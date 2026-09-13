@@ -1,7 +1,7 @@
 # Kubic
 
 Kubic is Konic's open-source terminal coding agent: model-agnostic, multi-agent, built directly
-on the Pi agent harness, with a sandboxed worker process per executing subagent and a terminal UI
+on the Pi agent harness, with a worker process per executing subagent and a terminal UI
 on `pi-tui`.
 
 **Status: design.** There is no implementation yet. This repository currently holds the design
@@ -41,7 +41,7 @@ The document is Markdown; the explorer is a build artifact of it. Edit the Markd
 ## Conventions
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/):
-  `type(scope): summary`, e.g. `docs(design): lock sandbox backend decision`.
+  `type(scope): summary`, e.g. `docs(design): lock workspace binding decision`.
 - **The design document is the source of truth.** Decisions are recorded in
   `design-decisions.json`; their rationale lives with the sections that encode them.
 - **Cross-references use `§`** followed by the section number (`§40.11`). The build validates them

@@ -11,12 +11,15 @@ document, the decision registry, and the tooling used to review them.
 
 | Path | What it is |
 | --- | --- |
-| [`docs/design/`](docs/design/) | The design. Start at [`docs/design/README.md`](docs/design/README.md). |
+| [`docs/design/`](docs/design/) | Everything about the design — document, decisions, config, tooling, generated explorer. Start at [`docs/design/README.md`](docs/design/README.md). |
 | [`docs/design/kubic-overview.md`](docs/design/kubic-overview.md) | The design document. Source of truth. |
 | [`docs/design/design-decisions.json`](docs/design/design-decisions.json) | Settled and open decisions, with alternatives and rationale. |
 | [`docs/design/design-explorer.html`](docs/design/design-explorer.html) | Generated, self-contained explorer for reading and annotating the design. |
-| `tools/design-explorer/` | Generator for the explorer. Vendored from the `ege-designer` skill. |
+| [`docs/design/tools/`](docs/design/tools/) | Generator for the explorer. Vendored from the `ege-designer` skill. |
 | `pi/` | Read-only reference clone of the Pi agent harness. Gitignored; not part of Kubic. |
+
+There is no top-level `tools/` folder on purpose: the only tooling here serves the design, so it
+lives inside the design folder rather than in a second tree that would exist to hold three files.
 
 `pi/` is upstream code kept locally so the design can cite real interfaces instead of guesses.
 It is never built, modified, or tested here, and it will be removed once Kubic stands on its own.
@@ -30,7 +33,7 @@ line, paragraph, table, or section, then click **Save for agent** to write
 Rebuild the explorer after editing the document or the decision registry:
 
 ```bash
-node tools/design-explorer/build-explorer.mjs --config docs/design/explorer.config.json
+node docs/design/tools/build-explorer.mjs --config docs/design/explorer.config.json
 ```
 
 The document is Markdown; the explorer is a build artifact of it. Edit the Markdown, not the HTML.

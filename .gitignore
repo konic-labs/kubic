@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------
+# Reference clone of the Pi agent harness.
+#
+# This is upstream code, not part of Kubic. It is checked out read-only as an
+# implementation reference for the Kubic design (see docs/design/). It is not
+# built, linted, tested or modified by this repository, and it will be removed
+# once Kubic no longer needs it as a reference.
+# ---------------------------------------------------------------------------
+/pi/
+
+# ---------------------------------------------------------------------------
+# Local review state from the design explorer.
+# Machine-specific annotations. Export them explicitly to hand them to an agent;
+# they are not tracked so they never conflict across machines.
+# ---------------------------------------------------------------------------
+docs/design/*-annotations.json
+docs/design/kubic-annotations.json
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.yarn/
+.npm/
+.pnpm-store/
+
+# ---------------------------------------------------------------------------
+# Build output and caches
+# ---------------------------------------------------------------------------
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.cache/
+.turbo/
+.parcel-cache/
+.eslintcache
+.biome/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Secrets and environment
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+secrets/
+credentials.json
+
+# ---------------------------------------------------------------------------
+# Logs and scratch
+# ---------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+.tmp/
+scratch/
+*.local

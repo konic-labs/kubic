@@ -1,11 +1,24 @@
 # Kubic
 
-Kubic is Konic's open-source terminal coding agent: model-agnostic, multi-agent, built directly
-on the Pi agent harness, with a worker process per executing subagent and a terminal UI
-on `pi-tui`.
+Kubic is Konic's open-source terminal coding agent: model-agnostic, built directly on the Pi agent
+harness, with a change journal that makes every edit reviewable and reversible, and an optional
+orchestrator mode that delegates to subagents in their own worktrees.
 
 **Status: design.** There is no implementation yet. This repository currently holds the design
 document, the decision registry, and the tooling used to review them.
+
+## What Kubic is
+
+**One agent, full tool set, working directly in your directory.** Every change it makes is recorded
+in a version-control-independent journal, so `kubic diff` and `kubic undo` work in a monorepo and in
+`~/Downloads` alike. Dangerous operations are approved by you.
+
+**Orchestrator mode is opt-in.** Turn it on and the same agent becomes a manager: it stops
+executing, delegates to subagents that each get their own process and their own git worktree, and
+merges what they produce. The mode is session-scoped and requires a git repository.
+
+There is no sandbox. Solo mode has no isolation at all, and the design says so plainly rather than
+implying otherwise — see §59.1 of the document.
 
 ## Where things are
 
@@ -41,7 +54,7 @@ The document is Markdown; the explorer is a build artifact of it. Edit the Markd
 ## Conventions
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/):
-  `type(scope): summary`, e.g. `docs(design): lock workspace binding decision`.
+  `type(scope): summary`, e.g. `docs(design): scope workspace behaviour to the mode`.
 - **The design document is the source of truth.** Decisions are recorded in
   `design-decisions.json`; their rationale lives with the sections that encode them.
 - **Cross-references use `§`** followed by the section number (`§40.11`). The build validates them
@@ -49,4 +62,5 @@ The document is Markdown; the explorer is a build artifact of it. Edit the Markd
 
 ## License
 
-TBD.
+MIT is the intended licence. The repository is private and unreleased, so this is tracked as an open
+backlog item rather than settled — see §75.1 of the design document.

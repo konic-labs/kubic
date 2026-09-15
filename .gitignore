@@ -9,12 +9,19 @@
 /pi/
 
 # ---------------------------------------------------------------------------
-# Local review state from the design explorer.
-# Machine-specific annotations. Export them explicitly to hand them to an agent;
-# they are not tracked so they never conflict across machines.
+# Kubic design documents.
+#
+# The design work is kept local: the document, the decision registry, the
+# generated explorer, the vendored generator and the explorer's annotation
+# files all live under docs/design/ and are not published to the remote. They
+# remain on disk and stay the source of truth for the design; they are simply
+# not tracked.
+#
+# Ignoring a path does not remove it from history. These files were tracked
+# before this rule existed, so their earlier revisions remain in origin's
+# history until it is rewritten.
 # ---------------------------------------------------------------------------
-docs/design/*-annotations.json
-docs/design/kubic-annotations.json
+docs/design/
 
 # ---------------------------------------------------------------------------
 # Node

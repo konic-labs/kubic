@@ -45,7 +45,8 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
       'dropped.txt',
     ]);
     const changed = entries.find((e) => e.path === 'change.txt');
-    expect(journal.readAfter(changed!)).toBe('after\n');
+    if (changed === undefined) throw new Error('missing change.txt entry');
+    expect(journal.readAfter(changed)).toBe('after\n');
     expect(changed?.beforeHash).toBe(baseline['change.txt']);
   });
 

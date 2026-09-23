@@ -321,9 +321,23 @@ export interface BaselineOptions {
 }
 
 function globToRegExp(glob: string): RegExp {
+  const escapable = new Set([
+    '+',
+    '.',
+    '^',
+    '$',
+    '{',
+    '}',
+    '(',
+    ')',
+    '|',
+    '[',
+    ']',
+    '\\',
+  ]);
   let out = '';
   for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
+    const c = glob[i] ?? '';
     if (c === '*') {
       if (glob[i + 1] === '*') {
         out += '.*';
@@ -333,7 +347,7 @@ function globToRegExp(glob: string): RegExp {
       }
     } else if (c === '?') {
       out += '[^/]';
-    } else if ('+.^${}()|[]\\'.includes(c ?? '')) {
+    } else if (escapable.has(c)) {
       out += `\\${c}`;
     } else {
       out += c;

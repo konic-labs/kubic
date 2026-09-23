@@ -4,8 +4,8 @@ import { chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FileJournalStore } from '../../../exec/src/journal.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { FileJournalStore } from '../../../exec/src/journal.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -43,13 +43,14 @@ describe('journal interception (issue #17, slice B)', () => {
     const entries = journal.entries();
     expect(entries).toHaveLength(1);
     const recorded = entries[0];
+    if (recorded === undefined) throw new Error('missing journal entry');
     expect(recorded?.op).toBe('write');
     expect(recorded?.toolCallId).toBe('call-9');
     expect(recorded?.sessionId).toBe('s1');
     if (out.ok) {
       expect(recorded?.beforeHash).toBe(out.result.beforeHash);
       expect(recorded?.afterHash).toBe(out.result.afterHash);
-      expect(journal.readAfter(recorded!)).toBe('hi\n');
+      expect(journal.readAfter(recorded)).toBe('hi\n');
     }
   });
 

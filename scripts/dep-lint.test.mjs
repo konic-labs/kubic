@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -192,6 +193,345 @@ describe('dep-lint (issue #2)', () => {
       violations.some((v) => v.from === 'tui' && v.to === 'worker'),
       `expected tui->worker violation, got ${JSON.stringify(violations)}`,
     );
+  });
+
+  it('flags every forbidden edge of each package row exactly', () => {
+    const rows = {
+      core: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
+      exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
+      worker: ['host', 'tui'],
+      host: ['tui'],
+      agents: ['host', 'worker', 'tui', 'trajectory', 'eval'],
+      trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
+      eval: ['exec', 'worker', 'host', 'tui'],
+      tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
+      extensions: ['worker', 'host', 'tui', 'kubic'],
+    };
+    for (const [owner, targets] of Object.entries(rows)) {
+      const files = {};
+      targets.forEach((t, i) => {
+        files[`packages/${owner}/src/edge-${i}.ts`] =
+          `import { x } from '@kubic/${t}';\n`;
+      });
+      const violations = checkTree(fixtureTree(files));
+      assert.deepEqual(
+        violations.map((v) => `${v.from}->${v.to}`).sort(),
+        targets.map((t) => `${owner}->${t}`).sort(),
+        `wrong edge set for ${owner}`,
+      );
+    }
+  });
+
+  it('treats a self-import as intra-package, not a violation', () => {
+    const dir = fixtureTree({
+      'packages/core/src/a.ts': `import { b } from '@kubic/core';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('treats an unknown package as forbidden from importing every row', () => {
+    const dir = fixtureTree({
+      'packages/zzz/src/a.ts': `import { d } from '@kubic/host';\n`,
+      'packages/zzz/src/b.ts': `import { c } from '@kubic/core';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'zzz->core',
+      'zzz->host',
+    ]);
+  });
+
+  it('returns no violations when the packages dir is missing', () => {
+    const dir = fixtureTree({ 'README.md': 'nothing here\n' });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('ignores non-directory entries in packages/', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dep-lint-'));
+    writeFileSync(join(dir, 'packages'), 'not a directory\n');
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('skips node_modules and dist trees', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/ok.ts': `import { c } from '@kubic/core';\n`,
+      'packages/tui/node_modules/dep/index.ts': `import { d } from '@kubic/host';\n`,
+      'packages/tui/dist/bundle.ts': `import { d } from '@kubic/host';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('flags an extensions file reaching the app root relatively', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/facets.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'extensions' && v.to === 'kubic'),
+      `expected extensions->kubic violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('allows a relative import within the same package', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/a.ts': `import { b } from './b.js';\n`,
+      'packages/tui/src/b.ts': `export const b = 1;\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('reports the exact file and line of a violation', () => {
+    const dir = fixtureTree({
+      'packages/core/src/session.ts': `import { a } from '@kubic/core';\nimport { b } from '@kubic/exec';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations, [
+      {
+        from: 'core',
+        to: 'exec',
+        file: join('packages', 'core', 'src', 'session.ts'),
+        line: 2,
+      },
+    ]);
+  });
+
+  it('flags node:fs subpaths, bare child_process, and records the spec', () => {
+    const dir = fixtureTree({
+      'packages/worker/src/a.ts': `import { readFile } from 'node:fs/promises';\n`,
+      'packages/host/src/b.ts': `import { exec } from 'child_process';\n`,
+      'packages/worker/src/c.ts': `import { spawn } from 'node:child_process/subprocess';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'host->child_process',
+      'worker->node:child_process/subprocess',
+      'worker->node:fs/promises',
+    ]);
+  });
+
+  it('allows exec to use node subpath imports', () => {
+    const dir = fixtureTree({
+      'packages/exec/src/a.ts': `import { readFile } from 'node:fs/promises';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('allows the worker Pi boundary file and flags other Pi users', () => {
+    const ok = fixtureTree({
+      'packages/worker/src/pi-boundary.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
+    });
+    assert.deepEqual(checkTree(ok), []);
+    const bad = fixtureTree({
+      'packages/worker/src/tools.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
+    });
+    const violations = checkTree(bad);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['worker->@earendil-works/pi-ai'],
+    );
+  });
+
+  it('fires both package and facet violations for a tui facet importing host', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/tui/panel.ts': `import { d } from '@kubic/host';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'extensions->host',
+      'extensions->host (tui facet)',
+    ]);
+  });
+
+  it('fires only the package violation outside a tui facet', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/facets.ts': `import { d } from '@kubic/host';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['extensions->host'],
+    );
+  });
+
+  it('fires the facet rule on host-like relative specs, not on lookalikes', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/tui/a.ts': `import { h } from './host/util.js';\n`,
+      'packages/extensions/src/tui/b.ts': `import { h } from './hostile/util.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['extensions->host (tui facet)'],
+    );
+  });
+
+  it('matches tui facets by filename prefix, not by substring', () => {
+    const prefixed = fixtureTree({
+      'packages/extensions/src/tui.panel.ts': `import { d } from '@kubic/host';\n`,
+    });
+    assert.deepEqual(
+      checkTree(prefixed)
+        .map((v) => `${v.from}->${v.to}`)
+        .sort(),
+      ['extensions->host', 'extensions->host (tui facet)'],
+    );
+    const substring = fixtureTree({
+      'packages/extensions/src/mytui.ts': `import { d } from '@kubic/host';\n`,
+    });
+    assert.deepEqual(
+      checkTree(substring).map((v) => `${v.from}->${v.to}`),
+      ['extensions->host'],
+    );
+  });
+
+  it('reports only the package violation for a Pi import (seam rule short-circuits)', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/worker/agent.ts': `import { V } from '@earendil-works/pi-tui';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['extensions->@earendil-works/pi-tui'],
+    );
+  });
+
+  it('fires the worker facet rule on a relative pi-tui spec', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/worker/agent.ts': `import { V } from '../pi-tui/panel.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['extensions->../pi-tui/panel.js (worker facet)'],
+    );
+  });
+
+  it('scans .mts and .js sources but ignores non-sources', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/a.mts': `import { d } from '@kubic/host';\n`,
+      'packages/tui/src/b.js': `import { d } from '@kubic/host';\n`,
+      'packages/tui/src/notes.json': `import { d } from '@kubic/host';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations.map((v) => v.file).sort(), [
+      join('packages', 'tui', 'src', 'a.mts'),
+      join('packages', 'tui', 'src', 'b.js'),
+    ]);
+  });
+
+  it('exits 0 printing OK on a clean tree via the CLI', () => {
+    const dir = fixtureTree({
+      'packages/core/src/a.ts': `import { b } from '@kubic/core';\n`,
+    });
+    const out = execFileSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'dep-lint.mjs'), dir],
+      { encoding: 'utf8' },
+    );
+    assert.match(out, /dep-direction OK/);
+  });
+
+  it('exits 1 listing violations via the CLI', () => {
+    const dir = fixtureTree({
+      'packages/core/src/a.ts': `import { b } from '@kubic/exec';\n`,
+    });
+    try {
+      execFileSync(
+        process.execPath,
+        [join(ROOT, 'scripts', 'dep-lint.mjs'), dir],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      assert.fail('CLI passed on a violating tree');
+    } catch (err) {
+      assert.equal(err.status, 1);
+      assert.match(err.stdout, /forbidden import core -> exec/);
+      assert.match(err.stdout, /1 forbidden import\(s\)/);
+    }
+  });
+
+  it('ignores same-package relative imports for every owner', () => {
+    const dir = fixtureTree({
+      'packages/extensions/src/a.ts': `import { b } from './b.js';\n`,
+      'packages/extensions/src/b.ts': `export const b = 1;\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('short-circuits when packages/ is missing, even with a violating app', () => {
+    const dir = fixtureTree({
+      'apps/kubic/src/main.ts': `import { fs } from 'node:fs';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('reads the app root for the kubic owner only', () => {
+    const dir = fixtureTree({
+      'apps/kubic/src/main.ts': `import { c } from '@kubic/core';\n`,
+      'packages/kubic/src/a.ts': `import { fs } from 'node:fs';\n`,
+      'kubic/src/b.ts': `import { fs } from 'node:fs';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('reports exact lines for fs, Pi-seam, and facet violations', () => {
+    const dir = fixtureTree({
+      'packages/worker/src/a.ts': `import { a } from '@kubic/worker';\nimport { b } from '@kubic/worker';\nimport { fs } from 'node:fs';\n`,
+      'packages/tui/src/b.ts': `import { a } from '@kubic/tui';\nimport { V } from '@earendil-works/pi-tui';\n`,
+      'packages/extensions/src/tui/c.ts': `import { d } from '@kubic/host';\n`,
+    });
+    const byFile = {};
+    for (const v of checkTree(dir)) byFile[v.file] = v;
+    assert.equal(byFile[join('packages', 'worker', 'src', 'a.ts')].line, 3);
+    assert.equal(
+      byFile[join('packages', 'worker', 'src', 'a.ts')].to,
+      'node:fs',
+    );
+    assert.equal(byFile[join('packages', 'tui', 'src', 'b.ts')].line, 2);
+    assert.equal(
+      byFile[join('packages', 'extensions', 'src', 'tui', 'c.ts')].line,
+      1,
+    );
+  });
+
+  it('flags export-from and side-effect imports', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/a.ts': `export { x } from '@kubic/host';\n`,
+      'packages/tui/src/b.ts': `import '@kubic/worker';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'tui->host',
+      'tui->worker',
+    ]);
+  });
+
+  it('flags require() with whitespace', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/a.ts': `const m = require ('@kubic/host');\n`,
+    });
+    const violations = checkTree(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.from}->${v.to}`),
+      ['tui->host'],
+    );
+  });
+
+  it('dep-lint module has no import side effects', async () => {
+    const writes = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk) => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      await import(`./dep-lint.mjs?silent=${Date.now()}`);
+    } finally {
+      process.stdout.write = original;
+    }
+    assert.deepEqual(writes, []);
   });
 });
 

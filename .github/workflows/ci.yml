@@ -23,3 +23,31 @@ jobs:
       - run: npm run lint:deps
       - run: npm run check:pi
       - run: npx biome ci .
+  mutation:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Mutation gate on touched scope (per-file >= 80)
+        # Vitest side is advisory until the upstream vitest-runner supports
+        # vitest 5 name matching (see docs/contributing.md "Known blocker").
+        # Tap side blocks.
+        run: |
+          REF="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$REF" ]; then REF="HEAD~1"; fi
+          npx stryker run --mutate "$(node scripts/mutation-scope.mjs --ref "$REF")"
+          node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80
+        continue-on-error: true
+      - name: Mutation gate, tap side (blocking)
+        run: |
+          REF="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$REF" ]; then REF="HEAD~1"; fi
+          npx stryker run stryker.tap.conf.json --mutate "$(node scripts/mutation-scope.mjs --ref "$REF" --tap)"
+          node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80

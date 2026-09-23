@@ -21,6 +21,10 @@ export interface JournalEntryInput {
   path: string;
   op: JournalOp;
   before: string | null;
+  // Explicit pre-image hash when before-content is unknowable
+  // (reconciliation): the entry records what the hash was, with no blob —
+  // readBefore returns null and undo reports non-reversible.
+  beforeHash?: string | null;
   after: string | null;
   bytesDelta: number;
   sessionId: string;
@@ -63,11 +67,7 @@ export function encodeDelta(before: string, after: string): string {
   const a = before.split('\n');
   const b = after.split('\n');
   let prefix = 0;
-  while (
-    prefix < a.length &&
-    prefix < b.length &&
-    a[prefix] === b[prefix]
-  ) {
+  while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) {
     prefix++;
   }
   let suffix = 0;
@@ -121,7 +121,10 @@ export class FileJournalStore {
 
   append(input: JournalEntryInput): JournalEntry {
     const bridge = this.bridge();
-    const beforeHash = input.before === null ? null : sha256Hex(input.before);
+    const beforeHash =
+      input.before === null
+        ? (input.beforeHash ?? null)
+        : sha256Hex(input.before);
     const afterHash = input.after === null ? null : sha256Hex(input.after);
     if (input.before !== null && beforeHash !== null) {
       this.putBlob(bridge, beforeHash, input.before);
@@ -200,7 +203,10 @@ export class FileJournalStore {
     return this.readBlob(entry.afterHash);
   }
 
-  enforceRetention(policy: RetentionPolicy): { entries: number; bytes: number } {
+  enforceRetention(policy: RetentionPolicy): {
+    entries: number;
+    bytes: number;
+  } {
     const bridge = this.bridge();
     const now = policy.now ?? Date.now();
     let kept = this.entries();
@@ -228,7 +234,8 @@ export class FileJournalStore {
     const tmp = `${this.indexPath}.${process.pid}.tmp`;
     bridge.writeFile(
       tmp,
-      kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length > 0 ? '\n' : ''),
+      kept.map((e) => JSON.stringify(e)).join('\n') +
+        (kept.length > 0 ? '\n' : ''),
     );
     try {
       bridge.renameFile(tmp, this.indexPath);
@@ -242,12 +249,16 @@ export class FileJournalStore {
     }
     if (bridge.exists(this.blobsDir)) {
       for (const info of bridge.listDir(this.blobsDir)) {
-        if (!info.isDirectory && !info.isSymbolicLink && !referenced.has(info.name)) {
+        if (
+          !info.isDirectory &&
+          !info.isSymbolicLink &&
+          !referenced.has(info.name)
+        ) {
           try {
             bridge.remove(join(this.blobsDir, info.name), false, true);
           } catch {
-              // Best-effort: an orphaned blob is a leak, not corruption.
-            }
+            // Best-effort: an orphaned blob is a leak, not corruption.
+          }
         }
       }
     }
@@ -299,4 +310,241 @@ export class FileJournalStore {
     }
     return total;
   }
+}
+
+// --- Baseline + reconciliation (issue #17, slice C; §42.5) ----------------
+
+export type Baseline = Record<string, string>;
+
+export interface BaselineOptions {
+  outOfScope?: string[];
+}
+
+function globToRegExp(glob: string): RegExp {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        out += '.*';
+        i++;
+      } else {
+        out += '[^/]*';
+      }
+    } else if (c === '?') {
+      out += '[^/]';
+    } else if ('+.^${}()|[]\\'.includes(c ?? '')) {
+      out += `\\${c}`;
+    } else {
+      out += c;
+    }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+interface IgnoreRule {
+  negate: boolean;
+  dirOnly: boolean;
+  anchored: boolean;
+  match: RegExp;
+  prefix: string;
+}
+
+function parseIgnoreFile(content: string): IgnoreRule[] {
+  const rules: IgnoreRule[] = [];
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    const negate = line.startsWith('!');
+    const body = negate ? line.slice(1) : line;
+    const dirOnly = body.endsWith('/');
+    const stripped = dirOnly ? body.slice(0, -1) : body;
+    const anchored = stripped.includes('/');
+    const pattern = anchored ? stripped.replace(/^\//, '') : stripped;
+    rules.push({
+      negate,
+      dirOnly,
+      anchored,
+      match: globToRegExp(
+        anchored ? pattern : (pattern.split('/').pop() ?? pattern),
+      ),
+      prefix: stripped,
+    });
+  }
+  return rules;
+}
+
+// Common-subset .gitignore matcher: *, ?, **, dir/ prefixes, ! negation
+// (last match wins). Exotic forms (character classes beyond ?, rooted
+// mid-pattern **) are not covered — documented, and anything missed only
+// widens the baseline, never narrows the journal.
+function isIgnored(
+  rules: IgnoreRule[],
+  relPath: string,
+  isDir: boolean,
+): boolean {
+  const name = relPath.split('/').pop() ?? relPath;
+  let ignored = false;
+  for (const rule of rules) {
+    let hit = false;
+    if (rule.dirOnly) {
+      hit =
+        relPath === rule.prefix ||
+        relPath.startsWith(`${rule.prefix}/`) ||
+        (!rule.anchored && relPath.split('/').includes(rule.prefix));
+    } else if (rule.anchored) {
+      hit = rule.match.test(relPath);
+    } else {
+      hit = rule.match.test(name);
+    }
+    if (hit) ignored = !rule.negate;
+    void isDir;
+  }
+  return ignored;
+}
+
+// Metadata walk, not a content copy: hashes only, no blobs. Always skips
+// .git/ and .kubic/ (journal state is never journaled), honors the root
+// .gitignore, and excludes caller-declared out-of-scope paths.
+export function captureBaseline(
+  root: string,
+  options: BaselineOptions = {},
+): Baseline {
+  const bridge = createNodeFileBridge('/');
+  const outOfScope = new Set(options.outOfScope ?? []);
+  let rules: IgnoreRule[] = [];
+  if (bridge.exists(join(root, '.gitignore'))) {
+    try {
+      rules = parseIgnoreFile(bridge.readTextFile(join(root, '.gitignore')));
+    } catch {
+      rules = [];
+    }
+  }
+  const baseline: Baseline = {};
+  const walk = (dir: string, rel: string): void => {
+    let infos: ReturnType<typeof bridge.listDir> = [];
+    try {
+      infos = bridge.listDir(dir);
+    } catch {
+      return;
+    }
+    for (const info of [...infos].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (info.isSymbolicLink) continue;
+      const relPath = rel === '' ? info.name : `${rel}/${info.name}`;
+      if (relPath === '.git' || relPath.startsWith('.git/')) continue;
+      if (relPath === '.kubic' || relPath.startsWith('.kubic/')) continue;
+      if (outOfScope.has(relPath)) continue;
+      if (isIgnored(rules, relPath, info.isDirectory)) continue;
+      if (info.isDirectory) {
+        walk(join(dir, info.name), relPath);
+      } else {
+        try {
+          baseline[relPath] = sha256Hex(
+            bridge.readTextFile(join(dir, info.name)),
+          );
+        } catch {
+          // Vanished mid-walk: reconcile treats it as a delete.
+        }
+      }
+    }
+  };
+  walk(root, '');
+  return baseline;
+}
+
+export function saveBaseline(
+  dir: string,
+  runId: string,
+  baseline: Baseline,
+): void {
+  createNodeFileBridge('/').writeFile(
+    join(dir, `baseline-${runId}.json`),
+    JSON.stringify(baseline),
+  );
+}
+
+export function loadBaseline(dir: string, runId: string): Baseline | null {
+  const bridge = createNodeFileBridge('/');
+  const path = join(dir, `baseline-${runId}.json`);
+  if (!bridge.exists(path)) return null;
+  try {
+    return JSON.parse(bridge.readTextFile(path)) as Baseline;
+  } catch {
+    return null;
+  }
+}
+
+export interface ReconcileContext {
+  sessionId: string;
+  agentId: string;
+  timestamp: number;
+}
+
+// End-of-run sweep: whatever moved without interception gets an
+// unattributed entry — sed -i, npm install fallout, formatters, builds.
+// Before-content is unknowable for these (the baseline holds hashes, not
+// copies), so beforeHash is recorded but no before-blob exists: undo of
+// unattributed entries is reported non-reversible by the next issue's CLI.
+export function reconcile(
+  store: FileJournalStore,
+  baseline: Baseline,
+  root: string,
+  ctx: ReconcileContext,
+  options: BaselineOptions = {},
+): number {
+  const bridge = createNodeFileBridge('/');
+  const current = captureBaseline(root, options);
+  const latest = new Map<string, { afterHash: string | null }>();
+  for (const e of store.entries()) {
+    latest.set(e.path, { afterHash: e.afterHash });
+  }
+  let added = 0;
+  const record = (input: {
+    path: string;
+    op: JournalEntryInput['op'];
+    beforeHash: string | null;
+    after: string | null;
+  }): void => {
+    store.append({
+      path: input.path,
+      op: input.op,
+      before: null,
+      beforeHash: input.beforeHash,
+      after: input.after,
+      bytesDelta: 0,
+      sessionId: ctx.sessionId,
+      agentId: ctx.agentId,
+      toolCallId: null,
+      timestamp: ctx.timestamp,
+      unattributed: true,
+    });
+    added++;
+  };
+  for (const [relPath, hash] of Object.entries(current)) {
+    if (baseline[relPath] === hash) continue;
+    if (latest.get(relPath)?.afterHash === hash) continue;
+    let after: string | null = null;
+    try {
+      after = bridge.readTextFile(join(root, relPath));
+    } catch {
+      after = null;
+    }
+    record({
+      path: relPath,
+      op: baseline[relPath] === undefined ? 'create' : 'write',
+      beforeHash: baseline[relPath] ?? null,
+      after,
+    });
+  }
+  for (const relPath of Object.keys(baseline)) {
+    if (current[relPath] !== undefined) continue;
+    if (latest.get(relPath)?.afterHash === null) continue;
+    record({
+      path: relPath,
+      op: 'delete',
+      beforeHash: baseline[relPath] ?? null,
+      after: null,
+    });
+  }
+  return added;
 }

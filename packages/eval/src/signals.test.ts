@@ -94,6 +94,21 @@ describe('computeSignals (issue #53)', () => {
     expect(signals.quality).toBe(0);
   });
 
+  it('gates quality and regression-freedom on red signals, not completion alone', () => {
+    const red = computeSignals(
+      trajectory({
+        eval: {
+          suite: 'swe-bench-mini',
+          caseId: 'case-1',
+          labels: { 'signal:tests': 'fail' },
+        },
+      }),
+    );
+    expect(red.completion).toBe(true);
+    expect(red.quality).toBe(0);
+    expect(red.regressionFree).toBe(false);
+  });
+
   it('reads tests/build/lint/typecheck signal labels, unknown by default', () => {
     const base = computeSignals(trajectory());
     expect([base.tests, base.build, base.lint, base.typecheck]).toEqual([

@@ -21,6 +21,12 @@ function signals(overrides: Partial<EvalSignals> = {}): EvalSignals {
   };
 }
 
+function usageRows() {
+  return [
+    { inputTokens: 100, outputTokens: 50, costUsd: 0.02, latencyMs: 60000 },
+  ];
+}
+
 describe('runEvalTask (issue #53)', () => {
   it('builds a complete record from a faux suite run', async () => {
     const record = await runEvalTask(
@@ -35,7 +41,11 @@ describe('runEvalTask (issue #53)', () => {
         workspace: 'inline',
       },
       {
-        runSuite: async () => ({ success: true, signals: signals() }),
+        runSuite: async () => ({
+          success: true,
+          signals: signals(),
+          usageRows: usageRows(),
+        }),
       },
     );
     expect(record.suite).toBe('swe-bench-mini');
@@ -77,7 +87,11 @@ describe('runEvalTask (issue #53)', () => {
         workspace: 'worktree',
       },
       {
-        runSuite: async () => ({ success: true, signals: signals() }),
+        runSuite: async () => ({
+          success: true,
+          signals: signals(),
+          usageRows: usageRows(),
+        }),
         ensureCleanWorktree: () => true,
       },
     );
@@ -101,6 +115,30 @@ describe('runEvalTask (issue #53)', () => {
         {
           runSuite: async () => ({ success: true, signals: signals() }),
           ensureCleanWorktree: () => false,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'dirty-worktree' });
+  });
+
+  it('refuses workspace=worktree without a cleanliness checker', async () => {
+    await expect(
+      runEvalTask(
+        {
+          suite: 'swe-bench-mini',
+          task: 'fix',
+          model: 'acme/m1',
+          thinking: null,
+          worktree: '/wt/unchecked',
+          generation: 1,
+          tier: 'smoke',
+          workspace: 'worktree',
+        },
+        {
+          runSuite: async () => ({
+            success: true,
+            signals: signals(),
+            usageRows: usageRows(),
+          }),
         },
       ),
     ).rejects.toMatchObject({ code: 'dirty-worktree' });
@@ -153,6 +191,75 @@ describe('runEvalTask (issue #53)', () => {
         },
       ),
     ).rejects.toMatchObject({ code: 'usage-mismatch' });
+  });
+
+  it('refuses a task-path run without usage rows (§39)', async () => {
+    await expect(
+      runEvalTask(
+        {
+          suite: 'swe-bench-mini',
+          task: 'fix',
+          model: 'acme/m1',
+          thinking: null,
+          worktree: '/wt/a',
+          generation: 1,
+          tier: 'smoke',
+          workspace: 'inline',
+        },
+        {
+          runSuite: async () => ({ success: true, signals: signals() }),
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'missing-usage-rows' });
+  });
+
+  it('rejects non-integer and infinite generations at the API layer', async () => {
+    for (const generation of [1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      await expect(
+        runEvalTask(
+          {
+            suite: 'swe-bench-mini',
+            task: 'fix',
+            model: 'acme/m1',
+            thinking: null,
+            worktree: '/wt/a',
+            generation,
+            tier: 'smoke',
+            workspace: 'inline',
+          },
+          {
+            runSuite: async () => ({
+              success: true,
+              signals: signals(),
+              usageRows: usageRows(),
+            }),
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'missing-generation' });
+    }
+  });
+
+  it('stores success=false for a completed run with a red gate', async () => {
+    const record = await runEvalTask(
+      {
+        suite: 'swe-bench-mini',
+        task: 'fix',
+        model: 'acme/m1',
+        thinking: null,
+        worktree: '/wt/a',
+        generation: 1,
+        tier: 'smoke',
+        workspace: 'inline',
+      },
+      {
+        runSuite: async () => ({
+          success: true,
+          signals: signals({ tests: 'fail' }),
+          usageRows: usageRows(),
+        }),
+      },
+    );
+    expect(record.success).toBe(false);
   });
 });
 
@@ -220,6 +327,71 @@ describe('runEvalTrajectory (issue #53)', () => {
     expect(record.toolCalls).toBe(1);
     expect(record instanceof Object).toBe(true);
     expect(record.model).toBe('acme/m1');
+  });
+
+  it('stores success=false for a completed trajectory with a red gate', async () => {
+    const record = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: {
+        schema_version: '1.0',
+        task: { taskId: 't', objective: 'fix', role: 'writer' },
+        identity: { sessionId: 's', agentId: 'a', workerId: 'w' },
+        model: {
+          provider: 'acme',
+          model: 'm1',
+          thinking: null,
+          escalations: [],
+        },
+        prompt: { text: 'fix', constraints: [] },
+        resources: { skills: [], promptTemplates: [] },
+        transfer: null,
+        actions: [{ seq: 1, tool: 'exec', args: null }],
+        observations: [],
+        state: { phase: 'done', snapshot: null },
+        provenance: {
+          sessionId: 's',
+          agentId: 'a',
+          pid: null,
+          generation: 3,
+          worktree: '/wt/agent-1',
+          model: 'acme/m1',
+        },
+        environment: { capturedFrom: 'used', cwd: '/wt/agent-1', env: {} },
+        worktree: { path: '/wt/agent-1', baseRevision: 'abc', branch: null },
+        diff: { filesChanged: [], files: [] },
+        approvals: [],
+        timestamps: {
+          startedAt: '2026-09-23T10:00:00.000Z',
+          endedAt: '2026-09-23T10:01:00.000Z',
+          durationMs: 60000,
+        },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          cachedTokens: 0,
+          requests: 1,
+          costUsd: 0.02,
+          byModel: {},
+        },
+        result: {
+          status: 'completed',
+          summary: 'done',
+          failureCategory: null,
+          error: null,
+        },
+        eval: {
+          suite: null,
+          caseId: null,
+          labels: { 'signal:tests': 'fail' },
+        },
+      },
+      model: 'acme/m1',
+      thinking: null,
+      worktree: '/wt/agent-1',
+      generation: 3,
+      tier: 'standard',
+    });
+    expect(record.success).toBe(false);
   });
 
   it('exposes a machine-readable error code', () => {

@@ -26,7 +26,13 @@ function out(): { lines: string[]; write: (line: string) => void } {
 }
 
 const deps = {
-  runSuite: async () => ({ success: true, signals: signals() }),
+  runSuite: async () => ({
+    success: true,
+    signals: signals(),
+    usageRows: [
+      { inputTokens: 100, outputTokens: 50, costUsd: 0.02, latencyMs: 60000 },
+    ],
+  }),
   ensureCleanWorktree: () => true,
 };
 
@@ -92,6 +98,31 @@ describe('eval command (issue #53)', () => {
     );
     expect(exit).toBe(2);
     expect(o.lines.join('\n')).toMatch(/worktree|generation|tier/i);
+  });
+
+  it('exits 2 on an invalid --workspace instead of coercing to inline', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      [
+        '--suite',
+        'swe-bench-mini',
+        '--task',
+        'fix',
+        '--model',
+        'acme/m1',
+        '--worktree',
+        '/wt/a',
+        '--generation',
+        '3',
+        '--tier',
+        'standard',
+        '--workspace',
+        'worktreee',
+      ],
+      { ...deps, out: o.write },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/workspace/i);
   });
 
   it('scores --trajectory without running a suite', async () => {
@@ -212,6 +243,9 @@ describe('benchmark command (issue #53)', () => {
     }
     const stubs = envelope.results.filter((r) => r.stub);
     expect(stubs.length).toBeGreaterThan(0);
+    for (const stub of stubs) {
+      expect(stub.success).toBe(false);
+    }
   });
 
   it('runs a single suite via --suite swe', async () => {
@@ -235,5 +269,58 @@ describe('benchmark command (issue #53)', () => {
     );
     expect(exit).toBe(0);
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
+  });
+
+  it('reports a stub-only run as skipped (success:false) yet exits 0', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      [
+        '--suite',
+        'terminal-live',
+        '--model',
+        'acme/m1',
+        '--worktree',
+        '/wt/a',
+        '--generation',
+        '1',
+        '--tier',
+        'smoke',
+        '--json',
+      ],
+      { ...deps, out: o.write },
+    );
+    expect(exit).toBe(0);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      results: Array<{ stub: boolean; skipped: boolean; success: boolean }>;
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.results).toHaveLength(1);
+    expect(envelope.results[0]).toMatchObject({
+      stub: true,
+      skipped: true,
+      success: false,
+    });
+  });
+
+  it('exits 2 on an invalid --workspace', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      [
+        '--model',
+        'acme/m1',
+        '--worktree',
+        '/wt/a',
+        '--generation',
+        '1',
+        '--tier',
+        'smoke',
+        '--workspace',
+        'worktreee',
+      ],
+      { ...deps, out: o.write },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/workspace/i);
   });
 });

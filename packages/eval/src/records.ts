@@ -4,7 +4,7 @@
 // rejected (never stored) — a result that cannot be attributed to a
 // worktree + generation + tier cannot be reproduced. Cost/latency/tokens
 // reconcile against §39 usage rows before a record is accepted.
-import type { EvalCategory } from './categories.js';
+import { type EvalCategory, isEvalCategory } from './categories.js';
 import type { EvalSignals } from './signals.js';
 
 export const EVAL_TIERS = ['smoke', 'standard', 'extended'] as const;
@@ -60,6 +60,12 @@ export function validateEvalRecord(input: unknown): RecordValidation {
   const candidate = input as Record<string, unknown>;
   if (!nonEmpty(candidate.suite)) errors.push('suite is required');
   if (!nonEmpty(candidate.caseId)) errors.push('caseId is required');
+  if (
+    typeof candidate.category !== 'string' ||
+    !isEvalCategory(candidate.category)
+  ) {
+    errors.push('category is required: one of the eight benchmark categories');
+  }
   if (!nonEmpty(candidate.model)) errors.push('model is required');
   if (!nonNegative(candidate.costUsd)) errors.push('costUsd is required');
   if (!nonNegative(candidate.tokens)) errors.push('tokens is required');
@@ -73,6 +79,7 @@ export function validateEvalRecord(input: unknown): RecordValidation {
   }
   if (
     typeof candidate.generation !== 'number' ||
+    !Number.isInteger(candidate.generation) ||
     !(candidate.generation >= 0)
   ) {
     errors.push(

@@ -36,6 +36,6 @@ export {
   runEvalTrajectory,
 } from './runner.js';
 export type { EvalSignals, GateSignal } from './signals.js';
-export { computeSignals } from './signals.js';
+export { computeSignals, gatesPass } from './signals.js';
 export type { EvalSuite } from './suites.js';
 export { EVAL_SUITES, findSuite } from './suites.js';

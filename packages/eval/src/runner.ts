@@ -19,7 +19,7 @@ import {
   type UsageRowLike,
   validateEvalRecord,
 } from './records.js';
-import { computeSignals, type EvalSignals } from './signals.js';
+import { computeSignals, type EvalSignals, gatesPass } from './signals.js';
 import { findSuite } from './suites.js';
 
 export type EvalRunnerErrorCode =
@@ -31,6 +31,7 @@ export type EvalRunnerErrorCode =
   | 'invalid-tier'
   | 'dirty-worktree'
   | 'usage-mismatch'
+  | 'missing-usage-rows'
   | 'invalid-trajectory';
 
 export class EvalRunnerError extends Error {
@@ -99,7 +100,11 @@ function requireProvenance(options: {
       'worktree is required: eval records how it ran (§73) — refusing to store a worktree-less result',
     );
   }
-  if (typeof options.generation !== 'number' || !(options.generation >= 0)) {
+  if (
+    typeof options.generation !== 'number' ||
+    !Number.isInteger(options.generation) ||
+    !(options.generation >= 0)
+  ) {
     throw new EvalRunnerError(
       'missing-generation',
       'generation is required: eval records which worker generation ran (§73)',
@@ -126,7 +131,15 @@ function requireCleanWorktree(
   ensureCleanWorktree: ((worktree: string) => boolean) | undefined,
 ): void {
   if (workspace !== 'worktree') return;
-  const clean = ensureCleanWorktree?.(worktree) ?? true;
+  // Fail closed: without a checker there is no evidence the tree is
+  // clean, so a worktree-scoped run is refused rather than scored.
+  if (ensureCleanWorktree === undefined) {
+    throw new EvalRunnerError(
+      'dirty-worktree',
+      `worktree ${JSON.stringify(worktree)} has no cleanliness checker — refusing to benchmark without one`,
+    );
+  }
+  const clean = ensureCleanWorktree(worktree);
   if (!clean) {
     throw new EvalRunnerError(
       'dirty-worktree',
@@ -197,23 +210,32 @@ export async function runEvalTask(
     deps.ensureCleanWorktree,
   );
   const outcome = await deps.runSuite(options.suite, options.task);
-  if (outcome.usageRows !== undefined) {
-    const reconciled = reconcileUsage(
-      {
-        tokens: outcome.signals.tokens,
-        costUsd: outcome.signals.costUsd,
-        latencyMs: outcome.signals.latencyMs,
-      },
-      outcome.usageRows,
+  // Fail closed (§39): a task-path record without usage rows cannot be
+  // reconciled, so it is refused rather than stored unreconciled.
+  if (outcome.usageRows === undefined) {
+    throw new EvalRunnerError(
+      'missing-usage-rows',
+      'usage rows are required: task-path signals must reconcile against §39 usage rows — refusing to store an unreconciled record',
     );
-    if (!reconciled.ok) {
-      throw new EvalRunnerError(
-        'usage-mismatch',
-        `signals do not reconcile with §39 usage rows: ${reconciled.errors.join('; ')}`,
-      );
-    }
   }
-  return toRecord({ ...options, tier, ...outcome }, suite.category);
+  const reconciled = reconcileUsage(
+    {
+      tokens: outcome.signals.tokens,
+      costUsd: outcome.signals.costUsd,
+      latencyMs: outcome.signals.latencyMs,
+    },
+    outcome.usageRows,
+  );
+  if (!reconciled.ok) {
+    throw new EvalRunnerError(
+      'usage-mismatch',
+      `signals do not reconcile with §39 usage rows: ${reconciled.errors.join('; ')}`,
+    );
+  }
+  // Gate success on the signals: a run that completed with a red
+  // tests/build/lint/typecheck gate stores success=false.
+  const success = outcome.success && gatesPass(outcome.signals);
+  return toRecord({ ...options, tier, ...outcome, success }, suite.category);
 }
 
 export async function runEvalTrajectory(
@@ -252,7 +274,7 @@ export async function runEvalTrajectory(
       worktree: options.worktree,
       generation: options.generation,
       tier,
-      success: signals.completion,
+      success: signals.completion && gatesPass(signals),
       signals,
     },
     suite.category,

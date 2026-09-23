@@ -27,6 +27,7 @@ interface Parsed {
   task: string | undefined;
   trajectory: string | undefined;
   workspace: EvalWorkspace;
+  workspaceInvalid: boolean;
   model: string;
   thinking: string | null;
   worktree: string;
@@ -41,6 +42,7 @@ function parseArgs(args: string[]): Parsed {
     task: undefined,
     trajectory: undefined,
     workspace: 'inline',
+    workspaceInvalid: false,
     model: 'faux/faux',
     thinking: null,
     worktree: '',
@@ -61,6 +63,7 @@ function parseArgs(args: string[]): Parsed {
     else if (arg === '--workspace') {
       const value = take();
       if (value === 'inline' || value === 'worktree') parsed.workspace = value;
+      else parsed.workspaceInvalid = true;
     } else if (arg === '--model') parsed.model = take() ?? parsed.model;
     else if (arg === '--thinking') parsed.thinking = take() ?? null;
     else if (arg === '--worktree') parsed.worktree = take() ?? '';
@@ -135,6 +138,10 @@ export async function runEvalCommand(
   deps: EvalCliDeps,
 ): Promise<number> {
   const parsed = parseArgs(args);
+  if (parsed.workspaceInvalid) {
+    deps.out('usage: --workspace must be one of inline|worktree');
+    return EVAL_EXIT_USAGE;
+  }
   if (
     parsed.suite === undefined ||
     (parsed.task === undefined && parsed.trajectory === undefined) ||
@@ -191,13 +198,18 @@ export interface BenchmarkResult {
 }
 
 // kubic benchmark [--suite <id>|all] (design §82): the reproducible
-// matrix. Stub suites are reported skipped:true (never as passing work);
-// exit 0 iff every executed suite succeeded.
+// matrix. Stub suites are reported skipped:true with success:false (never
+// as passing work); exit 0 iff every executed suite succeeded — skipped
+// stubs never count toward the verdict either way.
 export async function runBenchmarkCommand(
   args: string[],
   deps: EvalCliDeps,
 ): Promise<number> {
   const parsed = parseArgs(args);
+  if (parsed.workspaceInvalid) {
+    deps.out('usage: --workspace must be one of inline|worktree');
+    return EVAL_EXIT_USAGE;
+  }
   if (parsed.generation === undefined) {
     deps.out(
       'usage: kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]',
@@ -226,7 +238,7 @@ export async function runBenchmarkCommand(
         category: suite.category,
         stub: true,
         skipped: true,
-        success: true,
+        success: false,
       });
       continue;
     }
@@ -267,7 +279,7 @@ export async function runBenchmarkCommand(
       return EVAL_EXIT_USAGE;
     }
   }
-  const allOk = results.every((r) => r.success);
+  const allOk = results.filter((r) => !r.skipped).every((r) => r.success);
   const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   if (parsed.json) {
     deps.out(JSON.stringify({ ok: allOk, exitCode: exit, results }));

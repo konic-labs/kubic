@@ -52,6 +52,30 @@ describe('validateEvalRecord (issue #53)', () => {
     });
     expect(noTier.valid).toBe(false);
   });
+
+  it('rejects a record missing or with an invalid category', () => {
+    const { category: _dropped, ...rest } = input();
+    const missing = validateEvalRecord(rest);
+    expect(missing.valid).toBe(false);
+    if (!missing.valid) {
+      expect(missing.errors.join(' ')).toMatch(/category/i);
+    }
+    const invalid = validateEvalRecord({ ...input(), category: 'nope' });
+    expect(invalid.valid).toBe(false);
+    if (!invalid.valid) {
+      expect(invalid.errors.join(' ')).toMatch(/category/i);
+    }
+  });
+
+  it('rejects non-integer and infinite generations', () => {
+    for (const generation of [1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const result = validateEvalRecord({ ...input(), generation });
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.join(' ')).toMatch(/generation/i);
+      }
+    }
+  });
 });
 
 describe('reconcileUsage §39 (issue #53)', () => {

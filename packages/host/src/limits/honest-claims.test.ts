@@ -121,7 +121,11 @@ const TEST_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.test.js', '.test.md'];
 // suffix, a pattern the line must still match (so drift re-flags), and
 // the justification. Keep this list empty by default — add only with a
 // quoted reason pointing at the explicit denial in the same line.
-const REVIEWED_EXCEPTIONS: Array<{ fileSuffix: string; pattern: string; reason: string }> = [
+const REVIEWED_EXCEPTIONS: Array<{
+  fileSuffix: string;
+  pattern: string;
+  reason: string;
+}> = [
   {
     fileSuffix: 'docs/design/kubic-overview.md',
     pattern: 'prompt-injection prevention system.*does not prevent injection',

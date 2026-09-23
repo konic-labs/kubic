@@ -1,0 +1,201 @@
+// `kubic tui` wiring over the solo lane (issue #75).
+// RED: apps/kubic/src/tui-run.ts does not exist yet.
+//
+// Headless snapshots through the real TuiAltScreen + a fake Terminal
+// (same pattern as screen.test.ts): alt-screen open/restore asserted on
+// captured writes. Faux lane boot only — zero network.
+import { describe, expect, it } from 'vitest';
+import {
+  bootTuiLane,
+  runTuiCommand,
+  type TuiRunDeps,
+} from '../../../apps/kubic/src/tui-run.js';
+import type { Terminal } from './tui-boundary.js';
+
+function fakeTerminal(
+  width: number,
+  onStart?: (input: (data: string) => void) => void,
+): Terminal & {
+  writes: string[];
+  started: number;
+  stopped: number;
+} {
+  const writes: string[] = [];
+  const counts = { started: 0, stopped: 0 };
+  return {
+    writes,
+    get started(): number {
+      return counts.started;
+    },
+    get stopped(): number {
+      return counts.stopped;
+    },
+    start: (onInput: (data: string) => void) => {
+      counts.started++;
+      onStart?.(onInput);
+    },
+    stop: () => {
+      counts.stopped++;
+    },
+    drainInput: () => Promise.resolve(),
+    write: (data: string) => writes.push(data),
+    get columns(): number {
+      return width;
+    },
+    get rows(): number {
+      return 30;
+    },
+    get kittyProtocolActive(): boolean {
+      return false;
+    },
+    moveBy: () => {},
+    hideCursor: () => {},
+    showCursor: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    setTitle: () => {},
+    setProgress: () => {},
+  };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(condition()).toBe(true);
+}
+
+function deps(
+  terminal: Terminal,
+  overrides: Partial<TuiRunDeps> = {},
+): TuiRunDeps {
+  return {
+    out: () => {},
+    createTerminal: () => terminal,
+    bootLane: async (sessionId?: string) => ({
+      sessionId: sessionId ?? 's1',
+      model: 'faux/test',
+    }),
+    ...overrides,
+  };
+}
+
+describe('kubic tui (issue #75)', () => {
+  it('opens the alt-screen, shows rows in root order, restores on Ctrl-C', async () => {
+    const lines: string[] = [];
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(100, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      [],
+      deps(terminal, { out: (l) => lines.push(l) }),
+    );
+    await waitFor(() => terminal.started === 1);
+    input('T');
+    input('\x03');
+    const code = await pending;
+    expect(code).toBe(0);
+    const frames = terminal.writes.join('');
+    expect(frames).toContain('?2026h');
+    expect(frames).toContain('?1049l');
+    expect(terminal.stopped).toBe(1);
+    const doc = lines.join('\n');
+    const order = ['◌ solo', 'session s1', 'approvals:on'].map((m) =>
+      doc.indexOf(m),
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('passes --session through to the lane boot', async () => {
+    const seen: Array<string | undefined> = [];
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(100, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      ['--session', 'abc'],
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => {
+          seen.push(sessionId);
+          return { sessionId: sessionId ?? 's1', model: 'faux/test' };
+        },
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    input('\x03');
+    expect(await pending).toBe(0);
+    expect(seen).toEqual(['abc']);
+  });
+
+  it('hides the tree only on narrow terminals', async () => {
+    const lines: string[] = [];
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(70, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      [],
+      deps(terminal, { out: (l) => lines.push(l) }),
+    );
+    await waitFor(() => terminal.started === 1);
+    input('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).not.toMatch(/[✓●◌]/);
+    expect(doc).toContain('session s1');
+    expect(doc).toContain('approvals:on');
+  });
+
+  it('rejects unknown flags without opening the screen', async () => {
+    const lines: string[] = [];
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      ['--bogus'],
+      deps(terminal, { out: (l) => lines.push(l) }),
+    );
+    expect(code).toBe(2);
+    expect(terminal.started).toBe(0);
+    expect(lines.join('\n')).toContain('error: unknown flag --bogus');
+  });
+
+  it('rejects path-unsafe --session ids before the lane boots', async () => {
+    let booted = 0;
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      ['--session', '../evil'],
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => {
+          booted++;
+          return { sessionId: sessionId ?? 's1', model: 'faux/test' };
+        },
+      }),
+    );
+    expect(code).toBe(2);
+    expect(booted).toBe(0);
+    expect(terminal.started).toBe(0);
+  });
+
+  it('rejects path-unsafe ids inside bootTuiLane too (direct callers)', async () => {
+    await expect(bootTuiLane('../evil')).rejects.toThrow('invalid --session');
+  });
+
+  it('reports lane boot failure without opening the screen', async () => {
+    const lines: string[] = [];
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      [],
+      deps(terminal, {
+        out: (l) => lines.push(l),
+        bootLane: async () => {
+          throw new Error('nope');
+        },
+      }),
+    );
+    expect(code).toBe(1);
+    expect(terminal.started).toBe(0);
+    expect(lines.join('\n')).toContain('error: nope');
+  });
+});

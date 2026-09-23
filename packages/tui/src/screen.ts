@@ -9,6 +9,10 @@ import { TuiAltScreen } from './tui-boundary.js';
 export interface Screen {
   render: () => void;
   stop: (print: (line: string) => void) => void;
+  // The live alt-screen (issue #75): the composition root needs
+  // setFocus/addInputListener to route keyboard input. Additive — the
+  // boot/render/stop lifecycle above is unchanged.
+  tui: TuiAltScreen;
 }
 
 export function bootScreen(terminal: Terminal, root: VStack): Screen {
@@ -16,6 +20,7 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
   screen.setLayoutRoot(root);
   screen.start();
   return {
+    tui: screen,
     render: () => screen.renderNow(true),
     stop: (print: (line: string) => void) => {
       for (const line of root.render(terminal.columns)) print(line);

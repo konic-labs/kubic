@@ -8,9 +8,10 @@
 import {
   createProvider,
   envApiKeyAuth,
+  type ModelThinkingLevel,
+  type MutableModels,
   openAICompletionsApiLazy,
   openAIResponsesApiLazy,
-  type MutableModels,
 } from './pi-boundary.js';
 
 export const CUSTOM_APIS = ['openai-completions', 'openai-responses'] as const;
@@ -48,7 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function reqString(record: Record<string, unknown>, key: string, what: string): string {
+function reqString(
+  record: Record<string, unknown>,
+  key: string,
+  what: string,
+): string {
   const value = record[key];
   if (typeof value !== 'string' || value.trim() === '') {
     throw new ModelsJsonError(`${what}: '${key}' must be a non-empty string`);
@@ -56,24 +61,58 @@ function reqString(record: Record<string, unknown>, key: string, what: string): 
   return value;
 }
 
-function optNumber(record: Record<string, unknown>, key: string, what: string): number | undefined {
+function optNumber(
+  record: Record<string, unknown>,
+  key: string,
+  what: string,
+): number | undefined {
   const value = record[key];
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new ModelsJsonError(`${what}: '${key}' must be a non-negative number`);
+    throw new ModelsJsonError(
+      `${what}: '${key}' must be a non-negative number`,
+    );
   }
   return value;
 }
 
+export const THINKING_LEVELS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export function isThinkingLevel(value: unknown): value is ModelThinkingLevel {
+  return (
+    typeof value === 'string' &&
+    (THINKING_LEVELS as readonly string[]).includes(value)
+  );
+}
+
 function parseModel(raw: unknown, providerId: string): CustomModelSpec {
-  if (!isRecord(raw)) throw new ModelsJsonError(`provider '${providerId}': model must be an object`);
+  if (!isRecord(raw))
+    throw new ModelsJsonError(
+      `provider '${providerId}': model must be an object`,
+    );
   const id = reqString(raw, 'id', `provider '${providerId}' model`);
   return {
     id,
-    ...(typeof raw.name === 'string' && raw.name !== '' ? { name: raw.name } : {}),
+    ...(typeof raw.name === 'string' && raw.name !== ''
+      ? { name: raw.name }
+      : {}),
     ...(optNumber(raw, 'contextWindow', `model '${id}'`) === undefined
       ? {}
-      : { contextWindow: optNumber(raw, 'contextWindow', `model '${id}'`) as number }),
+      : {
+          contextWindow: optNumber(
+            raw,
+            'contextWindow',
+            `model '${id}'`,
+          ) as number,
+        }),
     ...(optNumber(raw, 'maxTokens', `model '${id}'`) === undefined
       ? {}
       : { maxTokens: optNumber(raw, 'maxTokens', `model '${id}'`) as number }),
@@ -82,7 +121,9 @@ function parseModel(raw: unknown, providerId: string): CustomModelSpec {
       : { inputCost: optNumber(raw, 'inputCost', `model '${id}'`) as number }),
     ...(optNumber(raw, 'outputCost', `model '${id}'`) === undefined
       ? {}
-      : { outputCost: optNumber(raw, 'outputCost', `model '${id}'`) as number }),
+      : {
+          outputCost: optNumber(raw, 'outputCost', `model '${id}'`) as number,
+        }),
     ...(raw.reasoning === true ? { reasoning: true as const } : {}),
   };
 }
@@ -94,6 +135,19 @@ function parseProvider(raw: unknown): CustomProviderSpec {
     throw new ModelsJsonError(`provider id '${id}' must match ${PROVIDER_ID}`);
   }
   const baseUrl = reqString(raw, 'baseUrl', `provider '${id}'`);
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ModelsJsonError(
+        `provider '${id}': baseUrl must be http(s) (got ${JSON.stringify(baseUrl)})`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof ModelsJsonError) throw error;
+    throw new ModelsJsonError(
+      `provider '${id}': baseUrl must be a valid URL (got ${JSON.stringify(baseUrl)})`,
+    );
+  }
   const api = raw.api;
   if (api !== 'openai-completions' && api !== 'openai-responses') {
     throw new ModelsJsonError(
@@ -101,15 +155,24 @@ function parseProvider(raw: unknown): CustomProviderSpec {
     );
   }
   if (!Array.isArray(raw.models) || raw.models.length === 0) {
-    throw new ModelsJsonError(`provider '${id}': models must be a non-empty array`);
+    throw new ModelsJsonError(
+      `provider '${id}': models must be a non-empty array`,
+    );
   }
   const apiKeyEnv = raw.apiKeyEnv;
-  if (apiKeyEnv !== undefined && (typeof apiKeyEnv !== 'string' || apiKeyEnv.trim() === '')) {
-    throw new ModelsJsonError(`provider '${id}': apiKeyEnv must be a non-empty string when set`);
+  if (
+    apiKeyEnv !== undefined &&
+    (typeof apiKeyEnv !== 'string' || apiKeyEnv.trim() === '')
+  ) {
+    throw new ModelsJsonError(
+      `provider '${id}': apiKeyEnv must be a non-empty string when set`,
+    );
   }
   return {
     id,
-    ...(typeof raw.name === 'string' && raw.name !== '' ? { name: raw.name } : {}),
+    ...(typeof raw.name === 'string' && raw.name !== ''
+      ? { name: raw.name }
+      : {}),
     baseUrl,
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
     api,
@@ -118,15 +181,30 @@ function parseProvider(raw: unknown): CustomProviderSpec {
 }
 
 export function parseModelsJson(raw: unknown): CustomProviderSpec[] {
-  if (!isRecord(raw)) throw new ModelsJsonError('models.json must be an object with a providers array');
+  if (!isRecord(raw))
+    throw new ModelsJsonError(
+      'models.json must be an object with a providers array',
+    );
   if (!Array.isArray(raw.providers) || raw.providers.length === 0) {
-    throw new ModelsJsonError('models.json providers must be a non-empty array');
+    throw new ModelsJsonError(
+      'models.json providers must be a non-empty array',
+    );
   }
   const seen = new Set<string>();
   const specs = raw.providers.map((p) => parseProvider(p));
   for (const spec of specs) {
-    if (seen.has(spec.id)) throw new ModelsJsonError(`duplicate provider id '${spec.id}'`);
+    if (seen.has(spec.id))
+      throw new ModelsJsonError(`duplicate provider id '${spec.id}'`);
     seen.add(spec.id);
+    const modelIds = new Set<string>();
+    for (const m of spec.models) {
+      if (modelIds.has(m.id)) {
+        throw new ModelsJsonError(
+          `provider '${spec.id}': duplicate model id '${m.id}'`,
+        );
+      }
+      modelIds.add(m.id);
+    }
   }
   return specs;
 }

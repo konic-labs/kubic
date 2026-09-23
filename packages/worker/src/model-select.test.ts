@@ -1,7 +1,7 @@
 // Slice B: model selection, one-way escalation, thinking clamp+persist
 // (issue #20; §38).
 // RED: selectModel/escalateModel/clampThinking do not exist yet.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -82,5 +82,13 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     expect(
       loadThinkingLevel(bridge, mkdtempSync(join(tmpdir(), 'sess-'))),
     ).toBe(null);
+    // Tampered sidecar: unknown level reads back null, never propagates.
+    writeFileSync(
+      join(dir, 'thinking.json'),
+      JSON.stringify({ level: 'ultra' }),
+    );
+    expect(loadThinkingLevel(bridge, dir)).toBe(null);
+    writeFileSync(join(dir, 'thinking.json'), 'not json');
+    expect(loadThinkingLevel(bridge, dir)).toBe(null);
   });
 });

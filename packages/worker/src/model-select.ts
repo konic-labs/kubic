@@ -10,6 +10,7 @@
 
 import { join } from 'node:path';
 import type { FileBridge } from '../../exec/src/file-bridge.js';
+import { isThinkingLevel } from './models-config.js';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -172,9 +173,9 @@ export function loadThinkingLevel(
     if (
       typeof parsed === 'object' &&
       parsed !== null &&
-      typeof (parsed as Record<string, unknown>).level === 'string'
+      isThinkingLevel((parsed as Record<string, unknown>).level)
     ) {
-      return (parsed as Record<string, unknown>).level as ModelThinkingLevel;
+      return (parsed as { level: ModelThinkingLevel }).level;
     }
     return null;
   } catch {

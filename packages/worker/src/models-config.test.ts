@@ -1,12 +1,12 @@
 // Slice A: models.json custom/local providers (issue #20; §37).
 // RED: parseModelsJson/registerCustomProviders do not exist yet.
 import { describe, expect, it } from 'vitest';
-import { createModels } from './pi-boundary.js';
 import {
   LOCAL_MODELS_EXAMPLE,
   parseModelsJson,
   registerCustomProviders,
 } from './models-config.js';
+import { createModels } from './pi-boundary.js';
 
 describe('models.json custom providers (issue #20, slice A)', () => {
   it('parses an Ollama-style local provider', () => {
@@ -34,21 +34,63 @@ describe('models.json custom providers (issue #20, slice A)', () => {
   it('rejects bad specs with named reasons', () => {
     expect(() => parseModelsJson({ providers: [] })).toThrow(/non-empty/);
     expect(() =>
-      parseModelsJson({ providers: [{ id: 'x', api: 'openai-completions', models: [{ id: 'm' }] }] }),
+      parseModelsJson({
+        providers: [
+          { id: 'x', api: 'openai-completions', models: [{ id: 'm' }] },
+        ],
+      }),
     ).toThrow(/baseUrl/);
     expect(() =>
       parseModelsJson({
-        providers: [{ id: 'x', baseUrl: 'http://y', api: 'nope', models: [{ id: 'm' }] }],
+        providers: [
+          { id: 'x', baseUrl: 'http://y', api: 'nope', models: [{ id: 'm' }] },
+        ],
       }),
     ).toThrow(/api/);
     expect(() =>
-      parseModelsJson({ providers: [{ id: '-bad', baseUrl: 'http://y', api: 'openai-completions', models: [{ id: 'm' }] }] }),
+      parseModelsJson({
+        providers: [
+          {
+            id: '-bad',
+            baseUrl: 'http://y',
+            api: 'openai-completions',
+            models: [{ id: 'm' }],
+          },
+        ],
+      }),
     ).toThrow(/id/);
+    expect(() =>
+      parseModelsJson({
+        providers: [
+          {
+            id: 'x',
+            baseUrl: 'ftp://y',
+            api: 'openai-completions',
+            models: [{ id: 'm' }],
+          },
+        ],
+      }),
+    ).toThrow(/http/);
+    expect(() =>
+      parseModelsJson({
+        providers: [
+          {
+            id: 'x',
+            baseUrl: 'http://y',
+            api: 'openai-completions',
+            models: [{ id: 'm' }, { id: 'm' }],
+          },
+        ],
+      }),
+    ).toThrow(/duplicate model/);
   });
 
   it('registers custom providers without network', () => {
     const models = createModels();
-    const names = registerCustomProviders(models, parseModelsJson(LOCAL_MODELS_EXAMPLE));
+    const names = registerCustomProviders(
+      models,
+      parseModelsJson(LOCAL_MODELS_EXAMPLE),
+    );
     expect(names).toEqual(['local']);
     expect(models.getProvider('local')?.id).toBe('local');
     expect(models.getModels('local').map((m) => m.id)).toContain('llama3');

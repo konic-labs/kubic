@@ -84,15 +84,19 @@ export {
   MemorySessionRepo,
   ok,
 } from '@earendil-works/pi-agent-core';
-export type { DeferredHandle, Model, Usage } from '@earendil-works/pi-ai';
+export type {
+  DeferredHandle,
+  Model,
+  ModelThinkingLevel,
+  MutableModels,
+  Usage,
+} from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai thinking support (supported levels + clamp)
 //   used by: packages/worker/src/model-select.ts (issue #20 thinking clamp)
 //   why Pi has no alternative: per-model thinking support lives in the model
 //     definitions (§38); reimplementing the clamp would desync from models
 //   review: issue #20
-export { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-export type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai model layer (createModels, faux provider,
 //     Model type, Type for tool schemas)
@@ -107,14 +111,6 @@ export type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 //     Pi pins typebox 1.3.27 — importing Pi's re-export keeps exactly one
 //     schema implementation on the tool path instead of a second typebox copy
 //   review: issue #11
-export {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxText,
-  fauxToolCall,
-  Type,
-} from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai custom providers (createProvider +
 //     OpenAI-compatible stream factories for models.json endpoints)
@@ -123,7 +119,24 @@ export {
 //     accounting live in Pi's model layer (§37 — registry generated, never
 //     hand-edited); Kubic only parses models.json and calls the factory
 //   review: issue #20
-export { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai credential store (in-memory; file-backed
+//     credentials land with EPIC D/F — solo runs on env keys + memory)
+//   used by: apps/kubic composition root (models assembly for `kubic models`)
+//   why Pi has no alternative: auth resolution reads this store (§37)
+//   review: issue #20
+export {
+  clampThinkingLevel,
+  createModels,
+  createProvider,
+  envApiKeyAuth,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+  getSupportedThinkingLevels,
+  InMemoryCredentialStore,
+  Type,
+} from '@earendil-works/pi-ai';
 export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-export type { MutableModels } from '@earendil-works/pi-ai';

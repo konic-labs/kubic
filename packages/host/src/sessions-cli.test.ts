@@ -88,5 +88,11 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(
       await runSessionsCommand(['bogus'], { sessionsRoot: root, out: o.write }),
     ).toBe(1);
+    expect(
+      await runSessionsCommand(['create', '--cwd', '--tail'], {
+        sessionsRoot: root,
+        out: o.write,
+      }),
+    ).toBe(1);
   });
 });

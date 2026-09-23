@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -39,5 +39,16 @@ describe('file checkpoint store (issue #14, slice B)', () => {
     const hit = store.latest('op-1');
     if (hit) hit.stdout = 'mutated';
     expect(store.latest('op-1')?.stdout).toBe('x');
+  });
+});
+
+describe('checkpoint hardening (review #14)', () => {
+  it('opens cleanly with a corrupt checkpoints file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ckpt-'));
+    writeFileSync(join(dir, 'checkpoints.json'), '{torn json');
+    const store = new FileCheckpointStore(dir);
+    expect(store.latest('op-1')).toBeUndefined();
+    store.recordFinal('op-1', snap('recovered'));
+    expect(store.latest('op-1')?.stdout).toBe('recovered');
   });
 });

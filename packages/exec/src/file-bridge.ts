@@ -5,23 +5,25 @@
 
 import {
   appendFileSync,
-  existsSync,
+  closeSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 export interface BridgeFileInfo {
   name: string;
   path: string;
   isDirectory: boolean;
+  isSymbolicLink: boolean;
   size: number;
   mtimeMs: number;
 }
@@ -52,19 +54,34 @@ export interface FileBridge {
 }
 
 function infoOf(abs: string): BridgeFileInfo {
-  const stat = statSync(abs);
-  const parts = abs.split('/');
+  // lstat: never follow symlinks (Pi FileInfo reports the link itself).
+  const stat = lstatSync(abs);
   return {
-    name: parts[parts.length - 1] ?? abs,
+    name: basename(abs),
     path: abs,
     isDirectory: stat.isDirectory(),
+    isSymbolicLink: stat.isSymbolicLink(),
     size: stat.size,
     mtimeMs: stat.mtimeMs,
   };
 }
 
+function splitLines(text: string): string[] {
+  // A trailing newline terminates the last line; it is not a phantom entry.
+  const lines = text.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+function sanitizePrefix(prefix: string): string {
+  return prefix.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'tmp-';
+}
+
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
+  const ensureParent = (abs: string): void => {
+    mkdirSync(dirname(abs), { recursive: true });
+  };
   return {
     cwd,
     absolutePath,
@@ -74,11 +91,11 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     readBinaryFile: (path: string): Uint8Array =>
       readFileSync(absolutePath(path)),
     readTextLines: (path: string, maxLines?: number): string[] => {
-      const lines = readFileSync(absolutePath(path), 'utf8').split('\n');
+      const lines = splitLines(readFileSync(absolutePath(path), 'utf8'));
       return maxLines === undefined ? lines : lines.slice(0, maxLines);
     },
     openTextLineReader: (path: string): BridgeLineReader => {
-      const lines = readFileSync(absolutePath(path), 'utf8').split('\n');
+      const lines = splitLines(readFileSync(absolutePath(path), 'utf8'));
       let index = 0;
       return {
         readLine: (): string | undefined =>
@@ -87,10 +104,14 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       };
     },
     writeFile: (path: string, content: string | Uint8Array): void => {
-      writeFileSync(absolutePath(path), content);
+      const abs = absolutePath(path);
+      ensureParent(abs);
+      writeFileSync(abs, content);
     },
     appendFile: (path: string, content: string | Uint8Array): void => {
-      appendFileSync(absolutePath(path), content);
+      const abs = absolutePath(path);
+      ensureParent(abs);
+      appendFileSync(abs, content);
     },
     renameFile: (source: string, destination: string): void => {
       renameSync(absolutePath(source), absolutePath(destination));
@@ -100,7 +121,16 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       readdirSync(absolutePath(path)).map((name) =>
         infoOf(join(absolutePath(path), name)),
       ),
-    exists: (path: string): boolean => existsSync(absolutePath(path)),
+    exists: (path: string): boolean => {
+      try {
+        lstatSync(absolutePath(path));
+        return true;
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code === 'ENOENT')
+          return false;
+        throw error;
+      }
+    },
     createDir: (path: string, recursive = true): void => {
       mkdirSync(absolutePath(path), { recursive });
     },
@@ -108,12 +138,27 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       rmSync(absolutePath(path), { recursive, force });
     },
     createTempDir: (prefix = 'tmp-'): string =>
-      mkdtempSync(join(tmpdir(), prefix)),
+      mkdtempSync(join(tmpdir(), sanitizePrefix(prefix))),
     createTempFile: (prefix = '', suffix = ''): string => {
-      const dir = mkdtempSync(join(tmpdir(), 'file-'));
-      const file = join(dir, `${prefix}tmp${suffix}`);
-      writeFileSync(file, '');
-      return file;
+      // Directly under tmpdir (no leaked directory); O_EXCL loop so the
+      // name is never predictable-clobberable.
+      const clean = sanitizePrefix(prefix || 'file-');
+      const tail = (suffix || '').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 16);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const candidate = join(
+          tmpdir(),
+          `${clean}${process.pid}-${attempt}${tail}`,
+        );
+        try {
+          const fd = openSync(candidate, 'wx');
+          closeSync(fd);
+          return candidate;
+        } catch (error) {
+          if ((error as { code?: string } | null)?.code !== 'EEXIST')
+            throw error;
+        }
+      }
+      throw new Error('could not create a unique temp file');
     },
   };
 }

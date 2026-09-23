@@ -15,6 +15,8 @@ function encodeSnapshot(snapshot: ProcessSnapshot): string {
   return `${snapshot.exitCode ?? 'run'}|${snapshot.stdout.length}|${snapshot.stdout}|${snapshot.stderr}`;
 }
 
+let persistCounter = 0;
+
 export class FileCheckpointStore implements CheckpointStore {
   private readonly snapshots = new Map<string, ProcessSnapshot>();
   private readonly lastWrite = new Map<
@@ -29,13 +31,19 @@ export class FileCheckpointStore implements CheckpointStore {
     this.now = now;
     this.bridge = createNodeFileBridge(dir);
     this.file = join(dir, 'checkpoints.json');
+    // Corrupt-tolerant: a torn write from a killed process must not take
+    // down every future opener — start empty and overwrite on next persist.
     if (this.bridge.exists(this.file)) {
-      const raw = JSON.parse(this.bridge.readTextFile(this.file)) as Record<
-        string,
-        ProcessSnapshot
-      >;
-      for (const [key, snapshot] of Object.entries(raw)) {
-        this.snapshots.set(key, { ...snapshot });
+      try {
+        const raw = JSON.parse(this.bridge.readTextFile(this.file)) as Record<
+          string,
+          ProcessSnapshot
+        >;
+        for (const [key, snapshot] of Object.entries(raw)) {
+          this.snapshots.set(key, { ...snapshot });
+        }
+      } catch {
+        this.snapshots.clear();
       }
     }
   }
@@ -70,8 +78,20 @@ export class FileCheckpointStore implements CheckpointStore {
     this.snapshots.set(key, { ...snapshot });
     const raw: Record<string, ProcessSnapshot> = {};
     for (const [k, v] of this.snapshots) raw[k] = { ...v };
-    const tmp = `${this.file}.tmp`;
+    // Unique tmp per write (pid + counter): never a predictable shared
+    // path, so concurrent processes cannot clobber or hijack each other.
+    persistCounter += 1;
+    const tmp = `${this.file}.${process.pid}.${persistCounter}.tmp`;
     this.bridge.writeFile(tmp, JSON.stringify(raw));
-    this.bridge.renameFile(tmp, this.file);
+    try {
+      this.bridge.renameFile(tmp, this.file);
+    } catch (error) {
+      try {
+        this.bridge.remove(tmp, false, true);
+      } catch {
+        // Best-effort tmp cleanup; the rename error below is what matters.
+      }
+      throw error;
+    }
   }
 }

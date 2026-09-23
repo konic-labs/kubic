@@ -33,6 +33,14 @@ function toFileError(error: unknown, path: string): FileError {
   );
 }
 
+function toKind(info: {
+  isDirectory: boolean;
+  isSymbolicLink: boolean;
+}): 'symlink' | 'directory' | 'file' {
+  if (info.isSymbolicLink) return 'symlink';
+  return info.isDirectory ? 'directory' : 'file';
+}
+
 export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
   const attempt = async <T>(
     path: string,
@@ -81,9 +89,7 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
         return {
           name: info.name,
           path: info.path,
-          kind: (info.isDirectory ? 'directory' : 'file') as
-            | 'directory'
-            | 'file',
+          kind: toKind(info),
           size: info.size,
           mtimeMs: info.mtimeMs,
         };
@@ -93,9 +99,7 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
         bridge.listDir(path).map((info) => ({
           name: info.name,
           path: info.path,
-          kind: (info.isDirectory ? 'directory' : 'file') as
-            | 'directory'
-            | 'file',
+          kind: toKind(info),
           size: info.size,
           mtimeMs: info.mtimeMs,
         })),
@@ -123,11 +127,14 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
         bridge.remove(path, options?.recursive, options?.force),
       ),
     createTempDir: async (prefix: string | undefined, _context: Context) =>
-      ok(bridge.createTempDir(prefix)),
+      attempt('<tempdir>', () => bridge.createTempDir(prefix)),
     createTempFile: async (
       options: { prefix?: string; suffix?: string } | undefined,
       _context: Context,
-    ) => ok(bridge.createTempFile(options?.prefix, options?.suffix)),
+    ) =>
+      attempt('<tempfile>', () =>
+        bridge.createTempFile(options?.prefix, options?.suffix),
+      ),
     cleanup: async (_context: Context): Promise<void> => undefined,
   };
 }

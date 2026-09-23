@@ -19,15 +19,17 @@ export const FAILURE_CODES = [
   'process_crashed',
   'process_spawn_failed',
   'workspace_failed',
-  'agent_looping',
-  'agent_crashed',
-  'agent_completed_with_failure',
   'context_overflow',
   'context_polluted',
   'budget_exhausted',
   'approval_denied',
   'approval_timed_out',
 ] as const;
+
+// Agent-lifecycle codes (agent_looping, agent_crashed,
+// agent_completed_with_failure) belong to the worker lifecycle owner
+// (issue #42), which is the only layer that can tell a crash from a
+// completed-with-failure. This taxonomy covers lane-execution failures.
 
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
@@ -39,6 +41,12 @@ export const RETRY_STRATEGIES = [
   'retry_with_different_tool',
   'retry_with_wider_capability',
 ] as const;
+
+// Full §53 strategy vocabulary. Only retry_same and
+// retry_with_different_tool are emitted today; the rest activate with
+// their owners (new context with #34 compaction, stronger model with #20
+// models, new agent with the orchestrator, wider capability with #16
+// approvals) instead of being guessed here.
 
 export type RetryStrategy = (typeof RETRY_STRATEGIES)[number];
 
@@ -151,7 +159,7 @@ export function classifyFailure(
         return {
           code: 'context_polluted',
           remedy:
-            'Context is polluted; escalate with the record, then retry with a new agent.',
+            'Context is polluted; escalate with the record. The follow-up retry_with_new_agent is chosen by the operator after escalation, not spent here.',
           strategy: 'escalate',
         };
       }

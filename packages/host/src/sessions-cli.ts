@@ -44,7 +44,7 @@ export async function runSessionsCommand(
     const flag = rest.indexOf('--cwd');
     if (flag !== -1) {
       const value = rest[flag + 1];
-      if (value === undefined) {
+      if (value === undefined || value.startsWith('--')) {
         deps.out('error: --cwd needs a value');
         return 1;
       }

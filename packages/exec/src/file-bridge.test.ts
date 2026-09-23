@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -39,5 +39,36 @@ describe('node file bridge (issue #14, slice A)', () => {
     expect(bridge.exists('sub/d.txt')).toBe(true);
     bridge.remove('sub', true);
     expect(bridge.exists('sub')).toBe(false);
+  });
+});
+
+describe('node file bridge hardening (review #14)', () => {
+  it('does not follow symlinks in fileInfo', () => {
+    const { bridge } = tmpBridge();
+    bridge.writeFile('real.txt', 'data');
+    symlinkSync('real.txt', join(bridge.cwd, 'link.txt'));
+    const info = bridge.fileInfo('link.txt');
+    expect(info.isSymbolicLink).toBe(true);
+    expect(info.isDirectory).toBe(false);
+  });
+
+  it('drops the trailing-newline phantom line', () => {
+    const { bridge } = tmpBridge();
+    bridge.writeFile('c.txt', 'x\ny\n');
+    expect(bridge.readTextLines('c.txt')).toEqual(['x', 'y']);
+    const reader = bridge.openTextLineReader('c.txt');
+    expect(reader.readLine()).toBe('x');
+    expect(reader.readLine()).toBe('y');
+    expect(reader.readLine()).toBeUndefined();
+  });
+
+  it('creates parent directories on write and sanitizes temp prefixes', () => {
+    const { bridge } = tmpBridge();
+    bridge.writeFile('deep/nested/f.txt', 'hi');
+    expect(bridge.readTextFile('deep/nested/f.txt')).toBe('hi');
+    const dir = bridge.createTempDir('../../evil');
+    expect(dir.startsWith(tmpdir())).toBe(true);
+    const file = bridge.createTempFile('p', '.log');
+    expect(bridge.exists(file)).toBe(true);
   });
 });

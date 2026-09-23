@@ -21,6 +21,7 @@ export {
   ParallelConfigError,
   resolveMaxConcurrency,
   resolveWorkerCapacity,
+  sanitizeReasonField,
   validateParallelLimits,
 } from './limits.js';
 export type {

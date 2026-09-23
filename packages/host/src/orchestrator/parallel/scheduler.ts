@@ -17,6 +17,7 @@ import {
   isBudgetGateConfigured,
   resolveMaxConcurrency,
   resolveWorkerCapacity,
+  sanitizeReasonField,
   validateParallelLimits,
 } from './limits.js';
 
@@ -58,12 +59,15 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-// Strip C0 controls + DEL at the log boundary so a crafted agentId or
-// worktree (ESC / CSI / newline) renders inert instead of driving the
-// terminal that tails the log. Reasons stay verbatim — only logs sanitize.
+// Log-boundary sanitize: strip C0 controls + DEL + C1 controls
+// (U+0080-U+009F, incl. NEL U+0085 and single-char CSI U+009B) + bidi
+// overrides (U+202A-U+202E, U+2066-U+2069) so a crafted agentId or worktree
+// (ESC / CSI / NEL / bidi) renders inert instead of driving the terminal
+// that tails the log. Deny/hold/queue reasons are additionally sanitized
+// at construction via sanitizeReasonField (limits.js) so returned reason
+// strings are already clean for any caller that prints them.
 export function sanitizeLogLine(line: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
-  return line.replace(/[\u0000-\u001f\u007f]/g, '');
+  return sanitizeReasonField(line);
 }
 
 export class ParallelScheduler {
@@ -127,13 +131,13 @@ export class ParallelScheduler {
     if (this.running.has(request.agentId)) {
       return {
         outcome: 'denied',
-        reason: `agent '${request.agentId}' is already running`,
+        reason: `agent '${sanitizeReasonField(request.agentId)}' is already running`,
       };
     }
     if (this.queue.some((e) => e.request.agentId === request.agentId)) {
       return {
         outcome: 'denied',
-        reason: `agent '${request.agentId}' is already queued`,
+        reason: `agent '${sanitizeReasonField(request.agentId)}' is already queued`,
       };
     }
     const verdict = this.tryAdmit(request);
@@ -275,7 +279,7 @@ export class ParallelScheduler {
       if (entry.request.worktree === request.worktree) {
         return {
           admitted: false,
-          reason: `worktree '${request.worktree}' already has a writer (§11.1 one-worktree-per-writer)`,
+          reason: `worktree '${sanitizeReasonField(request.worktree)}' already has a writer (§11.1 one-worktree-per-writer)`,
         };
       }
     }

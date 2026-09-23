@@ -368,6 +368,66 @@ describe('parallel log sanitizing (issue #47 review)', () => {
     }
   });
 
+  it('returns deny reasons already sanitized for a crafted agentId (sanitize-at-source)', () => {
+    const sched = new ParallelScheduler();
+    const evilAgent = 'a\u001b[2Jb';
+    const first = sched.requestSpawn(
+      {
+        agentId: evilAgent,
+        sessionId: 'sess-1',
+        worktree: '/repo/.kubic/wt/evil-one',
+      },
+      'autonomous',
+    );
+    expect(first.outcome).toBe('admitted');
+    const dup = sched.requestSpawn(
+      {
+        agentId: evilAgent,
+        sessionId: 'sess-1',
+        worktree: '/repo/.kubic/wt/evil-two',
+      },
+      'interactive',
+    );
+    expect(dup.outcome).toBe('denied');
+    if (dup.outcome === 'denied') {
+      expect(dup.reason.includes('\u001b')).toBe(false);
+      expect(dup.reason.includes(evilAgent)).toBe(false);
+    }
+  });
+
+  it('returns deny reasons already sanitized for a crafted worktree (sanitize-at-source)', () => {
+    const sched = new ParallelScheduler();
+    const evilWt = '/repo/.kubic/wt/evil\u001b[2J-inject';
+    sched.requestSpawn(
+      { agentId: 'w1', sessionId: 'sess-1', worktree: evilWt },
+      'autonomous',
+    );
+    const dup = sched.requestSpawn(
+      { agentId: 'w2', sessionId: 'sess-1', worktree: evilWt },
+      'interactive',
+    );
+    expect(dup.outcome).toBe('denied');
+    if (dup.outcome === 'denied') {
+      expect(dup.reason.includes('\u001b')).toBe(false);
+      expect(dup.reason.includes(evilWt)).toBe(false);
+    }
+  });
+
+  it('sanitizeLogLine strips single-char C1 CSI (U+009B)', () => {
+    const out = sanitizeLogLine('a\u009Bb');
+    expect([...out].map((ch) => ch.codePointAt(0))).toEqual([0x61, 0x62]);
+  });
+
+  it('sanitizeLogLine strips NEL (U+0085)', () => {
+    const out = sanitizeLogLine('a\u0085b');
+    expect([...out].map((ch) => ch.codePointAt(0))).toEqual([0x61, 0x62]);
+  });
+
+  it('sanitizeLogLine strips bidi overrides (U+202E)', () => {
+    const out = sanitizeLogLine('a\u202Eb');
+    expect([...out].map((ch) => ch.codePointAt(0))).toEqual([0x61, 0x62]);
+  });
+
   it('sanitizeLogLine removes C0 controls and DEL', () => {
     expect(sanitizeLogLine('a\u001fb\u007fc')).toBe('abc');
   });

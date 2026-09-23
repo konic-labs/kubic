@@ -14,6 +14,20 @@ export class ParallelConfigError extends Error {
   }
 }
 
+// Sanitize one value interpolated into a deny reason (agentId, worktree,
+// provider): strips C0 controls + DEL + C1 controls (U+0080-U+009F) +
+// bidi overrides, at reason-construction time so returned reasons are
+// already clean for any caller that prints them. Canonical home is here
+// (limits.js imports nothing from scheduler.js) with sanitizeLogLine in
+// scheduler.js delegating to it: one strip set, no import cycle.
+export function sanitizeReasonField(value: unknown): string {
+  return String(value).replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
+    /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
+    '',
+  );
+}
+
 export interface AggregateCaps {
   maxMemMb?: number;
   maxDiskMb?: number;
@@ -264,7 +278,7 @@ export function checkProviderAdmission(
   ) {
     return {
       admitted: false,
-      reason: `provider '${provider}' concurrency cap reached (${runningForProvider}/${cap.maxConcurrent})`,
+      reason: `provider '${sanitizeReasonField(provider)}' concurrency cap reached (${runningForProvider}/${cap.maxConcurrent})`,
     };
   }
   if (cap.maxPerWindow !== undefined) {
@@ -273,7 +287,7 @@ export function checkProviderAdmission(
     if (inWindow.length >= cap.maxPerWindow) {
       return {
         admitted: false,
-        reason: `provider '${provider}' rate cap reached (${inWindow.length}/${cap.maxPerWindow} per ${windowMs}ms)`,
+        reason: `provider '${sanitizeReasonField(provider)}' rate cap reached (${inWindow.length}/${cap.maxPerWindow} per ${windowMs}ms)`,
       };
     }
   }

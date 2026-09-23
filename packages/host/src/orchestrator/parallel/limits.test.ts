@@ -149,3 +149,21 @@ describe('parallel budget gates opt-in (issue #47, §71)', () => {
     ).toBe(true);
   });
 });
+
+describe('parallel deny-reason sanitize-at-source (issue #47)', () => {
+  it('sanitizes a crafted provider name in the deny reason (sanitize-at-source)', () => {
+    const evil = 'acme\u001b[2J-evil';
+    const blocked = checkProviderAdmission(
+      evil,
+      1,
+      [],
+      { maxConcurrent: 1 },
+      1000,
+    );
+    expect(blocked.admitted).toBe(false);
+    if (!blocked.admitted) {
+      expect(blocked.reason.includes('\u001b')).toBe(false);
+      expect(blocked.reason.includes(evil)).toBe(false);
+    }
+  });
+});

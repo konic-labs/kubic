@@ -9,9 +9,9 @@ import { describe, expect, it } from 'vitest';
 import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
-  runReplayCommand,
   type ReplayCommandDeps,
   type ReplayRunResult,
+  runReplayCommand,
 } from './replay.js';
 
 function tmpRoot(): string {
@@ -349,12 +349,30 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     });
     const first = out();
     await runReplayCommand(
-      [traj, '--tier', 'deterministic', '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'acme/m1',
+        '--lockfile',
+        lock,
+        '--json',
+      ],
       { out: first.write, run },
     );
     const second = out();
     await runReplayCommand(
-      [traj, '--tier', 'deterministic', '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'acme/m1',
+        '--lockfile',
+        lock,
+        '--json',
+      ],
       { out: second.write, run },
     );
     expect(second.lines.join('\n')).toBe(first.lines.join('\n'));
@@ -366,7 +384,8 @@ describe('replay live (§47.1 Live)', () => {
     const path = join(dir, name);
     writeFileSync(
       path,
-      body ?? '---\nrole: implementer\ntools: [read, edit]\n---\n\nDo the task.\n',
+      body ??
+        '---\nrole: implementer\ntools: [read, edit]\n---\n\nDo the task.\n',
     );
     return path;
   }
@@ -417,7 +436,14 @@ describe('replay live (§47.1 Live)', () => {
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'live', '--role-config', join(dir, 'missing.md'), '--json'],
+      [
+        traj,
+        '--tier',
+        'live',
+        '--role-config',
+        join(dir, 'missing.md'),
+        '--json',
+      ],
       deps(o),
     );
     expect(exit).toBe(5);
@@ -479,7 +505,16 @@ describe('replay live (§47.1 Live)', () => {
     const seen: unknown[] = [];
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'live', '--role-config', role, '--worktree', wt, '--json'],
+      [
+        traj,
+        '--tier',
+        'live',
+        '--role-config',
+        role,
+        '--worktree',
+        wt,
+        '--json',
+      ],
       {
         out: o.write,
         run: async (request) => {
@@ -498,5 +533,323 @@ describe('replay live (§47.1 Live)', () => {
     expect(envelope.invocation).toBe('different-worktree');
     expect(envelope.changed).toEqual(['worktree']);
     expect(envelope.experimental).toEqual(['worktree']);
+  });
+});
+
+describe('replay compare/regression (§47 --diff-against)', () => {
+  function writeVariant(dir: string, name: string, variant: string): string {
+    const path = join(dir, name);
+    const base = fixtureTrajectory();
+    if (variant === 'same') writeFileSync(path, JSON.stringify(base));
+    else if (variant === 'model') {
+      writeFileSync(
+        path,
+        JSON.stringify({ ...base, model: { ...base.model, model: 'm2' } }),
+      );
+    } else if (variant === 'worktree-diff') {
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...base,
+          worktree: { ...base.worktree, path: '/other/wt' },
+          diff: {
+            filesChanged: ['a.ts', 'b.ts'],
+            files: [
+              { path: 'a.ts', hunks: ['@@ -1 +1 @@'] },
+              { path: 'b.ts', hunks: ['@@ -1 +1 @@'] },
+            ],
+          },
+        }),
+      );
+    }
+    return path;
+  }
+
+  it('identical trajectories: exit 0, changed empty, regression false, runner never called', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const other = writeVariant(dir, 'other.json', 'same');
+    const o = out();
+    let called = false;
+    const exit = await runReplayCommand(
+      [traj, '--diff-against', other, '--json'],
+      {
+        out: o.write,
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'must not run' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(called).toBe(false);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      tier: string;
+      invocation: string;
+      changed: string[];
+      regression: boolean;
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.tier).toBe('recorded');
+    expect(envelope.invocation).toBe('compare');
+    expect(envelope.changed).toEqual([]);
+    expect(envelope.regression).toBe(false);
+  });
+
+  it('names each changed var and exits 1 as the regression signal', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    for (const [variant, want] of [
+      ['model', ['model']],
+      ['worktree-diff', ['worktree', 'diff']],
+    ] as const) {
+      const other = writeVariant(dir, `${variant}.json`, variant);
+      const o = out();
+      const exit = await runReplayCommand(
+        [traj, '--diff-against', other, '--json'],
+        deps(o),
+      );
+      expect(exit).toBe(1);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        changed: string[];
+        regression: boolean;
+        tier: string;
+        invocation: string;
+      };
+      expect(envelope.changed).toEqual([...want]);
+      expect(envelope.regression).toBe(true);
+      expect(envelope.tier).toBe('recorded');
+      expect(envelope.invocation).toBe('compare');
+    }
+  });
+
+  it('prints the changed vars in text output', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const other = writeVariant(dir, 'other.json', 'model');
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--diff-against', other],
+      deps(o),
+    );
+    expect(exit).toBe(1);
+    const text = o.lines.join('\n');
+    expect(text).toMatch(/tier: recorded/);
+    expect(text).toMatch(/changed: model/);
+    expect(text).toMatch(/regression: true/);
+  });
+
+  it('exits 5 when the --diff-against file is unreadable, 2 when malformed', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const missing = out();
+    const exitMissing = await runReplayCommand(
+      [traj, '--diff-against', join(dir, 'missing.json'), '--json'],
+      deps(missing),
+    );
+    expect(exitMissing).toBe(5);
+    expect(
+      (JSON.parse(missing.lines.join('\n')) as { error: { code: string } })
+        .error.code,
+    ).toBe('diff-against-unreadable');
+    const badPath = join(dir, 'bad.json');
+    writeFileSync(badPath, '{oops');
+    const bad = out();
+    const exitBad = await runReplayCommand(
+      [traj, '--diff-against', badPath, '--json'],
+      deps(bad),
+    );
+    expect(exitBad).toBe(2);
+    expect(
+      (JSON.parse(bad.lines.join('\n')) as { error: { code: string } }).error
+        .code,
+    ).toBe('diff-against-malformed');
+  });
+
+  it('refuses --diff-against under re-execution tiers', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const other = writeVariant(dir, 'other.json', 'same');
+    const lock = writeLockfile(dir, 'pins.json');
+    const o = out();
+    const exit = await runReplayCommand(
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'acme/m1',
+        '--lockfile',
+        lock,
+        '--diff-against',
+        other,
+      ],
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/unexpected-flag-for-tier/);
+  });
+});
+
+describe('replay tier honesty (negative tests; §47.1)', () => {
+  it('recorded refuses execution flags — it replays the trajectory alone', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    for (const extra of [
+      ['--model', 'acme/m1'],
+      ['--worktree', dir],
+      ['--lockfile', writeLockfile(dir, 'pins.json')],
+    ]) {
+      const o = out();
+      const exit = await runReplayCommand([traj, ...extra, '--json'], deps(o));
+      expect(exit).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        tier: string;
+        error: { code: string };
+      };
+      expect(envelope.tier).toBe('recorded');
+      expect(envelope.error.code).toBe('recorded-takes-trajectory-alone');
+    }
+  });
+
+  it('the published tier always equals the declared tier (never inflated)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writeLockfile(dir, 'pins.json');
+    const rolePath = join(dir, 'role.md');
+    writeFileSync(rolePath, '---\nrole: implementer\n---\n');
+    const cases: { args: string[]; tier: string; exit: number }[] = [
+      { args: [traj], tier: 'recorded', exit: 0 },
+      {
+        args: [
+          traj,
+          '--tier',
+          'deterministic',
+          '--model',
+          'acme/m1',
+          '--lockfile',
+          lock,
+        ],
+        tier: 'deterministic',
+        exit: 0,
+      },
+      {
+        args: [traj, '--tier', 'live', '--role-config', rolePath],
+        tier: 'live',
+        exit: 0,
+      },
+      {
+        args: [traj, '--tier', 'deterministic'],
+        tier: 'deterministic',
+        exit: 2,
+      },
+      { args: [traj, '--tier', 'live'], tier: 'live', exit: 2 },
+    ];
+    for (const { args, tier, exit } of cases) {
+      const o = out();
+      const got = await runReplayCommand([...args, '--json'], {
+        out: o.write,
+        run: async () => ({ terminus: 'completed', summary: 'ok' }),
+      });
+      expect(got).toBe(exit);
+      const envelope = JSON.parse(o.lines.join('\n')) as { tier: string };
+      expect(envelope.tier).toBe(tier);
+    }
+  });
+
+  it('rejects lockfiles that are not a pinned models record', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const notJson = join(dir, 'not-json.json');
+    writeFileSync(notJson, 'nope');
+    const noModels = join(dir, 'no-models.json');
+    writeFileSync(noModels, JSON.stringify({ models: {} }));
+    for (const lock of [notJson, noModels]) {
+      const o = out();
+      const exit = await runReplayCommand(
+        [
+          traj,
+          '--tier',
+          'deterministic',
+          '--model',
+          'acme/m1',
+          '--lockfile',
+          lock,
+          '--json',
+        ],
+        deps(o),
+      );
+      expect(exit).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        error: { code: string };
+      };
+      expect(envelope.error.code).toBe('lockfile-invalid');
+    }
+  });
+
+  it('rejects an unknown --tier and a missing --worktree target', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writeLockfile(dir, 'pins.json');
+    const badTier = out();
+    const exitTier = await runReplayCommand(
+      [traj, '--tier', 'ultra', '--json'],
+      deps(badTier),
+    );
+    expect(exitTier).toBe(2);
+    expect(
+      (JSON.parse(badTier.lines.join('\n')) as { tier: string }).tier,
+    ).toBe('unknown');
+    const badWt = out();
+    const exitWt = await runReplayCommand(
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'acme/m1',
+        '--lockfile',
+        lock,
+        '--worktree',
+        join(dir, 'missing-wt'),
+        '--json',
+      ],
+      deps(badWt),
+    );
+    expect(exitWt).toBe(5);
+    expect(
+      (JSON.parse(badWt.lines.join('\n')) as { error: { code: string } }).error
+        .code,
+    ).toBe('worktree-unavailable');
+  });
+
+  it('deterministic --worktree success names worktree as the changed var (experimental)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writeLockfile(dir, 'pins.json');
+    const wt = mkdtempSync(join(tmpdir(), 'replay-wt-'));
+    const o = out();
+    const exit = await runReplayCommand(
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'other/m9',
+        '--lockfile',
+        lock,
+        '--worktree',
+        wt,
+      ],
+      {
+        out: o.write,
+        run: async () => ({ terminus: 'completed', summary: 'ok' }),
+      },
+    );
+    expect(exit).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).toMatch(/warning: --worktree is experimental/);
+    expect(text).toMatch(/invocation: different-worktree/);
   });
 });

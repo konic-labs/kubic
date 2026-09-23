@@ -36,6 +36,7 @@ import {
 } from '../../../trajectory/src/schema.js';
 import {
   mapTerminusToExitCode,
+  RUN_EXIT_FAILED,
   RUN_EXIT_OK,
   RUN_EXIT_USAGE,
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
@@ -101,7 +102,8 @@ function usage(out: (line: string) => void): number {
 
 interface ReplayOptions {
   trajectory: string;
-  tier: ReplayTier;
+  tier: ReplayTier | 'unknown';
+  tierRaw: string | undefined;
   model: string | undefined;
   lockfile: string | undefined;
   roleConfig: string | undefined;
@@ -122,7 +124,7 @@ function parseArgs(
   out: (line: string) => void,
 ): { options: ReplayOptions } | { exit: number } {
   let trajectory: string | undefined;
-  let tier: ReplayTier = 'recorded';
+  let tier: ReplayTier | 'unknown' = 'recorded';
   let tierRaw: string | undefined;
   let model: string | undefined;
   let lockfile: string | undefined;
@@ -192,17 +194,16 @@ function parseArgs(
   if (tierRaw !== undefined) {
     const parsed = parseTier(tierRaw);
     if (parsed === null) {
-      out(
-        `error: invalid --tier ${JSON.stringify(tierRaw)} (want recorded|deterministic|live)`,
-      );
-      return { exit: RUN_EXIT_USAGE };
+      tier = 'unknown';
+    } else {
+      tier = parsed;
     }
-    tier = parsed;
   }
   return {
     options: {
       trajectory,
       tier,
+      tierRaw,
       model,
       lockfile,
       roleConfig,
@@ -241,7 +242,9 @@ function readFile(path: string): string {
 
 function loadTrajectory(
   path: string,
-): { trajectory: TrajectoryExport } | { code: string; message: string; exit: number } {
+):
+  | { trajectory: TrajectoryExport }
+  | { code: string; message: string; exit: number } {
   let raw: string;
   try {
     raw = readFile(path);
@@ -255,11 +258,18 @@ function loadTrajectory(
   try {
     return { trajectory: parseTrajectoryExportJSON(raw) };
   } catch (error) {
-    if (error instanceof TrajectorySchemaError && error.code === 'unknown-major') {
+    if (
+      error instanceof TrajectorySchemaError &&
+      error.code === 'unknown-major'
+    ) {
       // Replay's §78 subset (0/1/2/5/6) has no schema slot (exit 3 stays
       // inside the trajectory package): an unsupported major is a caller
       // usage error here, with the code preserved machine-readably.
-      return { code: 'unknown-major', message: error.message, exit: RUN_EXIT_USAGE };
+      return {
+        code: 'unknown-major',
+        message: error.message,
+        exit: RUN_EXIT_USAGE,
+      };
     }
     return {
       code: 'trajectory-malformed',
@@ -281,7 +291,9 @@ function isModelPin(value: string): boolean {
 // §72 pin artifact for the Deterministic tier: a JSON file pinning the
 // exact models the re-execution may use. Minimal but fail-closed: it
 // must parse as an object with a non-empty `models` record.
-function checkLockfile(path: string): { ok: true } | { code: string; message: string; exit: number } {
+function checkLockfile(
+  path: string,
+): { ok: true } | { code: string; message: string; exit: number } {
   let raw: string;
   try {
     raw = readFile(path);
@@ -389,13 +401,22 @@ function resolveWorktreeOverride(
   deps: ReplayCommandDeps,
   options: ReplayOptions,
   recordedPath: string,
-): { worktree: string; changed: string[]; experimental: string[] } | { exit: number } {
+):
+  | { worktree: string; changed: string[]; experimental: string[] }
+  | { exit: number } {
   if (options.worktree === undefined) {
     return { worktree: recordedPath, changed: [], experimental: [] };
   }
   const checked = checkWorktreeOverride(options.worktree);
   if ('exit' in checked) {
-    fail(deps, options, options.trajectory, checked.exit, checked.code, checked.message);
+    fail(
+      deps,
+      options,
+      options.trajectory,
+      checked.exit,
+      checked.code,
+      checked.message,
+    );
     return { exit: checked.exit };
   }
   return {
@@ -432,6 +453,61 @@ function modelIdOf(trajectory: TrajectoryExport): string {
   return `${trajectory.model.provider}/${trajectory.model.model}`;
 }
 
+function diffFingerprint(trajectory: TrajectoryExport): string {
+  return [...trajectory.diff.filesChanged].sort().join('\n');
+}
+
+// Compare invocation (§47 compare/regression): log-only diff of two
+// versioned trajectories at the Recorded tier. The envelope names every
+// changed var (model, worktree, diff); any difference exits 1 as the
+// regression signal, identity exits 0.
+function compareTrajectories(
+  base: TrajectoryExport,
+  other: TrajectoryExport,
+): string[] {
+  const changed: string[] = [];
+  if (modelIdOf(other) !== modelIdOf(base)) changed.push('model');
+  if (other.worktree.path !== base.worktree.path) changed.push('worktree');
+  if (diffFingerprint(other) !== diffFingerprint(base)) changed.push('diff');
+  return changed;
+}
+
+function loadOtherTrajectory(
+  path: string,
+):
+  | { trajectory: TrajectoryExport }
+  | { code: string; message: string; exit: number } {
+  let raw: string;
+  try {
+    raw = readFile(path);
+  } catch (error) {
+    return {
+      code: 'diff-against-unreadable',
+      message: `cannot read --diff-against ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
+      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+    };
+  }
+  try {
+    return { trajectory: parseTrajectoryExportJSON(raw) };
+  } catch (error) {
+    if (
+      error instanceof TrajectorySchemaError &&
+      error.code === 'unknown-major'
+    ) {
+      return {
+        code: 'unknown-major',
+        message: error.message,
+        exit: RUN_EXIT_USAGE,
+      };
+    }
+    return {
+      code: 'diff-against-malformed',
+      message: error instanceof Error ? error.message : String(error),
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+}
+
 function describeRecorded(trajectory: TrajectoryExport): string[] {
   const actions = trajectory.actions.length;
   const observations = trajectory.observations.length;
@@ -454,6 +530,17 @@ export async function runReplayCommand(
   const parsed = parseArgs(args, deps.out);
   if ('exit' in parsed) return parsed.exit;
   const options = parsed.options;
+
+  if (options.tier === 'unknown') {
+    return fail(
+      deps,
+      options,
+      null,
+      RUN_EXIT_USAGE,
+      'invalid-tier',
+      `invalid --tier ${JSON.stringify(options.tierRaw)} (want recorded|deterministic|live)`,
+    );
+  }
 
   // §47.1 honesty gates: a tier that needs pins refuses without them
   // (exit 2) — it never silently falls back to a lower tier.
@@ -552,7 +639,14 @@ export async function runReplayCommand(
     }
     const lock = checkLockfile(options.lockfile);
     if ('exit' in lock) {
-      return fail(deps, options, options.trajectory, lock.exit, lock.code, lock.message);
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        lock.exit,
+        lock.code,
+        lock.message,
+      );
     }
     let worktree = trajectory.worktree.path;
     const changed: string[] = [];
@@ -615,7 +709,14 @@ export async function runReplayCommand(
     }
     const role = checkRoleConfig(options.roleConfig);
     if ('exit' in role) {
-      return fail(deps, options, options.trajectory, role.exit, role.code, role.message);
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        role.exit,
+        role.code,
+        role.message,
+      );
     }
     const resolved = resolveWorktreeOverride(
       deps,
@@ -638,23 +739,42 @@ export async function runReplayCommand(
     });
   }
 
-  // Later slices: compare. Fail closed until it lands.
-  if (options.tier !== 'recorded') {
+  // Later slices: none — every tier is implemented. Compare closes the
+  // four §47 invocations.
+  const other = loadOtherTrajectory(options.diffAgainst as string);
+  if ('exit' in other) {
     return fail(
       deps,
       options,
       options.trajectory,
-      RUN_EXIT_USAGE,
-      'tier-not-implemented',
-      `tier ${options.tier} is not implemented yet — refusing instead of running a lower tier`,
+      other.exit,
+      other.code,
+      other.message,
     );
   }
-  return fail(
-    deps,
-    options,
-    options.trajectory,
-    RUN_EXIT_USAGE,
-    'diff-against-not-implemented',
-    '--diff-against compare is not implemented yet',
-  );
+  const changed = compareTrajectories(trajectory, other.trajectory);
+  const regression = changed.length > 0;
+  const exitCode = regression ? RUN_EXIT_FAILED : RUN_EXIT_OK;
+  const envelope: ReplayEnvelope = {
+    ok: !regression,
+    exitCode,
+    tier: 'recorded',
+    invocation: 'compare',
+    trajectory: options.trajectory,
+    changed,
+    result: {
+      status: trajectory.result.status,
+      summary: trajectory.result.summary,
+    },
+    regression,
+  };
+  if (options.json) {
+    deps.out(JSON.stringify(envelope));
+    return exitCode;
+  }
+  deps.out('tier: recorded');
+  deps.out('invocation: compare');
+  deps.out(`changed: ${regression ? changed.join(', ') : 'none (identical)'}`);
+  deps.out(`regression: ${regression}`);
+  return exitCode;
 }

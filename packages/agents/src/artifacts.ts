@@ -56,23 +56,81 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-// Credential-shaped `key=value` pairs must never be written into an
-// artifact — fail closed at validation, redact at render.
-const CREDENTIAL_RE =
-  /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]|\s+))\S+/gi;
+// Credential-shaped values must never be written into an artifact — fail
+// closed at validation, redact at render. Multiple shapes: spaced or quoted
+// separators, JSON-quoted keys, compound env names, and bare token formats.
+// Redaction replaces the WHOLE match so no secret material survives next to
+// the label.
+const CREDENTIAL_PATTERNS: RegExp[] = [
+  // Keyword assignment: `api_key=…`, `password: value`, `"password": "…"`,
+  // `password is hunter2`. Optional quotes handle JSON-quoted keys.
+  /["']?(?:token|password|passwd|secret|api[-_ ]?key|bearer|authorization|private[-_ ]?key)["']?\s*(?:[=:]\s*|\s+(?:is\s+)?)\S+/gi,
+  // Bare `key: value` / `key="value"` (strict separator — bare `key` with
+  // whitespace separation would false-positive on prose like "key insight").
+  /["']?\bkey["']?\s*[=:]\s*\S+/gi,
+  // Compound env names: `AWS_SECRET_ACCESS_KEY=…`, `stripe_api_key: …`.
+  /\b[A-Za-z0-9_]*(?:secret|token|passwd|password|private[_-]?key|api[_-]?key|auth[_-]?token|bearer)[A-Za-z0-9_]*["']?\s*[=:]\s*["']?\S+/gi,
+  // Bare token shapes: Stripe, GitHub, AWS, Slack, PEM blocks.
+  /\bsk-(?:live|test)-[A-Za-z0-9_-]{8,}\b/g,
+  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+  /\bgh[opurs]_[A-Za-z0-9]{8,}\b/g,
+  /\bAKIA[0-9A-Z]{8,}\b/g,
+  /\bxox[bpas]-[A-Za-z0-9-]{8,}\b/g,
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g,
+];
 
 export function containsCredential(text: string): boolean {
-  CREDENTIAL_RE.lastIndex = 0;
-  return CREDENTIAL_RE.test(text);
+  return CREDENTIAL_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    return pattern.test(text);
+  });
 }
 
 export function redactArtifactText(text: string): string {
-  CREDENTIAL_RE.lastIndex = 0;
-  return text.replace(CREDENTIAL_RE, '$1[REDACTED]');
+  let redacted = text;
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    pattern.lastIndex = 0;
+    redacted = redacted.replace(pattern, '[REDACTED]');
+  }
+  return redacted;
+}
+
+// Fake-transcript / prompt-injection shapes: forged `[artifact …]` blocks,
+// role/transcript headers starting a line, and instruction overrides.
+// Artifact text renders quoted, and validation rejects these outright.
+const TRANSCRIPT_MARKER_RE =
+  /\[artifact[\s\]]|^\s*(?:system|assistant|user|human|transcript|prompt|debugger|implementer)\s*:|ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+(?:all\s+|these\s+|prior\s+)?(?:previous\s+|prior\s+)?instructions|<\s*system\s*>/im;
+
+function containsTranscriptMarker(text: string): boolean {
+  return TRANSCRIPT_MARKER_RE.test(text);
+}
+
+const MAX_PATH_LENGTH = 256;
+const PATH_CHARS_RE = /^[A-Za-z0-9._\-/]+$/;
+
+function hasControlChar(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
+}
+
+// Paths only (§25): relative, confined, printable, bounded. Returns the
+// reason when the ref is not a safe worktree-relative path.
+function unsafePathReason(ref: string): string | undefined {
+  if (ref.length > MAX_PATH_LENGTH) return 'overlong path';
+  if (hasControlChar(ref)) return 'control characters';
+  if (ref.startsWith('/') || ref.startsWith('~'))
+    return 'absolute or home-relative path';
+  if (ref.split('/').includes('..')) return 'parent-directory traversal';
+  if (!PATH_CHARS_RE.test(ref)) return 'characters outside the path allow-list';
+  return undefined;
 }
 
 function allTextFields(artifact: TaskArtifact): string[] {
   return [
+    artifact.artifactId,
     artifact.summary,
     ...artifact.fileRefs,
     ...artifact.findings,
@@ -119,6 +177,13 @@ export function validateArtifact(input: unknown): ArtifactValidation {
       errors.push(`artifact must not carry '${banned}' (§25)`);
   }
 
+  // Closed world (§25): ARTIFACT_FIELDS fixes the contents exactly — unknown
+  // fields are rejected here and stripped from every returned artifact.
+  for (const key of Object.keys(input)) {
+    if (!(key in ARTIFACT_FIELDS))
+      errors.push(`artifact must not carry unknown field '${key}' (§25)`);
+  }
+
   if (!isNonEmptyString(input.artifactId))
     errors.push('artifactId must be a non-empty string');
   if (!isNonEmptyString(input.summary))
@@ -132,11 +197,12 @@ export function validateArtifact(input: unknown): ArtifactValidation {
         errors.push('fileRefs entries must be non-empty strings');
         break;
       }
-      // Paths only (§25): anything spanning lines is file contents, not a
-      // ref. NUL bytes can never appear in a path either.
-      if (ref.includes('\n') || ref.includes('\r') || ref.includes('\0')) {
+      // Paths only (§25): worktree-relative, confined, printable, bounded —
+      // never contents, escapes, or blobs.
+      const reason = unsafePathReason(ref);
+      if (reason !== undefined) {
         errors.push(
-          `fileRefs are paths only, never contents (§25): '${ref.slice(0, 40)}'`,
+          `fileRefs are paths only, never contents (§25): ${reason} in '${ref.slice(0, 40)}'`,
         );
         break;
       }
@@ -165,17 +231,43 @@ export function validateArtifact(input: unknown): ArtifactValidation {
 
   if (errors.length === 0 && isObject(input)) {
     const candidate = input as unknown as TaskArtifact;
-    const leaked = allTextFields(candidate).find((text) =>
-      containsCredential(text),
-    );
-    if (leaked !== undefined)
+    const texts = allTextFields(candidate);
+    const forged = texts.find((text) => containsTranscriptMarker(text));
+    if (forged !== undefined)
       errors.push(
-        'artifact must not carry credential-shaped values (redact before write)',
+        'artifact text must not carry transcript-shaped or instruction-override content (§25; artifact text renders quoted)',
       );
+    else {
+      const leaked = texts.find((text) => containsCredential(text));
+      if (leaked !== undefined)
+        errors.push(
+          'artifact must not carry credential-shaped values (redact before write)',
+        );
+    }
   }
 
   if (errors.length > 0) return { valid: false, errors };
-  return { valid: true, artifact: input as unknown as TaskArtifact };
+  // Closed world: return only ARTIFACT_FIELDS — smuggled keys cannot travel
+  // on the accepted artifact even if a caller bypasses validation.
+  const source = input as unknown as TaskArtifact;
+  return {
+    valid: true,
+    artifact: {
+      artifactId: source.artifactId,
+      summary: source.summary,
+      fileRefs: [...source.fileRefs],
+      findings: [...source.findings],
+      ...(source.tests === undefined
+        ? {}
+        : { tests: source.tests.map((test) => ({ ...test })) }),
+      ...(source.decisions === undefined
+        ? {}
+        : { decisions: [...source.decisions] }),
+      ...(source.diffRefs === undefined
+        ? {}
+        : { diffRefs: [...source.diffRefs] }),
+    },
+  };
 }
 
 // Spawn deny-list (§25.1): nothing outside the bounded transfer object
@@ -220,23 +312,31 @@ export interface ChildPromptInput {
 
 // The child prompt is built ONLY from bounded transfer fields — the
 // signature takes no transcript parameter, so zero parent-transcript tokens
-// travel by construction (§25.4 token economics).
+// travel by construction (§25.4 token economics). Free-text fields render
+// JSON-quoted so embedded newlines, forged markers, or instruction overrides
+// stay inert string content — never a new prompt line.
 export function buildChildPrompt(input: ChildPromptInput): string {
-  const lines = [`objective: ${input.objective}`];
+  const lines = [`objective: ${JSON.stringify(input.objective)}`];
   if (input.constraints !== undefined && input.constraints.length > 0)
-    lines.push(`constraints: ${input.constraints.join('; ')}`);
+    lines.push(
+      `constraints: ${input.constraints.map((constraint) => JSON.stringify(constraint)).join('; ')}`,
+    );
   if (input.relevantFiles !== undefined && input.relevantFiles.length > 0)
-    lines.push(`relevant files: ${input.relevantFiles.join(', ')}`);
+    lines.push(
+      `relevant files: ${input.relevantFiles.map((file) => JSON.stringify(file)).join(', ')}`,
+    );
   if (input.previousFindings !== undefined)
-    lines.push(`previous findings: ${input.previousFindings}`);
+    lines.push(`previous findings: ${JSON.stringify(input.previousFindings)}`);
   if (input.expectedOutput !== undefined)
-    lines.push(`expected output: ${input.expectedOutput}`);
+    lines.push(`expected output: ${JSON.stringify(input.expectedOutput)}`);
   if (
     input.artifactSummaries !== undefined &&
     input.artifactSummaries.length > 0
   )
-    lines.push(`artifacts: ${input.artifactSummaries.join('; ')}`);
-  return lines.join('\n');
+    lines.push(
+      `artifacts: ${input.artifactSummaries.map((summary) => JSON.stringify(summary)).join('; ')}`,
+    );
+  return redactArtifactText(lines.join('\n'));
 }
 
 // Prompt assertion for the zero-transcript acceptance criterion: no
@@ -268,13 +368,19 @@ export interface ArtifactTranscriptEntry {
 
 export function renderArtifactTranscript(artifact: TaskArtifact): string {
   const clean = sanitizeArtifact(artifact);
-  const lines = [`[artifact ${clean.artifactId}] ${clean.summary}`];
+  const lines = [
+    `[artifact ${clean.artifactId}] ${JSON.stringify(clean.summary)}`,
+  ];
   lines.push(`files: ${clean.fileRefs.join(', ')}`);
-  for (const finding of clean.findings) lines.push(`finding: ${finding}`);
+  for (const finding of clean.findings)
+    lines.push(`finding: ${JSON.stringify(finding)}`);
   for (const test of clean.tests ?? [])
-    lines.push(`test: ${test.name} (${test.passed ? 'pass' : 'fail'})`);
+    lines.push(
+      `test: ${JSON.stringify(test.name)} (${test.passed ? 'pass' : 'fail'})` +
+        (test.output === undefined ? '' : ` ${JSON.stringify(test.output)}`),
+    );
   for (const decision of clean.decisions ?? [])
-    lines.push(`decision: ${decision}`);
+    lines.push(`decision: ${JSON.stringify(decision)}`);
   if (clean.diffRefs !== undefined && clean.diffRefs.length > 0)
     lines.push(`diffs: ${clean.diffRefs.join(', ')}`);
   return lines.join('\n');
@@ -322,10 +428,11 @@ export function toTrajectoryRecord(
 }
 
 // Defense in depth: render paths redact credential-shaped text even though
-// validation already rejects it at write time.
+// validation already rejects it at write time. Closed world: only
+// ARTIFACT_FIELDS survive — smuggled keys are stripped, never spread.
 export function sanitizeArtifact(artifact: TaskArtifact): TaskArtifact {
   return {
-    ...artifact,
+    artifactId: redactArtifactText(artifact.artifactId),
     summary: redactArtifactText(artifact.summary),
     fileRefs: artifact.fileRefs.map(redactArtifactText),
     findings: artifact.findings.map(redactArtifactText),
@@ -334,6 +441,7 @@ export function sanitizeArtifact(artifact: TaskArtifact): TaskArtifact {
       : {
           tests: artifact.tests.map((test) => ({
             ...test,
+            name: redactArtifactText(test.name),
             ...(test.output === undefined
               ? {}
               : { output: redactArtifactText(test.output) }),
@@ -398,6 +506,14 @@ export function buildDebuggerHandoff(
     input.failingTests.forEach((test, index) => {
       if (!isObject(test) || !isNonEmptyString(test.name))
         errors.push(`failingTests[${index}].name must be a non-empty string`);
+      if (
+        isObject(test) &&
+        test.output !== undefined &&
+        typeof test.output !== 'string'
+      )
+        errors.push(
+          `failingTests[${index}].output must be a string when present`,
+        );
     });
   }
   if (!isNonEmptyString(input.diffRef))
@@ -406,12 +522,57 @@ export function buildDebuggerHandoff(
     errors.push('worktree must be a non-empty string');
   else if (!input.worktree.startsWith('/'))
     errors.push('worktree must be an absolute path');
+  else if (
+    hasControlChar(input.worktree) ||
+    input.worktree.split('/').includes('..')
+  )
+    errors.push('worktree must be a concrete absolute path without traversal');
   if (!Array.isArray(input.constraints))
     errors.push('constraints must be an array');
   if (!Array.isArray(input.artifactIds))
     errors.push('artifactIds must be an array');
   if (!isNonEmptyString(input.workerId))
     errors.push('workerId must be a non-empty string');
+  // Handoff files stay inside the worktree: relative refs only.
+  if (
+    Array.isArray(input.filesChanged) &&
+    input.filesChanged.every(isNonEmptyString)
+  ) {
+    const escaped = input.filesChanged.find(
+      (ref) => unsafePathReason(ref) !== undefined,
+    );
+    if (escaped !== undefined)
+      errors.push(
+        `filesChanged must be worktree-relative paths, never absolute or parent-traversing (§25): '${escaped.slice(0, 40)}'`,
+      );
+  }
+  // Same credential gate as artifacts: failing-test output and constraints
+  // must not carry secrets, nor forged transcript/instruction content.
+  if (errors.length === 0) {
+    const texts = [
+      input.summary,
+      ...input.filesChanged,
+      ...input.failingTests.flatMap((test) =>
+        [test.name, test.output].filter(
+          (part): part is string => typeof part === 'string',
+        ),
+      ),
+      input.diffRef,
+      input.worktree,
+      ...input.constraints.filter(
+        (constraint): constraint is string => typeof constraint === 'string',
+      ),
+      ...input.artifactIds.filter((id): id is string => typeof id === 'string'),
+    ];
+    if (texts.some((text) => containsCredential(text)))
+      errors.push(
+        'handoff must not carry credential-shaped values (redact before write)',
+      );
+    else if (texts.some((text) => containsTranscriptMarker(text)))
+      errors.push(
+        'handoff text must not carry transcript-shaped or instruction-override content (§25)',
+      );
+  }
   if (errors.length > 0) return { valid: false, errors };
   return {
     valid: true,
@@ -419,18 +580,20 @@ export function buildDebuggerHandoff(
       role: 'debugger',
       result: {
         status: 'failed',
-        summary: input.summary,
-        filesChanged: [...input.filesChanged],
+        summary: redactArtifactText(input.summary),
+        filesChanged: input.filesChanged.map(redactArtifactText),
         tests: input.failingTests.map((test) => ({
-          name: test.name,
+          name: redactArtifactText(test.name),
           passed: false as const,
-          ...(test.output === undefined ? {} : { output: test.output }),
+          ...(test.output === undefined
+            ? {}
+            : { output: redactArtifactText(test.output) }),
         })),
       },
       artifactIds: [...input.artifactIds],
       diffRef: input.diffRef,
       worktree: input.worktree,
-      constraints: [...input.constraints],
+      constraints: input.constraints.map(redactArtifactText),
       writeScope: 'worktree',
     },
   };
@@ -438,23 +601,26 @@ export function buildDebuggerHandoff(
 
 // Fresh-session debugger prompt: failing tests + diff ref + constraints +
 // artifact refs. No transcript parameter exists — a new session starts from
-// this prompt alone.
+// this prompt alone. Free text renders JSON-quoted and the prompt is
+// redacted, so smuggled credentials or markers stay inert.
 export function freshDebuggerPrompt(handoff: DebuggerHandoff): string {
   const lines = [
     'role: debugger',
-    `resume from: ${handoff.result.summary}`,
+    `resume from: ${JSON.stringify(handoff.result.summary)}`,
     `failing tests: ${handoff.result.tests
       .map((test) =>
-        test.output === undefined ? test.name : `${test.name} (${test.output})`,
+        test.output === undefined
+          ? JSON.stringify(test.name)
+          : `${JSON.stringify(test.name)} (${JSON.stringify(test.output)})`,
       )
       .join('; ')}`,
-    `diff ref: ${handoff.diffRef}`,
-    `files: ${handoff.result.filesChanged.join(', ')}`,
-    `constraints: ${handoff.constraints.join('; ')}`,
-    `artifacts: ${handoff.artifactIds.join(', ')}`,
-    `worktree: ${handoff.worktree}`,
+    `diff ref: ${JSON.stringify(handoff.diffRef)}`,
+    `files: ${handoff.result.filesChanged.map((file) => JSON.stringify(file)).join(', ')}`,
+    `constraints: ${handoff.constraints.map((constraint) => JSON.stringify(constraint)).join('; ')}`,
+    `artifacts: ${handoff.artifactIds.map((id) => JSON.stringify(id)).join(', ')}`,
+    `worktree: ${JSON.stringify(handoff.worktree)}`,
   ];
-  return lines.join('\n');
+  return redactArtifactText(lines.join('\n'));
 }
 
 // Token economics (§25.4): handoffs carry refs + failing-test excerpts, not

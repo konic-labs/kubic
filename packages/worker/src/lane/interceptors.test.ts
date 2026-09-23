@@ -240,6 +240,17 @@ describe('policy interceptors (issue #15, slice C)', () => {
     // Plain in-workspace single-file rm is allowed (recoverable via the
     // journal) — documented scope limit, not a silent gap.
     expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
+    // Multi-target rm is inspected token by token.
+    expect(defaultIsDestructive('rm notes.txt /etc/passwd', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm notes.txt /data/db.sqlite', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm notes.txt ~/.ssh/id_rsa', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm a.txt b.txt', '/work')).toBe(false);
     expect(isNetworkCommand('curl https://example.com')).toBe(true);
     expect(isNetworkCommand('ls -la')).toBe(false);
     expect(

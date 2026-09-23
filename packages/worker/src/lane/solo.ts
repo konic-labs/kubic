@@ -51,6 +51,11 @@ export interface SoloPolicyOptions {
   contributions?: ToolContribution[];
 }
 
+// Caller contract: classes alone deploy the allowlist (setActiveTools) and
+// the innermost permission wrapper. Destructive/network/confine guards
+// deploy only when interceptors options are also passed — the lane cannot
+// invent a workspace root, so confinement stays explicit.
+
 // The permission wrapper is composed innermost (closest to the core) when
 // classes are declared, so execute-time denial is deployed on every
 // policy boot — not just tested in isolation.

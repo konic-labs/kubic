@@ -52,19 +52,21 @@ function rmBlocked(command: string, workspace: string): boolean {
     if (match === null) continue;
     const flags = match[2] ?? '';
     if (/-[a-zA-Z]*[rf]/i.test(flags)) return true;
-    const target =
-      flags
-        .replace(/-[a-zA-Z]+\s*/g, '')
-        .replace(/--\S+\s*/g, '')
-        .trim()
-        .split(/\s+/)[0] ?? '';
-    if (target === '') continue;
-    const resolved = isAbsolute(target)
-      ? resolve(target)
-      : resolve(workspace, target);
-    const root = resolve(workspace);
-    if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
-    if (SENSITIVE_PATH.test(target)) return true;
+    // Every target token is inspected — checking only the first lets
+    // `rm notes.txt /etc/passwd` through.
+    const tokens = flags
+      .replace(/-[a-zA-Z]+\s*/g, ' ')
+      .replace(/--\S+\s*/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token !== '');
+    for (const target of tokens) {
+      const resolved = isAbsolute(target)
+        ? resolve(target)
+        : resolve(workspace, target);
+      const root = resolve(workspace);
+      if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
+      if (SENSITIVE_PATH.test(target)) return true;
+    }
   }
   return false;
 }
@@ -97,6 +99,11 @@ const NETWORK_PATTERNS = [
   /\bnc\b/i,
 ];
 
+// Literal-pattern heuristic with the same stated scope as the destructive
+// matcher: python/node/npm/pip/git/openssl exfiltration bypasses
+// network:none today. The verbs above cover the interactive-transfer
+// layer; everything else is approvals' problem (issue #16).
+
 export function isNetworkCommand(command: string): boolean {
   return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }
@@ -123,7 +130,7 @@ export function confinePath(
 export function redactReason(value: string): string {
   const short = value.length > 200 ? `${value.slice(0, 200)}…` : value;
   return short.replace(
-    /((?:token|password|passwd|secret|api[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
+    /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
     '$1[REDACTED]',
   );
 }

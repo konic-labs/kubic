@@ -3,7 +3,13 @@
 // the spec spawns a resolver under the implementer/debugger tool set
 // with the settlement constraints plus both diffs, under the SAME
 // approval snapshot and policy hash the manager holds — no bypass.
-// Pure — no spawning here, the manager lane owns the actual call.
+// The carried snapshot is verified inside, against the manager live
+// snapshot: the hash is recomputed and the snapshot is equality-checked
+// (a weakened or stale policy throws), then frozen so downstream code
+// cannot widen it. Pure — no spawning here, the manager lane owns the
+// actual call.
+
+import { createHash } from 'node:crypto';
 
 export const RESOLVER_ALLOWED_ROLES = ['implementer', 'debugger'] as const;
 
@@ -78,13 +84,82 @@ export interface ResolverSpecInput {
   theirsDiff: string;
   approvalPolicy: ApprovalSnapshot;
   policyHash: string;
+  livePolicy: ApprovalSnapshot;
 }
 
-function filesInDiff(diff: string): string[] {
+export class ResolverPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResolverPolicyError';
+  }
+}
+
+// Deterministic integrity hash over the canonical snapshot encoding.
+// Catches a stale/tampered carried hash; the live-snapshot equality
+// check below is the real anti-weakening guard.
+export function hashApprovalPolicy(policy: ApprovalSnapshot): string {
+  const canonical = JSON.stringify({
+    route: policy.route,
+    autoApprove: [...policy.autoApprove],
+    maxPendingMs: policy.maxPendingMs,
+  });
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
+export function approvalSnapshotsEqual(
+  left: ApprovalSnapshot,
+  right: ApprovalSnapshot,
+): boolean {
+  return (
+    left.route === right.route &&
+    left.maxPendingMs === right.maxPendingMs &&
+    left.autoApprove.length === right.autoApprove.length &&
+    left.autoApprove.every((entry, index) => entry === right.autoApprove[index])
+  );
+}
+
+function freezeApprovalSnapshot(policy: ApprovalSnapshot): ApprovalSnapshot {
+  return Object.freeze({
+    route: policy.route,
+    autoApprove: Object.freeze([...policy.autoApprove]),
+    maxPendingMs: policy.maxPendingMs,
+  });
+}
+
+// Git C-style quoting: paths with spaces or specials arrive double-quoted
+// (diff --git "a/my file.ts" "b/my file.ts"), with \" and \\ escapes.
+// Unquoted sides never contain spaces, so \S+ is exact there.
+const QUOTED_PATH = '"a/((?:[^"\\\\]|\\\\.)*)"\\s+"b/((?:[^"\\\\]|\\\\.)*)"';
+const QUOTED_A_BARE_B = '"a/((?:[^"\\\\]|\\\\.)*)"\\s+b/(\\S+)';
+const BARE_A_QUOTED_B = 'a/(\\S+)\\s+"b/((?:[^"\\\\]|\\\\.)*)"';
+const BARE_PATH = 'a/(\\S+)\\s+b/(\\S+)';
+
+function unescapeGitPath(path: string): string {
+  return path.replace(/\\(.)/g, '$1');
+}
+
+function parseDiffGitPaths(rest: string): string | undefined {
+  const patterns = [QUOTED_PATH, QUOTED_A_BARE_B, BARE_A_QUOTED_B, BARE_PATH];
+  for (const pattern of patterns) {
+    const match = new RegExp(`^${pattern}`).exec(rest);
+    const raw = match?.[1];
+    if (raw !== undefined) {
+      return rest.trimStart().startsWith('"a/') ? unescapeGitPath(raw) : raw;
+    }
+  }
+  return undefined;
+}
+
+// File paths touched by a unified diff. Only `diff --git` headers carry
+// both sides reliably, so anything else (---/+++, log output, empty
+// input) is ignored — never a crash, never a guess.
+export function filesInDiff(diff: string): string[] {
   const files = new Set<string>();
-  for (const line of diff.split('\n')) {
-    const match = /^diff --git a\/(\S+) b\/\S+/.exec(line.trim());
-    if (match?.[1] !== undefined) files.add(match[1]);
+  for (const rawLine of diff.split('\n')) {
+    const line = rawLine.trim();
+    if (!line.startsWith('diff --git ')) continue;
+    const parsed = parseDiffGitPaths(line.slice('diff --git '.length));
+    if (parsed !== undefined) files.add(parsed);
   }
   return [...files].sort();
 }
@@ -93,6 +168,17 @@ export function buildResolverSpec(input: ResolverSpecInput): ResolverSpawnSpec {
   if (!(RESOLVER_ALLOWED_ROLES as readonly string[]).includes(input.role)) {
     throw new Error(
       `resolver role must be implementer or debugger (got '${input.role}'): the manager never resolves`,
+    );
+  }
+  const recomputed = hashApprovalPolicy(input.approvalPolicy);
+  if (recomputed !== input.policyHash) {
+    throw new ResolverPolicyError(
+      `resolver approval hash mismatch (carried '${input.policyHash}' != recomputed '${recomputed}'): re-read the manager live policy, no bypass`,
+    );
+  }
+  if (!approvalSnapshotsEqual(input.approvalPolicy, input.livePolicy)) {
+    throw new ResolverPolicyError(
+      'resolver approval snapshot differs from the manager live policy (weakened or stale): no bypass',
     );
   }
   const files = [
@@ -113,11 +199,7 @@ export function buildResolverSpec(input: ResolverSpecInput): ResolverSpawnSpec {
       oursDiff: input.oursDiff,
       theirsDiff: input.theirsDiff,
     },
-    approvalPolicy: {
-      route: input.approvalPolicy.route,
-      autoApprove: [...input.approvalPolicy.autoApprove],
-      maxPendingMs: input.approvalPolicy.maxPendingMs,
-    },
+    approvalPolicy: freezeApprovalSnapshot(input.approvalPolicy),
     policyHash: input.policyHash,
   };
 }

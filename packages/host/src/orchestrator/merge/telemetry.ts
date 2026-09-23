@@ -1,8 +1,11 @@
 // Per-agent merge telemetry (issue #46; §61).
 // Phase timings per settled agent: queue wait, workspace_diff,
-// workspace_merge, writer-resolver rework, workspace_apply. Totals are
-// additive — resolveMs is reported apart, never folded into mergeMs.
-// Pure — the SpanRecorder (§29) owns aggregation; this is the record.
+// workspace_merge, writer-resolver rework (resolveMs), workspace_apply.
+// totalMergeMs is the sum of ALL five phases: resolveMs is tracked
+// separately from mergeMs (mergeMs covers workspace_merge only) but IS
+// included in the total — resolveMs is never folded into mergeMs
+// itself. Pure — the SpanRecorder (§29) owns aggregation; this is the
+// record.
 
 export type MergeOutcome =
   | 'merged'

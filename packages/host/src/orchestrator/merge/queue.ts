@@ -1,8 +1,11 @@
 // Ordered settlement queue (issue #46; §44.2).
 // Candidates settle strictly FIFO. An unresolvable conflict stops the
-// queue: the blocking candidate keeps both diffs with no winner picked,
-// and every candidate (settled or pending) stays listed — nothing is
-// dropped or reordered. Pure — no I/O, no git.
+// queue: dequeue refuses once stopped (fail-closed — the advisory stop
+// is now enforced), the blocking candidates keep both diffs with no
+// winner picked, and every candidate (settled or pending) stays listed
+// — nothing is dropped or reordered. Blocked records are kept per
+// agentId, so a second stop never overwrites the first. Pure — no I/O,
+// no git.
 
 export interface MergeCandidate {
   agentId: string;
@@ -18,6 +21,15 @@ export interface BlockedConflict {
 
 export type QueueStatus = 'open' | 'stopped';
 
+export class QueueStoppedError extends Error {
+  constructor(agentId: string) {
+    super(
+      `merge queue stopped by the unresolvable conflict on '${agentId}': dequeue refused, candidates preserved`,
+    );
+    this.name = 'QueueStoppedError';
+  }
+}
+
 export interface MergeQueue {
   enqueue: (candidate: MergeCandidate) => void;
   dequeue: () => MergeCandidate | undefined;
@@ -27,19 +39,29 @@ export interface MergeQueue {
     diffs: { oursDiff: string; theirsDiff: string },
   ) => void;
   status: () => QueueStatus;
-  blocked: () => BlockedConflict | undefined;
+  blocked: (agentId?: string) => BlockedConflict | undefined;
+  blockedFor: (agentId: string) => BlockedConflict | undefined;
+  blockedAll: () => BlockedConflict[];
 }
 
 export function createMergeQueue(): MergeQueue {
   const order: MergeCandidate[] = [];
+  const stoppedBy: string[] = [];
   let queueStatus: QueueStatus = 'open';
-  let blockedConflict: BlockedConflict | undefined;
+  const blockedConflicts = new Map<string, BlockedConflict>();
+
+  function copyBlocked(conflict: BlockedConflict): BlockedConflict {
+    return { ...conflict };
+  }
 
   return {
     enqueue(candidate: MergeCandidate): void {
       order.push({ ...candidate });
     },
     dequeue(): MergeCandidate | undefined {
+      if (queueStatus === 'stopped') {
+        throw new QueueStoppedError(stoppedBy[0] ?? 'unknown');
+      }
       const next = order.shift();
       return next === undefined ? undefined : { ...next };
     },
@@ -51,18 +73,35 @@ export function createMergeQueue(): MergeQueue {
       diffs: { oursDiff: string; theirsDiff: string },
     ): void {
       queueStatus = 'stopped';
-      blockedConflict = {
+      if (!blockedConflicts.has(agentId)) {
+        stoppedBy.push(agentId);
+      }
+      blockedConflicts.set(agentId, {
         agentId,
         oursDiff: diffs.oursDiff,
         theirsDiff: diffs.theirsDiff,
         winner: undefined,
-      };
+      });
     },
     status(): QueueStatus {
       return queueStatus;
     },
-    blocked(): BlockedConflict | undefined {
-      return blockedConflict === undefined ? undefined : { ...blockedConflict };
+    blocked(agentId?: string): BlockedConflict | undefined {
+      if (agentId !== undefined) {
+        const found = blockedConflicts.get(agentId);
+        return found === undefined ? undefined : copyBlocked(found);
+      }
+      const first = blockedConflicts.keys().next();
+      if (first.done) return undefined;
+      const found = blockedConflicts.get(first.value);
+      return found === undefined ? undefined : copyBlocked(found);
+    },
+    blockedFor(agentId: string): BlockedConflict | undefined {
+      const found = blockedConflicts.get(agentId);
+      return found === undefined ? undefined : copyBlocked(found);
+    },
+    blockedAll(): BlockedConflict[] {
+      return [...blockedConflicts.values()].map(copyBlocked);
     },
   };
 }

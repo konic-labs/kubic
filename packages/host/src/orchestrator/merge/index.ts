@@ -19,10 +19,14 @@ export type {
   ResolverSpecInput,
 } from './conflicts.js';
 export {
+  approvalSnapshotsEqual,
   buildResolverSpec,
   DEBUGGER_TOOLSET,
+  filesInDiff,
+  hashApprovalPolicy,
   IMPLEMENTER_TOOLSET,
   RESOLVER_ALLOWED_ROLES,
+  ResolverPolicyError,
 } from './conflicts.js';
 export type {
   BlockedConflict,
@@ -30,14 +34,17 @@ export type {
   MergeQueue,
   QueueStatus,
 } from './queue.js';
-export { createMergeQueue } from './queue.js';
+export { createMergeQueue, QueueStoppedError } from './queue.js';
 export type { ApplyDecision, ReviewResult, ReviewVerdict } from './review.js';
 export {
+  assertReviewerReadonly,
   decideApplyAfterReview,
   REVIEWER_READONLY_TOOLS,
+  ReviewerScopeError,
 } from './review.js';
 export {
   assertManagerZeroWrites,
+  MANAGER_MERGE_ALLOWLIST,
   MANAGER_WRITE_TOOLS,
   ManagerAuthoringError,
 } from './settle.js';

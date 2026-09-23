@@ -15,6 +15,23 @@ export const REVIEWER_READONLY_TOOLS = [
   'git_show',
 ] as const;
 
+export class ReviewerScopeError extends Error {
+  constructor(toolName: string) {
+    super(
+      `reviewer policy block: '${toolName}' is outside the read-only scope — findings travel back as text, never as edits`,
+    );
+    this.name = 'ReviewerScopeError';
+  }
+}
+
+export function assertReviewerReadonly(reviewerCalls: readonly string[]): void {
+  for (const call of reviewerCalls) {
+    if (!(REVIEWER_READONLY_TOOLS as readonly string[]).includes(call)) {
+      throw new ReviewerScopeError(call);
+    }
+  }
+}
+
 export type ReviewVerdict = 'accept' | 'request-changes' | 'escalate';
 
 export interface ReviewResult {

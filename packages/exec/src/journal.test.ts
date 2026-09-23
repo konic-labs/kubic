@@ -88,7 +88,12 @@ describe('journal store (issue #17, slice A)', () => {
     const store = new FileJournalStore(tmpRoot());
     const before = `${'line\n'.repeat(20_000)}tail\n`;
     const recorded = store.append(
-      entry({ path: 'big.txt', before, after: 'changed\n', bytesDelta: -99990 }),
+      entry({
+        path: 'big.txt',
+        before,
+        after: 'changed\n',
+        bytesDelta: -99990,
+      }),
     );
     expect(store.readBefore(recorded)).toBe(before);
   });

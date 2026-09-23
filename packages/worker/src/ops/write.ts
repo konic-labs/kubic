@@ -55,8 +55,7 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
       before = null;
     }
     const beforeHash = before === null ? null : sha256Hex(before);
-    const beforeBytes =
-      before === null ? 0 : Buffer.byteLength(before, 'utf8');
+    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
     const tmp = `${args.path}.kubic-tmp`;
     ctx.env.fs.writeFile(tmp, args.content);
     ctx.env.fs.rename(tmp, args.path);

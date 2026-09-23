@@ -6,7 +6,8 @@
 //
 // Slice A: FileSystem + Shell interfaces, provenance on every result,
 // NodeExecutionEnv (cwd-scoped), FakeExecutionEnv (hermetic tests).
-// Slice B (next): streaming updates, throttled checkpoints, crash resume.
+// Slice B: streaming onUpdate, throttled change-gated checkpoints,
+// recordFinal crash-resume read point, detached process-group kill.
 // Slice C (next): replay declarations, EffectGate, ToolBatch machine.
 
 import { spawn } from 'node:child_process';
@@ -55,11 +56,32 @@ export interface ShellResult {
   provenance: Provenance;
 }
 
+export interface ProcessSnapshot {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+
+export interface CheckpointStore {
+  record(key: string, snapshot: ProcessSnapshot): void;
+  recordFinal(key: string, snapshot: ProcessSnapshot): void;
+  latest(key: string): ProcessSnapshot | undefined;
+}
+
+export type UpdateCallback = (
+  snapshot: ProcessSnapshot,
+  options?: { checkpoint?: boolean },
+) => void;
+
 export interface SpawnOptions {
   provenance: Provenance;
+  onUpdate?: UpdateCallback;
+  checkpointKey?: string;
+  checkpointStore?: CheckpointStore;
 }
 
 export interface ProcessHandle {
+  pid: number | undefined;
   wait(): Promise<ShellResult>;
   kill(): void;
 }
@@ -115,6 +137,54 @@ class NodeFileSystem implements FileSystem {
   }
 }
 
+export const CHECKPOINT_INTERVAL_MS = 2000;
+
+function encodeSnapshot(snapshot: ProcessSnapshot): string {
+  return `${snapshot.exitCode ?? 'run'}|${snapshot.stdout.length}|${snapshot.stdout}|${snapshot.stderr}`;
+}
+
+// Durable recovery checkpoints (§20.4): at most every
+// CHECKPOINT_INTERVAL_MS and only when the encoded snapshot changed.
+// Clock is injectable so throttle behavior is unit-testable.
+export class MemoryCheckpointStore implements CheckpointStore {
+  private readonly snapshots = new Map<string, ProcessSnapshot>();
+  private readonly lastWrite = new Map<
+    string,
+    { at: number; encoded: string }
+  >();
+  private readonly now: () => number;
+
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
+
+  record(key: string, snapshot: ProcessSnapshot): void {
+    const at = this.now();
+    const encoded = encodeSnapshot(snapshot);
+    const prev = this.lastWrite.get(key);
+    if (
+      prev &&
+      (at - prev.at < CHECKPOINT_INTERVAL_MS || prev.encoded === encoded)
+    )
+      return;
+    this.lastWrite.set(key, { at, encoded });
+    this.snapshots.set(key, { ...snapshot });
+  }
+
+  recordFinal(key: string, snapshot: ProcessSnapshot): void {
+    this.lastWrite.set(key, {
+      at: this.now(),
+      encoded: encodeSnapshot(snapshot),
+    });
+    this.snapshots.set(key, { ...snapshot });
+  }
+
+  latest(key: string): ProcessSnapshot | undefined {
+    const hit = this.snapshots.get(key);
+    return hit ? { ...hit } : undefined;
+  }
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -123,29 +193,69 @@ class NodeShell implements Shell {
   }
 
   spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
-    const child = spawn(cmd, args, { cwd: this.cwd });
+    // Detached process group: kill() signals the whole group so spawned
+    // grandchildren die too (§9 leak cleanup) — no orphans.
+    const child = spawn(cmd, args, {
+      cwd: this.cwd,
+      detached: process.platform !== 'win32',
+    });
     let stdout = '';
     let stderr = '';
+    const snapshot = (): ProcessSnapshot => ({
+      stdout,
+      stderr,
+      exitCode: null,
+    });
+    const emit = (checkpoint: boolean) => {
+      options.onUpdate?.(
+        snapshot(),
+        checkpoint ? { checkpoint: true } : undefined,
+      );
+      if (checkpoint && options.checkpointKey && options.checkpointStore) {
+        options.checkpointStore.record(options.checkpointKey, snapshot());
+      }
+    };
     child.stdout?.on('data', (d: Buffer) => {
       stdout += d.toString();
+      emit(false);
     });
     child.stderr?.on('data', (d: Buffer) => {
       stderr += d.toString();
+      emit(false);
     });
     const done = new Promise<ShellResult>((resolveDone) => {
       child.on('close', (code) => {
-        resolveDone({
+        const result: ShellResult = {
           exitCode: code ?? 1,
           stdout,
           stderr,
           provenance: options.provenance,
-        });
+        };
+        if (options.checkpointKey && options.checkpointStore) {
+          options.checkpointStore.recordFinal(options.checkpointKey, {
+            ...result,
+          });
+        }
+        options.onUpdate?.({ ...result }, undefined);
+        child.unref();
+        resolveDone(result);
       });
     });
     return {
+      pid: child.pid,
       wait: () => done,
       kill: () => {
-        child.kill();
+        if (child.pid === undefined) return;
+        try {
+          if (process.platform !== 'win32') process.kill(-child.pid);
+          else child.kill();
+        } catch {
+          try {
+            child.kill();
+          } catch {
+            // Already exited — nothing to kill.
+          }
+        }
       },
     };
   }
@@ -210,14 +320,28 @@ export class FakeExecutionEnv implements ExecutionEnv {
         stdout: '',
         stderr: '',
       };
+      const snapshot: ProcessSnapshot = {
+        stdout: script.stdout,
+        stderr: script.stderr,
+        exitCode: null,
+      };
       return {
-        wait: () =>
-          Promise.resolve({
+        pid: undefined,
+        wait: () => {
+          options.onUpdate?.(snapshot, undefined);
+          if (options.checkpointKey && options.checkpointStore) {
+            options.checkpointStore.recordFinal(options.checkpointKey, {
+              ...snapshot,
+              exitCode: script.exitCode,
+            });
+          }
+          return Promise.resolve({
             exitCode: script.exitCode,
             stdout: script.stdout,
             stderr: script.stderr,
             provenance: options.provenance,
-          }),
+          });
+        },
         kill: () => undefined,
       };
     },

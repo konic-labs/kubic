@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUDIT_FIELDS,
+  AuditShapeError,
   AuditSinkError,
   appendAudit,
   createMemorySink,
@@ -81,6 +82,38 @@ describe('org audit record', () => {
       ),
     ).toThrow(AuditSinkError);
   });
+
+  it('rejects unknown top-level keys instead of keeping them (exactly 14)', () => {
+    const sink = createMemorySink();
+    const smuggled = {
+      ...baseInput(),
+      extra: 'smuggled',
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('refuses secret-shaped material in the sentinel without a secrets list', () => {
+    const sink = createMemorySink();
+    expect(() =>
+      emitAudit([sink], {
+        ...baseInput(),
+        credential: { sentinel: 'sentinel:sk-faux-test-key-0001' },
+      }),
+    ).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('refuses secret-shaped material in the reason without a secrets list', () => {
+    const sink = createMemorySink();
+    expect(() =>
+      emitAudit([sink], {
+        ...baseInput(),
+        reason: 'denied: saw sk-faux-test-key-0001 on the wire',
+      }),
+    ).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
 });
 
 describe('section-85 flow fixture', () => {
@@ -134,5 +167,36 @@ describe('sink failure', () => {
       'file',
       'memory',
     ]);
+  });
+
+  it('refuses async sinks that return a thenable', () => {
+    const asyncSink = {
+      name: 'async-syslog',
+      kind: 'syslog' as const,
+      write: (): unknown => Promise.resolve(),
+    };
+    expect(() => appendAudit([asyncSink], FLOW_AUDIT_FIXTURE)).toThrow(
+      AuditSinkError,
+    );
+  });
+
+  it('redacts secret-shaped substrings from sink failure messages', () => {
+    const live = 'sk-faux-test-key-0001';
+    const leaking = {
+      name: 'leaky',
+      kind: 'syslog' as const,
+      write: (): void => {
+        throw new Error(`syslog unreachable: saw ${live} on the wire`);
+      },
+    };
+    try {
+      appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+      expect.unreachable('leaky sink failure must throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AuditSinkError);
+      const message = (error as Error).message;
+      expect(message).not.toContain(live);
+      expect(message).toContain('[redacted-secret]');
+    }
   });
 });

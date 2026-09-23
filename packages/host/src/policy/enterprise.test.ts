@@ -7,6 +7,7 @@ import {
   isToolAllowed,
   POLICY_LAYERS,
   PolicyDeniedError,
+  PolicyError,
   resolveEffectivePolicy,
 } from './enterprise.js';
 
@@ -71,6 +72,55 @@ describe('enterprise precedence', () => {
     expect(isToolAllowed(policy, 'read')).toBe(true);
     expect(isToolAllowed(policy, 'write')).toBe(false);
     expect(isNetworkAllowed(policy, 'example.com')).toBe(false);
+  });
+
+  it('tool matching is case- and whitespace-insensitive', () => {
+    const { policy } = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: ENTERPRISE_DENY.enterprise },
+    ]);
+    expect(isToolAllowed(policy, 'Bash')).toBe(false);
+    expect(isToolAllowed(policy, 'BASH')).toBe(false);
+    expect(isToolAllowed(policy, 'bash ')).toBe(false);
+    expect(() =>
+      assertToolGrantable(policy, 'BASH', { layer: 'project' }),
+    ).toThrow(PolicyDeniedError);
+  });
+
+  it('allow lists normalize the same way', () => {
+    const { policy } = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { allow: ['Read'] } } },
+    ]);
+    expect(isToolAllowed(policy, 'read')).toBe(true);
+    expect(isToolAllowed(policy, ' READ ')).toBe(true);
+    expect(isToolAllowed(policy, 'write')).toBe(false);
+  });
+});
+
+describe('list hygiene', () => {
+  it('refuses empty string entries in tools.deny', () => {
+    expect(() =>
+      resolveEffectivePolicy([
+        { layer: 'enterprise', policy: { tools: { deny: [''] } } },
+      ]),
+    ).toThrow(PolicyError);
+  });
+
+  it('refuses whitespace-only entries', () => {
+    expect(() =>
+      resolveEffectivePolicy([
+        { layer: 'enterprise', policy: { network: { domains: ['   '] } } },
+      ]),
+    ).toThrow(PolicyError);
+  });
+
+  it('dedupes repeated entries, order-preserved', () => {
+    const { policy } = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { deny: ['bash', 'bash', 'git_push'] } },
+      },
+    ]);
+    expect(policy.tools.deny).toEqual(['bash', 'git_push']);
   });
 });
 
@@ -167,6 +217,63 @@ describe('credential broker', () => {
     expect(() =>
       mod.assertNoLocalCredentials({ GITHUB_TOKEN: 'ghp_faux0001' }, policy),
     ).toThrow(mod.PolicyDeniedError);
+  });
+
+  it('broker=true refuses unlisted secret-shaped values (no fail-open passthrough)', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { credentials: { requireCredentialBroker: true } },
+      },
+    ]);
+    expect(() =>
+      mod.buildBrokeredWorkerEnv({ EVIL: 'sk-faux-test-key-0001' }, [], policy),
+    ).toThrow(mod.PolicyDeniedError);
+  });
+
+  it('sentinels keep every replaced secret per key', async () => {
+    const mod = await import('./enterprise.js');
+    const fauxA = '«redacted:sk-…»';
+    const fauxB = '«redacted:AKIA…»';
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { credentials: { requireCredentialBroker: true } },
+      },
+    ]);
+    const built = mod.buildBrokeredWorkerEnv(
+      { COMBO: `${fauxA}+${fauxB}` },
+      [
+        { ref: '$A', value: fauxA },
+        { ref: '$B', value: fauxB },
+      ],
+      policy,
+    );
+    expect(built.env.COMBO).toBe('broker:$A+broker:$B');
+    expect(built.sentinels.COMBO).toEqual(['broker:$A', 'broker:$B']);
+  });
+
+  it('denyLocalCredentials refuses secret-shaped values under innocuous keys', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { credentials: { denyLocalCredentials: true } },
+      },
+    ]);
+    expect(() =>
+      mod.assertNoLocalCredentials({ CONFIG: 'sk-faux-test-key-0001' }, policy),
+    ).toThrow(mod.PolicyDeniedError);
+    expect(() =>
+      mod.assertNoLocalCredentials(
+        { API_KEY: 'sk-faux-test-key-0001' },
+        policy,
+      ),
+    ).toThrow(mod.PolicyDeniedError);
+    expect(() =>
+      mod.assertNoLocalCredentials({ CONFIG: 'plain-value' }, policy),
+    ).not.toThrow();
   });
 });
 

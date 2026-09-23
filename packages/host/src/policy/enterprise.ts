@@ -7,6 +7,8 @@
 // modified here — this module owns only the enterprise overlay and its
 // evaluation. Faux-only, zero network; no node:fs (FileBridge owns I/O).
 
+import { containsSecretShape } from './secret-shapes.js';
+
 export const POLICY_LAYERS = [
   'enterprise',
   'product',
@@ -150,7 +152,48 @@ function stringArray(value: unknown, path: string): string[] | undefined {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
     throw new PolicyError(`'${path}' must be a string array`);
   }
-  return [...(value as string[])];
+  // Fail-closed list hygiene: empty/whitespace-only entries are refused
+  // (a tools.deny of [''] must never land in the deny set), and exact
+  // duplicates are collapsed to a single entry, order-preserved.
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value as string[]) {
+    if (item.trim() === '') {
+      throw new PolicyError(`'${path}' must not contain empty entries`);
+    }
+    if (!seen.has(item)) {
+      seen.add(item);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+// Tool names match case- and whitespace-insensitively: a deny entry of
+// 'bash' covers 'Bash', 'BASH', and 'bash '. Normalization is trim plus
+// lowercase; the empty string is never a valid tool name.
+export function normalizeToolName(tool: string): string {
+  return tool.trim().toLowerCase();
+}
+
+function toolNameList(
+  value: string[] | undefined,
+  path: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const normalized = normalizeToolName(item);
+    if (normalized === '') {
+      throw new PolicyError(`'${path}' must not contain empty entries`);
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      out.push(normalized);
+    }
+  }
+  return out;
 }
 
 const THINKING_LEVELS = [
@@ -281,8 +324,14 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
       }
     }
     out.tools = {
-      allow: stringArray(tools.allow, `${layer}.tools.allow`),
-      deny: stringArray(tools.deny, `${layer}.tools.deny`),
+      allow: toolNameList(
+        stringArray(tools.allow, `${layer}.tools.allow`),
+        `${layer}.tools.allow`,
+      ),
+      deny: toolNameList(
+        stringArray(tools.deny, `${layer}.tools.deny`),
+        `${layer}.tools.deny`,
+      ),
     };
   }
   const network = raw.network;
@@ -730,11 +779,19 @@ export function resolveEffectivePolicy(
 }
 
 // Deny-by-default: a denied tool is never allowed; an unlisted tool is
-// allowed only when an explicit allow list names it.
+// allowed only when an explicit allow list names it. Matching is
+// case- and whitespace-insensitive on both sides.
 export function isToolAllowed(policy: EffectivePolicy, tool: string): boolean {
-  if (policy.tools.deny.includes(tool)) return false;
+  const normalized = normalizeToolName(tool);
+  if (
+    policy.tools.deny.some((denied) => normalizeToolName(denied) === normalized)
+  ) {
+    return false;
+  }
   if (policy.tools.allow === undefined) return false;
-  return policy.tools.allow.includes(tool);
+  return policy.tools.allow.some(
+    (allowed) => normalizeToolName(allowed) === normalized,
+  );
 }
 
 // A denied tool is not re-enableable by project, role, or model: any grant
@@ -796,13 +853,17 @@ export interface BrokerSecret {
 
 export interface BrokeredEnv {
   env: Record<string, string>;
-  sentinels: Record<string, string>;
+  // Every listed secret replaced in a value is recorded, in order: two
+  // secrets sharing one value both appear here, never just the last one.
+  sentinels: Record<string, string[]>;
 }
 
 // Credential broker (§36): when require_credential_broker holds, live
 // secret values never reach worker env — every occurrence is replaced by a
 // `broker:<ref>` sentinel that names the ref without carrying material.
-// Without the broker flag the env passes through untouched.
+// Without the broker flag the env passes through untouched. Shape backstop:
+// any unlisted secret-shaped value still present after replacement is
+// refused loudly — an empty secrets list never means passthrough.
 export function buildBrokeredWorkerEnv(
   env: Record<string, string>,
   secrets: BrokerSecret[],
@@ -812,15 +873,23 @@ export function buildBrokeredWorkerEnv(
     return { env: { ...env }, sentinels: {} };
   }
   const out: Record<string, string> = {};
-  const sentinels: Record<string, string> = {};
+  const sentinels: Record<string, string[]> = {};
   for (const [key, value] of Object.entries(env)) {
     let replaced = value;
     for (const secret of secrets) {
       if (secret.value === '') continue;
       if (replaced.includes(secret.value)) {
         replaced = replaced.split(secret.value).join(`broker:${secret.ref}`);
-        sentinels[key] = `broker:${secret.ref}`;
+        const seen = sentinels[key] ?? [];
+        const marker = `broker:${secret.ref}`;
+        if (!seen.includes(marker)) seen.push(marker);
+        sentinels[key] = seen;
       }
+    }
+    if (containsSecretShape(replaced)) {
+      throw new PolicyDeniedError(
+        'worker env contains unlisted secret-shaped material: broker violation',
+      );
     }
     out[key] = replaced;
   }
@@ -828,7 +897,8 @@ export function buildBrokeredWorkerEnv(
 }
 
 // Loud verifier for brokered payloads: any live secret material present
-// throws. The message never echoes the secret itself.
+// throws, including unlisted secret-shaped material. The message never
+// echoes the secret itself.
 export function assertNoSecretMaterial(
   value: unknown,
   secrets: string[],
@@ -841,6 +911,11 @@ export function assertNoSecretMaterial(
         'worker env/dump contains secret material: broker violation',
       );
     }
+  }
+  if (containsSecretShape(text)) {
+    throw new PolicyDeniedError(
+      'worker env/dump contains secret-shaped material: broker violation',
+    );
   }
 }
 
@@ -866,16 +941,23 @@ function isLocalCredentialKey(key: string): boolean {
 
 // deny_local_credentials: local credential keys must not appear in worker
 // env at all (brokered refs travel via the broker, never as env values).
-// Only the key name is reported, never any value.
+// Values are scanned too: a secret-shaped value under an innocuous key is
+// refused alongside sensitive key names. Only the key name is reported,
+// never any value.
 export function assertNoLocalCredentials(
   env: Record<string, string>,
   policy: EffectivePolicy,
 ): void {
   if (!policy.credentials.denyLocalCredentials) return;
-  for (const key of Object.keys(env)) {
+  for (const [key, value] of Object.entries(env)) {
     if (isLocalCredentialKey(key)) {
       throw new PolicyDeniedError(
         `local credential key '${key}' refused in worker env: deny_local_credentials holds`,
+      );
+    }
+    if (containsSecretShape(value)) {
+      throw new PolicyDeniedError(
+        `secret-shaped value for '${key}' refused in worker env: deny_local_credentials holds`,
       );
     }
   }

@@ -9,6 +9,7 @@
 // Faux-only, zero network; no node:fs (sinks are injected).
 
 import type { AuditSinkKind } from './enterprise.js';
+import { containsSecretShape, redactSecretShapes } from './secret-shapes.js';
 
 export const AUDIT_FIELDS = [
   'who',
@@ -63,8 +64,20 @@ export interface OrgAuditRecord {
 
 export class AuditSinkError extends Error {
   constructor(message: string) {
-    super(message);
+    // Fail-closed messages: secret-shaped substrings are redacted so a
+    // sink failure can never echo live material back to the caller.
+    super(redactSecretShapes(message));
     this.name = 'AuditSinkError';
+  }
+}
+
+// Shape violations (unknown top-level keys, secret-shaped smuggling) are a
+// distinct fail-closed signal that still satisfies `instanceof
+// AuditSinkError` for existing catch sites.
+export class AuditShapeError extends AuditSinkError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuditShapeError';
   }
 }
 
@@ -198,17 +211,26 @@ function validateRecord(
   for (const secret of secrets) {
     if (secret === '') continue;
     if (text.includes(secret)) {
-      throw new AuditSinkError(
+      throw new AuditShapeError(
         'audit record carries secret material: refused (sentinel only)',
       );
     }
   }
+  // Shape backstop: the listed-secrets inventory is not the only refusal
+  // signal. Any secret-shaped value anywhere in the wire form is refused
+  // even when the caller omits `secrets` entirely — no fail-open default.
+  if (containsSecretShape(text)) {
+    throw new AuditShapeError(
+      'audit record carries secret-shaped material: refused (sentinel only)',
+    );
+  }
   assertSentinelClean(record.credential.sentinel, secrets);
 }
 
-// Loud append: every sink must accept the record. Any failure — or zero
-// sinks — throws AuditSinkError naming the failed sinks. Records are never
-// silently lost.
+// Loud append: every sink must accept the record synchronously. Any failure
+// — a throw, a returned thenable (async sinks are refused: records must be
+// durable before emitAudit returns), or zero sinks — throws AuditSinkError
+// naming the failed sinks. Records are never silently lost.
 export function appendAudit(sinks: AuditSink[], record: OrgAuditRecord): void {
   if (sinks.length === 0) {
     throw new AuditSinkError('no audit sinks: record would be silently lost');
@@ -216,7 +238,16 @@ export function appendAudit(sinks: AuditSink[], record: OrgAuditRecord): void {
   const failed: string[] = [];
   for (const sink of sinks) {
     try {
-      sink.write(record);
+      const outcome: unknown = sink.write(record);
+      if (
+        outcome !== undefined &&
+        outcome !== null &&
+        typeof (outcome as { then?: unknown }).then === 'function'
+      ) {
+        throw new Error(
+          `async audit sink '${sink.name}' returned a thenable: refused`,
+        );
+      }
     } catch (error) {
       failed.push(
         `${sink.name} (${error instanceof Error ? error.message : String(error)})`,
@@ -236,12 +267,23 @@ export interface EmitAuditOptions {
 }
 
 // Build, validate, and loudly append one org audit record. Mode and
-// posture are required on every record — there is no default posture.
+// posture are required on every record — there is no default posture. The
+// input spreads onto exactly the 14 §60 fields: any unknown top-level key
+// is rejected fail-closed with AuditShapeError, never kept.
+const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
+
 export function emitAudit(
   sinks: AuditSink[],
   input: AuditInput,
   options: EmitAuditOptions = {},
 ): OrgAuditRecord {
+  for (const key of Object.keys(input)) {
+    if (!ALLOWED_AUDIT_INPUT_KEYS.has(key)) {
+      throw new AuditShapeError(
+        `audit record has unknown top-level key '${key}': refused (exactly 14 section-60 fields)`,
+      );
+    }
+  }
   const record: OrgAuditRecord = {
     ...input,
     when: input.when ?? new Date(options.now?.() ?? Date.now()).toISOString(),

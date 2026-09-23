@@ -16,6 +16,7 @@ import {
 
 // §52 failure codes (worker-owned spelling, pinned in trajectory schema).
 export type { TrajectoryFailureCode };
+export { isTrajectoryFailureCode };
 
 // Provenance embedded in every RL record: the OS process (explicit null
 // for faux runs — never silently dropped), worker generation, worktree,

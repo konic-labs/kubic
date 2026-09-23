@@ -32,6 +32,12 @@ describe('toolCall machine + EffectGate + batch termination (issue #12, slice C)
     expect(call.state).toBe('completed');
   });
 
+  it('replays under the same invocation id (safe reuse, never remint)', () => {
+    const first = advanceToolCall(planned(), replay);
+    expect(first.id).toBe('tc1');
+    expect(advanceToolCall(first, end(true)).id).toBe('tc1');
+  });
+
   it('refuses to replay a never-replay effect', () => {
     expect(() => advanceToolCall(planned('never'), replay)).toThrow(
       /never.*replay|replay.*never/i,

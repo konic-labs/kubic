@@ -1,12 +1,57 @@
-# Architecture overview (stub)
+# Architecture overview
 
-> Stub — content lands in issue
+> Design ref: §5 solo/orchestrator topology, §64 package layout,
+> §3.1 dependency directions, §59.1 honest limits. Owner: issue
 > [#62](https://github.com/konic-labs/kubic/issues/62).
-> Design ref: §5 solo/orchestrator topology, §64 package layout.
 
-Will cover: what Kubic is (solo default, orchestrator opt-in), the
-package map verified against the Wave 0 scaffold tree, and pointers to
-[solo](solo.md), [orchestrator](orchestrator.md), and
-[journal and safety](journal-and-safety.md).
+Kubic is a terminal coding agent with one architecture and two modes.
+**Solo** is the default and the architecture itself: a single agent
+working directly in the user's directory. **Orchestrator** is an
+opt-in mode for delegation: the manager stops executing and farms work
+out to subagents. Both modes share the same safety controls — the
+VCS-independent change journal and user-decided approvals.
+
+## Topology
+
+```text
+solo (default)                      orchestrator (opt-in, git repos only)
+─────────────────────────────       ─────────────────────────────────────
+one agent, in-process,              manager (delegates only, never executes)
+in the user's directory             ├── worker process + git worktree (subagent A)
+single trust zone, no isolation     ├── worker process + git worktree (subagent B)
+controls: approvals + journal       └── … merge what they produce
+                                    controls: approvals + journal (unchanged)
+```
+
+Solo is the whole story for trust: there is exactly one trust zone —
+the user's own authority. Orchestrator adds scheduling (processes and
+worktrees that separate concurrent writers) but no new trust boundary.
+See [solo](solo.md), [orchestrator](orchestrator.md), and
+[change journal and safety](journal-and-safety.md).
+
+## Package map (Wave 0 scaffold)
+
+Verified against the repository tree. Nine packages plus the
+composition root:
+
+| Directory | Role |
+| --- | --- |
+| `packages/core` | Shared contracts both runtimes build on |
+| `packages/exec` | Execution environment and change journal; the only package that touches `node:fs` / `node:child_process` |
+| `packages/worker` | Solo lane and worker lifecycle (the executing side) |
+| `packages/host` | Host wiring: approvals, manager, worktrees, merge (the delegating side) |
+| `packages/agents` | Agent task, roles, budgets, skills |
+| `packages/trajectory` | Versioned run records for replay and eval |
+| `packages/eval` | Benchmark suites and RL dataset export |
+| `packages/tui` | Presentation only; imports contracts from `core`, never `host`/`worker` implementation |
+| `packages/extensions` | First-party facet bundles dogfooding the layers below |
+| `apps/kubic` | Composition root: wires the packages into the `kubic` CLI |
+
+Dependencies flow one way (`scripts/dep-lint.mjs` enforces it): `tui`
+never imports `host`/`worker` implementation, the worker never imports
+`host`, and only the app root wires `host` and `tui` together.
+Per-package APIs live on the [package pages](../packages/README.md);
+command behaviour lives on the [CLI pages](../cli/README.md) — this
+section maps the boxes, not their interfaces.
 
 Back to the [docs index](../README.md).

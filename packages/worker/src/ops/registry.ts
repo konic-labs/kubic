@@ -14,10 +14,28 @@ import type { EditResult } from './edit.js';
 import { editOperation } from './edit.js';
 import type { FindResult } from './find.js';
 import { findOperation } from './find.js';
+import type {
+  GitBranchResult,
+  GitCheckpointResult,
+  GitCommitResult,
+  GitDiffResult,
+  GitLogResult,
+  GitShowResult,
+  GitStageResult,
+  GitStatusResult,
+} from './git.js';
+import {
+  gitBranchOperation,
+  gitCheckpointOperation,
+  gitCommitOperation,
+  gitDiffOperation,
+  gitLogOperation,
+  gitShowOperation,
+  gitStageOperation,
+  gitStatusOperation,
+} from './git.js';
 import type { GrepResult } from './grep.js';
 import { grepOperation } from './grep.js';
-import type { GitBranchResult, GitCheckpointResult, GitCommitResult, GitDiffResult, GitLogResult, GitShowResult, GitStageResult, GitStatusResult } from './git.js';
-import { gitBranchOperation, gitCheckpointOperation, gitCommitOperation, gitDiffOperation, gitLogOperation, gitShowOperation, gitStageOperation, gitStatusOperation } from './git.js';
 import type { LsResult } from './ls.js';
 import { lsOperation } from './ls.js';
 import type { ReadResult } from './read.js';

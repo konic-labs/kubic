@@ -6,8 +6,14 @@ import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
-function ctx(scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>): OpContext {
-  return { env: new FakeExecutionEnv(scripts), sessionId: 's1', agentId: 'root' };
+function ctx(
+  scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,
+): OpContext {
+  return {
+    env: new FakeExecutionEnv(scripts),
+    sessionId: 's1',
+    agentId: 'root',
+  };
 }
 
 function inv(id: string): ToolInvocation {
@@ -27,12 +33,21 @@ describe('git log/show (issue #19, slice B)', () => {
       'git_log',
       { max: 10 },
       inv('a'),
-      ctx({ 'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 10': { exitCode: 0, stdout: LOG_OUT, stderr: '' } }),
+      ctx({
+        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 10': {
+          exitCode: 0,
+          stdout: LOG_OUT,
+          stderr: '',
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.entries).toHaveLength(2);
-      expect(out.result.entries[0]).toMatchObject({ sha: 'abc1234', message: 'first commit' });
+      expect(out.result.entries[0]).toMatchObject({
+        sha: 'abc1234',
+        message: 'first commit',
+      });
     }
   });
 
@@ -41,7 +56,13 @@ describe('git log/show (issue #19, slice B)', () => {
       'git_show',
       { ref: 'abc1234' },
       inv('b'),
-      ctx({ 'git show --format= --patch abc1234': { exitCode: 0, stdout: 'diff --git a/x b/x\n', stderr: '' } }),
+      ctx({
+        'git show --format= --patch abc1234': {
+          exitCode: 0,
+          stdout: 'diff --git a/x b/x\n',
+          stderr: '',
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.patch).toContain('diff --git');
@@ -52,7 +73,13 @@ describe('git log/show (issue #19, slice B)', () => {
       'git_log',
       {},
       inv('c'),
-      ctx({ 'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' } }),
+      ctx({
+        'git log --format=%H%x1f%an%x1f%ad%x1f%s --date=short -n 20': {
+          exitCode: 128,
+          stdout: '',
+          stderr: 'fatal: not a git repository',
+        },
+      }),
     );
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error.code).toBe('not_a_repo');

@@ -6,8 +6,14 @@ import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
-function ctx(scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>): OpContext {
-  return { env: new FakeExecutionEnv(scripts), sessionId: 's1', agentId: 'root' };
+function ctx(
+  scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,
+): OpContext {
+  return {
+    env: new FakeExecutionEnv(scripts),
+    sessionId: 's1',
+    agentId: 'root',
+  };
 }
 
 function inv(id: string): ToolInvocation {
@@ -30,19 +36,45 @@ describe('git effects (issue #19, slice C)', () => {
   });
 
   it('git_stage refuses empty paths and absolute escapes', async () => {
-    for (const args of [{ paths: [] }, { paths: ['/etc/passwd'] }, { paths: ['../up.txt'] }]) {
-      const out = await callOperation('git_stage', args, inv(`c2-${args.paths[0] ?? 'empty'}`), ctx({}));
+    for (const args of [
+      { paths: [] },
+      { paths: ['/etc/passwd'] },
+      { paths: ['../up.txt'] },
+    ]) {
+      const out = await callOperation(
+        'git_stage',
+        args,
+        inv(`c2-${args.paths[0] ?? 'empty'}`),
+        ctx({}),
+      );
       expect(out.ok).toBe(false);
     }
   });
 
   it('git_commit returns the sha plus file list for the trajectory', async () => {
     const scripts = {
-      'git commit -m work in progress': { exitCode: 0, stdout: '[main abc1234] work in progress', stderr: '' },
-      'git rev-parse HEAD': { exitCode: 0, stdout: 'abc1234567890\n', stderr: '' },
-      'git show --name-only --format= abc1234567890': { exitCode: 0, stdout: 'a.txt\nb.txt\n', stderr: '' },
+      'git commit -m work in progress': {
+        exitCode: 0,
+        stdout: '[main abc1234] work in progress',
+        stderr: '',
+      },
+      'git rev-parse HEAD': {
+        exitCode: 0,
+        stdout: 'abc1234567890\n',
+        stderr: '',
+      },
+      'git show --name-only --format= abc1234567890': {
+        exitCode: 0,
+        stdout: 'a.txt\nb.txt\n',
+        stderr: '',
+      },
     };
-    const out = await callOperation('git_commit', { message: 'work in progress' }, inv('c3'), ctx(scripts));
+    const out = await callOperation(
+      'git_commit',
+      { message: 'work in progress' },
+      inv('c3'),
+      ctx(scripts),
+    );
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.sha).toBe('abc1234567890');
@@ -55,7 +87,13 @@ describe('git effects (issue #19, slice C)', () => {
       'git_checkpoint',
       { message: 'before risky edit' },
       inv('c4'),
-      ctx({ 'git stash create -m before risky edit': { exitCode: 0, stdout: 'deadbeef\n', stderr: '' } }),
+      ctx({
+        'git stash create -m before risky edit': {
+          exitCode: 0,
+          stdout: 'deadbeef\n',
+          stderr: '',
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.sha).toBe('deadbeef');
@@ -66,10 +104,17 @@ describe('git effects (issue #19, slice C)', () => {
       'git_branch',
       {},
       inv('c5'),
-      ctx({ 'git branch --format=%(refname:short)': { exitCode: 0, stdout: 'main\nfeature/x\n', stderr: '' } }),
+      ctx({
+        'git branch --format=%(refname:short)': {
+          exitCode: 0,
+          stdout: 'main\nfeature/x\n',
+          stderr: '',
+        },
+      }),
     );
     expect(listed.ok).toBe(true);
-    if (listed.ok) expect(listed.result.branches).toEqual(['main', 'feature/x']);
+    if (listed.ok)
+      expect(listed.result.branches).toEqual(['main', 'feature/x']);
     const created = await callOperation(
       'git_branch',
       { create: 'feature/y' },

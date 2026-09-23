@@ -6,7 +6,9 @@ import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
-function ctx(scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>): OpContext {
+function ctx(
+  scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,
+): OpContext {
   const env = new FakeExecutionEnv(scripts);
   return { env, sessionId: 's1', agentId: 'root' };
 }
@@ -30,7 +32,13 @@ describe('git ops (issue #19, slice A)', () => {
       'git_status',
       {},
       inv(),
-      ctx({ 'git status --porcelain=v1 -b': { exitCode: 0, stdout: STATUS_OUT, stderr: '' } }),
+      ctx({
+        'git status --porcelain=v1 -b': {
+          exitCode: 0,
+          stdout: STATUS_OUT,
+          stderr: '',
+        },
+      }),
     );
     expect(out.ok).toBe(true);
     if (out.ok) {

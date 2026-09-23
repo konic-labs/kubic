@@ -98,6 +98,15 @@ describe('journal store (issue #17, slice A)', () => {
     expect(store.readBefore(recorded)).toBe(before);
   });
 
+  it('bounds growth by default: appends enforce the store limits', () => {
+    const store = new FileJournalStore(tmpRoot(), { maxBytes: 12 });
+    store.append(entry({ path: 'a.txt', after: 'aaaaaa\n' }));
+    store.append(entry({ path: 'b.txt', after: 'bbbbbb\n' }));
+    const paths = store.entries().map((e) => e.path);
+    expect(paths).toEqual(['b.txt']);
+    expect(store.blobCount()).toBe(1);
+  });
+
   it('enforces retention: size evicts oldest, age evicts stale, blobs unreferenced are dropped', () => {
     const store = new FileJournalStore(tmpRoot());
     store.append(entry({ path: 'old.txt', after: 'old\n', timestamp: 1000 }));

@@ -16,6 +16,15 @@ export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 // undo needs the pre-image, and content addressing dedupes it — editing
 // the same large file twice stores the before-content once.
 export const LARGE_FILE_BYTES = 64 * 1024;
+// Default size bound: the journal can never grow past this without an
+// explicit override. No default age bound — age pruning is opt-in via
+// retention config / `kubic clean` (issue #18's CLI).
+export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
+
+export interface JournalRetention {
+  maxBytes?: number;
+  maxAgeMs?: number;
+}
 
 export interface JournalEntryInput {
   path: string;
@@ -109,10 +118,18 @@ export function applyDelta(before: string, delta: string): string {
 export class FileJournalStore {
   readonly indexPath: string;
   private readonly blobsDir: string;
+  private readonly limits: Required<Pick<JournalRetention, 'maxBytes'>> &
+    Pick<JournalRetention, 'maxAgeMs'>;
 
-  constructor(dir: string) {
+  constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
     this.blobsDir = join(dir, 'blobs');
+    this.limits = {
+      maxBytes: retention.maxBytes ?? DEFAULT_JOURNAL_MAX_BYTES,
+      ...(retention.maxAgeMs === undefined
+        ? {}
+        : { maxAgeMs: retention.maxAgeMs }),
+    };
   }
 
   private bridge() {
@@ -153,7 +170,9 @@ export class FileJournalStore {
       ...(input.unattributed === true ? { unattributed: true } : {}),
     };
     bridge.appendFile(this.indexPath, `${JSON.stringify(entry)}\n`);
-    this.enforceRetention({});
+    // Bounded by construction: every append enforces the store's limits,
+    // so there is no path that grows the journal without checking.
+    this.enforceRetention({ ...this.limits });
     return entry;
   }
 

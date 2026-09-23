@@ -33,12 +33,11 @@ export class FileCheckpointStore implements CheckpointStore {
     this.file = join(dir, 'checkpoints.json');
     // Corrupt-tolerant: a torn write from a killed process must not take
     // down every future opener — start empty and overwrite on next persist.
+    // Only JSON corruption is swallowed; read/permission errors propagate.
     if (this.bridge.exists(this.file)) {
+      const text = this.bridge.readTextFile(this.file);
       try {
-        const raw = JSON.parse(this.bridge.readTextFile(this.file)) as Record<
-          string,
-          ProcessSnapshot
-        >;
+        const raw = JSON.parse(text) as Record<string, ProcessSnapshot>;
         for (const [key, snapshot] of Object.entries(raw)) {
           this.snapshots.set(key, { ...snapshot });
         }
@@ -82,14 +81,14 @@ export class FileCheckpointStore implements CheckpointStore {
     // path, so concurrent processes cannot clobber or hijack each other.
     persistCounter += 1;
     const tmp = `${this.file}.${process.pid}.${persistCounter}.tmp`;
-    this.bridge.writeFile(tmp, JSON.stringify(raw));
     try {
+      this.bridge.writeFile(tmp, JSON.stringify(raw));
       this.bridge.renameFile(tmp, this.file);
     } catch (error) {
       try {
         this.bridge.remove(tmp, false, true);
       } catch {
-        // Best-effort tmp cleanup; the rename error below is what matters.
+        // Best-effort tmp cleanup; the original error below is what matters.
       }
       throw error;
     }

@@ -13,6 +13,16 @@
 export const DEFAULT_VITEST_MUTATE = [
   'packages/trajectory/src/**/*.ts',
   '!packages/trajectory/src/**/*.test.ts',
+  'packages/core/src/**/*.ts',
+  '!packages/core/src/**/*.test.ts',
+  'packages/exec/src/**/*.ts',
+  '!packages/exec/src/**/*.test.ts',
+  'packages/agents/src/**/*.ts',
+  '!packages/agents/src/**/*.test.ts',
+  'packages/worker/src/lane/**/*.ts',
+  '!packages/worker/src/lane/**/*.test.ts',
+  'packages/worker/src/ops/**/*.ts',
+  '!packages/worker/src/ops/**/*.test.ts',
 ];
 export const DEFAULT_TAP_MUTATE = [
   'scripts/dep-lint.mjs',

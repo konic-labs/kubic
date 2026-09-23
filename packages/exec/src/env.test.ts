@@ -7,6 +7,7 @@ import {
   FakeExecutionEnv,
   MemoryCheckpointStore,
   NodeExecutionEnv,
+  ROOT_PROVENANCE,
 } from './env.js';
 
 const PROV: Provenance = {
@@ -23,6 +24,18 @@ function makeNodeEnv(): { env: ExecutionEnv; cwd: string } {
 }
 
 describe('execution env (issue #12, slice A)', () => {
+  it('pins the root provenance identity exactly', () => {
+    // Every field is asserted: '' → 'Stryker was here!' and 'root'/0/'init'
+    // mutants must fail (mutation: StringLiteral).
+    expect(ROOT_PROVENANCE).toEqual({
+      sessionId: '',
+      agentId: '',
+      toolCallId: 'root',
+      turnId: 0,
+      operation: 'init',
+    });
+  });
+
   it('confines writes to the cwd', () => {
     const { env } = makeNodeEnv();
     expect(() => env.fs.writeFile('../escape.txt', 'x')).toThrow(/cwd|confin/i);
@@ -70,7 +83,7 @@ describe('execution env (issue #12, slice A)', () => {
     env.fs.writeFile('tmp-1.txt', 'atomic');
     env.fs.rename('tmp-1.txt', 'final.txt');
     expect(env.fs.readFile('final.txt')).toBe('atomic');
-    expect(() => env.fs.readFile('tmp-1.txt')).toThrow();
+    expect(() => env.fs.readFile('tmp-1.txt')).toThrow(/ENOENT|no such file/);
     expect(() => env.fs.rename('../escape.txt', 'x.txt')).toThrow(
       /cwd|confin/i,
     );

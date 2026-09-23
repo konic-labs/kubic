@@ -312,4 +312,26 @@ describe('policy interceptors (issue #15, slice C)', () => {
       rewritten: false,
     });
   });
+
+  it('matches every destructive shape, not just rm and git clean', () => {
+    // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch:
+    // surviving Regex mutants here mean a destructive shape slips through.
+    for (const command of [
+      'dd if=/dev/zero of=/dev/sda',
+      'dd if=x of= /dev/null',
+      'shred -u secret.txt',
+      'mkfs.ext4 /dev/sda1',
+      'chmod -R 777 /tmp/x',
+      'chown -R root:root /tmp/x',
+      ':(){ :|:& };:',
+      'rm -rf ~/.gnupg',
+      'rm -f key.pem',
+      'rm -rf /tmp/work-notes',
+      'rmdir /tmp/old',
+    ]) {
+      expect(defaultIsDestructive(command, '/work')).toBe(true);
+    }
+    expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
+    expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
+  });
 });

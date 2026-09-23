@@ -25,6 +25,17 @@ describe('presentation contract (issue #5, §66)', () => {
       'usage',
       'workers',
     ]);
+    // Values are the closed-world marker, not just the keys: flipping any
+    // field to false must fail (mutation: BooleanLiteral true→false).
+    expect(PRESENTATION_STATE_FIELDS).toEqual({
+      session: true,
+      agents: true,
+      lanes: true,
+      workers: true,
+      approvals: true,
+      usage: true,
+      connection: true,
+    });
   });
 
   it('command union is exactly the §66 eighteen', () => {

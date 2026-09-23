@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkAgreement,
   checkGrantable,
+  PolicyValidationError,
   SOLO_DEFAULTS,
   toolsForClasses,
   validateClasses,
@@ -80,13 +81,27 @@ describe('permission policy model (issue #15, slice A)', () => {
   it('merges partial input over solo defaults', () => {
     expect(validateClasses({})).toEqual(SOLO_DEFAULTS);
     expect(validateClasses({ filesystem: 'read' }).shell).toBe(true);
-    expect(() => validateClasses({ filesystem: 'sometimes' })).toThrow();
+    expect(() => validateClasses({ filesystem: 'sometimes' })).toThrow(
+      /invalid filesystem: "sometimes"/,
+    );
   });
 
   it('rejects unknown class literals', () => {
     expect(() =>
       validateClasses({ ...SOLO_DEFAULTS, filesystem: 'sometimes' }),
-    ).toThrow();
-    expect(() => validateClasses(null)).toThrow();
+    ).toThrow(/invalid filesystem: "sometimes"/);
+    expect(() => validateClasses(null)).toThrow(
+      /permission classes must be an object/,
+    );
+  });
+
+  it('throws named PolicyValidationError failures', () => {
+    try {
+      validateClasses(null);
+      expect.unreachable('validateClasses(null) must throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(PolicyValidationError);
+      expect((err as Error).name).toBe('PolicyValidationError');
+    }
   });
 });

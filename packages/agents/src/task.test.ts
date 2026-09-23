@@ -36,6 +36,26 @@ describe('agent task (issue #6, §67)', () => {
       'workspaceMode',
       'worktree',
     ]);
+    // Values are the closed-world marker: flipping any field to false must
+    // fail (mutation: BooleanLiteral true→false).
+    expect(AGENT_TASK_FIELDS).toEqual({
+      taskId: true,
+      parentSessionId: true,
+      role: true,
+      objective: true,
+      worktree: true,
+      constraints: true,
+      relevantFiles: true,
+      previousFindings: true,
+      expectedOutput: true,
+      model: true,
+      scopedModels: true,
+      workspaceMode: true,
+      toolNames: true,
+      budget: true,
+      resources: true,
+      artifacts: true,
+    });
   });
 
   it('accepts a minimal valid task', () => {

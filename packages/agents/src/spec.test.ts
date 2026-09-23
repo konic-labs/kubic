@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSnapshot, SpawnRequest, SubagentSpec } from './spec.js';
 import {
+  allocateGeneration,
   buildSubagentResult,
   createGenerationState,
   forkSessionConfig,
@@ -219,6 +220,60 @@ describe('spawn_agent contract (issue #41, §6.2 + §38.2 + §71)', () => {
       expect(outcome.spec.budget).toEqual({ maxTokens: 100 });
     }
   });
+
+  it('a non-object budget fails the spawn fail-closed (parity with validateTransferSpawn)', () => {
+    const outcome = spawnAgent(
+      spawnReq({
+        task: validTask({ budget: 'x' as unknown as AgentTask['budget'] }),
+      }),
+      createGenerationState(),
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.code).toBe('SPAWN_FAILED');
+      expect(outcome.reason).toMatch(/budget/);
+    }
+    expect(outcome).not.toHaveProperty('spec');
+  });
+
+  it('allocation with __proto__/constructor keys stays monotonic (no prototype pollution)', () => {
+    const generations = createGenerationState();
+    expect(allocateGeneration(generations, '__proto__')).toBe(1);
+    expect(allocateGeneration(generations, '__proto__')).toBe(2);
+    expect(allocateGeneration(generations, 'constructor')).toBe(1);
+    expect(allocateGeneration(generations, 'constructor')).toBe(2);
+    expect(allocateGeneration(generations, 'child-1')).toBe(1);
+    expect(
+      validateGenerationSend(generations, {
+        sessionId: '__proto__',
+        generation: 2,
+      }).ok,
+    ).toBe(true);
+    expect(({} as Record<string, unknown>).polluted).toBe(undefined);
+  });
+
+  it('spawn deep-copies retryBudget so the child cannot mutate the parent task', () => {
+    const task = validTask({
+      budget: {
+        maxTokens: 100,
+        retryBudget: { maxAttempts: 3, maxCostUsd: 1 },
+      },
+    });
+    const outcome = spawnAgent(spawnReq({ task }), createGenerationState());
+    expect(outcome.ok).toBe(true);
+    const childBudget = outcome.ok ? outcome.spec.budget : undefined;
+    expect(childBudget?.retryBudget).toEqual({
+      maxAttempts: 3,
+      maxCostUsd: 1,
+    });
+    if (childBudget?.retryBudget !== undefined) {
+      childBudget.retryBudget.maxAttempts = 99;
+    }
+    expect(task.budget.retryBudget).toEqual({
+      maxAttempts: 3,
+      maxCostUsd: 1,
+    });
+  });
 });
 
 function parentSnapshot(): SessionSnapshot {
@@ -256,6 +311,28 @@ describe('fork semantics + child isolation (issue #41, §22.3 + §23 + §24)', (
     const config = forkSessionConfig(parent);
     config.toolNames.push('write');
     expect(parent.toolNames).toEqual(['bash', 'read']);
+  });
+
+  it('fork deep-copies retryBudget so the child cannot mutate the parent', () => {
+    const parent: SessionSnapshot = {
+      ...parentSnapshot(),
+      budget: {
+        maxTokens: 100,
+        retryBudget: { maxAttempts: 3, maxCostUsd: 1 },
+      },
+    };
+    const config = forkSessionConfig(parent);
+    expect(config.budget?.retryBudget).toEqual({
+      maxAttempts: 3,
+      maxCostUsd: 1,
+    });
+    if (config.budget?.retryBudget !== undefined) {
+      config.budget.retryBudget.maxAttempts = 99;
+    }
+    expect(parent.budget?.retryBudget).toEqual({
+      maxAttempts: 3,
+      maxCostUsd: 1,
+    });
   });
 
   it('specKeyOf carries the (sessionId, generation) key', () => {

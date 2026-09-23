@@ -143,13 +143,15 @@ export function specKeyOf(
 }
 
 // Generation ledger (§11): the first spawn for a session starts at 1, every
-// respawn moves monotonically. The ledger lives with the parent.
+// respawn moves monotonically. The ledger lives with the parent. The map is
+// null-prototype: sessionIds are caller-supplied, so '__proto__' must behave
+// like any other key instead of corrupting allocation.
 export interface GenerationState {
   lastBySession: Record<string, number>;
 }
 
 export function createGenerationState(): GenerationState {
-  return { lastBySession: {} };
+  return { lastBySession: Object.create(null) };
 }
 
 export function allocateGeneration(
@@ -272,6 +274,12 @@ export function spawnAgent(
   ) {
     return spawnFailed('toolNames grant must be non-empty (§24)');
   }
+  // Fail closed on a malformed budget (parity with validateTransferSpawn):
+  // a non-object budget must reject the spawn, never ride along as no
+  // limits.
+  if (task.budget !== undefined && !isObject(task.budget)) {
+    return spawnFailed('budget must be an object when configured (§71)');
+  }
 
   const generation = allocateGeneration(generations, request.sessionId);
   const spec: SubagentSpec = {
@@ -292,7 +300,7 @@ export function spawnAgent(
   // §71: only a configured budget travels. Omitted or empty means no
   // limits — never a smuggled default.
   if (isBudgetConfigured(task.budget)) {
-    spec.budget = { ...task.budget };
+    spec.budget = copyBudget(task.budget);
   }
   return {
     ok: true,
@@ -337,6 +345,16 @@ function copyResources(resources: TaskResources): TaskResources {
   return copy;
 }
 
+// Budgets carry a nested retryBudget object: a top-level spread alone lets
+// the child mutate the parent's retry caps, so copy the nested object too.
+function copyBudget(budget: AgentBudget): AgentBudget {
+  const copy: AgentBudget = { ...budget };
+  if (budget.retryBudget !== undefined) {
+    copy.retryBudget = { ...budget.retryBudget };
+  }
+  return copy;
+}
+
 export function forkSessionConfig(snapshot: SessionSnapshot): SessionConfig {
   const config: SessionConfig = {
     model: { ...snapshot.model },
@@ -350,7 +368,7 @@ export function forkSessionConfig(snapshot: SessionSnapshot): SessionConfig {
     config.resources = copyResources(snapshot.resources);
   }
   if (snapshot.budget !== undefined) {
-    config.budget = { ...snapshot.budget };
+    config.budget = copyBudget(snapshot.budget);
   }
   return config;
 }

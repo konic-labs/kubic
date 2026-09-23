@@ -156,4 +156,25 @@ describe('addWorktree preflight (issue #45)', () => {
     expect((error as { code?: string }).code).toBe('already_exists');
     expect((error as Error).message).toMatch(/kubic\/agent-1/);
   });
+
+  it('does not confuse kubic/agent-1 with kubic/agent-10 in the branch list', async () => {
+    const env = new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': TOPLEVEL,
+      'git rev-parse --git-common-dir': COMMON_DIR,
+      'git branch --list kubic/agent-1': {
+        exitCode: 0,
+        stdout: '  kubic/agent-10\n  kubic/agent-11\n',
+        stderr: '',
+      },
+      'git worktree add /repo/.kubic/wt/agent-1 -b kubic/agent-1': {
+        exitCode: 0,
+        stdout: `Preparing worktree (new branch 'kubic/agent-1')\n`,
+        stderr: '',
+      },
+    });
+    seedRepo(env);
+    const result = await addWorktree(env, '/repo', 'agent-1');
+    expect(result.branch).toBe('kubic/agent-1');
+    expect(result.path).toBe('/repo/.kubic/wt/agent-1');
+  });
 });

@@ -8,10 +8,12 @@ import { WorktreeError } from './errors.js';
 export const OUTSIDE_WRITE_CAPABILITY = 'outside-write';
 
 // Lexical only: resolve() defeats `..` and absolute escapes but does NOT
-// resolve symlinks (a symlink inside the worktree can still point out) and
-// is subject to TOCTOU between check and write. realpath is unavailable
-// here: host code cannot import node:fs (dep-lint §9) and the ExecutionEnv
-// seam exposes no realpath — the write path must re-check at use time.
+// resolve symlinks (live probe: a symlink inside the worktree pointing out
+// passes this check) and is subject to TOCTOU between check and write.
+// realpath is unavailable here: host code cannot import node:fs (dep-lint
+// §9) and the ExecutionEnv seam exposes no realpath. REQUIRED: the write
+// path MUST re-check with a realpath resolution at use time (immediately
+// before the write) when it lands — this function alone never gates writes.
 export function isOutsideWorktree(
   worktreePath: string,
   target: string,

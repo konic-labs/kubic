@@ -115,8 +115,11 @@ export function parseCleanArgs(
 
 // Only spawned worktrees are planned — the main checkout is never pruned.
 // Scope is repoRoot-anchored (normalized prefix under `<root>/.kubic/wt/`)
-// when repoRoot is known; otherwise a normalized shape check so direct
-// `..` escapes never slip through a substring filter.
+// when repoRoot is known; otherwise a normalized shape-only fallback so
+// direct `..` escapes never slip through a substring filter. NOTE: the
+// shape-only fallback accepts any repo's spawned dir, so repoRoot MUST be
+// supplied (or defaulted from `git rev-parse --show-toplevel`) at the CLI
+// wiring layer when it lands — never ship the unanchored path as default.
 export function planClean(
   entries: WorktreeEntry[],
   options: CleanOptions,

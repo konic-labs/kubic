@@ -39,6 +39,16 @@ function isNotARepo(stderr: string): boolean {
   return /not a git repository/i.test(stderr);
 }
 
+function branchExists(stdout: string, branch: string): boolean {
+  // Exact-line match only: `git branch --list` output is one branch per
+  // line (with optional leading `*`/whitespace). A substring check would
+  // false-positive (`kubic/agent-1` matches `kubic/agent-10`).
+  return stdout
+    .split('\n')
+    .map((line) => line.trim().replace(/^\*\s*/, ''))
+    .some((line) => line === branch);
+}
+
 function isPermissionFailure(output: string): boolean {
   return /permission denied|EACCES|EROFS|read-only/i.test(output);
 }
@@ -163,7 +173,7 @@ export async function addWorktree(
     );
   }
   const branchHit = await runGit(env, ['branch', '--list', branch], provenance);
-  if (branchHit.exitCode === 0 && branchHit.stdout.includes(branch)) {
+  if (branchHit.exitCode === 0 && branchExists(branchHit.stdout, branch)) {
     throw new WorktreeError(
       'already_exists',
       `branch ${branch} already exists — remove it with \`kubic clean\` first`,

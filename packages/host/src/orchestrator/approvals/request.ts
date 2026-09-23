@@ -112,15 +112,32 @@ function summarize(toolName: string, trigger: string, args: unknown): string {
 }
 
 // Justifications must carry real meaning (§63): invisible formatting
-// characters (zero-width spaces, joiners, direction marks, BOM, soft
-// hyphen) are stripped before measuring, and the visible remainder must
-// reach a minimum length — a lone 'ok' or a zero-width smuggle is refused.
+// characters (zero-width spaces, joiners, direction marks, bidi embeds
+// and isolates, BOM, soft hyphen, variation selectors, and the other
+// default-ignorable/format ranges) are stripped before measuring, and the
+// visible remainder must reach a minimum length with real letter/digit
+// content — a lone 'ok', a zero-width smuggle, a bidi-control smuggle, or
+// a punctuation-only filler is refused.
 export const MIN_JUSTIFICATION_LENGTH = 8;
 
-const INVISIBLE_FORMAT = /[\u200B-\u200F\u2060\uFEFF\u00AD\u180E]/g;
+// Minimum count of letter/digit characters (Unicode letters and numbers)
+// required in the normalized justification: length alone is not meaning,
+// so a punctuation-only filler ('........') is refused.
+export const MIN_JUSTIFICATION_ALNUM = 4;
+
+const INVISIBLE_FORMAT =
+  /[\p{Cf}\u2000-\u200A\u2028\u2029\u2064\u2065\u3000\u115F\u1160\u3164]/gu;
+// Combining-mark invisibles (variation selectors, combining grapheme
+// joiner) live in their own class: mixing them with base characters in
+// one class trips noMisleadingCharacterClass, and the split keeps the
+// strip exact.
+const INVISIBLE_MARKS = /[\u034F\uFE00-\uFE0F]/gu;
 
 export function normalizeJustification(value: string): string {
-  return value.replace(INVISIBLE_FORMAT, '').trim();
+  return value
+    .replace(INVISIBLE_FORMAT, '')
+    .replace(INVISIBLE_MARKS, '')
+    .trim();
 }
 
 export function validateOrchestratorRequest(
@@ -153,6 +170,12 @@ export function validateOrchestratorRequest(
   if (cleanJustification.length < MIN_JUSTIFICATION_LENGTH) {
     throw new OrchestratorRequestError(
       `approval requires justification (§63): visible justification must be at least ${MIN_JUSTIFICATION_LENGTH} characters`,
+    );
+  }
+  const meaningful = (cleanJustification.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  if (meaningful < MIN_JUSTIFICATION_ALNUM) {
+    throw new OrchestratorRequestError(
+      `approval requires justification (§63): visible justification must contain at least ${MIN_JUSTIFICATION_ALNUM} letter/digit characters`,
     );
   }
   for (const field of ['sessionId', 'agentId', 'role'] as const) {

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyBudgetRaise,
   createBudgetGate,
+  mintUserBudgetApproval,
   recordToolCall,
   validateOrchestratorBudget,
 } from './budgets.js';
@@ -22,6 +23,7 @@ import {
   buildSessionSkipDoctorCheck,
   enableSessionSkip,
   isSessionSkipEnabled,
+  MAX_SESSION_SKIP_TTL_MS,
 } from './skip.js';
 
 function base() {
@@ -241,7 +243,7 @@ describe('security regression: budgets (issue #48)', () => {
   it('RAISE: a user-approved raise applies; a self-raise still refuses', () => {
     const current = validateOrchestratorBudget({ maxToolCalls: 5 });
     const granted = applyBudgetRaise({
-      approver: 'user',
+      approver: mintUserBudgetApproval(),
       owner: 'agent-1',
       current,
       proposed: { maxToolCalls: 50 },
@@ -257,5 +259,169 @@ describe('security regression: budgets (issue #48)', () => {
       proposed: { maxToolCalls: 50 },
     });
     expect(selfRaise.applied).toBe(false);
+  });
+});
+
+describe('round-2 review findings (issue #48, fix cycle 2)', () => {
+  it('BIDI: 12 bidi/isolate controls do not satisfy the justification minimum', () => {
+    const smuggled = String.fromCodePoint(
+      0x202a,
+      0x202b,
+      0x202c,
+      0x202d,
+      0x202e,
+      0x2066,
+      0x2067,
+      0x2068,
+      0x2069,
+      0x202a,
+      0x202b,
+      0x202c,
+    );
+    expect(smuggled.length).toBe(12);
+    expect(() =>
+      validateOrchestratorRequest({ ...base(), justification: smuggled }),
+    ).toThrow(/justification/);
+  });
+
+  it('BIDI: a legit justification still passes after the strip widening', () => {
+    const validated = validateOrchestratorRequest(base());
+    expect(validated.justification).toBe('need release tarball for the task');
+  });
+
+  it('JUST-PUNCT: punctuation-only justification is rejected', () => {
+    expect(() =>
+      validateOrchestratorRequest({ ...base(), justification: '........' }),
+    ).toThrow(/justification/);
+  });
+
+  it('TTL: Infinity ttlMs is rejected (skip must lapse)', () => {
+    expect(() =>
+      enableSessionSkip(
+        { sessionId: 's1' },
+        { by: 'user', ttlMs: Number.POSITIVE_INFINITY },
+      ),
+    ).toThrow(/ttlMs/);
+    expect(() =>
+      enableSessionSkip(
+        { sessionId: 's1' },
+        { by: 'user', ttlMs: MAX_SESSION_SKIP_TTL_MS + 1 },
+      ),
+    ).toThrow(/ttlMs/);
+    const bounded = enableSessionSkip(
+      { sessionId: 's1' },
+      { by: 'user', clock: () => 1000, ttlMs: MAX_SESSION_SKIP_TTL_MS },
+    );
+    expect(isSessionSkipEnabled({ sessionId: 's1' }, [bounded], 1001)).toBe(
+      true,
+    );
+  });
+
+  it('DOCTOR: expired skip reads enforced (pass), active reads full-access (fail)', () => {
+    const record = enableSessionSkip(
+      { sessionId: 's1' },
+      { by: 'user', clock: () => 1000, ttlMs: 500 },
+    );
+    const active = buildSessionSkipDoctorCheck('s1', [record], 1200);
+    expect(active.status).toBe('fail');
+    expect(active.detail).toMatch(/full-access/);
+    const expired = buildSessionSkipDoctorCheck('s1', [record], 1600);
+    expect(expired.status).toBe('pass');
+    expect(expired.detail).toMatch(/enforced/);
+  });
+
+  it('SEED-BYPASS: a seeded manager approval for the recomputed key still prompts', async () => {
+    const request = buildOrchestratorRequest(base());
+    const store = new MemoryDecisionStore();
+    store.save({ [request.key]: { approved: true, by: 'manager' } });
+    let asks = 0;
+    const audit: { type: string; detail: string }[] = [];
+    const router = createOrchestratorRouter({
+      maxPendingMs: 100,
+      store,
+      audit: (event) => {
+        audit.push(event);
+      },
+      awaitAnswer: async () => {
+        asks += 1;
+        return { approved: true, by: 'user' };
+      },
+    });
+    const verdict = await router.request(request);
+    expect(asks).toBe(1);
+    expect(verdict).toEqual({ approved: true, by: 'user' });
+    expect(
+      audit.some(
+        (e) => e.type.includes('drop') && e.detail.includes(request.key),
+      ),
+    ).toBe(true);
+  });
+
+  it('SUBMIT-AUDIT: non-user submit refusal is recorded with no audit deps', () => {
+    const before = readManagerRefusalLog().length;
+    const router = createOrchestratorRouter({ maxPendingMs: 50 });
+    const verdict = router.submit(buildOrchestratorRequest(base()), {
+      approved: true,
+      by: 'manager',
+    });
+    expect(verdict.approved).toBe(false);
+    const after = readManagerRefusalLog();
+    expect(after.length).toBe(before + 1);
+    expect(after[after.length - 1]?.detail).toMatch(/manager/);
+  });
+
+  it('RAISE-CAP: a bare approver string carries no authority and is refused', () => {
+    const current = validateOrchestratorBudget({ maxToolCalls: 5 });
+    const stringOnly = applyBudgetRaise({
+      approver: 'user',
+      owner: 'agent-1',
+      current,
+      proposed: { maxToolCalls: 50 },
+    });
+    expect(stringOnly.applied).toBe(false);
+    // A forged capability object (right shape, wrong grant) is refused too:
+    // only mintUserBudgetApproval — the user-dialog path — mints authority.
+    const forged = applyBudgetRaise({
+      approver: { decider: 'user', grant: Symbol('forged') },
+      owner: 'agent-1',
+      current,
+      proposed: { maxToolCalls: 50 },
+    });
+    expect(forged.applied).toBe(false);
+    const granted = applyBudgetRaise({
+      approver: mintUserBudgetApproval(),
+      owner: 'agent-1',
+      current,
+      proposed: { maxToolCalls: 50 },
+    });
+    expect(granted.applied).toBe(true);
+  });
+
+  it('DENIAL-DOS: attacker pre-denial does not block the user prompt; user approval wins', async () => {
+    let asks = 0;
+    const router = createOrchestratorRouter({
+      maxPendingMs: 100,
+      awaitAnswer: async () => {
+        asks += 1;
+        return { approved: true, by: 'user' };
+      },
+    });
+    const request = buildOrchestratorRequest(base());
+    router.submit(request, { approved: false, reason: 'attacker says no' });
+    const verdict = await router.request(request);
+    expect(asks).toBe(1);
+    expect(verdict).toEqual({ approved: true, by: 'user' });
+  });
+
+  it('DENIAL-DOS: a later user approval overrides a stored non-user denial via submit', () => {
+    const router = createOrchestratorRouter({ maxPendingMs: 50 });
+    const request = buildOrchestratorRequest(base());
+    router.submit(request, { approved: false, reason: 'attacker says no' });
+    const verdict = router.submit(request, { approved: true, by: 'user' });
+    expect(verdict).toEqual({ approved: true, by: 'user' });
+    expect(router.decided(request.key)).toEqual({
+      approved: true,
+      by: 'user',
+    });
   });
 });

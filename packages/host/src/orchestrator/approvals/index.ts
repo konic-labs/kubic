@@ -14,6 +14,7 @@ export type {
   OrchestratorBudget,
   RetryBudgetConfig,
   SelfRaiseRefusal,
+  UserBudgetApproval,
 } from './budgets.js';
 export {
   applyBudgetRaise,
@@ -22,6 +23,7 @@ export {
   checkBudgetExhaustion,
   createBudgetGate,
   createBurnDown,
+  mintUserBudgetApproval,
   OrchestratorBudgetError,
   RUN_EXIT_BUDGET,
   recordToolCall,
@@ -36,6 +38,7 @@ export type {
 } from './request.js';
 export {
   buildOrchestratorRequest,
+  MIN_JUSTIFICATION_ALNUM,
   MIN_JUSTIFICATION_LENGTH,
   normalizeJustification,
   ORCHESTRATOR_TRIGGERS,
@@ -49,6 +52,7 @@ export type {
   ManagerRefusalEvent,
   OrchestratorRouter,
   OrchestratorVerdict,
+  RouterAuditEvent,
   RouterOptions,
 } from './routing.js';
 export {
@@ -70,5 +74,6 @@ export {
   enableSessionSkip,
   formatSessionSkipIndicator,
   isSessionSkipEnabled,
+  MAX_SESSION_SKIP_TTL_MS,
   SessionSkipError,
 } from './skip.js';

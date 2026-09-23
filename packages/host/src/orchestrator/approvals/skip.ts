@@ -24,6 +24,11 @@ export interface SessionRef {
   sessionId: string;
 }
 
+// Upper bound for a session skip grant: full-access must lapse on a human
+// timescale, never persist indefinitely. An unbounded (Infinity) TTL would
+// make the skip never lapse, so non-finite and over-bound TTLs are refused.
+export const MAX_SESSION_SKIP_TTL_MS = 24 * 60 * 60 * 1000;
+
 export function enableSessionSkip(
   session: SessionRef,
   deps: { by: string; clock?: () => number; ttlMs?: number },
@@ -41,8 +46,15 @@ export function enableSessionSkip(
       `session skip must be enabled by the user (got by:${deps.by})`,
     );
   }
-  if (deps.ttlMs !== undefined && !(deps.ttlMs > 0)) {
-    throw new SessionSkipError('ttlMs must be a positive number when provided');
+  if (
+    deps.ttlMs !== undefined &&
+    (!Number.isFinite(deps.ttlMs) ||
+      !(deps.ttlMs > 0) ||
+      deps.ttlMs > MAX_SESSION_SKIP_TTL_MS)
+  ) {
+    throw new SessionSkipError(
+      `ttlMs must be a finite positive number up to ${MAX_SESSION_SKIP_TTL_MS} when provided`,
+    );
   }
   const enabledAt = (deps.clock ?? Date.now)();
   return {
@@ -69,7 +81,10 @@ export function isSessionSkipEnabled(
   return records.some(
     (record) =>
       record.sessionId === session.sessionId &&
-      (record.expiresAt === undefined || now < record.expiresAt),
+      // A non-finite stored expiry (legacy Infinity grant) never counts as
+      // enabled: fail closed back to enforcement instead of full-access.
+      (record.expiresAt === undefined ||
+        (Number.isFinite(record.expiresAt) && now < record.expiresAt)),
   );
 }
 
@@ -104,8 +119,16 @@ export function buildSessionSkipAuditEvent(
 export function buildSessionSkipDoctorCheck(
   sessionId: string,
   records: readonly SessionSkipRecord[] = [],
+  now: number = Date.now(),
 ): DoctorCheck {
-  const record = records.find((entry) => entry.sessionId === sessionId);
+  // Expiry-aware: the doctor must agree with enforcement. An expired grant
+  // reads enforced (pass); only a live grant reads full-access (fail).
+  const record = records.find(
+    (entry) =>
+      entry.sessionId === sessionId &&
+      (entry.expiresAt === undefined ||
+        (Number.isFinite(entry.expiresAt) && now < entry.expiresAt)),
+  );
   if (record === undefined) {
     return {
       id: 'approvals:session-skip',

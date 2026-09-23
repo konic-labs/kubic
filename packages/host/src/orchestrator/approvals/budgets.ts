@@ -225,18 +225,44 @@ export type BudgetRaiseResult =
   | { applied: true; budget: OrchestratorBudget }
   | { applied: false; reason: string };
 
-// Lawful raises need user approval: when the approver is the user, the
-// proposed budget is validated and applied; any agent approver — including
-// the owner itself — is refused exactly like a self-raise.
+// Lawful raises need user approval, proven by capability — not by string.
+// A bare approver:'user' string carries no authority (any caller can utter
+// it) and is refused. The only lawful approver is a UserBudgetApproval
+// minted by mintUserBudgetApproval, which only the user-dialog path may
+// call: the module-held grant symbol cannot be forged by workers, the
+// manager, or config input.
+const USER_BUDGET_GRANT = Symbol('kubic:user-budget-grant');
+
+export interface UserBudgetApproval {
+  readonly decider: 'user';
+  readonly grant: symbol;
+}
+
+export function mintUserBudgetApproval(): UserBudgetApproval {
+  return { decider: 'user', grant: USER_BUDGET_GRANT };
+}
+
 export function applyBudgetRaise(input: {
-  approver: string;
+  approver: string | UserBudgetApproval;
   owner: string;
   current: OrchestratorBudget;
   proposed: OrchestratorBudget;
 }): BudgetRaiseResult {
-  if (input.approver !== 'user') {
+  const approver = input.approver;
+  const lawful =
+    typeof approver === 'object' &&
+    approver !== null &&
+    approver.decider === 'user' &&
+    approver.grant === USER_BUDGET_GRANT;
+  if (!lawful) {
+    const named =
+      typeof approver === 'string'
+        ? approver
+        : (approver as { decider?: unknown }).decider === 'user'
+          ? 'user (invalid grant)'
+          : 'unknown';
     const refusal = refuseSelfRaise({
-      caller: input.approver,
+      caller: named,
       owner: input.owner,
       current: input.current,
       proposed: input.proposed,

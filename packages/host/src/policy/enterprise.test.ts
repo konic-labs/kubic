@@ -371,4 +371,43 @@ describe('case-transform bypass (fix cycle 2)', () => {
     expect(redacted).not.toContain('SK-FAUX-TEST-KEY-0001');
     expect(redacted).toContain(shapes.REDACTED_SECRET);
   });
+
+  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
+    'broker backstop refuses %s-scheme values with no inventory',
+    async (scheme) => {
+      const mod = await import('./enterprise.js');
+      const { policy } = mod.resolveEffectivePolicy([
+        {
+          layer: 'enterprise',
+          policy: { credentials: { requireCredentialBroker: true } },
+        },
+      ]);
+      expect(() =>
+        mod.buildBrokeredWorkerEnv(
+          { EVIL: `${scheme} faux-token-0001-abcdef` },
+          [],
+          policy,
+        ),
+      ).toThrow(mod.PolicyDeniedError);
+    },
+  );
+
+  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
+    'denyLocalCredentials refuses %s-scheme values under innocuous keys',
+    async (scheme) => {
+      const mod = await import('./enterprise.js');
+      const { policy } = mod.resolveEffectivePolicy([
+        {
+          layer: 'enterprise',
+          policy: { credentials: { denyLocalCredentials: true } },
+        },
+      ]);
+      expect(() =>
+        mod.assertNoLocalCredentials(
+          { CONFIG: `${scheme} faux-token-0001-abcdef` },
+          policy,
+        ),
+      ).toThrow(mod.PolicyDeniedError);
+    },
+  );
 });

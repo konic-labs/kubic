@@ -263,6 +263,11 @@ function cloneAuditRecord(record: OrgAuditRecord): OrgAuditRecord {
 // — a throw, a returned thenable (async sinks are refused: records must be
 // durable before emitAudit returns), or zero sinks — throws AuditSinkError
 // naming the failed sinks. Records are never silently lost.
+// The `secrets` inventory defaults to [] by design (not an oversight):
+// direct callers that withhold it still get shape-only redaction of failure
+// messages via redactSecretShapes, but unshaped listed values cannot be
+// redacted from error text — pass the inventory (emitAudit forwards
+// options.secrets) whenever one exists.
 export function appendAudit(
   sinks: AuditSink[],
   record: OrgAuditRecord,

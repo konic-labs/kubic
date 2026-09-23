@@ -36,3 +36,41 @@ describe('case-insensitive prefixes', () => {
     expect(redactSecretShapes('plain text')).toBe('plain text');
   });
 });
+
+describe('bearer/AKIA/PEM case bypass (fix cycle 3)', () => {
+  it.each(['BEARER', 'bEaReR', 'BeArEr', 'bearer'])(
+    'detects %s-scheme tokens case-insensitively',
+    (scheme) => {
+      expect(containsSecretShape(`${scheme} faux-token-0001-abcdef`)).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
+    'redacts %s-scheme tokens instead of echoing them',
+    (scheme) => {
+      const live = `${scheme} faux-token-0001-abcdef`;
+      const out = redactSecretShapes(`saw ${live} on the wire`);
+      expect(out).not.toContain(live);
+      expect(out).not.toContain('faux-token-0001-abcdef');
+      expect(out).toContain(REDACTED_SECRET);
+    },
+  );
+
+  it('detects lowercase akia access keys', () => {
+    expect(containsSecretShape('akiafauxtestkey00012')).toBe(true);
+    const out = redactSecretShapes('saw akiafauxtestkey00012 on the wire');
+    expect(out).not.toContain('akiafauxtestkey00012');
+    expect(out).toContain(REDACTED_SECRET);
+  });
+
+  it('detects lowercase PEM private-key headers', () => {
+    expect(containsSecretShape('-----begin rsa private key-----')).toBe(true);
+    const out = redactSecretShapes(
+      'saw -----begin rsa private key----- on the wire',
+    );
+    expect(out).not.toContain('begin rsa private key');
+    expect(out).toContain(REDACTED_SECRET);
+  });
+});

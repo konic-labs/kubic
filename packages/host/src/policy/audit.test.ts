@@ -213,6 +213,44 @@ describe('case-transform bypass (fix cycle 2)', () => {
     expect(sink.records).toHaveLength(0);
   });
 
+  it.each(['BEARER', 'bEaReR', 'BeArEr'])(
+    'refuses %s-scheme tokens in the wire form',
+    (scheme) => {
+      const sink = createMemorySink();
+      expect(() =>
+        emitAudit([sink], {
+          ...baseInput(),
+          reason: `denied: saw ${scheme} faux-token-0001-abcdef on the wire`,
+        }),
+      ).toThrow(AuditShapeError);
+      expect(sink.records).toHaveLength(0);
+    },
+  );
+
+  it.each(['BEARER', 'bEaReR'])(
+    'redacts %s-scheme tokens from sink failure messages',
+    (scheme) => {
+      const live = `${scheme} faux-token-0001-abcdef`;
+      const leaking = {
+        name: 'leaky',
+        kind: 'syslog' as const,
+        write: (): void => {
+          throw new Error(`syslog unreachable: saw ${live} on the wire`);
+        },
+      };
+      try {
+        appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+        expect.unreachable('leaky sink failure must throw');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuditSinkError);
+        const message = (error as Error).message;
+        expect(message).not.toContain(live);
+        expect(message).not.toContain('faux-token-0001-abcdef');
+        expect(message).toContain('[redacted-secret]');
+      }
+    },
+  );
+
   it('redacts uppercase SK- material from sink failure messages', () => {
     const live = 'SK-FAUX-TEST-KEY-0001';
     const leaking = {

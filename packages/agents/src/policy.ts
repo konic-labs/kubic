@@ -44,7 +44,12 @@ const FS_WRITE_TOOLS = ['write', 'edit'];
 // Read-only git tools are safe to replay; effect tools (stage/commit/
 // checkpoint) mutate the repo but stay inside it — no init, no push tool.
 const GIT_READ_TOOLS = ['git_status', 'git_diff', 'git_log', 'git_show'];
-const GIT_WRITE_TOOLS = ['git_stage', 'git_commit', 'git_branch', 'git_checkpoint'];
+const GIT_WRITE_TOOLS = [
+  'git_stage',
+  'git_commit',
+  'git_branch',
+  'git_checkpoint',
+];
 
 export function toolsForClasses(classes: PermissionClasses): string[] {
   const tools: string[] = [];

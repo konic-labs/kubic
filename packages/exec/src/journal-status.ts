@@ -46,7 +46,7 @@ function readRepo(root: string): RepoState | null {
     return null;
   }
   const branch = head.startsWith('ref: ')
-    ? (head.slice(5).replace(/^refs\/heads\//, '') || '(unknown)')
+    ? head.slice(5).replace(/^refs\/heads\//, '') || '(unknown)'
     : '(detached)';
   let dirty: boolean | null = null;
   try {

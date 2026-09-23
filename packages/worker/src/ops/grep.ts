@@ -95,7 +95,9 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
     const max = args.maxMatches ?? GREP_DEFAULT_MAX;
     const matches: GrepMatch[] = [];
     let truncated = false;
-    for (const entry of walkFiles(ctx.env.fs, root)) {
+    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
+    truncated = hitCap;
+    for (const entry of entries) {
       if (entry.isDirectory) continue;
       if (args.include && !entry.path.includes(args.include)) continue;
       let text: string;

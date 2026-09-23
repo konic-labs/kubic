@@ -57,15 +57,21 @@ export const lsOperation: Operation<LsArgs, LsResult> = {
     } catch {
       throw new OpError('not_found', `ls: no such directory: ${path}`);
     }
-    const entries: LsEntry[] = names.map((name) => {
-      const st = ctx.env.fs.stat(path === '.' ? name : `${path}/${name}`);
-      return {
+    const entries: LsEntry[] = [];
+    for (const name of names) {
+      let st: { isFile: boolean; isDirectory: boolean; size: number };
+      try {
+        st = ctx.env.fs.stat(path === '.' ? name : `${path}/${name}`);
+      } catch {
+        continue;
+      }
+      entries.push({
         name,
         isFile: st.isFile,
         isDirectory: st.isDirectory,
         size: st.size,
-      };
-    });
+      });
+    }
     return { path, entries };
   },
 };

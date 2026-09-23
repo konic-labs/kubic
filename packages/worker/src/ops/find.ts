@@ -78,9 +78,9 @@ export const findOperation: Operation<FindArgs, FindResult> = {
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {
     const root = args.root ?? '.';
     const max = args.maxResults ?? FIND_DEFAULT_MAX;
-    const entries = walkFiles(ctx.env.fs, root);
+    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
     const paths: string[] = [];
-    let truncated = false;
+    let truncated = hitCap;
     for (const entry of entries) {
       if (args.type === 'file' && entry.isDirectory) continue;
       if (args.type === 'dir' && !entry.isDirectory) continue;

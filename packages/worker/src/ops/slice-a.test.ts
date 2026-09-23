@@ -114,4 +114,12 @@ describe('ls operation (issue #13, slice A)', () => {
       ).toBe(true);
     }
   });
+
+  it('skips entries that vanish between list and stat', async () => {
+    const c = ctx();
+    Object.assign(c.env.fs, { listDir: () => ['ghost.txt'] });
+    const out = await callOperation('ls', { path: '.' }, inv(), c);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.entries).toEqual([]);
+  });
 });

@@ -95,15 +95,14 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
             timedOut = true;
             handle.kill();
           }, args.timeout * 1000);
+    const onAbort = () => handle.kill();
     if (ctx.signal) {
       if (ctx.signal.aborted) handle.kill();
-      else
-        ctx.signal.addEventListener('abort', () => handle.kill(), {
-          once: true,
-        });
+      else ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
     const result = await handle.wait();
     if (timer !== undefined) clearTimeout(timer);
+    ctx.signal?.removeEventListener('abort', onAbort);
     const aborted =
       result.exitCode !== 0 && (timedOut || ctx.signal?.aborted === true);
     return {

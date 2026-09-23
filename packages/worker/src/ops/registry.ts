@@ -59,6 +59,9 @@ export function callOperation<N extends OperationName>(
   inv: ToolInvocation,
   ctx: OpContext,
 ): Promise<OpResult<OperationResults[N]>>;
+// Untyped fallback: unknown names compile here and fail at runtime with
+// `unknown_tool`. Typed call sites should use OperationName so that
+// removing an operation breaks them at compile time.
 export function callOperation(
   name: string,
   rawArgs: unknown,

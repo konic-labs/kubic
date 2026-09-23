@@ -3,6 +3,7 @@ import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation, OPERATIONS } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
+import { WALK_MAX_ENTRIES, walkFiles } from './walk.js';
 
 function ctx(): OpContext {
   const env = new FakeExecutionEnv({});
@@ -84,6 +85,16 @@ describe('find operation (issue #13, slice B)', () => {
     );
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error.code).toBe('invalid_args');
+  });
+
+  it('reports the walk cap instead of silently truncating', () => {
+    const env = new FakeExecutionEnv({});
+    for (let i = 0; i < WALK_MAX_ENTRIES + 1; i += 1) {
+      env.fs.writeFile(`f${i}.txt`, 'x');
+    }
+    const { entries, hitCap } = walkFiles(env.fs, '.');
+    expect(hitCap).toBe(true);
+    expect(entries.length).toBe(WALK_MAX_ENTRIES);
   });
 });
 

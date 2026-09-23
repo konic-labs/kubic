@@ -115,7 +115,8 @@ export const editOperation: Operation<EditArgs, EditResult> = {
       replacements: found,
       beforeHash,
       afterHash: sha256Hex(updated),
-      bytesDelta: updated.length - current.length,
+      bytesDelta:
+        Buffer.byteLength(updated, 'utf8') - Buffer.byteLength(current, 'utf8'),
     };
   },
 };

@@ -53,7 +53,7 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
     try {
       const prev = ctx.env.fs.readFile(args.path);
       beforeHash = sha256Hex(prev);
-      beforeBytes = prev.length;
+      beforeBytes = Buffer.byteLength(prev, 'utf8');
     } catch {
       beforeHash = null;
     }
@@ -64,7 +64,7 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
       path: args.path,
       beforeHash,
       afterHash: sha256Hex(args.content),
-      bytesDelta: args.content.length - beforeBytes,
+      bytesDelta: Buffer.byteLength(args.content, 'utf8') - beforeBytes,
     };
   },
 };

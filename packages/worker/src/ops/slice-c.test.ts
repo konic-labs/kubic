@@ -92,6 +92,17 @@ describe('write operation (issue #13, slice C)', () => {
     }
   });
 
+  it('measures bytesDelta in UTF-8 bytes, not UTF-16 units', async () => {
+    const out = await callOperation(
+      'write',
+      { path: 'uni.txt', content: 'héllo\n' },
+      inv(),
+      ctx(),
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.bytesDelta).toBe(7);
+  });
+
   it('rejects unknown arg keys', async () => {
     const out = await callOperation(
       'write',

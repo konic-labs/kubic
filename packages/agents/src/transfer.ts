@@ -42,6 +42,14 @@ export function validateTransferSpawn(input: unknown): TransferValidation {
   if (!isObject(input)) {
     return { valid: false, errors: ['transfer must be an object'] };
   }
+  // No-transcript guarantee (§24): the parent conversation history never
+  // travels — only the bounded transfer object does.
+  if ('transcript' in input) {
+    return {
+      valid: false,
+      errors: ['transfer must not carry a transcript (§24)'],
+    };
+  }
   // §71: budgets are opt-in — a spawn without a budget key carries no
   // limits, it is not malformed. Default before delegating to the AgentTask
   // check, which requires the key to be present.
@@ -53,9 +61,54 @@ export function validateTransferSpawn(input: unknown): TransferValidation {
       errors: ['budget must be an object when configured'],
     };
   }
+  // Worktree + grant arrive together: a task pinned to a worktree without
+  // the capability grant (or vice versa) cannot spawn.
+  const hasWorktree =
+    typeof normalized.worktree === 'string' &&
+    normalized.worktree.startsWith('/');
+  const hasGrant =
+    typeof normalized.workspaceMode === 'string' &&
+    Array.isArray(normalized.toolNames) &&
+    normalized.toolNames.length > 0;
+  if (hasWorktree !== hasGrant) {
+    return {
+      valid: false,
+      errors: [
+        'worktree and grant (workspaceMode + toolNames) must arrive together (§24)',
+      ],
+    };
+  }
   const result = validateAgentTask(normalized);
   if (!result.valid) return { valid: false, errors: result.errors };
   return { valid: true, transfer: sealTransfer(normalized) };
+}
+
+// The capability grant travels with the task: workspace mode plus the tool
+// allowlist. The ref is derived deterministically so the trajectory log can
+// point at the exact grant without carrying it.
+export function grantRefFor(
+  transfer: Pick<TaskTransfer, 'workspaceMode' | 'toolNames'>,
+): string {
+  return `${transfer.workspaceMode}:${[...transfer.toolNames].sort().join(',')}`;
+}
+
+// Trajectory log record for a transfer (§24): task, worktree, and grant ref
+// — the audit trail that the child started from this bounded object. Plain
+// JSON data by construction; the host appends it to the trajectory.
+export interface TransferLogRecord {
+  kind: 'transfer';
+  taskId: string;
+  worktree: string;
+  grantRef: string;
+}
+
+export function buildTransferLog(transfer: TaskTransfer): TransferLogRecord {
+  return {
+    kind: 'transfer',
+    taskId: transfer.taskId,
+    worktree: transfer.worktree,
+    grantRef: grantRefFor(transfer),
+  };
 }
 
 // §71: only a configured budget travels. Absent or empty means no limits —

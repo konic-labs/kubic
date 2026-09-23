@@ -24,6 +24,8 @@ describe('operation registry (issue #13, slice A)', () => {
       'bash',
       'edit',
       'find',
+      'git_diff',
+      'git_status',
       'grep',
       'ls',
       'read',

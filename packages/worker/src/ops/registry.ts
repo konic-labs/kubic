@@ -16,6 +16,8 @@ import type { FindResult } from './find.js';
 import { findOperation } from './find.js';
 import type { GrepResult } from './grep.js';
 import { grepOperation } from './grep.js';
+import type { GitDiffResult, GitLogResult, GitShowResult, GitStatusResult } from './git.js';
+import { gitDiffOperation, gitLogOperation, gitShowOperation, gitStatusOperation } from './git.js';
 import type { LsResult } from './ls.js';
 import { lsOperation } from './ls.js';
 import type { ReadResult } from './read.js';
@@ -39,6 +41,10 @@ export const OPERATIONS = {
   write: writeOperation,
   edit: editOperation,
   bash: bashOperation,
+  git_status: gitStatusOperation,
+  git_diff: gitDiffOperation,
+  git_log: gitLogOperation,
+  git_show: gitShowOperation,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -51,6 +57,10 @@ export interface OperationResults {
   write: WriteResult;
   edit: EditResult;
   bash: BashResult;
+  git_status: GitStatusResult;
+  git_diff: GitDiffResult;
+  git_log: GitLogResult;
+  git_show: GitShowResult;
 }
 
 export function callOperation<N extends OperationName>(

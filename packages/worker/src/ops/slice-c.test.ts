@@ -18,12 +18,14 @@ function inv(id = 'inv-1'): ToolInvocation {
   );
 }
 
-describe('operation registry growth (issue #13, slice C)', () => {
+describe('operation registry growth (issue #13, slice C; extended #19)', () => {
   it('exposes exactly the expected operations', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual([
       'bash',
       'edit',
       'find',
+      'git_diff',
+      'git_status',
       'grep',
       'ls',
       'read',

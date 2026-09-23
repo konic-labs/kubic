@@ -39,6 +39,8 @@ describe('operation registry growth (issue #13, slice D)', () => {
       'bash',
       'edit',
       'find',
+      'git_diff',
+      'git_status',
       'grep',
       'ls',
       'read',

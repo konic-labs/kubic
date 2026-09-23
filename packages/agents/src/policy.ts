@@ -41,6 +41,10 @@ export const SOLO_DEFAULTS: PermissionClasses = {
 
 const FS_READ_TOOLS = ['read', 'ls', 'find', 'grep'];
 const FS_WRITE_TOOLS = ['write', 'edit'];
+// Read-only git tools are safe to replay; effect tools (stage/commit/
+// checkpoint) mutate the repo but stay inside it — no init, no push tool.
+const GIT_READ_TOOLS = ['git_status', 'git_diff', 'git_log', 'git_show'];
+const GIT_WRITE_TOOLS = ['git_stage', 'git_commit', 'git_branch', 'git_checkpoint'];
 
 export function toolsForClasses(classes: PermissionClasses): string[] {
   const tools: string[] = [];
@@ -59,6 +63,9 @@ export function toolsForClasses(classes: PermissionClasses): string[] {
   }
   if (classes.shell === 'read-only-allowlist' || classes.shell === true) {
     tools.push('bash');
+  }
+  if (classes.git === 'workspace' || classes.git === 'full') {
+    tools.push(...GIT_READ_TOOLS, ...GIT_WRITE_TOOLS);
   }
   return tools;
 }
@@ -95,6 +102,17 @@ export function checkAgreement(
       agree: false,
       reason: `shell is disabled but tool 'bash' is registered`,
     };
+  }
+  if (classes.git === false) {
+    const leaked = [...GIT_READ_TOOLS, ...GIT_WRITE_TOOLS].find((name) =>
+      has(name),
+    );
+    if (leaked !== undefined) {
+      return {
+        agree: false,
+        reason: `git is disabled but tool '${leaked}' is registered`,
+      };
+    }
   }
   return { agree: true };
 }

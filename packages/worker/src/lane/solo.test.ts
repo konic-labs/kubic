@@ -42,13 +42,15 @@ async function boot(text: string) {
 }
 
 describe('solo lane boot (issue #11, slice A)', () => {
-  it('boots one lane with the 7 Kubic tools and no IPC', async () => {
+  it('boots one lane with the 9 Kubic tools and no IPC', async () => {
     const { harness } = await boot('hi');
     const tools = await harness.getTools(BACKGROUND_CONTEXT);
     expect(tools.map((t) => t.name).sort()).toEqual([
       'bash',
       'edit',
       'find',
+      'git_diff',
+      'git_status',
       'grep',
       'ls',
       'read',

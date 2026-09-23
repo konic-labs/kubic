@@ -44,8 +44,8 @@ async function booted() {
   return bootedLane;
 }
 
-describe('tool policy allowlisting (issue #15, slice B)', () => {
-  it('boots with all seven tools active under solo defaults', async () => {
+describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
+  it('boots with all nine tools active under solo defaults', async () => {
     const { harness, lane } = await booted();
     const allowed = await applyToolPolicy(
       harness,
@@ -54,7 +54,17 @@ describe('tool policy allowlisting (issue #15, slice B)', () => {
       BACKGROUND_CONTEXT,
     );
     expect(allowed.sort()).toEqual(
-      ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'write'].sort(),
+      [
+        'bash',
+        'edit',
+        'find',
+        'git_diff',
+        'git_status',
+        'grep',
+        'ls',
+        'read',
+        'write',
+      ].sort(),
     );
     expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).toEqual(
       expect.arrayContaining(['read', 'bash']),
@@ -66,7 +76,7 @@ describe('tool policy allowlisting (issue #15, slice B)', () => {
     await applyToolPolicy(
       harness,
       lane,
-      { ...SOLO_DEFAULTS, filesystem: 'none', shell: false },
+      { ...SOLO_DEFAULTS, filesystem: 'none', shell: false, git: false },
       BACKGROUND_CONTEXT,
     );
     expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).toEqual([]);
@@ -78,6 +88,7 @@ describe('tool policy allowlisting (issue #15, slice B)', () => {
       ...SOLO_DEFAULTS,
       filesystem: 'read' as const,
       shell: false as const,
+      git: false as const,
     };
     const allowed = await applyToolPolicy(
       harness,

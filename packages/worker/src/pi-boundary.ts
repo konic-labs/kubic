@@ -35,11 +35,15 @@ export type {
   DriveOptions,
   DriveOutcome,
   DriveResult,
+  Events,
+  HarnessEvent,
+  LaneSnapshot,
   OperationAdmissionResult,
   OperationRequest,
   OperationResultRecord,
   Session,
   SessionCreateOptions,
+  UsageRow,
 } from '@earendil-works/pi-agent-core';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-agent-core#AgentHarness
@@ -64,7 +68,7 @@ export {
   BACKGROUND_CONTEXT,
   MemorySessionRepo,
 } from '@earendil-works/pi-agent-core';
-export type { DeferredHandle, Model } from '@earendil-works/pi-ai';
+export type { DeferredHandle, Model, Usage } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai model layer (createModels, faux provider,
 //     Model type, Type for tool schemas)

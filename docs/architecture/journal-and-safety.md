@@ -46,7 +46,7 @@ and restart failing closed to deny.
 
 It does not promise: isolation (solo runs in-process with the user's
 own authority), containment (worktrees separate concurrent writers
-only), prompt-injection prevention (model output is never trusted), or
+only), no prompt-injection prevention (model output is never trusted), or
 airtight confinement (the worktree check is lexical and must be
 re-checked at use time). Approvals plus the journal are the controls;
 everything else would be someone else's guarantee.

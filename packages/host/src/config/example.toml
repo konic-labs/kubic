@@ -1,0 +1,45 @@
+# Kubic canonical config example (issue #38; design §35.2/§63).
+# Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
+# Never committed (gitignored): sessions/ journal/ artifacts/ wt/
+
+[agent]
+name = "kubic"
+
+[model]
+provider = "local"
+id = "llama3"
+thinking = "medium"
+
+[modes]
+solo = true
+orchestrator = false
+
+[approvals]
+route = "ask-user"
+maxPendingMs = 30000
+autoApprove = []
+sessionScoped = true
+requireJustification = false
+
+[journal]
+retentionDays = 30
+
+[roles.reviewer]
+model = "local/llama3"
+tools = ["read", "grep", "diff"]
+
+[roles.implementer]
+model = "local/llama3"
+tools = ["read", "write", "edit", "bash"]
+
+[orchestrator]
+root = ".kubic/wt"
+maxWorkers = 4
+
+[ui]
+theme = "dark"
+statusBar = true
+
+[session]
+store = "jsonl"
+dir = ".kubic/sessions"

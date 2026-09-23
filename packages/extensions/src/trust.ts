@@ -23,11 +23,10 @@ function stripTrailingSlash(path: string): string {
 }
 
 function isRemoteSpecifier(spec: string): boolean {
-  return (
-    spec.startsWith('https://') ||
-    spec.startsWith('http://') ||
-    spec.startsWith('ftp://')
-  );
+  // URL schemes are case-insensitive (RFC 3986 §3.1): match case-insensitively
+  // on the trimmed spec BEFORE normalization (posix.normalize collapses
+  // 'https://' to 'https:/', so a post-normalization check never fires).
+  return /^(https?|ftp):\/\//i.test(spec);
 }
 
 function isOwnedPackageSpecifier(spec: string): boolean {
@@ -40,6 +39,13 @@ function isOwnedPackageSpecifier(spec: string): boolean {
 }
 
 export function isOwnedPath(spec: string, opts: TrustOptions): boolean {
+  // Fail closed on non-string specs: normalize the raw TypeError from String
+  // methods into the boundary error type (issue #69: refusal-path hardening).
+  if (typeof spec !== 'string') {
+    throw new ExtensionRefusedError(
+      `third-party extension refused: ${JSON.stringify(spec)} is not an owned path (owned: ~/.pi/agent/extensions, .pi/extensions, owned packages, -e allowlist)`,
+    );
+  }
   const trimmed = spec.trim();
   if (trimmed.length === 0) return false;
   // Fail closed on remote specifiers BEFORE normalization and BEFORE the
@@ -62,6 +68,8 @@ export function isOwnedPath(spec: string, opts: TrustOptions): boolean {
   // a relative spec climbing above its root is never owned.
   if (candidate.split('/').includes('..')) return false;
   for (const entry of opts.allowlist) {
+    // Fail closed on non-string allowlist entries: skip, never admit.
+    if (typeof entry !== 'string') continue;
     if (stripTrailingSlash(posixPath.normalize(entry.trim())) === candidate)
       return true;
   }
@@ -97,6 +105,9 @@ export function isFirstParty(
     return false;
   }
   if (subject.sourcePath !== undefined) {
+    // Fail closed on non-string sourcePaths: the boolean predicate reports
+    // refusal; assertFirstParty below surfaces ExtensionRefusedError.
+    if (typeof subject.sourcePath !== 'string') return false;
     return isOwnedPath(subject.sourcePath, opts);
   }
   return true;

@@ -183,6 +183,61 @@ describe('owned-path boundaries (issue #69)', () => {
     ).toThrow(ExtensionRefusedError);
   });
 
+  it('refuses case-variant remote schemes: URL schemes are case-insensitive', () => {
+    // Regression: the remote-specifier guard matched lowercase schemes only,
+    // but new URL('HTTPS://evil.example/bundle.js').protocol === 'https:' —
+    // a case-variant remote is still a parseable remote URL and never owned.
+    const variants = [
+      'HTTPS://evil.example/bundle.js',
+      'Http://evil.example/bundle.js',
+      'HTTP://evil.example/bundle.js',
+      'FTP://evil.example/bundle.js',
+      'fTp://evil.example/bundle.js',
+      '  HTTPS://evil.example/bundle.js  ',
+    ];
+    for (const evil of variants) {
+      expect(isOwnedPath(evil, OPTS)).toBe(false);
+      expect(() =>
+        assertFirstParty(manifest({ sourcePath: evil }), OPTS),
+      ).toThrow(ExtensionRefusedError);
+    }
+  });
+
+  it('never admits a case-variant remote via a mangled allowlist entry', () => {
+    const cases: Array<[string, string[]]> = [
+      ['HTTPS://evil.example/bundle.js', ['HTTPS:/evil.example/bundle.js']],
+      ['Http://evil.example/bundle.js', ['Http:/evil.example/bundle.js']],
+      ['FTP://evil.example/bundle.js', ['FTP:/evil.example/bundle.js']],
+    ];
+    for (const [evil, allowlist] of cases) {
+      const opts = { ...OPTS, allowlist };
+      expect(isOwnedPath(evil, opts)).toBe(false);
+      expect(() =>
+        assertFirstParty(manifest({ sourcePath: evil }), opts),
+      ).toThrow(ExtensionRefusedError);
+    }
+  });
+
+  it('normalizes non-string specs to the fail-closed boundary error type', () => {
+    // A non-string spec used to leak a raw TypeError from String methods;
+    // the trust boundary reports refusal as ExtensionRefusedError instead.
+    for (const bad of [123, null, undefined, {}, ['x']] as never[]) {
+      try {
+        isOwnedPath(bad, OPTS);
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ExtensionRefusedError);
+        expect(error).not.toBeInstanceOf(TypeError);
+      }
+    }
+    expect(() =>
+      assertFirstParty(manifest({ sourcePath: 123 as never }), OPTS),
+    ).toThrow(ExtensionRefusedError);
+    expect(isFirstParty(manifest({ sourcePath: 123 as never }), OPTS)).toBe(
+      false,
+    );
+  });
+
   it('accepts a first-party publisher with no sourcePath', () => {
     const m = manifest({ publisher: 'konic-labs' });
     delete (m as Record<string, unknown>).sourcePath;

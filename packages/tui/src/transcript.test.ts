@@ -56,4 +56,51 @@ describe('transcript view (issue #23, slice A)', () => {
     expect(view.isPinned).toBe(true);
     expect(view.scrollTop).toBeGreaterThan(held);
   });
+
+  it('streams chunks into one entry with one rebuild per chunk', () => {
+    const view = createTranscriptView();
+    view.appendDelta({ id: 's', kind: 'text', append: 'hel' });
+    view.appendDelta({ id: 's', kind: 'text', append: 'lo' });
+    expect(view.render(80).join('\n')).toContain('hello');
+    expect(view.rebuilds).toBe(2);
+  });
+
+  it('subscribes LaneSnapshot coarse cells interleaved and visible in one frame', () => {
+    const view = createTranscriptView();
+    const before = view.rebuilds;
+    view.applyLaneSnapshot({ laneId: 'lane-1' }, [
+      { id: 't1', kind: 'text', markdown: 'hello' },
+      { id: 'tool-1', kind: 'tool', markdown: 'read foo.ts' },
+      { id: 'o1', kind: 'output', markdown: '42 lines' },
+    ], 1);
+    // Snapshot→visible synchronously: exactly one rebuild, no extra frame.
+    expect(view.rebuilds).toBe(before + 1);
+    const doc = view.render(80).join('\n');
+    const order = ['hello', 'read foo.ts', '42 lines'].map((m) =>
+      doc.indexOf(m),
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('keeps wheel/drag defaults: nearest ScrollView, chained deltas', () => {
+    const view = createTranscriptView();
+    expect(view.scroll.followEnd).toBe(true);
+    expect(view.scroll.primary).toBe(true);
+    expect(view.scroll.overscroll).toBe('chain');
+  });
+
+  it('ignores stale resnapshots so a re-watch replays gap-free', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot({ laneId: 'lane-1' }, [
+      { id: 't1', kind: 'text', markdown: 'hello' },
+    ], 2);
+    const rebuilds = view.rebuilds;
+    const doc = view.render(80).join('\n');
+    view.applyLaneSnapshot({ laneId: 'lane-1' }, [
+      { id: 't1', kind: 'text', markdown: 'stale' },
+    ], 1);
+    expect(view.rebuilds).toBe(rebuilds);
+    expect(view.render(80).join('\n')).toBe(doc);
+  });
 });

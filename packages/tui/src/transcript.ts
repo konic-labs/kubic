@@ -53,6 +53,11 @@ export interface TranscriptView {
   readonly isPinned: boolean;
   readonly scrollTop: number;
   appendDelta(delta: TranscriptDelta): void;
+  applyLaneSnapshot(
+    lane: LaneSnapshot,
+    cells: ReadonlyArray<TranscriptEntry>,
+    revision: number,
+  ): void;
   updateLayout(contentHeight: number, viewportHeight: number): void;
   scrollUp(lines: number): void;
   rePin(): void;
@@ -69,6 +74,12 @@ export function createTranscriptView(): TranscriptView {
   const entries: Array<{ id: string; kind: TranscriptEntryKind; markdown: string }> =
     [];
   let rebuilds = 0;
+  let laneId: string | undefined;
+  let revision = -1;
+  const paint = (): void => {
+    document.setText(entries.map((entry) => entry.markdown).join('\n'));
+    rebuilds += 1;
+  };
   return {
     component: scroll,
     scroll,
@@ -101,8 +112,22 @@ export function createTranscriptView(): TranscriptView {
       } else {
         found.markdown += delta.append;
       }
-      document.setText(entries.map((entry) => entry.markdown).join('\n'));
-      rebuilds += 1;
+      paint();
+    },
+    applyLaneSnapshot(
+      lane: LaneSnapshot,
+      cells: ReadonlyArray<TranscriptEntry>,
+      next: number,
+    ): void {
+      // Stale resnapshots are ignored so a re-watch replays gap-free (§9.1).
+      if (lane.laneId === laneId && next <= revision) return;
+      laneId = lane.laneId;
+      revision = next;
+      entries.length = 0;
+      for (const cell of cells) {
+        entries.push({ id: cell.id, kind: cell.kind, markdown: cell.markdown });
+      }
+      paint();
     },
     render(width: number): string[] {
       return scroll.render(width);

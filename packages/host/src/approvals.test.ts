@@ -3,12 +3,27 @@ import { describe, expect, it } from 'vitest';
 import {
   ApprovalService,
   MemoryApprovalStore,
+  approvalKey,
+  detectTriggers,
+  summarizeRequest,
   validatePolicy,
   type ApprovalRequest,
+  type TriggerContext,
 } from './approvals.js';
 
 function request(key = 'k1'): ApprovalRequest {
   return { key, capability: 'destructive-shell', toolName: 'bash', summary: 'rm -rf /tmp/x' };
+}
+
+function triggerContext(overrides: Partial<TriggerContext> = {}): TriggerContext {
+  return {
+    workspace: '/work',
+    network: 'none',
+    isDestructive: (command) => /rm -rf/.test(command),
+    isNetworkCommand: (command) => /curl/.test(command),
+    isOutsideWorkspace: (path) => path.startsWith('/etc'),
+    ...overrides,
+  };
 }
 
 describe('approval service (issue #16, slice A)', () => {
@@ -95,5 +110,73 @@ describe('approval service (issue #16, slice A)', () => {
     expect(() => validatePolicy({ route: 'ask-manager' })).toThrow();
     expect(() => validatePolicy({ autoApprove: 'install' })).toThrow();
     expect(() => validatePolicy({ maxPendingMs: -1 })).toThrow();
+  });
+
+  it('detects every §41.1 trigger class with a detector', () => {
+    const ctx = triggerContext();
+    expect(detectTriggers('bash', { command: 'rm -rf /tmp/x' }, ctx)).toEqual([
+      'destructive-shell',
+    ]);
+    expect(detectTriggers('bash', { command: 'curl https://x.example' }, ctx)).toEqual([
+      'network',
+    ]);
+    expect(detectTriggers('bash', { command: 'git push origin main' }, ctx)).toEqual([
+      'git-push',
+    ]);
+    expect(detectTriggers('bash', { command: 'npm install left-pad' }, ctx)).toEqual([
+      'install',
+    ]);
+    expect(detectTriggers('bash', { command: 'kubectl apply -f deploy.yaml' }, ctx)).toEqual([
+      'deploy',
+    ]);
+    expect(detectTriggers('write', { path: '/etc/cron.d/x' }, ctx)).toEqual(['outside-write']);
+    expect(detectTriggers('read', { path: '/etc/passwd' }, ctx)).toEqual([]);
+    expect(
+      detectTriggers('bash', { command: 'curl https://x.example' }, triggerContext({ network: 'full' })),
+    ).toEqual([]);
+    expect(
+      detectTriggers('read', { path: 'notes.txt' }, triggerContext({ budgetOverrun: true })),
+    ).toEqual(['budget-overrun']);
+    expect(
+      detectTriggers('read', { path: 'notes.txt' }, triggerContext({ requires: ['read'] })),
+    ).toEqual(['requires:read']);
+  });
+
+  it('keys approvals stably across restarts and arg order', () => {
+    const args = { command: 'rm -rf /tmp/x', timeout: 30 };
+    const reordered = { timeout: 30, command: 'rm -rf /tmp/x' };
+    expect(approvalKey('bash', 'destructive-shell', args)).toBe(
+      approvalKey('bash', 'destructive-shell', reordered),
+    );
+    expect(approvalKey('bash', 'destructive-shell', args)).not.toBe(
+      approvalKey('bash', 'network', args),
+    );
+    expect(summarizeRequest('bash', 'destructive-shell', args)).toContain('rm -rf /tmp/x');
+  });
+
+  it('raises approval for each trigger without it (negative path)', async () => {
+    const ctx = triggerContext();
+    // Without an answer, every trigger denies on timeout — the run fails
+    // per policy instead of executing.
+    for (const [tool, args] of [
+      ['bash', { command: 'rm -rf /tmp/x' }],
+      ['bash', { command: 'git push origin main' }],
+      ['write', { path: '/etc/cron.d/x' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      const capabilities = detectTriggers(tool, args, ctx);
+      expect(capabilities).not.toHaveLength(0);
+      for (const capability of capabilities) {
+        const service = new ApprovalService({
+          policy: validatePolicy({ maxPendingMs: 10 }),
+        });
+        const verdict = await service.request({
+          key: approvalKey(tool, capability, args),
+          capability,
+          toolName: tool,
+          summary: summarizeRequest(tool, capability, args),
+        });
+        expect(verdict.approved).toBe(false);
+      }
+    }
   });
 });

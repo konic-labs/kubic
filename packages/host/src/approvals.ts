@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -88,6 +89,82 @@ export class MemoryApprovalStore implements ApprovalStore {
   save(decisions: Record<string, ApprovalVerdict>): void {
     this.decisions = { ...decisions };
   }
+}
+
+// Trigger detection (§41.1). Predicates are injected so this module stays
+// free of shell parsing: the worker owns the classifiers (issue #15) and
+// the host owns the decision. Capabilities with no detector today —
+// credentials overreach, spawn-agents — fire only via an explicit
+// `requires` entry or their future owners; that is documented, not silent.
+export interface TriggerContext {
+  workspace: string;
+  network: 'none' | 'allowlist' | 'full';
+  isDestructive: (command: string, workspace: string) => boolean;
+  isNetworkCommand: (command: string) => boolean;
+  isOutsideWorkspace: (path: string) => boolean;
+  requires?: string[];
+  budgetOverrun?: boolean;
+}
+
+const GIT_PUSH = /^\s*git\s+push\b/i;
+const GIT_REMOTE_MUTATION = /^\s*git\s+remote\s+(add|set-url|remove|rename)\b/i;
+const INSTALL = /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+const DEPLOY = /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
+
+export function detectTriggers(
+  toolName: string,
+  args: Record<string, unknown>,
+  ctx: TriggerContext,
+): Capability[] {
+  const found: Capability[] = [];
+  if (ctx.requires?.includes(toolName) === true) {
+    found.push(`requires:${toolName}`);
+  }
+  if (ctx.budgetOverrun === true) {
+    found.push('budget-overrun');
+  }
+  if (toolName === 'bash' && typeof args['command'] === 'string') {
+    const command = args['command'];
+    if (ctx.isDestructive(command, ctx.workspace)) found.push('destructive-shell');
+    if (ctx.network === 'none' && ctx.isNetworkCommand(command)) found.push('network');
+    if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command)) found.push('git-push');
+    if (INSTALL.test(command)) found.push('install');
+    if (DEPLOY.test(command)) found.push('deploy');
+  }
+  if ((toolName === 'write' || toolName === 'edit') && typeof args['path'] === 'string') {
+    if (ctx.isOutsideWorkspace(args['path'])) found.push('outside-write');
+  }
+  return [...new Set(found)];
+}
+
+// Stable across restarts: the same dangerous op re-proposed after a crash
+// maps to the same key, so a stored decision applies and the user is not
+// re-asked. Tool-call ids are deliberately excluded — they change per run.
+export function approvalKey(toolName: string, capability: Capability, args: Record<string, unknown>): string {
+  const canonical = JSON.stringify(sortKeys(args));
+  return createHash('sha256').update(`${toolName}|${capability}|${canonical}`).digest('hex').slice(0, 16);
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (typeof value === 'object' && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = sortKeys((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function summarizeRequest(toolName: string, capability: Capability, args: Record<string, unknown>): string {
+  if (toolName === 'bash' && typeof args['command'] === 'string') {
+    return `${capability}: ${args['command'].slice(0, 120)}`;
+  }
+  if (typeof args['path'] === 'string') {
+    return `${capability}: ${toolName} ${args['path']}`;
+  }
+  return `${capability}: ${toolName}`;
 }
 
 export interface ApprovalServiceOptions {

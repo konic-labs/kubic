@@ -72,7 +72,7 @@ describe('runDoctorCommand', () => {
     }
   });
 
-  it('provider-down fails distinct with exit 1 in text and --json', async () => {
+  it('provider-down fails distinct with exit 6 in text and --json (§78)', async () => {
     const deps = (out: (line: string) => void): DoctorDeps => ({
       ...cleanDeps(out),
       probeProviders: () => [
@@ -88,14 +88,14 @@ describe('runDoctorCommand', () => {
       [],
       deps((line: string) => textLines.push(line)),
     );
-    expect(textCode).toBe(1);
+    expect(textCode).toBe(6);
     expect(textLines.join('\n')).toContain('provider-down');
     const jsonLines: string[] = [];
     const jsonCode = await runDoctorCommand(
       ['--json'],
       deps((line: string) => jsonLines.push(line)),
     );
-    expect(jsonCode).toBe(1);
+    expect(jsonCode).toBe(6);
     const report = JSON.parse(jsonLines.join('\n')) as {
       ok: boolean;
       checks: Array<{ id: string; status: string; reason: string }>;
@@ -179,14 +179,14 @@ describe('runDoctorCommand', () => {
     expect(lines.join('\n')).toContain('0 fail');
   });
 
-  it('throwing probe becomes a structured fail with exit 1', async () => {
+  it('throwing probe becomes a structured provider-down fail with exit 6', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => {
       throw new Error('probe exploded');
     };
     const code = await runDoctorCommand([], deps);
-    expect(code).toBe(1);
+    expect(code).toBe(6);
     const text = lines.join('\n');
     expect(text).toContain('FAIL');
     expect(text).toContain('probe exploded');

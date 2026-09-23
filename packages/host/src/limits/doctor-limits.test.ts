@@ -21,7 +21,7 @@ import {
 } from './doctor-limits.js';
 
 describe('static §59.1 limit notices (issue #58)', () => {
-  it('covers every applicable limit with honest pass notices', () => {
+  it('covers every applicable limit with honest warn notices', () => {
     const checks = staticLimitChecks();
     const ids = checks.map((check) => check.id);
     expect(ids).toEqual([
@@ -33,7 +33,8 @@ describe('static §59.1 limit notices (issue #58)', () => {
       'limit:no-third-party-mcp',
     ]);
     for (const check of checks) {
-      expect(check.status).toBe('pass');
+      // Informational only: warn never flips the doctor exit code.
+      expect(check.status).toBe('warn');
       expect(check.reason).toBe('ok');
     }
   });
@@ -156,6 +157,37 @@ describe('§78 exit mapping (issue #58)', () => {
       LIMITS_DOCTOR_EXIT_FAIL,
     );
     expect(limitsDoctorExit([])).toBe(LIMITS_DOCTOR_EXIT_OK);
+  });
+
+  it('warn notices alone never flip the exit code', () => {
+    expect(limitsDoctorExit(staticLimitChecks())).toBe(LIMITS_DOCTOR_EXIT_OK);
+  });
+
+  it('a clean run with warn notices exits 0 end-to-end', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand([], {
+      out: (line: string) => lines.push(line),
+      probeProviders: () => [{ id: 'local', reachable: true }],
+      checkDeps: () => [{ id: 'node', ok: true }],
+      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+    });
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('WARN limit:solo-no-isolation');
+    expect(text).toContain('0 fail');
+  });
+
+  it('provider-down exits 6 end-to-end via runDoctorCommand (§78)', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand([], {
+      out: (line: string) => lines.push(line),
+      probeProviders: () => [{ id: 'local', reachable: false }],
+      checkDeps: () => [{ id: 'node', ok: true }],
+      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+    });
+    expect(code).toBe(6);
+    expect(code).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
+    expect(lines.join('\n')).toContain('provider-down');
   });
 });
 

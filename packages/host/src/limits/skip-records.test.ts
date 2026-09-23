@@ -67,6 +67,19 @@ describe('loud full-access skip records (issue #58)', () => {
     expect(event.enabledBy).toBe('user');
   });
 
+  it('disabled and expired trajectory events preserve owner and timestamp', () => {
+    const live = summarizeFullAccess('s1', [grant()]);
+    for (const action of ['disabled', 'expired'] as const) {
+      const event = buildFullAccessTrajectoryEvent(live, action);
+      expect(event.action).toBe(action);
+      expect(event.sessionId).toBe('s1');
+      // A trajectory is a historical record: the grant's provenance
+      // survives the transition instead of being dropped.
+      expect(event.enabledAt).toBe(1700000000000);
+      expect(event.enabledBy).toBe('user');
+    }
+  });
+
   it('session end expires the grant and re-arms enforcement', () => {
     const ended = endSessionSkip('s1', [grant('s1'), grant('s2')]);
     expect(ended.ended?.sessionId).toBe('s1');

@@ -1,11 +1,13 @@
 // Honest-limits doctor checks (issue #58; §59.1, §78, §50).
-// Doctor reports exactly enforced-or-not. Static §59.1 notices pass when
-// disclosed (a limit check passes because the limit IS reported, never
-// because the limit is enforced). Degraded posture — no reachable
-// provider, missing dep, unenforceable v1 policy value — fails with an
-// honest message. Schema/consistency failures stay owned by #29's
-// policy:approvals check: an invalid policy shape is not double-failed
-// here, it points at its owner. Faux-only: injected values, no I/O.
+// Doctor reports exactly enforced-or-not. Static §59.1 notices report
+// warn (informational: the limit IS disclosed, never enforced and never
+// a protection claim) — warn never flips the doctor exit code. Degraded
+// posture — no reachable provider, missing dep, unenforceable v1 policy
+// value — fails with an honest message (provider-down exits 6, the rest
+// exit 1, via limitsDoctorExit). Schema/consistency failures stay owned
+// by #29's policy:approvals check: an invalid policy shape is not
+// double-failed here, it points at its owner. Faux-only: injected
+// values, no I/O.
 
 import { validatePolicy } from '../approvals.js';
 import type { DoctorCheck } from '../doctor.js';
@@ -28,14 +30,15 @@ export interface LimitDepProbe {
   detail?: string;
 }
 
-// Every applicable §59.1 limit, disclosed (pass/ok): the check passes
-// because the limit is reported, never as a protection claim.
+// Every applicable §59.1 limit, disclosed as warn (informational, never
+// exit-flipping): the notice is honest because the limit is reported,
+// never as a protection claim.
 export function staticLimitChecks(): DoctorCheck[] {
   return [
     {
       id: 'limit:solo-no-isolation',
       label: 'limit solo no-isolation',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): solo runs in-process with your user authority (files, network, credentials) — no isolation, no containment; controls are approvals + journal (§59.1, §3.7)',
@@ -43,7 +46,7 @@ export function staticLimitChecks(): DoctorCheck[] {
     {
       id: 'limit:worktrees-writers-only',
       label: 'limit worktrees writers-only',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): orchestrator worktrees separate concurrent writers only — they are not isolation or containment (§59.1)',
@@ -51,7 +54,7 @@ export function staticLimitChecks(): DoctorCheck[] {
     {
       id: 'limit:no-injection-prevention',
       label: 'limit no injection prevention',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): no prompt-injection prevention — untrusted output is data, never instruction; approvals + journal are the controls (§59.1)',
@@ -59,7 +62,7 @@ export function staticLimitChecks(): DoctorCheck[] {
     {
       id: 'limit:policy-offer',
       label: 'limit policy offer',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): approval policy is an offer for routing, not enforcement — unenforceable values are reported, never honored (§59.1)',
@@ -67,7 +70,7 @@ export function staticLimitChecks(): DoctorCheck[] {
     {
       id: 'limit:journal-not-backup',
       label: 'limit journal not backup',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): the change journal is a review/undo log, not a backup — it cannot restore outside state (§59.1)',
@@ -75,7 +78,7 @@ export function staticLimitChecks(): DoctorCheck[] {
     {
       id: 'limit:no-third-party-mcp',
       label: 'limit no third-party MCP',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
       detail:
         'honest limit (not enforced): v1 has no third-party tools or MCP servers — requests for them are refused (§59.1, §33)',
@@ -242,8 +245,11 @@ function probeMessage(error: unknown): string {
 }
 
 // Registration entry for #29's doctor.ts (append-only): every section is
-// total — a throwing probe becomes a failing check, never a crash — so
-// the appended lines cannot break the doctor command.
+// total — a throwing probe becomes a failing check, never a crash. Static
+// §59.1 notices report warn (informational, never exit-flipping); only
+// fail (provider-down, deps-missing, policy-mismatch) flips the exit via
+// limitsDoctorExit — so these lines can never turn a clean run failing
+// except by reporting a genuinely degraded posture.
 export function collectLimitChecksFromDeps(
   deps: LimitProbeDeps,
 ): DoctorCheck[] {

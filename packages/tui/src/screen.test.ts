@@ -71,10 +71,17 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     expect(output).toContain('?2026h');
     expect(output).toContain('?2026l');
     const printed: string[] = [];
+    const beforeStop = terminal.writes.join('');
     screen.stop((line: string) => printed.push(line));
     expect(printed.join('\n')).toContain('body');
     // Stop leaves the alt screen (restore to main) exactly once.
     expect(terminal.writes.join('')).toContain('?1049l');
+    // C3: stop must unset the layout root before restoring the main
+    // screen — otherwise TuiAltScreen.afterTerminalStop repaints the
+    // full layout frame onto the main screen (mutant: +1.4KB writes).
+    const tail = terminal.writes.join('').slice(beforeStop.length);
+    expect(tail).toContain('?1049l');
+    expect(tail).not.toContain('body');
     expect(terminal.stopped).toBe(1);
     expect(terminal.started).toBe(1);
   });

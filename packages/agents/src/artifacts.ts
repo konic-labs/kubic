@@ -62,6 +62,10 @@ function isStringArray(value: unknown): value is string[] {
 // Redaction replaces the WHOLE match so no secret material survives next to
 // the label.
 const CREDENTIAL_PATTERNS: RegExp[] = [
+  // `Authorization: Bearer <token>` must match as ONE unit: the generic
+  // keyword pattern below would otherwise consume only
+  // `Authorization: Bearer`, leaving the token beside `[REDACTED]`.
+  /authorization\s*:\s*bearer\s+\S+/gi,
   // Keyword assignment: `api_key=…`, `password: value`, `"password": "…"`,
   // `password is hunter2`. Optional quotes handle JSON-quoted keys.
   /["']?(?:token|password|passwd|secret|api[-_ ]?key|bearer|authorization|private[-_ ]?key)["']?\s*(?:[=:]\s*|\s+(?:is\s+)?)\S+/gi,
@@ -129,18 +133,33 @@ function unsafePathReason(ref: string): string | undefined {
 }
 
 function allTextFields(artifact: TaskArtifact): string[] {
+  // Nested scan: EVERY string value inside tests[] entries is gated — a
+  // smuggled key (parentTranscript, evil, …) cannot hide a credential or a
+  // transcript marker from the closed-world checks below.
+  const nestedTestStrings = (artifact.tests ?? []).flatMap((test) =>
+    Object.values(test).filter(
+      (value): value is string => typeof value === 'string',
+    ),
+  );
   return [
     artifact.artifactId,
     artifact.summary,
     ...artifact.fileRefs,
     ...artifact.findings,
-    ...(artifact.tests ?? []).flatMap((test) =>
-      test.output === undefined ? [test.name] : [test.name, test.output],
-    ),
+    ...nestedTestStrings,
     ...(artifact.decisions ?? []),
     ...(artifact.diffRefs ?? []),
   ];
 }
+
+// Closed world for tests[] entries too (§25): only name/passed/output
+// travel — unknown nested keys are rejected at validation and stripped
+// from every returned artifact.
+const TEST_FIELDS = {
+  name: true,
+  passed: true,
+  output: true,
+} satisfies Record<keyof ArtifactTest, true>;
 
 function validateArtifactTest(
   test: unknown,
@@ -150,6 +169,12 @@ function validateArtifactTest(
   if (!isObject(test)) {
     errors.push(`tests[${index}] must be an object`);
     return;
+  }
+  for (const key of Object.keys(test)) {
+    if (!(key in TEST_FIELDS))
+      errors.push(
+        `tests[${index}] must not carry unknown field '${key}' (§25)`,
+      );
   }
   if (!isNonEmptyString(test.name))
     errors.push(`tests[${index}].name must be a non-empty string`);
@@ -186,8 +211,12 @@ export function validateArtifact(input: unknown): ArtifactValidation {
 
   if (!isNonEmptyString(input.artifactId))
     errors.push('artifactId must be a non-empty string');
+  else if (hasControlChar(input.artifactId))
+    errors.push('artifactId must not carry control characters (§25)');
   if (!isNonEmptyString(input.summary))
     errors.push('summary must be a non-empty string');
+  else if (hasControlChar(input.summary))
+    errors.push('summary must not carry control characters (§25)');
 
   if (!isStringArray(input.fileRefs))
     errors.push('fileRefs must be an array of strings');
@@ -220,13 +249,32 @@ export function validateArtifact(input: unknown): ArtifactValidation {
       }
     }
   }
-  for (const field of ['decisions', 'diffRefs'] as const) {
+  for (const field of ['decisions'] as const) {
     const value = input[field];
     if (
       value !== undefined &&
       (!isStringArray(value) || !value.every(isNonEmptyString))
     )
       errors.push(`${field} must be an array of non-empty strings`);
+  }
+
+  // Diff refs are paths too (§25): confined exactly like fileRefs — never
+  // absolute, traversing, overlong, or newline-bearing blobs.
+  if (
+    input.diffRefs !== undefined &&
+    (!isStringArray(input.diffRefs) || !input.diffRefs.every(isNonEmptyString))
+  )
+    errors.push('diffRefs must be an array of non-empty strings');
+  else if (input.diffRefs !== undefined) {
+    for (const ref of input.diffRefs) {
+      const reason = unsafePathReason(ref);
+      if (reason !== undefined) {
+        errors.push(
+          `diffRefs are paths only, never contents (§25): ${reason} in '${ref.slice(0, 40)}'`,
+        );
+        break;
+      }
+    }
   }
 
   if (errors.length === 0 && isObject(input)) {
@@ -247,8 +295,9 @@ export function validateArtifact(input: unknown): ArtifactValidation {
   }
 
   if (errors.length > 0) return { valid: false, errors };
-  // Closed world: return only ARTIFACT_FIELDS — smuggled keys cannot travel
-  // on the accepted artifact even if a caller bypasses validation.
+  // Closed world: return only ARTIFACT_FIELDS with test entries stripped to
+  // name/passed/output — smuggled keys cannot travel on the accepted
+  // artifact even if a caller bypasses validation.
   const source = input as unknown as TaskArtifact;
   return {
     valid: true,
@@ -259,7 +308,13 @@ export function validateArtifact(input: unknown): ArtifactValidation {
       findings: [...source.findings],
       ...(source.tests === undefined
         ? {}
-        : { tests: source.tests.map((test) => ({ ...test })) }),
+        : {
+            tests: source.tests.map((test) => ({
+              name: test.name,
+              passed: test.passed,
+              ...(test.output === undefined ? {} : { output: test.output }),
+            })),
+          }),
       ...(source.decisions === undefined
         ? {}
         : { decisions: [...source.decisions] }),
@@ -368,8 +423,10 @@ export interface ArtifactTranscriptEntry {
 
 export function renderArtifactTranscript(artifact: TaskArtifact): string {
   const clean = sanitizeArtifact(artifact);
+  // Header fields render JSON-quoted so embedded newlines or control text
+  // stay inert string content — one block per artifact, never a forged line.
   const lines = [
-    `[artifact ${clean.artifactId}] ${JSON.stringify(clean.summary)}`,
+    `[artifact ${JSON.stringify(clean.artifactId)}] ${JSON.stringify(clean.summary)}`,
   ];
   lines.push(`files: ${clean.fileRefs.join(', ')}`);
   for (const finding of clean.findings)
@@ -382,7 +439,9 @@ export function renderArtifactTranscript(artifact: TaskArtifact): string {
   for (const decision of clean.decisions ?? [])
     lines.push(`decision: ${JSON.stringify(decision)}`);
   if (clean.diffRefs !== undefined && clean.diffRefs.length > 0)
-    lines.push(`diffs: ${clean.diffRefs.join(', ')}`);
+    lines.push(
+      `diffs: ${clean.diffRefs.map((ref) => JSON.stringify(ref)).join(', ')}`,
+    );
   return lines.join('\n');
 }
 
@@ -419,7 +478,13 @@ export function toTrajectoryRecord(
     findings: [...clean.findings],
     ...(clean.tests === undefined
       ? {}
-      : { tests: clean.tests.map((test) => ({ ...test })) }),
+      : {
+          tests: clean.tests.map((test) => ({
+            name: test.name,
+            passed: test.passed,
+            ...(test.output === undefined ? {} : { output: test.output }),
+          })),
+        }),
     ...(clean.decisions === undefined
       ? {}
       : { decisions: [...clean.decisions] }),
@@ -440,8 +505,8 @@ export function sanitizeArtifact(artifact: TaskArtifact): TaskArtifact {
       ? {}
       : {
           tests: artifact.tests.map((test) => ({
-            ...test,
             name: redactArtifactText(test.name),
+            passed: test.passed,
             ...(test.output === undefined
               ? {}
               : { output: redactArtifactText(test.output) }),
@@ -518,6 +583,13 @@ export function buildDebuggerHandoff(
   }
   if (!isNonEmptyString(input.diffRef))
     errors.push('diffRef must be a non-empty string');
+  else {
+    const reason = unsafePathReason(input.diffRef);
+    if (reason !== undefined)
+      errors.push(
+        `diffRef must be a worktree-relative path, never absolute or parent-traversing (§25): ${reason}`,
+      );
+  }
   if (!isNonEmptyString(input.worktree))
     errors.push('worktree must be a non-empty string');
   else if (!input.worktree.startsWith('/'))

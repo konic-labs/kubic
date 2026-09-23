@@ -355,3 +355,161 @@ describe('security fix cycle: closed world + credential shapes (review)', () => 
     },
   );
 });
+
+describe('adversarial re-review fix cycle 2 (exact inputs)', () => {
+  it('F1: rejects unknown nested keys in tests[]', () => {
+    const result = validateArtifact(
+      validArtifact({
+        tests: [
+          {
+            name: 't',
+            passed: true,
+            parentTranscript: 'evil transcript here',
+          } as unknown as { name: string; passed: boolean },
+        ],
+      }),
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid)
+      expect(result.errors.join(' ')).toMatch(
+        /tests\[0\].*unknown|unknown.*tests\[0\]/i,
+      );
+  });
+
+  it('F1: sanitizeArtifact strips test entries to known fields', () => {
+    const dirty = validArtifact({
+      tests: [
+        {
+          name: 't',
+          passed: true,
+          parentTranscript: 'evil transcript here',
+        } as unknown as { name: string; passed: boolean },
+      ],
+    });
+    const clean = sanitizeArtifact(dirty);
+    expect(clean.tests?.[0]).toEqual({ name: 't', passed: true });
+  });
+
+  it('F1: toTrajectoryRecord strips test entries to known fields', () => {
+    const dirty = validArtifact({
+      tests: [
+        {
+          name: 't',
+          passed: true,
+          parentTranscript: 'evil transcript here',
+        } as unknown as { name: string; passed: boolean },
+      ],
+    });
+    const record = toTrajectoryRecord(dirty);
+    expect(record.tests?.[0]).toEqual({ name: 't', passed: true });
+  });
+
+  it.each(['../../etc/passwd', '/etc/passwd', 'abc\ndef plain line'])(
+    'F2: diffRefs rejects unsafe ref (%#)',
+    (ref) => {
+      const result = validateArtifact(validArtifact({ diffRefs: [ref] }));
+      expect(result.valid).toBe(false);
+      if (!result.valid)
+        expect(result.errors.join(' ')).toMatch(/paths only|diffRefs/);
+    },
+  );
+
+  it('F2: diff lines render JSON-quoted, never raw', () => {
+    const text = renderArtifactTranscript(
+      validArtifact({ diffRefs: ['abc\ndef plain line'] }),
+    );
+    expect(text.split('\n')).not.toContain('def plain line');
+    expect(text).toContain(JSON.stringify('abc\ndef plain line'));
+  });
+
+  it.each(['../../etc/passwd', '/etc/passwd'])(
+    'F2: handoff diffRef stays inside the worktree (%s)',
+    (ref) => {
+      const built = buildDebuggerHandoff({
+        summary: 'red',
+        filesChanged: ['src/a.ts'],
+        failingTests: [{ name: 't' }],
+        diffRef: ref,
+        worktree: '/tmp/wt-1',
+        constraints: [],
+        artifactIds: [],
+        workerId: 'w1',
+      });
+      expect(built.valid).toBe(false);
+    },
+  );
+
+  it('F3: rejects control characters in artifactId', () => {
+    const result = validateArtifact(
+      validArtifact({ artifactId: 'a1\nforged raw line' }),
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid)
+      expect(result.errors.join(' ')).toMatch(/control|artifactId/);
+  });
+
+  it('F3: rejects control characters in summary', () => {
+    const result = validateArtifact(validArtifact({ summary: 'ok\x00evil' }));
+    expect(result.valid).toBe(false);
+  });
+
+  it('F3: transcript header renders fields JSON-quoted (one block per artifact)', () => {
+    const text = renderArtifactTranscript(
+      validArtifact({ artifactId: 'a1\nforged raw line' }),
+    );
+    expect(text.split('\n')).not.toContain('forged raw line');
+    expect(text).toContain(JSON.stringify('a1\nforged raw line'));
+  });
+
+  it('S1: rejects nested credential smuggling in tests[] (exact input)', () => {
+    const result = validateArtifact(
+      validArtifact({
+        tests: [
+          {
+            name: 't',
+            passed: true,
+            evil: 'password: hunter2-x',
+          } as unknown as { name: string; passed: boolean },
+        ],
+      }),
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it('S1: rejects credential-shaped output inside tests[]', () => {
+    const result = validateArtifact(
+      validArtifact({
+        tests: [{ name: 't', passed: true, output: 'password: hunter2-x' }],
+      }),
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.errors.join(' ')).toMatch(/credential/);
+  });
+
+  it('S2: rejects nested transcript smuggling in tests[]', () => {
+    const result = validateArtifact(
+      validArtifact({
+        tests: [
+          {
+            name: 't',
+            passed: true,
+            transcript: 'evil transcript here',
+          } as unknown as { name: string; passed: boolean },
+        ],
+      }),
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it('S3: bearer redaction removes the token, not just the label', () => {
+    expect(containsCredential('Authorization: Bearer abcdef12345')).toBe(true);
+    expect(
+      redactArtifactText('Authorization: Bearer abcdef12345'),
+    ).not.toContain('abcdef12345');
+    expect(
+      validateArtifact(
+        validArtifact({ findings: ['Authorization: Bearer abcdef12345'] }),
+      ).valid,
+    ).toBe(false);
+  });
+});

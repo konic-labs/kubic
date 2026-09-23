@@ -2,10 +2,10 @@
 // Both types generate against a schema and validate fail-closed:
 // stripped provenance/labels are errors, not warnings.
 import { describe, expect, it } from 'vitest';
+import { makeExport } from './fixtures.js';
 import { buildGrpoGroup, validateGrpoGroup } from './grpo.js';
 import { canonicalJson } from './manifest.js';
 import { buildSftRecord, validateSftRecord } from './sft.js';
-import { makeExport } from './fixtures.js';
 
 describe('buildSftRecord (issue #54)', () => {
   it('generates a schema-valid SFT record from a passing trajectory', () => {
@@ -79,7 +79,9 @@ describe('canonicalJson manifest determinism (issue #54)', () => {
   it('is byte-identical for the same trajectory + verifier', () => {
     const exported = makeExport({ evalLabels: { 'signal:tests': 'pass' } });
     const first = canonicalJson(buildSftRecord(exported));
-    const second = canonicalJson(buildSftRecord(makeExport({ evalLabels: { 'signal:tests': 'pass' } })));
+    const second = canonicalJson(
+      buildSftRecord(makeExport({ evalLabels: { 'signal:tests': 'pass' } })),
+    );
     expect(second).toBe(first);
   });
 

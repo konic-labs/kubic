@@ -20,7 +20,9 @@ function stringifyCanonical(value: unknown): string {
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter((entry) => entry[1] !== undefined)
-      .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
+      .sort((left, right) =>
+        left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+      );
     return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stringifyCanonical(entry)}`).join(',')}}`;
   }
   throw new Error(`uncapturable value of type ${typeof value}`);

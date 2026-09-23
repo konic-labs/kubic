@@ -34,17 +34,17 @@ describe('extractProvenance (issue #54)', () => {
   });
 
   it('rejects a stripped base revision', () => {
-    expect(() =>
-      extractProvenance(makeExport({ baseRevision: '' })),
-    ).toThrow(/base/i);
+    expect(() => extractProvenance(makeExport({ baseRevision: '' }))).toThrow(
+      /base/i,
+    );
   });
 });
 
 describe('requireFailureLabel (issue #54, §52)', () => {
   it('accepts a completed run with a null failure category', () => {
-    expect(
-      requireFailureLabel(makeExport({ status: 'completed' })).ok,
-    ).toBe(true);
+    expect(requireFailureLabel(makeExport({ status: 'completed' })).ok).toBe(
+      true,
+    );
   });
 
   it('accepts a failed run carrying its §52 code', () => {

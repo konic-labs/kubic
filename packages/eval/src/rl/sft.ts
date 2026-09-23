@@ -7,9 +7,9 @@ import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
   extractProvenance,
   isTrajectoryFailureCode,
-  requireFailureLabel,
-  RlProvenanceError,
   type RlProvenance,
+  RlProvenanceError,
+  requireFailureLabel,
   type TrajectoryFailureCode,
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
@@ -80,10 +80,7 @@ export function checkProvenance(value: unknown): string[] {
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
   const proc = candidate.proc;
-  if (
-    proc !== null &&
-    (typeof proc !== 'number' || !Number.isInteger(proc))
-  ) {
+  if (proc !== null && (typeof proc !== 'number' || !Number.isInteger(proc))) {
     errors.push('provenance.proc must be an integer or null');
   }
   if (
@@ -93,7 +90,8 @@ export function checkProvenance(value: unknown): string[] {
   ) {
     errors.push('provenance.gen is required');
   }
-  if (!nonEmpty(candidate.worktree)) errors.push('provenance.worktree is required');
+  if (!nonEmpty(candidate.worktree))
+    errors.push('provenance.worktree is required');
   if (!nonEmpty(candidate.model)) errors.push('provenance.model is required');
   if (!nonEmpty(candidate.base)) errors.push('provenance.base is required');
   return errors;
@@ -108,9 +106,7 @@ export function checkFailureCategory(
   const category = candidate.failureCategory;
   if (category === null) return [];
   if (typeof category !== 'string' || !isTrajectoryFailureCode(category)) {
-    return [
-      `unknown §52 failure category ${JSON.stringify(category)}`,
-    ];
+    return [`unknown §52 failure category ${JSON.stringify(category)}`];
   }
   return [];
 }

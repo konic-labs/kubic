@@ -12,9 +12,9 @@ import {
 } from './sft.js';
 import {
   extractProvenance,
-  requireFailureLabel,
-  RlProvenanceError,
   type RlProvenance,
+  RlProvenanceError,
+  requireFailureLabel,
   type TrajectoryFailureCode,
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
@@ -69,7 +69,9 @@ function buildCandidate(exported: TrajectoryExport): GrpoCandidate {
 
 export function buildGrpoGroup(exports: TrajectoryExport[]): GrpoGroup {
   if (exports.length === 0) {
-    throw new RlProvenanceError('GRPO refused: at least one candidate is required');
+    throw new RlProvenanceError(
+      'GRPO refused: at least one candidate is required',
+    );
   }
   const candidates = exports.map(buildCandidate);
   const prompt = candidates[0]?.prompt ?? '';
@@ -87,7 +89,10 @@ export function validateGrpoGroup(input: unknown): GrpoValidation {
   }
   if (!nonEmpty(candidate.prompt)) errors.push('prompt is required');
   if (!Array.isArray(candidate.candidates) || candidate.candidates.length < 2) {
-    return { valid: false, errors: [...errors, 'candidates must hold at least two records'] };
+    return {
+      valid: false,
+      errors: [...errors, 'candidates must hold at least two records'],
+    };
   }
   const group = candidate as unknown as GrpoGroup;
   for (const [index, entry] of group.candidates.entries()) {
@@ -100,13 +105,16 @@ export function validateGrpoGroup(input: unknown): GrpoValidation {
       schema?: unknown;
     };
     if (record.schema !== undefined && record.schema !== SFT_SCHEMA) {
-      errors.push(`${prefix}.schema must be ${JSON.stringify(SFT_SCHEMA)} when present`);
+      errors.push(
+        `${prefix}.schema must be ${JSON.stringify(SFT_SCHEMA)} when present`,
+      );
     }
     if (!nonEmpty(record.prompt)) errors.push(`${prefix}.prompt is required`);
     else if (record.prompt !== group.prompt) {
       errors.push(`${prefix} shares no prompt with the group`);
     }
-    if (!nonEmpty(record.completion)) errors.push(`${prefix}.completion is required`);
+    if (!nonEmpty(record.completion))
+      errors.push(`${prefix}.completion is required`);
     if (
       typeof record.reward !== 'number' ||
       !(record.reward >= 0) ||

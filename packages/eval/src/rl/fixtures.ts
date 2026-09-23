@@ -21,7 +21,11 @@ export function makeExport(overrides: FixtureOverrides = {}): TrajectoryExport {
   const worktree = overrides.worktree ?? '/wt/agent-1';
   return {
     schema_version: '1.0',
-    task: { taskId: 'task-1', objective: 'fix the widget', role: 'implementer' },
+    task: {
+      taskId: 'task-1',
+      objective: 'fix the widget',
+      role: 'implementer',
+    },
     identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
     model: {
       provider: 'faux',

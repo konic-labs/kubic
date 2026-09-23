@@ -10,17 +10,13 @@
 // pairs carry refs only (#32 artifacts, #49 graph edges) — never
 // transcripts or file contents.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
-import {
-  checkFailureCategory,
-  checkProvenance,
-  checkVerifier,
-} from './sft.js';
+import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import {
   extractProvenance,
   isEnvFailure,
-  requireFailureLabel,
-  RlProvenanceError,
   type RlProvenance,
+  RlProvenanceError,
+  requireFailureLabel,
   type TrajectoryFailureCode,
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
@@ -96,7 +92,10 @@ function buildSide(exported: TrajectoryExport): PreferenceSide {
   };
 }
 
-function sameBoundary(chosen: PreferenceSide, rejected: PreferenceSide): boolean {
+function sameBoundary(
+  chosen: PreferenceSide,
+  rejected: PreferenceSide,
+): boolean {
   // Both refs must agree, and a grant must be present on both: a missing
   // grant cannot prove the same capability boundary, so it fails closed
   // to cross-boundary rather than guessing within.
@@ -115,10 +114,7 @@ export function buildPreferencePair(
   const prompt = chosenExport.prompt.text;
   const chosen = buildSide(chosenExport);
   const rejected = buildSide(rejectedExport);
-  const exclude = (
-    tag: ExclusionTag,
-    reason: string,
-  ): PairBuild => ({
+  const exclude = (tag: ExclusionTag, reason: string): PairBuild => ({
     pair: null,
     excluded: {
       prompt,
@@ -129,14 +125,20 @@ export function buildPreferencePair(
     },
   });
   // Env failures carry no capability signal — either side excluded.
-  if (isEnvFailure(chosen.failureCategory) || isEnvFailure(rejected.failureCategory)) {
+  if (
+    isEnvFailure(chosen.failureCategory) ||
+    isEnvFailure(rejected.failureCategory)
+  ) {
     return exclude(
       'env-failure-excluded',
       `env failure (${chosen.failureCategory ?? 'none'} vs ${rejected.failureCategory ?? 'none'}) is not a capability difference — kept out of capability training`,
     );
   }
   // The verifier must actually prefer chosen over rejected.
-  if (chosen.verifier.verdict !== 'pass' || rejected.verifier.verdict !== 'fail') {
+  if (
+    chosen.verifier.verdict !== 'pass' ||
+    rejected.verifier.verdict !== 'fail'
+  ) {
     return exclude(
       'no-preference-signal-excluded',
       `no verifier preference signal (chosen ${chosen.verifier.verdict} vs rejected ${rejected.verifier.verdict})`,
@@ -164,7 +166,8 @@ function checkSide(
   }
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
-  if (!nonEmpty(candidate.completion)) errors.push(`${prefix}.completion is required`);
+  if (!nonEmpty(candidate.completion))
+    errors.push(`${prefix}.completion is required`);
   for (const message of checkProvenance(candidate.provenance)) {
     errors.push(`${prefix}.${message}`);
   }
@@ -174,8 +177,10 @@ function checkSide(
   for (const message of checkVerifier(candidate.verifier)) {
     errors.push(`${prefix}.${message}`);
   }
-  if (!nonEmpty(candidate.taskRef)) errors.push(`${prefix}.taskRef is required`);
-  if (!nonEmpty(candidate.worktreeRef)) errors.push(`${prefix}.worktreeRef is required`);
+  if (!nonEmpty(candidate.taskRef))
+    errors.push(`${prefix}.taskRef is required`);
+  if (!nonEmpty(candidate.worktreeRef))
+    errors.push(`${prefix}.worktreeRef is required`);
   if (candidate.grantRef !== null && !nonEmpty(candidate.grantRef)) {
     errors.push(`${prefix}.grantRef must be a grant ref or null`);
   }

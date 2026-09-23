@@ -113,10 +113,9 @@ describe('buildDpoRecord (issue #54)', () => {
 
   it('rejects a stripped DPO record with an error', () => {
     const built = buildDpoRecord(passing({}), failing({}));
-    const { provenance: _dropped, ...stripped } = built.record as Record<
-      string,
-      unknown
-    >;
+    expect(built.record).not.toBeNull();
+    const { provenance: _dropped, ...stripped } =
+      built.record as unknown as Record<string, unknown>;
     const checked = validateDpoRecord(stripped);
     expect(checked.valid).toBe(false);
     if (!checked.valid) {

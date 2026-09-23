@@ -86,7 +86,9 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     errors.push('boundary must be within: cross-boundary pairs never validate');
   }
   // Reuse the pair-shape checks by projecting back onto a pair record.
-  const provenance = candidate.provenance as Record<string, unknown> | undefined;
+  const provenance = candidate.provenance as
+    | Record<string, unknown>
+    | undefined;
   const failureCategory = candidate.failureCategory as
     | Record<string, unknown>
     | undefined;

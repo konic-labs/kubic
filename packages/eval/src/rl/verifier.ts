@@ -4,7 +4,7 @@
 // over the parsed trajectory export — never a re-guess. Unknown signals
 // abstain, so an unverified run fails closed.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
-import { computeSignals, gatesPass, type GateSignal } from '../signals.js';
+import { computeSignals, type GateSignal, gatesPass } from '../signals.js';
 
 export interface VerifierVerdict {
   verdict: 'pass' | 'fail';

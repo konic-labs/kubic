@@ -131,3 +131,163 @@ export function renderApprovalInline(
     ...renderApprovalLines(request, w),
   ];
 }
+
+
+// Keybinding registry (§16.6/§16.9). Defaults live here (not in Pi's
+// global KeybindingsManager — the tui seam exposes no registry writer),
+// matched exclusively through matchesKey: no hardcoded key strings on
+// the input path.
+type ApprovalKeyId = Parameters<typeof matchesKey>[1];
+
+export const APPROVAL_DEFAULT_KEYS: Record<
+  ApprovalAction,
+  readonly ApprovalKeyId[]
+> = {
+  'allow-once': ['a'],
+  'allow-session': ['s'],
+  deny: ['d', 'escape'],
+};
+
+export type ApprovalKeyOverrides = Partial<
+  Record<ApprovalAction, readonly ApprovalKeyId[]>
+>;
+
+const ACTION_ORDER: ReadonlyArray<ApprovalAction> = [
+  'allow-once',
+  'allow-session',
+  'deny',
+];
+
+function resolvedBindings(
+  overrides?: ApprovalKeyOverrides,
+): Record<ApprovalAction, readonly ApprovalKeyId[]> {
+  return {
+    'allow-once':
+      overrides?.['allow-once'] ?? APPROVAL_DEFAULT_KEYS['allow-once'],
+    'allow-session':
+      overrides?.['allow-session'] ?? APPROVAL_DEFAULT_KEYS['allow-session'],
+    deny: overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny,
+  };
+}
+
+export function resolveApprovalAction(
+  data: string,
+  overrides?: ApprovalKeyOverrides,
+): ApprovalAction | undefined {
+  const bindings = resolvedBindings(overrides);
+  for (const action of ACTION_ORDER) {
+    for (const key of bindings[action]) {
+      if (matchesKey(data, key)) return action;
+    }
+  }
+  return undefined;
+}
+
+export interface ApprovalKeyConflict {
+  readonly key: string;
+  readonly actions: ReadonlyArray<ApprovalAction>;
+}
+
+export function approvalKeyConflicts(
+  overrides?: ApprovalKeyOverrides,
+): ApprovalKeyConflict[] {
+  const bindings = resolvedBindings(overrides);
+  const owners = new Map<string, ApprovalAction[]>();
+  for (const action of ACTION_ORDER) {
+    for (const key of bindings[action]) {
+      const list = owners.get(key);
+      if (list === undefined) {
+        owners.set(key, [action]);
+      } else if (!list.includes(action)) {
+        list.push(action);
+      }
+    }
+  }
+  const conflicts: ApprovalKeyConflict[] = [];
+  for (const [key, actions] of owners) {
+    if (actions.length > 1) conflicts.push({ key, actions });
+  }
+  return conflicts;
+}
+
+// Focus capture + explicit unfocus (§16.4). The handle types mirror Pi's
+// OverlayHandle structurally so tests inject a fake TUI without touching
+// Pi internals through the seam.
+export interface ApprovalOverlayHandle {
+  unfocus(options?: { target: Component | null }): void;
+  hide(): void;
+}
+
+export interface ApprovalOverlayTui {
+  showOverlay(
+    component: Component,
+    options?: ApprovalOverlayOptions,
+  ): ApprovalOverlayHandle;
+}
+
+export function showApprovalOverlay(
+  tui: ApprovalOverlayTui,
+  view: ApprovalView,
+  options?: ApprovalOverlayOptions,
+): ApprovalOverlayHandle {
+  view.focused = true;
+  return tui.showOverlay(view, options ?? approvalOverlayOptions());
+}
+
+export function dismissApprovalOverlay(
+  view: ApprovalView,
+  handle: ApprovalOverlayHandle,
+  editor: Component | null,
+): void {
+  handle.unfocus({ target: editor });
+  view.focused = false;
+}
+
+export interface ApprovalViewOptions {
+  readonly request: ApprovalViewRequest;
+  readonly onDecision?: (
+    action: ApprovalAction,
+    request: ApprovalViewRequest,
+  ) => void;
+  readonly onFocusEditor?: () => void;
+  readonly keyOverrides?: ApprovalKeyOverrides;
+}
+
+export class ApprovalView implements Component, Focusable {
+  focused = false;
+  private readonly viewRequest: ApprovalViewRequest;
+  private readonly onDecision: (
+    action: ApprovalAction,
+    request: ApprovalViewRequest,
+  ) => void;
+  private readonly onFocusEditor: () => void;
+  private readonly keyOverrides?: ApprovalKeyOverrides;
+
+  constructor(options: ApprovalViewOptions) {
+    this.viewRequest = options.request;
+    this.onDecision = options.onDecision ?? (() => {});
+    this.onFocusEditor = options.onFocusEditor ?? (() => {});
+    this.keyOverrides = options.keyOverrides;
+  }
+
+  getRequest(): ApprovalViewRequest {
+    return this.viewRequest;
+  }
+
+  handleInput(data: string): void {
+    const action = resolveApprovalAction(data, this.keyOverrides);
+    if (action === undefined) return;
+    this.onDecision(action, this.viewRequest);
+    this.onFocusEditor();
+  }
+
+  render(width: number): string[] {
+    const lines = renderApprovalLines(this.viewRequest, width);
+    if (this.focused && lines.length > 0) {
+      lines[0] += CURSOR_MARKER;
+    }
+    return lines;
+  }
+
+  invalidate(): void {}
+}

@@ -10,12 +10,15 @@
 
 export type {
   Component,
+  MouseRegionHandler,
   StackEntryOptions,
   Terminal,
   TUI,
 } from '@earendil-works/pi-tui';
 export {
   Editor,
+  Markdown,
+  MouseRegion,
   ScrollView,
   Text,
   TuiAltScreen,

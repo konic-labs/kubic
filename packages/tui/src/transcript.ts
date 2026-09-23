@@ -124,6 +124,8 @@ export function createTranscriptView(): TranscriptView {
       scroll.scrollToEnd();
     },
     appendDelta(delta: TranscriptDelta): void {
+      // NOTE: callers must call updateLayout after arrivals — ScrollView
+      // contentHeight is synced there, and scrollBy-from-tail uses it.
       const found = entries.find((entry) => entry.id === delta.id);
       if (found === undefined) {
         entries.push({
@@ -146,6 +148,8 @@ export function createTranscriptView(): TranscriptView {
       next: number,
     ): void {
       // Stale resnapshots are ignored so a re-watch replays gap-free (§9.1).
+      // Single-lane assumption: the guard tracks one (laneId, revision)
+      // slot, so callers follow exactly one lane at a time.
       if (lane.laneId === laneId && next <= revision) return;
       laneId = lane.laneId;
       revision = next;

@@ -15,6 +15,8 @@ import {
 import {
   confinePath,
   defaultIsDestructive,
+  isNetworkCommand,
+  redactReason,
   registerPolicyInterceptors,
 } from './interceptors.js';
 import { bootSoloLane, driveToSettled } from './solo.js';
@@ -125,6 +127,68 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(JSON.stringify(end.result)).toContain('/work/etc/passwd');
   });
 
+  it('confines write paths the same as reads', async () => {
+    const booted = await boot([
+      { name: 'write', args: { path: '/etc/cron.d/x', content: 'nope' } },
+    ]);
+    registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
+    const seenBySecond: Array<Record<string, unknown>> = [];
+    booted.harness.hooks.on('before_tool', (event) => {
+      seenBySecond.push({ ...(event.args as Record<string, unknown>) });
+      return undefined;
+    });
+    const ends = await driveToolEnds(booted);
+    expect(ends).toHaveLength(1);
+    expect(seenBySecond).toHaveLength(1);
+    expect(seenBySecond[0]?.['path']).toBe('/work/etc/cron.d/x');
+    expect(JSON.stringify(ends[0])).not.toContain('/etc/cron.d/x",');
+  });
+
+  it('blocks network commands when network is none, allows otherwise', async () => {
+    const blocked = await boot([
+      { name: 'bash', args: { command: 'curl https://example.com' } },
+    ]);
+    registerPolicyInterceptors(blocked.harness.hooks, {
+      workspace: '/work',
+      network: 'none',
+    });
+    const blockedEnds = await driveToolEnds(blocked);
+    expect(JSON.stringify(blockedEnds[0])).toContain('network command blocked');
+
+    const allowed = await boot([
+      { name: 'bash', args: { command: 'curl https://example.com' } },
+    ]);
+    registerPolicyInterceptors(allowed.harness.hooks, { workspace: '/work' });
+    const allowedEnds = await driveToolEnds(allowed);
+    expect(JSON.stringify(allowedEnds[0])).not.toContain(
+      'network command blocked',
+    );
+  });
+
+  it('counts blocked attempts against the budget', async () => {
+    const booted = await boot([
+      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+      { name: 'ls', args: { path: '.' } },
+    ]);
+    const triggers: Array<{ kind: string; count: number }> = [];
+    registerPolicyInterceptors(booted.harness.hooks, {
+      workspace: '/work',
+      maxToolCalls: 1,
+      onTrigger: (trigger) => {
+        triggers.push(trigger);
+      },
+    });
+    const ends = await driveToolEnds(booted);
+    expect(ends).toHaveLength(2);
+    // First attempt passes the budget (count 1) but the destructive guard
+    // blocks it; the second attempt exceeds the budget.
+    expect(JSON.stringify(ends)).toContain('destructive command blocked');
+    expect(JSON.stringify(ends)).toContain('maxToolCalls (1) exceeded');
+    expect(triggers).toEqual([
+      { kind: 'max_tool_calls', toolName: 'ls', count: 2 },
+    ]);
+  });
+
   it('fails closed when a policy handler throws', async () => {
     const booted = await boot([{ name: 'ls', args: { path: '.' } }]);
     registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
@@ -168,8 +232,23 @@ describe('policy interceptors (issue #15, slice C)', () => {
   it('matches destructive commands and confines paths at unit level', () => {
     expect(defaultIsDestructive('rm -rf /tmp/x')).toBe(true);
     expect(defaultIsDestructive('rm -Rf --no-preserve-root /')).toBe(true);
+    expect(defaultIsDestructive('rm -f ~/.ssh/id_rsa', '/work')).toBe(true);
+    expect(defaultIsDestructive('rm /data/db.sqlite', '/work')).toBe(true);
+    expect(defaultIsDestructive('git clean -fdx', '/work')).toBe(true);
     expect(defaultIsDestructive('echo hello')).toBe(false);
     expect(defaultIsDestructive('ls -la')).toBe(false);
+    // Plain in-workspace single-file rm is allowed (recoverable via the
+    // journal) — documented scope limit, not a silent gap.
+    expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
+    expect(isNetworkCommand('curl https://example.com')).toBe(true);
+    expect(isNetworkCommand('ls -la')).toBe(false);
+    expect(
+      redactReason('destructive command blocked: rm --token abc123 /x'),
+    ).toContain('token [REDACTED]');
+    expect(
+      redactReason('destructive command blocked: rm --token abc123 /x'),
+    ).not.toContain('abc123');
+    expect(redactReason('x'.repeat(500)).length).toBeLessThan(250);
     expect(confinePath('/work', '/etc/passwd')).toEqual({
       confined: '/work/etc/passwd',
       rewritten: true,

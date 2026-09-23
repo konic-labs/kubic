@@ -57,7 +57,9 @@ export interface TelemetryRecord {
 }
 
 // Telemetry wrapper: outermost by convention, so it times the full
-// permission(core) stack. The sink decides what "emit" means.
+// permission(core) stack. The sink decides what "emit" means. Denied
+// attempts are recorded too — the audit trail must show the attempt,
+// not just the successes.
 export function withTelemetry(
   sink: (record: TelemetryRecord) => void,
 ): ToolContribution {

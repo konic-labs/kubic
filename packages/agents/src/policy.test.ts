@@ -60,6 +60,12 @@ describe('permission policy model (issue #15, slice A)', () => {
     ).toBe(true);
   });
 
+  it('merges partial input over solo defaults', () => {
+    expect(validateClasses({})).toEqual(SOLO_DEFAULTS);
+    expect(validateClasses({ filesystem: 'read' }).shell).toBe(true);
+    expect(() => validateClasses({ filesystem: 'sometimes' })).toThrow();
+  });
+
   it('rejects unknown class literals', () => {
     expect(() =>
       validateClasses({ ...SOLO_DEFAULTS, filesystem: 'sometimes' }),

@@ -4,6 +4,10 @@
 // DriveOutcome, with retry waiting honored via notBefore.
 
 import type { PermissionClasses } from '../../../agents/src/policy.js';
+import {
+  toolsForClasses,
+  validateClasses,
+} from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
@@ -24,7 +28,11 @@ import {
 } from './interceptors.js';
 import { applyToolPolicy } from './policy.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
-import { composeTools, type ToolContribution } from './wrap.js';
+import {
+  composeTools,
+  type ToolContribution,
+  withPermissionCheck,
+} from './wrap.js';
 
 export const SOLO_LANE_NAME = 'main';
 
@@ -41,6 +49,19 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
+}
+
+// The permission wrapper is composed innermost (closest to the core) when
+// classes are declared, so execute-time denial is deployed on every
+// policy boot — not just tested in isolation.
+function withPolicyContributions(
+  policy: SoloPolicyOptions | undefined,
+): ToolContribution[] {
+  const extra = policy?.contributions ?? [];
+  if (policy?.classes === undefined) return extra;
+  const valid = validateClasses({ ...policy.classes });
+  const allowed = toolsForClasses(valid);
+  return [withPermissionCheck((name) => allowed.includes(name)), ...extra];
 }
 
 export interface SoloBootOptions {
@@ -81,7 +102,7 @@ export async function bootSoloLane(
       model: options.model,
       tools: composeTools(
         kubicToolsToPiTools(),
-        options.policy?.contributions ?? [],
+        withPolicyContributions(options.policy),
       ),
       toolContext,
       systemPrompt: options.systemPrompt ?? defaultSoloPrompt(options.env.cwd),

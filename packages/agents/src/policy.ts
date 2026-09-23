@@ -123,13 +123,15 @@ export function validateClasses(input: unknown): PermissionClasses {
     throw new PolicyValidationError('permission classes must be an object');
   }
   const record = input as Record<string, unknown>;
+  // Partial input merges over SOLO_DEFAULTS (§12.1: unlisted classes take
+  // the solo default; the restrictive tail — network none, credentials
+  // none — is what makes that safe).
   const pick = (
     key: string,
     allowed: readonly unknown[],
-    fallback?: unknown,
+    fallback: unknown,
   ): unknown => {
-    const value = record[key];
-    if (value === undefined && fallback !== undefined) return fallback;
+    const value = record[key] === undefined ? fallback : record[key];
     if (!allowed.includes(value)) {
       throw new PolicyValidationError(
         `invalid ${key}: ${JSON.stringify(value)}`,
@@ -138,11 +140,23 @@ export function validateClasses(input: unknown): PermissionClasses {
     return value;
   };
   return {
-    filesystem: pick('filesystem', FILESYSTEM_LEVELS) as FilesystemLevel,
-    shell: pick('shell', SHELL_LEVELS) as ShellLevel,
-    network: pick('network', NETWORK_LEVELS) as NetworkLevel,
-    git: pick('git', GIT_LEVELS) as GitLevel,
-    credentials: pick('credentials', CREDENTIAL_LEVELS) as CredentialLevel,
+    filesystem: pick(
+      'filesystem',
+      FILESYSTEM_LEVELS,
+      SOLO_DEFAULTS.filesystem,
+    ) as FilesystemLevel,
+    shell: pick('shell', SHELL_LEVELS, SOLO_DEFAULTS.shell) as ShellLevel,
+    network: pick(
+      'network',
+      NETWORK_LEVELS,
+      SOLO_DEFAULTS.network,
+    ) as NetworkLevel,
+    git: pick('git', GIT_LEVELS, SOLO_DEFAULTS.git) as GitLevel,
+    credentials: pick(
+      'credentials',
+      CREDENTIAL_LEVELS,
+      SOLO_DEFAULTS.credentials,
+    ) as CredentialLevel,
   };
 }
 

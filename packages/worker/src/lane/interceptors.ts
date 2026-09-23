@@ -2,8 +2,31 @@
 // Registered as separate harness hooks so chaining, first-block-wins, and
 // throw-becomes-block are the harness's real semantics, not ours. Every
 // handler is fail-closed: a policy exception blocks with its message.
+//
+// Enforcement map (what each class means at this layer):
+//   filesystem — tool allowlist (slice B) + path confine below. Symlinks
+//     are NOT resolved (lexical confine only, same limit as the exec seam);
+//     a workspace symlink pointing outside is a known escape, documented
+//     here instead of silently "handled".
+//   shell true — bash present, destructive commands blocked.
+//   shell read-only-allowlist — bash present, destructive AND network
+//     commands blocked.
+//   shell false — bash absent via allowlist.
+//   network none — network-command verbs blocked in bash. allowlist/full
+//     change nothing at the tool layer (documented, not silent): there is
+//     no network tool to remove, and shell:true can still curl. The flag
+//     is consumed by approval triggers (issue #16).
+//   git/credentials — NO tool-layer enforcement today (no git/credential
+//     tools exist yet; git arrives with issue #19). The flags are stored
+//     validated config consumed by approval triggers (issue #16), never
+//     silently dropped.
+// The destructive matcher is a literal-pattern heuristic, not a sandbox:
+// it sees the command string only, so $CMD indirection, backslash escapes,
+// and eval-obfuscation bypass it. Those bypasses are out of scope for this
+// layer (stated, not silent); approvals own the unknown.
 import { isAbsolute, join, resolve } from 'node:path';
-import type { Hooks } from '../pi-boundary.js';
+import type { NetworkLevel, ShellLevel } from '../../../agents/src/policy.js';
+import type { Hooks, JsonValue } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
   kind: 'max_tool_calls';
@@ -15,17 +38,67 @@ export interface PolicyInterceptorOptions {
   workspace: string;
   maxToolCalls?: number;
   onTrigger?: (trigger: PolicyTrigger) => void;
-  isDestructive?: (command: string) => boolean;
+  shell?: ShellLevel;
+  network?: NetworkLevel;
+  isDestructive?: (command: string, workspace: string) => boolean;
+}
+
+const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
+
+function rmBlocked(command: string, workspace: string): boolean {
+  const segments = command.split(/(?:^|[|;&])\s*(?=(?:rm|rmdir)\b)/i);
+  for (const segment of segments) {
+    const match = /^\s*(rm|rmdir)\b([^|;&]*)/i.exec(segment);
+    if (match === null) continue;
+    const flags = match[2] ?? '';
+    if (/-[a-zA-Z]*[rf]/i.test(flags)) return true;
+    const target =
+      flags
+        .replace(/-[a-zA-Z]+\s*/g, '')
+        .replace(/--\S+\s*/g, '')
+        .trim()
+        .split(/\s+/)[0] ?? '';
+    if (target === '') continue;
+    const resolved = isAbsolute(target)
+      ? resolve(target)
+      : resolve(workspace, target);
+    const root = resolve(workspace);
+    if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
+    if (SENSITIVE_PATH.test(target)) return true;
+  }
+  return false;
 }
 
 const DESTRUCTIVE_PATTERNS = [
-  /\brm\s+[^|;&]*-[a-zA-Z]*r/i,
   /\bmkfs\b/i,
   /\bdd\b[^|;&]*\bof=\s*\/dev\//i,
+  /\bshred\b/i,
+  /\bgit\s+clean\s+[^|;&]*-[a-zA-Z]*f/i,
+  /\b(chmod|chown)\b[^|;&]*\s-[a-zA-Z]*R/i,
+  /:\(\)\s*\{\s*:\|:&\s*\}\s*;/,
 ];
 
-export function defaultIsDestructive(command: string): boolean {
+export function defaultIsDestructive(
+  command: string,
+  workspace = '/work',
+): boolean {
+  if (rmBlocked(command, workspace)) return true;
   return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+const NETWORK_PATTERNS = [
+  /\bcurl\b/i,
+  /\bwget\b/i,
+  /\bssh\b/i,
+  /\bscp\b/i,
+  /\bsftp\b/i,
+  /\bftp\b/i,
+  /\btelnet\b/i,
+  /\bnc\b/i,
+];
+
+export function isNetworkCommand(command: string): boolean {
+  return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 export function confinePath(
@@ -36,16 +109,29 @@ export function confinePath(
   const resolved = isAbsolute(path) ? resolve(path) : resolve(root, path);
   if (resolved === root || resolved.startsWith(`${root}/`))
     return { confined: resolved, rewritten: false };
+  // Re-root under the workspace. The rewritten path is operator-visible in
+  // the tool call, so a same-named workspace file can confuse but never
+  // silently serve an outside file.
   const tail = resolved
     .split('/')
     .filter((part) => part !== '' && part !== '..' && part !== '.');
   return { confined: join(root, tail.join('/')), rewritten: true };
 }
 
+// Reasons persist into the trajectory, so commands and raw errors are
+// truncated and secret-shaped values redacted before they become blocks.
+export function redactReason(value: string): string {
+  const short = value.length > 200 ? `${value.slice(0, 200)}…` : value;
+  return short.replace(
+    /((?:token|password|passwd|secret|api[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
+    '$1[REDACTED]',
+  );
+}
+
 function block(reason: string): {
   block: { reason: string; terminate: false };
 } {
-  return { block: { reason, terminate: false as const } };
+  return { block: { reason: redactReason(reason), terminate: false as const } };
 }
 
 function failClosed<T>(
@@ -65,43 +151,47 @@ function failClosed<T>(
   }
 }
 
+// Tools whose path-like args are confined. read/write/edit/ls take `path`,
+// find/grep take `root`.
+const CONFINED_TOOLS: Record<string, string[]> = {
+  read: ['path'],
+  write: ['path'],
+  edit: ['path'],
+  ls: ['path'],
+  find: ['root'],
+  grep: ['root'],
+};
+
+function confineArgs(
+  toolName: string,
+  args: Record<string, JsonValue>,
+  workspace: string,
+): Record<string, JsonValue> | undefined {
+  const keys = CONFINED_TOOLS[toolName];
+  if (keys === undefined) return undefined;
+  let rewritten = false;
+  const next = { ...args };
+  for (const key of keys) {
+    const value = next[key];
+    if (typeof value !== 'string') continue;
+    const { confined, rewritten: hit } = confinePath(workspace, value);
+    if (hit) {
+      next[key] = confined;
+      rewritten = true;
+    }
+  }
+  return rewritten ? next : undefined;
+}
+
 export function registerPolicyInterceptors(
   hooks: Hooks,
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
+  // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
   let triggered = false;
   const off: Array<() => void> = [];
-
-  off.push(
-    hooks.on('before_tool', (event) =>
-      failClosed(() => {
-        if (event.toolName !== 'bash') return undefined;
-        const command =
-          typeof event.args['command'] === 'string'
-            ? event.args['command']
-            : '';
-        if (isDestructive(command)) {
-          return block(`destructive command blocked: ${command}`);
-        }
-        return undefined;
-      }),
-    ),
-  );
-
-  off.push(
-    hooks.on('before_tool', (event) =>
-      failClosed(() => {
-        if (event.toolName !== 'read') return undefined;
-        const path = event.args['path'];
-        if (typeof path !== 'string') return undefined;
-        const { confined, rewritten } = confinePath(options.workspace, path);
-        if (!rewritten) return undefined;
-        return { args: { ...event.args, path: confined } };
-      }),
-    ),
-  );
 
   if (options.maxToolCalls !== undefined) {
     const max = options.maxToolCalls;
@@ -112,17 +202,58 @@ export function registerPolicyInterceptors(
           if (calls <= max) return undefined;
           if (!triggered) {
             triggered = true;
-            options.onTrigger?.({
-              kind: 'max_tool_calls',
-              toolName: event.toolName,
-              count: calls,
-            });
+            try {
+              options.onTrigger?.({
+                kind: 'max_tool_calls',
+                toolName: event.toolName,
+                count: calls,
+              });
+            } catch {
+              // A throwing trigger callback must not mask the block.
+            }
           }
           return block(`maxToolCalls (${max}) exceeded`);
         }),
       ),
     );
   }
+
+  off.push(
+    hooks.on('before_tool', (event) =>
+      failClosed(() => {
+        if (event.toolName !== 'bash') return undefined;
+        const command =
+          typeof event.args['command'] === 'string'
+            ? event.args['command']
+            : '';
+        if (isDestructive(command, options.workspace)) {
+          return block(`destructive command blocked: ${command}`);
+        }
+        if (
+          (options.network === 'none' ||
+            options.shell === 'read-only-allowlist') &&
+          isNetworkCommand(command)
+        ) {
+          return block(`network command blocked (network: none): ${command}`);
+        }
+        return undefined;
+      }),
+    ),
+  );
+
+  off.push(
+    hooks.on('before_tool', (event) =>
+      failClosed(() => {
+        const confined = confineArgs(
+          event.toolName,
+          event.args,
+          options.workspace,
+        );
+        if (confined === undefined) return undefined;
+        return { args: confined };
+      }),
+    ),
+  );
 
   return () => {
     for (const remove of off) remove();

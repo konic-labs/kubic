@@ -44,6 +44,7 @@ export type {
   HarnessEvent,
   HookHandler,
   Hooks,
+  JsonValue,
   LaneSnapshot,
   OperationAdmissionResult,
   OperationError,

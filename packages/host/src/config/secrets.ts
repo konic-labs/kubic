@@ -153,7 +153,6 @@ export function assertNoPlaintextSecrets(
 }
 
 export interface ScopedToken {
-  readonly value: string;
   readonly expiresAt: number;
   readonly hosts: string[];
   readonly maxUses: number;
@@ -162,8 +161,15 @@ export interface ScopedToken {
   revoke(): void;
 }
 
+// The live secret is held in this module-private WeakMap, never assigned
+// onto the token object: holding a ScopedToken grants no read access —
+// property reads, spreads, and JSON cannot reach it. Only
+// useScopedToken/substituteTokenHost resolve the value, enforcing
+// revocation + expiry + host binding + budget in that order.
+const tokenSecrets = new WeakMap<ScopedToken, string>();
+
 // Brokered tool credential: budget-bounded (maxUses), host-bound, expiring.
-// The value is readable only via useScopedToken/substituteTokenHost, which
+// The secret is readable only via useScopedToken/substituteTokenHost, which
 // enforce revocation + expiry + host binding + budget in that order.
 export function issueScopedToken(
   secret: string,
@@ -177,7 +183,6 @@ export function issueScopedToken(
   }
   const issuedAt = opts.now ?? Date.now();
   const token: ScopedToken = {
-    value: secret,
     expiresAt: issuedAt + opts.ttlMs,
     hosts: [...opts.hosts],
     maxUses: opts.maxUses,
@@ -187,6 +192,7 @@ export function issueScopedToken(
       token.revoked = true;
     },
   };
+  tokenSecrets.set(token, secret);
   return token;
 }
 
@@ -203,8 +209,12 @@ export function useScopedToken(
   if (token.remainingUses < 1) {
     throw new SecretError('scoped token budget exhausted');
   }
+  const secret = tokenSecrets.get(token);
+  if (secret === undefined) {
+    throw new SecretError('scoped token revoked');
+  }
   token.remainingUses -= 1;
-  return token.value;
+  return secret;
 }
 
 // Host-substitution (e.g. registry URLs) is host-restricted: the target

@@ -328,12 +328,27 @@ function parseScalar(text: string, lineNo: number): unknown {
   throw new ConfigError(`line ${lineNo}: cannot parse value ${token}`);
 }
 
+// Prototype-pollution guard: TOML section/key segments are
+// attacker-controlled (project-local configs are post-trust files), so
+// dunder segments must never be assigned onto plain objects —
+// `obj['__proto__'] = ...` mutates Object.prototype instead of creating an
+// own property. Rejected fail-closed at both assignment sites (setPath for
+// parsing, unflatten for layer merging).
+const UNSAFE_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function assertSafePathKey(key: string, context: string): void {
+  if (UNSAFE_PATH_KEYS.has(key)) {
+    throw new ConfigError(`${context}: forbidden key '${key}'`);
+  }
+}
+
 function setPath(
   root: Record<string, unknown>,
   path: string[],
   value: unknown,
   lineNo: number,
 ): void {
+  for (const key of path) assertSafePathKey(key, `line ${lineNo}`);
   let node = root;
   for (let i = 0; i < path.length - 1; i += 1) {
     const key = path[i] as string;
@@ -733,6 +748,7 @@ function unflatten(leaves: Map<string, unknown>): KubicConfig {
   const root: Record<string, unknown> = {};
   for (const [path, value] of leaves) {
     const parts = path.split('.');
+    for (const part of parts) assertSafePathKey(part, `path '${path}'`);
     let node = root;
     for (let i = 0; i < parts.length - 1; i += 1) {
       const key = parts[i] as string;

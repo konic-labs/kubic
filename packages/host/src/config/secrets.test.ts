@@ -236,6 +236,22 @@ describe('ScopedToken (issue #38)', () => {
     expect(b.revoked).toBe(true);
     expect(() => useScopedToken(a, 'h', 2_000)).toThrow(/revok/i);
   });
+
+  it('never exposes the live secret on the token object', () => {
+    const token = issueScopedToken(FIXTURE_KEY_A, {
+      ttlMs: 60_000,
+      hosts: ['h'],
+      maxUses: 2,
+      now: 1_000,
+    });
+    const exposed = token as unknown as Record<string, unknown>;
+    expect(exposed.value).toBeUndefined();
+    expect('value' in token).toBe(false);
+    expect(JSON.stringify(token)).not.toContain(FIXTURE_KEY_A);
+    expect({ ...token }).not.toHaveProperty('value');
+    // The gated path still resolves after the checks pass.
+    expect(useScopedToken(token, 'h', 2_000)).toBe(FIXTURE_KEY_A);
+  });
 });
 
 describe('per-role injection (issue #38)', () => {

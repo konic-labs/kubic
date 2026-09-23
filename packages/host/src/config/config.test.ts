@@ -103,6 +103,22 @@ describe('config layers (issue #38)', () => {
   });
 });
 
+describe('prototype-pollution guard (issue #38)', () => {
+  it('refuses a [__proto__] section without polluting Object.prototype', () => {
+    expect(() => parseTomlConfig('[__proto__]\npolluted = "yes"\n')).toThrow(
+      /forbidden key '__proto__'/,
+    );
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('refuses dunder keys in dotted paths', () => {
+    expect(() =>
+      parseTomlConfig('[agent]\n__proto__.polluted = "yes"\n'),
+    ).toThrow(/forbidden key '__proto__'/);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
 describe('canonical TOML example (issue #38)', () => {
   it('parses the example with every required section', () => {
     const parsed = parseTomlConfig(EXAMPLE_TOML);

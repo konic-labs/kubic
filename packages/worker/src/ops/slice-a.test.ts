@@ -51,7 +51,10 @@ describe('operation registry (issue #13, slice A)', () => {
   it('makes unknown tools uncallable with a structured error', async () => {
     const out = await callOperation('drop-database', {}, inv(), ctx());
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.error.code).toBe('unknown_tool');
+    if (!out.ok) {
+      expect(out.error.code).toBe('unknown_tool');
+      expect(out.error.message).toBe('unknown tool: drop-database');
+    }
   });
 
   it('converts invalid args to structured errors, not throws', async () => {

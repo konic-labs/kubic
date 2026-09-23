@@ -124,6 +124,18 @@ describe('replay pin (issue #9, §72)', () => {
       'toolSet',
       'worktree',
     ]);
+    // Values are the closed-world marker: flipping any field to false must
+    // fail (mutation: BooleanLiteral true→false).
+    expect(REPLAY_PIN_FIELDS).toEqual({
+      task: true,
+      model: true,
+      thinking: true,
+      toolSet: true,
+      worktree: true,
+      baseRevision: true,
+      systemPrompt: true,
+      resources: true,
+    });
   });
 
   it('diff finds the one changed var', () => {

@@ -47,6 +47,20 @@ describe('subagent spec (issue #41, §6.2)', () => {
         'worktreePath',
       ].sort(),
     );
+    // Values are the closed-world marker: flipping any field to false must
+    // fail (mutation: BooleanLiteral true→false).
+    expect(SUBAGENT_SPEC_FIELDS).toEqual({
+      sessionId: true,
+      parentSessionId: true,
+      role: true,
+      model: true,
+      systemPrompt: true,
+      resources: true,
+      toolNames: true,
+      budget: true,
+      worktreePath: true,
+      generation: true,
+    });
   });
 
   it('accepts a minimal valid spec', () => {

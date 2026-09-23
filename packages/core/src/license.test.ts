@@ -3,6 +3,7 @@
 // same license string that LICENSE and the package.json fields declare.
 import { describe, expect, it } from 'vitest';
 import {
+  formatLicenseDetail,
   formatVersionLine,
   KUBIC_LICENSE,
   KUBIC_LICENSE_FILE,
@@ -19,5 +20,9 @@ describe('kubic license identity (issue #59)', () => {
 
   it('formats the --version line with version and license', () => {
     expect(formatVersionLine('0.0.0')).toBe('kubic 0.0.0 (license: MIT)');
+  });
+
+  it('formats the license detail with id and file pointer', () => {
+    expect(formatLicenseDetail()).toBe('MIT (see LICENSE)');
   });
 });

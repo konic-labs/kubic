@@ -6,6 +6,7 @@ import {
   attachGraph,
   consumers,
   createGraph,
+  EDGE_FIELDS,
   estimateEdgeTokens,
   producers,
   renderDag,
@@ -128,5 +129,24 @@ describe('graph (issue #49, §54)', () => {
         kind: 'merged' as unknown as EdgeKind,
       }),
     ).toThrow(/kind/i);
+  });
+
+  it('edge closed-world fields are exactly the five markers', () => {
+    expect(Object.keys(EDGE_FIELDS).sort()).toEqual([
+      'artifactRefs',
+      'diffRef',
+      'from',
+      'kind',
+      'to',
+    ]);
+    // Values are the closed-world marker: flipping any field to false must
+    // fail (mutation: BooleanLiteral true→false).
+    expect(EDGE_FIELDS).toEqual({
+      from: true,
+      to: true,
+      kind: true,
+      artifactRefs: true,
+      diffRef: true,
+    });
   });
 });

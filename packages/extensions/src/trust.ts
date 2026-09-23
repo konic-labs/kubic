@@ -42,6 +42,11 @@ function isOwnedPackageSpecifier(spec: string): boolean {
 export function isOwnedPath(spec: string, opts: TrustOptions): boolean {
   const trimmed = spec.trim();
   if (trimmed.length === 0) return false;
+  // Fail closed on percent-encoded traversal/separators BEFORE normalization:
+  // '%2e%2e' decodes to '..' and '%2f'/'%5c' decode to path separators, so a
+  // future URL-decoding fs layer would turn an owned-looking prefix into
+  // traversal. No decode sink exists today — this stays inert-but-refused.
+  if (/%252e|%252f|%255c|%2e|%2f|%5c/i.test(trimmed)) return false;
   // Normalize BEFORE prefix comparison: raw string-prefix matching accepts
   // '<owned>/../evil' (verified live). Normalization collapses '..' so the
   // escaped target no longer carries the owned prefix.

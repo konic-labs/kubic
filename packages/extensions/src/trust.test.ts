@@ -100,6 +100,25 @@ describe('extensions trust (issue #37, §31)', () => {
     ).not.toThrow();
   });
 
+  it('refuses percent-encoded traversal segments (fail-closed, no decode sink)', () => {
+    const encoded = [
+      `${HOME}/.pi/agent/extensions/%2e%2e/evil.js`,
+      `${HOME}/.pi/agent/extensions/%2E%2E/evil.js`,
+      `${HOME}/.pi/agent/extensions/%252e%252e/evil.js`,
+      `${HOME}/.pi/agent/extensions/budget%2f..%2fevil.js`,
+      `${HOME}/.pi/agent/extensions/budget%5c..%5cevil.js`,
+    ];
+    for (const evil of encoded) {
+      expect(isOwnedPath(evil, OPTS)).toBe(false);
+      expect(() =>
+        assertFirstParty(manifest({ sourcePath: evil }), OPTS),
+      ).toThrow(ExtensionRefusedError);
+    }
+    // Control: legit owned paths still pass.
+    expect(isOwnedPath(`${HOME}/.pi/agent/extensions/budget`, OPTS)).toBe(true);
+    expect(() => assertFirstParty(manifest(), OPTS)).not.toThrow();
+  });
+
   it('FIRST_PARTY_PUBLISHERS is frozen: push cannot admit third-party', () => {
     expect(Object.isFrozen(FIRST_PARTY_PUBLISHERS)).toBe(true);
     try {

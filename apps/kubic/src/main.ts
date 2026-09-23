@@ -4,6 +4,10 @@
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
+import {
+  assembleModels,
+  runModelsCommand,
+} from '../../../packages/host/src/models-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 
 async function main(argv: string[]): Promise<number> {
@@ -27,7 +31,17 @@ async function main(argv: string[]): Promise<number> {
       out: (line) => console.log(line),
     });
   }
-  console.log('usage: kubic <sessions | git | diff | undo | log | status>');
+  if (command === 'models') {
+    const assembled = assembleModels(process.cwd());
+    if (assembled.note !== null) console.log(assembled.note);
+    return runModelsCommand(rest, {
+      models: assembled.models,
+      out: (line) => console.log(line),
+    });
+  }
+  console.log(
+    'usage: kubic <sessions | git | models | diff | undo | log | status>',
+  );
   return 1;
 }
 

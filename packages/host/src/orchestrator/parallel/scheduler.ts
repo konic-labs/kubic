@@ -17,6 +17,7 @@ import {
   isBudgetGateConfigured,
   resolveMaxConcurrency,
   resolveWorkerCapacity,
+  validateParallelLimits,
 } from './limits.js';
 
 export const DEFAULT_MAX_PENDING_MS = 60_000;
@@ -57,23 +58,33 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+// Strip C0 controls + DEL at the log boundary so a crafted agentId or
+// worktree (ESC / CSI / newline) renders inert instead of driving the
+// terminal that tails the log. Reasons stay verbatim — only logs sanitize.
+export function sanitizeLogLine(line: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
+  return line.replace(/[\u0000-\u001f\u007f]/g, '');
+}
+
 export class ParallelScheduler {
   private readonly limits: ParallelLimits;
   private readonly clock: () => number;
   private readonly log: (line: string) => void;
   private readonly sessionOverride: number | undefined;
-  private readonly usage: UsageTally | undefined;
+  private usage: UsageTally | undefined;
   private readonly running = new Map<string, RunningEntry>();
   private readonly queue: QueuedEntry[] = [];
   private readonly providerStamps = new Map<string, number[]>();
 
   constructor(limits?: ParallelLimits, deps?: SchedulerDeps) {
     // Validate eagerly so misconfig fails at construction, never mid-spawn.
+    validateParallelLimits(limits);
     resolveMaxConcurrency(limits, deps?.sessionOverride);
     resolveWorkerCapacity(limits, deps?.sessionOverride);
     this.limits = limits ?? {};
     this.clock = deps?.clock ?? Date.now;
-    this.log = deps?.log ?? (() => undefined);
+    const sink = deps?.log ?? (() => undefined);
+    this.log = (line: string) => sink(sanitizeLogLine(line));
     this.sessionOverride = deps?.sessionOverride;
     this.usage = deps?.usage;
   }
@@ -101,6 +112,17 @@ export class ParallelScheduler {
         outcome: 'denied',
         reason: 'agentId must be a non-empty string',
       };
+    }
+    // Time alone can free a gate (provider rate window) with nothing
+    // running, so re-evaluate the queued head before judging the newcomer —
+    // otherwise a queued entry waits until the next complete() or expiry.
+    // Runs after the id checks so a malformed request never triggers wakes.
+    const wasQueued = this.queue.some(
+      (e) => e.request.agentId === request.agentId,
+    );
+    this.drain();
+    if (wasQueued && this.running.has(request.agentId)) {
+      return { outcome: 'admitted' };
     }
     if (this.running.has(request.agentId)) {
       return {
@@ -159,7 +181,18 @@ export class ParallelScheduler {
         );
       }
     }
+    this.pruneProviderStamps(now);
     return denied.reverse();
+  }
+
+  // Replace the budget usage snapshot and re-evaluate the queue. A
+  // budget-denied head can never become admittable on its own — fresh usage
+  // is the only event that unblocks it — so update + drain are one step.
+  // Returns woken agent ids.
+  updateUsage(usage: UsageTally): string[] {
+    this.usage = usage;
+    this.sweepPending();
+    return this.drain();
   }
 
   private drain(): string[] {
@@ -186,9 +219,32 @@ export class ParallelScheduler {
   private admit(request: SpawnRequest): void {
     this.running.set(request.agentId, { request });
     if (request.provider !== undefined) {
-      const stamps = this.providerStamps.get(request.provider) ?? [];
-      stamps.push(this.clock());
+      const now = this.clock();
+      const windowMs = this.providerWindowMs(request.provider);
+      const stamps = (this.providerStamps.get(request.provider) ?? []).filter(
+        (t) => t > now - windowMs,
+      );
+      stamps.push(now);
       this.providerStamps.set(request.provider, stamps);
+    }
+  }
+
+  private providerWindowMs(provider: string): number {
+    return this.limits.providerCaps?.[provider]?.windowMs ?? 60_000;
+  }
+
+  // Provider stamps are append-only without this: every admit pushes one but
+  // nothing removes out-of-window entries, so long-lived schedulers grow
+  // without bound. Prune to the in-window set on admit (above) and here.
+  private pruneProviderStamps(now: number): void {
+    for (const [provider, stamps] of this.providerStamps) {
+      const windowMs = this.providerWindowMs(provider);
+      const kept = stamps.filter((t) => t > now - windowMs);
+      if (kept.length === 0) {
+        this.providerStamps.delete(provider);
+      } else if (kept.length !== stamps.length) {
+        this.providerStamps.set(provider, kept);
+      }
     }
   }
 

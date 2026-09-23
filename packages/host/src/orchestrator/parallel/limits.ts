@@ -114,6 +114,98 @@ function hasPositiveNumber(
   return typeof value === 'number' && value > 0;
 }
 
+// Construction-time validation: a 0 cap always denies (running 0 >= 0)
+// and a negative maxPendingMs expires everything on the next sweep, so
+// both are misconfig — fail fast instead of denying silently mid-spawn.
+function rejectNonPositive(
+  value: unknown,
+  field: string,
+  integer: boolean,
+): void {
+  if (value === undefined) return;
+  const ok =
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    (!integer || Number.isInteger(value));
+  if (!ok) {
+    throw new ParallelConfigError(
+      `${field} must be a positive${integer ? ' integer' : ''} number (got ${String(value)})`,
+    );
+  }
+}
+
+export function validateParallelLimits(limits?: ParallelLimits): void {
+  if (limits === undefined) return;
+  const maxPendingMs = limits.maxPendingMs;
+  if (maxPendingMs !== undefined) {
+    if (
+      typeof maxPendingMs !== 'number' ||
+      !Number.isFinite(maxPendingMs) ||
+      maxPendingMs < 0
+    ) {
+      throw new ParallelConfigError(
+        `maxPendingMs must be a non-negative number (got ${String(maxPendingMs)})`,
+      );
+    }
+  }
+  rejectNonPositive(limits.aggregates?.maxMemMb, 'aggregates.maxMemMb', false);
+  rejectNonPositive(
+    limits.aggregates?.maxDiskMb,
+    'aggregates.maxDiskMb',
+    false,
+  );
+  for (const [provider, cap] of Object.entries(limits.providerCaps ?? {})) {
+    rejectNonPositive(
+      cap?.maxConcurrent,
+      `providerCaps['${provider}'].maxConcurrent`,
+      true,
+    );
+    rejectNonPositive(
+      cap?.maxPerWindow,
+      `providerCaps['${provider}'].maxPerWindow`,
+      true,
+    );
+    rejectNonPositive(
+      cap?.windowMs,
+      `providerCaps['${provider}'].windowMs`,
+      false,
+    );
+  }
+  rejectNonPositive(
+    limits.budgetGate?.maxCostUsd,
+    'budgetGate.maxCostUsd',
+    false,
+  );
+  rejectNonPositive(
+    limits.budgetGate?.maxTokens,
+    'budgetGate.maxTokens',
+    false,
+  );
+  rejectNonPositive(
+    limits.budgetGate?.maxToolCalls,
+    'budgetGate.maxToolCalls',
+    false,
+  );
+  rejectNonPositive(
+    limits.budgetGate?.maxRuntimeMs,
+    'budgetGate.maxRuntimeMs',
+    false,
+  );
+  const approvalCapacity = limits.approvalCapacity;
+  if (approvalCapacity !== undefined) {
+    if (
+      typeof approvalCapacity !== 'number' ||
+      !Number.isInteger(approvalCapacity) ||
+      approvalCapacity < 0
+    ) {
+      throw new ParallelConfigError(
+        `approvalCapacity must be a non-negative integer (got ${String(approvalCapacity)})`,
+      );
+    }
+  }
+}
+
 export function isAggregateConfigured(
   caps: AggregateCaps | undefined,
 ): boolean {

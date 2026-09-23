@@ -2,7 +2,7 @@
 // one-worktree-per-writer, aggregates, provider/budget/approval gates,
 // maxPendingMs-deny. RED first — implementation lands in scheduler.ts.
 import { describe, expect, it } from 'vitest';
-import { ParallelScheduler } from './scheduler.js';
+import { ParallelScheduler, sanitizeLogLine } from './scheduler.js';
 
 function req(agentId: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -177,5 +177,198 @@ describe('parallel aggregate + approval gates (issue #47)', () => {
     );
     expect(second.outcome).toBe('denied');
     if (second.outcome === 'denied') expect(second.reason).toMatch(/approval/);
+  });
+});
+
+describe('parallel provider stamp pruning (issue #47 review)', () => {
+  it('bounds the stamp array after many admits across windows', () => {
+    let now = 0;
+    const sched = new ParallelScheduler(
+      {
+        maxConcurrency: 100,
+        maxPendingMs: 600_000,
+        providerCaps: { acme: { maxPerWindow: 10_000, windowMs: 1000 } },
+      },
+      { clock: () => now },
+    );
+    for (let i = 0; i < 20; i += 1) {
+      now = i * 500;
+      const out = sched.requestSpawn(
+        req(`p${i}`, { provider: 'acme' }),
+        'interactive',
+      );
+      expect(out.outcome).toBe('admitted');
+    }
+    const stamps = (
+      sched as unknown as { providerStamps: Map<string, number[]> }
+    ).providerStamps.get('acme');
+    // Only admits inside the trailing 1000ms window survive (t=9000, t=9500).
+    expect(stamps?.length).toBe(2);
+  });
+
+  it('drops stamp buckets entirely once fully outside the window', () => {
+    let now = 0;
+    const sched = new ParallelScheduler(
+      {
+        maxConcurrency: 100,
+        providerCaps: { acme: { maxPerWindow: 10_000, windowMs: 1000 } },
+      },
+      { clock: () => now },
+    );
+    sched.requestSpawn(req('p0', { provider: 'acme' }), 'interactive');
+    now = 60_000;
+    sched.sweepPending();
+    const stamps = (
+      sched as unknown as { providerStamps: Map<string, number[]> }
+    ).providerStamps.get('acme');
+    expect(stamps).toBeUndefined();
+  });
+});
+
+describe('parallel time-freed drain on spawn (issue #47 review)', () => {
+  it('admits a queued head on a new spawn after the rate window passes, without expiry', () => {
+    let now = 0;
+    const sched = new ParallelScheduler(
+      {
+        maxConcurrency: 8,
+        maxPendingMs: 600_000,
+        providerCaps: { acme: { maxPerWindow: 1, windowMs: 1000 } },
+      },
+      { clock: () => now },
+    );
+    expect(
+      sched.requestSpawn(req('a1', { provider: 'acme' }), 'autonomous').outcome,
+    ).toBe('admitted');
+    expect(
+      sched.requestSpawn(req('a2', { provider: 'acme' }), 'autonomous').outcome,
+    ).toBe('queued');
+    now = 100;
+    sched.complete('a1');
+    // Still in-window: head stays queued even with nothing running.
+    expect(sched.pendingIds()).toEqual(['a2']);
+    // Window passes; the next spawn re-evaluates the head first.
+    now = 1200;
+    const third = sched.requestSpawn(
+      req('a3', { provider: 'acme' }),
+      'autonomous',
+    );
+    expect(third.outcome).toBe('queued');
+    expect(sched.runningIds()).toContain('a2');
+    expect(sched.pendingIds()).toEqual(['a3']);
+  });
+});
+
+describe('parallel construction validation (issue #47 review)', () => {
+  it('throws on a negative maxPendingMs', () => {
+    expect(() => new ParallelScheduler({ maxPendingMs: -1 })).toThrow(
+      /maxPendingMs/,
+    );
+  });
+
+  it('throws on zero/negative provider caps', () => {
+    expect(
+      () =>
+        new ParallelScheduler({
+          providerCaps: { acme: { maxConcurrent: 0 } },
+        }),
+    ).toThrow(/maxConcurrent/);
+    expect(
+      () =>
+        new ParallelScheduler({
+          providerCaps: { acme: { maxPerWindow: -2 } },
+        }),
+    ).toThrow(/maxPerWindow/);
+    expect(
+      () => new ParallelScheduler({ providerCaps: { acme: { windowMs: 0 } } }),
+    ).toThrow(/windowMs/);
+  });
+
+  it('throws on zero/negative budget and aggregate caps', () => {
+    expect(
+      () => new ParallelScheduler({ budgetGate: { maxCostUsd: 0 } }),
+    ).toThrow(/maxCostUsd/);
+    expect(
+      () => new ParallelScheduler({ budgetGate: { maxTokens: -5 } }),
+    ).toThrow(/maxTokens/);
+    expect(
+      () => new ParallelScheduler({ aggregates: { maxMemMb: 0 } }),
+    ).toThrow(/maxMemMb/);
+    expect(() => new ParallelScheduler({ approvalCapacity: -1 })).toThrow(
+      /approvalCapacity/,
+    );
+  });
+});
+
+describe('parallel budget updateUsage (issue #47 review)', () => {
+  it('wakes a budget-queued head after fresh usage arrives', () => {
+    const sched = new ParallelScheduler(
+      { maxConcurrency: 8, budgetGate: { maxCostUsd: 5 } },
+      { usage: { costUsd: 10 } },
+    );
+    expect(sched.requestSpawn(req('b1'), 'autonomous').outcome).toBe('queued');
+    const woken = sched.updateUsage({ costUsd: 1 });
+    expect(woken).toEqual(['b1']);
+    expect(sched.pendingIds()).toEqual([]);
+    expect(sched.runningIds()).toContain('b1');
+  });
+
+  it('denied → updated → admitted in interactive mode', () => {
+    const sched = new ParallelScheduler(
+      { maxConcurrency: 8, budgetGate: { maxCostUsd: 5 } },
+      { usage: { costUsd: 10 } },
+    );
+    const denied = sched.requestSpawn(req('b1'), 'interactive');
+    expect(denied.outcome).toBe('denied');
+    sched.updateUsage({ costUsd: 1 });
+    expect(sched.requestSpawn(req('b1'), 'interactive').outcome).toBe(
+      'admitted',
+    );
+  });
+});
+
+describe('parallel log sanitizing (issue #47 review)', () => {
+  it('strips control characters from queue logs for a crafted agentId', () => {
+    const logs: string[] = [];
+    const sched = new ParallelScheduler(
+      { maxConcurrency: 1 },
+      { log: (line: string) => logs.push(line) },
+    );
+    sched.requestSpawn(req('ok'), 'autonomous');
+    const evil = 'evil-\u001b[31m-red';
+    expect(sched.requestSpawn(req(evil), 'autonomous').outcome).toBe('queued');
+    expect(logs.length).toBeGreaterThan(0);
+    for (const line of logs) {
+      expect(line.includes('\u001b')).toBe(false);
+      expect(line.includes('\n')).toBe(false);
+    }
+    expect(logs.some((l) => l.includes('evil-') && l.includes('-red'))).toBe(
+      true,
+    );
+  });
+
+  it('strips escape sequences from deny logs for a crafted worktree', () => {
+    const logs: string[] = [];
+    const sched = new ParallelScheduler(
+      {},
+      { log: (line: string) => logs.push(line) },
+    );
+    const evilWt = '/repo/.kubic/wt/evil\u001b[2J-inject';
+    sched.requestSpawn(
+      { agentId: 'w1', sessionId: 'sess-1', worktree: evilWt },
+      'autonomous',
+    );
+    const dup = sched.requestSpawn(
+      { agentId: 'w2', sessionId: 'sess-1', worktree: evilWt },
+      'interactive',
+    );
+    expect(dup.outcome).toBe('denied');
+    expect(logs.length).toBeGreaterThan(0);
+    for (const line of logs) {
+      expect(line.includes('\u001b')).toBe(false);
+    }
+  });
+
+  it('sanitizeLogLine removes C0 controls and DEL', () => {
+    expect(sanitizeLogLine('a\u001fb\u007fc')).toBe('abc');
   });
 });

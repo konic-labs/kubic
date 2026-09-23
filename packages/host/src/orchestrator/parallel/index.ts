@@ -21,13 +21,18 @@ export {
   ParallelConfigError,
   resolveMaxConcurrency,
   resolveWorkerCapacity,
+  validateParallelLimits,
 } from './limits.js';
 export type {
   SchedulerDeps,
   SpawnOutcome,
   SpawnRequest,
 } from './scheduler.js';
-export { DEFAULT_MAX_PENDING_MS, ParallelScheduler } from './scheduler.js';
+export {
+  DEFAULT_MAX_PENDING_MS,
+  ParallelScheduler,
+  sanitizeLogLine,
+} from './scheduler.js';
 export type {
   ParallelConc,
   ParallelSnapshot,

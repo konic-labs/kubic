@@ -17,7 +17,8 @@
     "lint:deps": "node scripts/dep-lint.mjs",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs"
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs",
+    "docs:check": "node scripts/check-docs-links.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

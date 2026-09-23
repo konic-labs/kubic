@@ -428,7 +428,9 @@ export function renderArtifactTranscript(artifact: TaskArtifact): string {
   const lines = [
     `[artifact ${JSON.stringify(clean.artifactId)}] ${JSON.stringify(clean.summary)}`,
   ];
-  lines.push(`files: ${clean.fileRefs.join(', ')}`);
+  lines.push(
+    `files: ${clean.fileRefs.map((ref) => JSON.stringify(ref)).join(', ')}`,
+  );
   for (const finding of clean.findings)
     lines.push(`finding: ${JSON.stringify(finding)}`);
   for (const test of clean.tests ?? [])

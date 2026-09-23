@@ -422,6 +422,14 @@ describe('adversarial re-review fix cycle 2 (exact inputs)', () => {
     expect(text).toContain(JSON.stringify('abc\ndef plain line'));
   });
 
+  it('F2: fileRefs render JSON-quoted, never raw', () => {
+    const text = renderArtifactTranscript(
+      validArtifact({ fileRefs: ['abc\ndef forged line'] }),
+    );
+    expect(text.split('\n')).not.toContain('def forged line');
+    expect(text).toContain(JSON.stringify('abc\ndef forged line'));
+  });
+
   it.each(['../../etc/passwd', '/etc/passwd'])(
     'F2: handoff diffRef stays inside the worktree (%s)',
     (ref) => {

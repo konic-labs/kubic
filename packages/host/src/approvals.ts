@@ -48,8 +48,13 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
     throw new PolicyValidationError(`invalid route: ${JSON.stringify(route)}`);
   }
   const autoApprove = record['autoApprove'] ?? [];
-  if (!Array.isArray(autoApprove) || !autoApprove.every((entry) => typeof entry === 'string')) {
-    throw new PolicyValidationError('autoApprove must be an explicit string array');
+  if (
+    !Array.isArray(autoApprove) ||
+    !autoApprove.every((entry) => typeof entry === 'string')
+  ) {
+    throw new PolicyValidationError(
+      'autoApprove must be an explicit string array',
+    );
   }
   const maxPendingMs = record['maxPendingMs'] ?? 60_000;
   if (typeof maxPendingMs !== 'number' || !(maxPendingMs > 0)) {
@@ -58,9 +63,15 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
   return {
     route,
     autoApprove: [...autoApprove],
-    sessionScoped: record['sessionScoped'] ?? true,
+    sessionScoped:
+      typeof record['sessionScoped'] === 'boolean'
+        ? record['sessionScoped']
+        : true,
     maxPendingMs,
-    requireJustification: record['requireJustification'] ?? false,
+    requireJustification:
+      typeof record['requireJustification'] === 'boolean'
+        ? record['requireJustification']
+        : false,
   };
 }
 
@@ -108,8 +119,10 @@ export interface TriggerContext {
 
 const GIT_PUSH = /^\s*git\s+push\b/i;
 const GIT_REMOTE_MUTATION = /^\s*git\s+remote\s+(add|set-url|remove|rename)\b/i;
-const INSTALL = /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
-const DEPLOY = /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
+const INSTALL =
+  /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+const DEPLOY =
+  /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
 
 export function detectTriggers(
   toolName: string,
@@ -125,13 +138,19 @@ export function detectTriggers(
   }
   if (toolName === 'bash' && typeof args['command'] === 'string') {
     const command = args['command'];
-    if (ctx.isDestructive(command, ctx.workspace)) found.push('destructive-shell');
-    if (ctx.network === 'none' && ctx.isNetworkCommand(command)) found.push('network');
-    if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command)) found.push('git-push');
+    if (ctx.isDestructive(command, ctx.workspace))
+      found.push('destructive-shell');
+    if (ctx.network === 'none' && ctx.isNetworkCommand(command))
+      found.push('network');
+    if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command))
+      found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
   }
-  if ((toolName === 'write' || toolName === 'edit') && typeof args['path'] === 'string') {
+  if (
+    (toolName === 'write' || toolName === 'edit') &&
+    typeof args['path'] === 'string'
+  ) {
     if (ctx.isOutsideWorkspace(args['path'])) found.push('outside-write');
   }
   return [...new Set(found)];
@@ -140,9 +159,16 @@ export function detectTriggers(
 // Stable across restarts: the same dangerous op re-proposed after a crash
 // maps to the same key, so a stored decision applies and the user is not
 // re-asked. Tool-call ids are deliberately excluded — they change per run.
-export function approvalKey(toolName: string, capability: Capability, args: Record<string, unknown>): string {
+export function approvalKey(
+  toolName: string,
+  capability: Capability,
+  args: Record<string, unknown>,
+): string {
   const canonical = JSON.stringify(sortKeys(args));
-  return createHash('sha256').update(`${toolName}|${capability}|${canonical}`).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(`${toolName}|${capability}|${canonical}`)
+    .digest('hex')
+    .slice(0, 16);
 }
 
 function sortKeys(value: unknown): unknown {
@@ -157,7 +183,11 @@ function sortKeys(value: unknown): unknown {
   return value;
 }
 
-export function summarizeRequest(toolName: string, capability: Capability, args: Record<string, unknown>): string {
+export function summarizeRequest(
+  toolName: string,
+  capability: Capability,
+  args: Record<string, unknown>,
+): string {
   if (toolName === 'bash' && typeof args['command'] === 'string') {
     return `${capability}: ${args['command'].slice(0, 120)}`;
   }
@@ -172,17 +202,24 @@ export interface ApprovalServiceOptions {
   store?: ApprovalStore;
   // Resolves the pending request when a user answers. Never resolves on
   // its own in headless runs — the wait below times out into a denial.
-  awaitAnswer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  awaitAnswer?: (
+    request: ApprovalRequest,
+  ) => Promise<ApprovalVerdict | undefined>;
   clock?: () => number;
 }
 
 export class ApprovalService {
   private readonly policy: ApprovalPolicy;
   private readonly store: ApprovalStore;
-  private readonly awaitAnswer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  private readonly awaitAnswer?: (
+    request: ApprovalRequest,
+  ) => Promise<ApprovalVerdict | undefined>;
   private readonly decisions: Map<string, ApprovalVerdict>;
   private readonly pending = new Map<string, ApprovalRequest>();
-  private readonly waiters = new Map<string, (verdict: ApprovalVerdict | undefined) => void>();
+  private readonly waiters = new Map<
+    string,
+    (verdict: ApprovalVerdict | undefined) => void
+  >();
 
   constructor(options: ApprovalServiceOptions) {
     this.policy = options.policy;
@@ -204,7 +241,11 @@ export class ApprovalService {
   submit(request: ApprovalRequest, verdict: ApprovalVerdict): ApprovalVerdict {
     const existing = this.decisions.get(request.key);
     if (existing !== undefined) return existing;
-    if (this.policy.requireJustification && verdict.approved && request.justification === undefined) {
+    if (
+      this.policy.requireJustification &&
+      verdict.approved &&
+      request.justification === undefined
+    ) {
       return { approved: false, reason: 'approval requires justification' };
     }
     this.decisions.set(request.key, verdict);
@@ -242,7 +283,9 @@ export class ApprovalService {
     }
   }
 
-  private waitForAnswer(request: ApprovalRequest): Promise<ApprovalVerdict | undefined> {
+  private waitForAnswer(
+    request: ApprovalRequest,
+  ): Promise<ApprovalVerdict | undefined> {
     const answer = this.awaitAnswer?.(request);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
@@ -252,7 +295,9 @@ export class ApprovalService {
     const notified = new Promise<ApprovalVerdict | undefined>((resolve) => {
       this.waiters.set(request.key, resolve);
     });
-    const done = (value: ApprovalVerdict | undefined): ApprovalVerdict | undefined => {
+    const done = (
+      value: ApprovalVerdict | undefined,
+    ): ApprovalVerdict | undefined => {
       if (timer !== undefined) clearTimeout(timer);
       this.waiters.delete(request.key);
       return value;

@@ -165,6 +165,35 @@ describe('policy interceptors (issue #15, slice C)', () => {
     );
   });
 
+  it('denies through the approval decider and stands down guards when approved', async () => {
+    const denied = await boot([
+      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+    ]);
+    registerPolicyInterceptors(denied.harness.hooks, {
+      workspace: '/work',
+      approve: () =>
+        Promise.resolve({ approved: false, reason: 'user said no' }),
+    });
+    const deniedEnds = await driveToolEnds(denied);
+    expect(JSON.stringify(deniedEnds[0])).toContain(
+      'not approved: user said no',
+    );
+
+    // Approved: the destructive guard AND the confine guard stand down for
+    // that exact call — the read runs with its original outside path.
+    const approved = await boot([
+      { name: 'read', args: { path: '/etc/passwd' } },
+    ]);
+    registerPolicyInterceptors(approved.harness.hooks, {
+      workspace: '/work',
+      approve: () => Promise.resolve({ approved: true }),
+    });
+    const approvedEnds = await driveToolEnds(approved);
+    expect(approvedEnds).toHaveLength(1);
+    expect(JSON.stringify(approvedEnds[0])).toContain('/etc/passwd');
+    expect(JSON.stringify(approvedEnds[0])).not.toContain('/work/etc/passwd');
+  });
+
   it('counts blocked attempts against the budget', async () => {
     const booted = await boot([
       { name: 'bash', args: { command: 'rm -rf /tmp/x' } },

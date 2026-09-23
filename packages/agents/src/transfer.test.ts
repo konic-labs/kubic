@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskTransfer } from './transfer.js';
-import { validateTransferSpawn } from './transfer.js';
+import {
+  isBudgetConfigured,
+  serializeTransfer,
+  validateTransferSpawn,
+} from './transfer.js';
 
 function validTransfer(overrides: Partial<TaskTransfer> = {}): TaskTransfer {
   return {
@@ -28,5 +32,30 @@ describe('transfer boundedness (issue #31, §24)', () => {
     const result = validateTransferSpawn(noObjective);
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.errors.join(' ')).toMatch(/objective/);
+  });
+
+  it('budget-absent spawn defaults to no limits', () => {
+    const { budget: _dropped, ...noBudget } = validTransfer();
+    const result = validateTransferSpawn(noBudget);
+    expect(result.valid).toBe(true);
+    if (result.valid) expect(result.transfer.budget).toEqual({});
+  });
+
+  it('isBudgetConfigured is false only for absent or empty budgets', () => {
+    expect(isBudgetConfigured(undefined)).toBe(false);
+    expect(isBudgetConfigured({})).toBe(false);
+    expect(isBudgetConfigured({ maxTokens: 100 })).toBe(true);
+  });
+
+  it('serializeTransfer omits the budget key when nothing is configured', () => {
+    const serialized = serializeTransfer(validTransfer({ budget: {} }));
+    expect(serialized).not.toHaveProperty('budget');
+  });
+
+  it('serializeTransfer keeps the budget key when configured', () => {
+    const serialized = serializeTransfer(
+      validTransfer({ budget: { maxTokens: 100 } }),
+    );
+    expect(serialized).toHaveProperty('budget', { maxTokens: 100 });
   });
 });

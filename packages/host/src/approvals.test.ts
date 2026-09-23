@@ -301,7 +301,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     );
     enableFullAccess(first, 'cli', () => 1700000000000);
     const second = new FileApprovalStore(dir);
-    expect(second.load()['k']).toEqual({ approved: true, by: 'user' });
+    expect(second.load().k).toEqual({ approved: true, by: 'user' });
     expect(second.loadPosture()).toEqual({
       fullAccess: true,
       enabledAt: 1700000000000,

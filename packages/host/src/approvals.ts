@@ -45,11 +45,11 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
     throw new PolicyValidationError('approval policy must be an object');
   }
   const record = input as Record<string, unknown>;
-  const route = record['route'] ?? 'ask-user';
+  const route = record.route ?? 'ask-user';
   if (route !== 'ask-user' && route !== 'deny') {
     throw new PolicyValidationError(`invalid route: ${JSON.stringify(route)}`);
   }
-  const autoApprove = record['autoApprove'] ?? [];
+  const autoApprove = record.autoApprove ?? [];
   if (
     !Array.isArray(autoApprove) ||
     !autoApprove.every((entry) => typeof entry === 'string')
@@ -58,7 +58,7 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
       'autoApprove must be an explicit string array',
     );
   }
-  const maxPendingMs = record['maxPendingMs'] ?? 60_000;
+  const maxPendingMs = record.maxPendingMs ?? 60_000;
   if (typeof maxPendingMs !== 'number' || !(maxPendingMs > 0)) {
     throw new PolicyValidationError('maxPendingMs must be a positive number');
   }
@@ -66,13 +66,11 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
     route,
     autoApprove: [...autoApprove],
     sessionScoped:
-      typeof record['sessionScoped'] === 'boolean'
-        ? record['sessionScoped']
-        : true,
+      typeof record.sessionScoped === 'boolean' ? record.sessionScoped : true,
     maxPendingMs,
     requireJustification:
-      typeof record['requireJustification'] === 'boolean'
-        ? record['requireJustification']
+      typeof record.requireJustification === 'boolean'
+        ? record.requireJustification
         : false,
   };
 }
@@ -138,8 +136,8 @@ export function detectTriggers(
   if (ctx.budgetOverrun === true) {
     found.push('budget-overrun');
   }
-  if (toolName === 'bash' && typeof args['command'] === 'string') {
-    const command = args['command'];
+  if (toolName === 'bash' && typeof args.command === 'string') {
+    const command = args.command;
     if (ctx.isDestructive(command, ctx.workspace))
       found.push('destructive-shell');
     if (ctx.network === 'none' && ctx.isNetworkCommand(command))
@@ -151,9 +149,9 @@ export function detectTriggers(
   }
   if (
     (toolName === 'write' || toolName === 'edit') &&
-    typeof args['path'] === 'string'
+    typeof args.path === 'string'
   ) {
-    if (ctx.isOutsideWorkspace(args['path'])) found.push('outside-write');
+    if (ctx.isOutsideWorkspace(args.path)) found.push('outside-write');
   }
   return [...new Set(found)];
 }
@@ -190,11 +188,11 @@ export function summarizeRequest(
   capability: Capability,
   args: Record<string, unknown>,
 ): string {
-  if (toolName === 'bash' && typeof args['command'] === 'string') {
-    return `${capability}: ${args['command'].slice(0, 120)}`;
+  if (toolName === 'bash' && typeof args.command === 'string') {
+    return `${capability}: ${args.command.slice(0, 120)}`;
   }
-  if (typeof args['path'] === 'string') {
-    return `${capability}: ${toolName} ${args['path']}`;
+  if (typeof args.path === 'string') {
+    return `${capability}: ${toolName} ${args.path}`;
   }
   return `${capability}: ${toolName}`;
 }

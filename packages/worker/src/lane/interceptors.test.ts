@@ -121,7 +121,7 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(ends).toHaveLength(1);
     // The second interceptor saw the confined args (chaining), and the tool ran confined.
     expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.['path']).toBe('/work/etc/passwd');
+    expect(seenBySecond[0]?.path).toBe('/work/etc/passwd');
     const end = ends[0];
     if (end.type !== 'tool_end') throw new Error('unreachable');
     expect(JSON.stringify(end.result)).toContain('/work/etc/passwd');
@@ -140,7 +140,7 @@ describe('policy interceptors (issue #15, slice C)', () => {
     const ends = await driveToolEnds(booted);
     expect(ends).toHaveLength(1);
     expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.['path']).toBe('/work/etc/cron.d/x');
+    expect(seenBySecond[0]?.path).toBe('/work/etc/cron.d/x');
     expect(JSON.stringify(ends[0])).not.toContain('/etc/cron.d/x",');
   });
 

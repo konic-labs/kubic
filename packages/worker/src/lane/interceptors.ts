@@ -269,9 +269,7 @@ export function registerPolicyInterceptors(
         if (approvedCalls.has(event.toolCallId)) return undefined;
         if (event.toolName !== 'bash') return undefined;
         const command =
-          typeof event.args['command'] === 'string'
-            ? event.args['command']
-            : '';
+          typeof event.args.command === 'string' ? event.args.command : '';
         if (isDestructive(command, options.workspace)) {
           return block(`destructive command blocked: ${command}`);
         }

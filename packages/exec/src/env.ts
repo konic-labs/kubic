@@ -15,6 +15,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -45,6 +46,7 @@ export interface StatInfo {
 export interface FileSystem {
   readFile(path: string): string;
   writeFile(path: string, content: string): void;
+  rename(from: string, to: string): void;
   listDir(path: string): string[];
   stat(path: string): StatInfo;
 }
@@ -125,6 +127,10 @@ class NodeFileSystem implements FileSystem {
     const abs = confine(this.cwd, path);
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, content);
+  }
+
+  rename(from: string, to: string): void {
+    renameSync(confine(this.cwd, from), confine(this.cwd, to));
   }
 
   listDir(path: string): string[] {
@@ -310,6 +316,12 @@ export class FakeExecutionEnv implements ExecutionEnv {
     writeFile: (path: string, content: string) => {
       this.files.set(path, content);
     },
+    rename: (from: string, to: string) => {
+      const hit = this.files.get(from);
+      if (hit === undefined) throw new Error(`fake fs: no such file: ${from}`);
+      this.files.delete(from);
+      this.files.set(to, hit);
+    },
     // Prefix filter approximating directory listing (first segment under
     // the path). Known divergence from Node semantics (no `.`/`..`
     // resolution) — the fake is a hermetic stand-in, not a fs model.
@@ -326,8 +338,19 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     stat: (path: string) => {
       const hit = this.files.get(path);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${path}`);
-      return { isFile: true, isDirectory: false, size: hit.length };
+      if (hit !== undefined)
+        return { isFile: true, isDirectory: false, size: hit.length };
+      const prefix = `${path.replace(/\/*$/, '')}/`;
+      let size = 0;
+      let count = 0;
+      for (const [k, v] of this.files) {
+        if (k.startsWith(prefix)) {
+          size += v.length;
+          count += 1;
+        }
+      }
+      if (count === 0) throw new Error(`fake fs: no such file: ${path}`);
+      return { isFile: false, isDirectory: true, size };
     },
   };
 

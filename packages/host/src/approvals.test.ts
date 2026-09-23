@@ -79,9 +79,13 @@ describe('approval service (issue #16, slice A)', () => {
       approved: false,
       reason: 'changed mind',
     });
-    expect(first).toEqual({ approved: true, by: 'user' });
-    expect(late).toEqual({ approved: true, by: 'user' });
-    await expect(pending).resolves.toEqual({ approved: true, by: 'user' });
+    expect(first).toEqual({ approved: true, by: 'user', justified: false });
+    expect(late).toEqual({ approved: true, by: 'user', justified: false });
+    await expect(pending).resolves.toEqual({
+      approved: true,
+      by: 'user',
+      justified: false,
+    });
     expect(service.pendingRequests()).toEqual([]);
   });
 
@@ -99,6 +103,7 @@ describe('approval service (issue #16, slice A)', () => {
     await expect(second.request(request())).resolves.toEqual({
       approved: true,
       by: 'user',
+      justified: false,
     });
   });
 
@@ -108,7 +113,7 @@ describe('approval service (issue #16, slice A)', () => {
     });
     await expect(
       explicit.request({ ...request(), capability: 'install' }),
-    ).resolves.toEqual({ approved: true, by: 'autoApprove' });
+    ).resolves.toEqual({ approved: true, by: 'autoApprove', justified: false });
     const implicit = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 20 }),
     });
@@ -133,7 +138,7 @@ describe('approval service (issue #16, slice A)', () => {
         { ...request(), justification: 'cleanup tmp' },
         { approved: true, by: 'user' },
       ),
-    ).toEqual({ approved: true, by: 'user' });
+    ).toEqual({ approved: true, by: 'user', justified: true });
   });
 
   it('rejects malformed policy', () => {
@@ -304,7 +309,11 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     );
     enableFullAccess(first, 'cli', () => 1700000000000);
     const second = new FileApprovalStore(dir);
-    expect(second.load().k).toEqual({ approved: true, by: 'user' });
+    expect(second.load().k).toEqual({
+      approved: true,
+      by: 'user',
+      justified: false,
+    });
     expect(second.loadPosture()).toEqual({
       fullAccess: true,
       enabledAt: 1700000000000,
@@ -332,7 +341,10 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
       detectTriggers('bash', { command: 'echo x > /etc/cron.d/x' }, ctx),
     ).toEqual(['outside-write']);
     expect(
-      detectTriggers('bash', { command: 'echo hi > notes.txt' }, ctx),
+      detectTriggers('bash', { command: 'echo x > "/etc/cron.d/x"; id' }, ctx),
+    ).toEqual(['outside-write']);
+    expect(
+      detectTriggers('bash', { command: "echo hi > 'notes.txt'" }, ctx),
     ).toEqual([]);
     expect(
       summarizeRequest('bash', 'network', { command: 'curl --token abc123 x' }),
@@ -365,6 +377,34 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
         summary: 'npm i',
         justification: 'deps for build',
       }),
-    ).resolves.toEqual({ approved: true, by: 'autoApprove' });
+    ).resolves.toEqual({ approved: true, by: 'autoApprove', justified: true });
+  });
+
+  it('evicts stored approvals when the policy tightens to require justification', async () => {
+    const store = new MemoryApprovalStore();
+    const granted = new ApprovalService({
+      policy: validatePolicy({ route: 'ask-user' }),
+      store,
+    });
+    const req = {
+      key: 't1',
+      capability: 'install' as const,
+      toolName: 'bash',
+      summary: 'npm i',
+    };
+    granted.submit(req, { approved: true, by: 'user' });
+    expect(granted.decided('t1')?.approved).toBe(true);
+    const tight = new ApprovalService({
+      policy: validatePolicy({
+        route: 'ask-user',
+        requireJustification: true,
+        maxPendingMs: 10,
+      }),
+      store,
+    });
+    await expect(tight.request(req)).resolves.toEqual({
+      approved: false,
+      reason: expect.stringContaining('timed out'),
+    });
   });
 });

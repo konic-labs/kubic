@@ -92,7 +92,7 @@ export interface ApprovalRequest {
 }
 
 export type ApprovalVerdict =
-  | { approved: true; by: string }
+  | { approved: true; by: string; justified?: boolean }
   | { approved: false; reason: string };
 
 export interface ApprovalStore {
@@ -167,12 +167,13 @@ export function detectTriggers(
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
     const redirect = REDIRECT.exec(command);
-    if (
-      redirect !== null &&
-      redirect[2] !== undefined &&
-      ctx.isOutsideWorkspace(redirect[2])
-    ) {
-      found.push('outside-write');
+    if (redirect !== null && redirect[2] !== undefined) {
+      // Targets arrive raw: strip surrounding quotes and trailing
+      // delimiters so `> "/etc/cron.d/x"` cannot dodge the outside check.
+      const target = redirect[2].replace(/^['"]+|['";,]+$/g, '');
+      if (target !== '' && ctx.isOutsideWorkspace(target)) {
+        found.push('outside-write');
+      }
     }
   }
   if (
@@ -390,7 +391,10 @@ export class ApprovalService {
   }
 
   // First answer wins: a stored decision is returned untouched and a late
-  // submit for a settled key is ignored (memoOnce semantics).
+  // submit for a settled key is ignored (memoOnce semantics) — EXCEPT a
+  // stored approval that predates a tightened policy: an approval granted
+  // without justification does not survive requireJustification being
+  // enabled later. It re-enters the policy path (and denies headless).
   submit(request: ApprovalRequest, verdict: ApprovalVerdict): ApprovalVerdict {
     const existing = this.decisions.get(request.key);
     if (existing !== undefined) return existing;
@@ -401,17 +405,31 @@ export class ApprovalService {
     ) {
       return { approved: false, reason: 'approval requires justification' };
     }
-    this.decisions.set(request.key, verdict);
+    const stamped: ApprovalVerdict = verdict.approved
+      ? { ...verdict, justified: request.justification !== undefined }
+      : verdict;
+    this.decisions.set(request.key, stamped);
     this.persist();
     this.pending.delete(request.key);
-    this.waiters.get(request.key)?.(verdict);
+    this.waiters.get(request.key)?.(stamped);
     this.waiters.delete(request.key);
-    return verdict;
+    return stamped;
   }
 
   async request(request: ApprovalRequest): Promise<ApprovalVerdict> {
     const existing = this.decisions.get(request.key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      const stale =
+        existing.approved &&
+        this.policy.requireJustification &&
+        existing.justified !== true;
+      if (!stale) return existing;
+      // Evict: the stored approval predates the tightened policy and must
+      // re-enter the policy path (submit's first-wins latch would otherwise
+      // hand it straight back). Every path below ends in submit, which
+      // persists — so the eviction is durable and the denial is recorded.
+      this.decisions.delete(request.key);
+    }
     if (this.policy.autoApprove.includes(request.capability)) {
       if (
         this.policy.requireJustification &&

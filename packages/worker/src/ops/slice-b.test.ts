@@ -9,7 +9,7 @@ function ctx(): OpContext {
   env.fs.writeFile('a.txt', 'hello world\nsecond line\n');
   env.fs.writeFile('sub/b.txt', 'hello again\nnothing\n');
   env.fs.writeFile('sub/deep/c.txt', 'unrelated\n');
-  return { env };
+  return { env, sessionId: 's1', agentId: 'a1' };
 }
 
 function inv(id = 'inv-1'): ToolInvocation {
@@ -22,6 +22,7 @@ function inv(id = 'inv-1'): ToolInvocation {
 describe('operation registry growth (issue #13, slice B)', () => {
   it('exposes exactly the expected operations', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual([
+      'bash',
       'edit',
       'find',
       'grep',

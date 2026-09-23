@@ -8,7 +8,7 @@ function ctx(): OpContext {
   const env = new FakeExecutionEnv({});
   env.fs.writeFile('a.txt', 'l1\nl2\nl3\n');
   env.fs.writeFile('sub/b.txt', 'x\n');
-  return { env };
+  return { env, sessionId: 's1', agentId: 'a1' };
 }
 
 function inv(id = 'inv-1'): ToolInvocation {
@@ -21,6 +21,7 @@ function inv(id = 'inv-1'): ToolInvocation {
 describe('operation registry (issue #13, slice A)', () => {
   it('exposes exactly the expected operations', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual([
+      'bash',
       'edit',
       'find',
       'grep',

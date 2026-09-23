@@ -2,7 +2,14 @@
 // The registry IS the tool set: removing an entry makes the tool
 // uncallable by construction — dispatch is a record lookup, and unknown
 // names (or invalid args) become structured errors, never throws.
+//
+// Never-replay guard (§20.2, §20.3): effects (replay:"never") memoize
+// their result under the invocation id. A worker retry or crash replay
+// with the same invocation id returns the memoized result instead of
+// re-executing — effects never re-invoke.
 
+import type { BashResult } from './bash.js';
+import { bashOperation } from './bash.js';
 import type { EditResult } from './edit.js';
 import { editOperation } from './edit.js';
 import type { FindResult } from './find.js';
@@ -14,6 +21,7 @@ import { lsOperation } from './ls.js';
 import type { ReadResult } from './read.js';
 import { readOperation } from './read.js';
 import type {
+  JsonValue,
   OpContext,
   Operation,
   OpResult,
@@ -30,6 +38,7 @@ export const OPERATIONS = {
   grep: grepOperation,
   write: writeOperation,
   edit: editOperation,
+  bash: bashOperation,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -41,6 +50,7 @@ export interface OperationResults {
   grep: GrepResult;
   write: WriteResult;
   edit: EditResult;
+  bash: BashResult;
 }
 
 export function callOperation<N extends OperationName>(
@@ -71,6 +81,20 @@ export async function callOperation(
   }
   try {
     const args = op.validateArgs(rawArgs);
+    if (op.replay === 'never') {
+      const memoKey = `op-result:${name}`;
+      const memoized = await inv.getMemo(memoKey);
+      if (memoized !== undefined) {
+        return {
+          ok: true,
+          invocation: refOf(inv),
+          result: memoized as unknown,
+        };
+      }
+      const result = await op.execute(inv, args, ctx);
+      await inv.setMemo(memoKey, result as unknown as JsonValue);
+      return { ok: true, invocation: refOf(inv), result };
+    }
     const result = await op.execute(inv, args, ctx);
     return { ok: true, invocation: refOf(inv), result };
   } catch (err) {

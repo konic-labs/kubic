@@ -3,7 +3,11 @@
 // Invocation threading (invocationId stable across safe replay,
 // operationId, turnId) plus memo accessors per §20.3.
 
-import type { ExecutionEnv } from '../../../exec/src/env.js';
+import type {
+  CheckpointStore,
+  ExecutionEnv,
+  ProcessSnapshot,
+} from '../../../exec/src/env.js';
 
 export type JsonValue =
   | string
@@ -38,6 +42,11 @@ export interface ToolInvocation {
 
 export interface OpContext {
   env: ExecutionEnv;
+  sessionId: string;
+  agentId: string;
+  signal?: AbortSignal;
+  onUpdate?: (snapshot: ProcessSnapshot) => void;
+  checkpointStore?: CheckpointStore;
 }
 
 export interface InvocationRef {

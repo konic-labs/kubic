@@ -18,6 +18,7 @@ import {
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToTerminus,
+  SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
@@ -89,6 +90,37 @@ function storeFailure(
     ...refs(ref),
     error: { kind: terminus, message },
   };
+}
+
+// Lane outcomes arrive as unknown at the composition root: the drive loop
+// hands back whatever the lane settled with. Validate the record shape
+// explicitly so a malformed outcome maps to failed with a clear message
+// instead of throwing an incidental TypeError mid-map.
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'declined',
+  'aborted',
+  'failed',
+]);
+
+function isRecordError(
+  value: unknown,
+): value is { code: string; message: string } {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as { code?: unknown; message?: unknown };
+  return typeof record.code === 'string' && typeof record.message === 'string';
+}
+
+function asResultRecord(outcome: unknown): OperationResultRecord | null {
+  if (typeof outcome !== 'object' || outcome === null) return null;
+  const record = outcome as { status?: unknown; error?: unknown };
+  if (
+    typeof record.status !== 'string' ||
+    !TERMINAL_STATUSES.has(record.status)
+  )
+    return null;
+  if (record.error !== undefined && !isRecordError(record.error)) return null;
+  return record as OperationResultRecord;
 }
 
 function tipId(entries: readonly unknown[]): string | null {
@@ -175,6 +207,16 @@ export async function runHeadlessPrompt(
   options: { sessionId?: string },
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
+  // Defense-in-depth with run-cli's --session check: direct callers bypass
+  // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
+  // before any store attach or path join can see them.
+  if (
+    options.sessionId !== undefined &&
+    !SESSION_ID_PATTERN.test(options.sessionId)
+  ) {
+    const invalid = `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-])`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
   const bridge = createNodeFileBridge(root);
@@ -233,7 +275,13 @@ export async function runHeadlessPrompt(
         'headless run suspended waiting on an approval that cannot arrive without a TTY';
       return finished(id, 'approval_timed_out', message, message);
     }
-    const record = driven.outcome as OperationResultRecord;
+    const record = asResultRecord(driven.outcome);
+    if (record === null) {
+      const detail =
+        JSON.stringify(driven.outcome)?.slice(0, 500) ?? String(driven.outcome);
+      const malformed = `lane yielded a malformed outcome: ${detail}`;
+      return finished(id, 'failed', malformed, malformed);
+    }
     const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
     if (terminus === 'completed') {
       const entries = await lane.findEntries(undefined, context);
@@ -247,6 +295,12 @@ export async function runHeadlessPrompt(
   } catch (error) {
     return storeFailure(id, error);
   } finally {
-    await session.close(context);
+    // The result is already mapped: a close failure must neither escape
+    // nor mask it.
+    try {
+      await session.close(context);
+    } catch {
+      // Intentionally swallowed — the mapped result stands.
+    }
   }
 }

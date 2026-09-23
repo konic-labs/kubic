@@ -35,7 +35,7 @@ export const DEFAULT_VITEST_MUTATE = [
   'packages/extensions/src/**/*.ts',
   '!packages/extensions/src/**/*.test.ts',
   'packages/agents/src/skills/**/*.ts',
-  '!packages/agents/src/skills/**/*.test.ts'
+  '!packages/agents/src/skills/**/*.test.ts',
 ];
 export const DEFAULT_TAP_MUTATE = [
   'scripts/dep-lint.mjs',

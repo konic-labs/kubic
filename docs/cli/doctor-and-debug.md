@@ -25,6 +25,11 @@ same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other
 fail, 2 usage error — full table on the
 [exit-codes page](exit-codes.md).
 
+On a fresh clone with no provider configured, doctor exits 6 with
+exactly one failure — `FAIL limit:provider-availability (provider-down)` —
+and everything else passing (`warn` never flips the exit). Configure a
+provider (see [configuration](configuration.md)) for a fully clean matrix.
+
 ## What each check means
 
 Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,

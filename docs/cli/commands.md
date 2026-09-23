@@ -7,8 +7,11 @@
 > internals live on the [packages pages](../packages/README.md).
 
 `kubic --version` (or `-V`) prints `kubic <version> (license: MIT)` —
-the version comes from `apps/kubic/package.json` — and exits 0.
-Anything else dispatches below; an unknown command prints
+the version comes from the nearest `kubic` package manifest
+(`apps/kubic/package.json` for src runs, the repo root for `dist/` runs) —
+and exits 0.
+Build first (`npm run build`), then invoke `./bin/kubic.js` (or
+`npm run kubic -- …`); anything else dispatches below; an unknown command prints
 `usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.

@@ -4,8 +4,17 @@ Kubic is Konic's open-source terminal coding agent: model-agnostic, built direct
 harness, with a change journal that makes every edit reviewable and reversible, and an optional
 orchestrator mode that delegates to subagents in their own worktrees.
 
-**Status: design.** There is no implementation yet. This repository currently holds the design
-document, the decision registry, and the tooling used to review them.
+**Status: implemented (solo mode).** A fresh clone plus Node >= 22.19 is
+enough to build a working `kubic` binary — see [Install](#install). The
+solo-mode commands (`run`, `sessions`, `git`, `models`, `diff` / `undo` /
+`log` / `status`, `doctor`) are implemented and specified under
+[`docs/cli/`](docs/cli/); the design document, decision registry, and review
+tooling live in `docs/design/` (local-only, gitignored).
+
+Still open: orchestrator mode, the interactive TUI, and the `workers`,
+eval/benchmark, and cost/policy wirings (issues
+[#75](https://github.com/konic-labs/kubic/issues/75)–[#79](https://github.com/konic-labs/kubic/issues/79)).
+Out of scope for the install story: npm publishing, auto-update, installers.
 
 ## What Kubic is
 
@@ -20,10 +29,37 @@ merges what they produce. The mode is session-scoped and requires a git reposito
 There is no sandbox. Solo mode has no isolation at all, and the design says so plainly rather than
 implying otherwise — see §59.1 of the document.
 
+## Install
+
+Prerequisites: Node >= 22.19 (`node --version`).
+
+From a fresh clone, run these exact commands from the repo root:
+
+```bash
+npm ci
+npm run build
+./bin/kubic.js --version
+```
+
+The third prints `kubic 0.0.0 (license: MIT)` and exits 0. Equivalent
+invocations: `npx kubic --version` (the `bin` entry, no install needed),
+`npm run kubic -- --version` (the same binary through npm), and
+`node dist/apps/kubic/src/main.js --version` (the build output directly).
+`./bin/kubic.js doctor` reports health; on a clean tree with no provider
+configured it exits 6 with a single `provider-down` failure
+(`limit:provider-availability`) — see
+[`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md).
+
+`dist/` is gitignored tsc output (`tsconfig.build.json`, no hand-rolled
+flags); rebuilding is byte-equivalent. Nothing here publishes to npm.
+
 ## Where things are
 
 | Path | What it is |
 | --- | --- |
+| [`bin/kubic.js`](bin/kubic.js) | Committed `kubic` executable — wrapper over the `dist/` build output. |
+| [`apps/kubic/`](apps/kubic/) | CLI composition root (`src/main.ts` wires host + tui). |
+| [`packages/`](docs/packages/) | Feature packages — one API page per package under `docs/packages/`. |
 | [`docs/design/`](docs/design/) | Everything about the design — document, decisions, config, tooling, generated explorer. Start at [`docs/design/README.md`](docs/design/README.md). |
 | [`docs/design/kubic-overview.md`](docs/design/kubic-overview.md) | The design document. Source of truth. |
 | [`docs/design/design-decisions.json`](docs/design/design-decisions.json) | Settled and open decisions, with alternatives and rationale. |

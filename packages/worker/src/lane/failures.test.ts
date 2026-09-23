@@ -1,0 +1,86 @@
+// Slice C: §52 failure taxonomy + §53 retry chooser (issue #14).
+import { describe, expect, it } from 'vitest';
+import { chooseRetry, classifyFailure, RetryBudget } from './failures.js';
+
+describe('failure taxonomy (issue #14, slice C)', () => {
+  it('preserves the §52 distinctions', () => {
+    expect(classifyFailure('process', 'spawn ENOENT', '').code).toBe(
+      'process_spawn_failed',
+    );
+    expect(classifyFailure('process', 'crashed signal 9', '').code).toBe(
+      'process_crashed',
+    );
+    expect(classifyFailure('tool', 'exit 1', '').code).toBe('tool_failed');
+    expect(classifyFailure('budget', 'tokens exhausted', '').code).toBe(
+      'budget_exhausted',
+    );
+    expect(classifyFailure('model', 'tokens exhausted', '').code).toBe(
+      'model_failed',
+    );
+    expect(classifyFailure('approval', 'denied by user', '').code).toBe(
+      'approval_denied',
+    );
+    expect(classifyFailure('approval', 'timed out', '').code).toBe(
+      'approval_timed_out',
+    );
+  });
+
+  it('gives every code a remedy', () => {
+    for (const kind of [
+      'model',
+      'provider',
+      'tool',
+      'process',
+      'workspace',
+      'context',
+      'budget',
+      'approval',
+    ] as const) {
+      const failure = classifyFailure(kind, 'something broke', '');
+      expect(failure.remedy.length).toBeGreaterThan(0);
+      expect(failure.strategy.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('routes transient provider errors to retry_same with notBefore', () => {
+    const failure = classifyFailure('provider', '429 rate limited', '');
+    const decision = chooseRetry(
+      failure,
+      { retryAfterMs: 5000 },
+      new RetryBudget(3),
+    );
+    expect(decision.decision).toBe('retry_same');
+    expect(decision.notBefore).toBeGreaterThan(Date.now());
+  });
+
+  it('routes polluted context to escalation, not blind retry', () => {
+    const failure = classifyFailure('context', 'context polluted', '');
+    const decision = chooseRetry(failure, {}, new RetryBudget(3));
+    expect(decision.decision).toBe('escalate');
+  });
+
+  it('abandons on budget exhaustion and denied approvals', () => {
+    const budget = chooseRetry(
+      classifyFailure('budget', 'spent', ''),
+      {},
+      new RetryBudget(3),
+    );
+    expect(budget.decision).toBe('abandon');
+    const denied = chooseRetry(
+      classifyFailure('approval', 'denied', ''),
+      {},
+      new RetryBudget(3),
+    );
+    expect(denied.decision).toBe('abandon');
+  });
+
+  it('spends retry budget separately from task budget', () => {
+    const retries = new RetryBudget(1);
+    const failure = classifyFailure('provider', '500 upstream', '');
+    const first = chooseRetry(failure, {}, retries);
+    expect(first.decision).toBe('retry_same');
+    const second = chooseRetry(failure, {}, retries);
+    expect(second.decision).toBe('abandon');
+    expect(second.reason).toContain('retry budget');
+  });
+});

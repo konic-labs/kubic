@@ -37,14 +37,20 @@ export type {
   DriveOutcome,
   DriveResult,
   Events,
+  FileErrorCode,
+  FileInfo,
+  FileKind,
+  FileSystem,
   HarnessEvent,
   LaneSnapshot,
   OperationAdmissionResult,
   OperationError,
   OperationRequest,
   OperationResultRecord,
+  Result,
   Session,
   SessionCreateOptions,
+  SessionRepo,
   TerminalStatus,
   UsageRow,
 } from '@earendil-works/pi-agent-core';
@@ -69,7 +75,11 @@ export type {
 export {
   AgentHarness,
   BACKGROUND_CONTEXT,
+  err,
+  FileError,
+  JsonlSessionRepo,
   MemorySessionRepo,
+  ok,
 } from '@earendil-works/pi-agent-core';
 export type { DeferredHandle, Model, Usage } from '@earendil-works/pi-ai';
 // JUSTIFICATION:

@@ -11,6 +11,12 @@ const FORBIDDEN = {
   trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
   eval: ['exec', 'worker', 'host', 'tui'],
   tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
+  // extensions sits above the library layers it dogfoods (core/exec/agents/
+  // trajectory/eval) but below the runtime implementations: a bundle facade
+  // must never reach into worker/host/tui implementation or the app root.
+  // Intra-package facet splits (tui never imports host, worker never pi-tui)
+  // are enforced in checkTree below (issue #37, §32).
+  extensions: ['worker', 'host', 'tui', 'kubic'],
   // apps/kubic is the composition root: may wire host + tui together.
   kubic: [],
 };
@@ -133,6 +139,41 @@ export function checkTree(root) {
             file: relative(root, file),
             line,
           });
+        }
+        if (owner === 'extensions') {
+          // Facet splits, issue #37 §32: a tui facet file (*/tui.ts or
+          // */tui/*) never imports host — including the same-package host
+          // facet, which the package-level rule above cannot see. A worker
+          // facet file never imports pi-tui.
+          const rel = relative(root, file);
+          const segs = rel.split(sep);
+          const base = segs[segs.length - 1] ?? '';
+          const isTuiFacet = segs.includes('tui') || base.startsWith('tui.');
+          const isWorkerFacet =
+            segs.includes('worker') || base.startsWith('worker.');
+          const mentionsHost =
+            spec === '@kubic/host' ||
+            spec.startsWith('@kubic/host/') ||
+            target === 'host' ||
+            /(^|\/)host(\/|$|\.)/.test(spec);
+          if (isTuiFacet && mentionsHost) {
+            const line = content.slice(0, m.index).split('\n').length;
+            violations.push({
+              from: owner,
+              to: 'host (tui facet)',
+              file: rel,
+              line,
+            });
+          }
+          if (isWorkerFacet && spec.includes('pi-tui')) {
+            const line = content.slice(0, m.index).split('\n').length;
+            violations.push({
+              from: owner,
+              to: `${spec} (worker facet)`,
+              file: rel,
+              line,
+            });
+          }
         }
       }
     }

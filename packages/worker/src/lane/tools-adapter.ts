@@ -15,12 +15,14 @@ import {
   type AgentHarnessToolInvocation,
   Type,
 } from '../pi-boundary.js';
+import type { OperationKillRegistry } from './abort.js';
 
 export interface KubicToolContext {
   env: ExecutionEnv;
   sessionId: string;
   agentId: string;
   memos: MemoStore;
+  kills: OperationKillRegistry;
 }
 
 function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
@@ -52,6 +54,7 @@ export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
         env: toolContext.env,
         sessionId: toolContext.sessionId,
         agentId: toolContext.agentId,
+        trackHandle: (kill) => toolContext.kills.track(inv.operationId, kill),
         onUpdate: (snapshot) =>
           onUpdate({
             content: [{ type: 'text', text: JSON.stringify(snapshot) }],

@@ -16,6 +16,7 @@ import {
   type Model,
   type Session,
 } from '../pi-boundary.js';
+import { OperationKillRegistry } from './abort.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 
 export const SOLO_LANE_NAME = 'main';
@@ -44,17 +45,20 @@ export interface SoloBootOptions {
 export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
+  kills: OperationKillRegistry;
 }
 
 export async function bootSoloLane(
   options: SoloBootOptions,
 ): Promise<SoloLane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
+  const kills = new OperationKillRegistry();
   const toolContext: KubicToolContext = {
     env: options.env,
     sessionId: options.sessionId,
     agentId: options.agentId,
     memos: options.memos ?? new MemoryMemoStore(),
+    kills,
   };
   const { harness } = await AgentHarness.create(
     {
@@ -68,7 +72,7 @@ export async function bootSoloLane(
     context,
   );
   const lane = await harness.lane(SOLO_LANE_NAME, context);
-  return { harness, lane };
+  return { harness, lane, kills };
 }
 
 // Minimal drive surface: real AgentLanes satisfy this, and so do unit

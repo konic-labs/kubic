@@ -87,6 +87,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       checkpointKey: inv.invocationId,
       checkpointStore: ctx.checkpointStore,
     });
+    ctx.trackHandle?.(() => handle.kill(), inv);
     let timedOut = false;
     const timer =
       args.timeout === undefined

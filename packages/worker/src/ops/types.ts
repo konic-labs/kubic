@@ -47,6 +47,9 @@ export interface OpContext {
   signal?: AbortSignal;
   onUpdate?: (snapshot: ProcessSnapshot) => void;
   checkpointStore?: CheckpointStore;
+  // Lane abort support (issue #11): the op hands its process kill to the
+  // lane's kill registry so requestLaneAbort drains in-flight trees.
+  trackHandle?: (kill: () => void, invocation: ToolInvocation) => void;
 }
 
 export interface InvocationRef {

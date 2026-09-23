@@ -26,6 +26,7 @@
 //     Kubic defines no parallel event vocabulary)
 //   review: issue #11
 export type {
+  AbortRequestResult,
   AgentHarness as AgentHarnessApi,
   AgentHarnessTool,
   AgentHarnessToolInvocation,
@@ -39,10 +40,12 @@ export type {
   HarnessEvent,
   LaneSnapshot,
   OperationAdmissionResult,
+  OperationError,
   OperationRequest,
   OperationResultRecord,
   Session,
   SessionCreateOptions,
+  TerminalStatus,
   UsageRow,
 } from '@earendil-works/pi-agent-core';
 // JUSTIFICATION:

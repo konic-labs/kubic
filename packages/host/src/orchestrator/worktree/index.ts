@@ -28,8 +28,11 @@ export {
 } from './clean.js';
 export {
   isOutsideWorktree,
+  isSpawnedWorktreePath,
+  isSpawnedWorktreeShape,
   OUTSIDE_WRITE_CAPABILITY,
   requireInsideWorktree,
+  spawnedRootFor,
 } from './confinement.js';
 export type { WorktreeErrorCode } from './errors.js';
 export {
@@ -49,7 +52,7 @@ export {
   validateAgentId,
   WORKTREE_BRANCH_PREFIX,
 } from './naming.js';
-export type { RemoveWorktreeResult } from './remove.js';
+export type { RemoveWorktreeOptions, RemoveWorktreeResult } from './remove.js';
 export { removeWorktree } from './remove.js';
 export type {
   MergedWorktree,

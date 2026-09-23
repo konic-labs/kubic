@@ -96,6 +96,34 @@ describe('kubic clean (issue #45)', () => {
     expect(spawnedEntries()).toHaveLength(3);
   });
 
+  it('anchors clean scope to the repo root, not a substring', () => {
+    const entries = [
+      ...parseWorktreePorcelain(THREE_WT_PORCELAIN),
+      {
+        path: '/other/.kubic/wt/agent-9',
+        branch: 'kubic/agent-9',
+        bare: false,
+        detached: false,
+      },
+      {
+        path: '/repo/.kubic/wt/../escape',
+        branch: null,
+        bare: false,
+        detached: false,
+      },
+    ];
+    const anchored = planClean(entries, {}, '/repo');
+    expect(anchored.worktrees.map((w) => w.path)).toEqual([
+      '/repo/.kubic/wt/agent-1',
+      '/repo/.kubic/wt/agent-2',
+      '/repo/.kubic/wt/agent-3',
+    ]);
+    const unanchored = planClean(entries, {});
+    expect(unanchored.worktrees.map((w) => w.path)).not.toContain(
+      '/repo/.kubic/wt/../escape',
+    );
+  });
+
   it('rejects unknown flags without pruning', async () => {
     const env = new FakeExecutionEnv({});
     const lines: string[] = [];

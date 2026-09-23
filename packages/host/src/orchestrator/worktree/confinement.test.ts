@@ -4,8 +4,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   isOutsideWorktree,
+  isSpawnedWorktreePath,
+  isSpawnedWorktreeShape,
   OUTSIDE_WRITE_CAPABILITY,
   requireInsideWorktree,
+  spawnedRootFor,
 } from './confinement.js';
 import { WorktreeError } from './errors.js';
 
@@ -46,5 +49,35 @@ describe('worktree confinement (issue #45)', () => {
       expect((error as WorktreeError).approval).toBe(OUTSIDE_WRITE_CAPABILITY);
       expect((error as WorktreeError).approval).toBe('outside-write');
     }
+  });
+
+  it('defeats direct .. traversal above the worktree', () => {
+    expect(isOutsideWorktree('/repo/.kubic/wt/agent-1', '../agent-2/x')).toBe(
+      true,
+    );
+    expect(
+      isOutsideWorktree(
+        '/repo/.kubic/wt/agent-1',
+        '/repo/.kubic/wt/agent-1/../../etc/passwd',
+      ),
+    ).toBe(true);
+    expect(
+      isOutsideWorktree('/repo/.kubic/wt/agent-1', '/repo/.kubic/wt/agent-1'),
+    ).toBe(false);
+  });
+
+  it('anchors the spawned set to the repo root', () => {
+    expect(isSpawnedWorktreePath('/repo', '/repo/.kubic/wt/agent-1')).toBe(
+      true,
+    );
+    expect(isSpawnedWorktreePath('/repo', '/other/.kubic/wt/agent-9')).toBe(
+      false,
+    );
+    expect(isSpawnedWorktreePath('/repo', '/repo/.kubic/wt/../escape')).toBe(
+      false,
+    );
+    expect(isSpawnedWorktreeShape('/repo/.kubic/wt/agent-1')).toBe(true);
+    expect(isSpawnedWorktreeShape('/repo/.kubic/wt/../escape')).toBe(false);
+    expect(spawnedRootFor('/repo')).toBe('/repo/.kubic/wt');
   });
 });

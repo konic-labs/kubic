@@ -121,4 +121,39 @@ describe('addWorktree preflight (issue #45)', () => {
     expect(isColdAddWithinBudget(result.elapsedMs)).toBe(true);
     expect(isColdAddWithinBudget(500)).toBe(false);
   });
+
+  it('refuses a second add when the worktree path already exists', async () => {
+    const env = new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': TOPLEVEL,
+      'git rev-parse --git-common-dir': COMMON_DIR,
+    });
+    seedRepo(env);
+    env.fs.writeFile(
+      '/repo/.kubic/wt/agent-1/HEAD',
+      'ref: refs/heads/kubic/agent-1\n',
+    );
+    const error = await addWorktree(env, '/repo', 'agent-1').catch(
+      (e: unknown) => e,
+    );
+    expect((error as { code?: string }).code).toBe('already_exists');
+    expect((error as Error).message).toMatch(/already exists/);
+  });
+
+  it('refuses a second add when the branch already exists', async () => {
+    const env = new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': TOPLEVEL,
+      'git rev-parse --git-common-dir': COMMON_DIR,
+      'git branch --list kubic/agent-1': {
+        exitCode: 0,
+        stdout: '  kubic/agent-1\n',
+        stderr: '',
+      },
+    });
+    seedRepo(env);
+    const error = await addWorktree(env, '/repo', 'agent-1').catch(
+      (e: unknown) => e,
+    );
+    expect((error as { code?: string }).code).toBe('already_exists');
+    expect((error as Error).message).toMatch(/kubic\/agent-1/);
+  });
 });

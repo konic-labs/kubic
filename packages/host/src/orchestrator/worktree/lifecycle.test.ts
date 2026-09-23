@@ -75,4 +75,29 @@ describe('removeWorktree (issue #45)', () => {
     });
     expect(result.removed).toBe(true);
   });
+
+  it('refuses a foreign absolute path outside the spawned set', async () => {
+    const env = new FakeExecutionEnv({});
+    const shaped = await removeWorktree(env, '/other/.kubic/wt/agent-9', {
+      repoRoot: '/repo',
+    }).catch((e: unknown) => e);
+    expect((shaped as { code?: string }).code).toBe('remove_failed');
+    expect((shaped as Error).message).toMatch(/outside the spawned set/);
+    const foreign = await removeWorktree(env, '/etc/cron.d/x', {
+      repoRoot: '/repo',
+    }).catch((e: unknown) => e);
+    expect((foreign as { code?: string }).code).toBe('remove_failed');
+    const unanchored = await removeWorktree(env, '/etc/cron.d/x').catch(
+      (e: unknown) => e,
+    );
+    expect((unanchored as { code?: string }).code).toBe('remove_failed');
+  });
+
+  it('refuses status for a foreign absolute path', async () => {
+    const env = new FakeExecutionEnv({});
+    const error = await getWorktreeStatus(env, '/repo/other.txt', {
+      repoRoot: '/repo',
+    }).catch((e: unknown) => e);
+    expect((error as { code?: string }).code).toBe('status_failed');
+  });
 });

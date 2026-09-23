@@ -4,6 +4,10 @@
 // removal disposes the checkout, the `kubic/<agent>` branch stays.
 
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
+import {
+  isSpawnedWorktreePath,
+  isSpawnedWorktreeShape,
+} from './confinement.js';
 import { WorktreeError } from './errors.js';
 import { branchForAgent } from './naming.js';
 
@@ -12,6 +16,12 @@ export interface RemoveWorktreeResult {
   removed: true;
   branchKept: true;
   branch: string | null;
+}
+
+export interface RemoveWorktreeOptions {
+  force?: boolean;
+  sessionId?: string;
+  repoRoot?: string;
 }
 
 function branchForPath(path: string): string | null {
@@ -23,10 +33,27 @@ function branchForPath(path: string): string | null {
   }
 }
 
+function assertSpawnedPath(path: string, repoRoot: string | undefined): void {
+  if (!isSpawnedWorktreeShape(path)) {
+    throw new WorktreeError(
+      'remove_failed',
+      `refusing to remove ${path}: not a spawned worktree under .kubic/wt/`,
+      1,
+    );
+  }
+  if (repoRoot !== undefined && !isSpawnedWorktreePath(repoRoot, path)) {
+    throw new WorktreeError(
+      'remove_failed',
+      `refusing to remove ${path}: outside the spawned set of ${repoRoot}`,
+      1,
+    );
+  }
+}
+
 export async function removeWorktree(
   env: ExecutionEnv,
   path: string,
-  options?: { force?: boolean; sessionId?: string },
+  options?: RemoveWorktreeOptions,
 ): Promise<RemoveWorktreeResult> {
   if (!path.startsWith('/')) {
     throw new WorktreeError(
@@ -35,6 +62,7 @@ export async function removeWorktree(
       1,
     );
   }
+  assertSpawnedPath(path, options?.repoRoot);
   const provenance: Provenance = {
     sessionId: options?.sessionId ?? 'cli',
     agentId: 'manager',

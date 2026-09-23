@@ -6,6 +6,10 @@
 // module never touches the filesystem directly.
 
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
+import {
+  isSpawnedWorktreePath,
+  isSpawnedWorktreeShape,
+} from './confinement.js';
 import { isWorktreeError } from './errors.js';
 import { listWorktrees, type WorktreeEntry } from './list.js';
 import { removeWorktree } from './remove.js';
@@ -35,6 +39,7 @@ export interface JournalPruneResult {
 export interface CleanDeps {
   env: ExecutionEnv;
   out: (line: string) => void;
+  repoRoot?: string;
   lister?: (env: ExecutionEnv) => Promise<WorktreeEntry[]>;
   remover?: (env: ExecutionEnv, path: string) => Promise<unknown>;
   pruneJournal?: (policy: {
@@ -109,14 +114,22 @@ export function parseCleanArgs(
 }
 
 // Only spawned worktrees are planned — the main checkout is never pruned.
+// Scope is repoRoot-anchored (normalized prefix under `<root>/.kubic/wt/`)
+// when repoRoot is known; otherwise a normalized shape check so direct
+// `..` escapes never slip through a substring filter.
 export function planClean(
   entries: WorktreeEntry[],
   options: CleanOptions,
+  repoRoot?: string,
 ): CleanPlan {
   void options;
+  const inScope =
+    repoRoot === undefined
+      ? (path: string): boolean => isSpawnedWorktreeShape(path)
+      : (path: string): boolean => isSpawnedWorktreePath(repoRoot, path);
   return {
     worktrees: entries
-      .filter((entry) => entry.path.includes('/.kubic/wt/'))
+      .filter((entry) => inScope(entry.path))
       .map((entry) => ({ path: entry.path, branch: entry.branch })),
     journal: {
       ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs }),
@@ -150,11 +163,14 @@ export async function runCleanCommand(
     }
     throw error;
   }
-  const plan = planClean(entries, options);
+  const plan = planClean(entries, options, deps.repoRoot);
   const remover =
     deps.remover ??
     ((env, path) =>
-      removeWorktree(env, path, { sessionId: options.sessionId }));
+      removeWorktree(env, path, {
+        sessionId: options.sessionId,
+        ...(deps.repoRoot === undefined ? {} : { repoRoot: deps.repoRoot }),
+      }));
   const prune = deps.pruneJournal ?? noopPrune;
 
   if (options.dryRun === true) {
@@ -182,6 +198,7 @@ export async function runCleanCommand(
   }
 
   const pruned: string[] = [];
+  // Real clean intentionally does not require a prior dry-run: dry-run is an advisory preview only.
   for (const item of plan.worktrees) {
     await remover(deps.env, item.path);
     pruned.push(item.path);

@@ -152,6 +152,25 @@ export async function addWorktree(
 
   const warnings = detectUntrackedGaps(env, repoRoot, path);
 
+  // Explicit pre-flight: a second add for the same agent fails fast here
+  // with `already_exists` — never rely on parsing git's reactive
+  // "already exists" stderr (kept below only as a TOCTOU fallback).
+  if (exists(env, path)) {
+    throw new WorktreeError(
+      'already_exists',
+      `worktree ${path} already exists — remove it with \`kubic clean\` first`,
+      1,
+    );
+  }
+  const branchHit = await runGit(env, ['branch', '--list', branch], provenance);
+  if (branchHit.exitCode === 0 && branchHit.stdout.includes(branch)) {
+    throw new WorktreeError(
+      'already_exists',
+      `branch ${branch} already exists — remove it with \`kubic clean\` first`,
+      1,
+    );
+  }
+
   const added = await runGit(
     env,
     ['worktree', 'add', path, '-b', branch],

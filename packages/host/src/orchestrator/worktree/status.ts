@@ -4,6 +4,10 @@
 // the exec Shell seam (`git -C <path> status`, explicit argv).
 
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
+import {
+  isSpawnedWorktreePath,
+  isSpawnedWorktreeShape,
+} from './confinement.js';
 import { WorktreeError } from './errors.js';
 import type { WorktreeEntry } from './list.js';
 
@@ -41,12 +45,29 @@ export function markMerged(entry: WorktreeEntry): MergedWorktree {
 export async function getWorktreeStatus(
   env: ExecutionEnv,
   path: string,
-  options?: { sessionId?: string },
+  options?: { sessionId?: string; repoRoot?: string },
 ): Promise<WorktreeStatus> {
   if (!path.startsWith('/')) {
     throw new WorktreeError(
       'status_failed',
       'worktree path must be absolute',
+      1,
+    );
+  }
+  if (!isSpawnedWorktreeShape(path)) {
+    throw new WorktreeError(
+      'status_failed',
+      `refusing status for ${path}: not a spawned worktree under .kubic/wt/`,
+      1,
+    );
+  }
+  if (
+    options?.repoRoot !== undefined &&
+    !isSpawnedWorktreePath(options.repoRoot, path)
+  ) {
+    throw new WorktreeError(
+      'status_failed',
+      `refusing status for ${path}: outside the spawned set of ${options.repoRoot}`,
       1,
     );
   }

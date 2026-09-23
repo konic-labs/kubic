@@ -313,3 +313,108 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     });
   });
 });
+
+describe('trajectory review fixes (round 2)', () => {
+  it('truncates multi-byte output on a character boundary — byte cap holds exactly, no U+FFFD', () => {
+    const cjk = 'あ'.repeat(5000);
+    expect(Buffer.byteLength(cjk, 'utf8')).toBe(15_000);
+    const exported = buildTrajectoryExport(
+      completeInput({
+        observations: [{ seq: 1, actionSeq: 1, output: cjk }],
+      }),
+    );
+    const observation = exported.observations[0];
+    expect(observation?.truncated).toBe(true);
+    expect(observation?.bytesOriginal).toBe(15_000);
+    expect(
+      Buffer.byteLength(observation?.output ?? '', 'utf8'),
+    ).toBeLessThanOrEqual(MAX_OBSERVATION_BYTES);
+    expect(observation?.output).not.toContain('�');
+  });
+
+  it('rejects a completed result carrying a failureCategory', () => {
+    try {
+      buildTrajectoryExport(
+        completeInput({
+          result: {
+            status: 'completed',
+            summary: 'done?',
+            failureCategory: 'tool_failed',
+            error: null,
+          },
+        }),
+      );
+    } catch (e) {
+      expect((e as TrajectoryExportError).code).toBe('contradictory-result');
+      return;
+    }
+    throw new Error(
+      'completed result with a failureCategory exported — expected block',
+    );
+  });
+
+  it('rejects a malformed usage.byModel row', () => {
+    try {
+      buildTrajectoryExport(
+        completeInput({
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cachedTokens: 0,
+            requests: 1,
+            costUsd: 0.01,
+            byModel: {
+              'acme/m1': {
+                requests: 1,
+                input: 10,
+                output: -5,
+                costTotal: 0.01,
+              },
+            },
+          },
+        }),
+      );
+    } catch (e) {
+      expect((e as TrajectoryExportError).code).toBe('invalid-usage');
+      return;
+    }
+    throw new Error('malformed byModel row exported — expected block');
+  });
+
+  it('passes a well-formed usage.byModel through', () => {
+    const exported = buildTrajectoryExport(
+      completeInput({
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          cachedTokens: 0,
+          requests: 1,
+          costUsd: 0.01,
+          byModel: {
+            'acme/m1': { requests: 1, input: 10, output: 5, costTotal: 0.01 },
+          },
+        },
+      }),
+    );
+    expect(exported.usage.byModel['acme/m1']).toEqual({
+      requests: 1,
+      input: 10,
+      output: 5,
+      costTotal: 0.01,
+    });
+  });
+
+  it('records the used env VERBATIM — never silent scrub (secrecy is upstream at the spawn allowlist #42)', () => {
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/home/agent',
+      SECRET_TOKEN: 's3cret-that-must-round-trip',
+    };
+    const exported = buildTrajectoryExport(
+      completeInput({
+        environment: { capturedFrom: 'used', cwd: '/repo', env },
+      }),
+    );
+    expect(exported.environment.env).toEqual(env);
+  });
+});

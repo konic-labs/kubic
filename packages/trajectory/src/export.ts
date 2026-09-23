@@ -147,6 +147,14 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
 // §46r2/§3.8: record the env the run ACTUALLY used. The discriminator
 // forces the caller to assert this — an intended/configured snapshot is
 // refused, so a trajectory can never claim unrun config.
+//
+// Secrecy contract (pinned by test, "records the used env VERBATIM"):
+// the exporter records the used env VERBATIM — it never scrubs, redacts,
+// or filters keys. A trajectory is a faithful record of what the run
+// actually saw; silent scrubbing would make replays lie. Secrecy is
+// enforced UPSTREAM at the spawn allowlist (#42, §3.8): secrets never
+// enter the spawn env, so there is nothing to scrub here. This behavior
+// is deliberate and pinned explicitly rather than left implicit.
 function checkEnvironment(input: BuildTrajectoryInput): TrajectoryEnvironment {
   const environment = input.environment;
   if (!isRecord(environment)) {
@@ -223,6 +231,33 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
       );
     }
   }
+  const byModel = u.byModel;
+  if (byModel !== undefined) {
+    if (!isRecord(byModel)) {
+      throw new TrajectoryExportError(
+        'invalid-usage',
+        'trajectory export blocked: usage.byModel must be a record of per-model rows',
+      );
+    }
+    for (const [model, row] of Object.entries(byModel)) {
+      if (!isRecord(row)) {
+        throw new TrajectoryExportError(
+          'invalid-usage',
+          `trajectory export blocked: usage.byModel[${JSON.stringify(model)}] must be a record`,
+        );
+      }
+      const r = row as Record<string, unknown>;
+      for (const key of ['requests', 'input', 'output', 'costTotal']) {
+        const value = r[key];
+        if (typeof value !== 'number' || !(value >= 0)) {
+          throw new TrajectoryExportError(
+            'invalid-usage',
+            `trajectory export blocked: usage.byModel[${JSON.stringify(model)}].${key} must be a non-negative number`,
+          );
+        }
+      }
+    }
+  }
   return usage;
 }
 
@@ -258,6 +293,12 @@ function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
       throw new TrajectoryExportError(
         'contradictory-result',
         'trajectory export blocked: a completed result must not carry an error',
+      );
+    }
+    if (failureCategory !== null && failureCategory !== undefined) {
+      throw new TrajectoryExportError(
+        'contradictory-result',
+        'trajectory export blocked: a completed result must not carry a failureCategory (mirror of the completed+error check)',
       );
     }
     return result;
@@ -297,11 +338,24 @@ function truncateObservations(
         bytesOriginal,
       };
     }
-    const buf = Buffer.from(observation.output, 'utf8');
+    // Truncate on a UTF-8 character boundary: slicing the encoded bytes
+    // at MAX_OBSERVATION_BYTES can split a multi-byte character, and
+    // decoding the split emits U+FFFD (3 bytes) — pushing the result OVER
+    // the cap (15000 CJK bytes → 8193 > 8192). Walk whole characters
+    // instead, so the byte cap holds exactly and no replacement char
+    // can appear.
+    let end = 0;
+    let keptBytes = 0;
+    for (const ch of observation.output) {
+      const chBytes = Buffer.byteLength(ch, 'utf8');
+      if (keptBytes + chBytes > MAX_OBSERVATION_BYTES) break;
+      keptBytes += chBytes;
+      end += ch.length;
+    }
     return {
       seq: observation.seq,
       actionSeq: observation.actionSeq,
-      output: buf.subarray(0, MAX_OBSERVATION_BYTES).toString('utf8'),
+      output: observation.output.slice(0, end),
       truncated: true,
       bytesOriginal,
     };

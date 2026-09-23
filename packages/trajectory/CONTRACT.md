@@ -28,10 +28,17 @@ with `unknown-major` (exit 3). Breaking changes mint major 2.
   (exit 2). Only the USED spawn env is recorded (§46r2/§3.8):
   `environment.capturedFrom` must be `'used'`; anything else
   (intended/configured) is refused with `untrusted-environment`.
+  The used env is recorded VERBATIM — never scrubbed or redacted
+  (transparency: replays must see what the run saw). Secrecy is
+  enforced upstream at the spawn allowlist (#42).
 - Every non-`completed` result carries a §52 `failureCategory`
   (the 16 worker codes, pinned equal by test); otherwise
-  `missing-failure-category` (exit 2).
-- Observations over 8 KiB are truncated with `bytesOriginal` kept.
+  `missing-failure-category` (exit 2). A `completed` result carrying
+  a `failureCategory` or `error` is `contradictory-result` (exit 2).
+- `usage.byModel` rows are validated (`requests`/`input`/`output`/
+  `costTotal` non-negative numbers); otherwise `invalid-usage` (exit 2).
+- Observations over 8 KiB are truncated on a UTF-8 character boundary
+  (byte cap holds exactly, no U+FFFD) with `bytesOriginal` kept.
 
 ## Consumers
 

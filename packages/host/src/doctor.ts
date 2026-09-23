@@ -7,12 +7,24 @@
 // goes through the exec FileBridge — this module never imports node:fs.
 
 import { CAPABILITIES, validatePolicy } from './approvals.js';
+// Issue #58 honest limits (§59.1, §78): registration import only — no
+// existing check builder in this file was modified for #58. Exit codes
+// route through the limits mapper so provider-down exits 6.
+import {
+  collectLimitChecksFromDeps,
+  limitsDoctorExit,
+} from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = 0;
 export const DOCTOR_EXIT_FAIL = 1;
 export const DOCTOR_EXIT_USAGE = 2;
+// §78 provider-failure code, mirroring kubic run: a doctor matrix with a
+// provider-down failure exits 6 (see limitsDoctorExit).
+export const DOCTOR_EXIT_PROVIDER = 6;
 
-export type DoctorStatus = 'pass' | 'fail' | 'skip';
+// warn is informational only (issue #58 static §59.1 notices): it is
+// rendered, counted, and never exit-flipping — only fail flips the exit.
+export type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip';
 
 export type DoctorReason =
   | 'ok'
@@ -182,6 +194,13 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  // Issue #58 honest limits (§59.1): registration only — the limit
+  // checks ride the same --skip and exit path as #29. The builder is
+  // total (a throwing probe becomes a failing check). Static §59.1
+  // notices report warn (informational, never exit-flipping); only
+  // fail (provider-down, deps-missing, policy-mismatch) flips the exit,
+  // via limitsDoctorExit below (6 for provider-down, 1 otherwise).
+  checks.push(...collectLimitChecksFromDeps(deps));
   return checks.map((check) =>
     skip.includes(check.id)
       ? {
@@ -196,9 +215,10 @@ export function collectDoctorChecks(
 
 function summarize(checks: DoctorCheck[]): string {
   const pass = checks.filter((c) => c.status === 'pass').length;
+  const warn = checks.filter((c) => c.status === 'warn').length;
   const fail = checks.filter((c) => c.status === 'fail').length;
   const skip = checks.filter((c) => c.status === 'skip').length;
-  return `doctor: ${pass} pass, ${fail} fail, ${skip} skip`;
+  return `doctor: ${pass} pass, ${warn} warn, ${fail} fail, ${skip} skip`;
 }
 
 export async function runDoctorCommand(
@@ -231,8 +251,8 @@ export async function runDoctorCommand(
     deps.out(`error: unknown check ${JSON.stringify(unknownSkip)}`);
     return DOCTOR_EXIT_USAGE;
   }
-  const failed = checks.some((check) => check.status === 'fail');
-  const exitCode = failed ? DOCTOR_EXIT_FAIL : DOCTOR_EXIT_OK;
+  const exitCode = limitsDoctorExit(checks);
+  const failed = exitCode !== DOCTOR_EXIT_OK;
   if (json) {
     deps.out(JSON.stringify({ ok: !failed, exitCode, checks }, null, 2));
     return exitCode;

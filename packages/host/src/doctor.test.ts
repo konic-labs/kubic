@@ -1,7 +1,7 @@
 // kubic doctor (issue #29; §41.4, §50): providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -54,6 +54,16 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
+      // Issue #58 honest-limits registration rides the same command.
+      'limit:solo-no-isolation',
+      'limit:worktrees-writers-only',
+      'limit:no-injection-prevention',
+      'limit:policy-offer',
+      'limit:journal-not-backup',
+      'limit:no-third-party-mcp',
+      'limit:provider-availability',
+      'limit:deps-present',
+      'policy:enforceability',
     ]);
     const text = textLines.join('\n');
     for (const check of report.checks) {
@@ -62,7 +72,7 @@ describe('runDoctorCommand', () => {
     }
   });
 
-  it('provider-down fails distinct with exit 1 in text and --json', async () => {
+  it('provider-down fails distinct with exit 6 in text and --json (§78)', async () => {
     const deps = (out: (line: string) => void): DoctorDeps => ({
       ...cleanDeps(out),
       probeProviders: () => [
@@ -78,14 +88,14 @@ describe('runDoctorCommand', () => {
       [],
       deps((line: string) => textLines.push(line)),
     );
-    expect(textCode).toBe(1);
+    expect(textCode).toBe(6);
     expect(textLines.join('\n')).toContain('provider-down');
     const jsonLines: string[] = [];
     const jsonCode = await runDoctorCommand(
       ['--json'],
       deps((line: string) => jsonLines.push(line)),
     );
-    expect(jsonCode).toBe(1);
+    expect(jsonCode).toBe(6);
     const report = JSON.parse(jsonLines.join('\n')) as {
       ok: boolean;
       checks: Array<{ id: string; status: string; reason: string }>;
@@ -135,6 +145,21 @@ describe('runDoctorCommand', () => {
 
   it('main.ts-style wiring (assembled providers + node dep) passes clean', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'doctor-'));
+    // A provider must exist for a clean run: with zero providers the
+    // honest-limits aggregate (issue #58) fails missing-provider.
+    writeFileSync(
+      join(dir, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            baseUrl: 'http://127.0.0.1:11434',
+            api: 'openai-completions',
+            models: [{ id: 'llama3' }],
+          },
+        ],
+      }),
+    );
     const assembled = assembleModels(dir);
     const lines: string[] = [];
     const code = await runDoctorCommand([], {
@@ -154,14 +179,14 @@ describe('runDoctorCommand', () => {
     expect(lines.join('\n')).toContain('0 fail');
   });
 
-  it('throwing probe becomes a structured fail with exit 1', async () => {
+  it('throwing probe becomes a structured provider-down fail with exit 6', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => {
       throw new Error('probe exploded');
     };
     const code = await runDoctorCommand([], deps);
-    expect(code).toBe(1);
+    expect(code).toBe(6);
     const text = lines.join('\n');
     expect(text).toContain('FAIL');
     expect(text).toContain('probe exploded');

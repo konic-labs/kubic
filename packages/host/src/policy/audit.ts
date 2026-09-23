@@ -9,7 +9,11 @@
 // Faux-only, zero network; no node:fs (sinks are injected).
 
 import type { AuditSinkKind } from './enterprise.js';
-import { containsSecretShape, redactSecretShapes } from './secret-shapes.js';
+import {
+  containsSecretShape,
+  REDACTED_SECRET,
+  redactSecretShapes,
+} from './secret-shapes.js';
 
 export const AUDIT_FIELDS = [
   'who',
@@ -62,11 +66,24 @@ export interface OrgAuditRecord {
   reason: string;
 }
 
+// Listed-secret inventory values are redacted literally (in addition to
+// secret-shaped substrings): a sink failure echoing a listed value that has
+// no secret shape must still never leak it back to the caller.
+function redactListedSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (secret === '') continue;
+    if (out.includes(secret)) out = out.split(secret).join(REDACTED_SECRET);
+  }
+  return out;
+}
+
 export class AuditSinkError extends Error {
-  constructor(message: string) {
-    // Fail-closed messages: secret-shaped substrings are redacted so a
-    // sink failure can never echo live material back to the caller.
-    super(redactSecretShapes(message));
+  constructor(message: string, secrets: readonly string[] = []) {
+    // Fail-closed messages: secret-shaped substrings and every listed-secret
+    // inventory value are redacted so a sink failure can never echo live
+    // material back to the caller.
+    super(redactListedSecrets(redactSecretShapes(message), secrets));
     this.name = 'AuditSinkError';
   }
 }
@@ -75,8 +92,8 @@ export class AuditSinkError extends Error {
 // distinct fail-closed signal that still satisfies `instanceof
 // AuditSinkError` for existing catch sites.
 export class AuditShapeError extends AuditSinkError {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, secrets: readonly string[] = []) {
+    super(message, secrets);
     this.name = 'AuditShapeError';
   }
 }
@@ -152,6 +169,14 @@ function validateRecord(
   requireText(record.when, 'when');
   requireText(record.agent.session, 'agent.session');
   requireText(record.agent.role, 'agent.role');
+  if (
+    record.agent.parent !== undefined &&
+    typeof record.agent.parent !== 'string'
+  ) {
+    throw new AuditSinkError(
+      "audit record 'agent.parent' must be a string when present",
+    );
+  }
   requireText(record.model.provider, 'model.provider');
   requireText(record.model.id, 'model.id');
   requireText(record.model.thinking, 'model.thinking');
@@ -227,18 +252,34 @@ function validateRecord(
   assertSentinelClean(record.credential.sentinel, secrets);
 }
 
+// Deep copy for sink fan-out: the record is JSON-safe by construction
+// (validated strings and integers only), so a round-trip clone keeps sinks
+// from sharing one mutable record — a sink must never rewrite what other
+// sinks store or what emitAudit returns to the caller.
+function cloneAuditRecord(record: OrgAuditRecord): OrgAuditRecord {
+  return JSON.parse(JSON.stringify(record)) as OrgAuditRecord;
+}
 // Loud append: every sink must accept the record synchronously. Any failure
 // — a throw, a returned thenable (async sinks are refused: records must be
 // durable before emitAudit returns), or zero sinks — throws AuditSinkError
 // naming the failed sinks. Records are never silently lost.
-export function appendAudit(sinks: AuditSink[], record: OrgAuditRecord): void {
+export function appendAudit(
+  sinks: AuditSink[],
+  record: OrgAuditRecord,
+  secrets: readonly string[] = [],
+): void {
   if (sinks.length === 0) {
-    throw new AuditSinkError('no audit sinks: record would be silently lost');
+    throw new AuditSinkError(
+      'no audit sinks: record would be silently lost',
+      secrets,
+    );
   }
   const failed: string[] = [];
   for (const sink of sinks) {
     try {
-      const outcome: unknown = sink.write(record);
+      // Each sink gets its own deep copy: a sink that mutates the record
+      // only rewrites its private copy, never the stored or returned one.
+      const outcome: unknown = sink.write(cloneAuditRecord(record));
       if (
         outcome !== undefined &&
         outcome !== null &&
@@ -255,7 +296,10 @@ export function appendAudit(sinks: AuditSink[], record: OrgAuditRecord): void {
     }
   }
   if (failed.length > 0) {
-    throw new AuditSinkError(`audit sink failure: ${failed.join('; ')}`);
+    throw new AuditSinkError(
+      `audit sink failure: ${failed.join('; ')}`,
+      secrets,
+    );
   }
 }
 
@@ -272,6 +316,35 @@ export interface EmitAuditOptions {
 // is rejected fail-closed with AuditShapeError, never kept.
 const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
 
+// Exactly-14 holds below the top level too (fix cycle 2): every nested
+// section carries a fixed section-60 shape, so unknown nested keys are
+// rejected fail-closed with AuditShapeError, never kept and persisted.
+const ALLOWED_NESTED_AUDIT_KEYS: Record<string, readonly string[]> = {
+  agent: ['session', 'role', 'parent'],
+  model: ['provider', 'id', 'thinking'],
+  worker: ['pid', 'generation', 'role'],
+  workspace: ['path', 'base'],
+  permission: ['permission', 'approval'],
+  credential: ['sentinel'],
+  network: ['host', 'port', 'decision', 'bytes'],
+};
+
+function rejectUnknownNestedKeys(input: AuditInput): void {
+  const sections = input as Record<string, unknown>;
+  for (const [section, allowed] of Object.entries(ALLOWED_NESTED_AUDIT_KEYS)) {
+    const value = sections[section];
+    if (value !== undefined && typeof value === 'object' && value !== null) {
+      for (const key of Object.keys(value)) {
+        if (!allowed.includes(key)) {
+          throw new AuditShapeError(
+            `audit record has unknown nested key '${section}.${key}': refused (exact section-60 shape)`,
+          );
+        }
+      }
+    }
+  }
+}
+
 export function emitAudit(
   sinks: AuditSink[],
   input: AuditInput,
@@ -284,12 +357,13 @@ export function emitAudit(
       );
     }
   }
+  rejectUnknownNestedKeys(input);
   const record: OrgAuditRecord = {
     ...input,
     when: input.when ?? new Date(options.now?.() ?? Date.now()).toISOString(),
   };
   validateRecord(record, options.secrets ?? []);
-  appendAudit(sinks, record);
+  appendAudit(sinks, record, options.secrets ?? []);
   return record;
 }
 

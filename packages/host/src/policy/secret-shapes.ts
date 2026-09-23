@@ -5,18 +5,22 @@
 // carry a 'faux' marker and stay inert — shapes below never match them unless
 // combined with a real-looking prefix run (e.g. 'sk-faux-test-key-0001').
 // Faux-only, zero network.
+// Case-transform bypass note (fix cycle 2): the sk-/gh-/xox- prefixes match
+// case-insensitively, so uppercasing never evades any call site. Residual
+// limit (by design, not enforced): material split across separately scanned
+// strings so no single scan carries the full shape is not reassembled here.
 
 const SHAPE_SOURCES: readonly string[] = [
   // OpenAI-style keys: sk- plus a long run (covers sk-live-*, sk-test-*,
   // sk-proj-*). The {8,} run keeps faux markers like '«redacted:sk-…»'
   // (ellipsis is outside the class) from matching.
-  '\\bsk-[A-Za-z0-9_\\-]{8,}',
+  '\\b[Ss][Kk]-[A-Za-z0-9_\\-]{8,}', // case-insensitive prefix (fix cycle 2)
   // AWS access key id: AKIA + 16 uppercase alphanumerics.
   '\\bAKIA[0-9A-Z]{16}\\b',
   // GitHub-shaped tokens: ghp_/gho_/ghu_/ghs_/ghr_/gh_ + material.
-  '\\bgh[a-z]*_[A-Za-z0-9]{8,}',
+  '\\b[Gg][Hh][a-zA-Z]*_[A-Za-z0-9]{8,}', // case-insensitive prefix (fix cycle 2)
   // Slack-shaped tokens: xox[bpasr]- + material.
-  '\\bxox[bpasr]?-[A-Za-z0-9\\-]{8,}',
+  '\\b[Xx][Oo][Xx][BbPpAaSsRr]?-[A-Za-z0-9\\-]{8,}', // case-insensitive prefix (fix cycle 2)
   // PEM private-key blocks.
   '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----',
   // Bearer tokens on the wire.

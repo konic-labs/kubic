@@ -200,3 +200,129 @@ describe('sink failure', () => {
     }
   });
 });
+
+describe('case-transform bypass (fix cycle 2)', () => {
+  it('refuses uppercase SK- material in the wire form', () => {
+    const sink = createMemorySink();
+    expect(() =>
+      emitAudit([sink], {
+        ...baseInput(),
+        reason: 'denied: saw SK-FAUX-TEST-KEY-0001 on the wire',
+      }),
+    ).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('redacts uppercase SK- material from sink failure messages', () => {
+    const live = 'SK-FAUX-TEST-KEY-0001';
+    const leaking = {
+      name: 'leaky',
+      kind: 'syslog' as const,
+      write: (): void => {
+        throw new Error(`syslog unreachable: saw ${live} on the wire`);
+      },
+    };
+    try {
+      appendAudit([leaking], FLOW_AUDIT_FIXTURE);
+      expect.unreachable('leaky sink failure must throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AuditSinkError);
+      const message = (error as Error).message;
+      expect(message).not.toContain(live);
+      expect(message).toContain('[redacted-secret]');
+    }
+  });
+
+  it('redacts listed-secret inventory values from sink failure messages', () => {
+    const listed = 'listed-plaintext-inventory-token-0001';
+    const leaking = {
+      name: 'leaky',
+      kind: 'syslog' as const,
+      write: (): void => {
+        throw new Error(`syslog unreachable: saw ${listed} on the wire`);
+      },
+    };
+    try {
+      appendAudit([leaking], FLOW_AUDIT_FIXTURE, [listed]);
+      expect.unreachable('leaky sink failure must throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AuditSinkError);
+      const message = (error as Error).message;
+      expect(message).not.toContain(listed);
+      expect(message).toContain('[redacted-secret]');
+    }
+  });
+
+  it('a sink cannot rewrite the record other sinks store', () => {
+    const memory = createMemorySink('memory');
+    const rewriting = {
+      name: 'rewriter',
+      kind: 'syslog' as const,
+      write: (record: OrgAuditRecord): void => {
+        record.reason = 'pwned';
+      },
+    };
+    const returned = emitAudit([rewriting, memory], baseInput(), {
+      now: () => 1_700_000_000_000,
+    });
+    expect(memory.records).toHaveLength(1);
+    expect(memory.records[0]?.reason).toBe('policy allow');
+    expect(returned.reason).toBe('policy allow');
+  });
+
+  it('rejects a non-string agent.parent instead of emitting it', () => {
+    const sink = createMemorySink();
+    const smuggled = {
+      ...baseInput(),
+      agent: { session: 'sess-1', role: 'implementer', parent: { evil: 1 } },
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditSinkError);
+    expect(sink.records).toHaveLength(0);
+  });
+});
+
+describe('nested unknown keys (fix cycle 2)', () => {
+  it('rejects agent.extra (exactly-14 holds below the top level)', () => {
+    const sink = createMemorySink();
+    const input = baseInput();
+    const smuggled = {
+      ...input,
+      agent: { ...input.agent, extra: 'smuggled' },
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('rejects credential.extra', () => {
+    const sink = createMemorySink();
+    const input = baseInput();
+    const smuggled = {
+      ...input,
+      credential: { ...input.credential, extra: 'smuggled' },
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('rejects network.extra', () => {
+    const sink = createMemorySink();
+    const input = baseInput();
+    const smuggled = {
+      ...input,
+      network: { ...input.network, extra: 'smuggled' },
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('rejects worker.extra', () => {
+    const sink = createMemorySink();
+    const input = baseInput();
+    const smuggled = {
+      ...input,
+      worker: { ...input.worker, extra: 'smuggled' },
+    } as unknown as Omit<OrgAuditRecord, 'when'>;
+    expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+});

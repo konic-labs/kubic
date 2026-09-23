@@ -864,6 +864,8 @@ export interface BrokeredEnv {
 // Without the broker flag the env passes through untouched. Shape backstop:
 // any unlisted secret-shaped value still present after replacement is
 // refused loudly — an empty secrets list never means passthrough.
+// Residual limit (by design): unlisted values with no secret shape pass
+// through untouched — every live secret must be listed in `secrets`.
 export function buildBrokeredWorkerEnv(
   env: Record<string, string>,
   secrets: BrokerSecret[],
@@ -943,7 +945,8 @@ function isLocalCredentialKey(key: string): boolean {
 // env at all (brokered refs travel via the broker, never as env values).
 // Values are scanned too: a secret-shaped value under an innocuous key is
 // refused alongside sensitive key names. Only the key name is reported,
-// never any value.
+// never any value. Residual limit (by design): shape scanning is value-only
+// — unknown key names carrying non-shaped values are not inspected.
 export function assertNoLocalCredentials(
   env: Record<string, string>,
   policy: EffectivePolicy,

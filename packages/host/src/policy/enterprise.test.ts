@@ -334,3 +334,41 @@ describe('enterprise doctor checks', () => {
     ).toBe(true);
   });
 });
+
+describe('case-transform bypass (fix cycle 2)', () => {
+  it('broker backstop refuses uppercase SK- values with no inventory', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { credentials: { requireCredentialBroker: true } },
+      },
+    ]);
+    expect(() =>
+      mod.buildBrokeredWorkerEnv({ EVIL: 'SK-FAUX-TEST-KEY-0001' }, [], policy),
+    ).toThrow(mod.PolicyDeniedError);
+  });
+
+  it('denyLocalCredentials refuses uppercase SK- values under innocuous keys', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { credentials: { denyLocalCredentials: true } },
+      },
+    ]);
+    expect(() =>
+      mod.assertNoLocalCredentials({ CONFIG: 'SK-FAUX-TEST-KEY-0001' }, policy),
+    ).toThrow(mod.PolicyDeniedError);
+  });
+
+  it('redactSecretShapes replaces uppercase SK- material', async () => {
+    const shapes = await import('./secret-shapes.js');
+    expect(shapes.containsSecretShape('SK-FAUX-TEST-KEY-0001')).toBe(true);
+    const redacted = shapes.redactSecretShapes(
+      'saw SK-FAUX-TEST-KEY-0001 on the wire',
+    );
+    expect(redacted).not.toContain('SK-FAUX-TEST-KEY-0001');
+    expect(redacted).toContain(shapes.REDACTED_SECRET);
+  });
+});

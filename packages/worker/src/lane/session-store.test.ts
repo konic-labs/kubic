@@ -94,3 +94,42 @@ describe('JSONL session store (issue #14, slice A)', () => {
     expect(lines).toBeGreaterThan(0);
   });
 });
+
+describe('mutation serialization (issue #14, slice D)', () => {
+  it('loses no writes under concurrent mutates', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    openSessions.push(session);
+    const writers = Array.from({ length: 10 }, (_, i) =>
+      session.mutate(async (mutator) => {
+        await mutator.commit(
+          [
+            {
+              kind: 'entry',
+              entry: {
+                id: `e-concurrent-${i}`,
+                parentId: null,
+                type: 'message',
+                message: {
+                  role: 'user',
+                  content: [{ type: 'text', text: `writer ${i}` }],
+                  timestamp: Date.now(),
+                },
+              },
+            },
+          ],
+          BACKGROUND_CONTEXT,
+        );
+      }, BACKGROUND_CONTEXT),
+    );
+    await Promise.all(writers);
+    const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
+    const texts = entries.map((entry) => JSON.stringify(entry));
+    for (let i = 0; i < 10; i += 1) {
+      expect(texts.some((text) => text.includes(`writer ${i}`))).toBe(true);
+    }
+    const seqs = entries.map((entry) => entry.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
+});

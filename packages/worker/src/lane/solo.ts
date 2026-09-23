@@ -9,6 +9,7 @@ import {
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
+import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -80,6 +81,9 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
+  // Session journal for interception (issue #17): when set, every
+  // write/edit through the lane is recorded with its toolCallId.
+  journal?: FileJournalStore;
 }
 
 export interface SoloLane {
@@ -99,6 +103,7 @@ export async function bootSoloLane(
     agentId: options.agentId,
     memos: options.memos ?? new MemoryMemoStore(),
     kills,
+    ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
   const { harness } = await AgentHarness.create(
     {

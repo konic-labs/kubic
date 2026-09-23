@@ -494,6 +494,36 @@ export interface ReconcileContext {
   timestamp: number;
 }
 
+export type RestoreResult =
+  | { restored: true }
+  | { restored: false; reason: string };
+
+// Undo primitive for the next issue's CLI: writes the recorded
+// before-content back. Entries without before-content (unattributed
+// reconciliation finds) are reported non-reversible — never guessed.
+export function restoreEntry(
+  store: FileJournalStore,
+  entry: JournalEntry,
+  root: string,
+): RestoreResult {
+  const before = store.readBefore(entry);
+  if (before === null) {
+    return {
+      restored: false,
+      reason: 'no before-content: unattributed entry is not reversible',
+    };
+  }
+  try {
+    createNodeFileBridge('/').writeFile(join(root, entry.path), before);
+  } catch (error) {
+    return {
+      restored: false,
+      reason: `restore write failed: ${(error as Error).message}`,
+    };
+  }
+  return { restored: true };
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
 // Before-content is unknowable for these (the baseline holds hashes, not

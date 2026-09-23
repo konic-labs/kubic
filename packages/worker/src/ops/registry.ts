@@ -85,7 +85,10 @@ export async function callOperation(
   try {
     const args = op.validateArgs(rawArgs);
     if (op.replay === 'never') {
-      const memoKey = `op-result:${name}`;
+      // Pi forbids ':' in memo names (validateMemoName) — the dash keeps
+      // this key legal on a real lane, where the faux ids already proved
+      // a colon key fails every never-replay op.
+      const memoKey = `op-result-${name}`;
       const memoized = await inv.getMemo(memoKey);
       if (memoized !== undefined) {
         return {

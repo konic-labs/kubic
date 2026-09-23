@@ -10,7 +10,7 @@ import {
 } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation, OPERATIONS } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { JsonValue, OpContext, ToolInvocation } from './types.js';
 
 function fakeCtx(env: FakeExecutionEnv, extra?: Partial<OpContext>): OpContext {
   return { env, sessionId: 's1', agentId: 'a1', ...extra };
@@ -189,6 +189,41 @@ describe('replay acceptance (issue #13)', () => {
       expect(second.result).toEqual(first.result);
     }
     expect(c.env.fs.readFile('w.txt')).toBe('first\n');
+  });
+
+  it('never-replay memo keys are Pi-legal (no colons)', async () => {
+    // Pi 0.85.1 validateMemoName rejects ':' — a colon key fails every
+    // never-replay op on a real lane (caught by the journal lane test).
+    const seen: string[] = [];
+    const strict: ToolInvocation = {
+      invocationId: 'inv-s',
+      operationId: 'op-s',
+      turnId: 't-s',
+      getMemo: (name: string): Promise<JsonValue | undefined> => {
+        seen.push(name);
+        if (name.includes(':')) throw new Error('illegal memo name');
+        return Promise.resolve(undefined);
+      },
+      setMemo: (name: string): Promise<void> => {
+        seen.push(name);
+        if (name.includes(':')) throw new Error('illegal memo name');
+        return Promise.resolve(undefined);
+      },
+      memoOnce: (name: string, candidate: JsonValue): Promise<JsonValue> => {
+        void name;
+        return Promise.resolve(candidate);
+      },
+    };
+    const c = fakeCtx(new FakeExecutionEnv({}));
+    const out = await callOperation(
+      'write',
+      { path: 'w.txt', content: 'x\n' },
+      strict,
+      c,
+    );
+    expect(out.ok).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((name) => !name.includes(':'))).toBe(true);
   });
 });
 

@@ -1,0 +1,164 @@
+import { describe, expect, it } from 'vitest';
+import type { AgentBudget, BudgetTermination, ReplayPin } from './budget.js';
+import {
+  BUDGET_LIMITS,
+  BUDGET_OWNERSHIP,
+  createBudget,
+  diffReplayPin,
+  REPLAY_PIN_DIMS,
+  REPLAY_PIN_FIELDS,
+  resolveBlockedSpawn,
+  terminateForBudget,
+} from './budget.js';
+
+const FULL_PIN: ReplayPin = {
+  task: 'task-1',
+  model: 'model-a',
+  thinking: 'high',
+  toolSet: ['bash', 'read'],
+  worktree: '/wt/1',
+  baseRevision: 'abc123',
+  systemPrompt: 'prompt',
+  resources: ['res-1'],
+};
+
+describe('budget (issue #9, §71)', () => {
+  it('createBudget({}) is empty — no smuggled defaults', () => {
+    expect(createBudget({})).toEqual({});
+  });
+
+  it('createBudget keeps exactly the given fields', () => {
+    const partial: AgentBudget = {
+      maxTokens: 100,
+      retryBudget: { maxAttempts: 3, maxCostUsd: 1 },
+    };
+    expect(createBudget(partial)).toEqual(partial);
+  });
+
+  it('ownership map covers all five §71 rows and nothing else', () => {
+    expect([...BUDGET_LIMITS].sort()).toEqual([
+      'cost',
+      'retries',
+      'tokens',
+      'toolCalls',
+      'wallClock',
+    ]);
+    expect(Object.keys(BUDGET_OWNERSHIP).sort()).toEqual([
+      'cost',
+      'retries',
+      'tokens',
+      'toolCalls',
+      'wallClock',
+    ]);
+    expect(BUDGET_OWNERSHIP.tokens.enforcedBy).toMatch(/harness/);
+    expect(BUDGET_OWNERSHIP.cost.enforcedBy).toMatch(/host/);
+    expect(BUDGET_OWNERSHIP.wallClock.enforcedBy).toMatch(/host/);
+    expect(BUDGET_OWNERSHIP.toolCalls.enforcedBy).toMatch(/before_tool/);
+    expect(BUDGET_OWNERSHIP.retries.enforcedBy).toMatch(/retry/);
+  });
+
+  it('blocked spawn queues in autonomous mode', () => {
+    expect(
+      resolveBlockedSpawn('autonomous', 'aggregate tokens exhausted'),
+    ).toEqual({
+      outcome: 'queued',
+    });
+  });
+
+  it('blocked spawn fails with reason in interactive mode', () => {
+    expect(
+      resolveBlockedSpawn('interactive', 'aggregate tokens exhausted'),
+    ).toEqual({
+      outcome: 'failed',
+      reason: 'aggregate tokens exhausted',
+    });
+  });
+
+  it('budget exhaustion is a distinct status, not a generic failure', () => {
+    const termination: BudgetTermination = {
+      status: 'budget_exhausted',
+      limit: 'tokens',
+    };
+    expect(termination.status).toBe('budget_exhausted');
+    expect(termination.status).not.toBe('failed');
+  });
+
+  it('terminateForBudget produces exhaustion via implementation output', () => {
+    expect(terminateForBudget('toolCalls')).toEqual({
+      status: 'budget_exhausted',
+      limit: 'toolCalls',
+    });
+    expect(terminateForBudget('cost').status).not.toBe('failed');
+  });
+});
+
+describe('replay pin (issue #9, §72)', () => {
+  it('pin carries the six §72 dims and nothing else', () => {
+    expect([...REPLAY_PIN_DIMS].sort()).toEqual([
+      'baseRevision',
+      'model+thinking',
+      'prompt+resources',
+      'task',
+      'toolSet',
+      'worktree',
+    ]);
+    expect(Object.keys(REPLAY_PIN_FIELDS).sort()).toEqual([
+      'baseRevision',
+      'model',
+      'resources',
+      'systemPrompt',
+      'task',
+      'thinking',
+      'toolSet',
+      'worktree',
+    ]);
+  });
+
+  it('diff finds the one changed var', () => {
+    expect(diffReplayPin(FULL_PIN, { ...FULL_PIN, model: 'model-b' })).toEqual([
+      'model+thinking',
+    ]);
+  });
+
+  it('diff is empty for identical pins', () => {
+    expect(diffReplayPin(FULL_PIN, { ...FULL_PIN })).toEqual([]);
+  });
+
+  it('diff groups thinking changes under model+thinking', () => {
+    expect(diffReplayPin(FULL_PIN, { ...FULL_PIN, thinking: 'low' })).toEqual([
+      'model+thinking',
+    ]);
+  });
+
+  it('diff groups resource-only changes under prompt+resources', () => {
+    expect(
+      diffReplayPin(FULL_PIN, { ...FULL_PIN, resources: ['res-2'] }),
+    ).toEqual(['prompt+resources']);
+  });
+
+  it('diff groups systemPrompt-only changes under prompt+resources', () => {
+    expect(
+      diffReplayPin(FULL_PIN, { ...FULL_PIN, systemPrompt: 'other' }),
+    ).toEqual(['prompt+resources']);
+  });
+
+  it('diff treats toolSet order as significant (conservative)', () => {
+    expect(
+      diffReplayPin(FULL_PIN, { ...FULL_PIN, toolSet: ['read', 'bash'] }),
+    ).toEqual(['toolSet']);
+  });
+
+  it('diff reports each changed dim once', () => {
+    const changed: ReplayPin = {
+      ...FULL_PIN,
+      task: 'task-2',
+      toolSet: ['bash'],
+      baseRevision: 'def456',
+    };
+    expect(diffReplayPin(FULL_PIN, changed).sort()).toEqual([
+      'baseRevision',
+      'task',
+      'toolSet',
+    ]);
+  });
+});

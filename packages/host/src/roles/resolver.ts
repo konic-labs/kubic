@@ -13,6 +13,7 @@ import {
   toolsForClasses,
   validateClasses,
 } from '../../../agents/src/policy.js';
+import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   confinePath,
   defaultIsDestructive,
@@ -22,6 +23,7 @@ import type { TriggerContext } from '../approvals.js';
 import { detectTriggers } from '../approvals.js';
 import type { ConfigLayer } from '../config/config.js';
 import { CONFIG_LAYERS } from '../config/config.js';
+import type { DoctorCheck } from '../doctor.js';
 
 export class RoleParseError extends Error {
   constructor(message: string) {
@@ -357,4 +359,60 @@ export function createRolePolicyGuard(
       },
     };
   };
+}
+
+// Debug line (§50): the existing [policy] vocabulary names the role and
+// its resolved tool set — no new line class is introduced.
+export function roleDebugLine(resolved: ResolvedRole): string {
+  return `[policy] role=${resolved.name} tools=${resolved.tools.join(',')}`;
+}
+
+export function emitRoleDebug(
+  sink: (line: string) => void,
+  resolved: ResolvedRole,
+): void {
+  sink(roleDebugLine(resolved));
+}
+
+// Doctor surfacing (§41.4, §50): every resolved role becomes a
+// `role:<name>` check. Contradictory roles report fail/policy-mismatch
+// with the refusal reason — the same shape runDoctorCommand renders,
+// without touching the doctor module.
+export function roleDoctorChecks(resolvedRoles: ResolvedRole[]): DoctorCheck[] {
+  return resolvedRoles.map((resolved) => {
+    const base = {
+      id: `role:${resolved.name}`,
+      label: `role ${resolved.name}`,
+    };
+    try {
+      validateResolvedRole(resolved);
+    } catch (error) {
+      return {
+        ...base,
+        status: 'fail' as const,
+        reason: 'policy-mismatch' as const,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return {
+      ...base,
+      status: 'pass' as const,
+      reason: 'ok' as const,
+      detail: `${resolved.tools.length} tool(s): ${resolved.tools.join(', ')}`,
+    };
+  });
+}
+
+// Role document load through the exec FileBridge (sorted by filename so
+// multi-role loads are deterministic). The bridge is injected so tests
+// run on fakes while prod passes the real FileBridge.
+export function loadRoleDocuments(
+  bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>,
+  dir: string,
+): ParsedRoleDoc[] {
+  return bridge
+    .listDir(dir)
+    .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((entry) => parseRoleDocument(bridge.readTextFile(entry.path)));
 }

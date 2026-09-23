@@ -6,10 +6,13 @@ import {
   applyRoleToLane,
   createRolePolicyGuard,
   createRoleToolGuard,
+  loadRoleDocuments,
   mergeRoleLayers,
   parseRoleDocument,
   RoleRefusedError,
   resolveRole,
+  roleDebugLine,
+  roleDoctorChecks,
   validateResolvedRole,
 } from './resolver.js';
 
@@ -267,5 +270,114 @@ describe('createRolePolicyGuard', () => {
         args: { command: 'echo hi' },
       }),
     ).toBeUndefined();
+  });
+});
+
+describe('deterministic ordering', () => {
+  it('identical definitions resolve to identically-ordered lists', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    const shuffled = {
+      ...doc,
+      tools: ['grep', 'read', 'find', 'ls', 'read'],
+    };
+    const first = resolveRole(doc, []);
+    const second = resolveRole(shuffled, []);
+    expect(first.tools).toEqual(second.tools);
+    expect(first.tools).toEqual([...first.tools].sort());
+  });
+
+  it('every role tool is a known tool (roles x tools matrix)', () => {
+    for (const md of [PLANNER_MD, REVIEWER_MD]) {
+      const resolved = resolveRole(parseRoleDocument(md), []);
+      for (const tool of resolved.tools) {
+        expect(() =>
+          validateResolvedRole({ ...resolved, tools: [tool] }),
+        ).not.toThrow();
+      }
+    }
+  });
+
+  it('unknown-tool fuzz is denied', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    for (let i = 0; i < 50; i += 1) {
+      const resolved = resolveRole(
+        { ...doc, tools: ['read', `fuzz-tool-${i}`] },
+        [],
+        { validate: false },
+      );
+      expect(() => validateResolvedRole(resolved)).toThrow(RoleRefusedError);
+    }
+  });
+});
+
+describe('roleDebugLine', () => {
+  it('emits a [policy] line naming the role and its tools', () => {
+    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
+    expect(roleDebugLine(resolved)).toBe(
+      `[policy] role=planner tools=${resolved.tools.join(',')}`,
+    );
+  });
+});
+
+describe('roleDoctorChecks', () => {
+  it('passes valid roles and fails contradictory ones with the reason', () => {
+    const good = resolveRole(parseRoleDocument(PLANNER_MD), []);
+    const bad = resolveRole(
+      { ...parseRoleDocument(PLANNER_MD), tools: ['read', 'write'] },
+      [],
+      { validate: false },
+    );
+    const checks = roleDoctorChecks([good, bad]);
+    expect(checks[0]).toMatchObject({
+      id: 'role:planner',
+      status: 'pass',
+      reason: 'ok',
+    });
+    expect(checks[1]).toMatchObject({
+      id: 'role:planner',
+      status: 'fail',
+      reason: 'policy-mismatch',
+    });
+    expect(checks[1]?.detail).toMatch(/filesystem.*read.*write/i);
+  });
+});
+
+describe('loadRoleDocuments', () => {
+  it('reads *.md role files through the FileBridge in sorted order', () => {
+    const files: Record<string, string> = {
+      '/roles/b.md': REVIEWER_MD,
+      '/roles/a.md': PLANNER_MD,
+    };
+    const bridge = {
+      listDir: (dir: string) => [
+        {
+          name: 'b.md',
+          path: `${dir}/b.md`,
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 1,
+          mtimeMs: 0,
+        },
+        {
+          name: 'notes.txt',
+          path: `${dir}/notes.txt`,
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 1,
+          mtimeMs: 0,
+        },
+        {
+          name: 'a.md',
+          path: `${dir}/a.md`,
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 1,
+          mtimeMs: 0,
+        },
+      ],
+      readTextFile: (path: string) => files[path] ?? '',
+    };
+    const docs = loadRoleDocuments(bridge, '/roles');
+    expect(docs.map((doc) => doc.name)).toEqual(['planner', 'reviewer']);
   });
 });

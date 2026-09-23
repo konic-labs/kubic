@@ -112,16 +112,47 @@ const EXCLUDED_DIRS = new Set([
   'coverage',
   'pi',
 ]);
+// Dev-tooling sources (design explorers, notes apps) are not product
+// claims surfaces — their UI strings describe the tool itself.
+const EXCLUDED_PATH_SEGMENTS = ['docs/design/tools'];
 const TEST_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.test.js', '.test.md'];
+
+// Lines reviewed by a human and judged honest: each entry names the file
+// suffix, a pattern the line must still match (so drift re-flags), and
+// the justification. Keep this list empty by default — add only with a
+// quoted reason pointing at the explicit denial in the same line.
+const REVIEWED_EXCEPTIONS: Array<{ fileSuffix: string; pattern: string; reason: string }> = [
+  {
+    fileSuffix: 'docs/design/kubic-overview.md',
+    pattern: 'prompt-injection prevention system.*does not prevent injection',
+    reason: 'NOT-list entry: explicitly denies prevention in the same line',
+  },
+  {
+    fileSuffix: 'docs/design/kubic-overview.md',
+    pattern: 'isolated-vm.*refused until then',
+    reason: 'Phase-4 roadmap entry: explicitly refused until containment lands',
+  },
+];
+
+function isReviewedException(file: string, line: string): boolean {
+  return REVIEWED_EXCEPTIONS.some(
+    (entry) =>
+      file.endsWith(entry.fileSuffix) && new RegExp(entry.pattern).test(line),
+  );
+}
 
 function sourceFiles(root: string): string[] {
   const out: string[] = [];
-  const walk = (dir: string): void => {
+  const walk = (dir: string, rel: string): void => {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
+      const relPath = rel === '' ? entry : `${rel}/${entry}`;
       if (statSync(full).isDirectory()) {
-        if (!EXCLUDED_DIRS.has(entry)) {
-          walk(full);
+        if (
+          !EXCLUDED_DIRS.has(entry) &&
+          !EXCLUDED_PATH_SEGMENTS.some((segment) => relPath === segment)
+        ) {
+          walk(full, relPath);
         }
       } else if (
         SOURCE_EXTENSIONS.some((ext) => full.endsWith(ext)) &&
@@ -131,7 +162,7 @@ function sourceFiles(root: string): string[] {
       }
     }
   };
-  walk(root);
+  walk(root, '');
   return out;
 }
 
@@ -209,11 +240,41 @@ describe('honest-claims grep-gate (issue #58)', () => {
     for (const file of sourceFiles(root)) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
+        if (isReviewedException(file, line)) {
+          return;
+        }
         for (const label of findClaimViolations(line)) {
           failures.push(`${file}:${index + 1} [${label}] ${line.trim()}`);
         }
       });
     }
     expect(failures).toEqual([]);
+  });
+
+  it('reviewed exceptions still match their justification patterns', () => {
+    // Exceptions are drift-pinned: if the line changes so the denial is
+    // gone, the exception stops applying and the scan re-flags it.
+    for (const entry of REVIEWED_EXCEPTIONS) {
+      expect(entry.reason.length).toBeGreaterThan(0);
+      const hits = sourceFiles(process.cwd()).filter((file) =>
+        file.endsWith(entry.fileSuffix),
+      );
+      if (hits.length === 0) {
+        // File absent here (e.g. gitignored design docs in fresh
+        // clones) — nothing to pin; the scan test above still guards
+        // every file that is present.
+        continue;
+      }
+      const matched = hits.some((file) =>
+        readFileSync(file, 'utf8')
+          .split('\n')
+          .some(
+            (line) =>
+              new RegExp(entry.pattern).test(line) &&
+              findClaimViolations(line).length > 0,
+          ),
+      );
+      expect(matched).toBe(true);
+    }
   });
 });

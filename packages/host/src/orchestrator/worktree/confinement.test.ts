@@ -1,0 +1,50 @@
+// Worktree confinement: outside writes need approval (issue #45, slice 4).
+// RED first: writes inside the worktree pass, writes outside raise
+// the `outside-write` approval (§41.1) instead of proceeding silently.
+import { describe, expect, it } from 'vitest';
+import {
+  isOutsideWorktree,
+  OUTSIDE_WRITE_CAPABILITY,
+  requireInsideWorktree,
+} from './confinement.js';
+import { WorktreeError } from './errors.js';
+
+describe('worktree confinement (issue #45)', () => {
+  it('allows writes inside the worktree', () => {
+    expect(
+      isOutsideWorktree(
+        '/repo/.kubic/wt/agent-1',
+        '/repo/.kubic/wt/agent-1/a.txt',
+      ),
+    ).toBe(false);
+    expect(() =>
+      requireInsideWorktree(
+        '/repo/.kubic/wt/agent-1',
+        '/repo/.kubic/wt/agent-1/a.txt',
+      ),
+    ).not.toThrow();
+  });
+
+  it('raises outside-write approval for escapes', () => {
+    expect(isOutsideWorktree('/repo/.kubic/wt/agent-1', '/etc/cron.d/x')).toBe(
+      true,
+    );
+    expect(
+      isOutsideWorktree('/repo/.kubic/wt/agent-1', '/repo/other.txt'),
+    ).toBe(true);
+    expect(
+      isOutsideWorktree(
+        '/repo/.kubic/wt/agent-1',
+        '/repo/.kubic/wt/agent-1/../agent-2/x',
+      ),
+    ).toBe(true);
+    try {
+      requireInsideWorktree('/repo/.kubic/wt/agent-1', '/etc/cron.d/x');
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorktreeError);
+      expect((error as WorktreeError).approval).toBe(OUTSIDE_WRITE_CAPABILITY);
+      expect((error as WorktreeError).approval).toBe('outside-write');
+    }
+  });
+});

@@ -120,7 +120,7 @@ export function applyLaneEvent(
         existing.durationMs =
           existing.startedAt === undefined
             ? undefined
-            : at - existing.startedAt;
+            : Math.max(0, at - existing.startedAt);
       }
       return;
     }
@@ -175,7 +175,7 @@ export interface TreeViewOptions {
   clock?: () => number;
 }
 
-const TOGGLE_KEYS = new Set(['t', 'T', '\r', ' ']);
+const TOGGLE_KEYS = new Set(['t', 'T', '\r', '\n', ' ']);
 
 // Inner body: renders exact pre-truncated lines (no padding/wrap) so
 // headless snapshots assert content, not pixels. Pi's Text pads to the

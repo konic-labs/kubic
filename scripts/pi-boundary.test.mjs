@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -174,5 +175,239 @@ describe('pi pinning + boundary (issue #4)', () => {
         `lockfile must pin ${dep}@${PI_VERSION}`,
       );
     }
+  });
+
+  it('pinned check rejects ranges in peerDependencies', () => {
+    const dir = fixturePackageJson({});
+    mkdirSync(join(dir, 'packages', 'worker'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages', 'worker', 'package.json'),
+      JSON.stringify({
+        name: '@kubic/worker',
+        peerDependencies: { '@earendil-works/pi-ai': '>=0.85.1' },
+      }),
+    );
+    const violations = checkPinned(dir);
+    assert.ok(
+      violations.some((v) => v.dep === '@earendil-works/pi-ai'),
+      `expected range violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('pinned check rejects ranges in overrides', () => {
+    const dir = fixturePackageJson({});
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        private: true,
+        overrides: {
+          '@earendil-works/pi-ai': '^0.85.1',
+          lodash: '^4.0.0',
+        },
+      }),
+    );
+    const violations = checkPinned(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.file}:${v.dep}@${v.spec}:${v.reason}`),
+      ['package.json:@earendil-works/pi-ai@^0.85.1:range-not-exact'],
+    );
+  });
+
+  it('pinned check passes exact pins in overrides', () => {
+    const dir = fixturePackageJson({});
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        private: true,
+        overrides: { '@earendil-works/pi-ai': '0.85.1' },
+      }),
+    );
+    assert.deepEqual(checkPinned(dir), []);
+  });
+
+  it('pinned check ignores null overrides (npm deletion marker)', () => {
+    const dir = fixturePackageJson({});
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        private: true,
+        overrides: { '@earendil-works/pi-ai': null },
+      }),
+    );
+    assert.deepEqual(checkPinned(dir), []);
+  });
+
+  it('pinned module has no import side effects', async () => {
+    const writes = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk) => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      await import(`./check-pinned-deps.mjs?silent=${Date.now()}`);
+    } finally {
+      process.stdout.write = original;
+    }
+    assert.deepEqual(writes, []);
+  });
+
+  it('pinned check scans apps manifests too', () => {
+    const dir = fixturePackageJson({});
+    mkdirSync(join(dir, 'apps', 'kubic'), { recursive: true });
+    writeFileSync(
+      join(dir, 'apps', 'kubic', 'package.json'),
+      JSON.stringify({
+        name: 'kubic',
+        dependencies: { '@earendil-works/pi-ai': '~0.85.1' },
+      }),
+    );
+    const violations = checkPinned(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.file}:${v.dep}`),
+      ['apps/kubic/package.json:@earendil-works/pi-ai'],
+    );
+  });
+
+  it('pinned check ignores non-Pi ranges', () => {
+    const dir = fixturePackageJson({
+      lodash: '^4.0.0',
+      '@earendil-works/pi-ai': '0.85.1',
+    });
+    assert.deepEqual(checkPinned(dir), []);
+  });
+
+  it('pinned check rejects non-string specs', () => {
+    const dir = fixturePackageJson({});
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        dependencies: { '@earendil-works/pi-ai': null },
+      }),
+    );
+    const violations = checkPinned(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.dep}:${v.reason}`),
+      ['@earendil-works/pi-ai:range-not-exact'],
+    );
+  });
+
+  it('pinned check skips invalid manifests and missing trees', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pinned-bad-'));
+    writeFileSync(join(dir, 'package.json'), 'not json\n');
+    assert.deepEqual(checkPinned(dir), []);
+  });
+
+  it('pinned check accepts exact multi-digit and prerelease pins', () => {
+    const dir = fixturePackageJson({
+      '@earendil-works/pi-ai': '0.85.1-beta.1',
+    });
+    assert.deepEqual(checkPinned(dir), []);
+    for (const spec of ['10.0.0', '0.85.10']) {
+      const d = fixturePackageJson({ '@earendil-works/pi-ai': spec });
+      assert.deepEqual(
+        checkPinned(d),
+        [],
+        `exact pin ${JSON.stringify(spec)} must pass`,
+      );
+    }
+  });
+
+  it('pinned check rejects pins with trailing garbage', () => {
+    const dir = fixturePackageJson({ '@earendil-works/pi-ai': '0.85.1 ' });
+    const violations = checkPinned(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.dep}@${v.spec}`),
+      ['@earendil-works/pi-ai@0.85.1 '],
+    );
+  });
+
+  it('pinned check reports the exact violation shape', () => {
+    const dir = fixturePackageJson({
+      '@earendil-works/pi-ai': '~0.85.1',
+    });
+    assert.deepEqual(checkPinned(dir), [
+      {
+        file: 'package.json',
+        dep: '@earendil-works/pi-ai',
+        spec: '~0.85.1',
+        reason: 'range-not-exact',
+      },
+    ]);
+  });
+
+  it('pinned CLI exits 0 printing OK on the clean tree', () => {
+    const out = execFileSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'check-pinned-deps.mjs'), ROOT],
+      { encoding: 'utf8' },
+    );
+    assert.match(out, /pi pins OK/);
+  });
+
+  it('pinned CLI exits 1 listing violations', () => {
+    const dir = fixturePackageJson({
+      '@earendil-works/pi-ai': '^0.85.1',
+    });
+    try {
+      execFileSync(
+        process.execPath,
+        [join(ROOT, 'scripts', 'check-pinned-deps.mjs'), dir],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      assert.fail('CLI passed on an unpinned tree');
+    } catch (err) {
+      assert.equal(err.status, 1);
+      assert.match(err.stdout, /is not an exact pin/);
+      assert.match(err.stdout, /1 unpinned Pi dependency\(ies\)/);
+    }
+  });
+
+  it('pinned check rejects ranges in devDependencies', () => {
+    const dir = fixturePackageJson({});
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        devDependencies: { '@earendil-works/pi-ai': '^0.85.1' },
+      }),
+    );
+    const violations = checkPinned(dir);
+    assert.deepEqual(
+      violations.map((v) => `${v.dep}@${v.spec}`),
+      ['@earendil-works/pi-ai@^0.85.1'],
+    );
+  });
+
+  it('pinned CLI defaults to the parent root', () => {
+    const out = execFileSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'check-pinned-deps.mjs')],
+      { encoding: 'utf8', cwd: join(ROOT, 'scripts') },
+    );
+    assert.match(out, /pi pins OK/);
+  });
+
+  it('pinned check skips invalid package manifests', () => {
+    const dir = fixturePackageJson({});
+    mkdirSync(join(dir, 'packages', 'broken'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages', 'broken', 'package.json'),
+      'not json\n',
+    );
+    assert.deepEqual(checkPinned(dir), []);
+  });
+
+  it('pinned check tolerates missing packages and apps trees', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pinned-empty-'));
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'fixture', private: true }),
+    );
+    assert.deepEqual(checkPinned(dir), []);
   });
 });

@@ -42,6 +42,8 @@ export type {
   FileKind,
   FileSystem,
   HarnessEvent,
+  HookHandler,
+  Hooks,
   LaneSnapshot,
   OperationAdmissionResult,
   OperationError,

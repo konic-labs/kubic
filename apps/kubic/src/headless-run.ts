@@ -1,0 +1,306 @@
+// Prod `kubic run -p` runner (issue #28): the composition root drives the
+// real solo lane headless and derives the §78 terminus from the lane's own
+// settled outcome (E1). Everything durable lands under
+// <sessionsRoot>/<id>/ (E3): the transcript and usage rows in the session
+// store, file effects in <id>/journal/ via lane interception, and the
+// entry chain itself is the trajectory record — so every ref resolves to
+// a real location. Resume keeps one chain: the -p prompt commits
+// parent-linked to the last existing entry under a random id (E4).
+
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import {
+  type HeadlessRunResult,
+  mapCaughtErrorToTerminus,
+  mapLaneOutcomeToTerminus,
+  SESSION_ID_PATTERN,
+} from '../../../packages/host/src/run-cli.js';
+import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import {
+  attachSession,
+  createSession,
+  openSessionStore,
+} from '../../../packages/worker/src/lane/session-store.js';
+import {
+  bootSoloLane,
+  driveToSettled,
+} from '../../../packages/worker/src/lane/solo.js';
+import {
+  ModelSelectError,
+  selectModel,
+} from '../../../packages/worker/src/model-select.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type MutableModels,
+  type OperationResultRecord,
+  type Session,
+} from '../../../packages/worker/src/pi-boundary.js';
+
+export interface HeadlessRunDeps {
+  sessionsRoot?: string;
+  models?: MutableModels;
+  env?: ExecutionEnv;
+  context?: Context;
+}
+
+function refs(
+  id: string,
+): Pick<HeadlessRunResult, 'journalRef' | 'usageRef' | 'trajectoryRef'> {
+  return {
+    journalRef: `journal:${id}`,
+    usageRef: `usage:${id}`,
+    trajectoryRef: `trajectory:${id}`,
+  };
+}
+
+function finished(
+  id: string,
+  terminus: HeadlessRunResult['terminus'],
+  summary: string,
+  errorMessage?: string,
+): HeadlessRunResult {
+  return {
+    terminus,
+    summary,
+    sessionId: id,
+    ...refs(id),
+    ...(errorMessage === undefined
+      ? {}
+      : { error: { kind: terminus, message: errorMessage } }),
+  };
+}
+
+function storeFailure(
+  sessionId: string | undefined,
+  error: unknown,
+): HeadlessRunResult {
+  const message = error instanceof Error ? error.message : String(error);
+  const terminus = mapCaughtErrorToTerminus(error);
+  const ref = sessionId ?? 'unassigned';
+  return {
+    terminus,
+    summary: message,
+    sessionId: ref,
+    ...refs(ref),
+    error: { kind: terminus, message },
+  };
+}
+
+// Lane outcomes arrive as unknown at the composition root: the drive loop
+// hands back whatever the lane settled with. Validate the record shape
+// explicitly so a malformed outcome maps to failed with a clear message
+// instead of throwing an incidental TypeError mid-map.
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'declined',
+  'aborted',
+  'failed',
+]);
+
+function isRecordError(
+  value: unknown,
+): value is { code: string; message: string } {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as { code?: unknown; message?: unknown };
+  return typeof record.code === 'string' && typeof record.message === 'string';
+}
+
+function asResultRecord(outcome: unknown): OperationResultRecord | null {
+  if (typeof outcome !== 'object' || outcome === null) return null;
+  const record = outcome as { status?: unknown; error?: unknown };
+  if (
+    typeof record.status !== 'string' ||
+    !TERMINAL_STATUSES.has(record.status)
+  )
+    return null;
+  if (record.error !== undefined && !isRecordError(record.error)) return null;
+  return record as OperationResultRecord;
+}
+
+function tipId(entries: readonly unknown[]): string | null {
+  // The store makes no order promise: take the max-seq entry's id.
+  let best: string | null = null;
+  let bestSeq = -1;
+  for (const entry of entries) {
+    const record = entry as { id?: unknown; seq?: unknown };
+    if (typeof record?.id !== 'string') continue;
+    const seq = typeof record.seq === 'number' ? record.seq : -1;
+    if (seq >= bestSeq) {
+      bestSeq = seq;
+      best = record.id;
+    }
+  }
+  return best;
+}
+
+// Final assistant text of the settled run for the result summary;
+// falls back to the prompt when the lane left no assistant text.
+function assistantSummary(entries: readonly unknown[]): string | undefined {
+  let best: string | undefined;
+  let bestSeq = -1;
+  for (const entry of entries) {
+    const record = entry as {
+      seq?: unknown;
+      type?: unknown;
+      message?: { role?: unknown; content?: unknown };
+    };
+    if (record?.type !== 'message') continue;
+    if (record.message?.role !== 'assistant') continue;
+    if (!Array.isArray(record.message.content)) continue;
+    const text = record.message.content
+      .filter(
+        (part) =>
+          (part as { type?: unknown }).type === 'text' &&
+          typeof (part as { text?: unknown }).text === 'string',
+      )
+      .map((part) => (part as { text: string }).text)
+      .join('\n')
+      .trim();
+    if (text === '') continue;
+    const seq = typeof record.seq === 'number' ? record.seq : -1;
+    if (seq >= bestSeq) {
+      bestSeq = seq;
+      best = text.slice(0, 500);
+    }
+  }
+  return best;
+}
+
+async function recordPrompt(
+  session: Session,
+  prompt: string,
+  context: Context,
+): Promise<void> {
+  const existing = await session.findEntries(undefined, context);
+  const parentId = tipId(existing);
+  const entryId = randomUUID();
+  await session.mutate(async (mutator) => {
+    await mutator.commit(
+      [
+        {
+          kind: 'entry',
+          entry: {
+            id: entryId,
+            parentId,
+            type: 'message',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: prompt }],
+              timestamp: Date.now(),
+            },
+          },
+        },
+      ],
+      context,
+    );
+  }, context);
+}
+
+export async function runHeadlessPrompt(
+  prompt: string,
+  options: { sessionId?: string },
+  deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  // Defense-in-depth with run-cli's --session check: direct callers bypass
+  // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
+  // before any store attach or path join can see them.
+  if (
+    options.sessionId !== undefined &&
+    !SESSION_ID_PATTERN.test(options.sessionId)
+  ) {
+    const invalid = `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-])`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  const root = deps.sessionsRoot ?? defaultSessionsRoot();
+  const context = deps.context ?? BACKGROUND_CONTEXT;
+  const bridge = createNodeFileBridge(root);
+  const store = openSessionStore(root, bridge);
+  let session: Session;
+  try {
+    session =
+      options.sessionId === undefined
+        ? await createSession(store, deps.env?.cwd ?? process.cwd(), context)
+        : await attachSession(store, options.sessionId, context);
+  } catch (error) {
+    return storeFailure(options.sessionId, error);
+  }
+  const id = session.metadata.id;
+  try {
+    bridge.createDir(join(id, 'journal'));
+    await recordPrompt(session, prompt, context);
+    const assembled = assembleModels(process.cwd());
+    const models = deps.models ?? assembled.models;
+    let model: ReturnType<typeof selectModel>;
+    try {
+      model = selectModel(models);
+    } catch (error) {
+      if (error instanceof ModelSelectError) {
+        return finished(
+          id,
+          'provider_probe_failed',
+          error.message,
+          error.message,
+        );
+      }
+      throw error;
+    }
+    const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    const { lane } = await bootSoloLane({
+      session,
+      models,
+      model,
+      env,
+      sessionId: id,
+      agentId: 'root',
+      journal: new FileJournalStore(join(root, id, 'journal')),
+    });
+    const admission = await lane.accept({ kind: 'prompt', prompt }, context);
+    if (!admission.ok) {
+      const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
+      return finished(id, 'failed', message, message);
+    }
+    const driven = await driveToSettled(
+      lane,
+      admission.value.operationId,
+      context,
+    );
+    if (driven.kind === 'waiting-deferred') {
+      const message =
+        'headless run suspended waiting on an approval that cannot arrive without a TTY';
+      return finished(id, 'approval_timed_out', message, message);
+    }
+    const record = asResultRecord(driven.outcome);
+    if (record === null) {
+      const detail =
+        JSON.stringify(driven.outcome)?.slice(0, 500) ?? String(driven.outcome);
+      const malformed = `lane yielded a malformed outcome: ${detail}`;
+      return finished(id, 'failed', malformed, malformed);
+    }
+    const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
+    if (terminus === 'completed') {
+      const entries = await lane.findEntries(undefined, context);
+      return finished(id, terminus, assistantSummary(entries) ?? prompt);
+    }
+    const summary =
+      record.error === undefined
+        ? `lane ${record.status} without detail`
+        : `${record.error.code}: ${record.error.message}`;
+    return finished(id, terminus, summary, summary);
+  } catch (error) {
+    return storeFailure(id, error);
+  } finally {
+    // The result is already mapped: a close failure must neither escape
+    // nor mask it.
+    try {
+      await session.close(context);
+    } catch {
+      // Intentionally swallowed — the mapped result stands.
+    }
+  }
+}

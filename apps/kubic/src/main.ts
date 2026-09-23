@@ -8,7 +8,9 @@ import {
   assembleModels,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
+import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
+import { runHeadlessPrompt } from './headless-run.js';
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -39,8 +41,15 @@ async function main(argv: string[]): Promise<number> {
       out: (line) => console.log(line),
     });
   }
+  if (command === 'run') {
+    return runRunCommand(rest, {
+      out: (line: string) => console.log(line),
+      run: (prompt: string, options: { sessionId?: string }) =>
+        runHeadlessPrompt(prompt, options),
+    });
+  }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run>',
   );
   return 1;
 }

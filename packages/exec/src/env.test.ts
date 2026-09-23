@@ -56,6 +56,15 @@ describe('execution env (issue #12, slice A)', () => {
     expect(readdirSync(cwd)).toEqual([]);
   });
 
+  it('fake env stats directories by prefix', () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('sub/b.txt', 'data');
+    const dir = env.fs.stat('sub');
+    expect(dir.isDirectory).toBe(true);
+    expect(dir.isFile).toBe(false);
+    expect(() => env.fs.stat('missing')).toThrow(/no such file/);
+  });
+
   it('node shell executes and captures output', async () => {
     const { env } = makeNodeEnv();
     const handle = env.shell.spawn(

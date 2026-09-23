@@ -326,8 +326,19 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     stat: (path: string) => {
       const hit = this.files.get(path);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${path}`);
-      return { isFile: true, isDirectory: false, size: hit.length };
+      if (hit !== undefined)
+        return { isFile: true, isDirectory: false, size: hit.length };
+      const prefix = `${path.replace(/\/*$/, '')}/`;
+      let size = 0;
+      let count = 0;
+      for (const [k, v] of this.files) {
+        if (k.startsWith(prefix)) {
+          size += v.length;
+          count += 1;
+        }
+      }
+      if (count === 0) throw new Error(`fake fs: no such file: ${path}`);
+      return { isFile: false, isDirectory: true, size };
     },
   };
 

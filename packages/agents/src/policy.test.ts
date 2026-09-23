@@ -20,7 +20,23 @@ describe('permission policy model (issue #15, slice A)', () => {
 
   it('derives the solo tool allowlist from defaults', () => {
     expect(toolsForClasses(SOLO_DEFAULTS).sort()).toEqual(
-      ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'write'].sort(),
+      [
+        'bash',
+        'edit',
+        'find',
+        'git_branch',
+        'git_checkpoint',
+        'git_commit',
+        'git_diff',
+        'git_log',
+        'git_show',
+        'git_stage',
+        'git_status',
+        'grep',
+        'ls',
+        'read',
+        'write',
+      ].sort(),
     );
   });
 
@@ -29,6 +45,7 @@ describe('permission policy model (issue #15, slice A)', () => {
       ...SOLO_DEFAULTS,
       filesystem: 'read',
       shell: false,
+      git: false,
     });
     expect(tools.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
   });

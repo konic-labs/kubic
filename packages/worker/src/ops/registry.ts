@@ -14,6 +14,26 @@ import type { EditResult } from './edit.js';
 import { editOperation } from './edit.js';
 import type { FindResult } from './find.js';
 import { findOperation } from './find.js';
+import type {
+  GitBranchResult,
+  GitCheckpointResult,
+  GitCommitResult,
+  GitDiffResult,
+  GitLogResult,
+  GitShowResult,
+  GitStageResult,
+  GitStatusResult,
+} from './git.js';
+import {
+  gitBranchOperation,
+  gitCheckpointOperation,
+  gitCommitOperation,
+  gitDiffOperation,
+  gitLogOperation,
+  gitShowOperation,
+  gitStageOperation,
+  gitStatusOperation,
+} from './git.js';
 import type { GrepResult } from './grep.js';
 import { grepOperation } from './grep.js';
 import type { LsResult } from './ls.js';
@@ -39,6 +59,14 @@ export const OPERATIONS = {
   write: writeOperation,
   edit: editOperation,
   bash: bashOperation,
+  git_status: gitStatusOperation,
+  git_diff: gitDiffOperation,
+  git_log: gitLogOperation,
+  git_show: gitShowOperation,
+  git_stage: gitStageOperation,
+  git_commit: gitCommitOperation,
+  git_branch: gitBranchOperation,
+  git_checkpoint: gitCheckpointOperation,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -51,6 +79,14 @@ export interface OperationResults {
   write: WriteResult;
   edit: EditResult;
   bash: BashResult;
+  git_status: GitStatusResult;
+  git_diff: GitDiffResult;
+  git_log: GitLogResult;
+  git_show: GitShowResult;
+  git_stage: GitStageResult;
+  git_commit: GitCommitResult;
+  git_branch: GitBranchResult;
+  git_checkpoint: GitCheckpointResult;
 }
 
 export function callOperation<N extends OperationName>(

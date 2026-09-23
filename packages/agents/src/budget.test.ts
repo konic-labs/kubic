@@ -173,4 +173,49 @@ describe('replay pin (issue #9, §72)', () => {
       'toolSet',
     ]);
   });
+
+  it('diff isolates a worktree-only change (issue #70)', () => {
+    expect(diffReplayPin(FULL_PIN, { ...FULL_PIN, worktree: '/wt/2' })).toEqual(
+      ['worktree'],
+    );
+  });
+
+  it('diff emits model+thinking once when both change (issue #70)', () => {
+    expect(
+      diffReplayPin(FULL_PIN, {
+        ...FULL_PIN,
+        model: 'model-b',
+        thinking: 'low',
+      }),
+    ).toEqual(['model+thinking']);
+  });
+
+  it('diff emits every dim in source order when all change (issue #70)', () => {
+    const changed: ReplayPin = {
+      task: 'task-2',
+      model: 'model-b',
+      thinking: 'low',
+      toolSet: ['read'],
+      worktree: '/wt/2',
+      baseRevision: 'def456',
+      systemPrompt: 'other',
+      resources: ['res-2'],
+    };
+    expect(diffReplayPin(FULL_PIN, changed)).toEqual([
+      'task',
+      'model+thinking',
+      'toolSet',
+      'worktree',
+      'baseRevision',
+      'prompt+resources',
+    ]);
+  });
+
+  it('terminateForBudget covers every limit with a distinct status (issue #70)', () => {
+    for (const limit of BUDGET_LIMITS) {
+      const termination = terminateForBudget(limit);
+      expect(termination).toEqual({ status: 'budget_exhausted', limit });
+      expect(termination.status).not.toBe('failed');
+    }
+  });
 });

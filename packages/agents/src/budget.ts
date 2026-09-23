@@ -16,7 +16,11 @@ export interface AgentBudget {
 }
 
 export function createBudget(partial: AgentBudget): AgentBudget {
-  return { ...partial };
+  const budget: AgentBudget = { ...partial };
+  if (partial.retryBudget !== undefined) {
+    budget.retryBudget = { ...partial.retryBudget };
+  }
+  return budget;
 }
 
 export const BUDGET_LIMITS = [

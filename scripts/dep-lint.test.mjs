@@ -110,6 +110,42 @@ describe('dep-lint (issue #2)', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
+  it('allows exec to import node:fs for the Node binding', () => {
+    const dir = fixtureTree({
+      'packages/exec/src/env.ts': `import { readFileSync } from 'node:fs';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('fails when tools import node:fs directly', () => {
+    const dir = fixtureTree({
+      'packages/worker/src/tools.ts': `import { readFileSync } from 'node:fs';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'worker'),
+      `expected worker node:fs violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('fails when tools import node:child_process directly', () => {
+    const dir = fixtureTree({
+      'packages/host/src/dispatch.ts': `import { spawn } from 'node:child_process';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'host'),
+      `expected host child_process violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('allows test files to import node builtins for scaffolding', () => {
+    const dir = fixtureTree({
+      'packages/worker/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
   it('fails on dynamic import() of a forbidden package', () => {
     const dir = fixtureTree({
       'packages/tui/src/views.ts': `const m = await import('@kubic/host');\n`,

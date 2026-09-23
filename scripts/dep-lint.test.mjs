@@ -110,6 +110,21 @@ describe('dep-lint (issue #2)', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
+  it('allows only the tui boundary to touch Pi presentation modules', () => {
+    const ok = fixtureTree({
+      'packages/tui/src/tui-boundary.ts': `import { VStack } from '@earendil-works/pi-tui';\n`,
+    });
+    assert.deepEqual(checkTree(ok), []);
+    const bad = fixtureTree({
+      'packages/tui/src/layout.ts': `import { VStack } from '@earendil-works/pi-tui';\n`,
+    });
+    const violations = checkTree(bad);
+    assert.ok(
+      violations.some((v) => v.from === 'tui'),
+      `expected tui Pi-seam violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
   it('allows exec to import node:fs for the Node binding', () => {
     const dir = fixtureTree({
       'packages/exec/src/env.ts': `import { readFileSync } from 'node:fs';\n`,

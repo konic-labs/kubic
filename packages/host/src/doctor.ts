@@ -19,6 +19,7 @@ export type DoctorReason =
   | 'provider-down'
   | 'policy-mismatch'
   | 'deps-missing'
+  | 'full-access'
   | 'skipped';
 
 export interface DoctorCheck {

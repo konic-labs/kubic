@@ -5,10 +5,8 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "declaration": true,
-    "sourceMap": true,
-    "outDir": "dist",
     "types": ["node"]
   },
   "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"]

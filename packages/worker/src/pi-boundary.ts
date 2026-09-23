@@ -107,3 +107,15 @@ export {
   fauxToolCall,
   Type,
 } from '@earendil-works/pi-ai';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai custom providers (createProvider +
+//     OpenAI-compatible stream factories for models.json endpoints)
+//   used by: packages/worker/src/models-config.ts (issue #20 local/custom)
+//   why Pi has no alternative: provider streaming, auth resolution, and cost
+//     accounting live in Pi's model layer (§37 — registry generated, never
+//     hand-edited); Kubic only parses models.json and calls the factory
+//   review: issue #20
+export { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-works/pi-ai/api/openai-completions.lazy';
+export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi-ai/api/openai-responses.lazy';
+export type { MutableModels } from '@earendil-works/pi-ai';

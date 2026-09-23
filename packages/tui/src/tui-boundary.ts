@@ -10,14 +10,17 @@
 
 export type {
   Component,
+  Focusable,
   MouseRegionHandler,
   StackEntryOptions,
   Terminal,
   TUI,
 } from '@earendil-works/pi-tui';
 export {
+  CURSOR_MARKER,
   Editor,
   Markdown,
+  matchesKey,
   MouseRegion,
   ScrollView,
   Text,

@@ -81,6 +81,26 @@ describe('buildPreferencePair (issue #54)', () => {
     expect(built.pair).toBeNull();
     expect(built.excluded?.tag).toBe('no-preference-signal-excluded');
   });
+
+  it('rejects a hand-crafted env-failure pair at validation', () => {
+    const built = buildPreferencePair(passing({}), failing({}));
+    const crafted = structuredClone(built.pair);
+    expect(crafted).not.toBeNull();
+    if (crafted !== null) {
+      crafted.rejected.failureCategory = 'tool_failed';
+      expect(validatePreferencePair(crafted).valid).toBe(false);
+    }
+  });
+
+  it('rejects a hand-crafted no-preference-signal pair at validation', () => {
+    const built = buildPreferencePair(passing({}), failing({}));
+    const crafted = structuredClone(built.pair);
+    expect(crafted).not.toBeNull();
+    if (crafted !== null) {
+      crafted.rejected.verifier = { verdict: 'pass', tests: 'pass' };
+      expect(validatePreferencePair(crafted).valid).toBe(false);
+    }
+  });
 });
 
 describe('buildDpoRecord (issue #54)', () => {
@@ -121,6 +141,43 @@ describe('buildDpoRecord (issue #54)', () => {
     if (!checked.valid) {
       expect(checked.errors.join(' ')).toMatch(/provenance/i);
       expect(checked.record).toBeUndefined();
+    }
+  });
+
+  it('rejects a hand-crafted cross-grant DPO at validation', () => {
+    const built = buildDpoRecord(passing({}), failing({}));
+    const crossed = structuredClone(built.record);
+    expect(crossed).not.toBeNull();
+    if (crossed !== null) {
+      crossed.boundary = 'within';
+      crossed.grantRef = { chosen: 'solo:exec', rejected: 'worktree:write' };
+      expect(validateDpoRecord(crossed).valid).toBe(false);
+    }
+  });
+
+  it('rejects a hand-crafted env-failure DPO at validation', () => {
+    const built = buildDpoRecord(passing({}), failing({}));
+    const crafted = structuredClone(built.record);
+    expect(crafted).not.toBeNull();
+    if (crafted !== null) {
+      crafted.failureCategory = {
+        ...crafted.failureCategory,
+        rejected: 'tool_failed',
+      };
+      expect(validateDpoRecord(crafted).valid).toBe(false);
+    }
+  });
+
+  it('rejects a hand-crafted no-preference-signal DPO at validation', () => {
+    const built = buildDpoRecord(passing({}), failing({}));
+    const crafted = structuredClone(built.record);
+    expect(crafted).not.toBeNull();
+    if (crafted !== null) {
+      crafted.verifier = {
+        ...crafted.verifier,
+        rejected: { verdict: 'pass', tests: 'pass' },
+      };
+      expect(validateDpoRecord(crafted).valid).toBe(false);
     }
   });
 });

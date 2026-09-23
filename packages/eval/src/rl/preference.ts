@@ -211,6 +211,27 @@ export function validatePreferencePair(input: unknown): PairValidation {
   ) {
     errors.push('chosen and rejected cross a worktree/grant boundary');
   }
+  // Mirror the build policy: env failures carry no capability signal and
+  // the verifier must actually prefer chosen over rejected — hand-crafted
+  // records bypass the builder, so validation re-enforces both.
+  if (chosen.side !== undefined && rejected.side !== undefined) {
+    if (
+      isEnvFailure(chosen.side.failureCategory) ||
+      isEnvFailure(rejected.side.failureCategory)
+    ) {
+      errors.push(
+        'env failure runs carry no capability signal: excluded from capability training',
+      );
+    }
+    if (
+      chosen.side.verifier.verdict !== 'pass' ||
+      rejected.side.verifier.verdict !== 'fail'
+    ) {
+      errors.push(
+        `no verifier preference signal (chosen ${chosen.side.verifier.verdict} vs rejected ${rejected.side.verifier.verdict})`,
+      );
+    }
+  }
   if (errors.length > 0) return { valid: false, errors };
   return { valid: true, record: candidate as unknown as PreferencePair };
 }

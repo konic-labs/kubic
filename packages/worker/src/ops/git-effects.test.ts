@@ -40,15 +40,48 @@ describe('git effects (issue #19, slice C)', () => {
       { paths: [] },
       { paths: ['/etc/passwd'] },
       { paths: ['../up.txt'] },
+      { paths: ['a/../../up.txt'] },
     ]) {
       const out = await callOperation(
         'git_stage',
         args,
-        inv(`c2-${args.paths[0] ?? 'empty'}`),
+        inv(
+          `c2-${String(args.paths[0] ?? 'empty').replace(/[^A-Za-z0-9]/g, '_')}`,
+        ),
         ctx({}),
       );
       expect(out.ok).toBe(false);
     }
+  });
+
+  it('git_stage refuses dot-dot segments even when they resolve inside', async () => {
+    const out = await callOperation(
+      'git_stage',
+      { paths: ['sub/../ok.txt'] },
+      inv('c2b'),
+      ctx({}),
+    );
+    // Rejected: any `..` segment is refused, even one that resolves inside.
+    expect(out.ok).toBe(false);
+  });
+
+  it('git_branch refuses hostile names and git_diff refuses dash ranges', async () => {
+    for (const create of ['--help', 'a..b', 'has space', '../x', 'a@{1}']) {
+      const out = await callOperation(
+        'git_branch',
+        { create },
+        inv(`c7-${create.length}`),
+        ctx({}),
+      );
+      expect(out.ok).toBe(false);
+    }
+    const diffed = await callOperation(
+      'git_diff',
+      { range: '--output=/tmp/x' },
+      inv('c8'),
+      ctx({}),
+    );
+    expect(diffed.ok).toBe(false);
   });
 
   it('git_commit returns the sha plus file list for the trajectory', async () => {

@@ -308,6 +308,18 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
     if (record.range !== undefined && typeof record.range !== 'string') {
       throw new OpError('invalid_args', 'git_diff range must be a string');
     }
+    if (
+      typeof record.range === 'string' &&
+      record.range !== '' &&
+      record.range.startsWith('-')
+    ) {
+      // A leading dash would be parsed by git as a flag (e.g. --output):
+      // ranges name revisions, never flags.
+      throw new OpError(
+        'invalid_args',
+        'git_diff range must not start with a dash',
+      );
+    }
     if (record.path !== undefined && typeof record.path !== 'string') {
       throw new OpError('invalid_args', 'git_diff path must be a string');
     }
@@ -381,17 +393,35 @@ function gitEffectProvenance(
 }
 
 function rejectPathEscape(path: string, op: string): void {
+  // Any `..` segment anywhere (not just leading): `a/../../x` escapes the
+  // same as `../x` once git resolves it.
   if (
     path === '' ||
     path.startsWith('/') ||
-    path === '..' ||
-    path.startsWith('../')
+    path.split('/').some((segment) => segment === '..')
   ) {
     throw new OpError(
       'invalid_args',
       `${op}: refusing path '${path}' (empty, absolute, or parent-escaping)`,
     );
   }
+}
+
+export function isValidBranchName(name: string): boolean {
+  if (name === '') return false;
+  if (name.startsWith('-') || name.includes('..') || name.includes('@{')) {
+    return false;
+  }
+  if (/[\s~^:?*[\]\\]/.test(name)) return false;
+  if (
+    name.startsWith('/') ||
+    name.endsWith('/') ||
+    name.endsWith('.') ||
+    name.includes('//')
+  ) {
+    return false;
+  }
+  return /^[A-Za-z0-9._/-]+$/.test(name);
 }
 
 export const gitStageOperation: Operation<GitStageArgs, GitStageResult> = {
@@ -597,13 +627,7 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
       throw new OpError('invalid_args', 'git_branch args must be an object');
     const create = (raw as Record<string, unknown>).create;
     if (create !== undefined) {
-      if (
-        typeof create !== 'string' ||
-        create.trim() === '' ||
-        create.startsWith('-') ||
-        create.includes('..') ||
-        create.includes(' ')
-      ) {
+      if (typeof create !== 'string' || !isValidBranchName(create)) {
         throw new OpError(
           'invalid_args',
           'git_branch create must be a plain branch name',

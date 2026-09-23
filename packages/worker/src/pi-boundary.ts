@@ -86,6 +86,14 @@ export {
 } from '@earendil-works/pi-agent-core';
 export type { DeferredHandle, Model, Usage } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
+//   seam: @earendil-works/pi-ai thinking support (supported levels + clamp)
+//   used by: packages/worker/src/model-select.ts (issue #20 thinking clamp)
+//   why Pi has no alternative: per-model thinking support lives in the model
+//     definitions (§38); reimplementing the clamp would desync from models
+//   review: issue #20
+export { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+export type { ModelThinkingLevel } from '@earendil-works/pi-ai';
+// JUSTIFICATION:
 //   seam: @earendil-works/pi-ai model layer (createModels, faux provider,
 //     Model type, Type for tool schemas)
 //   used by: packages/worker/src/lane/* (model wiring) and faux-driven tests

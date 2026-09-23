@@ -60,8 +60,8 @@ describe('journal log + status (issue #18, slice C)', () => {
   it('reports branch state inside a repository without running naive git', () => {
     const root = mkdtempSync(join(tmpdir(), 'ws-'));
     mkdirSync(join(root, '.git'));
-    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/feature/nested\n');
     const status = journalStatus(seed(), root);
-    expect(status.repo?.branch).toBe('main');
+    expect(status.repo?.branch).toBe('feature/nested');
   });
 });

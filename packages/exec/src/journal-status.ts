@@ -4,9 +4,9 @@
 // identically outside git by design, §43.2).
 
 import { execFileSync } from 'node:child_process';
-import { createNodeFileBridge } from './file-bridge.js';
-import { FileJournalStore } from './journal.js';
 import { join } from 'node:path';
+import { createNodeFileBridge } from './file-bridge.js';
+import type { FileJournalStore } from './journal.js';
 
 export function renderLog(store: FileJournalStore): string[] {
   return store.entries().map((e) => {
@@ -46,7 +46,7 @@ function readRepo(root: string): RepoState | null {
     return null;
   }
   const branch = head.startsWith('ref: ')
-    ? (head.slice(5).split('/').pop() ?? '(unknown)')
+    ? (head.slice(5).replace(/^refs\/heads\//, '') || '(unknown)')
     : '(detached)';
   let dirty: boolean | null = null;
   try {

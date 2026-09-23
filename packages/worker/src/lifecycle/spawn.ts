@@ -52,6 +52,15 @@ export interface SpawnWorkerDeps {
   // Live generation for request.sessionId, when the caller tracks one
   // (e.g. the WorkerRegistry row). A request naming an older generation
   // is stale and refused before any side effect.
+  // REQUIRED wiring at the composition root for any orchestrator that
+  // spawns into a session with live generations: callers that leave
+  // this unwired get NO stale-generation check — spawn proceeds
+  // unconditionally.
+  // Intended asymmetry with WorkerRegistry.replace: this check uses
+  // `<`, so a request naming a FUTURE generation still spawns (the
+  // allocator may have bumped past our snapshot); the registry CAS
+  // uses strict `!==` and refuses any mismatch, stale or future. Only
+  // a strictly older generation is stale here.
   getLiveGeneration?: (sessionId: string) => number | undefined;
   // Receives the redacted spawn debug line (see spawnDebugLine): secrets
   // are redacted by default, so wiring this to §50 output is safe.
@@ -108,7 +117,8 @@ export function spawnWorker(
   deps?: SpawnWorkerDeps,
 ): SpawnedWorker {
   // A pre-replace generation must never spawn over a live worker: refuse
-  // before any side effect (no env build, no shell spawn).
+  // before any side effect (no env build, no shell spawn). Future
+  // generations pass: see the getLiveGeneration asymmetry note above.
   const live = deps?.getLiveGeneration?.(request.sessionId);
   if (live !== undefined && request.generation < live) {
     throw new StaleGenerationError(request.sessionId, live, request.generation);

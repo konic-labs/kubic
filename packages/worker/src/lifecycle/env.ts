@@ -46,6 +46,13 @@ export function filterSpawnEnv(
   return out;
 }
 
+// Namespaces a role grant under KUBIC_ROLE_<ROLE>_. The `role` value
+// is trusted as-is: this function mints whatever sibling-prefixed
+// namespace the caller names and performs NO authorization. The
+// orchestrator MUST authorize the role value at the composition root
+// (when that wiring lands) — only a role the session is entitled to
+// may reach this function, or a caller could mint a sibling role's
+// namespace.
 export function roleCredentialEnv(
   role: string,
   grant: Record<string, string>,

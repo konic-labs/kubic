@@ -32,9 +32,15 @@ export interface ReplaceOutcome {
 }
 
 export class StaleGenerationError extends Error {
+  // Arg convention (basis, candidate): oldGeneration is the basis the
+  // request is measured against (the live generation, or the claimed
+  // old generation); next is the candidate generation the caller
+  // presented (or was allocated). The message names both roles
+  // explicitly so expected-vs-live order reads unambiguously at every
+  // throw site (spawn, replace, registry CAS).
   constructor(sessionId: string, oldGeneration: number, next: number) {
     super(
-      `refusing replace for session ${sessionId}: generation ${next} is not newer than ${oldGeneration}`,
+      `stale generation for session ${sessionId}: got generation ${next}, want newer than ${oldGeneration}`,
     );
     this.name = 'StaleGenerationError';
   }

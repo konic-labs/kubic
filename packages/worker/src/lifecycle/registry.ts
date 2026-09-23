@@ -72,14 +72,21 @@ export class WorkerRegistry {
     // Compare-and-swap: a stale replacer names a generation that is no
     // longer live. Refuse without touching the row — no bump, no reset —
     // so the live worker survives the stale request.
+    // Intended asymmetry with spawnWorker: the CAS uses strict `!==`,
+    // refusing ANY mismatch — stale or future (a future expectation
+    // means the caller holds a generation this registry never issued).
+    // spawnWorker instead uses `<` and lets future generations through.
+    // Arg order follows the StaleGenerationError (basis, candidate)
+    // convention — live generation first, caller-presented expectation
+    // second — so the refusal message reads unambiguously.
     if (
       expectedGeneration !== undefined &&
       entry.generation !== expectedGeneration
     ) {
       throw new StaleGenerationError(
         entry.sessionId,
-        expectedGeneration,
         entry.generation,
+        expectedGeneration,
       );
     }
     entry.generation += 1;

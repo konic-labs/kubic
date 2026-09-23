@@ -1,0 +1,112 @@
+// Dep-direction lint for the Kubic monorepo (issue #2, design §64 + §3.1).
+//
+// One-way dependency rule: packages may only import "downward".
+// Forbidden edges (importer -> forbidden imported packages):
+const FORBIDDEN = {
+  core: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
+  exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
+  worker: ['host', 'tui'],
+  host: ['tui'],
+  agents: ['host', 'worker', 'tui', 'trajectory', 'eval'],
+  trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
+  eval: ['exec', 'worker', 'host', 'tui'],
+  tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
+  // apps/kubic is the composition root: may wire host + tui together.
+  kubic: [],
+};
+
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const IMPORT_RE =
+  /(?:import|export)\s+(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]|(?:import\s*\(\s*|require\s*\(\s*)['"]([^'"]+)['"]/g;
+
+function tsFiles(dir, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e === 'node_modules' || e === 'dist') continue;
+    const full = join(dir, e);
+    if (statSync(full).isDirectory()) tsFiles(full, out);
+    else if (/\.m?[jt]sx?$/.test(e)) out.push(full);
+  }
+  return out;
+}
+
+// Resolve an import specifier found in `ownerPkg` to an internal package name,
+// or null when it is external (node builtin, npm dep) or intra-package.
+function resolveTarget(ownerPkg, importerFile, spec, root) {
+  if (spec.startsWith('@kubic/')) {
+    const name = spec.slice('@kubic/'.length).split('/')[0];
+    return name === ownerPkg ? null : name;
+  }
+  if (spec.startsWith('.')) {
+    const abs = resolve(dirname(importerFile), spec);
+    const rel = relative(root, abs);
+    const parts = rel.split(sep);
+    if (parts[0] === 'packages' && parts[1] && parts[1] !== ownerPkg)
+      return parts[1];
+    if (parts[0] === 'apps' && ownerPkg !== 'kubic') return 'kubic';
+  }
+  return null;
+}
+
+import { dirname } from 'node:path';
+
+export function checkTree(root) {
+  const violations = [];
+  const packagesDir = join(root, 'packages');
+  let owners = [];
+  try {
+    owners = readdirSync(packagesDir).filter((e) =>
+      statSync(join(packagesDir, e)).isDirectory(),
+    );
+  } catch {
+    return violations;
+  }
+  owners.push('kubic');
+  for (const owner of owners) {
+    const srcDir =
+      owner === 'kubic'
+        ? join(root, 'apps', 'kubic')
+        : join(packagesDir, owner);
+    const forbidden = new Set(FORBIDDEN[owner] ?? Object.keys(FORBIDDEN));
+    for (const file of tsFiles(srcDir)) {
+      const content = readFileSync(file, 'utf8');
+      for (const m of content.matchAll(IMPORT_RE)) {
+        const spec = m[1] ?? m[2];
+        const target = resolveTarget(owner, file, spec, root);
+        if (target && forbidden.has(target)) {
+          const line = content.slice(0, m.index).split('\n').length;
+          violations.push({
+            from: owner,
+            to: target,
+            file: relative(root, file),
+            line,
+          });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  const root =
+    process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '..');
+  const violations = checkTree(root);
+  for (const v of violations) {
+    console.log(`${v.file}:${v.line}: forbidden import ${v.from} -> ${v.to}`);
+  }
+  if (violations.length > 0) {
+    console.log(`${violations.length} forbidden import(s)`);
+    process.exit(1);
+  }
+  console.log('dep-direction OK');
+}

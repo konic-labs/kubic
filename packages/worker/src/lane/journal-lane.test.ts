@@ -115,4 +115,25 @@ describe('durable next-day undo (issue #17, slice D)', () => {
       reason: 'no before-content: unattributed entry is not reversible',
     });
   });
+
+  it('refuses to restore entry paths escaping the workspace root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const store = new FileJournalStore(dir);
+    const recorded = store.append({
+      path: '../evil.txt',
+      op: 'write',
+      before: 'original\n',
+      after: 'changed\n',
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1,
+    });
+    expect(restoreEntry(store, recorded, root)).toEqual({
+      restored: false,
+      reason: 'entry path escapes the workspace root: ../evil.txt',
+    });
+  });
 });

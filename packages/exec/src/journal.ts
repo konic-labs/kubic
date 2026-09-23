@@ -6,7 +6,7 @@
 // adds an entry without checking the bounds first.
 
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createNodeFileBridge } from './file-bridge.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -520,6 +520,8 @@ export type RestoreResult =
 // Undo primitive for the next issue's CLI: writes the recorded
 // before-content back. Entries without before-content (unattributed
 // reconciliation finds) are reported non-reversible — never guessed.
+// Entry paths are contained to the workspace root: a path escaping via
+// ../ (or an absolute path) is refused, never written.
 export function restoreEntry(
   store: FileJournalStore,
   entry: JournalEntry,
@@ -532,8 +534,16 @@ export function restoreEntry(
       reason: 'no before-content: unattributed entry is not reversible',
     };
   }
+  const target = resolve(root, entry.path);
+  const rel = relative(root, target);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return {
+      restored: false,
+      reason: `entry path escapes the workspace root: ${entry.path}`,
+    };
+  }
   try {
-    createNodeFileBridge('/').writeFile(join(root, entry.path), before);
+    createNodeFileBridge('/').writeFile(target, before);
   } catch (error) {
     return {
       restored: false,

@@ -3,6 +3,7 @@
 // tools all live in this process. Kubic adds no loop: accept → drive →
 // DriveOutcome, with retry waiting honored via notBefore.
 
+import type { PermissionClasses } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
@@ -17,7 +18,13 @@ import {
   type Session,
 } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
+import {
+  type PolicyInterceptorOptions,
+  registerPolicyInterceptors,
+} from './interceptors.js';
+import { applyToolPolicy } from './policy.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
+import { composeTools, type ToolContribution } from './wrap.js';
 
 export const SOLO_LANE_NAME = 'main';
 
@@ -30,6 +37,12 @@ export function defaultSoloPrompt(cwd: string): string {
   ].join('\n');
 }
 
+export interface SoloPolicyOptions {
+  classes?: PermissionClasses;
+  interceptors?: PolicyInterceptorOptions;
+  contributions?: ToolContribution[];
+}
+
 export interface SoloBootOptions {
   session: Session;
   models: ReturnType<typeof import('../pi-boundary.js').createModels>;
@@ -40,6 +53,7 @@ export interface SoloBootOptions {
   memos?: MemoStore;
   systemPrompt?: string;
   context?: Context;
+  policy?: SoloPolicyOptions;
 }
 
 export interface SoloLane {
@@ -65,13 +79,22 @@ export async function bootSoloLane(
       session: options.session,
       models: options.models,
       model: options.model,
-      tools: kubicToolsToPiTools(),
+      tools: composeTools(
+        kubicToolsToPiTools(),
+        options.policy?.contributions ?? [],
+      ),
       toolContext,
       systemPrompt: options.systemPrompt ?? defaultSoloPrompt(options.env.cwd),
     },
     context,
   );
   const lane = await harness.lane(SOLO_LANE_NAME, context);
+  if (options.policy?.classes !== undefined) {
+    await applyToolPolicy(harness, lane, options.policy.classes, context);
+  }
+  if (options.policy?.interceptors !== undefined) {
+    registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
+  }
   return { harness, lane, kills };
 }
 

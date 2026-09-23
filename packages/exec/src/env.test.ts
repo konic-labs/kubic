@@ -65,6 +65,25 @@ describe('execution env (issue #12, slice A)', () => {
     expect(() => env.fs.stat('missing')).toThrow(/no such file/);
   });
 
+  it('node fs renames atomically within the cwd', () => {
+    const { env } = makeNodeEnv();
+    env.fs.writeFile('tmp-1.txt', 'atomic');
+    env.fs.rename('tmp-1.txt', 'final.txt');
+    expect(env.fs.readFile('final.txt')).toBe('atomic');
+    expect(() => env.fs.readFile('tmp-1.txt')).toThrow();
+    expect(() => env.fs.rename('../escape.txt', 'x.txt')).toThrow(
+      /cwd|confin/i,
+    );
+  });
+
+  it('fake fs renames in memory', () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('tmp-1.txt', 'atomic');
+    env.fs.rename('tmp-1.txt', 'final.txt');
+    expect(env.fs.readFile('final.txt')).toBe('atomic');
+    expect(() => env.fs.rename('missing.txt', 'x.txt')).toThrow(/no such file/);
+  });
+
   it('node shell executes and captures output', async () => {
     const { env } = makeNodeEnv();
     const handle = env.shell.spawn(

@@ -22,10 +22,12 @@ function inv(id = 'inv-1'): ToolInvocation {
 describe('operation registry growth (issue #13, slice B)', () => {
   it('exposes exactly the expected operations', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual([
+      'edit',
       'find',
       'grep',
       'ls',
       'read',
+      'write',
     ]);
   });
 });

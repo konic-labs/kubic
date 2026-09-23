@@ -3,6 +3,8 @@
 // uncallable by construction — dispatch is a record lookup, and unknown
 // names (or invalid args) become structured errors, never throws.
 
+import type { EditResult } from './edit.js';
+import { editOperation } from './edit.js';
 import type { FindResult } from './find.js';
 import { findOperation } from './find.js';
 import type { GrepResult } from './grep.js';
@@ -18,12 +20,16 @@ import type {
   ToolInvocation,
 } from './types.js';
 import { OpError, refOf } from './types.js';
+import type { WriteResult } from './write.js';
+import { writeOperation } from './write.js';
 
 export const OPERATIONS = {
   read: readOperation,
   ls: lsOperation,
   find: findOperation,
   grep: grepOperation,
+  write: writeOperation,
+  edit: editOperation,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;
@@ -33,6 +39,8 @@ export interface OperationResults {
   ls: LsResult;
   find: FindResult;
   grep: GrepResult;
+  write: WriteResult;
+  edit: EditResult;
 }
 
 export function callOperation<N extends OperationName>(

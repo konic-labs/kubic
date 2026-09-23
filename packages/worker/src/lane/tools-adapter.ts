@@ -7,7 +7,7 @@
 // content (Pi's own tools report exit codes the same way); only unexpected
 // throws propagate to the harness as faults.
 
-import type { ExecutionEnv } from '../../../exec/src/env.js';
+import type { CheckpointStore, ExecutionEnv } from '../../../exec/src/env.js';
 import { callOperation, OPERATIONS } from '../ops/registry.js';
 import type { MemoStore, OpContext, ToolInvocation } from '../ops/types.js';
 import {
@@ -23,6 +23,7 @@ export interface KubicToolContext {
   agentId: string;
   memos: MemoStore;
   kills: OperationKillRegistry;
+  checkpointStore?: CheckpointStore;
 }
 
 function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
@@ -58,6 +59,7 @@ export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
         env: toolContext.env,
         sessionId: toolContext.sessionId,
         agentId: toolContext.agentId,
+        checkpointStore: toolContext.checkpointStore,
         trackHandle: (kill) => toolContext.kills.track(inv.operationId, kill),
         onUpdate: (snapshot) =>
           onUpdate({

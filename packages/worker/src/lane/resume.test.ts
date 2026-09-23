@@ -10,13 +10,16 @@ import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  type OperationResultRecord,
   type Session,
 } from '../pi-boundary.js';
+import { requestLaneAbort } from './abort.js';
 import {
   attachSession,
   createSession,
   openSessionStore,
 } from './session-store.js';
+import { settleTerminalStatus } from './settle.js';
 import { bootSoloLane, driveToSettled } from './solo.js';
 
 const openSessions: Session[] = [];
@@ -85,5 +88,53 @@ describe('session resume (issue #14, slice B)', () => {
       BACKGROUND_CONTEXT,
     );
     expect(JSON.stringify(entries)).toContain('finish this');
+  });
+});
+
+describe('abort persistence (issue #14, slice E)', () => {
+  it('abort settles the op as aborted with kills drained', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'abort-'));
+    const env = new FakeExecutionEnv({});
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    openSessions.push(session);
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('never runs')]);
+    const { lane, kills } = await bootSoloLane({
+      session,
+      models,
+      model: faux.getModel(),
+      env,
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+    const admission = await lane.accept(
+      { kind: 'prompt', prompt: 'doomed work' },
+      BACKGROUND_CONTEXT,
+    );
+    if (!admission.ok) throw new Error('accept failed');
+    const operationId = admission.value.operationId;
+    let drained = 0;
+    kills.track(operationId, () => {
+      drained += 1;
+    });
+    const aborted = await requestLaneAbort(
+      lane,
+      kills,
+      operationId,
+      BACKGROUND_CONTEXT,
+    );
+    expect(aborted.newlyRequested).toBe(true);
+    expect(aborted.killed).toBe(1);
+    expect(drained).toBe(1);
+    const driven = await driveToSettled(lane, operationId, BACKGROUND_CONTEXT);
+    expect(driven.kind).toBe('settled');
+    if (driven.kind === 'settled') {
+      const record = driven.outcome as OperationResultRecord;
+      expect(record.status).toBe('aborted');
+    }
+    expect(settleTerminalStatus('aborted').status).toBe('cancelled');
   });
 });

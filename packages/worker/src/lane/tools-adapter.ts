@@ -32,6 +32,10 @@ function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
     turnId: pi.turnId,
     getMemo: (name: string) => pi.getMemo(name),
     setMemo: (name: string, value) => pi.setMemo(name, value),
+    // Check-then-set, not atomic: safe because the harness never executes
+    // the same toolCallId concurrently (single-flight drive). If an op ever
+    // relies on this for never-replay gating under concurrent retry, route
+    // it through an atomic primitive instead.
     memoOnce: async (name, candidate) => {
       const existing = await pi.getMemo(name);
       if (existing !== undefined) return existing;

@@ -49,6 +49,9 @@ export async function requestLaneAbort(
 ): Promise<LaneAbortResult> {
   const requested = await lane.requestAbort(operationId, context);
   if (!requested.ok) {
+    // Intentional: kills stay tracked so a retried abort still drains them.
+    // Draining here would either leak (never killed) or kill processes for
+    // an operation the harness refused to stop.
     const detail =
       requested.error instanceof Error
         ? requested.error.message

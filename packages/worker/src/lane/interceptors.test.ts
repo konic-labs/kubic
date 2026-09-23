@@ -9,6 +9,7 @@ import {
   fauxProvider,
   fauxToolCall,
   type HarnessEvent,
+  type JsonValue,
   MemorySessionRepo,
   type Session,
 } from '../pi-boundary.js';
@@ -42,7 +43,7 @@ interface Booted {
 }
 
 async function boot(
-  calls: Array<{ name: string; args: Record<string, unknown> }>,
+  calls: Array<{ name: string; args: Record<string, JsonValue> }>,
 ): Promise<Booted> {
   const env = new FakeExecutionEnv({});
   env.fs.writeFile('notes.txt', 'workspace notes\n');

@@ -112,7 +112,7 @@ Unknown flags exit 2. Full exit-code contract is on the
 Live worker list over the process registry: one line per worker with
 the §13 status verbatim, age, owner, pid, startup span ms, and
 resources (`skills=… templates=…`, `-` when none). A one-shot CLI
-carries no orchestrator, so the registry is empty — no output, exit 0.
+carries no orchestrator, so the registry is empty — no text output (`--json` prints `[]`), exit 0.
 
 | Flag | Meaning |
 | --- | --- |

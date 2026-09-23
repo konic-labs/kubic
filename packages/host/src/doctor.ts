@@ -6,6 +6,10 @@
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
+// License identity (issue #59; §75.1): constants only, no file access —
+// this module never imports node:fs, and the static LICENSE/package.json
+// correspondence is guarded by scripts/license.test.mjs.
+import { formatLicenseDetail } from '../../core/src/license.js';
 import { CAPABILITIES, validatePolicy } from './approvals.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
@@ -156,6 +160,21 @@ function probeMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// License identity (issue #59; §75.1): Kubic is MIT-licensed. The check
+// always passes — it surfaces the license at runtime and can never flip
+// the doctor exit code. The static correspondence (LICENSE text and the
+// package.json license fields matching these constants) is guarded by
+// scripts/license.test.mjs instead of by a runtime probe.
+function licenseCheck(): DoctorCheck {
+  return {
+    id: 'license:kubic',
+    label: 'license kubic',
+    status: 'pass',
+    reason: 'ok',
+    detail: formatLicenseDetail(),
+  };
+}
+
 export function collectDoctorChecks(
   deps: DoctorDeps,
   skip: string[],
@@ -194,6 +213,9 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  // License identity (issue #59): reported on every run, never skipped
+  // implicitly — --skip license:kubic remains available like any check.
+  checks.push(licenseCheck());
   // Issue #58 honest limits (§59.1): registration only — the limit
   // checks ride the same --skip and exit path as #29. The builder is
   // total (a throwing probe becomes a failing check). Static §59.1

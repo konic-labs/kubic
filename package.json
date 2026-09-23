@@ -2,6 +2,7 @@
   "name": "kubic",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Kubic — model-agnostic terminal coding agent (Solo default, orchestrator opt-in)",
   "engines": {
     "node": ">=22.19"
@@ -16,7 +17,7 @@
     "lint:deps": "node scripts/dep-lint.mjs",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs"
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

@@ -62,5 +62,12 @@ The document is Markdown; the explorer is a build artifact of it. Edit the Markd
 
 ## License
 
-MIT is the intended licence. The repository is private and unreleased, so this is tracked as an open
-backlog item rather than settled — see §75.1 of the design document.
+MIT — see [LICENSE](LICENSE) (Copyright (c) 2026 Konic Labs). Third-party
+attribution (Pi agent harness) lives in [NOTICE.md](NOTICE.md). Every
+`package.json` declares `"license": "MIT"`, and the CLI reports it via
+`kubic --version` and the `license:kubic` doctor check.
+
+The repository is private and unreleased; the private-to-public gate
+(`docs/design/` and `pi/` stay local, secret/history sweep) is recorded in
+[docs/publish-checklist.md](docs/publish-checklist.md) — see §75.1 of the
+design document.

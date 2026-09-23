@@ -360,3 +360,143 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     expect(second.lines.join('\n')).toBe(first.lines.join('\n'));
   });
 });
+
+describe('replay live (§47.1 Live)', () => {
+  function writeRoleConfig(dir: string, name: string, body?: string): string {
+    const path = join(dir, name);
+    writeFileSync(
+      path,
+      body ?? '---\nrole: implementer\ntools: [read, edit]\n---\n\nDo the task.\n',
+    );
+    return path;
+  }
+
+  it('refuses without a pinned role config (exit 2, runner never called)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const o = out();
+    let called = false;
+    const exit = await runReplayCommand([traj, '--tier', 'live', '--json'], {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return { terminus: 'completed', summary: 'must not run' };
+      },
+    });
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      tier: string;
+      error: { code: string };
+    };
+    expect(envelope.tier).toBe('live');
+    expect(envelope.error.code).toBe('live-needs-role-config');
+  });
+
+  it('refuses model/lockfile pins under live (pins come from the role)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const role = writeRoleConfig(dir, 'role.md');
+    const lock = writeLockfile(dir, 'pins.json');
+    for (const extra of [
+      ['--model', 'acme/m1'],
+      ['--lockfile', lock],
+    ]) {
+      const o = out();
+      const exit = await runReplayCommand(
+        [traj, '--tier', 'live', '--role-config', role, ...extra],
+        deps(o),
+      );
+      expect(exit).toBe(2);
+      expect(o.lines.join('\n')).toMatch(/unexpected-flag-for-tier/);
+    }
+  });
+
+  it('exits 5 when the role config is unreadable', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'live', '--role-config', join(dir, 'missing.md'), '--json'],
+      deps(o),
+    );
+    expect(exit).toBe(5);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      error: { code: string };
+    };
+    expect(envelope.error.code).toBe('role-config-unreadable');
+  });
+
+  it('exits 2 when the role config is empty', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const role = writeRoleConfig(dir, 'empty.md', '   \n');
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'live', '--role-config', role],
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/role-config-invalid/);
+  });
+
+  it('re-executes live: tier live, invocation exact, runner gets role config', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const role = writeRoleConfig(dir, 'role.md');
+    const seen: unknown[] = [];
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'live', '--role-config', role, '--json'],
+      {
+        out: o.write,
+        run: async (request) => {
+          seen.push(request);
+          return { terminus: 'completed', summary: 'live ok' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toMatchObject({
+      tier: 'live',
+      roleConfig: role,
+      model: 'acme/m1',
+    });
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      tier: string;
+      invocation: string;
+    };
+    expect(envelope.tier).toBe('live');
+    expect(envelope.invocation).toBe('exact');
+  });
+
+  it('live with --worktree override is a different-worktree invocation (experimental)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const role = writeRoleConfig(dir, 'role.md');
+    const wt = mkdtempSync(join(tmpdir(), 'replay-wt-'));
+    const seen: unknown[] = [];
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'live', '--role-config', role, '--worktree', wt, '--json'],
+      {
+        out: o.write,
+        run: async (request) => {
+          seen.push(request);
+          return { terminus: 'completed', summary: 'live ok' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(seen[0]).toMatchObject({ worktree: wt, tier: 'live' });
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      invocation: string;
+      changed: string[];
+      experimental: string[];
+    };
+    expect(envelope.invocation).toBe('different-worktree');
+    expect(envelope.changed).toEqual(['worktree']);
+    expect(envelope.experimental).toEqual(['worktree']);
+  });
+});

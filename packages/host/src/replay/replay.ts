@@ -231,7 +231,7 @@ function fail(
     error: { code, message },
   };
   if (options.json) deps.out(JSON.stringify(envelope));
-  else deps.out(`error: ${message}`);
+  else deps.out(`error [${code}]: ${message}`);
   return exitCode;
 }
 
@@ -330,6 +330,99 @@ function checkWorktreeOverride(
       code: 'worktree-unavailable',
       message: `worktree override ${JSON.stringify(path)} does not exist — refusing a replay against a missing worktree`,
       exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+    };
+  }
+  return { ok: true };
+}
+
+async function executeTierRun(
+  deps: ReplayCommandDeps,
+  options: ReplayOptions,
+  params: {
+    tier: 'deterministic' | 'live';
+    invocation: ReplayInvocation;
+    model: string;
+    worktree: string;
+    lockfile: string | null;
+    roleConfig: string | null;
+    changed: string[];
+    experimental: string[];
+  },
+): Promise<number> {
+  const rerun = await deps.run({
+    tier: params.tier,
+    trajectory: options.trajectory,
+    model: params.model,
+    worktree: params.worktree,
+    lockfile: params.lockfile,
+    roleConfig: params.roleConfig,
+  });
+  const exitCode = mapTerminusToExitCode(rerun.terminus);
+  const envelope: ReplayEnvelope = {
+    ok: exitCode === RUN_EXIT_OK,
+    exitCode,
+    tier: params.tier,
+    invocation: params.invocation,
+    trajectory: options.trajectory,
+    changed: params.changed,
+    result: { status: rerun.terminus, summary: rerun.summary },
+    ...(params.experimental.length === 0
+      ? {}
+      : { experimental: params.experimental }),
+  };
+  if (options.json) {
+    deps.out(JSON.stringify(envelope));
+    return exitCode;
+  }
+  if (params.experimental.length > 0) {
+    deps.out('warning: --worktree is experimental');
+  }
+  deps.out(`tier: ${params.tier}`);
+  deps.out(`invocation: ${params.invocation}`);
+  deps.out(`model: ${params.model}`);
+  deps.out(`worktree: ${params.worktree}`);
+  deps.out(`result: ${rerun.terminus} — ${rerun.summary}`);
+  return exitCode;
+}
+
+function resolveWorktreeOverride(
+  deps: ReplayCommandDeps,
+  options: ReplayOptions,
+  recordedPath: string,
+): { worktree: string; changed: string[]; experimental: string[] } | { exit: number } {
+  if (options.worktree === undefined) {
+    return { worktree: recordedPath, changed: [], experimental: [] };
+  }
+  const checked = checkWorktreeOverride(options.worktree);
+  if ('exit' in checked) {
+    fail(deps, options, options.trajectory, checked.exit, checked.code, checked.message);
+    return { exit: checked.exit };
+  }
+  return {
+    worktree: options.worktree,
+    changed: ['worktree'],
+    experimental: ['worktree'],
+  };
+}
+
+function checkRoleConfig(
+  path: string,
+): { ok: true } | { code: string; message: string; exit: number } {
+  let raw: string;
+  try {
+    raw = readFile(path);
+  } catch (error) {
+    return {
+      code: 'role-config-unreadable',
+      message: `cannot read role config ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
+      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+    };
+  }
+  if (raw.trim() === '') {
+    return {
+      code: 'role-config-invalid',
+      message: `role config ${JSON.stringify(path)} is empty — live replay needs a pinned role`,
+      exit: RUN_EXIT_USAGE,
     };
   }
   return { ok: true };
@@ -465,59 +558,87 @@ export async function runReplayCommand(
     const changed: string[] = [];
     const experimental: string[] = [];
     if (options.worktree !== undefined) {
-      const checked = checkWorktreeOverride(options.worktree);
-      if ('exit' in checked) {
-        return fail(
-          deps,
-          options,
-          options.trajectory,
-          checked.exit,
-          checked.code,
-          checked.message,
-        );
-      }
-      worktree = options.worktree;
-      changed.push('worktree');
-      experimental.push('worktree');
+      const resolved = resolveWorktreeOverride(
+        deps,
+        options,
+        trajectory.worktree.path,
+      );
+      if ('exit' in resolved) return resolved.exit;
+      worktree = resolved.worktree;
+      changed.push(...resolved.changed);
+      experimental.push(...resolved.experimental);
     }
     const invocation: ReplayInvocation =
       options.worktree !== undefined ? 'different-worktree' : 'different-model';
-    const rerun = await deps.run({
+    return executeTierRun(deps, options, {
       tier: 'deterministic',
-      trajectory: options.trajectory,
+      invocation,
       model: options.model,
       worktree,
       lockfile: options.lockfile,
       roleConfig: null,
-    });
-    const exitCode = mapTerminusToExitCode(rerun.terminus);
-    const envelope: ReplayEnvelope = {
-      ok: exitCode === RUN_EXIT_OK,
-      exitCode,
-      tier: 'deterministic',
-      invocation,
-      trajectory: options.trajectory,
       changed,
-      result: { status: rerun.terminus, summary: rerun.summary },
-      ...(experimental.length === 0 ? {} : { experimental }),
-    };
-    if (options.json) {
-      deps.out(JSON.stringify(envelope));
-      return exitCode;
-    }
-    if (experimental.length > 0) {
-      deps.out('warning: --worktree is experimental');
-    }
-    deps.out('tier: deterministic');
-    deps.out(`invocation: ${invocation}`);
-    deps.out(`model: ${options.model}`);
-    deps.out(`worktree: ${worktree}`);
-    deps.out(`result: ${rerun.terminus} — ${rerun.summary}`);
-    return exitCode;
+      experimental,
+    });
   }
 
-  // Later slices: live re-execution, compare. Fail closed until they land
-  // rather than claiming an unrun tier.
+  if (options.tier === 'live') {
+    if (options.roleConfig === undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'live-needs-role-config',
+        'tier live needs a pinned --role-config — refusing to re-execute without the role that owns the run',
+      );
+    }
+    if (options.model !== undefined || options.lockfile !== undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'unexpected-flag-for-tier',
+        'tier live takes pins from --role-config — --model/--lockfile belong to --tier deterministic',
+      );
+    }
+    if (options.diffAgainst !== undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'unexpected-flag-for-tier',
+        '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
+      );
+    }
+    const role = checkRoleConfig(options.roleConfig);
+    if ('exit' in role) {
+      return fail(deps, options, options.trajectory, role.exit, role.code, role.message);
+    }
+    const resolved = resolveWorktreeOverride(
+      deps,
+      options,
+      trajectory.worktree.path,
+    );
+    if ('exit' in resolved) return resolved.exit;
+    return executeTierRun(deps, options, {
+      tier: 'live',
+      invocation:
+        options.worktree !== undefined ? 'different-worktree' : 'exact',
+      // The role config is the pin artifact: the model re-executes at the
+      // trajectory's recorded model under the role's pinned config.
+      model: modelIdOf(trajectory),
+      worktree: resolved.worktree,
+      lockfile: null,
+      roleConfig: options.roleConfig,
+      changed: resolved.changed,
+      experimental: resolved.experimental,
+    });
+  }
+
+  // Later slices: compare. Fail closed until it lands.
   if (options.tier !== 'recorded') {
     return fail(
       deps,

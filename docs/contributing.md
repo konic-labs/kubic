@@ -1,8 +1,76 @@
-# Contributing — mutation testing policy (issue #66)
+# Contributing
 
-> The full contributor guide lands in issue
-> [#64](https://github.com/konic-labs/kubic/issues/64).
-> Until then, `AGENTS.md` at the repo root is the authority.
+> Owner: issue [#64](https://github.com/konic-labs/kubic/issues/64).
+> `AGENTS.md` at the repo root is the authority — this page mirrors it
+> for humans. If the two ever disagree, `AGENTS.md` wins.
+
+Kubic is Konic's open-source terminal coding agent: model-agnostic,
+with a VCS-independent change journal and an opt-in orchestrator mode.
+Solo mode is the architecture; delegation is a mode — solo has no
+isolation, never imply otherwise in code, docs, or CLI text.
+
+## Workflow (LC0–LC6)
+
+Every issue, every wave, no freelancing:
+
+- **LC0 Scope** — `gh issue view <n> --comments`, then
+  `gh issue develop <n> --checkout` (`feat/issue-<n>-<slug>`). Read the
+  issue's Design ref / Acceptance / Dependencies fully. If the approach
+  is genuinely unknowable upfront, spike first and throw it away.
+- **LC1 TDD** — one acceptance checkbox at a time: failing test → watch
+  it fail → minimal code → watch it pass → refactor. Runner is vitest
+  with the `faux` provider (zero network, zero paid tokens in CI); TUI
+  work adds `VirtualTerminal` headless snapshots. One behavior per
+  test, real code over mocks.
+- **LC2 Debug** — anything red goes through root-cause investigation
+  first (tight repro loop, recent changes, data flow — no fix proposals
+  yet), then pattern analysis, ranked falsifiable hypotheses tested one
+  variable at a time, and finally a regression test plus a single fix.
+  Three failed fixes means questioning the architecture with a human,
+  never a fourth blind attempt.
+- **LC3 Review gate** — before every commit on a staged diff: static
+  security scan of added lines (secrets, shell/SQL injection,
+  eval/exec, unsafe deserialization), baseline tests + lint (only NEW
+  failures block), self-review, then an independent reviewer on the
+  diff alone (fail-closed), max 2 auto-fix cycles. Never verify your
+  own work. Lint gate is `biome ci` (exact CI parity).
+- **LC4 Simplify** — only on explicit request, per wave, never bundled
+  into feature commits.
+- **LC5 Commit** — Conventional Commits, one commit per finished issue
+  minimum, pushed iteratively; wave merges carry `fixes #<n>` (repeat
+  the keyword per issue — `closes #1, #2` closes only the first). Never
+  `git add -A`, `reset --hard`, `stash`, `clean -fd`, or `--no-verify`;
+  never force-push. See below.
+- **LC6 Capture** — reusable procedures learned doing the work go to a
+  skill; memory is only for facts true of every future session.
+
+## Commits
+
+`type(scope): summary` — e.g. `feat(journal): …`, `fix(worker): …`,
+`chore(scaffold): …`. Post issue/PR comments with
+`gh issue comment <n> --body-file <file>`, never multi-line `--body`.
+
+## Conventions that bite contributors
+
+- **Erasable-syntax TypeScript only** — no parameter properties,
+  `enum`, `namespace`, `import =`/`export =`. Node >= 22.19. Exact
+  (no `^`/`~`) pins on all `@earendil-works/*` deps.
+- **Dep direction** — the TUI package must never import `host`/`worker`
+  implementation (contracts from `core` only), enforced by lint.
+- **Issue body contract** — `## Design ref`, `## Goal`, `## Scope`
+  (in/out), `## Acceptance criteria` (checkboxes), `## Dependencies`.
+- **`pi/` is read-only reference** — never build, modify, lint, or test
+  anything under `pi/`; it is gitignored upstream material, not Kubic.
+- **Tests never need network or paid tokens** — `faux` provider,
+  headless `VirtualTerminal`, fixture `usage` rows.
+
+## Docs rule
+
+Each implementation wave updates its docs page in the same commit — a
+behaviour change without its docs page is incomplete and fails review.
+`node scripts/check-docs-links.mjs` must pass (it runs in CI via
+`npm test`). The area map lives on the
+[docs index](README.md#separation-of-concerns-soc).
 
 ## The gate
 

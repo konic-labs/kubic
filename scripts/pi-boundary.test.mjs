@@ -24,7 +24,7 @@ const PI_DEPS = [
   '@earendil-works/pi-telemetry',
   '@earendil-works/pi-protocol',
 ];
-const PI_VERSION = '0.85.1';
+const PI_VERSION = '0.87.1';
 
 function fixturePackageJson(deps) {
   const dir = mkdtempSync(join(tmpdir(), 'pinned-'));

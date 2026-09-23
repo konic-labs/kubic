@@ -60,6 +60,36 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       ok(bridge.joinPath(parts)),
     readTextFile: async (path: string, _context: Context) =>
       attempt(path, () => bridge.readTextFile(path)),
+    // Pi 0.87.1 FileSystem surface (issue #71): pull-based line reading with
+    // final-line termination preserved so JsonlSessionRepo can discard a torn
+    // trailing record. Computed from a single readTextFile snapshot — session
+    // files are small and this keeps Pi types out of the exec bridge.
+    // (Upstream does not re-export TextLine/TextLineReader from the package
+    // index, so the shape flows structurally through FileSystem.)
+    openTextLineReader: async (path: string, _context: Context) => {
+      try {
+        const text = bridge.readTextFile(path);
+        const terminated = text.endsWith('\n');
+        const parts = text.split('\n');
+        if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
+        const lines = parts.map((line, index) => ({
+          text: line,
+          terminated: index < parts.length - 1 || terminated,
+        }));
+        let cursor = 0;
+        return ok({
+          readLine: async (
+            _context: Context,
+          ): Promise<
+            Result<{ text: string; terminated: boolean } | undefined, FileError>
+          > => ok(cursor < lines.length ? lines[cursor++] : undefined),
+          // Best-effort release: snapshot reader holds no handle.
+          close: async (_context: Context): Promise<void> => undefined,
+        });
+      } catch (error) {
+        return err(toFileError(error, path));
+      }
+    },
     readTextLines: async (
       path: string,
       options: { maxLines?: number } | undefined,

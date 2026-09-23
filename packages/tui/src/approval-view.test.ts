@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APPROVAL_MIN_WIDTH,
   type ApprovalOverlayHandle,
+  type ApprovalOverlayOptions,
   ApprovalView,
   type ApprovalViewRequest,
   approvalKeyConflicts,
@@ -91,6 +92,21 @@ describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
     expect(approvalKeyConflicts()).toEqual([]);
   });
 
+  it('deny wins on a conflicting key', () => {
+    expect(
+      resolveApprovalAction('x', {
+        'allow-once': ['x'],
+        deny: ['x'],
+      }),
+    ).toBe('deny');
+    expect(
+      approvalKeyConflicts({
+        'allow-once': ['x'],
+        deny: ['x'],
+      }),
+    ).toEqual([{ key: 'x', actions: ['deny', 'allow-once'] }]);
+  });
+
   it('lets user overrides win', () => {
     expect(resolveApprovalAction('x', { 'allow-once': ['x'] })).toBe(
       'allow-once',
@@ -119,36 +135,60 @@ describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
 });
 
 describe('approval focus (issue #26; §16.4/§16.6)', () => {
-  function fakeTui(): {
+  // Fake Pi showOverlay semantics (pi-tui/dist/tui.js): focus only when
+  // capturing AND visible — visible() gates on terminal size, so narrow
+  // terminals never focus. hide() removes the entry; unfocus only moves
+  // focus.
+  function fakeTui(
+    termWidth = 100,
+    termHeight = 30,
+  ): {
     shown: Component[];
     unfocused: Array<{ target: Component | null } | undefined>;
+    hidden: number;
     handle: ApprovalOverlayHandle;
     tui: {
-      showOverlay: (component: Component) => ApprovalOverlayHandle;
+      showOverlay: (
+        component: Component,
+        options?: ApprovalOverlayOptions,
+      ) => ApprovalOverlayHandle;
     };
   } {
     const unfocused: Array<{ target: Component | null } | undefined> = [];
+    let hidden = 0;
     const handle: ApprovalOverlayHandle = {
       unfocus: (options) => {
         unfocused.push(options);
       },
-      hide: () => {},
+      hide: () => {
+        hidden++;
+      },
     };
     const shown: Component[] = [];
     return {
       shown,
       unfocused,
+      get hidden() {
+        return hidden;
+      },
       handle,
       tui: {
-        showOverlay: (component: Component) => {
+        showOverlay: (
+          component: Component,
+          options?: ApprovalOverlayOptions,
+        ) => {
           shown.push(component);
+          const visible = options?.visible?.(termWidth, termHeight) ?? true;
+          if (!options?.nonCapturing && visible && 'focused' in component) {
+            (component as { focused: boolean }).focused = true;
+          }
           return handle;
         },
       },
     };
   }
 
-  it('captures focus on show and exposes an explicit unfocus target', () => {
+  it('captures focus on show and removes the overlay on dismiss', () => {
     const fake = fakeTui();
     const editor: Component = { render: () => [], invalidate: () => {} };
     const view = new ApprovalView({ request: request() });
@@ -160,7 +200,21 @@ describe('approval focus (issue #26; §16.4/§16.6)', () => {
     dismissApprovalOverlay(view, handle, editor);
     expect(view.focused).toBe(false);
     expect(fake.unfocused).toEqual([{ target: editor }]);
+    expect(fake.hidden).toBe(1);
     expect(view.render(100).join('\n')).not.toContain(CURSOR_MARKER);
+  });
+
+  it('stays unfocused on narrow terminals where Pi never focuses', () => {
+    const fake = fakeTui(70, 24);
+    const editor: Component = { render: () => [], invalidate: () => {} };
+    const view = new ApprovalView({ request: request() });
+    const handle = showApprovalOverlay(fake.tui, view);
+    expect(fake.shown).toEqual([view]);
+    expect(view.focused).toBe(false);
+    expect(view.render(70).join('\n')).not.toContain(CURSOR_MARKER);
+    dismissApprovalOverlay(view, handle, editor);
+    expect(fake.unfocused).toEqual([{ target: editor }]);
+    expect(fake.hidden).toBe(1);
   });
 });
 
@@ -174,6 +228,28 @@ describe('approval timeout + memoOnce (issue #26; §41)', () => {
     expect(verdict).toEqual({
       approved: false,
       reason: 'approval timed out after 20ms',
+    });
+    expect(memo.decided('k1')).toEqual(verdict);
+  });
+
+  it('rejects invalid maxPendingMs instead of arming a bad timer', () => {
+    for (const maxPendingMs of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(() =>
+        waitForApproval('k1', { memo: createApprovalMemo(), maxPendingMs }),
+      ).toThrow(RangeError);
+    }
+  });
+
+  it('resolves deny when awaitAnswer rejects instead of propagating', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 50,
+      awaitAnswer: () => Promise.reject(new Error('boom')),
+    });
+    expect(verdict).toEqual({
+      approved: false,
+      reason: 'approval await failed: boom',
     });
     expect(memo.decided('k1')).toEqual(verdict);
   });

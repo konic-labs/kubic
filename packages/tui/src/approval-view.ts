@@ -76,6 +76,12 @@ export interface ApprovalOverlayBounds {
   readonly col: number;
 }
 
+// NOTE (max-extent estimate — Pi is the layout authority at runtime):
+// Pi's compositeOverlays (pi-tui/dist/tui.js) renders the component at the
+// resolved width and uses content height (overlayLines.length clamped to
+// maxHeight) centered via resolveOverlayLayout — it never sizes the box to
+// termHeight * 60%. This helper returns the 70%-wide / 60%-tall centered
+// max extent for headless estimates and tests only.
 export function approvalOverlayBounds(
   termWidth: number,
   termHeight: number,
@@ -150,10 +156,12 @@ export type ApprovalKeyOverrides = Partial<
   Record<ApprovalAction, readonly ApprovalKeyId[]>
 >;
 
+// Deny wins: a key claimed by both an allow binding and deny resolves to
+// deny. approvalKeyConflicts still reports the overlap for registry hygiene.
 const ACTION_ORDER: ReadonlyArray<ApprovalAction> = [
+  'deny',
   'allow-once',
   'allow-session',
-  'deny',
 ];
 
 function resolvedBindings(
@@ -228,7 +236,11 @@ export function showApprovalOverlay(
   view: ApprovalView,
   options?: ApprovalOverlayOptions,
 ): ApprovalOverlayHandle {
-  view.focused = true;
+  // No manual focused pre-set: Pi's showOverlay focuses via setFocus (which
+  // sets focused through the isFocusable guard) only when capturing AND
+  // visible — isOverlayVisible honors the visible() callback, so on narrow
+  // terminals Pi never focuses and the view must stay unfocused (no
+  // CURSOR_MARKER). Setting focused here unconditionally would lie.
   return tui.showOverlay(view, options ?? approvalOverlayOptions());
 }
 
@@ -237,8 +249,13 @@ export function dismissApprovalOverlay(
   handle: ApprovalOverlayHandle,
   editor: Component | null,
 ): void {
+  // unfocus moves focus to the editor but leaves the entry on Pi's
+  // overlayStack (still composited); hide() is the only removal path.
+  // unfocus-first: after hide() Pi's unfocus early-returns (entry gone,
+  // focus already moved), so the explicit editor target would be lost.
   handle.unfocus({ target: editor });
   view.focused = false;
+  handle.hide();
 }
 
 export interface ApprovalViewOptions {
@@ -343,10 +360,17 @@ export interface ApprovalWaitOptions {
 
 // Timeout→deny (§41): every wait is bounded by maxPendingMs, so headless
 // (-p) runs settle without a user. Late answers lose to the memo latch.
+// A rejected awaitAnswer resolves deny (never propagates); the timer is
+// always cleared via .finally.
 export function waitForApproval(
   key: string,
   options: ApprovalWaitOptions,
 ): Promise<ApprovalDecision> {
+  if (!Number.isFinite(options.maxPendingMs) || options.maxPendingMs < 0) {
+    throw new RangeError(
+      `maxPendingMs must be a finite non-negative number, got ${options.maxPendingMs}`,
+    );
+  }
   const settled = options.memo.decided(key);
   if (settled !== undefined) return Promise.resolve(settled);
   const reason = `approval timed out after ${options.maxPendingMs}ms`;
@@ -357,18 +381,29 @@ export function waitForApproval(
     }, options.maxPendingMs);
     timer.unref?.();
   });
-  const done = (verdict: ApprovalDecision): ApprovalDecision => {
-    if (timer !== undefined) clearTimeout(timer);
-    return verdict;
-  };
   const answer = options.awaitAnswer?.(key);
-  if (answer === undefined) return timeout.then(done);
-  return Promise.race([
-    answer.then((verdict) =>
-      verdict === undefined
-        ? timeout
-        : Promise.resolve(options.memo.submit(key, verdict)),
+  if (answer === undefined) {
+    return timeout.finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+  }
+  const raced = Promise.race([
+    answer.then(
+      (verdict) =>
+        verdict === undefined
+          ? timeout
+          : Promise.resolve(options.memo.submit(key, verdict)),
+      (failure: unknown) =>
+        Promise.resolve(
+          options.memo.submit(key, {
+            approved: false,
+            reason: `approval await failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+          }),
+        ),
     ),
     timeout,
-  ]).then(done);
+  ]);
+  return raced.finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }

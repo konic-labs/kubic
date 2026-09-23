@@ -5,7 +5,12 @@
 // mapping below follows the issue's Design ref flags --model,
 // --workspace/--worktree, --diff-against and the
 // exact/different-model/different-worktree/compare/regression list):
-//   exact               `kubic replay traj.json` (Recorded, log-only)
+//   exact               `kubic replay traj.json` (Recorded, log-only —
+//                       never re-executes, so it never collides with the
+//                       live re-execution label below)
+//   live-exact          `... --tier live --role-config r` (Live
+//                       re-execution at the recorded model/worktree; the
+//                       invocation alone tells it apart from log-only exact)
 //   different-model     `... --model p/id --tier deterministic --lockfile f`
 //   different-worktree  `... --worktree <path>` (experimental var) with
 //                       deterministic/live re-execution
@@ -21,8 +26,10 @@
 //                 --role-config (pins come from the role, so --model and
 //                 --lockfile are refused under live)
 // The published tier (§72) is printed and present in --json for every
-// result, including refusals. Exit codes are the §78 subset 0/1/2/5/6,
-// reusing run-cli's mapping read-only for runner termini.
+// result, including refusals and parse errors. Exit codes are the §78
+// subset 0/1/2/5/6: runner termini pass through a local allowlist that
+// fail-closes to exit 2 (run-cli's exit-code constants are reused, not
+// its wider terminus mapping).
 //
 // Faux-only: re-execution is injected by the composition root (faux in
 // tests); this module never touches the network or a model. File reads
@@ -35,9 +42,9 @@ import {
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
 import {
-  mapTerminusToExitCode,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
+  RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
 } from '../run-cli.js';
@@ -46,6 +53,7 @@ export type ReplayTier = 'recorded' | 'deterministic' | 'live';
 
 export type ReplayInvocation =
   | 'exact'
+  | 'live-exact'
   | 'different-model'
   | 'different-worktree'
   | 'compare';
@@ -93,12 +101,8 @@ export interface ReplayEnvelope {
   error?: ReplayError;
 }
 
-function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]',
-  );
-  return RUN_EXIT_USAGE;
-}
+const USAGE_MESSAGE =
+  'usage: kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]';
 
 interface ReplayOptions {
   trajectory: string;
@@ -119,90 +123,125 @@ function parseTier(raw: string): ReplayTier | null {
   return null;
 }
 
+// Parse errors also publish a tier (§72): the declared --tier when one
+// was given (unknown when it names no known tier), else the recorded
+// default — so --json failures share the envelope shape.
+function sniffParseTier(args: string[]): ReplayTier | 'unknown' {
+  const at = args.indexOf('--tier');
+  if (at === -1) return 'recorded';
+  const raw = args[at + 1];
+  if (raw === undefined || raw.startsWith('--')) return 'recorded';
+  return parseTier(raw) ?? 'unknown';
+}
+
+interface ReplayParseError {
+  code: string;
+  message: string;
+  trajectory: string | null;
+  tier: ReplayTier | 'unknown';
+  json: boolean;
+}
+
 function parseArgs(
   args: string[],
-  out: (line: string) => void,
-): { options: ReplayOptions } | { exit: number } {
+): { options: ReplayOptions } | { error: ReplayParseError } {
+  const json = args.includes('--json');
+  const tier = sniffParseTier(args);
+  const failParse = (
+    code: string,
+    message: string,
+    trajectory: string | null,
+  ): { error: ReplayParseError } => ({
+    error: { code, message, trajectory, tier, json },
+  });
   let trajectory: string | undefined;
-  let tier: ReplayTier | 'unknown' = 'recorded';
+  let resolvedTier: ReplayTier | 'unknown' = 'recorded';
   let tierRaw: string | undefined;
   let model: string | undefined;
   let lockfile: string | undefined;
   let roleConfig: string | undefined;
   let worktree: string | undefined;
   let diffAgainst: string | undefined;
-  let json = false;
+  // --json is consumed by the pre-scan above; drop it before the loop so
+  // the unknown-flag branch never sees it.
+  const rest = args.filter((arg) => arg !== '--json');
   const takeValue = (
     flag: string,
     index: number,
-  ): { value: string; next: number } | { exit: number } => {
-    const value = args[index + 1];
+  ): { value: string; next: number } | { error: ReplayParseError } => {
+    const value = rest[index + 1];
     if (value === undefined || value.startsWith('--')) {
-      out(`error: ${flag} needs a value`);
-      return { exit: RUN_EXIT_USAGE };
+      return failParse(
+        'missing-flag-value',
+        `error: ${flag} needs a value`,
+        trajectory ?? null,
+      );
     }
     return { value, next: index + 1 };
   };
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i] as string;
     if (arg === '--tier') {
       const taken = takeValue('--tier', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       tierRaw = taken.value;
       i = taken.next;
     } else if (arg === '--model') {
       const taken = takeValue('--model', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       model = taken.value;
       i = taken.next;
     } else if (arg === '--lockfile') {
       const taken = takeValue('--lockfile', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       lockfile = taken.value;
       i = taken.next;
     } else if (arg === '--role-config') {
       const taken = takeValue('--role-config', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       roleConfig = taken.value;
       i = taken.next;
     } else if (arg === '--worktree') {
       const taken = takeValue('--worktree', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       worktree = taken.value;
       i = taken.next;
     } else if (arg === '--diff-against') {
       const taken = takeValue('--diff-against', i);
-      if ('exit' in taken) return taken;
+      if ('error' in taken) return taken;
       diffAgainst = taken.value;
       i = taken.next;
-    } else if (arg === '--json') {
-      json = true;
     } else if (arg.startsWith('--')) {
-      out(`error: unknown flag ${arg}`);
-      return { exit: RUN_EXIT_USAGE };
+      return failParse(
+        'unknown-flag',
+        `error: unknown flag ${arg}`,
+        trajectory ?? null,
+      );
     } else if (trajectory === undefined) {
       trajectory = arg;
     } else {
-      out(`error: unexpected argument ${arg}`);
-      return { exit: RUN_EXIT_USAGE };
+      return failParse(
+        'unexpected-argument',
+        `error: unexpected argument ${arg}`,
+        trajectory,
+      );
     }
   }
   if (trajectory === undefined) {
-    usage(out);
-    return { exit: RUN_EXIT_USAGE };
+    return failParse('missing-trajectory', USAGE_MESSAGE, null);
   }
   if (tierRaw !== undefined) {
     const parsed = parseTier(tierRaw);
     if (parsed === null) {
-      tier = 'unknown';
+      resolvedTier = 'unknown';
     } else {
-      tier = parsed;
+      resolvedTier = parsed;
     }
   }
   return {
     options: {
       trajectory,
-      tier,
+      tier: resolvedTier,
       tierRaw,
       model,
       lockfile,
@@ -347,6 +386,25 @@ function checkWorktreeOverride(
   return { ok: true };
 }
 
+// Replay's §78 subset (0/1/2/5/6) as a runtime allowlist over the
+// injected runner's terminus: a contract-violating runner (a run-cli
+// terminus outside replay's subset, or garbage) fail-closes to exit 2 —
+// never 3/4/undefined.
+function replayTerminusToExitCode(terminus: unknown): number {
+  switch (terminus) {
+    case 'completed':
+      return RUN_EXIT_OK;
+    case 'failed':
+      return RUN_EXIT_FAILED;
+    case 'workspace_unavailable':
+      return RUN_EXIT_WORKSPACE_UNAVAILABLE;
+    case 'provider_probe_failed':
+      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    default:
+      return RUN_EXIT_USAGE;
+  }
+}
+
 async function executeTierRun(
   deps: ReplayCommandDeps,
   options: ReplayOptions,
@@ -369,7 +427,9 @@ async function executeTierRun(
     lockfile: params.lockfile,
     roleConfig: params.roleConfig,
   });
-  const exitCode = mapTerminusToExitCode(rerun.terminus);
+  const terminus: unknown = (rerun as { terminus: unknown }).terminus;
+  const status = typeof terminus === 'string' ? terminus : 'unknown';
+  const exitCode = replayTerminusToExitCode(terminus);
   const envelope: ReplayEnvelope = {
     ok: exitCode === RUN_EXIT_OK,
     exitCode,
@@ -377,7 +437,7 @@ async function executeTierRun(
     invocation: params.invocation,
     trajectory: options.trajectory,
     changed: params.changed,
-    result: { status: rerun.terminus, summary: rerun.summary },
+    result: { status, summary: rerun.summary },
     ...(params.experimental.length === 0
       ? {}
       : { experimental: params.experimental }),
@@ -393,7 +453,7 @@ async function executeTierRun(
   deps.out(`invocation: ${params.invocation}`);
   deps.out(`model: ${params.model}`);
   deps.out(`worktree: ${params.worktree}`);
-  deps.out(`result: ${rerun.terminus} — ${rerun.summary}`);
+  deps.out(`result: ${status} — ${rerun.summary}`);
   return exitCode;
 }
 
@@ -527,8 +587,25 @@ export async function runReplayCommand(
   args: string[],
   deps: ReplayCommandDeps,
 ): Promise<number> {
-  const parsed = parseArgs(args, deps.out);
-  if ('exit' in parsed) return parsed.exit;
+  const parsed = parseArgs(args);
+  if ('error' in parsed) {
+    const err = parsed.error;
+    if (err.json) {
+      const envelope: ReplayEnvelope = {
+        ok: false,
+        exitCode: RUN_EXIT_USAGE,
+        tier: err.tier,
+        invocation: null,
+        trajectory: err.trajectory,
+        changed: [],
+        error: { code: err.code, message: err.message },
+      };
+      deps.out(JSON.stringify(envelope));
+    } else {
+      deps.out(err.message);
+    }
+    return RUN_EXIT_USAGE;
+  }
   const options = parsed.options;
 
   if (options.tier === 'unknown') {
@@ -727,7 +804,7 @@ export async function runReplayCommand(
     return executeTierRun(deps, options, {
       tier: 'live',
       invocation:
-        options.worktree !== undefined ? 'different-worktree' : 'exact',
+        options.worktree !== undefined ? 'different-worktree' : 'live-exact',
       // The role config is the pin artifact: the model re-executes at the
       // trajectory's recorded model under the role's pinned config.
       model: modelIdOf(trajectory),

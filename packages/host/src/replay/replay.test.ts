@@ -340,6 +340,48 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     }
   });
 
+  it('fail-closes to exit 2 on a contract-violating runner terminus (never 3/4/undefined)', async () => {
+    const dir = tmpRoot();
+    const { traj, lock } = detArgs(dir);
+    const termini = [
+      'budget_exhausted',
+      'approval_denied',
+      'bogus-terminus',
+      undefined,
+    ];
+    for (const terminus of termini) {
+      const o = out();
+      const exit = await runReplayCommand(
+        [
+          traj,
+          '--tier',
+          'deterministic',
+          '--model',
+          'acme/m1',
+          '--lockfile',
+          lock,
+          '--json',
+        ],
+        {
+          out: o.write,
+          run: async () => ({
+            terminus: terminus as unknown as 'completed',
+            summary: String(terminus),
+          }),
+        },
+      );
+      expect(exit).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        ok: boolean;
+        exitCode: number;
+        tier: string;
+      };
+      expect(envelope.ok).toBe(false);
+      expect(envelope.exitCode).toBe(2);
+      expect(envelope.tier).toBe('deterministic');
+    }
+  });
+
   it('is byte-identical across runs with the same pins', async () => {
     const dir = tmpRoot();
     const { traj, lock } = detArgs(dir);
@@ -466,7 +508,7 @@ describe('replay live (§47.1 Live)', () => {
     expect(o.lines.join('\n')).toMatch(/role-config-invalid/);
   });
 
-  it('re-executes live: tier live, invocation exact, runner gets role config', async () => {
+  it('re-executes live: tier live, invocation live-exact, runner gets role config', async () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
@@ -494,7 +536,7 @@ describe('replay live (§47.1 Live)', () => {
       invocation: string;
     };
     expect(envelope.tier).toBe('live');
-    expect(envelope.invocation).toBe('exact');
+    expect(envelope.invocation).toBe('live-exact');
   });
 
   it('live with --worktree override is a different-worktree invocation (experimental)', async () => {
@@ -851,5 +893,69 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const text = o.lines.join('\n');
     expect(text).toMatch(/warning: --worktree is experimental/);
     expect(text).toMatch(/invocation: different-worktree/);
+  });
+});
+
+describe('replay parse-error envelopes (§78 exit 2 with tier; --json)', () => {
+  it('emits a tiered envelope on parse errors: missing value, unknown flag, unexpected positional', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const cases: { args: string[]; code: string }[] = [
+      { args: [traj, '--model'], code: 'missing-flag-value' },
+      { args: [traj, '--bogus'], code: 'unknown-flag' },
+      { args: [traj, 'extra-positional'], code: 'unexpected-argument' },
+    ];
+    for (const { args, code } of cases) {
+      const o = out();
+      const exit = await runReplayCommand([...args, '--json'], deps(o));
+      expect(exit).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        ok: boolean;
+        exitCode: number;
+        tier: string;
+        invocation: null;
+        changed: string[];
+        error: { code: string; message: string };
+      };
+      expect(envelope.ok).toBe(false);
+      expect(envelope.exitCode).toBe(2);
+      expect(envelope.tier).toBe('recorded');
+      expect(envelope.invocation).toBe(null);
+      expect(envelope.changed).toEqual([]);
+      expect(envelope.error.code).toBe(code);
+    }
+  });
+
+  it('emits a tiered envelope when the trajectory is missing', async () => {
+    const o = out();
+    const exit = await runReplayCommand(['--json'], deps(o));
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      tier: string;
+      error: { code: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(2);
+    expect(envelope.tier).toBe('recorded');
+    expect(envelope.error.code).toBe('missing-trajectory');
+  });
+
+  it('reports tier unknown on parse errors when --tier names an unknown tier', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'ultra', '--bogus', '--json'],
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      tier: string;
+      error: { code: string };
+    };
+    expect(envelope.tier).toBe('unknown');
+    expect(envelope.error.code).toBe('unknown-flag');
   });
 });

@@ -20,7 +20,12 @@ function inv(id = 'inv-1'): ToolInvocation {
 
 describe('operation registry (issue #13, slice A)', () => {
   it('exposes exactly the expected operations', () => {
-    expect(Object.keys(OPERATIONS).sort()).toEqual(['ls', 'read']);
+    expect(Object.keys(OPERATIONS).sort()).toEqual([
+      'find',
+      'grep',
+      'ls',
+      'read',
+    ]);
   });
 
   it('routes read by name and threads invocation ids', async () => {

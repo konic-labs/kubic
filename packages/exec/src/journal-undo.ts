@@ -4,7 +4,7 @@
 // before-content are skipped and reported — never guessed.
 
 import {
-  FileJournalStore,
+  type FileJournalStore,
   type JournalEntry,
   restoreEntry,
 } from './journal.js';

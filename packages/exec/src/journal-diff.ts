@@ -3,11 +3,7 @@
 // latest after, latest attribution), plus unified-hunk rendering shared
 // by the CLI and the future TUI views ("TUI consumes same data").
 
-import {
-  FileJournalStore,
-  type JournalEntry,
-  type JournalOp,
-} from './journal.js';
+import type { FileJournalStore, JournalEntry, JournalOp } from './journal.js';
 
 export interface FileChange {
   path: string;
@@ -77,11 +73,7 @@ export function unifiedHunks(
   }
   let endA = a.length;
   let endB = b.length;
-  while (
-    endA > start &&
-    endB > start &&
-    a[endA - 1] === b[endB - 1]
-  ) {
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
     endA--;
     endB--;
   }
@@ -89,9 +81,7 @@ export function unifiedHunks(
   const from = Math.max(0, start - context);
   const toA = Math.min(a.length, endA + context);
   const toB = Math.min(b.length, endB + context);
-  const lines = [
-    `@@ -${from + 1},${toA - from} +${from + 1},${toB - from} @@`,
-  ];
+  const lines = [`@@ -${from + 1},${toA - from} +${from + 1},${toB - from} @@`];
   for (let i = from; i < start; i++) lines.push(` ${a[i]}`);
   for (let i = start; i < endA; i++) lines.push(`-${a[i]}`);
   for (let i = start; i < endB; i++) lines.push(`+${b[i]}`);

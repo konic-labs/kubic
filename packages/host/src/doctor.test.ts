@@ -54,6 +54,8 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
+      // Issue #59 license identity rides the same command.
+      'license:kubic',
       // Issue #58 honest-limits registration rides the same command.
       'limit:solo-no-isolation',
       'limit:worktrees-writers-only',
@@ -190,5 +192,15 @@ describe('runDoctorCommand', () => {
     const text = lines.join('\n');
     expect(text).toContain('FAIL');
     expect(text).toContain('probe exploded');
+  });
+
+  it('reports the MIT license as a passing check (issue #59)', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      [],
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('PASS license:kubic (ok)');
   });
 });

@@ -1,7 +1,11 @@
 // kubic CLI composition root: argv in, exit code out. All logic lives in
 // the packages; this file only wires.
 
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -13,8 +17,28 @@ import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
+// License identity (issue #59): version comes from this app's own
+// package.json; the license half of the line is owned by core/license.ts.
+function cliVersion(): string {
+  // File access goes through the exec FileBridge (I/O confinement, §9):
+  // the composition root never imports node:fs directly.
+  try {
+    const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const pkg = JSON.parse(
+      createNodeFileBridge(appRoot).readTextFile('package.json'),
+    ) as { version?: unknown };
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
+  if (command === '--version' || command === '-V') {
+    console.log(formatVersionLine(cliVersion()));
+    return 0;
+  }
   if (command === 'sessions') {
     return runSessionsCommand(rest, { out: (line) => console.log(line) });
   }

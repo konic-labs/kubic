@@ -50,7 +50,12 @@ export interface TranscriptView {
   readonly component: Component;
   readonly scroll: ScrollView;
   readonly rebuilds: number;
+  readonly isPinned: boolean;
+  readonly scrollTop: number;
   appendDelta(delta: TranscriptDelta): void;
+  updateLayout(contentHeight: number, viewportHeight: number): void;
+  scrollUp(lines: number): void;
+  rePin(): void;
   render(width: number): string[];
 }
 
@@ -69,6 +74,21 @@ export function createTranscriptView(): TranscriptView {
     scroll,
     get rebuilds(): number {
       return rebuilds;
+    },
+    get isPinned(): boolean {
+      return scroll.isFollowingEnd;
+    },
+    get scrollTop(): number {
+      return scroll.scrollTop;
+    },
+    updateLayout(contentHeight: number, viewportHeight: number): void {
+      scroll.updateLayout(contentHeight, viewportHeight, () => {});
+    },
+    scrollUp(lines: number): void {
+      scroll.scrollBy(-Math.max(0, Math.trunc(lines)));
+    },
+    rePin(): void {
+      scroll.scrollToEnd();
     },
     appendDelta(delta: TranscriptDelta): void {
       const found = entries.find((entry) => entry.id === delta.id);

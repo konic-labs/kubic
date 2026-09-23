@@ -30,4 +30,30 @@ describe('transcript view (issue #23, slice A)', () => {
     expect(doc).toContain('line 0');
     expect(doc).toContain('line 199');
   });
+
+  it('follows the tail when pinned, holds on scroll-up, re-pins on End', () => {
+    const view = createTranscriptView();
+    for (let i = 0; i < 10; i++) {
+      view.appendDelta({ id: `e${i}`, kind: 'text', append: `line ${i}` });
+    }
+    view.updateLayout(view.render(80).length, 5);
+    expect(view.isPinned).toBe(true);
+    const tail = view.scrollTop;
+    for (let i = 10; i < 20; i++) {
+      view.appendDelta({ id: `e${i}`, kind: 'text', append: `line ${i}` });
+    }
+    view.updateLayout(view.render(80).length, 5);
+    expect(view.scrollTop).toBeGreaterThan(tail);
+    view.scrollUp(100);
+    expect(view.isPinned).toBe(false);
+    const held = view.scrollTop;
+    for (let i = 20; i < 70; i++) {
+      view.appendDelta({ id: `e${i}`, kind: 'text', append: `line ${i}` });
+    }
+    view.updateLayout(view.render(80).length, 5);
+    expect(view.scrollTop).toBe(held);
+    view.rePin();
+    expect(view.isPinned).toBe(true);
+    expect(view.scrollTop).toBeGreaterThan(held);
+  });
 });

@@ -12,7 +12,7 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 
@@ -31,6 +31,18 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 `error:` line comes first. Exit code is the §78 terminus map — see
 [exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
 value, an invalid `--session` id, or an unknown flag all exit 2.
+
+## `kubic tui [--session <id>]`
+
+Interactive solo TUI: the alt-screen over the solo lane. Tree,
+transcript, and status rows render in root order; `T`/`t` toggles the
+tree, `Ctrl-C` quits — quitting restores the main screen and prints the
+final document (no cursor loss on interrupt). Below 80 columns the tree
+hides and transcript plus status stay. `--session <id>` resumes into an
+existing session (same `[A-Za-z0-9_-]` rule as `run` — anything else
+exits 2 before the lane boots). Lane boot failure exits 5 on a missing
+session, 6 with no reachable provider, 1 otherwise. Solo mode runs
+in-process with your user authority: no isolation, no containment.
 
 ## `kubic sessions`
 

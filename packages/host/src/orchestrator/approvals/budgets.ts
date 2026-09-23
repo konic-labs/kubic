@@ -32,7 +32,9 @@ export class OrchestratorBudgetError extends Error {
 }
 
 function assertPositive(name: string, value: unknown): void {
-  if (typeof value !== 'number' || !(value > 0)) {
+  // Number.isFinite closes the Infinity evasion: an unbounded limit would
+  // disable the dimension while looking configured.
+  if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
     throw new OrchestratorBudgetError(`${name} must be a positive number`);
   }
 }
@@ -158,8 +160,24 @@ export interface BudgetGate {
   usage: BudgetUsage;
 }
 
+// Spend lives behind the gate, never in the caller's hands: `usage` is a
+// read-only snapshot getter (each read returns a copy), so mutating the
+// returned object cannot reset burn-down. recordToolCall is the only
+// writer, and it reaches the ledger through this registry.
+const gateLedgers = new WeakMap<BudgetGate, BudgetUsage>();
+
+function assertSpend(name: string, value: number | undefined): number {
+  const amount = value ?? 0;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+    throw new OrchestratorBudgetError(
+      `${name} spend must be a finite, non-negative number`,
+    );
+  }
+  return amount;
+}
+
 export function createBudgetGate(budget: OrchestratorBudget): BudgetGate {
-  const usage: BudgetUsage = {
+  const ledger: BudgetUsage = {
     tokens: 0,
     costUsd: 0,
     runtimeMs: 0,
@@ -167,7 +185,7 @@ export function createBudgetGate(budget: OrchestratorBudget): BudgetGate {
     retries: 0,
   };
   const gate = ((event: BeforeToolEvent): BeforeToolVerdict | undefined => {
-    const hit = checkBudgetExhaustion(budget, usage);
+    const hit = checkBudgetExhaustion(budget, ledger);
     if (hit === undefined) return undefined;
     return {
       block: {
@@ -176,7 +194,11 @@ export function createBudgetGate(budget: OrchestratorBudget): BudgetGate {
       },
     };
   }) as BudgetGate;
-  gate.usage = usage;
+  gateLedgers.set(gate, ledger);
+  Object.defineProperty(gate, 'usage', {
+    enumerable: true,
+    get: (): BudgetUsage => ({ ...ledger }),
+  });
   return gate;
 }
 
@@ -184,10 +206,14 @@ export function recordToolCall(
   gate: BudgetGate,
   spend: { tokens?: number; costUsd?: number; runtimeMs?: number } = {},
 ): void {
-  gate.usage.toolCalls += 1;
-  gate.usage.tokens += spend.tokens ?? 0;
-  gate.usage.costUsd += spend.costUsd ?? 0;
-  gate.usage.runtimeMs += spend.runtimeMs ?? 0;
+  const ledger = gateLedgers.get(gate);
+  if (ledger === undefined) {
+    throw new OrchestratorBudgetError('unknown budget gate');
+  }
+  ledger.toolCalls += 1;
+  ledger.tokens += assertSpend('tokens', spend.tokens);
+  ledger.costUsd += assertSpend('costUsd', spend.costUsd);
+  ledger.runtimeMs += assertSpend('runtimeMs', spend.runtimeMs);
 }
 
 export interface SelfRaiseRefusal {
@@ -195,6 +221,46 @@ export interface SelfRaiseRefusal {
   reason: string;
 }
 
+export type BudgetRaiseResult =
+  | { applied: true; budget: OrchestratorBudget }
+  | { applied: false; reason: string };
+
+// Lawful raises need user approval: when the approver is the user, the
+// proposed budget is validated and applied; any agent approver — including
+// the owner itself — is refused exactly like a self-raise.
+export function applyBudgetRaise(input: {
+  approver: string;
+  owner: string;
+  current: OrchestratorBudget;
+  proposed: OrchestratorBudget;
+}): BudgetRaiseResult {
+  if (input.approver !== 'user') {
+    const refusal = refuseSelfRaise({
+      caller: input.approver,
+      owner: input.owner,
+      current: input.current,
+      proposed: input.proposed,
+    });
+    return { applied: false, reason: refusal.reason };
+  }
+  try {
+    return {
+      applied: true,
+      budget: validateOrchestratorBudget({
+        ...input.current,
+        ...input.proposed,
+      }),
+    };
+  } catch (error) {
+    return {
+      applied: false,
+      reason:
+        error instanceof Error
+          ? error.message
+          : 'proposed budget failed validation',
+    };
+  }
+}
 export function refuseSelfRaise(input: {
   caller: string;
   owner: string;

@@ -6,6 +6,7 @@ export type {
   BeforeToolVerdict,
   BudgetGate,
   BudgetLimit,
+  BudgetRaiseResult,
   BudgetTermination,
   BudgetTrajectoryEvent,
   BudgetUsage,
@@ -15,6 +16,7 @@ export type {
   SelfRaiseRefusal,
 } from './budgets.js';
 export {
+  applyBudgetRaise,
   BUDGET_EXHAUSTED,
   buildBudgetTrajectoryEvent,
   checkBudgetExhaustion,
@@ -34,6 +36,8 @@ export type {
 } from './request.js';
 export {
   buildOrchestratorRequest,
+  MIN_JUSTIFICATION_LENGTH,
+  normalizeJustification,
   ORCHESTRATOR_TRIGGERS,
   OrchestratorRequestError,
   orchestratorRequestKey,
@@ -42,6 +46,7 @@ export {
 export type {
   DecisionStore,
   ManagerBlockedIndicator,
+  ManagerRefusalEvent,
   OrchestratorRouter,
   OrchestratorVerdict,
   RouterOptions,
@@ -51,6 +56,7 @@ export {
   buildManagerBlockedIndicator,
   createOrchestratorRouter,
   MemoryDecisionStore,
+  readManagerRefusalLog,
 } from './routing.js';
 export type {
   SessionRef,
@@ -64,4 +70,5 @@ export {
   enableSessionSkip,
   formatSessionSkipIndicator,
   isSessionSkipEnabled,
+  SessionSkipError,
 } from './skip.js';

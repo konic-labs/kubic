@@ -2,9 +2,14 @@
 // §63 required justification). Provenance (session/agent/role/worktree)
 // travels on every request so the user dialog, audit, and trajectory can
 // attribute the ask. The key is stable across restarts: same tool +
-// trigger + canonical args + worktree → same key, so a settled decision
-// applies and the user is never re-asked. Ephemeral ids (session, agent,
-// toolCallId) are deliberately excluded from the key.
+// trigger + canonical args + worktree + session + agent + justification →
+// same key, so a settled decision applies and the user is never re-asked.
+// Session, agent, and justification are deliberately BOUND into the key:
+// an approval granted in sess-1 never authorizes sess-2 (cross-session
+// replay is a key miss → fresh user prompt). Caller-supplied `key` and
+// `summary` fields are never honored: the key is always recomputed and
+// the display text always derived from trigger/toolName/args, so spoofed
+// keys and dialog text cannot smuggle trust.
 import { createHash } from 'node:crypto';
 
 export const ORCHESTRATOR_TRIGGERS = [
@@ -76,10 +81,17 @@ export function orchestratorRequestKey(
   trigger: OrchestratorTrigger,
   args: Record<string, unknown>,
   worktree: string,
+  scope: { sessionId?: string; agentId?: string; justification?: string } = {},
 ): string {
   const canonical = JSON.stringify(sortKeys(args));
+  const justificationHash = createHash('sha256')
+    .update(scope.justification ?? '')
+    .digest('hex')
+    .slice(0, 16);
   return createHash('sha256')
-    .update(`${toolName}|${trigger}|${canonical}|${worktree}`)
+    .update(
+      `${toolName}|${trigger}|${canonical}|${worktree}|${scope.sessionId ?? ''}|${scope.agentId ?? ''}|${justificationHash}`,
+    )
     .digest('hex')
     .slice(0, 16);
 }
@@ -97,6 +109,18 @@ function summarize(toolName: string, trigger: string, args: unknown): string {
     );
   }
   return `${trigger}: ${toolName}`;
+}
+
+// Justifications must carry real meaning (§63): invisible formatting
+// characters (zero-width spaces, joiners, direction marks, BOM, soft
+// hyphen) are stripped before measuring, and the visible remainder must
+// reach a minimum length — a lone 'ok' or a zero-width smuggle is refused.
+export const MIN_JUSTIFICATION_LENGTH = 8;
+
+const INVISIBLE_FORMAT = /[\u200B-\u200F\u2060\uFEFF\u00AD\u180E]/g;
+
+export function normalizeJustification(value: string): string {
+  return value.replace(INVISIBLE_FORMAT, '').trim();
 }
 
 export function validateOrchestratorRequest(
@@ -120,9 +144,15 @@ export function validateOrchestratorRequest(
     );
   }
   const justification = record.justification;
-  if (typeof justification !== 'string' || justification.trim().length === 0) {
+  if (typeof justification !== 'string') {
     throw new OrchestratorRequestError(
       'approval requires justification (§63): justification must be non-empty',
+    );
+  }
+  const cleanJustification = normalizeJustification(justification);
+  if (cleanJustification.length < MIN_JUSTIFICATION_LENGTH) {
+    throw new OrchestratorRequestError(
+      `approval requires justification (§63): visible justification must be at least ${MIN_JUSTIFICATION_LENGTH} characters`,
     );
   }
   for (const field of ['sessionId', 'agentId', 'role'] as const) {
@@ -154,25 +184,25 @@ export function validateOrchestratorRequest(
     typeof record.args === 'object' && record.args !== null
       ? (record.args as Record<string, unknown>)
       : {};
-  const existingKey =
-    typeof record.key === 'string' && /^[0-9a-f]{16}$/.test(record.key)
-      ? record.key
-      : orchestratorRequestKey(
-          toolName,
-          trigger as OrchestratorTrigger,
-          args,
-          worktree,
-        );
-  const summary =
-    typeof record.summary === 'string' && record.summary.length > 0
-      ? record.summary
-      : summarize(toolName, trigger, args);
+  // The key is always recomputed and the summary always derived: any
+  // caller-supplied `key`/`summary` fields are ignored, never honored.
+  const key = orchestratorRequestKey(
+    toolName,
+    trigger as OrchestratorTrigger,
+    args,
+    worktree,
+    {
+      sessionId: record.sessionId as string,
+      agentId: record.agentId as string,
+      justification: cleanJustification,
+    },
+  );
   return {
-    key: existingKey,
+    key,
     trigger: trigger as OrchestratorTrigger,
     toolName,
-    summary,
-    justification: (justification as string).trim(),
+    summary: summarize(toolName, trigger, args),
+    justification: cleanJustification,
     sessionId: record.sessionId as string,
     agentId: record.agentId as string,
     role: record.role as string,

@@ -70,11 +70,32 @@ export function buildManagerBlockedIndicator(
 
 export function attemptManagerApprove(
   request: OrchestratorApprovalRequest,
-  deps: { audit?: (event: { type: string; detail: string }) => void } = {},
+  deps: { audit?: (event: ManagerRefusalEvent) => void } = {},
 ): OrchestratorVerdict {
   const reason = `manager cannot approve request ${request.key}: the decider is the user (§41.2)`;
-  deps.audit?.({ type: 'manager-approve-refused', detail: reason });
+  (deps.audit ?? defaultManagerRefusalAudit)({
+    type: 'manager-approve-refused',
+    detail: reason,
+  });
   return { approved: false, reason };
+}
+
+export interface ManagerRefusalEvent {
+  type: 'manager-approve-refused';
+  detail: string;
+}
+
+// Default sink: refusals are recorded even when the caller passes no
+// deps, so a bare `attemptManagerApprove(req)` still leaves an audit
+// trail instead of vanishing silently.
+const managerRefusalLog: ManagerRefusalEvent[] = [];
+
+function defaultManagerRefusalAudit(event: ManagerRefusalEvent): void {
+  managerRefusalLog.push(event);
+}
+
+export function readManagerRefusalLog(): readonly ManagerRefusalEvent[] {
+  return managerRefusalLog;
 }
 
 export interface OrchestratorRouter {
@@ -109,6 +130,22 @@ export function createOrchestratorRouter(
   ): OrchestratorVerdict => {
     const existing = decisions.get(request.key);
     if (existing !== undefined) return existing;
+    // Only the user decider may approve: the awaitAnswer user path
+    // submits approved:true with by:'user'. Anything else claiming
+    // approval (by:'manager', a worker, a pre-seed) is refused and never
+    // stored, so it cannot poison the key against the later user answer.
+    // Denials stay fail-closed: anyone may record a denial.
+    if (verdict.approved && verdict.by !== 'user') {
+      const refusal: OrchestratorVerdict = {
+        approved: false,
+        reason: `refused: only the user decider may approve request ${request.key} (got by:${verdict.by}) — denial recorded, approval dropped`,
+      };
+      options.audit?.({
+        type: 'orchestrator-approval-refused',
+        detail: `${request.key} non-user approval by ${verdict.by} refused`,
+      });
+      return refusal;
+    }
     decisions.set(request.key, verdict);
     persist();
     pending.delete(request.key);

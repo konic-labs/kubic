@@ -52,14 +52,14 @@ describe('session-scoped skip (issue #48)', () => {
     expect(off.action).toBe('disabled');
   });
 
-  it('surfaces a doctor check naming the posture', () => {
+  it('surfaces a failing doctor check naming the posture', () => {
     const record = enableSessionSkip(
       { sessionId: 's1' },
       { by: 'user', clock: () => 7 },
     );
     const check = buildSessionSkipDoctorCheck('s1', [record]);
     expect(check.id).toBe('approvals:session-skip');
-    expect(check.status).toBe('pass');
+    expect(check.status).toBe('fail');
     expect(check.detail).toMatch(/full-access/);
     const enforced = buildSessionSkipDoctorCheck('s2', [record]);
     expect(enforced.detail).toMatch(/enforced/);

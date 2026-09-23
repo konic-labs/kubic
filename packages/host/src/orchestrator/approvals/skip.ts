@@ -5,11 +5,19 @@
 // and doctor — never quiet.
 import type { DoctorCheck } from '../../doctor.js';
 
+export class SessionSkipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionSkipError';
+  }
+}
+
 export interface SessionSkipRecord {
   sessionId: string;
   scope: 'session';
   enabledAt: number;
   enabledBy: string;
+  expiresAt?: number;
 }
 
 export interface SessionRef {
@@ -18,13 +26,31 @@ export interface SessionRef {
 
 export function enableSessionSkip(
   session: SessionRef,
-  deps: { by: string; clock?: () => number },
+  deps: { by: string; clock?: () => number; ttlMs?: number },
 ): SessionSkipRecord {
+  if (
+    typeof session.sessionId !== 'string' ||
+    session.sessionId.trim().length === 0
+  ) {
+    throw new SessionSkipError('sessionId must be a non-empty string');
+  }
+  // Full-access is an explicit user opt-in: a worker/agent can never
+  // enable it for itself — only deps.by === 'user' carries authority.
+  if (deps.by !== 'user') {
+    throw new SessionSkipError(
+      `session skip must be enabled by the user (got by:${deps.by})`,
+    );
+  }
+  if (deps.ttlMs !== undefined && !(deps.ttlMs > 0)) {
+    throw new SessionSkipError('ttlMs must be a positive number when provided');
+  }
+  const enabledAt = (deps.clock ?? Date.now)();
   return {
     sessionId: session.sessionId,
     scope: 'session',
-    enabledAt: (deps.clock ?? Date.now)(),
+    enabledAt,
     enabledBy: deps.by,
+    ...(deps.ttlMs !== undefined ? { expiresAt: enabledAt + deps.ttlMs } : {}),
   };
 }
 
@@ -38,8 +64,13 @@ export function disableSessionSkip(
 export function isSessionSkipEnabled(
   session: SessionRef,
   records: readonly SessionSkipRecord[] = [],
+  now: number = Date.now(),
 ): boolean {
-  return records.some((record) => record.sessionId === session.sessionId);
+  return records.some(
+    (record) =>
+      record.sessionId === session.sessionId &&
+      (record.expiresAt === undefined || now < record.expiresAt),
+  );
 }
 
 export function formatSessionSkipIndicator(record: SessionSkipRecord): string {
@@ -87,10 +118,10 @@ export function buildSessionSkipDoctorCheck(
   return {
     id: 'approvals:session-skip',
     label: 'approvals session skip',
-    status: 'pass',
-    reason: 'ok',
+    status: 'fail',
+    reason: 'full-access',
     detail:
-      `session ${sessionId}: full-access (enabled ${record.enabledAt} ` +
-      `by ${record.enabledBy}, session scope)`,
+      `session ${sessionId}: full-access approvals SKIPPED (enabled ${record.enabledAt} ` +
+      `by ${record.enabledBy}, session scope) — re-enable enforcement to pass`,
   };
 }

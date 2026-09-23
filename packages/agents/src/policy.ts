@@ -2,7 +2,12 @@
 // boundary: in solo mode this is the only thing shaping the tool set.
 // Classes declare intent; toolsForClasses derives the allowlist;
 // checkAgreement refuses contradictions with named reasons, never silent.
-export const FILESYSTEM_LEVELS = ['none', 'read', 'workspace-write', 'full'] as const;
+export const FILESYSTEM_LEVELS = [
+  'none',
+  'read',
+  'workspace-write',
+  'full',
+] as const;
 export type FilesystemLevel = (typeof FILESYSTEM_LEVELS)[number];
 
 export const SHELL_LEVELS = [false, 'read-only-allowlist', true] as const;
@@ -39,10 +44,17 @@ const FS_WRITE_TOOLS = ['write', 'edit'];
 
 export function toolsForClasses(classes: PermissionClasses): string[] {
   const tools: string[] = [];
-  if (classes.filesystem === 'read' || classes.filesystem === 'workspace-write' || classes.filesystem === 'full') {
+  if (
+    classes.filesystem === 'read' ||
+    classes.filesystem === 'workspace-write' ||
+    classes.filesystem === 'full'
+  ) {
     tools.push(...FS_READ_TOOLS);
   }
-  if (classes.filesystem === 'workspace-write' || classes.filesystem === 'full') {
+  if (
+    classes.filesystem === 'workspace-write' ||
+    classes.filesystem === 'full'
+  ) {
     tools.push(...FS_WRITE_TOOLS);
   }
   if (classes.shell === 'read-only-allowlist' || classes.shell === true) {
@@ -51,9 +63,7 @@ export function toolsForClasses(classes: PermissionClasses): string[] {
   return tools;
 }
 
-export type AgreementCheck =
-  | { agree: true }
-  | { agree: false; reason: string };
+export type AgreementCheck = { agree: true } | { agree: false; reason: string };
 
 export function checkAgreement(
   classes: PermissionClasses,
@@ -61,7 +71,9 @@ export function checkAgreement(
 ): AgreementCheck {
   const has = (name: string): boolean => toolNames.includes(name);
   if (classes.filesystem === 'none') {
-    const leaked = [...FS_READ_TOOLS, ...FS_WRITE_TOOLS].find((name) => has(name));
+    const leaked = [...FS_READ_TOOLS, ...FS_WRITE_TOOLS].find((name) =>
+      has(name),
+    );
     if (leaked !== undefined) {
       return {
         agree: false,
@@ -79,7 +91,29 @@ export function checkAgreement(
     }
   }
   if (classes.shell === false && has('bash')) {
-    return { agree: false, reason: `shell is disabled but tool 'bash' is registered` };
+    return {
+      agree: false,
+      reason: `shell is disabled but tool 'bash' is registered`,
+    };
+  }
+  return { agree: true };
+}
+
+// Grantability: the lane can only allowlist tools that are actually
+// registered. A class demanding an absent tool is refused with a named
+// reason, never silently narrowed.
+export function checkGrantable(
+  classes: PermissionClasses,
+  registeredNames: string[],
+): AgreementCheck {
+  const missing = toolsForClasses(classes).find(
+    (name) => !registeredNames.includes(name),
+  );
+  if (missing !== undefined) {
+    return {
+      agree: false,
+      reason: `permission classes require tool '${missing}' which is not registered`,
+    };
   }
   return { agree: true };
 }
@@ -89,11 +123,17 @@ export function validateClasses(input: unknown): PermissionClasses {
     throw new PolicyValidationError('permission classes must be an object');
   }
   const record = input as Record<string, unknown>;
-  const pick = (key: string, allowed: readonly unknown[], fallback?: unknown): unknown => {
+  const pick = (
+    key: string,
+    allowed: readonly unknown[],
+    fallback?: unknown,
+  ): unknown => {
     const value = record[key];
     if (value === undefined && fallback !== undefined) return fallback;
     if (!allowed.includes(value)) {
-      throw new PolicyValidationError(`invalid ${key}: ${JSON.stringify(value)}`);
+      throw new PolicyValidationError(
+        `invalid ${key}: ${JSON.stringify(value)}`,
+      );
     }
     return value;
   };

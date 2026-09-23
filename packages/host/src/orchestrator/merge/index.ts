@@ -22,6 +22,7 @@ export {
   approvalSnapshotsEqual,
   buildResolverSpec,
   DEBUGGER_TOOLSET,
+  dispatchResolverSpec,
   filesInDiff,
   hashApprovalPolicy,
   IMPLEMENTER_TOOLSET,
@@ -43,6 +44,7 @@ export {
   ReviewerScopeError,
 } from './review.js';
 export {
+  applySettlementAfterReview,
   assertManagerZeroWrites,
   MANAGER_MERGE_ALLOWLIST,
   MANAGER_WRITE_TOOLS,

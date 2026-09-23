@@ -11,8 +11,10 @@ import {
   diffArgsForAgent,
   filterEntriesByAgent,
 } from './attribution.js';
+import type { ResolverSpecInput } from './conflicts.js';
 import {
   buildResolverSpec,
+  dispatchResolverSpec,
   filesInDiff,
   hashApprovalPolicy,
   IMPLEMENTER_TOOLSET,
@@ -27,9 +29,11 @@ import {
   ReviewerScopeError,
 } from './review.js';
 import {
+  applySettlementAfterReview,
   assertManagerZeroWrites,
   MANAGER_MERGE_ALLOWLIST,
   MANAGER_WRITE_TOOLS,
+  ManagerAuthoringError,
 } from './settle.js';
 import { recordMergeTelemetry, totalMergeMs } from './telemetry.js';
 
@@ -58,17 +62,11 @@ function policyCarriage(): {
     maxPendingMs: number;
   };
   policyHash: string;
-  livePolicy: {
-    route: string;
-    autoApprove: string[];
-    maxPendingMs: number;
-  };
 } {
   const approvalPolicy = livePolicy();
   return {
     approvalPolicy,
     policyHash: hashApprovalPolicy(approvalPolicy),
-    livePolicy: livePolicy(),
   };
 }
 
@@ -174,6 +172,37 @@ describe('stopped queue refuses settlement (issue #46 fix)', () => {
     expect(queue.blockedAll()).toHaveLength(2);
     expect(queue.blocked()?.agentId).toBe('agent-1');
   });
+
+  it('same-agent double mark keeps the first record (first wins)', () => {
+    const queue = createMergeQueue();
+    queue.markUnresolvable('agent-1', {
+      oursDiff: 'ours-first',
+      theirsDiff: 'theirs-first',
+    });
+    queue.markUnresolvable('agent-1', {
+      oursDiff: 'ours-second',
+      theirsDiff: 'theirs-second',
+    });
+    expect(queue.blockedFor('agent-1')).toMatchObject({
+      agentId: 'agent-1',
+      oursDiff: 'ours-first',
+      theirsDiff: 'theirs-first',
+    });
+    expect(queue.blockedAll()).toHaveLength(1);
+  });
+
+  it('enqueue after stop throws QueueStoppedError and preserves candidates', () => {
+    const queue = createMergeQueue();
+    queue.enqueue({ agentId: 'agent-1', branch: 'kubic/agent-1' });
+    queue.markUnresolvable('agent-1', {
+      oursDiff: 'ours-patch',
+      theirsDiff: 'theirs-patch',
+    });
+    expect(() =>
+      queue.enqueue({ agentId: 'agent-2', branch: 'kubic/agent-2' }),
+    ).toThrow(QueueStoppedError);
+    expect(queue.list().map((entry) => entry.agentId)).toEqual(['agent-1']);
+  });
 });
 
 describe('manager merge allowlist (issue #46 fix)', () => {
@@ -241,21 +270,30 @@ describe('resolver under same approval + policy (issue #46)', () => {
 });
 
 describe('resolver spec verifies the approval policy (issue #46 fix)', () => {
-  it('rejects a weakened policy that differs from the manager live snapshot', () => {
-    const weakened = livePolicy();
-    weakened.maxPendingMs = 3_600_000;
-    expect(() =>
-      buildResolverSpec({
-        agentId: 'agent-2',
-        role: 'implementer',
-        constraints: [],
-        oursDiff: 'ours',
-        theirsDiff: 'theirs',
-        approvalPolicy: weakened,
-        policyHash: hashApprovalPolicy(weakened),
-        livePolicy: livePolicy(),
-      }),
-    ).toThrow(ResolverPolicyError);
+  it('TRUSTED-CALLER contract: no live-policy parameter to forge through', () => {
+    // Compile-time pin: ResolverSpecInput must not carry a live snapshot —
+    // re-adding the parameter breaks tsc on this assertion.
+    type HasLivePolicy = 'livePolicy' extends keyof ResolverSpecInput
+      ? true
+      : false;
+    const contract: HasLivePolicy extends false ? true : never = true;
+    expect(contract).toBe(true);
+    // Runtime half: a self-consistent snapshot passes here even when weak.
+    // Authenticity is established at the trust boundary (the manager lane
+    // composition root passes its own live snapshot as approvalPolicy),
+    // never by comparing against a caller-supplied second snapshot.
+    const weak = livePolicy();
+    weak.maxPendingMs = 3_600_000;
+    const spec = buildResolverSpec({
+      agentId: 'agent-2',
+      role: 'implementer',
+      constraints: [],
+      oursDiff: 'ours',
+      theirsDiff: 'theirs',
+      approvalPolicy: weak,
+      policyHash: hashApprovalPolicy(weak),
+    });
+    expect(spec.policyHash).toBe(hashApprovalPolicy(weak));
   });
 
   it('rejects a carried hash that does not match the snapshot', () => {
@@ -269,9 +307,8 @@ describe('resolver spec verifies the approval policy (issue #46 fix)', () => {
         theirsDiff: 'theirs',
         approvalPolicy: snapshot,
         policyHash: 'stale-hash',
-        livePolicy: snapshot,
       }),
-    ).toThrow(/hash/);
+    ).toThrow(ResolverPolicyError);
   });
 
   it('freezes the carried snapshot so downstream cannot widen it', () => {
@@ -293,6 +330,27 @@ describe('filesInDiff hardening (issue #46 fix)', () => {
     expect(
       filesInDiff('diff --git "a/my file.ts" "b/my file.ts"\n+change'),
     ).toEqual(['my file.ts']);
+  });
+
+  it('returns the union of rename sides (a-side and b-side)', () => {
+    expect(filesInDiff('diff --git a/old.ts b/new.ts\n+change')).toEqual([
+      'new.ts',
+      'old.ts',
+    ]);
+  });
+
+  it('decodes git C-style octal UTF-8 in quoted paths', () => {
+    expect(
+      filesInDiff(
+        'diff --git "a/\\303\\251 Selon.ts" "b/\\303\\251 Selon.ts"\n+change',
+      ),
+    ).toEqual(['é Selon.ts']);
+  });
+
+  it('decodes escaped quotes in quoted paths', () => {
+    expect(
+      filesInDiff('diff --git "a/we\\"ird.ts" "b/we\\"ird.ts"\n+change'),
+    ).toEqual(['we"ird.ts']);
   });
 
   it('ignores non-diff inputs instead of crashing', () => {
@@ -355,6 +413,82 @@ describe('reviewer read-only assert (issue #46 fix)', () => {
     for (const tool of ['write', 'edit', 'bash', 'git_commit']) {
       expect(() => assertReviewerReadonly([tool])).toThrow(ReviewerScopeError);
     }
+  });
+});
+
+describe('settle apply path enforces the manager guard (issue #46 fix)', () => {
+  it('applies after accept when the manager trace is clean', () => {
+    let applied = 0;
+    const decision = applySettlementAfterReview(
+      ['spawn_agent', 'workspace_diff', 'workspace_merge'],
+      { verdict: 'accept' },
+      () => {
+        applied += 1;
+      },
+    );
+    expect(decision).toBe('apply');
+    expect(applied).toBe(1);
+  });
+
+  it('discards without applying on request-changes', () => {
+    let applied = 0;
+    const decision = applySettlementAfterReview(
+      ['spawn_agent', 'workspace_diff', 'workspace_merge'],
+      { verdict: 'request-changes' },
+      () => {
+        applied += 1;
+      },
+    );
+    expect(decision).toBe('discard');
+    expect(applied).toBe(0);
+  });
+
+  it('blocks a tainted manager trace before applying (fail-closed)', () => {
+    let applied = 0;
+    expect(() =>
+      applySettlementAfterReview(
+        ['workspace_diff', 'write'],
+        { verdict: 'accept' },
+        () => {
+          applied += 1;
+        },
+      ),
+    ).toThrow(ManagerAuthoringError);
+    expect(applied).toBe(0);
+  });
+});
+
+describe('resolver-dispatch path enforces reviewer readonly (issue #46 fix)', () => {
+  it('dispatches the resolver spec when the reviewer toolset is read-only', () => {
+    const spec = dispatchResolverSpec(
+      {
+        agentId: 'agent-2',
+        role: 'implementer',
+        constraints: [],
+        oursDiff: 'diff --git a/a.ts b/a.ts\n+ours',
+        theirsDiff: 'diff --git a/a.ts b/a.ts\n+theirs',
+        ...policyCarriage(),
+      },
+      [...REVIEWER_READONLY_TOOLS],
+    );
+    expect(spec.conflict.files).toEqual(['a.ts']);
+    expect(spec.tools).toContain('write');
+  });
+
+  it('refuses dispatch when the reviewer toolset authors', () => {
+    expect(() =>
+      dispatchResolverSpec(
+        {
+          agentId: 'agent-2',
+          role: 'implementer',
+          constraints: [],
+          oursDiff: 'ours',
+          theirsDiff: 'theirs',
+          ...policyCarriage(),
+        },
+        ['read', 'write'],
+      ),
+    ).toThrow(ReviewerScopeError);
   });
 });
 

@@ -3,13 +3,21 @@
 // the spec spawns a resolver under the implementer/debugger tool set
 // with the settlement constraints plus both diffs, under the SAME
 // approval snapshot and policy hash the manager holds — no bypass.
-// The carried snapshot is verified inside, against the manager live
-// snapshot: the hash is recomputed and the snapshot is equality-checked
-// (a weakened or stale policy throws), then frozen so downstream code
-// cannot widen it. Pure — no spawning here, the manager lane owns the
+// The carried snapshot is self-consistency-checked inside (the hash is
+// recomputed and must equal the carried policyHash — a stale or
+// tampered hash throws), then frozen so downstream code cannot widen
+// it. TRUSTED-CALLER contract: authenticity of the snapshot is NOT
+// established here. There is deliberately no live-policy parameter —
+// any caller-supplied second snapshot could be forged in lockstep
+// with a weakened policy (weakened policy + matching hash + equally
+// weakened "live" snapshot would pass any in-function equality
+// check), so the check would be theater. The caller — the manager
+// lane composition root — MUST pass its own live snapshot as
+// approvalPolicy. Pure — no spawning here, the manager lane owns the
 // actual call.
 
 import { createHash } from 'node:crypto';
+import { assertReviewerReadonly } from './review.js';
 
 export const RESOLVER_ALLOWED_ROLES = ['implementer', 'debugger'] as const;
 
@@ -84,7 +92,6 @@ export interface ResolverSpecInput {
   theirsDiff: string;
   approvalPolicy: ApprovalSnapshot;
   policyHash: string;
-  livePolicy: ApprovalSnapshot;
 }
 
 export class ResolverPolicyError extends Error {
@@ -126,28 +133,108 @@ function freezeApprovalSnapshot(policy: ApprovalSnapshot): ApprovalSnapshot {
   });
 }
 
-// Git C-style quoting: paths with spaces or specials arrive double-quoted
-// (diff --git "a/my file.ts" "b/my file.ts"), with \" and \\ escapes.
-// Unquoted sides never contain spaces, so \S+ is exact there.
-const QUOTED_PATH = '"a/((?:[^"\\\\]|\\\\.)*)"\\s+"b/((?:[^"\\\\]|\\\\.)*)"';
-const QUOTED_A_BARE_B = '"a/((?:[^"\\\\]|\\\\.)*)"\\s+b/(\\S+)';
-const BARE_A_QUOTED_B = 'a/(\\S+)\\s+"b/((?:[^"\\\\]|\\\\.)*)"';
-const BARE_PATH = 'a/(\\S+)\\s+b/(\\S+)';
-
-function unescapeGitPath(path: string): string {
-  return path.replace(/\\(.)/g, '$1');
+// Git C-style path decoding. Quoted paths ("a/my file.ts") may carry
+// backslash escapes: \" and \\, single-letter C escapes (\n \t \r
+// \a \b \f \v), and octal byte escapes (\303\251) — git emits
+// non-ASCII bytes as UTF-8, so octal escapes accumulate into a byte
+// buffer decoded as UTF-8 whole. Anything else is encoded as-is.
+function unquoteGitPath(quoted: string): string {
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  let index = 0;
+  while (index < quoted.length) {
+    if (quoted[index] !== '\\') {
+      for (const byte of encoder.encode(quoted[index])) bytes.push(byte);
+      index += 1;
+      continue;
+    }
+    const rest = quoted.slice(index + 1);
+    if (rest.length === 0) {
+      bytes.push(0x5c);
+      index += 1;
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(rest);
+    if (octal !== null) {
+      bytes.push(Number.parseInt(octal[0], 8) & 0xff);
+      index += 1 + octal[0].length;
+      continue;
+    }
+    switch (rest[0]) {
+      case 'a':
+        bytes.push(0x07);
+        break;
+      case 'b':
+        bytes.push(0x08);
+        break;
+      case 'f':
+        bytes.push(0x0c);
+        break;
+      case 'n':
+        bytes.push(0x0a);
+        break;
+      case 'r':
+        bytes.push(0x0d);
+        break;
+      case 't':
+        bytes.push(0x09);
+        break;
+      case 'v':
+        bytes.push(0x0b);
+        break;
+      case '\\':
+        bytes.push(0x5c);
+        break;
+      case '"':
+        bytes.push(0x22);
+        break;
+      default:
+        for (const byte of encoder.encode(rest[0])) bytes.push(byte);
+        break;
+    }
+    index += 2;
+  }
+  return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
 }
 
-function parseDiffGitPaths(rest: string): string | undefined {
-  const patterns = [QUOTED_PATH, QUOTED_A_BARE_B, BARE_A_QUOTED_B, BARE_PATH];
-  for (const pattern of patterns) {
-    const match = new RegExp(`^${pattern}`).exec(rest);
-    const raw = match?.[1];
-    if (raw !== undefined) {
-      return rest.trimStart().startsWith('"a/') ? unescapeGitPath(raw) : raw;
+// One `diff --git` path: either C-style quoted ("...") or bare (\S+).
+// Returns the decoded path plus the unconsumed rest.
+function takeGitPath(text: string): { path: string; rest: string } | undefined {
+  if (text.startsWith('"')) {
+    let raw = '';
+    let index = 1;
+    while (index < text.length) {
+      const head = text[index];
+      if (head === '\\') {
+        raw += text.slice(index, index + 2);
+        index += 2;
+        continue;
+      }
+      if (head === '"') {
+        return { path: unquoteGitPath(raw), rest: text.slice(index + 1) };
+      }
+      raw += head;
+      index += 1;
     }
+    return undefined;
   }
-  return undefined;
+  const bare = /^\S+/.exec(text);
+  if (bare === null) return undefined;
+  return { path: bare[0], rest: text.slice(bare[0].length) };
+}
+
+// Both sides of a `diff --git a/... b/...` header, with the a-/b-
+// prefixes stripped. The destination (b-side) is returned too —
+// renames surface both names, never just the source.
+function parseDiffGitSides(rest: string): [string, string] | undefined {
+  const first = takeGitPath(rest.trimStart());
+  if (first === undefined) return undefined;
+  const second = takeGitPath(first.rest.trimStart());
+  if (second === undefined) return undefined;
+  if (!first.path.startsWith('a/') || !second.path.startsWith('b/')) {
+    return undefined;
+  }
+  return [first.path.slice(2), second.path.slice(2)];
 }
 
 // File paths touched by a unified diff. Only `diff --git` headers carry
@@ -158,8 +245,11 @@ export function filesInDiff(diff: string): string[] {
   for (const rawLine of diff.split('\n')) {
     const line = rawLine.trim();
     if (!line.startsWith('diff --git ')) continue;
-    const parsed = parseDiffGitPaths(line.slice('diff --git '.length));
-    if (parsed !== undefined) files.add(parsed);
+    const sides = parseDiffGitSides(line.slice('diff --git '.length));
+    if (sides !== undefined) {
+      files.add(sides[0]);
+      files.add(sides[1]);
+    }
   }
   return [...files].sort();
 }
@@ -170,15 +260,14 @@ export function buildResolverSpec(input: ResolverSpecInput): ResolverSpawnSpec {
       `resolver role must be implementer or debugger (got '${input.role}'): the manager never resolves`,
     );
   }
+  // Self-consistency only (see the TRUSTED-CALLER contract at the top):
+  // the recomputed hash must equal the carried policyHash. A stale or
+  // tampered hash throws; snapshot authenticity itself is the caller's
+  // job — there is no second snapshot to compare against by design.
   const recomputed = hashApprovalPolicy(input.approvalPolicy);
   if (recomputed !== input.policyHash) {
     throw new ResolverPolicyError(
       `resolver approval hash mismatch (carried '${input.policyHash}' != recomputed '${recomputed}'): re-read the manager live policy, no bypass`,
-    );
-  }
-  if (!approvalSnapshotsEqual(input.approvalPolicy, input.livePolicy)) {
-    throw new ResolverPolicyError(
-      'resolver approval snapshot differs from the manager live policy (weakened or stale): no bypass',
     );
   }
   const files = [
@@ -202,4 +291,18 @@ export function buildResolverSpec(input: ResolverSpecInput): ResolverSpawnSpec {
     approvalPolicy: freezeApprovalSnapshot(input.approvalPolicy),
     policyHash: input.policyHash,
   };
+}
+
+// Resolver-dispatch path: the ONLY merge-path entry to buildResolverSpec.
+// The reviewer inspects the conflict before the writer-resolver is
+// dispatched, so its toolset is proven read-only first — findings travel
+// back as text, never as edits. (The manager lane's own production gate
+// is checkManagerCall in ../manager.ts; this assert is the merge-path
+// layer, enforced on the real dispatch path rather than left opt-in.)
+export function dispatchResolverSpec(
+  input: ResolverSpecInput,
+  reviewerTools: readonly string[],
+): ResolverSpawnSpec {
+  assertReviewerReadonly(reviewerTools);
+  return buildResolverSpec(input);
 }

@@ -6,6 +6,25 @@
 // the git_* authoring tools, or any unknown tool — is a policy block:
 // the guard is an ALLOWLIST (fail-closed), never a blocklist. The
 // writer resolver owns authoring tools, never the manager. Pure — no I/O.
+//
+// Layering note: the authoritative production gate is checkManagerCall
+// in ../manager.ts (owned by another issue — do NOT widen this file to
+// duplicate it). This allowlist is a second-layer merge-path guard
+// scoped to AUTHORING: reads pass BY DESIGN — the assert is named
+// ZeroWrites because writes are what it forbids. DIVERGENCE, stated
+// explicitly: manager.ts forbids read/ls/find/grep on the manager lane
+// entirely and allows lane plumbing (send_to_agent, wait_for_agent,
+// collect_result, ask_user, ...) this guard does not list, while this
+// guard allows reads manager.ts rejects. Both divergences are intended:
+// reads author nothing (safe to pass here), and lane plumbing never
+// appears on the merge path (correct to refuse here). Enforcement
+// lives on the real settle apply path below, not just in the helper.
+
+import {
+  type ApplyDecision,
+  decideApplyAfterReview,
+  type ReviewResult,
+} from './review.js';
 
 export const MANAGER_MERGE_ALLOWLIST: readonly string[] = [
   'spawn_agent',
@@ -51,4 +70,23 @@ export function assertManagerZeroWrites(managerCalls: readonly string[]): void {
       throw new ManagerAuthoringError(call);
     }
   }
+}
+
+// The settle apply path: the ONLY merge-path entry to workspace_apply.
+// The recorded manager call trace is proven write-free BEFORE the
+// verdict routes to apply — a tainted trace throws and apply never
+// runs. (Outer gate: checkManagerCall in ../manager.ts owns the
+// production lane; this enforces the merge path itself.) Pure — the
+// caller owns the actual workspace_apply call behind `apply`.
+export function applySettlementAfterReview(
+  managerCalls: readonly string[],
+  review: ReviewResult,
+  apply: () => void,
+): ApplyDecision {
+  assertManagerZeroWrites(managerCalls);
+  const decision = decideApplyAfterReview(review);
+  if (decision === 'apply') {
+    apply();
+  }
+  return decision;
 }

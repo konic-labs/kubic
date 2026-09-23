@@ -1,11 +1,11 @@
 // Ordered settlement queue (issue #46; §44.2).
 // Candidates settle strictly FIFO. An unresolvable conflict stops the
-// queue: dequeue refuses once stopped (fail-closed — the advisory stop
-// is now enforced), the blocking candidates keep both diffs with no
-// winner picked, and every candidate (settled or pending) stays listed
-// — nothing is dropped or reordered. Blocked records are kept per
-// agentId, so a second stop never overwrites the first. Pure — no I/O,
-// no git.
+// queue: enqueue and dequeue both refuse once stopped (fail-closed),
+// the blocking candidates keep both diffs with no winner picked, and
+// every candidate (settled or pending) stays listed — nothing is
+// dropped or reordered. Blocked records are kept per agentId, first
+// record wins: a second mark for the same agent never overwrites the
+// first. Pure — no I/O, no git.
 
 export interface MergeCandidate {
   agentId: string;
@@ -56,6 +56,9 @@ export function createMergeQueue(): MergeQueue {
 
   return {
     enqueue(candidate: MergeCandidate): void {
+      if (queueStatus === 'stopped') {
+        throw new QueueStoppedError(stoppedBy[0] ?? candidate.agentId);
+      }
       order.push({ ...candidate });
     },
     dequeue(): MergeCandidate | undefined {
@@ -72,10 +75,11 @@ export function createMergeQueue(): MergeQueue {
       agentId: string,
       diffs: { oursDiff: string; theirsDiff: string },
     ): void {
-      queueStatus = 'stopped';
-      if (!blockedConflicts.has(agentId)) {
-        stoppedBy.push(agentId);
+      if (blockedConflicts.has(agentId)) {
+        return;
       }
+      queueStatus = 'stopped';
+      stoppedBy.push(agentId);
       blockedConflicts.set(agentId, {
         agentId,
         oursDiff: diffs.oursDiff,

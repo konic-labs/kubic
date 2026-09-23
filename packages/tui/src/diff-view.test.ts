@@ -126,3 +126,49 @@ describe('diff placeholders (issue #25)', () => {
     expect(deleted).toContain('-gone');
   });
 });
+
+describe('diff mutation hardening (issue #68)', () => {
+  it('badges the header for unattributed reconciliation entries', () => {
+    expect(renderDiffHeader({ ...WRITE_EDIT, unattributed: true })).toBe(
+      'a.txt — write [unattributed]',
+    );
+    expect(renderDiffHeader(WRITE_EDIT)).toBe('a.txt — write');
+  });
+
+  it('missing after-blob on a non-delete renders an after placeholder', () => {
+    const lines = renderDiffLines({ ...WRITE_EDIT, after: null });
+    expect(lines.join('\n')).toContain(
+      '~ content unavailable: a.txt (missing after-blob)',
+    );
+    expect(lines.some((l) => l.startsWith('-') && l !== '--- a/a.txt')).toBe(
+      false,
+    );
+  });
+
+  it('maxLines equal to the line count keeps every line with no trailer', () => {
+    const full = renderDiffLines(WRITE_EDIT);
+    expect(full.length).toBeGreaterThan(0);
+    const capped = renderDiffLines(WRITE_EDIT, { maxLines: full.length });
+    expect(capped).toEqual(full);
+    expect(capped[capped.length - 1]).not.toMatch(/more lines/);
+  });
+
+  it('rename renders hunks with the op label in the header', () => {
+    const lines = renderDiffLines({ ...WRITE_EDIT, op: 'rename' });
+    expect(lines[0]).toContain('rename');
+    expect(lines).toContain('-two');
+    expect(lines).toContain('+TWO');
+  });
+
+  it('clamps every line to width with no maxLines cap', () => {
+    const long = {
+      ...WRITE_EDIT,
+      after: `one\n${'x'.repeat(200)}\nthree\n`,
+    };
+    const lines = renderDiffLines(long, { width: 40 });
+    expect(lines.length).toBeGreaterThan(5);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(40);
+    }
+  });
+});

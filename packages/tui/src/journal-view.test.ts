@@ -137,3 +137,40 @@ describe('journal view (issue #25; §80)', () => {
     expect(doc).not.toContain('b.txt');
   });
 });
+
+describe('journal mutation hardening (issue #68)', () => {
+  it('combines path and agent filters with AND', () => {
+    expect(
+      filterJournalChanges(changes(), { path: 'a.txt', agent: 'root' }).map(
+        (c) => c.path,
+      ),
+    ).toEqual(['a.txt']);
+    expect(
+      filterJournalChanges(changes(), { path: 'a.txt', agent: 'worker-1' }),
+    ).toEqual([]);
+  });
+
+  it('setChanges repaints the snapshot to the new file set', () => {
+    const view = new JournalView(changes().slice(0, 1));
+    expect(view.render(100).join('\n')).toContain('--- a/a.txt');
+    view.setChanges(changes().slice(1, 2));
+    const doc = view.render(100).join('\n');
+    expect(doc).toContain('--- a/b.txt');
+    expect(doc).not.toContain('--- a/a.txt');
+  });
+
+  it('empty changes after setChanges renders no-changes', () => {
+    const view = new JournalView(changes().slice(0, 1));
+    view.setChanges([]);
+    expect(view.render(80).join('\n')).toContain('no changes');
+  });
+
+  it('setFilter repaints the snapshot to the narrowed set', () => {
+    const view = new JournalView(changes());
+    expect(view.render(100).join('\n')).toContain('--- a/b.txt');
+    view.setFilter({ agent: 'worker-1' });
+    const doc = view.render(100).join('\n');
+    expect(doc).toContain('--- a/b.txt');
+    expect(doc).not.toContain('--- a/a.txt');
+  });
+});

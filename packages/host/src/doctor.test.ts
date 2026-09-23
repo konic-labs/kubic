@@ -204,3 +204,165 @@ describe('runDoctorCommand', () => {
     expect(lines.join('\n')).toContain('PASS license:kubic (ok)');
   });
 });
+
+describe('runDoctorCommand mutation hardening (issue #68)', () => {
+  it('reports a reachable provider without models as 0 registered', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeProviders = () => [{ id: 'local', reachable: true }];
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'PASS provider:local (ok): reachable, 0 model(s) registered',
+    );
+  });
+
+  it('prefers the probe detail over the default reachable text', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeProviders = () => [
+      { id: 'local', reachable: true, detail: 'custom ok' },
+    ];
+    await runDoctorCommand([], deps);
+    expect(lines.join('\n')).toContain('PASS provider:local (ok): custom ok');
+  });
+
+  it('prints the unreachable detail verbatim on a provider-down fail', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeProviders = () => [
+      {
+        id: 'local',
+        reachable: false,
+        detail: 'ECONNREFUSED 127.0.0.1:11434',
+      },
+    ];
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(6);
+    expect(lines.join('\n')).toContain(
+      'FAIL provider:local (provider-down): ECONNREFUSED 127.0.0.1:11434',
+    );
+  });
+
+  it('defaults dep details to present/missing when the probe omits them', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.checkDeps = () => [
+      { id: 'node', ok: true },
+      { id: 'git', ok: false },
+    ];
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    const text = lines.join('\n');
+    expect(text).toContain('PASS dep:node (ok): present');
+    expect(text).toContain('FAIL dep:git (deps-missing): missing');
+  });
+
+  it('maps a throwing dep probe to a structured deps-missing fail', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.checkDeps = () => {
+      throw new Error('deps exploded');
+    };
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain(
+      'FAIL dep:check (deps-missing): deps exploded',
+    );
+  });
+
+  it('maps a throwing policy loader to a policy-mismatch fail', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.loadPolicy = () => {
+      throw new Error('policy disk gone');
+    };
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain(
+      'FAIL policy:approvals (policy-mismatch): policy disk gone',
+    );
+  });
+
+  it('fails route=deny with entries that can never apply', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.loadPolicy = () => ({ route: 'deny', autoApprove: ['network'] });
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain('route=deny ignores autoApprove');
+  });
+
+  it('passes route=deny with no entries to ignore', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.loadPolicy = () => ({ route: 'deny', autoApprove: [] });
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'PASS policy:approvals (ok): route=deny, 0 auto-approved',
+    );
+  });
+
+  it('accepts requires: capabilities as dynamic triggers', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.loadPolicy = () => ({
+      route: 'ask-user',
+      autoApprove: ['requires:exec'],
+    });
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'PASS policy:approvals (ok): route=ask-user, 1 auto-approved',
+    );
+  });
+
+  it('skips a comma list with whitespace around each id', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      ['--skip', 'dep:node, policy:approvals'],
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('SKIP dep:node (skipped)');
+    expect(text).toContain('SKIP policy:approvals (skipped)');
+    expect(text).toContain('2 skip');
+  });
+
+  it('rejects --skip without a value or with a flag-like value', async () => {
+    for (const args of [['--skip'], ['--skip', '--json']]) {
+      const lines: string[] = [];
+      const code = await runDoctorCommand(
+        args,
+        cleanDeps((line: string) => lines.push(line)),
+      );
+      expect(code).toBe(2);
+      expect(lines.join('\n')).toContain('--skip needs a value');
+    }
+  });
+
+  it('rejects an unknown flag as a usage error', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      ['--bogus'],
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    expect(code).toBe(2);
+    expect(lines.join('\n')).toContain('unknown flag --bogus');
+  });
+
+  it('stringifies a non-Error probe failure instead of crashing', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeProviders = () => {
+      throw 'string boom';
+    };
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(6);
+    expect(lines.join('\n')).toContain(
+      'FAIL provider:probe (provider-down): string boom',
+    );
+  });
+});

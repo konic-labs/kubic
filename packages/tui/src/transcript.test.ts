@@ -154,3 +154,56 @@ describe('transcript view (issue #23, slice A)', () => {
     expect(replayed.render(80)).toEqual(view.render(80));
   });
 });
+
+describe('transcript snapshot guards (issue #68; mutation hardening)', () => {
+  it('ignores a same-revision resnapshot on the same lane', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      [{ id: 't1', kind: 'text', markdown: 'hello' }],
+      2,
+    );
+    const rebuilds = view.rebuilds;
+    const doc = view.render(80).join('\n');
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      [{ id: 't1', kind: 'text', markdown: 'same-rev replacement' }],
+      2,
+    );
+    expect(view.rebuilds).toBe(rebuilds);
+    expect(view.render(80).join('\n')).toBe(doc);
+  });
+
+  it('applies a lane switch even at an older revision', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      [{ id: 't1', kind: 'text', markdown: 'lane one text' }],
+      5,
+    );
+    view.applyLaneSnapshot(
+      { laneId: 'lane-2' },
+      [{ id: 't2', kind: 'text', markdown: 'lane two text' }],
+      1,
+    );
+    const doc = view.render(80).join('\n');
+    expect(doc).toContain('lane two text');
+    expect(doc).not.toContain('lane one text');
+  });
+
+  it('a snapshot replaces deltas that arrived before it', () => {
+    const view = createTranscriptView();
+    view.appendDelta({ id: 'old', kind: 'text', append: 'stale delta' });
+    expect(view.render(80).join('\n')).toContain('stale delta');
+    const rebuilds = view.rebuilds;
+    view.applyLaneSnapshot(
+      { laneId: 'lane-1' },
+      [{ id: 'fresh', kind: 'text', markdown: 'snapshot text' }],
+      1,
+    );
+    expect(view.rebuilds).toBe(rebuilds + 1);
+    const doc = view.render(80).join('\n');
+    expect(doc).toContain('snapshot text');
+    expect(doc).not.toContain('stale delta');
+  });
+});

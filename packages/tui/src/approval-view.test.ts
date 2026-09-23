@@ -272,3 +272,127 @@ describe('approval timeout + memoOnce (issue #26; §41)', () => {
     expect(again).toEqual(first);
   });
 });
+
+describe('approval mutation hardening (issue #68)', () => {
+  it('uses the inline fallback exactly below 80 columns', () => {
+    expect(shouldUseInlineFallback(80)).toBe(false);
+    expect(shouldUseInlineFallback(79)).toBe(true);
+    expect(shouldUseInlineFallback(0)).toBe(true);
+  });
+
+  it('floors fractional overlay geometry instead of returning floats', () => {
+    expect(approvalOverlayBounds(99, 29)).toEqual({
+      width: 69,
+      height: 17,
+      row: 6,
+      col: 15,
+    });
+  });
+
+  it('omits empty command/paths and defaults justification for minimal requests', () => {
+    const lines = renderApprovalLines(
+      { key: 'k', capability: 'fs-read', toolName: 'read' },
+      100,
+    );
+    const doc = lines.join('\n');
+    expect(doc).toContain('Approval required: fs-read');
+    expect(doc).toContain('tool: read');
+    expect(doc).toContain('justification: (none)');
+    expect(doc).not.toContain('command:');
+    expect(doc).not.toContain('paths:');
+    const emptyPaths = renderApprovalLines({ ...request(), paths: [] }, 100);
+    expect(emptyPaths.join('\n')).not.toContain('paths:');
+    const emptyCommand = renderApprovalLines(
+      { ...request(), command: '' },
+      100,
+    );
+    expect(emptyCommand.join('\n')).not.toContain('command:');
+  });
+
+  it('passes explicit overlay options through instead of forcing defaults', () => {
+    const seen: ApprovalOverlayOptions[] = [];
+    const view = new ApprovalView({ request: request() });
+    const tui = {
+      showOverlay: (
+        _component: Component,
+        options?: ApprovalOverlayOptions,
+      ): ApprovalOverlayHandle => {
+        seen.push(options ?? {});
+        return { unfocus: () => {}, hide: () => {} };
+      },
+    };
+    showApprovalOverlay(tui, view, { width: '50%' });
+    expect(seen[0]?.width).toBe('50%');
+  });
+
+  it('dismisses unfocus-first so the editor target survives hide', () => {
+    const order: string[] = [];
+    const view = new ApprovalView({ request: request() });
+    const editor: Component = { render: () => [], invalidate: () => {} };
+    dismissApprovalOverlay(
+      view,
+      {
+        unfocus: () => {
+          order.push('unfocus');
+        },
+        hide: () => {
+          order.push('hide');
+        },
+      },
+      editor,
+    );
+    expect(order).toEqual(['unfocus', 'hide']);
+  });
+
+  it('resolves an approving answer through the memo', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 50,
+      awaitAnswer: () => Promise.resolve({ approved: true, by: 'allow-once' }),
+    });
+    expect(verdict).toEqual({ approved: true, by: 'allow-once' });
+    expect(memo.decided('k1')).toEqual(verdict);
+  });
+
+  it('waits out an undefined answer to the timeout deny', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 20,
+      awaitAnswer: () => Promise.resolve(undefined),
+    });
+    expect(verdict).toEqual({
+      approved: false,
+      reason: 'approval timed out after 20ms',
+    });
+  });
+
+  it('denies immediately on maxPendingMs 0 without throwing', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', { memo, maxPendingMs: 0 });
+    expect(verdict).toEqual({
+      approved: false,
+      reason: 'approval timed out after 0ms',
+    });
+  });
+
+  it('reports a non-Error rejection without an undefined reason', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 50,
+      awaitAnswer: () => Promise.reject('string boom'),
+    });
+    expect(verdict).toEqual({
+      approved: false,
+      reason: 'approval await failed: string boom',
+    });
+  });
+
+  it('shows the overlay at exactly 80 columns, inline below', () => {
+    const options = approvalOverlayOptions();
+    expect(options.visible?.(80, 30)).toBe(true);
+    expect(options.visible?.(79, 30)).toBe(false);
+  });
+});

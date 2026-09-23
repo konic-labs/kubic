@@ -59,6 +59,17 @@ describe('tui layout root (issue #22, slice A)', () => {
   });
 });
 
+describe('tui layout boundary (issue #68; mutation hardening)', () => {
+  it('keeps the tree visible at exactly 80 columns, hides at 79', () => {
+    expect(renderLayout(buildLayoutRoot(slots()), 80).join('\n')).toContain(
+      'tree',
+    );
+    const narrow = renderLayout(buildLayoutRoot(slots()), 79);
+    expect(narrow.join('\n')).not.toContain('tree');
+    expect(narrow.join('\n')).toContain('body');
+  });
+});
+
 function visibleWidth(line: string): number {
   // Strip SGR sequences; OSC8 hyperlinks are reset per §16.3.
   const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');

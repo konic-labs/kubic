@@ -338,3 +338,73 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
     expect(Object.keys(row({})).sort()).toEqual(['model', 'provider', 'usage']);
   });
 });
+
+describe('status bar mutation hardening (issue #68)', () => {
+  it('propagates setRows to the rendered cost within one frame', () => {
+    const bar = new StatusBar(state({ rows: [] }));
+    expect(bar.render(100)[0]).toContain('$0.00');
+    bar.setRows([priced()]);
+    const lines = bar.render(100);
+    expect(lines[0]).toContain('$0.03');
+    expect(lines[0]).toContain('120ms');
+    expect(bar.getState().rows.length).toBe(1);
+  });
+
+  it('drops thinking before tool-ms at 90 cols (priority: thinking first)', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 90);
+    expect(lines[0]).toContain('test/model-long-name');
+    expect(lines[0]).not.toContain('thinking');
+    expect(lines[0]).toContain('tool 45ms');
+    expect(lines[0]).toContain('TTFT 120ms');
+  });
+
+  it('drops tool-ms before TTFT at 60 cols (priority: tool next)', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 60);
+    expect(lines[0]).toContain('TTFT 120ms');
+    expect(lines[0]).not.toContain('tool 45ms');
+    expect(lines[0]).toContain('$0.03');
+  });
+
+  it('renders the bare cost line at 40 cols without TTFT or tool-ms', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 40);
+    expect(lines[0]).toContain('$0.03');
+    expect(lines[0]).not.toContain('TTFT');
+    expect(lines[0]).not.toContain('tool 45ms');
+  });
+
+  it('a silent row never clears the last TTFT/tool reading', () => {
+    const summary = summarizeStatusRows([
+      row({ ttftMs: 100, latencyMs: 40 }),
+      row({}),
+    ]);
+    expect(summary.ttftMs).toBe(100);
+    expect(summary.toolMs).toBe(40);
+  });
+
+  it('truncates the model with an ellipsis when exactly 4 columns remain', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 65);
+    expect(statusVisibleWidth(lines[0])).toBeLessThanOrEqual(65);
+    expect(lines[0]).toContain('…');
+  });
+
+  it('returns the full line when it fits the width exactly', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 99);
+    expect(lines[0]).toContain('thinking medium');
+  });
+
+  it('keeps the session stub at 34 cols where 4 columns remain', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 34);
+    expect(statusVisibleWidth(lines[1])).toBeLessThanOrEqual(34);
+    expect(lines[1]).toContain('session');
+  });
+
+  it('keeps warning color through the final narrow-OFF fallback at 47 cols', () => {
+    const lines = renderStatusLines(
+      state({ rows: [priced()], approvalsSkipped: true }),
+      47,
+    );
+    expect(statusVisibleWidth(lines[1])).toBeLessThanOrEqual(47);
+    expect(lines[1]).toContain('OFF');
+    expect(lines[1]).toContain(`${ESC}[`);
+  });
+});

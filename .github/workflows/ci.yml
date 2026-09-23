@@ -25,7 +25,12 @@ jobs:
       - run: npx biome ci .
   mutation:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    # Temporarily disabled: the vitest side grinds ~9h per run (20k mutants x
+    # full-suite-each, no incremental cache on fresh checkouts) while gating
+    # nothing. See the backlog issue "Mutation CI: 9h runs" for the full
+    # diagnosis and the re-enable plan (nightly schedule + scope caps +
+    # incremental cache). Re-enable by restoring the `if:` below.
+    if: false
     steps:
       - uses: actions/checkout@v4
         with:

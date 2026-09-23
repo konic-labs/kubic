@@ -49,6 +49,7 @@ const TRANSCRIPT_THEME = {
 export interface TranscriptView {
   readonly component: Component;
   readonly scroll: ScrollView;
+  readonly rebuilds: number;
   appendDelta(delta: TranscriptDelta): void;
   render(width: number): string[];
 }
@@ -62,9 +63,13 @@ export function createTranscriptView(): TranscriptView {
   });
   const entries: Array<{ id: string; kind: TranscriptEntryKind; markdown: string }> =
     [];
+  let rebuilds = 0;
   return {
     component: scroll,
     scroll,
+    get rebuilds(): number {
+      return rebuilds;
+    },
     appendDelta(delta: TranscriptDelta): void {
       const found = entries.find((entry) => entry.id === delta.id);
       if (found === undefined) {
@@ -77,6 +82,7 @@ export function createTranscriptView(): TranscriptView {
         found.markdown += delta.append;
       }
       document.setText(entries.map((entry) => entry.markdown).join('\n'));
+      rebuilds += 1;
     },
     render(width: number): string[] {
       return scroll.render(width);

@@ -1,0 +1,5 @@
+# CODEOWNERS — Kubic
+#
+# The Pi boundary choke point needs a human on every change: any Pi-internal
+# touch must stay visible and review-gated (design §65, issue #4).
+/packages/worker/src/pi-boundary.ts @egesabanci

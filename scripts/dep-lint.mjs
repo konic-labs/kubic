@@ -80,6 +80,24 @@ export function checkTree(root) {
       const content = readFileSync(file, 'utf8');
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];
+        if (spec.startsWith('@earendil-works/')) {
+          // Pi seam rule (§65): only packages/worker/src/pi-boundary.ts may
+          // touch Pi modules — exact path match, no suffix bypass.
+          const isBoundary =
+            owner === 'worker' &&
+            relative(root, file) ===
+              join('packages', 'worker', 'src', 'pi-boundary.ts');
+          if (!isBoundary) {
+            const line = content.slice(0, m.index).split('\n').length;
+            violations.push({
+              from: owner,
+              to: spec,
+              file: relative(root, file),
+              line,
+            });
+          }
+          continue;
+        }
         const target = resolveTarget(owner, file, spec, root);
         if (target && forbidden.has(target)) {
           const line = content.slice(0, m.index).split('\n').length;

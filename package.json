@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs"
+    "check:pi": "node scripts/check-pinned-deps.mjs",
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

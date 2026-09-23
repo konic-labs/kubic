@@ -8,8 +8,8 @@
 // Thinking levels clamp to what the model supports (Pi owns the map);
 // the level persists in a sidecar so attach restores it.
 
-import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { FileBridge } from '../../exec/src/file-bridge.js';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -40,7 +40,9 @@ export function selectModel(
   const pick = (sel: ModelSelection, origin: string): AnyModel => {
     const provider = models.getProvider(sel.provider);
     if (provider === undefined) {
-      throw new ModelSelectError(`unknown provider '${sel.provider}' (${origin})`);
+      throw new ModelSelectError(
+        `unknown provider '${sel.provider}' (${origin})`,
+      );
     }
     const model = models.getModel(sel.provider, sel.id);
     if (model === undefined) {
@@ -94,8 +96,13 @@ export function createLadder(
   steps: string[],
   options: { maxEscalations?: number } = {},
 ): EscalationLadder {
-  if (steps.length === 0) throw new EscalationError('escalation ladder must not be empty');
-  return { steps, maxEscalations: options.maxEscalations ?? steps.length, record: [] };
+  if (steps.length === 0)
+    throw new EscalationError('escalation ladder must not be empty');
+  return {
+    steps,
+    maxEscalations: options.maxEscalations ?? steps.length,
+    record: [],
+  };
 }
 
 export function escalateModel(
@@ -112,10 +119,14 @@ export function escalateModel(
   const fromAt = ladder.steps.indexOf(from);
   const toAt = ladder.steps.indexOf(to);
   if (fromAt === -1 || toAt === -1) {
-    throw new EscalationError(`escalation off-ladder refused: '${from}' -> '${to}'`);
+    throw new EscalationError(
+      `escalation off-ladder refused: '${from}' -> '${to}'`,
+    );
   }
   if (toAt < fromAt) {
-    throw new EscalationError(`escalation is one-way: refusing down-step '${from}' -> '${to}'`);
+    throw new EscalationError(
+      `escalation is one-way: refusing down-step '${from}' -> '${to}'`,
+    );
   }
   ladder.record.push({ from, to, reason, at: Date.now() });
   return { to };
@@ -139,16 +150,20 @@ export function clampThinking(
 const THINKING_FILE = 'thinking.json';
 
 export function saveThinkingLevel(
+  bridge: FileBridge,
   sessionDir: string,
   level: ModelThinkingLevel,
 ): void {
-  writeFileSync(join(sessionDir, THINKING_FILE), JSON.stringify({ level }));
+  bridge.writeFile(join(sessionDir, THINKING_FILE), JSON.stringify({ level }));
 }
 
-export function loadThinkingLevel(sessionDir: string): ModelThinkingLevel | null {
+export function loadThinkingLevel(
+  bridge: FileBridge,
+  sessionDir: string,
+): ModelThinkingLevel | null {
   let raw: string;
   try {
-    raw = readFileSync(join(sessionDir, THINKING_FILE), 'utf8');
+    raw = bridge.readTextFile(join(sessionDir, THINKING_FILE));
   } catch {
     return null;
   }

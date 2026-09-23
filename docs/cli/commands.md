@@ -11,8 +11,8 @@ the version comes from the nearest `kubic` package manifest
 (`apps/kubic/package.json` for src runs, the repo root for `dist/` runs) —
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
-`npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor>`
+|`npm run kubic -- …`); anything else dispatches below; an unknown command prints
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor | workers>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 
@@ -106,6 +106,22 @@ Health readout — see [doctor and debug](doctor-and-debug.md).
 
 Unknown flags exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
+
+## `kubic workers [--json] [--debug]`
+
+Live worker list over the process registry: one line per worker with
+the §13 status verbatim, age, owner, pid, startup span ms, and
+resources (`skills=… templates=…`, `-` when none). A one-shot CLI
+carries no orchestrator, so the registry is empty — no output, exit 0.
+
+| Flag | Meaning |
+| --- | --- |
+| (none) | `<id>  <status>  gen=<n>  age=<age>  owner=<owner>  pid=<pid>  startup=<ms>  resources=<…>` per worker. |
+| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view. |
+| `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr. Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
+
+An unknown flag prints `usage: kubic workers [--json] [--debug]` and
+exits 2 (no stack trace).
 
 Back to the [docs index](../README.md). See also
 [exit codes](exit-codes.md), [configuration](configuration.md), and

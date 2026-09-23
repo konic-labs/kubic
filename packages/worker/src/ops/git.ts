@@ -287,3 +287,200 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
     return { diff: run.stdout };
   },
 };
+
+export interface GitStageArgs {
+  paths: string[];
+}
+
+export interface GitStageResult {
+  staged: string[];
+}
+
+function gitEffectProvenance(inv: ToolInvocation, ctx: OpContext, operation: string): {
+  sessionId: string;
+  agentId: string;
+  toolCallId: string;
+  turnId: number;
+  operation: string;
+} {
+  return {
+    sessionId: ctx.sessionId,
+    agentId: ctx.agentId,
+    toolCallId: inv.invocationId,
+    turnId: 0,
+    operation,
+  };
+}
+
+function rejectPathEscape(path: string, op: string): void {
+  if (path === '' || path.startsWith('/') || path === '..' || path.startsWith('../')) {
+    throw new OpError('invalid_args', `${op}: refusing path '${path}' (empty, absolute, or parent-escaping)`);
+  }
+}
+
+export const gitStageOperation: Operation<GitStageArgs, GitStageResult> = {
+  name: 'git_stage',
+  description: 'Stage explicit paths (never -A: the agent stages what it means)',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitStageArgs => {
+    if (typeof raw !== 'object' || raw === null) throw new OpError('invalid_args', 'git_stage args must be an object');
+    const paths = (raw as Record<string, unknown>).paths;
+    if (!Array.isArray(paths) || paths.length === 0) {
+      throw new OpError('invalid_args', 'git_stage paths must be a non-empty array');
+    }
+    for (const p of paths) {
+      if (typeof p !== 'string') throw new OpError('invalid_args', 'git_stage paths must be strings');
+      rejectPathEscape(p, 'git_stage');
+    }
+    return { paths };
+  },
+  execute: async (inv: ToolInvocation, args: GitStageArgs, ctx: OpContext): Promise<GitStageResult> => {
+    const run = await runGit(ctx.env, ['add', '--', ...args.paths], gitEffectProvenance(inv, ctx, 'git_stage'));
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_stage', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_stage failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { staged: args.paths };
+  },
+};
+
+export interface GitCommitArgs {
+  message: string;
+  amend?: boolean;
+}
+
+export interface GitCommitResult {
+  sha: string;
+  files: string[];
+}
+
+export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
+  name: 'git_commit',
+  description: 'Commit staged changes; returns sha + file list (trajectory records commits from this result in EPIC F)',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitCommitArgs => {
+    if (typeof raw !== 'object' || raw === null) throw new OpError('invalid_args', 'git_commit args must be an object');
+    const record = raw as Record<string, unknown>;
+    if (typeof record.message !== 'string' || record.message.trim() === '') {
+      throw new OpError('invalid_args', 'git_commit message must be a non-empty string');
+    }
+    if (record.amend !== undefined && typeof record.amend !== 'boolean') {
+      throw new OpError('invalid_args', 'git_commit amend must be a boolean');
+    }
+    return {
+      message: record.message,
+      ...(record.amend === true ? { amend: true as const } : {}),
+    };
+  },
+  execute: async (inv: ToolInvocation, args: GitCommitArgs, ctx: OpContext): Promise<GitCommitResult> => {
+    const argv = ['commit', '-m', args.message];
+    if (args.amend === true) argv.push('--amend');
+    const run = await runGit(ctx.env, argv, gitEffectProvenance(inv, ctx, 'git_commit'));
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_commit', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_commit failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    const head = await runGit(ctx.env, ['rev-parse', 'HEAD'], gitEffectProvenance(inv, ctx, 'git_commit'));
+    const sha = head.stdout.trim();
+    if (sha === '') throw new OpError('tool_failed', 'git_commit succeeded but rev-parse HEAD is empty');
+    const files = await runGit(ctx.env, ['show', '--name-only', '--format=', sha], gitEffectProvenance(inv, ctx, 'git_commit'));
+    return {
+      sha,
+      files: files.stdout.split('\n').map((f) => f.trim()).filter((f) => f !== ''),
+    };
+  },
+};
+
+export interface GitCheckpointArgs {
+  message: string;
+}
+
+export interface GitCheckpointResult {
+  sha: string;
+}
+
+export const gitCheckpointOperation: Operation<GitCheckpointArgs, GitCheckpointResult> = {
+  name: 'git_checkpoint',
+  description: 'Create a restorable stash point WITHOUT touching the tree (git stash create); restore with git stash apply <sha>',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitCheckpointArgs => {
+    if (typeof raw !== 'object' || raw === null) throw new OpError('invalid_args', 'git_checkpoint args must be an object');
+    const message = (raw as Record<string, unknown>).message;
+    if (typeof message !== 'string' || message.trim() === '') {
+      throw new OpError('invalid_args', 'git_checkpoint message must be a non-empty string');
+    }
+    return { message };
+  },
+  execute: async (inv: ToolInvocation, args: GitCheckpointArgs, ctx: OpContext): Promise<GitCheckpointResult> => {
+    // `stash create` writes a stash commit object but no ref and leaves the
+    // working tree alone — the checkpoint is restorable (stash apply <sha>)
+    // without the checkpoint itself destroying work.
+    const run = await runGit(ctx.env, ['stash', 'create', '-m', args.message], gitEffectProvenance(inv, ctx, 'git_checkpoint'));
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_checkpoint', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_checkpoint failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    const sha = run.stdout.trim();
+    if (sha === '') {
+      throw new OpError('tool_failed', 'git_checkpoint: no changes to checkpoint (clean tree)');
+    }
+    return { sha };
+  },
+};
+
+export interface GitBranchArgs {
+  create?: string;
+}
+
+export interface GitBranchResult {
+  branches?: string[];
+  created?: string;
+}
+
+export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
+  name: 'git_branch',
+  description: 'List branches, or create one (checkout is out of scope: solo works on the current branch)',
+  replay: 'never',
+  validateArgs: (raw: unknown): GitBranchArgs => {
+    if (typeof raw !== 'object' || raw === null) throw new OpError('invalid_args', 'git_branch args must be an object');
+    const create = (raw as Record<string, unknown>).create;
+    if (create !== undefined) {
+      if (typeof create !== 'string' || create.trim() === '' || create.startsWith('-') || create.includes('..') || create.includes(' ')) {
+        throw new OpError('invalid_args', 'git_branch create must be a plain branch name');
+      }
+      return { create };
+    }
+    return {};
+  },
+  execute: async (inv: ToolInvocation, args: GitBranchArgs, ctx: OpContext): Promise<GitBranchResult> => {
+    if (args.create !== undefined) {
+      const run = await runGit(ctx.env, ['branch', args.create], gitEffectProvenance(inv, ctx, 'git_branch'));
+      if (run.exitCode !== 0) {
+        if (isNotARepo(run.stderr)) throw notARepoError('git_branch', run.stderr);
+        throw new OpError(
+          'tool_failed',
+          `git_branch failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+        );
+      }
+      return { created: args.create };
+    }
+    const run = await runGit(ctx.env, ['branch', '--format=%(refname:short)'], gitEffectProvenance(inv, ctx, 'git_branch'));
+    if (run.exitCode !== 0) {
+      if (isNotARepo(run.stderr)) throw notARepoError('git_branch', run.stderr);
+      throw new OpError(
+        'tool_failed',
+        `git_branch failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    return { branches: run.stdout.split('\n').map((b) => b.trim()).filter((b) => b !== '') };
+  },
+};

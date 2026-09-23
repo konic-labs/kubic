@@ -45,7 +45,7 @@ async function booted() {
 }
 
 describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
-  it('boots with all nine tools active under solo defaults', async () => {
+  it('boots with all fifteen tools active under solo defaults', async () => {
     const { harness, lane } = await booted();
     const allowed = await applyToolPolicy(
       harness,
@@ -58,7 +58,13 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
         'bash',
         'edit',
         'find',
+        'git_branch',
+        'git_checkpoint',
+        'git_commit',
         'git_diff',
+        'git_log',
+        'git_show',
+        'git_stage',
         'git_status',
         'grep',
         'ls',

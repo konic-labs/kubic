@@ -48,23 +48,43 @@ export const writeOperation: Operation<WriteArgs, WriteResult> = {
   replay: 'never',
   validateArgs: validateWriteArgs,
   execute: async (_inv: ToolInvocation, args: WriteArgs, ctx: OpContext) => {
-    let beforeHash: string | null = null;
-    let beforeBytes = 0;
+    let before: string | null = null;
     try {
-      const prev = ctx.env.fs.readFile(args.path);
-      beforeHash = sha256Hex(prev);
-      beforeBytes = Buffer.byteLength(prev, 'utf8');
+      before = ctx.env.fs.readFile(args.path);
     } catch {
-      beforeHash = null;
+      before = null;
     }
+    const beforeHash = before === null ? null : sha256Hex(before);
+    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
     const tmp = `${args.path}.kubic-tmp`;
     ctx.env.fs.writeFile(tmp, args.content);
     ctx.env.fs.rename(tmp, args.path);
-    return {
+    const result = {
       path: args.path,
       beforeHash,
       afterHash: sha256Hex(args.content),
       bytesDelta: Buffer.byteLength(args.content, 'utf8') - beforeBytes,
     };
+    if (ctx.journal !== undefined) {
+      try {
+        ctx.journal.append({
+          path: args.path,
+          op: before === null ? 'create' : 'write',
+          before,
+          after: args.content,
+          bytesDelta: result.bytesDelta,
+          sessionId: ctx.sessionId,
+          agentId: ctx.agentId,
+          toolCallId: ctx.toolCallId ?? null,
+          timestamp: Date.now(),
+        });
+      } catch (error) {
+        throw new OpError(
+          'journal_failed',
+          `write applied but journal record failed: ${(error as Error).message}`,
+        );
+      }
+    }
+    return result;
   },
 };

@@ -110,7 +110,7 @@ export const editOperation: Operation<EditArgs, EditResult> = {
     const tmp = `${args.path}.kubic-tmp`;
     ctx.env.fs.writeFile(tmp, updated);
     ctx.env.fs.rename(tmp, args.path);
-    return {
+    const result = {
       path: args.path,
       replacements: found,
       beforeHash,
@@ -118,5 +118,26 @@ export const editOperation: Operation<EditArgs, EditResult> = {
       bytesDelta:
         Buffer.byteLength(updated, 'utf8') - Buffer.byteLength(current, 'utf8'),
     };
+    if (ctx.journal !== undefined) {
+      try {
+        ctx.journal.append({
+          path: args.path,
+          op: 'edit',
+          before: current,
+          after: updated,
+          bytesDelta: result.bytesDelta,
+          sessionId: ctx.sessionId,
+          agentId: ctx.agentId,
+          toolCallId: ctx.toolCallId ?? null,
+          timestamp: Date.now(),
+        });
+      } catch (error) {
+        throw new OpError(
+          'journal_failed',
+          `edit applied but journal record failed: ${(error as Error).message}`,
+        );
+      }
+    }
+    return result;
   },
 };

@@ -3,7 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
+  "type": "module",
   "description": "Kubic — model-agnostic terminal coding agent (Solo default, orchestrator opt-in)",
+  "bin": {
+    "kubic": "bin/kubic.js"
+  },
   "engines": {
     "node": ">=22.19"
   },
@@ -12,12 +16,14 @@
     "apps/*"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "kubic": "node ./bin/kubic.js",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs",
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs scripts/build-contract.test.mjs",
     "docs:check": "node scripts/check-docs-links.mjs",
     "test:mutation:vitest": "stryker run",
     "test:mutation:tap": "stryker run stryker.tap.conf.json",

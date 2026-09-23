@@ -1,7 +1,8 @@
+#!/usr/bin/env node
 // kubic CLI composition root: argv in, exit code out. All logic lives in
 // the packages; this file only wires.
 
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
@@ -19,18 +20,34 @@ import { runHeadlessPrompt } from './headless-run.js';
 
 // License identity (issue #59): version comes from this app's own
 // package.json; the license half of the line is owned by core/license.ts.
+// Walk up from this module: the src layout finds apps/kubic/package.json
+// at once, while the dist layout (dist/apps/kubic/src/main.js, issue #74)
+// has no sibling manifest, so the walk continues to the repo-root
+// package.json — both declare the same 0.0.0 version.
 function cliVersion(): string {
   // File access goes through the exec FileBridge (I/O confinement, §9):
   // the composition root never imports node:fs directly.
   try {
-    const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-    const pkg = JSON.parse(
-      createNodeFileBridge(appRoot).readTextFile('package.json'),
-    ) as { version?: unknown };
-    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let level = 0; level < 6; level++) {
+      try {
+        const pkg = JSON.parse(
+          createNodeFileBridge(dir).readTextFile('package.json'),
+        ) as { name?: unknown; version?: unknown };
+        if (pkg.name === 'kubic' && typeof pkg.version === 'string') {
+          return pkg.version;
+        }
+      } catch {
+        // No (or unreadable) manifest here — keep walking up.
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
   } catch {
-    return '0.0.0';
+    // Fall through to the default below.
   }
+  return '0.0.0';
 }
 
 async function main(argv: string[]): Promise<number> {

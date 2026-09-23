@@ -153,4 +153,17 @@ describe('runDoctorCommand', () => {
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('0 fail');
   });
+
+  it('throwing probe becomes a structured fail with exit 1', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeProviders = () => {
+      throw new Error('probe exploded');
+    };
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    const text = lines.join('\n');
+    expect(text).toContain('FAIL');
+    expect(text).toContain('probe exploded');
+  });
 });

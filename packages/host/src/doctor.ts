@@ -139,15 +139,48 @@ function policyCheck(raw: unknown): DoctorCheck {
   };
 }
 
+function probeMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function collectDoctorChecks(
   deps: DoctorDeps,
   skip: string[],
 ): DoctorCheck[] {
-  const checks: DoctorCheck[] = [
-    ...providerChecks(deps.probeProviders()),
-    ...depChecks(deps.checkDeps()),
-    policyCheck(deps.loadPolicy()),
-  ];
+  const checks: DoctorCheck[] = [];
+  try {
+    checks.push(...providerChecks(deps.probeProviders()));
+  } catch (error) {
+    checks.push({
+      id: 'provider:probe',
+      label: 'provider probe',
+      status: 'fail',
+      reason: 'provider-down',
+      detail: probeMessage(error),
+    });
+  }
+  try {
+    checks.push(...depChecks(deps.checkDeps()));
+  } catch (error) {
+    checks.push({
+      id: 'dep:check',
+      label: 'dep check',
+      status: 'fail',
+      reason: 'deps-missing',
+      detail: probeMessage(error),
+    });
+  }
+  try {
+    checks.push(policyCheck(deps.loadPolicy()));
+  } catch (error) {
+    checks.push({
+      id: 'policy:approvals',
+      label: 'policy approvals',
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: probeMessage(error),
+    });
+  }
   return checks.map((check) =>
     skip.includes(check.id)
       ? {

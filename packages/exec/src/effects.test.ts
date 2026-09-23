@@ -46,7 +46,9 @@ describe('toolCall machine + EffectGate + batch termination (issue #12, slice C)
 
   it('holds at effect_pending while tool_end.terminate is false', () => {
     const call = advanceToolCall(planned(), replay);
-    expect(advanceToolCall(call, end(false)).state).toBe('effect_pending');
+    const held = advanceToolCall(call, end(false));
+    expect(held.state).toBe('effect_pending');
+    expect(held).not.toBe(call);
   });
 
   it('rejects terminate from planned and any event on completed', () => {

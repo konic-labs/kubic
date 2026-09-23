@@ -55,7 +55,7 @@ export function advanceToolCall(call: ToolCall, event: ToolEvent): ToolCall {
   if (call.state === 'planned') {
     throw new Error(`tool ${call.id} is planned — replay before terminate`);
   }
-  if (!event.terminate) return call;
+  if (!event.terminate) return { ...call };
   return {
     ...call,
     state: call.state === 'effect_pending' ? 'outcome_ready' : 'completed',

@@ -139,6 +139,17 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
+  it('fails when tools import bare fs directly', () => {
+    const dir = fixtureTree({
+      'packages/host/src/policy.ts': `import { readFileSync } from 'fs';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some((v) => v.from === 'host'),
+      `expected host bare-fs violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
   it('allows test files to import node builtins for scaffolding', () => {
     const dir = fixtureTree({
       'packages/worker/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,

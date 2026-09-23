@@ -99,6 +99,10 @@ export interface ExecutionEnv {
 }
 
 function confine(cwd: string, path: string): string {
+  // Lexical guardrail only: resolve() defeats `..` and absolute escapes but
+  // does NOT resolve symlinks — a symlink inside the cwd can still point
+  // out. Acceptable: solo has no isolation (§3.7), this is an accidental-
+  // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
   if (abs !== cwd && !abs.startsWith(cwd + sep)) {
     throw new Error(`path escapes cwd confinement: ${path}`);
@@ -215,13 +219,19 @@ class NodeShell implements Shell {
         options.checkpointStore.record(options.checkpointKey, snapshot());
       }
     };
+    // A configured checkpoint store means this run wants durable recovery:
+    // every update requests a checkpoint and the store's own gate
+    // (≤2s, change-only) decides what is durable (§20.4).
+    const wantCheckpoint =
+      options.checkpointKey !== undefined &&
+      options.checkpointStore !== undefined;
     child.stdout?.on('data', (d: Buffer) => {
       stdout += d.toString();
-      emit(false);
+      emit(wantCheckpoint);
     });
     child.stderr?.on('data', (d: Buffer) => {
       stderr += d.toString();
-      emit(false);
+      emit(wantCheckpoint);
     });
     const done = new Promise<ShellResult>((resolveDone) => {
       child.on('close', (code) => {
@@ -300,7 +310,20 @@ export class FakeExecutionEnv implements ExecutionEnv {
     writeFile: (path: string, content: string) => {
       this.files.set(path, content);
     },
-    listDir: () => [...this.files.keys()],
+    // Prefix filter approximating directory listing (first segment under
+    // the path). Known divergence from Node semantics (no `.`/`..`
+    // resolution) — the fake is a hermetic stand-in, not a fs model.
+    listDir: (path: string) => {
+      const prefix =
+        path === '.' || path === '' ? '' : `${path.replace(/\/*$/, '')}/`;
+      const out = new Set<string>();
+      for (const key of this.files.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const seg = key.slice(prefix.length).split('/')[0];
+        if (seg) out.add(seg as string);
+      }
+      return [...out];
+    },
     stat: (path: string) => {
       const hit = this.files.get(path);
       if (hit === undefined) throw new Error(`fake fs: no such file: ${path}`);

@@ -142,6 +142,31 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
     expect(store.latest('run-1')?.stdout).toBe('done');
   });
 
+  it('node shell checkpoints mid-run while the process is still alive', async () => {
+    const { env } = makeNodeEnv();
+    const store = new MemoryCheckpointStore();
+    const handle = env.shell.spawn(
+      process.execPath,
+      [
+        '-e',
+        'process.stdout.write("part1");setTimeout(()=>process.stdout.write("part2"),500)',
+      ],
+      { provenance: PROV, checkpointKey: 'run-mid', checkpointStore: store },
+    );
+    let mid: ProcessSnapshot | undefined;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const hit = store.latest('run-mid');
+      if (hit && hit.exitCode === null) {
+        mid = hit;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await handle.wait();
+    expect(mid?.stdout).toContain('part1');
+  });
+
   it.runIf(process.platform !== 'win32')(
     'kill leaves no orphans in the process group',
     async () => {

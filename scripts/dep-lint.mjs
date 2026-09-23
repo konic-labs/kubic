@@ -83,8 +83,10 @@ export function checkTree(root) {
         if (
           (spec === 'node:fs' ||
             spec.startsWith('node:fs/') ||
+            spec === 'fs' ||
             spec === 'node:child_process' ||
-            spec.startsWith('node:child_process/')) &&
+            spec.startsWith('node:child_process/') ||
+            spec === 'child_process') &&
           owner !== 'exec' &&
           !file.endsWith('.test.ts')
         ) {

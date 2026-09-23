@@ -92,6 +92,10 @@ describe('diff placeholders (issue #25)', () => {
     expect(isBinaryText('plain text\n')).toBe(false);
   });
 
+  it('isBinaryText never throws on runtime undefined (returns false)', () => {
+    expect(isBinaryText(undefined as unknown as string)).toBe(false);
+  });
+
   it('binary either-side renders a placeholder and never throws', () => {
     const lines = renderDiffLines({ ...WRITE_EDIT, after: 'a\0b' });
     expect(lines.join('\n')).toContain('binary');

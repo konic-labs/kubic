@@ -35,7 +35,10 @@ export interface DiffRenderOptions {
 
 // Binary detection: journal blobs are text; a NUL byte means the
 // tool wrote binary content, which unified hunks must never split.
+// Total (never throws): non-string input at runtime (undefined/null
+// from a corrupt row) returns false instead of throwing in includes.
 export function isBinaryText(content: string): boolean {
+  if (typeof content !== 'string') return false;
   return content.includes('\0');
 }
 

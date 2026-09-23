@@ -17,8 +17,13 @@ export interface JournalFilter {
   readonly agent?: string;
 }
 
-// Same predicate the CLI applies in diffEntries: keep entries whose
-// path (resp. agentId) exactly equals the filter value, if given.
+// Post-aggregation filter over one FileChange per path (assumes the
+// caller passes already-aggregated rows, at most one entry per path).
+// NOTE: this diverges from CLI diffEntries (exec journal-diff.ts),
+// which filters raw journal rows BEFORE aggregation: a path with
+// mixed-agent history keeps only matching rows there, while here the
+// agent predicate tests the aggregated row's last-agentId. Same exact-
+// match predicate otherwise: path (resp. agentId) equals the filter.
 export function filterJournalChanges(
   changes: ReadonlyArray<DiffFileChange>,
   filter: JournalFilter,

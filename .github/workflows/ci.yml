@@ -20,4 +20,5 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run lint:deps
+      - run: npm run check:pi
       - run: npx biome ci .

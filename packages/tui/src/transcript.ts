@@ -46,12 +46,27 @@ const TRANSCRIPT_THEME = {
   underline: identity,
 };
 
+export interface TranscriptSnapshotOp {
+  readonly op: 'snapshot';
+  readonly laneId: string;
+  readonly cells: ReadonlyArray<TranscriptEntry>;
+  readonly revision: number;
+}
+
+export interface TranscriptDeltaOp {
+  readonly op: 'delta';
+  readonly delta: TranscriptDelta;
+}
+
+export type TranscriptOp = TranscriptSnapshotOp | TranscriptDeltaOp;
+
 export interface TranscriptView {
   readonly component: Component;
   readonly scroll: ScrollView;
   readonly rebuilds: number;
   readonly isPinned: boolean;
   readonly scrollTop: number;
+  readonly writeLog: ReadonlyArray<TranscriptOp>;
   appendDelta(delta: TranscriptDelta): void;
   applyLaneSnapshot(
     lane: LaneSnapshot,
@@ -71,11 +86,15 @@ export function createTranscriptView(): TranscriptView {
     primary: true,
     overscroll: 'chain',
   });
-  const entries: Array<{ id: string; kind: TranscriptEntryKind; markdown: string }> =
-    [];
+  const entries: Array<{
+    id: string;
+    kind: TranscriptEntryKind;
+    markdown: string;
+  }> = [];
   let rebuilds = 0;
   let laneId: string | undefined;
   let revision = -1;
+  const log: Array<TranscriptOp> = [];
   const paint = (): void => {
     document.setText(entries.map((entry) => entry.markdown).join('\n'));
     rebuilds += 1;
@@ -91,6 +110,9 @@ export function createTranscriptView(): TranscriptView {
     },
     get scrollTop(): number {
       return scroll.scrollTop;
+    },
+    get writeLog(): ReadonlyArray<TranscriptOp> {
+      return log;
     },
     updateLayout(contentHeight: number, viewportHeight: number): void {
       scroll.updateLayout(contentHeight, viewportHeight, () => {});
@@ -112,6 +134,10 @@ export function createTranscriptView(): TranscriptView {
       } else {
         found.markdown += delta.append;
       }
+      log.push({
+        op: 'delta',
+        delta: { id: delta.id, kind: delta.kind, append: delta.append },
+      });
       paint();
     },
     applyLaneSnapshot(
@@ -127,10 +153,34 @@ export function createTranscriptView(): TranscriptView {
       for (const cell of cells) {
         entries.push({ id: cell.id, kind: cell.kind, markdown: cell.markdown });
       }
+      log.push({
+        op: 'snapshot',
+        laneId: lane.laneId,
+        cells: cells.map((cell) => ({
+          id: cell.id,
+          kind: cell.kind,
+          markdown: cell.markdown,
+        })),
+        revision: next,
+      });
       paint();
     },
     render(width: number): string[] {
       return scroll.render(width);
     },
   };
+}
+
+export function replayTranscript(
+  ops: ReadonlyArray<TranscriptOp>,
+): TranscriptView {
+  const view = createTranscriptView();
+  for (const op of ops) {
+    if (op.op === 'delta') {
+      view.appendDelta(op.delta);
+    } else {
+      view.applyLaneSnapshot({ laneId: op.laneId }, op.cells, op.revision);
+    }
+  }
+  return view;
 }

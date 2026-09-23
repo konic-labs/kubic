@@ -44,7 +44,8 @@ export async function replaceWorker(
   request: ReplaceRequest,
   deps: ReplaceDeps,
 ): Promise<ReplaceOutcome> {
-  await deps.terminate(request.workerId);
+  // The expected generation is validated BEFORE terminate: a stale
+  // request must never kill the live worker and then throw.
   const generation = deps.allocateGeneration(request.sessionId);
   if (generation <= request.oldGeneration) {
     throw new StaleGenerationError(
@@ -53,6 +54,7 @@ export async function replaceWorker(
       generation,
     );
   }
+  await deps.terminate(request.workerId);
   const lane = await deps.openSession(request.sessionId);
   const resumed = await deps.resumeLane(lane);
   return {

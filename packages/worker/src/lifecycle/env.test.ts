@@ -30,11 +30,11 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     const out = buildSpawnEnv(
       { PATH: '/bin', PARENT_TOKEN: 'nope' },
       'reviewer',
-      { KUBIC_ROLE_TOKEN: 'role-secret' },
+      { token: 'role-secret' },
     );
     expect(out).toEqual({
       PATH: '/bin',
-      KUBIC_ROLE_TOKEN: 'role-secret',
+      KUBIC_ROLE_REVIEWER_TOKEN: 'role-secret',
     });
   });
 
@@ -52,5 +52,29 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
       KUBIC_ROLE_TOKEN: 'shh',
     });
     expect(redacted).toEqual({ PATH: '/bin', KUBIC_ROLE_TOKEN: '<redacted>' });
+  });
+
+  it('redacts every grant-derived key by provenance, not suffix', () => {
+    const spawned = buildSpawnEnv({ PATH: '/bin' }, 'reviewer', {
+      session: 's3cr3t-value',
+    });
+    expect(spawned.KUBIC_ROLE_REVIEWER_SESSION).toBe('s3cr3t-value');
+    const redacted = redactEnvForLog(spawned);
+    expect(redacted.KUBIC_ROLE_REVIEWER_SESSION).toBe('<redacted>');
+    expect(redacted.PATH).toBe('/bin');
+  });
+
+  it('refuses KUBIC_-prefixed grant keys instead of minting child env', () => {
+    expect(() =>
+      buildSpawnEnv({ PATH: '/bin' }, 'reviewer', {
+        KUBIC_INJECTED: 'evil',
+      }),
+    ).toThrow(/KUBIC_INJECTED/);
+  });
+
+  it('refuses sibling-impersonating grant keys instead of passing them through', () => {
+    expect(() =>
+      roleCredentialEnv('reviewer', { KUBIC_ROLE_OTHER_TOKEN: 'x' }),
+    ).toThrow(/KUBIC_ROLE_OTHER_TOKEN/);
   });
 });

@@ -3,7 +3,7 @@
 // resume without repeating the approved effect (memoOnce dedupe).
 import { describe, expect, it } from 'vitest';
 import { MemoryMemoStore } from '../ops/memos.js';
-import { replaceWorker } from './replace.js';
+import { replaceWorker, StaleGenerationError } from './replace.js';
 
 describe('replaceWorker (issue #42)', () => {
   it('bumps the generation and resumes the lane from the opened session', async () => {
@@ -66,5 +66,31 @@ describe('replaceWorker (issue #42)', () => {
         },
       ),
     ).rejects.toThrow(/generation/i);
+  });
+
+  it('stale replace leaves the live worker untouched and throws StaleGenerationError', async () => {
+    const calls: string[] = [];
+    await expect(
+      replaceWorker(
+        { workerId: 'w-1', sessionId: 's-1', oldGeneration: 1 },
+        {
+          allocateGeneration: () => 1,
+          openSession: async (sessionId: string) => {
+            calls.push(`open:${sessionId}`);
+            return { laneId: 'main' };
+          },
+          resumeLane: async (lane: { laneId: string }) => {
+            calls.push(`resume:${lane.laneId}`);
+            return { resumed: true };
+          },
+          terminate: async (workerId: string) => {
+            calls.push(`terminate:${workerId}`);
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(StaleGenerationError);
+    // Generation is validated BEFORE terminate: the live proc is never
+    // killed, the session never opened, the lane never resumed.
+    expect(calls).toEqual([]);
   });
 });

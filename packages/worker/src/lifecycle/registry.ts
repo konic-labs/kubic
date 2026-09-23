@@ -3,6 +3,7 @@
 // network, clock injected so age is deterministic in tests.
 
 import type { TaskResources } from '../../../agents/src/task.js';
+import { StaleGenerationError } from './replace.js';
 import type { WorkerStatus } from './status.js';
 
 export interface WorkerRegistration {
@@ -63,10 +64,23 @@ export class WorkerRegistry {
     return this.rowOf(entry);
   }
 
-  replace(workerId: string): WorkerRow {
+  replace(workerId: string, expectedGeneration?: number): WorkerRow {
     const entry = this.entries.get(workerId);
     if (entry === undefined) {
       throw new Error(`unknown worker: ${workerId}`);
+    }
+    // Compare-and-swap: a stale replacer names a generation that is no
+    // longer live. Refuse without touching the row — no bump, no reset —
+    // so the live worker survives the stale request.
+    if (
+      expectedGeneration !== undefined &&
+      entry.generation !== expectedGeneration
+    ) {
+      throw new StaleGenerationError(
+        entry.sessionId,
+        expectedGeneration,
+        entry.generation,
+      );
     }
     entry.generation += 1;
     entry.status = 'created';

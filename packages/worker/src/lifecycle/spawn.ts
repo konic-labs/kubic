@@ -11,7 +11,8 @@ import type {
   Provenance,
   SpawnOptions,
 } from '../../../exec/src/env.js';
-import { buildSpawnEnv } from './env.js';
+import { buildSpawnEnv, redactEnvForLog } from './env.js';
+import { StaleGenerationError } from './replace.js';
 import type { WorkerStatus } from './status.js';
 
 export const READY_PREFIX = 'KUBIC_WORKER_READY';
@@ -48,6 +49,13 @@ export interface SpawnWorkerRequest {
 export interface SpawnWorkerDeps {
   clock?: () => number;
   onStartup?: (startupMs: number) => void;
+  // Live generation for request.sessionId, when the caller tracks one
+  // (e.g. the WorkerRegistry row). A request naming an older generation
+  // is stale and refused before any side effect.
+  getLiveGeneration?: (sessionId: string) => number | undefined;
+  // Receives the redacted spawn debug line (see spawnDebugLine): secrets
+  // are redacted by default, so wiring this to §50 output is safe.
+  onDebug?: (line: string) => void;
 }
 
 export class SpawnFailedError extends Error {
@@ -59,8 +67,13 @@ export class SpawnFailedError extends Error {
 
 export interface SpawnedWorker {
   workerId: string;
+  sessionId: string;
+  generation: number;
   pid: number | undefined;
   status: WorkerStatus;
+  // Redacted-for-log view of the child env (redactEnvForLog): keys stay
+  // for debugging, secret values never do. The plaintext env reaches only
+  // the exec Shell seam in spawn options — never this handle.
   env: Record<string, string>;
   startedAtMs: number;
   startupMs: number | undefined;
@@ -69,6 +82,24 @@ export interface SpawnedWorker {
   kill: () => void;
 }
 
+// The spawn debug line (§50 vocabulary): worker identity plus the child
+// env with secrets redacted. Redaction is the default here — callers get
+// no accessor to the plaintext grant, which lives only in the Shell seam.
+export function spawnDebugLine(args: {
+  workerId: string;
+  sessionId: string;
+  generation: number;
+  pid: number | undefined;
+  env: Record<string, string>;
+}): string {
+  const redacted = redactEnvForLog(args.env);
+  const pid = args.pid === undefined ? '-' : String(args.pid);
+  const envJson = JSON.stringify(redacted);
+  return `[worker] spawn id=${args.workerId} session=${args.sessionId} gen=${String(args.generation)} pid=${pid} env=${envJson}`;
+}
+
+export { StaleGenerationError };
+
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 
 export function spawnWorker(
@@ -76,6 +107,12 @@ export function spawnWorker(
   request: SpawnWorkerRequest,
   deps?: SpawnWorkerDeps,
 ): SpawnedWorker {
+  // A pre-replace generation must never spawn over a live worker: refuse
+  // before any side effect (no env build, no shell spawn).
+  const live = deps?.getLiveGeneration?.(request.sessionId);
+  if (live !== undefined && request.generation < live) {
+    throw new StaleGenerationError(request.sessionId, live, request.generation);
+  }
   const clock = deps?.clock ?? Date.now;
   const startedAtMs = clock();
   const env = buildSpawnEnv(
@@ -86,9 +123,11 @@ export function spawnWorker(
   const marker = readyMarker(request.workerId);
   const worker: SpawnedWorker = {
     workerId: request.workerId,
+    sessionId: request.sessionId,
+    generation: request.generation,
     pid: undefined,
     status: 'spawning',
-    env,
+    env: redactEnvForLog(env),
     startedAtMs,
     startupMs: undefined,
     ready: Promise.resolve(),
@@ -160,6 +199,15 @@ export function spawnWorker(
     return worker;
   }
   worker.pid = handle.pid;
+  deps?.onDebug?.(
+    spawnDebugLine({
+      workerId: request.workerId,
+      sessionId: request.sessionId,
+      generation: request.generation,
+      pid: worker.pid,
+      env,
+    }),
+  );
   worker.kill = () => handle.kill();
   worker.wait = async () => {
     const result = await handle.wait();

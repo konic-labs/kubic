@@ -24,6 +24,11 @@ const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
 
 function isSecretKey(key: string): boolean {
   const upper = key.toUpperCase();
+  // Grant-derived keys are secrets by provenance: every roleCredentialEnv
+  // output lives under KUBIC_ROLE_<ROLE>_, so redact the whole namespace
+  // instead of guessing from the suffix (a grant named `session` carries
+  // a secret but matches no SECRET_SUFFIXES entry).
+  if (upper.startsWith('KUBIC_ROLE_')) return true;
   return SECRET_SUFFIXES.some(
     (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
   );
@@ -48,9 +53,10 @@ export function roleCredentialEnv(
   const prefix = `KUBIC_ROLE_${role.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_`;
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(grant)) {
-    if (key.startsWith(KUBIC_PREFIX)) {
-      out[key] = value;
-      continue;
+    if (key.toUpperCase().startsWith(KUBIC_PREFIX)) {
+      throw new Error(
+        `refusing KUBIC_-prefixed grant key for role ${role}: ${key}`,
+      );
     }
     const name = key.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
     out[`${prefix}${name}`] = value;

@@ -39,6 +39,22 @@ describe('worker registry (issue #42)', () => {
     expect(reg.get('w-1')?.generation).toBe(2);
   });
 
+  it('replace with a wrong expected generation refuses without bumping', () => {
+    const { reg } = registry();
+    reg.register({
+      workerId: 'w-1',
+      sessionId: 's-1',
+      generation: 1,
+      owner: 'parent-session',
+    });
+    expect(() => reg.replace('w-1', 99)).toThrow(/generation/i);
+    // CAS refusal leaves the live row untouched: no bump, no reset.
+    expect(reg.get('w-1')?.generation).toBe(1);
+    expect(reg.get('w-1')?.status).toBe('created');
+    // Matching expectation still bumps.
+    expect(reg.replace('w-1', 1).generation).toBe(2);
+  });
+
   it('lists rows carrying age/owner/resources for `kubic workers`', () => {
     const { reg, advance } = registry();
     reg.register({

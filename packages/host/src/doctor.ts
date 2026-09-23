@@ -7,6 +7,9 @@
 // goes through the exec FileBridge — this module never imports node:fs.
 
 import { CAPABILITIES, validatePolicy } from './approvals.js';
+// Issue #58 honest limits (§59.1): registration import only — no
+// existing line in this file was modified for #58.
+import { collectLimitChecksFromDeps } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = 0;
 export const DOCTOR_EXIT_FAIL = 1;
@@ -182,6 +185,11 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  // Issue #58 honest limits (§59.1): registration only — the limit
+  // checks ride the same --skip and exit path as #29. The builder is
+  // total (a throwing probe becomes a failing check), so these lines
+  // cannot break the doctor command.
+  checks.push(...collectLimitChecksFromDeps(deps));
   return checks.map((check) =>
     skip.includes(check.id)
       ? {

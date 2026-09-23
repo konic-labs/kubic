@@ -1,7 +1,7 @@
 // kubic doctor (issue #29; §41.4, §50): providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -54,6 +54,16 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
+      // Issue #58 honest-limits registration rides the same command.
+      'limit:solo-no-isolation',
+      'limit:worktrees-writers-only',
+      'limit:no-injection-prevention',
+      'limit:policy-offer',
+      'limit:journal-not-backup',
+      'limit:no-third-party-mcp',
+      'limit:provider-availability',
+      'limit:deps-present',
+      'policy:enforceability',
     ]);
     const text = textLines.join('\n');
     for (const check of report.checks) {
@@ -135,6 +145,21 @@ describe('runDoctorCommand', () => {
 
   it('main.ts-style wiring (assembled providers + node dep) passes clean', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'doctor-'));
+    // A provider must exist for a clean run: with zero providers the
+    // honest-limits aggregate (issue #58) fails missing-provider.
+    writeFileSync(
+      join(dir, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            baseUrl: 'http://127.0.0.1:11434',
+            api: 'openai-completions',
+            models: [{ id: 'llama3' }],
+          },
+        ],
+      }),
+    );
     const assembled = assembleModels(dir);
     const lines: string[] = [];
     const code = await runDoctorCommand([], {

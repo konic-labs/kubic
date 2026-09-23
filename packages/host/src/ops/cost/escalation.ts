@@ -13,8 +13,8 @@ export interface CostEscalationRecord {
 }
 
 export interface CostLadder {
-  steps: string[];
-  record: CostEscalationRecord[];
+  readonly steps: readonly string[];
+  readonly record: readonly CostEscalationRecord[];
 }
 
 export class CostEscalationError extends Error {
@@ -28,7 +28,10 @@ export function createCostLadder(steps: string[]): CostLadder {
   if (steps.length === 0) {
     throw new CostEscalationError('cost ladder must not be empty');
   }
-  return { steps: [...steps], record: [] };
+  return {
+    steps: Object.freeze([...steps]),
+    record: Object.freeze([] as CostEscalationRecord[]),
+  };
 }
 
 export function escalateCost(
@@ -49,7 +52,9 @@ export function escalateCost(
       `escalation is one-way ('${from}' → '${to}' refused): de-escalation needs a new agent/session`,
     );
   }
-  ladder.record.push({ from, to, reason, at: Date.now() });
+  const entry: CostEscalationRecord = { from, to, reason, at: Date.now() };
+  (ladder as { record: readonly CostEscalationRecord[] }).record =
+    Object.freeze([...ladder.record, entry]);
   return { to };
 }
 
@@ -62,9 +67,11 @@ export function compareEscalationValue(input: {
   cheapCost: number;
   expensiveWinCost: number;
 }): 'escalate' | 'stay' {
+  // Three cheap failures escalate on their own: cheapBurn is
+  // cheapFails * cheapCost, so comparing the burn against 3x the cheap
+  // cost restates the count check. Keep the count check only.
+  if (input.cheapFails >= 3) return 'escalate';
   const cheapBurn = input.cheapFails * input.cheapCost;
-  if (input.cheapFails >= 3 && cheapBurn >= input.cheapCost * 3)
-    return 'escalate';
   if (cheapBurn >= input.expensiveWinCost) return 'escalate';
   return 'stay';
 }

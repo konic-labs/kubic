@@ -40,6 +40,11 @@ export function canRetry(ledger: RetryLedger): boolean {
 }
 
 export function chargeRetry(ledger: RetryLedger, costUsd: number): void {
+  if (!Number.isFinite(costUsd) || costUsd < 0) {
+    throw new RetryBudgetError(
+      `invalid retry charge ${costUsd}: cost must be a finite non-negative number`,
+    );
+  }
   if (!canRetry(ledger)) {
     throw new RetryBudgetError(
       'retry budget exhausted: refusing further retries',

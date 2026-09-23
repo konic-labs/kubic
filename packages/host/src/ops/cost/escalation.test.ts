@@ -40,4 +40,53 @@ describe('escalation discipline (issue #56)', () => {
       }),
     ).toBe('stay');
   });
+
+  it('freezes the ladder: hostile reorder cannot fake de-escalation', () => {
+    const ladder = createCostLadder(['cheap', 'mid', 'expensive']);
+    expect(Object.isFrozen(ladder.steps)).toBe(true);
+    expect(Object.isFrozen(ladder.record)).toBe(true);
+    const before = [...ladder.steps];
+    try {
+      (ladder.steps as unknown as string[]).splice(
+        0,
+        3,
+        'expensive',
+        'mid',
+        'cheap',
+      );
+    } catch {
+      // Frozen: strict-mode mutation throws. Either way the ladder must not change.
+    }
+    expect([...ladder.steps]).toEqual(before);
+    expect(() => escalateCost(ladder, 'mid', 'cheap', 'save money')).toThrow(
+      /one-way/,
+    );
+  });
+
+  it('keeps the escalation record frozen across escalations', () => {
+    const ladder = createCostLadder(['cheap', 'mid']);
+    escalateCost(ladder, 'cheap', 'mid', 'stuck on tests');
+    expect(ladder.record).toHaveLength(1);
+    expect(Object.isFrozen(ladder.record)).toBe(true);
+  });
+
+  it('escalates on 3 cheap fails even when the burn is below the expensive win', () => {
+    expect(
+      compareEscalationValue({
+        cheapFails: 3,
+        cheapCost: 0.01,
+        expensiveWinCost: 10,
+      }),
+    ).toBe('escalate');
+  });
+
+  it('stays below 3 fails when the burn is below the expensive win', () => {
+    expect(
+      compareEscalationValue({
+        cheapFails: 2,
+        cheapCost: 0.01,
+        expensiveWinCost: 10,
+      }),
+    ).toBe('stay');
+  });
 });

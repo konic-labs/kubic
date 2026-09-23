@@ -32,4 +32,29 @@ describe('retry discipline on a separate budget (issue #56)', () => {
     chargeRetry(ledger, 0.2);
     expect(canRetry(ledger)).toBe(false);
   });
+
+  it('rejects negative retry charges: the ledger never goes backwards', () => {
+    const ledger = createRetryLedger({ maxAttempts: 3, maxCostUsd: 1 });
+    expect(() => chargeRetry(ledger, -0.1)).toThrow(/finite non-negative/);
+    expect(ledger.attempts).toBe(0);
+    expect(ledger.spentUsd).toBe(0);
+    expect(canRetry(ledger)).toBe(true);
+  });
+
+  it('rejects NaN retry charges: NaN never poisons the ledger', () => {
+    const ledger = createRetryLedger({ maxAttempts: 3, maxCostUsd: 1 });
+    expect(() => chargeRetry(ledger, Number.NaN)).toThrow(
+      /finite non-negative/,
+    );
+    expect(ledger.attempts).toBe(0);
+    expect(ledger.spentUsd).toBe(0);
+    expect(canRetry(ledger)).toBe(true);
+  });
+
+  it('accepts a zero-cost retry charge', () => {
+    const ledger = createRetryLedger({ maxAttempts: 3, maxCostUsd: 1 });
+    chargeRetry(ledger, 0);
+    expect(ledger.attempts).toBe(1);
+    expect(ledger.spentUsd).toBe(0);
+  });
 });

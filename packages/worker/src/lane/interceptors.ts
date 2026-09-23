@@ -41,7 +41,25 @@ export interface PolicyInterceptorOptions {
   shell?: ShellLevel;
   network?: NetworkLevel;
   isDestructive?: (command: string, workspace: string) => boolean;
+  // Approval decider (issue #16, owned by the host). Consulted for every
+  // call after the budget gate: denials block; approvals let the call
+  // through. Only challenged approvals (a real capability was raised and
+  // granted) stand down the destructive/network/confine guards for that
+  // exact toolCallId — an unchallenged fast-path keeps every guard up.
+  // The type lives here (not in host) because the worker cannot import
+  // host; the host adapts its ApprovalService to it.
+  approve?: (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 }
+
+export interface ApprovalCall {
+  toolName: string;
+  args: Record<string, JsonValue>;
+  toolCallId: string;
+}
+
+export type ApprovalAskVerdict =
+  | { approved: true; challenged: boolean }
+  | { approved: false; reason: string };
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
@@ -195,6 +213,21 @@ export function registerPolicyInterceptors(
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
+  // Tool calls a real challenge cleared. Guards below stand down for
+  // exactly these ids — never by tool name or pattern. Unchallenged
+  // fast-path calls never enter this set, so #15 guards stay up for them.
+  // Capped FIFO: harness toolCallIds are unique per call, but an
+  // unbounded set across a long lane lifetime is a leak; eviction only
+  // drops stale ids whose calls already ran.
+  const approvedCalls = new Map<string, number>();
+  const APPROVED_CALLS_CAP = 512;
+  const markApproved = (toolCallId: string): void => {
+    approvedCalls.set(toolCallId, Date.now());
+    if (approvedCalls.size > APPROVED_CALLS_CAP) {
+      const oldest = approvedCalls.keys().next();
+      if (!oldest.done) approvedCalls.delete(oldest.value);
+    }
+  };
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
   let triggered = false;
@@ -227,12 +260,29 @@ export function registerPolicyInterceptors(
 
   off.push(
     hooks.on('before_tool', (event) =>
+      failClosed(async () => {
+        if (options.approve === undefined) return undefined;
+        const verdict = await options.approve({
+          toolName: event.toolName,
+          args: event.args,
+          toolCallId: event.toolCallId,
+        });
+        if (verdict.approved) {
+          if (verdict.challenged) markApproved(event.toolCallId);
+          return undefined;
+        }
+        return block(`not approved: ${verdict.reason}`);
+      }),
+    ),
+  );
+
+  off.push(
+    hooks.on('before_tool', (event) =>
       failClosed(() => {
+        if (approvedCalls.has(event.toolCallId)) return undefined;
         if (event.toolName !== 'bash') return undefined;
         const command =
-          typeof event.args['command'] === 'string'
-            ? event.args['command']
-            : '';
+          typeof event.args.command === 'string' ? event.args.command : '';
         if (isDestructive(command, options.workspace)) {
           return block(`destructive command blocked: ${command}`);
         }
@@ -251,6 +301,7 @@ export function registerPolicyInterceptors(
   off.push(
     hooks.on('before_tool', (event) =>
       failClosed(() => {
+        if (approvedCalls.has(event.toolCallId)) return undefined;
         const confined = confineArgs(
           event.toolName,
           event.args,

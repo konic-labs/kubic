@@ -10,7 +10,6 @@ import {
   fauxProvider,
   fauxToolCall,
   MemorySessionRepo,
-  type Session,
 } from '../pi-boundary.js';
 import { bootSoloLane, driveToSettled } from './solo.js';
 import {

@@ -14,6 +14,7 @@ import {
   SessionAttachError,
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
+import { enableFullAccess, FileApprovalStore } from './approvals.js';
 
 export interface SessionsCommandDeps {
   sessionsRoot?: string;
@@ -26,7 +27,7 @@ export function defaultSessionsRoot(): string {
 
 function usage(out: (line: string) => void): number {
   out(
-    'usage: kubic sessions <create [--cwd <path>] | list | attach <id> [--tail <n>]>',
+    'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>]>',
   );
   return 1;
 }
@@ -54,6 +55,19 @@ export async function runSessionsCommand(
     const id = session.metadata.id;
     await session.close(BACKGROUND_CONTEXT);
     deps.out(id);
+    // Session-scoped full-access: recorded in the session dir (posture.json)
+    // and indicated on stdout. Fresh sessions start safe — the flag must be
+    // passed explicitly every time.
+    if (rest.includes('--dangerously-skip-approvals')) {
+      const approvalStore = new FileApprovalStore(join(root, id));
+      const posture = enableFullAccess(
+        approvalStore,
+        'cli --dangerously-skip-approvals',
+      );
+      deps.out(
+        `warning: full-access approvals skipped (recorded ${posture.enabledAt})`,
+      );
+    }
     return 0;
   }
   if (sub === 'list') {
@@ -67,6 +81,10 @@ export async function runSessionsCommand(
     const id = rest[0];
     if (id === undefined) {
       deps.out('error: attach needs a session id');
+      return 1;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+      deps.out('error: invalid session id');
       return 1;
     }
     let tail = 10;
@@ -84,6 +102,12 @@ export async function runSessionsCommand(
       try {
         deps.out(
           `session ${session.metadata.id}  cwd=${session.metadata.cwd ?? '(none)'}`,
+        );
+        const posture = new FileApprovalStore(join(root, id)).loadPosture();
+        deps.out(
+          posture.fullAccess
+            ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
+            : 'posture: approvals enforced',
         );
         const entries = await session.findEntries(
           undefined,

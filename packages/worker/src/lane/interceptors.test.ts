@@ -121,7 +121,7 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(ends).toHaveLength(1);
     // The second interceptor saw the confined args (chaining), and the tool ran confined.
     expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.['path']).toBe('/work/etc/passwd');
+    expect(seenBySecond[0]?.path).toBe('/work/etc/passwd');
     const end = ends[0];
     if (end.type !== 'tool_end') throw new Error('unreachable');
     expect(JSON.stringify(end.result)).toContain('/work/etc/passwd');
@@ -140,7 +140,7 @@ describe('policy interceptors (issue #15, slice C)', () => {
     const ends = await driveToolEnds(booted);
     expect(ends).toHaveLength(1);
     expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.['path']).toBe('/work/etc/cron.d/x');
+    expect(seenBySecond[0]?.path).toBe('/work/etc/cron.d/x');
     expect(JSON.stringify(ends[0])).not.toContain('/etc/cron.d/x",');
   });
 
@@ -163,6 +163,44 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(JSON.stringify(allowedEnds[0])).not.toContain(
       'network command blocked',
     );
+  });
+
+  it('denies through the approval decider and stands down guards only when challenged', async () => {
+    const denied = await boot([
+      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+    ]);
+    registerPolicyInterceptors(denied.harness.hooks, {
+      workspace: '/work',
+      approve: () =>
+        Promise.resolve({ approved: false, reason: 'user said no' }),
+    });
+    const deniedEnds = await driveToolEnds(denied);
+    expect(JSON.stringify(deniedEnds[0])).toContain(
+      'not approved: user said no',
+    );
+
+    // Challenged + granted: the destructive guard stands down and the call runs.
+    const challenged = await boot([
+      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+    ]);
+    registerPolicyInterceptors(challenged.harness.hooks, {
+      workspace: '/work',
+      approve: () => Promise.resolve({ approved: true, challenged: true }),
+    });
+    const challengedEnds = await driveToolEnds(challenged);
+    expect(challengedEnds).toHaveLength(1);
+    expect(JSON.stringify(challengedEnds[0])).not.toContain('blocked');
+
+    // Unchallenged fast-path: approved, but every #15 guard stays up — the
+    // outside read is still confined.
+    const fast = await boot([{ name: 'read', args: { path: '/etc/passwd' } }]);
+    registerPolicyInterceptors(fast.harness.hooks, {
+      workspace: '/work',
+      approve: () => Promise.resolve({ approved: true, challenged: false }),
+    });
+    const fastEnds = await driveToolEnds(fast);
+    expect(fastEnds).toHaveLength(1);
+    expect(JSON.stringify(fastEnds[0])).toContain('/work/etc/passwd');
   });
 
   it('counts blocked attempts against the budget', async () => {

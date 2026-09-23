@@ -24,11 +24,13 @@ export interface LayoutSlots {
 }
 
 export function buildLayoutRoot(slots: LayoutSlots): VStack {
-  const narrow = (viewport: Viewport): boolean =>
+  // The tree hides below 80 columns; Pi's Stack consults `visible` per
+  // viewport at render time (proven by the narrow snapshot test).
+  const treeVisible = (viewport: Viewport): boolean =>
     viewport.width >= NARROW_COLUMNS;
   return new VStack(
     [
-      { component: slots.tree, basis: 12, shrink: 0, visible: narrow },
+      { component: slots.tree, basis: 12, shrink: 0, visible: treeVisible },
       { component: slots.transcript, grow: 1, shrink: 1, minSize: 3 },
       { component: slots.status, basis: 2, shrink: 0 },
       { component: slots.editor, basis: 'auto', shrink: 0 },

@@ -368,6 +368,11 @@ export function forkSessionConfig(snapshot: SessionSnapshot): SessionConfig {
     config.resources = copyResources(snapshot.resources);
   }
   if (snapshot.budget !== undefined) {
+    // Fail closed on a malformed budget (parity with spawnAgent): a
+    // non-object budget must reject the fork, never spread into garbage.
+    if (!isObject(snapshot.budget)) {
+      throw new Error('budget must be an object when configured (§71)');
+    }
     config.budget = copyBudget(snapshot.budget);
   }
   return config;

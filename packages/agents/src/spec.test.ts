@@ -335,6 +335,14 @@ describe('fork semantics + child isolation (issue #41, §22.3 + §23 + §24)', (
     });
   });
 
+  it('fork rejects a non-object budget fail-closed (parity with spawnAgent)', () => {
+    const parent: SessionSnapshot = {
+      ...parentSnapshot(),
+      budget: 'x' as unknown as SessionSnapshot['budget'],
+    };
+    expect(() => forkSessionConfig(parent)).toThrow(/budget/);
+  });
+
   it('specKeyOf carries the (sessionId, generation) key', () => {
     expect(specKeyOf(validSpec())).toEqual({
       sessionId: 'child-1',

@@ -35,6 +35,18 @@ describe('budget (issue #9, §71)', () => {
     expect(createBudget(partial)).toEqual(partial);
   });
 
+  it('createBudget deep-copies retryBudget so the caller object is not aliased', () => {
+    const partial: AgentBudget = {
+      maxTokens: 100,
+      retryBudget: { maxAttempts: 3, maxCostUsd: 1 },
+    };
+    const budget = createBudget(partial);
+    if (budget.retryBudget !== undefined) {
+      budget.retryBudget.maxAttempts = 99;
+    }
+    expect(partial.retryBudget).toEqual({ maxAttempts: 3, maxCostUsd: 1 });
+  });
+
   it('ownership map covers all five §71 rows and nothing else', () => {
     expect([...BUDGET_LIMITS].sort()).toEqual([
       'cost',

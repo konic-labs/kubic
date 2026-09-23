@@ -6,7 +6,7 @@
 // adds an entry without checking the bounds first.
 
 import { createHash } from 'node:crypto';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createNodeFileBridge } from './file-bridge.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -517,6 +517,24 @@ export type RestoreResult =
   | { restored: true }
   | { restored: false; reason: string };
 
+// True when any existing component of target's parent chain (up to but
+// excluding root) is a symlink. Missing components cannot be symlinks.
+function hasSymlinkParent(target: string, root: string): boolean {
+  const bridge = createNodeFileBridge('/');
+  let dir = dirname(target);
+  const stop = resolve(root);
+  while (dir.startsWith(stop + sep) || dir === stop) {
+    if (dir === stop) return false;
+    try {
+      if (bridge.fileInfo(dir).isSymbolicLink) return true;
+    } catch {
+      return false;
+    }
+    dir = dirname(dir);
+  }
+  return false;
+}
+
 // Undo primitive for the next issue's CLI: writes the recorded
 // before-content back. Entries without before-content (unattributed
 // reconciliation finds) are reported non-reversible — never guessed.
@@ -536,10 +554,20 @@ export function restoreEntry(
   }
   const target = resolve(root, entry.path);
   const rel = relative(root, target);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+  if (rel === '' || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) {
     return {
       restored: false,
       reason: `entry path escapes the workspace root: ${entry.path}`,
+    };
+  }
+  // Lexical containment is not enough: a symlinked directory inside the
+  // root would redirect the write outside. Refuse symlink parents.
+  // (Check-then-write races against a local attacker swapping links
+  // mid-restore are out of scope: the journal is a local recovery tool.)
+  if (hasSymlinkParent(target, root)) {
+    return {
+      restored: false,
+      reason: `entry path crosses a symlink: ${entry.path}`,
     };
   }
   try {

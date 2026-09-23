@@ -1,6 +1,6 @@
 // Slice D: lane journal wiring + durable next-day undo (issue #17; §42.4).
 // RED: SoloBootOptions has no journal; restoreEntry does not exist.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -134,6 +134,42 @@ describe('durable next-day undo (issue #17, slice D)', () => {
     expect(restoreEntry(store, recorded, root)).toEqual({
       restored: false,
       reason: 'entry path escapes the workspace root: ../evil.txt',
+    });
+  });
+
+  it('still restores dot-dot names that stay inside, and refuses symlink parents', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    writeFileSync(join(root, '..foo'), 'before\n');
+    const outside = mkdtempSync(join(tmpdir(), 'out-'));
+    symlinkSync(outside, join(root, 'linked'));
+    const store = new FileJournalStore(dir);
+    const inside = store.append({
+      path: '..foo',
+      op: 'write',
+      before: 'before\n',
+      after: 'after\n',
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1,
+    });
+    expect(restoreEntry(store, inside, root)).toEqual({ restored: true });
+    const linked = store.append({
+      path: 'linked/evil.txt',
+      op: 'write',
+      before: 'before\n',
+      after: 'after\n',
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 2,
+    });
+    expect(restoreEntry(store, linked, root)).toEqual({
+      restored: false,
+      reason: 'entry path crosses a symlink: linked/evil.txt',
     });
   });
 });

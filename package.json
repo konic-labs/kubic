@@ -1,0 +1,25 @@
+{
+  "name": "kubic",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kubic — model-agnostic terminal coding agent (Solo default, orchestrator opt-in)",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.base.json",
+    "lint": "biome check .",
+    "lint:deps": "node scripts/dep-lint.mjs",
+    "test": "node --test scripts/dep-lint.test.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "26.6.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

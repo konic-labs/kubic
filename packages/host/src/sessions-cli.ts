@@ -83,6 +83,10 @@ export async function runSessionsCommand(
       deps.out('error: attach needs a session id');
       return 1;
     }
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+      deps.out('error: invalid session id');
+      return 1;
+    }
     let tail = 10;
     const flag = rest.indexOf('--tail');
     if (flag !== -1) {

@@ -1,13 +1,21 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import { redactReason } from '../../worker/src/lane/interceptors.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
 // override, structurally, not by flag.
 // Outcomes deny on timeout and never hang headless: every ask is bounded
-// by maxPendingMs. First answer wins (memoOnce semantics); late attach
-// discovers pending requests through the same service.
+// by maxPendingMs. First answer wins (first-wins latch, the memoOnce
+// semantic — the harness primitive itself is not involved). Same-process
+// late attach discovers pending asks via pendingRequests(); across a
+// restart, pending asks time out to deny by design — only settled
+// decisions persist (approvals.json), never open questions.
+// sessionScoped is enforced by store placement, selected by the host:
+// a per-session FileApprovalStore scopes decisions to one session,
+// a shared store shares them. The flag documents the intent the host
+// must honor when wiring the store.
 export const CAPABILITIES = [
   'network',
   'credentials',
@@ -104,9 +112,18 @@ export class MemoryApprovalStore implements ApprovalStore {
 
 // Trigger detection (§41.1). Predicates are injected so this module stays
 // free of shell parsing: the worker owns the classifiers (issue #15) and
-// the host owns the decision. Capabilities with no detector today —
-// credentials overreach, spawn-agents — fire only via an explicit
-// `requires` entry or their future owners; that is documented, not silent.
+// the host owns the decision. Detector ownership for the rest:
+//   credentials overreach, spawn-agents — no detector: fire only via an
+//     explicit `requires` entry, or via their owners (credentials with
+//     issue #19 git/credential tools, spawn-agents with the orchestrator).
+//   budget/concurrency overrun — the `budgetOverrun` flag; no live
+//     producer yet (orchestrator opt-in budgets #48, worker perf budgets
+//     #55). Until one wires up, the flag is test-only: documented, silent
+//     nowhere.
+//   network under allowlist/full — fires nothing by design (issue #15:
+//     no network tool exists to remove; the flag is advisory for #16).
+//   sensitive reads — deliberately not a trigger: §41.1 governs writes,
+//     the filesystem read class governs reads.
 export interface TriggerContext {
   workspace: string;
   network: 'none' | 'allowlist' | 'full';
@@ -123,6 +140,9 @@ const INSTALL =
   /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
 const DEPLOY =
   /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
+// Shell redirection into an absolute target is a write by another name —
+// `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
+const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
 
 export function detectTriggers(
   toolName: string,
@@ -146,6 +166,14 @@ export function detectTriggers(
       found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
+    const redirect = REDIRECT.exec(command);
+    if (
+      redirect !== null &&
+      redirect[2] !== undefined &&
+      ctx.isOutsideWorkspace(redirect[2])
+    ) {
+      found.push('outside-write');
+    }
   }
   if (
     (toolName === 'write' || toolName === 'edit') &&
@@ -188,19 +216,22 @@ export function summarizeRequest(
   capability: Capability,
   args: Record<string, unknown>,
 ): string {
+  // Summaries reach the TUI and the trajectory: secret-shaped values are
+  // redacted exactly like block reasons (issue #15).
   if (toolName === 'bash' && typeof args.command === 'string') {
-    return `${capability}: ${args.command.slice(0, 120)}`;
+    return redactReason(`${capability}: ${args.command.slice(0, 120)}`);
   }
   if (typeof args.path === 'string') {
-    return `${capability}: ${toolName} ${args.path}`;
+    return redactReason(`${capability}: ${toolName} ${args.path}`);
   }
   return `${capability}: ${toolName}`;
 }
 
 // File-backed store: decisions + full-access posture live beside the
 // session that scoped them, so a fresh session starts safe (no file →
-// default deny posture) and audit/doctor read the same files later.
-// Load is corrupt-tolerant; saves are atomic tmp+rename.
+// default deny posture). posture.json sits beside the session for the
+// audit/doctor readers coming in #57/#29. Load is corrupt-tolerant;
+// saves are atomic tmp+rename (races fail safe to deny on load).
 export interface AccessPosture {
   fullAccess: boolean;
   enabledAt?: number;
@@ -264,15 +295,19 @@ export class FileApprovalStore implements ApprovalStore {
 }
 
 // Adapter from the service to the worker's approve hook (issue #15 slice
-// C). Non-triggered calls pass immediately without touching the service;
-// triggered calls need every raised capability approved. Full-access
-// approves everything AND records the posture — indicated, recorded,
-// and doctor-visible — never a quiet bypass.
+// C). Non-triggered calls pass immediately WITHOUT challenging — the
+// worker keeps every #15 guard up for them. Triggered calls need every
+// raised capability approved and return challenged=true so the worker
+// stands down the guards for exactly that call. Full-access approves
+// everything as challenged AND records the posture — indicated, recorded
+// beside the session for audit/doctor readers (#57, #29) — never quiet.
 export type ApprovalAsk = (call: {
   toolName: string;
   args: Record<string, unknown>;
   toolCallId: string;
-}) => Promise<{ approved: true } | { approved: false; reason: string }>;
+}) => Promise<
+  { approved: true; challenged: boolean } | { approved: false; reason: string }
+>;
 
 export function createApprovalAsk(
   service: ApprovalService,
@@ -281,10 +316,10 @@ export function createApprovalAsk(
 ): ApprovalAsk {
   return async (call) => {
     const capabilities = detectTriggers(call.toolName, call.args, ctx);
-    if (capabilities.length === 0) return { approved: true };
+    if (capabilities.length === 0) return { approved: true, challenged: false };
     const posture = store.loadPosture();
     if (posture.fullAccess) {
-      return { approved: true };
+      return { approved: true, challenged: true };
     }
     for (const capability of capabilities) {
       const verdict = await service.request({
@@ -297,7 +332,7 @@ export function createApprovalAsk(
         return { approved: false, reason: verdict.reason };
       }
     }
-    return { approved: true };
+    return { approved: true, challenged: true };
   };
 }
 
@@ -378,6 +413,15 @@ export class ApprovalService {
     const existing = this.decisions.get(request.key);
     if (existing !== undefined) return existing;
     if (this.policy.autoApprove.includes(request.capability)) {
+      if (
+        this.policy.requireJustification &&
+        request.justification === undefined
+      ) {
+        return this.submit(request, {
+          approved: false,
+          reason: 'approval requires justification',
+        });
+      }
       return this.submit(request, { approved: true, by: 'autoApprove' });
     }
     if (this.policy.route === 'deny') {

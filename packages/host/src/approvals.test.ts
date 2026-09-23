@@ -243,7 +243,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     );
     await expect(
       ask({ toolName: 'read', args: { path: 'notes.txt' }, toolCallId: 'c1' }),
-    ).resolves.toEqual({ approved: true });
+    ).resolves.toEqual({ approved: true, challenged: false });
   });
 
   it('denies triggered calls headless and approves on answer', async () => {
@@ -284,7 +284,10 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
       { key, capability: 'git-push', toolName: 'bash', summary: 'push' },
       { approved: true, by: 'user' },
     );
-    await expect(pending).resolves.toEqual({ approved: true });
+    await expect(pending).resolves.toEqual({
+      approved: true,
+      challenged: true,
+    });
   });
 
   it('persists decisions and posture across restarts; fresh dirs start safe', async () => {
@@ -321,5 +324,47 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     const store = new FileApprovalStore(dir);
     expect(store.load()).toEqual({});
     expect(store.loadPosture()).toEqual({ fullAccess: false });
+  });
+
+  it('detects shell-redirection outside-writes and redacts summaries', () => {
+    const ctx = triggerContext();
+    expect(
+      detectTriggers('bash', { command: 'echo x > /etc/cron.d/x' }, ctx),
+    ).toEqual(['outside-write']);
+    expect(
+      detectTriggers('bash', { command: 'echo hi > notes.txt' }, ctx),
+    ).toEqual([]);
+    expect(
+      summarizeRequest('bash', 'network', { command: 'curl --token abc123 x' }),
+    ).not.toContain('abc123');
+  });
+
+  it('holds autoApprove to the justification requirement', async () => {
+    const service = new ApprovalService({
+      policy: validatePolicy({
+        autoApprove: ['install'],
+        requireJustification: true,
+      }),
+    });
+    await expect(
+      service.request({
+        key: 'j1',
+        capability: 'install',
+        toolName: 'bash',
+        summary: 'npm i',
+      }),
+    ).resolves.toEqual({
+      approved: false,
+      reason: 'approval requires justification',
+    });
+    await expect(
+      service.request({
+        key: 'j2',
+        capability: 'install',
+        toolName: 'bash',
+        summary: 'npm i',
+        justification: 'deps for build',
+      }),
+    ).resolves.toEqual({ approved: true, by: 'autoApprove' });
   });
 });

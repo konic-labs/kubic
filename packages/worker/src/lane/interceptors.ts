@@ -42,11 +42,12 @@ export interface PolicyInterceptorOptions {
   network?: NetworkLevel;
   isDestructive?: (command: string, workspace: string) => boolean;
   // Approval decider (issue #16, owned by the host). Consulted for every
-  // call after the budget gate: denials block, approvals let the call
-  // through AND stand down the destructive/network/confine guards for
-  // that exact toolCallId — an approved dangerous op must run, not hit
-  // the next guard. The type lives here (not in host) because the worker
-  // cannot import host; the host adapts its ApprovalService to it.
+  // call after the budget gate: denials block; approvals let the call
+  // through. Only challenged approvals (a real capability was raised and
+  // granted) stand down the destructive/network/confine guards for that
+  // exact toolCallId — an unchallenged fast-path keeps every guard up.
+  // The type lives here (not in host) because the worker cannot import
+  // host; the host adapts its ApprovalService to it.
   approve?: (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 }
 
@@ -57,7 +58,7 @@ export interface ApprovalCall {
 }
 
 export type ApprovalAskVerdict =
-  | { approved: true }
+  | { approved: true; challenged: boolean }
   | { approved: false; reason: string };
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
@@ -212,9 +213,21 @@ export function registerPolicyInterceptors(
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
-  // Tool calls the approval decider cleared. Guards below stand down for
-  // exactly these ids — never by tool name or pattern.
-  const approvedCalls = new Set<string>();
+  // Tool calls a real challenge cleared. Guards below stand down for
+  // exactly these ids — never by tool name or pattern. Unchallenged
+  // fast-path calls never enter this set, so #15 guards stay up for them.
+  // Capped FIFO: harness toolCallIds are unique per call, but an
+  // unbounded set across a long lane lifetime is a leak; eviction only
+  // drops stale ids whose calls already ran.
+  const approvedCalls = new Map<string, number>();
+  const APPROVED_CALLS_CAP = 512;
+  const markApproved = (toolCallId: string): void => {
+    approvedCalls.set(toolCallId, Date.now());
+    if (approvedCalls.size > APPROVED_CALLS_CAP) {
+      const oldest = approvedCalls.keys().next();
+      if (!oldest.done) approvedCalls.delete(oldest.value);
+    }
+  };
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
   let triggered = false;
@@ -255,7 +268,7 @@ export function registerPolicyInterceptors(
           toolCallId: event.toolCallId,
         });
         if (verdict.approved) {
-          approvedCalls.add(event.toolCallId);
+          if (verdict.challenged) markApproved(event.toolCallId);
           return undefined;
         }
         return block(`not approved: ${verdict.reason}`);

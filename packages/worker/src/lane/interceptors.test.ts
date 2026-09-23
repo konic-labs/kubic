@@ -165,7 +165,7 @@ describe('policy interceptors (issue #15, slice C)', () => {
     );
   });
 
-  it('denies through the approval decider and stands down guards when approved', async () => {
+  it('denies through the approval decider and stands down guards only when challenged', async () => {
     const denied = await boot([
       { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
     ]);
@@ -179,19 +179,28 @@ describe('policy interceptors (issue #15, slice C)', () => {
       'not approved: user said no',
     );
 
-    // Approved: the destructive guard AND the confine guard stand down for
-    // that exact call — the read runs with its original outside path.
-    const approved = await boot([
-      { name: 'read', args: { path: '/etc/passwd' } },
+    // Challenged + granted: the destructive guard stands down and the call runs.
+    const challenged = await boot([
+      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
     ]);
-    registerPolicyInterceptors(approved.harness.hooks, {
+    registerPolicyInterceptors(challenged.harness.hooks, {
       workspace: '/work',
-      approve: () => Promise.resolve({ approved: true }),
+      approve: () => Promise.resolve({ approved: true, challenged: true }),
     });
-    const approvedEnds = await driveToolEnds(approved);
-    expect(approvedEnds).toHaveLength(1);
-    expect(JSON.stringify(approvedEnds[0])).toContain('/etc/passwd');
-    expect(JSON.stringify(approvedEnds[0])).not.toContain('/work/etc/passwd');
+    const challengedEnds = await driveToolEnds(challenged);
+    expect(challengedEnds).toHaveLength(1);
+    expect(JSON.stringify(challengedEnds[0])).not.toContain('blocked');
+
+    // Unchallenged fast-path: approved, but every #15 guard stays up — the
+    // outside read is still confined.
+    const fast = await boot([{ name: 'read', args: { path: '/etc/passwd' } }]);
+    registerPolicyInterceptors(fast.harness.hooks, {
+      workspace: '/work',
+      approve: () => Promise.resolve({ approved: true, challenged: false }),
+    });
+    const fastEnds = await driveToolEnds(fast);
+    expect(fastEnds).toHaveLength(1);
+    expect(JSON.stringify(fastEnds[0])).toContain('/work/etc/passwd');
   });
 
   it('counts blocked attempts against the budget', async () => {

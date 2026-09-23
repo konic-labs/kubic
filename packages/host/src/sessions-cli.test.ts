@@ -119,7 +119,7 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     );
   });
 
-  it('defaults to approvals enforced', async () => {
+  it('defaults to approvals enforced and rejects bad ids', async () => {
     const root = tmpRoot();
     const o = out();
     await runSessionsCommand(['create', '--cwd', '/work'], {
@@ -135,5 +135,15 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     expect(
       o2.lines.some((line) => line.includes('posture: approvals enforced')),
     ).toBe(true);
+    const o3 = out();
+    expect(
+      await runSessionsCommand(['attach', '../../etc', '--tail', '0'], {
+        sessionsRoot: root,
+        out: o3.write,
+      }),
+    ).toBe(1);
+    expect(o3.lines.some((line) => line.includes('invalid session id'))).toBe(
+      true,
+    );
   });
 });

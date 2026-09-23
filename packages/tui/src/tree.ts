@@ -10,6 +10,9 @@
 // only the fields the tree reads are typed here. `usage`/`fault` events
 // are ignored.
 
+import type { Component, MouseRegionHandler } from './tui-boundary.js';
+import { MouseRegion } from './tui-boundary.js';
+
 export type RunStatus = 'idle' | 'running' | 'done';
 export type ToolCallState = 'running' | 'done';
 
@@ -160,4 +163,98 @@ export function renderTreeLines(
     for (const call of state.tools) lines.push(toolLine(call));
   }
   return lines.map((line) => truncateLine(line, w));
+}
+
+export type TreeMouseEvent = Parameters<MouseRegionHandler>[0];
+export type TreeMouseResult = ReturnType<MouseRegionHandler>;
+
+export interface TreeViewOptions {
+  label?: string;
+  collapsed?: boolean;
+  onFocusEditor?: () => void;
+  clock?: () => number;
+}
+
+const TOGGLE_KEYS = new Set(['t', 'T', '\r', ' ']);
+
+// Inner body: renders exact pre-truncated lines (no padding/wrap) so
+// headless snapshots assert content, not pixels. Pi's Text pads to the
+// full width, which would bury the tree lines in spaces.
+class TreeBody implements Component {
+  private treeState: AgentTreeState;
+
+  constructor(state: AgentTreeState) {
+    this.treeState = state;
+  }
+
+  render(width: number): string[] {
+    return renderTreeLines(this.treeState, width);
+  }
+
+  invalidate(): void {}
+}
+
+export class AgentTreeView implements Component {
+  private body: TreeBody;
+  private region: MouseRegion;
+  private treeState: AgentTreeState;
+  private focusEditor: () => void;
+  private clock: () => number;
+
+  constructor(state?: AgentTreeState, options?: TreeViewOptions) {
+    this.treeState = state ?? createTreeState(options?.label);
+    if (options?.collapsed !== undefined) {
+      this.treeState.collapsed = options.collapsed;
+    }
+    this.focusEditor = options?.onFocusEditor ?? (() => {});
+    this.clock = options?.clock ?? Date.now;
+    this.body = new TreeBody(this.treeState);
+    this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
+  }
+
+  getState(): AgentTreeState {
+    return this.treeState;
+  }
+
+  isCollapsed(): boolean {
+    return this.treeState.collapsed;
+  }
+
+  toggle(): void {
+    toggleTree(this.treeState);
+  }
+
+  update(event: LaneEventLike): void {
+    applyLaneEvent(this.treeState, event, this.clock);
+  }
+
+  handleInput(data: string): void {
+    if (!TOGGLE_KEYS.has(data)) return;
+    this.toggle();
+    this.focusEditor();
+  }
+
+  handleMouse(event: TreeMouseEvent): TreeMouseResult {
+    return this.region.handleMouse(event);
+  }
+
+  render(width: number): string[] {
+    return this.region.render(width);
+  }
+
+  invalidate(): void {
+    this.body.invalidate();
+    this.region.invalidate();
+  }
+
+  private onMouse(event: TreeMouseEvent): TreeMouseResult {
+    // Click toggles collapse and returns focus to the editor (§16.7).
+    // Wheel/move/drag/release chain through (undefined) so the
+    // transcript keeps scrolling under the tree.
+    if (event.type !== 'click') return undefined;
+    if (event.button !== 'left') return undefined;
+    this.toggle();
+    this.focusEditor();
+    return { handled: true };
+  }
 }

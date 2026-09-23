@@ -4,6 +4,7 @@
 // Pi 0.85.1) like layout.test.ts.
 import { describe, expect, it } from 'vitest';
 import {
+  AgentTreeView,
   applyLaneEvent,
   collapsedSummary,
   createTreeState,
@@ -143,3 +144,121 @@ describe('tree collapse (issue #24; §80)', () => {
     ]);
   });
 });
+
+describe('tree toggle input (issue #24; §16.7)', () => {
+  it('toggles on key and returns focus to the editor', () => {
+    const state = createTreeState();
+    let editorFocus = 0;
+    const view = new AgentTreeView(state, {
+      onFocusEditor: () => editorFocus++,
+    });
+    expect(view.isCollapsed()).toBe(false);
+    view.handleInput('t');
+    expect(view.isCollapsed()).toBe(true);
+    expect(editorFocus).toBe(1);
+    view.handleInput('\r');
+    expect(view.isCollapsed()).toBe(false);
+    expect(editorFocus).toBe(2);
+  });
+
+  it('toggles on click, chains wheel to the transcript', () => {
+    const state = createTreeState();
+    let editorFocus = 0;
+    const view = new AgentTreeView(state, {
+      onFocusEditor: () => editorFocus++,
+    });
+    const clicked = view.handleMouse({
+      type: 'click',
+      button: 'left',
+      x: 0,
+      y: 0,
+      screenX: 0,
+      screenY: 0,
+      width: 100,
+      height: 2,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    });
+    expect(clicked?.handled).toBe(true);
+    expect(view.isCollapsed()).toBe(true);
+    expect(editorFocus).toBe(1);
+    const wheeled = view.handleMouse({
+      type: 'wheel',
+      button: 'none',
+      x: 0,
+      y: 0,
+      screenX: 0,
+      screenY: 0,
+      width: 100,
+      height: 2,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      wheelDelta: -1,
+    });
+    expect(wheeled).toBeUndefined();
+    expect(view.isCollapsed()).toBe(true);
+  });
+});
+
+describe('tree snapshots (issue #24; headless, no VirtualTerminal)', () => {
+  function populated(): AgentTreeView {
+    const state = createTreeState();
+    const clock = { now: 0 };
+    applyLaneEvent(state, {
+      type: 'run-start',
+      lane: 's',
+      runId: 'r',
+      startedAt: 0,
+    });
+    clock.now = 0;
+    applyLaneEvent(state, startTool('c1', 'bash'), () => clock.now);
+    clock.now = 142;
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        lane: 's',
+        runId: 'r',
+        turnId: 't',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError: false,
+        terminate: false,
+      },
+      () => clock.now,
+    );
+    applyLaneEvent(state, startTool('c2', 'bash'));
+    return new AgentTreeView(state);
+  }
+
+  it('snapshots the expanded tree', () => {
+    expect(populated().render(100)).toEqual([
+      '● solo',
+      '  ✓ bash 142ms',
+      '  ● bash',
+    ]);
+  });
+
+  it('snapshots the collapsed tree', () => {
+    const view = populated();
+    view.toggle();
+    expect(view.render(100)).toEqual(['● solo', '  …2 calls, 142ms']);
+  });
+
+  it('truncates every line at narrow widths (minSize 6)', () => {
+    const view = populated();
+    for (const width of [30, 12, 6]) {
+      for (const line of view.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+    expect(populated().render(6)[0]).toContain('●');
+  });
+});
+
+function visibleWidth(line: string): number {
+  const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+  return line.replace(sgr, '').length;
+}

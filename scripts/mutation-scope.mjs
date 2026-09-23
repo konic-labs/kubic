@@ -19,10 +19,12 @@ export const DEFAULT_VITEST_MUTATE = [
   '!packages/exec/src/**/*.test.ts',
   'packages/agents/src/**/*.ts',
   '!packages/agents/src/**/*.test.ts',
-  'packages/worker/src/lane/**/*.ts',
-  '!packages/worker/src/lane/**/*.test.ts',
-  'packages/worker/src/ops/**/*.ts',
-  '!packages/worker/src/ops/**/*.test.ts',
+  'packages/worker/src/**/*.ts',
+  '!packages/worker/src/**/*.test.ts',
+  'packages/host/src/**/*.ts',
+  '!packages/host/src/**/*.test.ts',
+  'packages/eval/src/**/*.ts',
+  '!packages/eval/src/**/*.test.ts',
 ];
 export const DEFAULT_TAP_MUTATE = [
   'scripts/dep-lint.mjs',

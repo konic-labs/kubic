@@ -8,7 +8,11 @@ import {
   DEFAULT_MAX_CONCURRENCY,
   isAggregateConfigured,
   isBudgetGateConfigured,
+  ParallelConfigError,
   resolveMaxConcurrency,
+  resolveWorkerCapacity,
+  sanitizeReasonField,
+  validateParallelLimits,
 } from './limits.js';
 
 describe('parallel concurrency default (issue #47)', () => {
@@ -165,5 +169,133 @@ describe('parallel deny-reason sanitize-at-source (issue #47)', () => {
       expect(blocked.reason.includes('\u001b')).toBe(false);
       expect(blocked.reason.includes(evil)).toBe(false);
     }
+  });
+});
+
+describe('parallel budget gates per-dim (issue #70 mutation E/F)', () => {
+  it('recognizes each budget field as a configured gate', () => {
+    expect(isBudgetGateConfigured({ maxTokens: 10 })).toBe(true);
+    expect(isBudgetGateConfigured({ maxToolCalls: 10 })).toBe(true);
+    expect(isBudgetGateConfigured({ maxRuntimeMs: 10 })).toBe(true);
+  });
+
+  it('blocks token/tool-call/runtime overruns with a naming reason', () => {
+    for (const [usage, gate, pattern] of [
+      [{ tokens: 11 }, { maxTokens: 10 }, /token/],
+      [{ toolCalls: 6 }, { maxToolCalls: 5 }, /tool-call/],
+      [{ runtimeMs: 2001 }, { maxRuntimeMs: 2000 }, /runtime/],
+    ] as const) {
+      const blocked = checkBudgetAdmission(usage, gate);
+      expect(blocked.admitted).toBe(false);
+      if (!blocked.admitted) expect(blocked.reason).toMatch(pattern);
+    }
+  });
+
+  it('admits usage exactly at each gate — over by one denies', () => {
+    expect(
+      checkBudgetAdmission({ tokens: 10 }, { maxTokens: 10 }).admitted,
+    ).toBe(true);
+    expect(
+      checkBudgetAdmission({ toolCalls: 5 }, { maxToolCalls: 5 }).admitted,
+    ).toBe(true);
+    expect(
+      checkBudgetAdmission({ runtimeMs: 2000 }, { maxRuntimeMs: 2000 })
+        .admitted,
+    ).toBe(true);
+    expect(
+      checkBudgetAdmission({ tokens: 11 }, { maxTokens: 10 }).admitted,
+    ).toBe(false);
+  });
+
+  it('treats absent usage fields as zero — never NaN-blocks', () => {
+    expect(checkBudgetAdmission({}, { maxTokens: 10 }).admitted).toBe(true);
+    expect(checkBudgetAdmission({}, { maxCostUsd: 5 }).admitted).toBe(true);
+    expect(checkBudgetAdmission({}, { maxToolCalls: 5 }).admitted).toBe(true);
+    expect(checkBudgetAdmission({}, { maxRuntimeMs: 5 }).admitted).toBe(true);
+  });
+});
+
+describe('parallel worker capacity + validation (issue #70 mutation E/F)', () => {
+  it('defaults worker slots to the resolved concurrency', () => {
+    expect(resolveWorkerCapacity()).toBe(4);
+    expect(resolveWorkerCapacity({ maxConcurrency: 6 })).toBe(6);
+    expect(resolveWorkerCapacity({}, 2)).toBe(2);
+    expect(
+      resolveWorkerCapacity({ workerCapacity: 8, maxConcurrency: 6 }),
+    ).toBe(8);
+  });
+
+  it('rejects bad worker/concurrency values as ParallelConfigError', () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      expect(() => resolveMaxConcurrency({ maxConcurrency: bad })).toThrow(
+        ParallelConfigError,
+      );
+      expect(() => resolveWorkerCapacity({ workerCapacity: bad })).toThrow(
+        ParallelConfigError,
+      );
+      expect(() => resolveMaxConcurrency({}, bad)).toThrow(ParallelConfigError);
+    }
+  });
+
+  it('accepts empty limits and zero approval/maxPending budgets', () => {
+    expect(() => validateParallelLimits()).not.toThrow();
+    expect(() => validateParallelLimits({})).not.toThrow();
+    expect(() =>
+      validateParallelLimits({ approvalCapacity: 0, maxPendingMs: 0 }),
+    ).not.toThrow();
+  });
+
+  it('throws naming the field for bad caps', () => {
+    expect(() => validateParallelLimits({ maxPendingMs: -1 })).toThrow(
+      /maxPendingMs/,
+    );
+    expect(() =>
+      validateParallelLimits({ aggregates: { maxMemMb: 0 } }),
+    ).toThrow(/aggregates\.maxMemMb/);
+    expect(() =>
+      validateParallelLimits({
+        providerCaps: { acme: { maxConcurrent: 0 } },
+      }),
+    ).toThrow(/maxConcurrent/);
+    expect(() =>
+      validateParallelLimits({ budgetGate: { maxTokens: -5 } }),
+    ).toThrow(/budgetGate\.maxTokens/);
+    expect(() => validateParallelLimits({ approvalCapacity: -1 })).toThrow(
+      /approvalCapacity/,
+    );
+    expect(() => validateParallelLimits({ approvalCapacity: 1.5 })).toThrow(
+      ParallelConfigError,
+    );
+  });
+});
+
+describe('parallel provider admission exact (issue #70 mutation E/F)', () => {
+  it('admits one below the concurrency cap, denies exactly at it', () => {
+    expect(
+      checkProviderAdmission('acme', 1, [], { maxConcurrent: 2 }, 1000)
+        .admitted,
+    ).toBe(true);
+    expect(
+      checkProviderAdmission('acme', 2, [], { maxConcurrent: 2 }, 1000)
+        .admitted,
+    ).toBe(false);
+  });
+
+  it('uses the 60s default window when windowMs is absent', () => {
+    const cap = { maxPerWindow: 1 };
+    expect(
+      checkProviderAdmission('acme', 0, [1000], cap, 61_001).admitted,
+    ).toBe(true);
+    expect(
+      checkProviderAdmission('acme', 0, [60_001], cap, 61_001).admitted,
+    ).toBe(false);
+  });
+
+  it('strips controls and bidi overrides at the source', () => {
+    expect(sanitizeReasonField('acme\u001b[2J\u202e-evil')).toBe(
+      'acme[2J-evil',
+    );
+    expect(sanitizeReasonField('ok-name')).toBe('ok-name');
+    expect(sanitizeReasonField(42)).toBe('42');
   });
 });

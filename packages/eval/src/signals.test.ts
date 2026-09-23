@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
-import { computeSignals } from './signals.js';
+import { computeSignals, gatesPass } from './signals.js';
 
 function trajectory(
   overrides: Partial<TrajectoryExport> = {},
@@ -128,5 +128,74 @@ describe('computeSignals (issue #53)', () => {
     );
     expect(labelled.tests).toBe('pass');
     expect(labelled.build).toBe('fail');
+  });
+});
+
+describe('gatesPass exact veto (issue #70)', () => {
+  it('passes when every gate is pass or unknown', () => {
+    expect(
+      gatesPass({
+        tests: 'pass',
+        build: 'pass',
+        lint: 'pass',
+        typecheck: 'pass',
+      }),
+    ).toBe(true);
+    expect(
+      gatesPass({
+        tests: 'unknown',
+        build: 'unknown',
+        lint: 'unknown',
+        typecheck: 'unknown',
+      }),
+    ).toBe(true);
+  });
+
+  it('vetoes on exactly one red gate — each gate alone (issue #70)', () => {
+    const gates = ['tests', 'build', 'lint', 'typecheck'] as const;
+    for (const red of gates) {
+      const signals: Record<(typeof gates)[number], 'pass' | 'fail'> = {
+        tests: 'pass',
+        build: 'pass',
+        lint: 'pass',
+        typecheck: 'pass',
+      };
+      signals[red] = 'fail';
+      expect(gatesPass(signals)).toBe(false);
+    }
+  });
+
+  it('treats non pass/fail label values as unknown, never as pass (issue #70)', () => {
+    const odd = computeSignals(
+      trajectory({
+        eval: {
+          suite: 'swe-bench-mini',
+          caseId: 'case-1',
+          labels: { 'signal:tests': 'PASS', 'signal:build': '' },
+        },
+      }),
+    );
+    expect(odd.tests).toBe('unknown');
+    expect(odd.build).toBe('unknown');
+    expect(
+      gatesPass({
+        tests: odd.tests,
+        build: odd.build,
+        lint: odd.lint,
+        typecheck: odd.typecheck,
+      }),
+    ).toBe(true);
+  });
+
+  it('derives exact counts from the trajectory (issue #70)', () => {
+    const signals = computeSignals(trajectory());
+    expect(signals.tokens).toBe(150);
+    expect(signals.costUsd).toBe(0.02);
+    expect(signals.latencyMs).toBe(60000);
+    expect(signals.toolCalls).toBe(0);
+    expect(signals.toolCounts).toEqual({});
+    expect(signals.escalations).toBe(0);
+    expect(signals.quality).toBe(1);
+    expect(signals.regressionFree).toBe(true);
   });
 });

@@ -238,3 +238,103 @@ describe('status bar rows (issue #27, slice B)', () => {
     expect(basic.render(60)[1]).toContain('solo');
   });
 });
+
+describe('status bar review fixes (issue #27, fix cycle 1)', () => {
+  it('floors sub-cent spend to <$0.01 instead of $0.00', () => {
+    expect(formatStatusCost(0)).toBe('$0.00');
+    expect(formatStatusCost(0.001)).toBe('<$0.01');
+    expect(formatStatusCost(0.0049)).toBe('<$0.01');
+    expect(formatStatusCost(0.005)).toBe('$0.01');
+    expect(formatStatusCost(0.033)).toBe('$0.03');
+  });
+
+  it('normalizes non-finite widths to 0 instead of ellipsis lines', () => {
+    for (const width of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const lines = renderStatusLines(state({ rows: [priced()] }), width);
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(statusVisibleWidth(line)).toBe(0);
+        expect(stripSgr(line)).not.toContain('…');
+      }
+    }
+  });
+
+  it('keeps warning color on a narrowed OFF line, leaves ON plain', () => {
+    const off = renderStatusLines(
+      state({ rows: [priced()], approvalsSkipped: true }),
+      40,
+    );
+    expect(statusVisibleWidth(off[1])).toBeLessThanOrEqual(40);
+    expect(off[1]).toContain('OFF');
+    expect(off[1]).toContain(`${ESC}[`);
+    const on = renderStatusLines(state({ rows: [priced()] }), 12);
+    expect(statusVisibleWidth(on[1])).toBeLessThanOrEqual(12);
+    expect(on[1]).not.toContain(`${ESC}[`);
+  });
+
+  it('mirrors worker KubicUsageRow field-for-field (drift guard)', () => {
+    // Structural mirror of packages/worker/src/usage.ts KubicUsageRow,
+    // hand-copied because dep-lint forbids tui → worker imports: a shape
+    // change on either side fails here loudly instead of drifting.
+    interface ExpectedWorkerCost {
+      readonly input: number;
+      readonly output: number;
+      readonly cacheRead: number;
+      readonly cacheWrite: number;
+      readonly total: number;
+    }
+    interface ExpectedWorkerUsage {
+      readonly input: number;
+      readonly output: number;
+      readonly cacheRead: number;
+      readonly cacheWrite: number;
+      readonly totalTokens: number;
+      readonly cost: ExpectedWorkerCost;
+    }
+    interface ExpectedWorkerRow {
+      readonly model: string;
+      readonly provider: string;
+      readonly usage: ExpectedWorkerUsage;
+      readonly ttftMs?: number;
+      readonly latencyMs?: number;
+      readonly toolCallId?: string;
+      readonly entryId?: string;
+    }
+    // Type-level: assignability holds in both directions.
+    const probe: StatusUsageRow = row({
+      ttftMs: 1,
+      latencyMs: 2,
+      toolCallId: 'tool-1',
+      entryId: 'entry-1',
+    });
+    const asExpected: ExpectedWorkerRow = probe;
+    const backToStatus: StatusUsageRow = asExpected;
+    expect(backToStatus.model).toBe(probe.model);
+    // Runtime: exact key sets, required vs optional split.
+    expect(Object.keys(backToStatus.usage.cost).sort()).toEqual([
+      'cacheRead',
+      'cacheWrite',
+      'input',
+      'output',
+      'total',
+    ]);
+    expect(Object.keys(backToStatus.usage).sort()).toEqual([
+      'cacheRead',
+      'cacheWrite',
+      'cost',
+      'input',
+      'output',
+      'totalTokens',
+    ]);
+    expect(Object.keys(backToStatus).sort()).toEqual([
+      'entryId',
+      'latencyMs',
+      'model',
+      'provider',
+      'toolCallId',
+      'ttftMs',
+      'usage',
+    ]);
+    expect(Object.keys(row({})).sort()).toEqual(['model', 'provider', 'usage']);
+  });
+});

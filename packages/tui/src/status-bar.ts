@@ -88,6 +88,10 @@ export function summarizeStatusRows(
 }
 
 export function formatStatusCost(total: number): string {
+  // Sub-cent floor: a spending session must never read as free — any
+  // positive total below the cent grid renders as `<$0.01` instead of
+  // the `$0.00` that toFixed(2) would print. Exact zero stays `$0.00`.
+  if (total > 0 && total < 0.005) return '<$0.01';
   return `$${total.toFixed(2)}`;
 }
 
@@ -120,11 +124,19 @@ export function statusVisibleWidth(line: string): number {
   return stripAnsi(line).length;
 }
 
-function truncateLine(line: string, width: number): string {
+function truncateLine(
+  line: string,
+  width: number,
+  wrap?: (text: string) => string,
+): string {
   if (statusVisibleWidth(line) <= width) return line;
   if (width <= 0) return '';
   const plain = stripAnsi(line);
-  return `${plain.slice(0, width - 1)}…`;
+  const head = `${plain.slice(0, width - 1)}…`;
+  // ANSI re-wrap: truncation strips SGR spans, so callers whose source
+  // line carries theme styling re-apply it to the truncated head —
+  // otherwise a narrowed OFF line loses its warning color entirely.
+  return wrap === undefined ? head : wrap(head);
 }
 
 function shortModel(model: string, width: number, rest: string): string {
@@ -175,8 +187,11 @@ function renderRow2(
   const full = `${state.mode} • ${approvals} • session ${state.sessionId}`;
   if (statusVisibleWidth(full) <= width) return full;
   const head = `${state.mode} • ${approvals}`;
+  // Only the OFF head carries warning styling; a narrowed ON line is
+  // plain text and must not gain warning color through truncation.
+  const wrap = state.approvalsSkipped === true ? theme.warning : undefined;
   if (statusVisibleWidth(head) > width) {
-    return truncateLine(head, width);
+    return truncateLine(head, width, wrap);
   }
   const room = width - statusVisibleWidth(head) - ' • session '.length;
   if (room >= 4) {
@@ -187,17 +202,22 @@ function renderRow2(
     const attempt = `${state.mode} • ${approvals} • session ${shortId}`;
     if (statusVisibleWidth(attempt) <= width) return attempt;
   }
-  return truncateLine(head, width);
+  return truncateLine(head, width, wrap);
 }
 
 // Pure headless render (no VirtualTerminal in Pi 0.85.1): callers
 // assert these two lines directly like renderLayout in layout.test.ts.
+//
+// Supported minimum width is 40 columns: below that the rows still
+// clamp to the given width (best-effort, cost + mode survive longest)
+// but layout priority is no longer guaranteed. Non-finite widths
+// (NaN/Infinity) normalize to 0 and render empty lines.
 export function renderStatusLines(
   state: StatusBarState,
   width: number,
   theme: StatusBarTheme = DEFAULT_STATUS_THEME,
 ): string[] {
-  const w = Math.max(0, Math.floor(width));
+  const w = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
   const summary = summarizeStatusRows(state.rows);
   return [renderRow1(state, summary, w), renderRow2(state, theme, w)];
 }

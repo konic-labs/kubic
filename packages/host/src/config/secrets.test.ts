@@ -308,3 +308,217 @@ describe('agent env allowlist (issue #38)', () => {
     expect('AWS_SECRET_ACCESS_KEY' in env).toBe(false);
   });
 });
+
+// Secret-ref and redaction hardening (issue #69): every fail-closed branch
+// pins its exact error so a removed refusal fails a test.
+describe('secret ref hardening (issue #69)', () => {
+  it('rejects empty !command refs', () => {
+    expect(() => parseSecretRef('!')).toThrow(/empty !command/);
+    expect(() => parseSecretRef('!   ')).toThrow(/empty !command/);
+  });
+
+  it('treats near-miss env shapes as literals', () => {
+    expect(parseSecretRef('$1bad')).toEqual({
+      kind: 'literal',
+      value: '$1bad',
+    });
+    expect(parseSecretRef('$')).toEqual({ kind: 'literal', value: '$' });
+    expect(parseSecretRef('plain-value')).toEqual({
+      kind: 'literal',
+      value: 'plain-value',
+    });
+  });
+
+  it('fails closed on empty env values', async () => {
+    const { deps: d } = deps({ env: { KUBIC_EMPTY_KEY: '' } });
+    await expect(
+      resolveSecretRef(parseSecretRef('$KUBIC_EMPTY_KEY'), d, {
+        role: 'reviewer',
+        purpose: 'provider-auth',
+      }),
+    ).rejects.toThrow(/missing env secret/);
+  });
+
+  it('fails closed on empty command output', async () => {
+    const { deps: d } = deps({ runCommand: () => '\n' });
+    await expect(
+      resolveSecretRef(parseSecretRef('!pass show api-key'), d, {
+        role: 'implementer',
+        purpose: 'provider-auth',
+      }),
+    ).rejects.toThrow(/empty output/);
+  });
+
+  it('audits literals under the [literal] ref without leaking values', async () => {
+    const { deps: d, audit, commands } = deps();
+    const value = await resolveSecretRef(parseSecretRef('just-a-value'), d, {
+      role: 'reviewer',
+      purpose: 'probe',
+    });
+    expect(value).toBe('just-a-value');
+    expect(commands).toHaveLength(0);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ ref: '[literal]' });
+    expect(JSON.stringify(audit)).not.toContain('just-a-value');
+  });
+
+  it('pins SecretError names on every refusal', async () => {
+    try {
+      parseSecretRef(42);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).name).toBe('SecretError');
+    }
+    const { deps: d } = deps();
+    await expect(
+      resolveSecretRef(parseSecretRef('$KUBIC_MISSING_KEY'), d, {
+        role: 'r',
+        purpose: 'p',
+      }),
+    ).rejects.toMatchObject({ name: 'SecretError' });
+  });
+});
+
+describe('redaction hardening (issue #69)', () => {
+  it('leaves payloads untouched with no live secrets', () => {
+    expect(redactSecretValues({ a: FIXTURE_KEY_A }, [])).toEqual({
+      a: FIXTURE_KEY_A,
+    });
+    expect(redactSecretValues(FIXTURE_KEY_A, ['', '  '])).toBe(FIXTURE_KEY_A);
+  });
+
+  it('passes non-string values through unchanged', () => {
+    expect(redactSecretValues(42, [FIXTURE_KEY_A])).toBe(42);
+    expect(redactSecretValues(true, [FIXTURE_KEY_A])).toBe(true);
+    expect(redactSecretValues(null, [FIXTURE_KEY_A])).toBeNull();
+    expect(redactSecretValues(undefined, [FIXTURE_KEY_A])).toBeUndefined();
+  });
+
+  it('redacts overlapping secrets and nested arrays exactly', () => {
+    const out = redactSecretValues({ deep: [[`pre-${FIXTURE_KEY_A}-post`]] }, [
+      FIXTURE_KEY_A,
+    ]);
+    expect(out).toEqual({ deep: [['pre-[REDACTED]-post']] });
+  });
+
+  it('ignores empty secret entries in plaintext detection', () => {
+    expect(containsPlaintextSecret('anything', [])).toBe(false);
+    expect(containsPlaintextSecret('anything', [''])).toBe(false);
+    expect(containsPlaintextSecret('', [FIXTURE_KEY_A])).toBe(false);
+  });
+
+  it('pins the violating entry index in the refusal', () => {
+    try {
+      assertNoPlaintextSecrets(
+        ['clean', `leak ${FIXTURE_KEY_A}`],
+        [FIXTURE_KEY_A],
+      );
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).name).toBe('SecretError');
+      expect((error as Error).message).toMatch(/entry 1/);
+    }
+  });
+});
+
+describe('ScopedToken hardening (issue #69)', () => {
+  it('requires hosts and a positive integer budget at issue', () => {
+    expect(() =>
+      issueScopedToken(FIXTURE_KEY_A, {
+        ttlMs: 60_000,
+        hosts: [],
+        maxUses: 2,
+      }),
+    ).toThrow(/at least one host/);
+    for (const maxUses of [0, -1, 1.5, Number.NaN]) {
+      expect(() =>
+        issueScopedToken(FIXTURE_KEY_A, {
+          ttlMs: 60_000,
+          hosts: ['h'],
+          maxUses,
+        }),
+      ).toThrow(/positive integer/);
+    }
+  });
+
+  it('expires at the exact boundary (now === expiresAt)', () => {
+    const token = issueScopedToken(FIXTURE_KEY_A, {
+      ttlMs: 1_000,
+      hosts: ['h'],
+      maxUses: 5,
+      now: 1_000,
+    });
+    expect(() => useScopedToken(token, 'h', 2_000)).toThrow(/expired/);
+    expect(token.remainingUses).toBe(5);
+  });
+
+  it('refuses forged tokens missing from the secret store', () => {
+    const real = issueScopedToken(FIXTURE_KEY_A, {
+      ttlMs: 60_000,
+      hosts: ['h'],
+      maxUses: 5,
+      now: 1_000,
+    });
+    const forged = { ...real };
+    expect(() => useScopedToken(forged, 'h', 2_000)).toThrow(/revoked/);
+  });
+
+  it('substitution requires the placeholder and consumes budget', () => {
+    const token = issueScopedToken(FIXTURE_KEY_A, {
+      ttlMs: 60_000,
+      hosts: ['h'],
+      maxUses: 2,
+      now: 1_000,
+    });
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CRED} is the placeholder syntax under test
+    const CRED = '${CRED}';
+    expect(() =>
+      substituteTokenHost('https://h/v1', CRED, token, 'h', 2_000),
+    ).toThrow(/placeholder not found/);
+    expect(token.remainingUses).toBe(2);
+    const out = substituteTokenHost(
+      `x-${CRED}-${CRED}`,
+      CRED,
+      token,
+      'h',
+      2_000,
+    );
+    expect(out).toBe(`x-${FIXTURE_KEY_A}-${FIXTURE_KEY_A}`);
+    expect(token.remainingUses).toBe(1);
+  });
+
+  it('revokes zero tokens without throwing', () => {
+    expect(() => revokeAllTokens([])).not.toThrow();
+  });
+
+  it('pins the exact allowlist contents', () => {
+    expect([...AGENT_ENV_ALLOWLIST]).toEqual([
+      'PATH',
+      'HOME',
+      'TERM',
+      'LANG',
+      'TZ',
+      'TMPDIR',
+    ]);
+  });
+
+  it('skips undefined allowlisted values and lets role creds win', () => {
+    const env = buildAgentEnv(
+      { PATH: undefined, HOME: '/home/u' },
+      AGENT_ENV_ALLOWLIST,
+      { PATH: '/role/bin' },
+    );
+    expect(env.PATH).toBe('/role/bin');
+    expect(env.HOME).toBe('/home/u');
+  });
+
+  it('isolates role credential sets by entries, not by reference', () => {
+    const set = resolveRoleCredentials(
+      'reviewer',
+      {},
+      { version: 3, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
+    );
+    expect(set).toMatchObject({ role: 'reviewer', version: 3 });
+    expect(set.tokens).toEqual({});
+  });
+});

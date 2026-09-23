@@ -16,7 +16,13 @@
   "ignoreStatic": false,
   "mutate": [
     "packages/trajectory/src/**/*.ts",
-    "!packages/trajectory/src/**/*.test.ts"
+    "!packages/trajectory/src/**/*.test.ts",
+    "packages/host/src/config/**/*.ts",
+    "!packages/host/src/config/**/*.test.ts",
+    "packages/extensions/src/**/*.ts",
+    "!packages/extensions/src/**/*.test.ts",
+    "packages/agents/src/skills/**/*.ts",
+    "!packages/agents/src/skills/**/*.test.ts"
   ],
   "ignorePatterns": ["pi/**", "docs/design/**", "examples/**"],
   "plugins": ["@stryker-mutator/vitest-runner"],

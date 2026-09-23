@@ -134,3 +134,86 @@ describe('extensions trust (issue #37, §31)', () => {
     ).toThrow(ExtensionRefusedError);
   });
 });
+
+// Refusal-path hardening (issue #69): every owned-path boundary branch is
+// pinned so a removed refusal fails a test, not just lowers a score.
+describe('owned-path boundaries (issue #69)', () => {
+  it('refuses empty and blank specs', () => {
+    expect(isOwnedPath('', OPTS)).toBe(false);
+    expect(isOwnedPath('   ', OPTS)).toBe(false);
+  });
+
+  it('refuses dot and climbing relative specs', () => {
+    expect(isOwnedPath('.', OPTS)).toBe(false);
+    expect(isOwnedPath('..', OPTS)).toBe(false);
+    expect(isOwnedPath('../evil', OPTS)).toBe(false);
+    expect(isOwnedPath('../../evil', OPTS)).toBe(false);
+  });
+
+  it('accepts exact owned directory roots', () => {
+    expect(isOwnedPath(`${HOME}/.pi/agent/extensions`, OPTS)).toBe(true);
+    expect(isOwnedPath('/repo/.pi/extensions', OPTS)).toBe(true);
+    expect(isOwnedPath('.pi/extensions', OPTS)).toBe(true);
+  });
+
+  it('refuses http and ftp remotes, not just https', () => {
+    expect(isOwnedPath('http://evil.example/bundle.js', OPTS)).toBe(false);
+    expect(isOwnedPath('ftp://evil.example/bundle.js', OPTS)).toBe(false);
+    expect(() =>
+      assertFirstParty(
+        manifest({ sourcePath: 'http://evil.example/bundle.js' }),
+        OPTS,
+      ),
+    ).toThrow(ExtensionRefusedError);
+  });
+
+  it('never admits a remote specifier via the allowlist', () => {
+    // Regression: posix normalize collapses 'https://' to 'https:/', so a
+    // mangled allowlist entry used to match a remote URL post-normalization.
+    const opts = {
+      ...OPTS,
+      allowlist: ['https:/evil.example/bundle.js'],
+    };
+    expect(isOwnedPath('https://evil.example/bundle.js', opts)).toBe(false);
+    expect(() =>
+      assertFirstParty(
+        manifest({ sourcePath: 'https://evil.example/bundle.js' }),
+        opts,
+      ),
+    ).toThrow(ExtensionRefusedError);
+  });
+
+  it('accepts a first-party publisher with no sourcePath', () => {
+    const m = manifest({ publisher: 'konic-labs' });
+    delete (m as Record<string, unknown>).sourcePath;
+    expect(isFirstParty(m, OPTS)).toBe(true);
+    expect(() => assertFirstParty(m, OPTS)).not.toThrow();
+  });
+
+  it('refuses a first-party publisher on an unowned path', () => {
+    const m = manifest({
+      publisher: 'konic-labs',
+      sourcePath: '/tmp/evil/bundle',
+    });
+    expect(isFirstParty(m, OPTS)).toBe(false);
+    expect(() => assertFirstParty(m, OPTS)).toThrow(/not an owned path/i);
+  });
+
+  it('pins refusal error names and messages', () => {
+    try {
+      assertFirstParty(manifest({ publisher: 'evil-corp' }), OPTS);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(ExtensionRefusedError);
+      expect((error as Error).name).toBe('ExtensionRefusedError');
+      expect((error as Error).message).toMatch(/not first-party/);
+    }
+    try {
+      assertFirstParty(manifest({ sourcePath: '/tmp/evil/bundle' }), OPTS);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).name).toBe('ExtensionRefusedError');
+      expect((error as Error).message).toMatch(/not an owned path/);
+    }
+  });
+});

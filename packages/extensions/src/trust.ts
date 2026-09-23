@@ -42,6 +42,12 @@ function isOwnedPackageSpecifier(spec: string): boolean {
 export function isOwnedPath(spec: string, opts: TrustOptions): boolean {
   const trimmed = spec.trim();
   if (trimmed.length === 0) return false;
+  // Fail closed on remote specifiers BEFORE normalization and BEFORE the
+  // allowlist: posix normalize collapses 'https://' to 'https:/', so a
+  // post-normalization check never fires and a mangled allowlist entry
+  // could even admit a remote URL. Remote targets are never owned
+  // (issue #69: refusal-path hardening).
+  if (isRemoteSpecifier(trimmed)) return false;
   // Fail closed on percent-encoded traversal/separators BEFORE normalization:
   // '%2e%2e' decodes to '..' and '%2f'/'%5c' decode to path separators, so a
   // future URL-decoding fs layer would turn an owned-looking prefix into
@@ -59,7 +65,6 @@ export function isOwnedPath(spec: string, opts: TrustOptions): boolean {
     if (stripTrailingSlash(posixPath.normalize(entry.trim())) === candidate)
       return true;
   }
-  if (isRemoteSpecifier(candidate)) return false;
   if (isOwnedPackageSpecifier(candidate)) return true;
   const home = stripTrailingSlash(posixPath.normalize(opts.homeDir.trim()));
   const cwd = stripTrailingSlash(posixPath.normalize(opts.cwd.trim()));

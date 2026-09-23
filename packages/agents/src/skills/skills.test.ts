@@ -13,6 +13,7 @@ import {
   gateSkills,
   invokeSkill,
   parseSkillArgs,
+  parseSkillFile,
   resolveTaskSkillRefs,
 } from './skills.js';
 
@@ -443,5 +444,262 @@ describe('skill CLI flags (issue #36)', () => {
     const names = readdirSync(here);
     expect(names.some((name) => /fetch|install/i.test(name))).toBe(false);
     expect(join(here, 'skills.ts')).toBe(join(here, 'skills.ts'));
+  });
+});
+
+// Frontmatter + explicit-skill hardening (issue #69): every parse branch
+// pinned so a dropped quote style or gate fails loudly.
+describe('skill frontmatter hardening (issue #69)', () => {
+  it('parses single- and double-quoted frontmatter values', () => {
+    const parsed = parseSkillFile(
+      '/x/skill/SKILL.md',
+      '---\nname: \'quoted\'\ndescription: "dbl"\n---\nBody.\n',
+    );
+    expect(parsed.name).toBe('quoted');
+    expect(parsed.description).toBe('dbl');
+  });
+
+  it('parses quoted flow-list entries and booleans', () => {
+    const parsed = parseSkillFile(
+      '/x/skill/SKILL.md',
+      '---\nroles: [\'a\', "b"]\ntools: [read, write]\ndisableModelInvocation: true\n---\nBody.\n',
+    );
+    expect(parsed.roles).toEqual(['a', 'b']);
+    expect(parsed.requiredTools).toEqual(['read', 'write']);
+    expect(parsed.disableModelInvocation).toBe(true);
+  });
+
+  it('treats empty roles/tools and false flags as absent', () => {
+    const parsed = parseSkillFile(
+      '/x/skill/SKILL.md',
+      '---\nroles: []\ntools: []\ndisableModelInvocation: false\n---\nBody.\n',
+    );
+    expect(parsed.roles).toBeUndefined();
+    expect(parsed.requiredTools).toBeUndefined();
+    expect(parsed.disableModelInvocation).toBeUndefined();
+  });
+
+  it('falls back to the directory name for empty names', () => {
+    const parsed = parseSkillFile(
+      '/x/mydir/SKILL.md',
+      '---\nname: ""\n---\nBody line.\n',
+    );
+    expect(parsed.name).toBe('mydir');
+  });
+
+  it('keeps unclosed frontmatter as raw body', () => {
+    const raw = '---\nname: x\nBody without closing.\n';
+    const parsed = parseSkillFile('/x/mydir/SKILL.md', raw);
+    expect(parsed.content).toBe(raw);
+    expect(parsed.name).toBe('mydir');
+  });
+
+  it('parses CRLF frontmatter', () => {
+    const parsed = parseSkillFile(
+      '/x/skill/SKILL.md',
+      '---\r\nname: crlf\r\n---\r\nBody\r\n',
+    );
+    expect(parsed.name).toBe('crlf');
+  });
+
+  it('skips comments and colon-less lines in frontmatter', () => {
+    const parsed = parseSkillFile(
+      '/x/skill/SKILL.md',
+      '---\n# a comment\nno-colon-here\n: empty-key\nname: ok\n---\nBody.\n',
+    );
+    expect(parsed.name).toBe('ok');
+    expect(parsed.description).toBe('Body.');
+  });
+
+  it('uses the first non-empty body line as the description fallback', () => {
+    const parsed = parseSkillFile(
+      '/x/mydir/SKILL.md',
+      '\n\nFirst line.\nSecond.\n',
+    );
+    expect(parsed.name).toBe('mydir');
+    expect(parsed.description).toBe('First line.');
+  });
+
+  it('falls back to an empty description when the body is empty', () => {
+    const parsed = parseSkillFile('/x/mydir/SKILL.md', '---\nname: n\n---\n');
+    expect(parsed.name).toBe('n');
+    expect(parsed.description).toBe('');
+    expect(parsed.content).toBe('');
+  });
+});
+
+describe('explicit skill loading hardening (issue #69)', () => {
+  it('logs and skips unreadable skill dirs', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile('/oops/other.txt', 'x');
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      settingsSkills: ['/oops'],
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(lines.some((line) => /unreadable/.test(line))).toBe(true);
+  });
+
+  it('logs unknown --skill names without failing', () => {
+    const { bridge } = setup();
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['ghost-skill'],
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills).toEqual([]);
+    expect(lines.some((line) => /unknown skill/.test(line))).toBe(true);
+  });
+
+  it('loads a direct .md --skill path', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/custom/standalone.md',
+      skillMd('name: solo\ndescription: Direct'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['/custom/standalone.md'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['solo']);
+    expect(result.skills[0]?.source).toBe('cli');
+  });
+
+  it('loads a --skill directory via its SKILL.md', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/custom/dir/SKILL.md',
+      skillMd('name: dirry\ndescription: Dir'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['/custom/dir'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['dirry']);
+  });
+
+  it('resolves bare --skill names against discovery roots', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/bare/SKILL.md`,
+      skillMd('name: bare\ndescription: Bare'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['bare'],
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['bare']);
+  });
+
+  it('skips missing settings dirs silently', () => {
+    const { bridge } = setup();
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      settingsSkills: ['/missing/dir'],
+    });
+    expect(result.skills).toEqual([]);
+  });
+
+  it('logs invalid package.json files and keeps going', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(`${CWD}/package.json`, '{invalid json');
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/ok/SKILL.md`,
+      skillMd('name: ok\ndescription: Fine'),
+    );
+    const lines: string[] = [];
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: true,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(['ok']);
+    expect(lines.some((line) => /invalid package\.json/.test(line))).toBe(true);
+  });
+
+  it('logs the untrusted-cwd exclusion', () => {
+    const { bridge } = setup();
+    const lines: string[] = [];
+    discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      log: (line) => {
+        lines.push(line);
+      },
+    });
+    expect(lines.some((line) => /untrusted cwd/.test(line))).toBe(true);
+  });
+});
+
+describe('skill gating and invocation hardening (issue #69)', () => {
+  it('escapes XML metacharacters in the system prompt', () => {
+    const xml = formatSkillsForSystemPrompt([
+      {
+        name: 'a&b<c>d',
+        description: 'x&y<z>',
+        filePath: '/p/SKILL.md',
+        source: 'user',
+        content: 'c',
+      },
+    ]);
+    expect(xml).toContain('a&amp;b&lt;c&gt;d');
+    expect(xml).toContain('x&amp;y&lt;z&gt;');
+    expect(xml).not.toContain('a&b');
+  });
+
+  it('throws on unknown explicit skill names', () => {
+    expect(() => invokeSkill([], 'ghost')).toThrow(/unknown skill/);
+  });
+
+  it('reports unknown task refs with the unknown-skill reason', () => {
+    const resolved = resolveTaskSkillRefs(['ghost'], {
+      visible: [],
+      withheld: [],
+    });
+    expect(resolved.granted).toEqual([]);
+    expect(resolved.withheld).toEqual([
+      { name: 'ghost', reason: "unknown skill 'ghost'" },
+    ]);
+  });
+
+  it('rejects valueless --skill and ignores non-flag args', () => {
+    expect(() => parseSkillArgs(['--skill', '--no-skills'])).toThrow(
+      /needs a value/,
+    );
+    expect(parseSkillArgs(['positional', '--unknown-ok'])).toEqual({
+      noSkills: false,
+      skills: [],
+    });
   });
 });

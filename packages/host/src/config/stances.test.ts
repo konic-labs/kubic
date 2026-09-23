@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ACP_EDGE_OWNER,
+  type AcpChordMessage,
   type AcpEdgeEnvelope,
   assertNoMcpConfig,
   createAcpEdgeEnvelope,
@@ -113,3 +114,76 @@ function tsFiles(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+// Refusal-path hardening (issue #69): a surviving "refusal removed" mutant
+// is a P0 test bug, so every refusal branch pins exact errors.
+describe('MCP refusal hardening (issue #69)', () => {
+  it('passes through non-object configs without false positives', () => {
+    expect(() => assertNoMcpConfig([])).not.toThrow();
+    expect(() => assertNoMcpConfig('mcp')).not.toThrow();
+    expect(() => assertNoMcpConfig(42)).not.toThrow();
+    expect(() => assertNoMcpConfig(true)).not.toThrow();
+    expect(() =>
+      assertNoMcpConfig({ agent: { mcp: 'nested-value' } }),
+    ).not.toThrow();
+  });
+
+  it('pins the McpUnsupportedError name and Phase-4 message', () => {
+    try {
+      assertNoMcpConfig({ mcp: {} });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpUnsupportedError);
+      expect((error as Error).name).toBe('McpUnsupportedError');
+      expect((error as Error).message).toMatch(/\[mcp\]/);
+      expect((error as Error).message).toMatch(/Phase-4/);
+    }
+  });
+
+  it('refuses inherited mcp keys only when own (no prototype false-positive)', () => {
+    const proto = { mcp: {} };
+    const child = Object.create(proto) as Record<string, unknown>;
+    child.agent = { name: 'k' };
+    expect(() => assertNoMcpConfig(child)).not.toThrow();
+    expect(Object.hasOwn(child, 'mcp')).toBe(false);
+  });
+});
+
+describe('ACP edge hardening (issue #69)', () => {
+  it('copies the message list so later caller mutation cannot leak in', () => {
+    const messages: AcpChordMessage[] = [
+      { kind: 'lane-snapshot', payload: { session: 's1' } },
+    ];
+    const envelope = createAcpEdgeEnvelope(
+      {
+        sessionId: 's1',
+        status: 'active',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      messages,
+    );
+    messages.push({ kind: 'injected', payload: {} });
+    expect(envelope.messages).toHaveLength(1);
+    expect(envelope.messages[0]).toEqual({
+      kind: 'lane-snapshot',
+      payload: { session: 's1' },
+    });
+  });
+
+  it('pins the exact edge owner', () => {
+    expect(ACP_EDGE_OWNER).toBe('@kubic/host/src/config/acp-edge');
+  });
+
+  it('keeps an empty message list empty', () => {
+    const envelope = createAcpEdgeEnvelope(
+      {
+        sessionId: 's1',
+        status: 'active',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      [],
+    );
+    expect(envelope.messages).toEqual([]);
+    expect(envelope.snapshot.status).toBe('active');
+  });
+});

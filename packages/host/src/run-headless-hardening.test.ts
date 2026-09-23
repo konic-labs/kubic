@@ -157,3 +157,150 @@ describe('headless hardening (issue #28, review cycle 2)', () => {
     expect(result.error?.message).not.toMatch(/malformed outcome/);
   });
 });
+
+describe('headless composition root (issue #68; mutation hardening)', () => {
+  it('fails a refused admission explicitly instead of driving', async () => {
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane: {
+        accept: async () => ({ ok: false as const, error: { message: 'no' } }),
+        findEntries: async () => [],
+      },
+    } as unknown as SoloLane);
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toMatch(/lane refused the prompt/);
+    expect(result.error?.message).toMatch(/lane refused the prompt/);
+    expect(vi.mocked(driveToSettled)).not.toHaveBeenCalled();
+  });
+
+  it('maps a deferred wait to approval_timed_out without a TTY', async () => {
+    vi.mocked(driveToSettled).mockResolvedValue({
+      kind: 'waiting-deferred',
+      operationId: 'op-1',
+      deferred: {},
+    } as Awaited<ReturnType<typeof driveToSettled>>);
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('approval_timed_out');
+    expect(result.summary).toMatch(/cannot arrive without a TTY/);
+    expect(mapTerminusToExitCode(result.terminus)).toBe(4);
+  });
+
+  it('names a detail-free lane failure instead of printing undefined', async () => {
+    vi.mocked(driveToSettled).mockResolvedValue({
+      kind: 'settled' as const,
+      outcome: { status: 'failed' },
+    });
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toBe('lane failed without detail');
+    expect(result.error).toEqual({
+      kind: 'failed',
+      message: 'lane failed without detail',
+    });
+  });
+
+  function textEntry(
+    id: string,
+    seq: number,
+    role: string,
+    text: string,
+  ): Record<string, unknown> {
+    return {
+      id,
+      seq,
+      type: 'message',
+      message: {
+        role,
+        content: [{ type: 'text', text }],
+      },
+    };
+  }
+
+  it('summarizes the latest assistant text trimmed to 500 columns', async () => {
+    const long = `  ${'y'.repeat(600)}  `;
+    const longer = { type: 'text', text: `  ${'z'.repeat(600)}  ` };
+    const numeric = { type: 'text', text: 42 };
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane: {
+        accept: fakeLane().accept,
+        findEntries: async () => [
+          textEntry('e-user', 5, 'user', 'ignore me'),
+          textEntry('e-ws', 3, 'assistant', '   '),
+          textEntry('e-long', 2, 'assistant', long),
+          {
+            id: 'e-long2',
+            seq: 2,
+            type: 'message',
+            message: { role: 'assistant', content: [numeric, longer] },
+          },
+          {
+            id: 'e-bad',
+            seq: 4,
+            type: 'message',
+            message: { role: 'assistant', content: 'nope' },
+          },
+          {
+            id: 'e-sys',
+            seq: 6,
+            type: 'system',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'q'.repeat(600) }],
+            },
+          },
+        ],
+      },
+    } as unknown as SoloLane);
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('z'.repeat(500));
+  });
+
+  it('falls back to the prompt when only whitespace assistant text exists', async () => {
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane: {
+        accept: fakeLane().accept,
+        findEntries: async () => [textEntry('e-ws', 0, 'assistant', '   ')],
+      },
+    } as unknown as SoloLane);
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('do it');
+  });
+
+  it('runs without an injected env by defaulting to the node env', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'hi env',
+      {},
+      { sessionsRoot: root, models: fauxModels(['env ok']) },
+    );
+    expect(result.terminus).toBe('completed');
+    // The mocked lane yields no assistant text, so the prompt fallback
+    // proves the run completed through the default-env branch.
+    expect(result.summary).toBe('hi env');
+  });
+
+  it('maps a store-creation failure to unassigned refs', async () => {
+    vi.mocked(createSession).mockRejectedValueOnce(new Error('store blew up'));
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('failed');
+    expect(result.sessionId).toBe('unassigned');
+    expect(result.journalRef).toBe('journal:unassigned');
+    expect(result.usageRef).toBe('usage:unassigned');
+    expect(result.trajectoryRef).toBe('trajectory:unassigned');
+    expect(result.summary).toBe('store blew up');
+    expect(result.error).toEqual({
+      kind: 'failed',
+      message: 'store blew up',
+    });
+  });
+
+  it('stringifies a non-Error store failure', async () => {
+    vi.mocked(createSession).mockRejectedValueOnce('string store boom');
+    const result = await runHeadlessPrompt('do it', {}, deps());
+    expect(result.terminus).toBe('failed');
+    expect(result.sessionId).toBe('unassigned');
+    expect(result.summary).toBe('string store boom');
+  });
+});

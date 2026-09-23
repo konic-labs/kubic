@@ -165,6 +165,21 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
       expect(linked[0]?.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
+      // E4 (§28): the -p prompt itself commits parent-linked to the tip
+      // under a random v4 id. The lane keeps its own prompt copy under a
+      // lane-shaped id, so the v4 shape identifies the composition root's
+      // commit — a null tip here means the resume broke the chain.
+      const v4 =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+      const own = entries.filter(
+        (entry) =>
+          entry.parentId === tipAfterFirst &&
+          v4.test(entry.id) &&
+          entryTexts([entry])
+            .join('\n')
+            .match(/second prompt/),
+      );
+      expect(own.length).toBeGreaterThan(0);
       expect(entryTexts(entries).join('\n')).toMatch(/first prompt/);
       expect(entryTexts(entries).join('\n')).toMatch(/second prompt/);
     } finally {
@@ -187,5 +202,90 @@ describe('prod run path, store failures (issue #28, E2)', () => {
     );
     expect(result.terminus).toBe('workspace_unavailable');
     expect(result.sessionId).toBe('sess-nope');
+  });
+});
+
+describe('prod run path, result refs (issue #68; mutation hardening)', () => {
+  it('points journal/usage/trajectory refs at the live session', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'do it',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['all done']),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const id = result.sessionId;
+    expect(result.journalRef).toBe(`journal:${id}`);
+    expect(result.usageRef).toBe(`usage:${id}`);
+    expect(result.trajectoryRef).toBe(`trajectory:${id}`);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('keeps the requested session id in every failure ref', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'hello',
+      { sessionId: 'sess-nope' },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['unused']),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('workspace_unavailable');
+    expect(result.sessionId).toBe('sess-nope');
+    expect(result.journalRef).toBe('journal:sess-nope');
+    expect(result.usageRef).toBe('usage:sess-nope');
+    expect(result.trajectoryRef).toBe('trajectory:sess-nope');
+    expect(result.error).toEqual({
+      kind: 'workspace_unavailable',
+      message: result.error?.message,
+    });
+  });
+
+  it('tags a provider failure with the provider terminus kind', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: createModels(),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('provider_probe_failed');
+    expect(result.error?.kind).toBe('provider_probe_failed');
+    expect(typeof result.error?.message).toBe('string');
+  });
+
+  it('persists the prompt even when no model can run it', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'durable hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: createModels(),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('provider_probe_failed');
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const reopened = await attachSession(
+      store,
+      result.sessionId,
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const entries = await reopened.findEntries(undefined, BACKGROUND_CONTEXT);
+      expect(entryTexts(entries).join('\n')).toMatch(/durable hello/);
+    } finally {
+      await reopened.close(BACKGROUND_CONTEXT);
+    }
   });
 });

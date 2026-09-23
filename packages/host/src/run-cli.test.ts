@@ -246,6 +246,19 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
   it('maps generic failures to failed', () => {
     expect(mapCaughtErrorToTerminus(new Error('boom'))).toBe('failed');
   });
+
+  it('reads the code field and non-Error throws for workspace signals', () => {
+    expect(mapCaughtErrorToTerminus({ code: 'EACCES' })).toBe(
+      'workspace_unavailable',
+    );
+    expect(mapCaughtErrorToTerminus('ENOENT: disk gone')).toBe(
+      'workspace_unavailable',
+    );
+    expect(mapCaughtErrorToTerminus(new Error('worktree lock busy'))).toBe(
+      'workspace_unavailable',
+    );
+    expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {
@@ -398,5 +411,147 @@ describe('run -p headless behavior (§17, §80)', () => {
     } finally {
       await reopened.close(BACKGROUND_CONTEXT);
     }
+  });
+});
+
+describe('run -p argument handling (issue #68; mutation hardening)', () => {
+  it('accepts the --prompt long form like -p', async () => {
+    const o = out();
+    const seen: { prompt?: string; sessionId?: string } = {};
+    const exit = await runRunCommand(['--prompt', 'hi there'], {
+      out: o.write,
+      run: stubRun(completedResult(), seen),
+    });
+    expect(exit).toBe(0);
+    expect(seen.prompt).toBe('hi there');
+  });
+
+  it('rejects a flag-like -p value instead of running it', async () => {
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(['-p', '--json'], {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return completedResult();
+      },
+    });
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(o.lines.join('\n')).toMatch(/-p needs a value/);
+  });
+
+  it('rejects --session without a value or with a flag-like value', async () => {
+    for (const args of [
+      ['-p', 'hi', '--session'],
+      ['-p', 'hi', '--session', '--json'],
+    ]) {
+      const o = out();
+      let called = false;
+      const exit = await runRunCommand(args, {
+        out: o.write,
+        run: async () => {
+          called = true;
+          return completedResult();
+        },
+      });
+      expect(exit).toBe(2);
+      expect(called).toBe(false);
+      expect(o.lines.join('\n')).toMatch(/--session needs a value/);
+    }
+  });
+
+  it('rejects an unknown flag as a usage error', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hi', '--bogus'], {
+      out: o.write,
+      run: stubRun(completedResult()),
+    });
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/unknown flag --bogus/);
+  });
+
+  it('passes a valid --session id through to the runner', async () => {
+    const o = out();
+    const seen: { prompt?: string; sessionId?: string } = {};
+    const exit = await runRunCommand(['-p', 'hi', '--session', 'sess-ok'], {
+      out: o.write,
+      run: stubRun(completedResult(), seen),
+    });
+    expect(exit).toBe(0);
+    expect(seen.sessionId).toBe('sess-ok');
+  });
+
+  it('prints the full text result block line-for-line', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello'], {
+      out: o.write,
+      run: stubRun(completedResult()),
+    });
+    expect(exit).toBe(0);
+    expect(o.lines).toEqual([
+      'result: did the thing',
+      'session: sess-1',
+      'journal: journal:42',
+      'usage: usage:42',
+      'trajectory: trajectory:42',
+    ]);
+  });
+
+  it('marks the success envelope ok:true with no error key', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello', '--json'], {
+      out: o.write,
+      run: stubRun(completedResult()),
+    });
+    expect(exit).toBe(0);
+    expect(o.lines.length).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.exitCode).toBe(0);
+    expect('error' in envelope).toBe(false);
+  });
+
+  it('passes the lane error object through the failure envelope', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello', '--json'], {
+      out: o.write,
+      run: stubRun(
+        completedResult({
+          terminus: 'failed',
+          summary: 'm',
+          error: { kind: 'failed', message: 'm' },
+        }),
+      ),
+    });
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error).toEqual({ kind: 'failed', message: 'm' });
+  });
+
+  it('maps a non-Error run rejection to unassigned refs in text', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello'], {
+      out: o.write,
+      run: async () => {
+        throw 'kaput';
+      },
+    });
+    expect(exit).toBe(1);
+    expect(o.lines).toEqual([
+      'error: kaput',
+      'result: kaput',
+      'session: unassigned',
+      'journal: journal:unassigned',
+      'usage: usage:unassigned',
+      'trajectory: trajectory:unassigned',
+    ]);
   });
 });

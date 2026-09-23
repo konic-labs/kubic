@@ -262,3 +262,66 @@ function visibleWidth(line: string): number {
   const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
   return line.replace(sgr, '').length;
 }
+
+describe('tree mutation hardening (issue #68)', () => {
+  it('ignores non-toggle keys without toggling or refocusing', () => {
+    const state = createTreeState();
+    let editorFocus = 0;
+    const view = new AgentTreeView(state, {
+      onFocusEditor: () => editorFocus++,
+    });
+    view.handleInput('x');
+    expect(view.isCollapsed()).toBe(false);
+    expect(editorFocus).toBe(0);
+    view.handleInput('t');
+    expect(view.isCollapsed()).toBe(true);
+    view.handleInput('q');
+    expect(view.isCollapsed()).toBe(true);
+    expect(editorFocus).toBe(1);
+  });
+
+  it('keeps an exact-width line untruncated (no ellipsis at length === width)', () => {
+    const state = createTreeState();
+    // '◌ solo' is exactly 6 visible columns.
+    expect(renderTreeLines(state, 6)).toEqual(['◌ solo']);
+    expect(renderTreeLines(state, 6)[0]).not.toContain('…');
+  });
+
+  it('honors constructor label/collapsed options and the injected clock', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, {
+      type: 'run-start',
+      lane: 's',
+      runId: 'r',
+      startedAt: 0,
+    });
+    applyLaneEvent(state, startTool('c1', 'bash'), () => 1000);
+    const view = new AgentTreeView(state, {
+      collapsed: true,
+      clock: () => 1500,
+    });
+    expect(view.isCollapsed()).toBe(true);
+    view.update({
+      type: 'tool-end',
+      lane: 's',
+      runId: 'r',
+      turnId: 't',
+      toolCallId: 'c1',
+      toolName: 'bash',
+      isError: false,
+      terminate: false,
+    });
+    // One tool: singular 'call' via the injected clock (1500 - 1000).
+    expect(view.render(100)).toEqual(['● solo', '  …1 call, 500ms']);
+    expect(view.getState().tools[0]?.durationMs).toBe(500);
+  });
+
+  it('restarts a retooled call instead of duplicating it', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, startTool('c1', 'bash'), () => 0);
+    applyLaneEvent(state, startTool('c1', 'bash'), () => 50);
+    expect(state.tools.length).toBe(1);
+    expect(state.tools[0]?.done).toBe(false);
+    expect(renderTreeLines(state, 100)).toEqual(['◌ solo', '  ● bash']);
+  });
+});

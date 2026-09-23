@@ -35,6 +35,7 @@ import {
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
 import {
+  mapTerminusToExitCode,
   RUN_EXIT_OK,
   RUN_EXIT_USAGE,
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
@@ -268,6 +269,72 @@ function loadTrajectory(
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isModelPin(value: string): boolean {
+  const slash = value.indexOf('/');
+  return slash > 0 && slash < value.length - 1;
+}
+
+// §72 pin artifact for the Deterministic tier: a JSON file pinning the
+// exact models the re-execution may use. Minimal but fail-closed: it
+// must parse as an object with a non-empty `models` record.
+function checkLockfile(path: string): { ok: true } | { code: string; message: string; exit: number } {
+  let raw: string;
+  try {
+    raw = readFile(path);
+  } catch (error) {
+    return {
+      code: 'lockfile-unreadable',
+      message: `cannot read lockfile ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
+      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return {
+      code: 'lockfile-invalid',
+      message: `lockfile ${JSON.stringify(path)} is not valid JSON — deterministic replay needs a pinned models record`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  if (
+    !isRecord(parsed) ||
+    !isRecord(parsed.models) ||
+    Object.keys(parsed.models).length === 0
+  ) {
+    return {
+      code: 'lockfile-invalid',
+      message: `lockfile ${JSON.stringify(path)} must be a JSON object with a non-empty "models" record — deterministic replay needs pinned models`,
+      exit: RUN_EXIT_USAGE,
+    };
+  }
+  return { ok: true };
+}
+
+function checkWorktreeOverride(
+  path: string,
+): { ok: true } | { code: string; message: string; exit: number } {
+  let exists = false;
+  try {
+    exists = createNodeFileBridge('/').exists(path);
+  } catch {
+    exists = false;
+  }
+  if (!exists) {
+    return {
+      code: 'worktree-unavailable',
+      message: `worktree override ${JSON.stringify(path)} does not exist — refusing a replay against a missing worktree`,
+      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+    };
+  }
+  return { ok: true };
+}
+
 function modelIdOf(trajectory: TrajectoryExport): string {
   return `${trajectory.model.provider}/${trajectory.model.model}`;
 }
@@ -349,8 +416,108 @@ export async function runReplayCommand(
     return RUN_EXIT_OK;
   }
 
-  // Later slices: deterministic/live re-execution, compare. Fail closed
-  // until they land rather than claiming an unrun tier.
+  if (options.tier === 'deterministic') {
+    if (options.model === undefined || options.lockfile === undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'deterministic-needs-pins',
+        'tier deterministic needs a pinned --model <provider/id> plus a --lockfile — refusing to re-execute unpinned',
+      );
+    }
+    if (options.roleConfig !== undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'unexpected-flag-for-tier',
+        'tier deterministic takes pins from --model/--lockfile — --role-config belongs to --tier live',
+      );
+    }
+    if (options.diffAgainst !== undefined) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'unexpected-flag-for-tier',
+        '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
+      );
+    }
+    if (!isModelPin(options.model)) {
+      return fail(
+        deps,
+        options,
+        options.trajectory,
+        RUN_EXIT_USAGE,
+        'invalid-model-pin',
+        `invalid-model-pin ${JSON.stringify(options.model)} (want 'provider/id') — deterministic replay needs an exact model pin`,
+      );
+    }
+    const lock = checkLockfile(options.lockfile);
+    if ('exit' in lock) {
+      return fail(deps, options, options.trajectory, lock.exit, lock.code, lock.message);
+    }
+    let worktree = trajectory.worktree.path;
+    const changed: string[] = [];
+    const experimental: string[] = [];
+    if (options.worktree !== undefined) {
+      const checked = checkWorktreeOverride(options.worktree);
+      if ('exit' in checked) {
+        return fail(
+          deps,
+          options,
+          options.trajectory,
+          checked.exit,
+          checked.code,
+          checked.message,
+        );
+      }
+      worktree = options.worktree;
+      changed.push('worktree');
+      experimental.push('worktree');
+    }
+    const invocation: ReplayInvocation =
+      options.worktree !== undefined ? 'different-worktree' : 'different-model';
+    const rerun = await deps.run({
+      tier: 'deterministic',
+      trajectory: options.trajectory,
+      model: options.model,
+      worktree,
+      lockfile: options.lockfile,
+      roleConfig: null,
+    });
+    const exitCode = mapTerminusToExitCode(rerun.terminus);
+    const envelope: ReplayEnvelope = {
+      ok: exitCode === RUN_EXIT_OK,
+      exitCode,
+      tier: 'deterministic',
+      invocation,
+      trajectory: options.trajectory,
+      changed,
+      result: { status: rerun.terminus, summary: rerun.summary },
+      ...(experimental.length === 0 ? {} : { experimental }),
+    };
+    if (options.json) {
+      deps.out(JSON.stringify(envelope));
+      return exitCode;
+    }
+    if (experimental.length > 0) {
+      deps.out('warning: --worktree is experimental');
+    }
+    deps.out('tier: deterministic');
+    deps.out(`invocation: ${invocation}`);
+    deps.out(`model: ${options.model}`);
+    deps.out(`worktree: ${worktree}`);
+    deps.out(`result: ${rerun.terminus} — ${rerun.summary}`);
+    return exitCode;
+  }
+
+  // Later slices: live re-execution, compare. Fail closed until they land
+  // rather than claiming an unrun tier.
   if (options.tier !== 'recorded') {
     return fail(
       deps,

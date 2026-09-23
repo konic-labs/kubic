@@ -90,20 +90,27 @@ function writeTrajectory(dir: string, name: string): string {
   return path;
 }
 
+function writeLockfile(dir: string, name: string): string {
+  const path = join(dir, name);
+  writeFileSync(
+    path,
+    JSON.stringify({ models: { 'acme/m1': { digest: 'sha256:abc' } } }),
+  );
+  return path;
+}
+
 function deps(
   o: { lines: string[]; write: (line: string) => void },
   run?: ReplayCommandDeps['run'],
 ): ReplayCommandDeps {
-  const calls: unknown[] = [];
   return {
     out: o.write,
-    calls,
     run:
       run ??
       (async (): Promise<ReplayRunResult> => {
         throw new Error('runner must not be called');
       }),
-  } as ReplayCommandDeps;
+  };
 }
 
 describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
@@ -169,5 +176,187 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
       error: { code: string };
     };
     expect(envelope.error.code).toBe('trajectory-malformed');
+  });
+
+  it('exits 2 with the code preserved when the major is unsupported', async () => {
+    const dir = tmpRoot();
+    const path = join(dir, 'future.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...fixtureTrajectory(), schema_version: '2.0' }),
+    );
+    const o = out();
+    const exit = await runReplayCommand([path, '--json'], deps(o));
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      error: { code: string };
+    };
+    expect(envelope.error.code).toBe('unknown-major');
+  });
+});
+
+describe('replay deterministic (§47 different-model; §47.1 Deterministic)', () => {
+  function detArgs(dir: string): {
+    traj: string;
+    lock: string;
+    base: string[];
+  } {
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writeLockfile(dir, 'pins.json');
+    return { traj, lock, base: [traj, '--tier', 'deterministic'] };
+  }
+
+  it('refuses without pins (exit 2, runner never called, tier published)', async () => {
+    const dir = tmpRoot();
+    const { base } = detArgs(dir);
+    for (const args of [
+      [...base],
+      [...base, '--model', 'acme/m1'],
+      [...base, '--lockfile', join(dir, 'pins.json')],
+    ]) {
+      const o = out();
+      let called = false;
+      const exit = await runReplayCommand([...args, '--json'], {
+        out: o.write,
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'must not run' };
+        },
+      });
+      expect(exit).toBe(2);
+      expect(called).toBe(false);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        tier: string;
+        error: { code: string };
+      };
+      expect(envelope.tier).toBe('deterministic');
+      expect(envelope.error.code).toBe('deterministic-needs-pins');
+    }
+  });
+
+  it('refuses a model pin outside provider/id form', async () => {
+    const dir = tmpRoot();
+    const { traj, lock } = detArgs(dir);
+    const o = out();
+    const exit = await runReplayCommand(
+      [traj, '--tier', 'deterministic', '--model', 'm1', '--lockfile', lock],
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toMatch(/invalid-model-pin/);
+  });
+
+  it('exits 5 when the lockfile is unreadable', async () => {
+    const dir = tmpRoot();
+    const { traj } = detArgs(dir);
+    const o = out();
+    const exit = await runReplayCommand(
+      [
+        traj,
+        '--tier',
+        'deterministic',
+        '--model',
+        'acme/m1',
+        '--lockfile',
+        join(dir, 'missing.json'),
+        '--json',
+      ],
+      deps(o),
+    );
+    expect(exit).toBe(5);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      error: { code: string };
+    };
+    expect(envelope.error.code).toBe('lockfile-unreadable');
+  });
+
+  it('re-executes with pins: exit 0, tier deterministic in text and --json', async () => {
+    const dir = tmpRoot();
+    const { traj, lock, base } = detArgs(dir);
+    const seen: unknown[] = [];
+    const o = out();
+    const exit = await runReplayCommand(
+      [...base, '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      {
+        out: o.write,
+        run: async (request) => {
+          seen.push(request);
+          return { terminus: 'completed', summary: 'replayed ok' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toMatchObject({
+      tier: 'deterministic',
+      model: 'acme/m1',
+      trajectory: traj,
+    });
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      tier: string;
+      invocation: string;
+      result: { summary: string };
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.tier).toBe('deterministic');
+    expect(envelope.invocation).toBe('different-model');
+    expect(envelope.result.summary).toBe('replayed ok');
+  });
+
+  it('maps runner termini to §78 codes 1/5/6', async () => {
+    const dir = tmpRoot();
+    const { traj, lock } = detArgs(dir);
+    const cases = [
+      { terminus: 'failed', code: 1 },
+      { terminus: 'workspace_unavailable', code: 5 },
+      { terminus: 'provider_probe_failed', code: 6 },
+    ] as const;
+    for (const { terminus, code } of cases) {
+      const o = out();
+      const exit = await runReplayCommand(
+        [
+          traj,
+          '--tier',
+          'deterministic',
+          '--model',
+          'acme/m1',
+          '--lockfile',
+          lock,
+          '--json',
+        ],
+        {
+          out: o.write,
+          run: async () => ({ terminus, summary: terminus }),
+        },
+      );
+      expect(exit).toBe(code);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        exitCode: number;
+        tier: string;
+      };
+      expect(envelope.exitCode).toBe(code);
+      expect(envelope.tier).toBe('deterministic');
+    }
+  });
+
+  it('is byte-identical across runs with the same pins', async () => {
+    const dir = tmpRoot();
+    const { traj, lock } = detArgs(dir);
+    const run = async (): Promise<ReplayRunResult> => ({
+      terminus: 'completed',
+      summary: 'replayed ok',
+    });
+    const first = out();
+    await runReplayCommand(
+      [traj, '--tier', 'deterministic', '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      { out: first.write, run },
+    );
+    const second = out();
+    await runReplayCommand(
+      [traj, '--tier', 'deterministic', '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      { out: second.write, run },
+    );
+    expect(second.lines.join('\n')).toBe(first.lines.join('\n'));
   });
 });

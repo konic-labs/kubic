@@ -131,8 +131,11 @@ tests use fixture rows, never network or paid tokens.
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md),
   [@kubic/agents](agents-pkg.md) (+ trajectory/eval shapes as
   snapshots where pinned) — never host/tui.
-- Imported by: [@kubic/host](host.md) (runtime wiring),
-  [@kubic/trajectory](trajectory.md) (result snapshot, pinned by test).
+- Imported by: [@kubic/host](host.md) (runtime wiring).
+- Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
+  nothing from any package (dep-lint FORBIDDEN) — it records only string
+  stump fields plus a structural result snapshot pinned by the golden
+  fixture test, never a live import.
 - Pi seam: `pi-boundary.ts` only (§65).
 
 ```text

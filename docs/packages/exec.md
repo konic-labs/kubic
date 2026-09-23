@@ -93,7 +93,10 @@ surface — see the module for exact fields.
 - May import: [@kubic/core](core.md) only (no worker/host/agents/
   trajectory/eval/tui — see `scripts/dep-lint.mjs`).
 - Imported by: [@kubic/worker](worker.md) (lane bridges), [@kubic/host](host.md)
-  (journal CLI), [@kubic/extensions](extensions.md) (dogfood facet).
+  (journal CLI), [@kubic/agents](agents-pkg.md) (`FileBridge` for
+  memory/skills).
+- Note: importable by the extensions dogfood facet but unreferenced
+  in-tree (allowed by `scripts/dep-lint.mjs`, no edge yet).
 - Sole owner of `node:fs` / `node:child_process` (§9, issue #12).
 
 ```text

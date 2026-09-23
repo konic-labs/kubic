@@ -18,13 +18,18 @@ neighbours — no architecture rationale, no CLI usage.
 ## Import direction (matches `scripts/dep-lint.mjs`)
 
 One-way dependencies: packages may only import "downward". The diagram
-below is the allowlist — any edge not shown here is a lint violation
-(run `node scripts/dep-lint.mjs`).
+below summarizes the allowed direction — the allowlist itself lives in
+`scripts/dep-lint.mjs` (run `node scripts/dep-lint.mjs`); if the two
+disagree, the lint governs. `node scripts/check-docs-links.mjs`
+cross-checks these neighbour lists against the lint's edge set so drift
+fails CI.
 
 ```text
 @kubic/core                      ← imports nothing internal; imported by all
-  ↑         ↑          ↑
-@kubic/exec  @kubic/agents  @kubic/trajectory   ← core only
+  ↑                ↑
+@kubic/exec  @kubic/trajectory   ← core only
+  ↑
+@kubic/agents                    ← core, exec (FileBridge for memory/skills)
   ↑    ↑          ↑                ↑
   │    └──────────┼────────────────┼──→ @kubic/worker   ← core, exec, agents (+ snapshots)
   │               │                │         ↑

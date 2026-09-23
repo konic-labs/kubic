@@ -125,9 +125,12 @@ never a transcript, §69).
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md) only — never
   host/worker/tui/trajectory/eval.
 - Imported by: [@kubic/worker](worker.md), [@kubic/host](host.md),
-  [@kubic/trajectory](trajectory.md) (structural snapshots, pinned by
-  test), [@kubic/extensions](extensions.md) (budget bundle delegates to
+  [@kubic/extensions](extensions.md) (budget bundle delegates to
   `createBudget` read-only).
+- Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
+  nothing from any package (dep-lint FORBIDDEN) — it holds only string
+  stump fields (e.g. `workerId`) and structural snapshots pinned by the
+  golden fixture test, never a live import.
 
 ```text
 core ──→ agents ←── exec

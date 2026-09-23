@@ -271,3 +271,181 @@ You implement {{target}}.
     ).toThrow(/filesystem/i);
   });
 });
+
+// Template frontmatter + surface hardening (issue #69): quote styles,
+// malformed args, and unreadable-file branches pinned.
+describe('template frontmatter hardening (issue #69)', () => {
+  it('parses single-quoted scalars', () => {
+    const template = parsePromptTemplate(
+      '/tpl/q.md',
+      "---\nname: 'quoted'\ndescription: 'It works'\n---\nHi.\n",
+    );
+    expect(template.name).toBe('quoted');
+    expect(template.description).toBe('It works');
+  });
+
+  it('falls back to the file basename without .md', () => {
+    const template = parsePromptTemplate('/tpl/noname.md', 'Just a body.\n');
+    expect(template.name).toBe('noname');
+    expect(template.args).toEqual([]);
+    expect(template.description).toBeUndefined();
+  });
+
+  it('keeps unclosed frontmatter as raw content', () => {
+    const raw = '---\nname: x\nNo closing fence.\n';
+    const template = parsePromptTemplate('/tpl/raw.md', raw);
+    expect(template.content).toBe(raw);
+    expect(template.args).toEqual([]);
+  });
+
+  it('parses CRLF frontmatter', () => {
+    const template = parsePromptTemplate(
+      '/tpl/cr.md',
+      '---\r\nname: crlf\r\n---\r\nBody\r\n',
+    );
+    expect(template.name).toBe('crlf');
+  });
+
+  it('rejects non-list args and unnamed args', () => {
+    expect(() =>
+      parsePromptTemplate('/tpl/bad.md', '---\nargs: nope\n---\nHi.\n'),
+    ).toThrow(/non-list 'args'/);
+    expect(() =>
+      parsePromptTemplate(
+        '/tpl/bad.md',
+        '---\nargs: [{required: true}]\n---\nHi.\n',
+      ),
+    ).toThrow(/without a name/);
+  });
+
+  it('parses string-entry args and flow maps with descriptions', () => {
+    const template = parsePromptTemplate(
+      '/tpl/mixed.md',
+      '---\nargs: [topic, {name: depth, default: "shallow", description: "How deep"}]\n---\n{{topic}} {{depth}}.\n',
+    );
+    expect(template.args).toEqual([
+      { name: 'topic', required: false },
+      {
+        name: 'depth',
+        required: false,
+        default: 'shallow',
+        description: 'How deep',
+      },
+    ]);
+    expect(renderPromptTemplate(template, { topic: 'x' })).toContain(
+      'x shallow.',
+    );
+  });
+
+  it('renders optional arg defaults and blanks', () => {
+    const template = parsePromptTemplate(
+      '/tpl/opt.md',
+      '---\nargs: [{name: a}, {name: b, default: "d"}]\n---\n[{{a}}|{{b}}] {{missing}}.\n',
+    );
+    expect(renderPromptTemplate(template, {})).toBe('[|d] {{missing}}.\n');
+  });
+
+  it('skips comment and colon-less frontmatter lines', () => {
+    const template = parsePromptTemplate(
+      '/tpl/c.md',
+      '---\n# comment\nno-colon\nname: kept\n---\nHi.\n',
+    );
+    expect(template.name).toBe('kept');
+  });
+
+  it('pins the exact invocation block shape', () => {
+    const template = parsePromptTemplate('/tpl/plan.md', PLAN_MD);
+    expect(formatPromptTemplateInvocation(template, { task: 'auth' })).toBe(
+      '<prompt-template name="plan">\n# Plan for auth\n\nScope: whole repo.\n\n</prompt-template>',
+    );
+  });
+});
+
+describe('template discovery and preset hardening (issue #69)', () => {
+  it('skips missing dirs and non-markdown files, sorts by name', () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('/tpl/b.md', 'B body.\n');
+    env.fs.writeFile('/tpl/a.md', 'A body.\n');
+    env.fs.writeFile('/tpl/notes.txt', 'Not a template.\n');
+    const found = discoverTemplates(bridgeFromEnv(env), ['/missing', '/tpl']);
+    expect(found.map((template) => template.name)).toEqual(['a', 'b']);
+  });
+
+  it('logs unreadable templates and keeps the readable ones', () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('/tpl/ok.md', 'Ok body.\n');
+    const bridge = bridgeFromEnv(env);
+    const throwing: FileBridge = {
+      ...bridge,
+      readTextFile: (path: string): string => {
+        if (path.endsWith('bad.md')) throw new Error('EACCES');
+        return bridge.readTextFile(path);
+      },
+      listDir: () => [
+        {
+          name: 'ok.md',
+          path: '/tpl/ok.md',
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 0,
+          mtimeMs: 0,
+        },
+        {
+          name: 'bad.md',
+          path: '/tpl/bad.md',
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 0,
+          mtimeMs: 0,
+        },
+      ],
+    };
+    const lines: string[] = [];
+    const found = discoverTemplates(throwing, ['/tpl'], (line) => {
+      lines.push(line);
+    });
+    expect(found.map((template) => template.name)).toEqual(['ok']);
+    expect(lines.some((line) => /unreadable \/tpl\/bad\.md/.test(line))).toBe(
+      true,
+    );
+  });
+
+  it('throws on unknown role presets', () => {
+    const env = new FakeExecutionEnv({});
+    expect(() => loadRolePreset(bridgeFromEnv(env), '/roles', 'ghost')).toThrow(
+      /unknown role preset/,
+    );
+  });
+
+  it('loads presets without grants over the solo defaults', () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('/roles/plain.md', '---\nname: plain\n---\nHi {{x}}.\n');
+    const preset = loadRolePreset(bridgeFromEnv(env), '/roles', 'plain');
+    expect(preset.template.name).toBe('plain');
+    expect(typeof preset.grants.filesystem).toBe('string');
+  });
+
+  it('reports TUI failures with the template name and empty body', () => {
+    const { bridge } = setup();
+    const templates = discoverTemplates(bridge, ['/tpl']);
+    const view = invokeTemplateTui('ghost', {}, { templates });
+    expect(view).toMatchObject({ title: 'ghost', body: '' });
+    expect(view.error).toMatch(/unknown template/);
+  });
+
+  it('stringifies non-Error failures on the CLI surface', () => {
+    const lines: string[] = [];
+    const code = invokeTemplateCli(
+      'ghost',
+      {},
+      {
+        templates: [],
+        out: (line: string): void => {
+          lines.push(line);
+        },
+      },
+    );
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toMatch(/^error: unknown template/);
+  });
+});

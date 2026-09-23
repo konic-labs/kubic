@@ -21,6 +21,7 @@ import {
   parseTomlConfig,
   serializeTomlConfig,
 } from './config.js';
+import { McpUnsupportedError } from './stances.js';
 
 type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
 
@@ -278,5 +279,320 @@ describe('layer paths (issue #38)', () => {
       enterprisePath: '/mnt/policy/config.toml',
     });
     expect(paths.enterprise).toBe('/mnt/policy/config.toml');
+  });
+});
+
+// TOML parser hardening (issue #69): single-quote, escape, and malformed
+// branches pinned so dropped guards fail loudly.
+describe('TOML parser hardening (issue #69)', () => {
+  it('keeps # and = inside single-quoted strings', () => {
+    const parsed = parseTomlConfig(
+      "[agent]\nname = 'a#b'\n[model]\nid = 'x=y'\nprovider = \"p\"\n",
+    );
+    expect(parsed.agent?.name).toBe('a#b');
+    expect(parsed.model?.id).toBe('x=y');
+  });
+
+  it('decodes double-quoted escapes and rejects bad ones', () => {
+    const parsed = parseTomlConfig(
+      '[agent]\nname = "a\\nb\\tc\\"d\\\\e\\rf"\n',
+    );
+    expect(parsed.agent?.name).toBe('a\nb\tc"d\\e\rf');
+    expect(() => parseTomlConfig('[agent]\nname = "a\\xb"\n')).toThrow(
+      /bad escape/,
+    );
+  });
+
+  it('rejects nested arrays and parses mixed-quote string arrays', () => {
+    expect(() => parseTomlConfig('[roles.a]\ntools = [["x"]]\n')).toThrow(
+      /nested arrays/,
+    );
+    const parsed = parseTomlConfig('[roles.a]\ntools = ["a", \'b\']\n');
+    expect(parsed.roles?.a?.tools).toEqual(['a', 'b']);
+  });
+
+  it('rejects unterminated strings in arrays', () => {
+    expect(() => parseTomlConfig('[roles.a]\ntools = ["x]\n')).toThrow(
+      /unterminated string/,
+    );
+  });
+
+  it('rejects malformed headers, keys, and assignments', () => {
+    expect(() => parseTomlConfig('[bad\n')).toThrow(/bad section header/);
+    expect(() => parseTomlConfig('[a b]\n')).toThrow(/bad section header/);
+    expect(() => parseTomlConfig('[agent]\nbad key = 1\n')).toThrow(/bad key/);
+    expect(() => parseTomlConfig('[agent]\nname\n')).toThrow(
+      /expected key = value/,
+    );
+    expect(() => parseTomlConfig('[agent]\nname = kubic\n')).toThrow(
+      /cannot parse/,
+    );
+  });
+
+  it('rejects duplicate keys and value/table collisions', () => {
+    expect(() => parseTomlConfig('[agent]\nname = "a"\nname = "b"\n')).toThrow(
+      /duplicate key/,
+    );
+    expect(() => parseTomlConfig('agent = "x"\n[agent]\nname = "a"\n')).toThrow(
+      /already a value/,
+    );
+  });
+
+  it('parses dotted keys and single-quoted array members', () => {
+    const parsed = parseTomlConfig("[roles.a]\ntools = ['read', 'write']\n");
+    expect(parsed.roles?.a?.tools).toEqual(['read', 'write']);
+  });
+
+  it('tracks quotes before the assignment separator', () => {
+    // Malformed lines with a quote ahead of '=' still scan quoted spans
+    // before failing key validation — the quote branches are live.
+    expect(() => parseTomlConfig("[agent]\n'a=b' = 1\n")).toThrow(/bad key/);
+    expect(() => parseTomlConfig('[agent]\n"a=b" = 1\n')).toThrow(/bad key/);
+    expect(() => parseTomlConfig('[agent]\n"a\\"b" = 1\n')).toThrow(/bad key/);
+  });
+
+  it('passes escapes through nested array items', () => {
+    const parsed = parseTomlConfig('[roles.a]\ntools = ["a\\nb", "c"]\n');
+    expect(parsed.roles?.a?.tools).toEqual(['a\nb', 'c']);
+  });
+
+  it('rejects a trailing backslash as a bad escape', () => {
+    expect(() => parseTomlConfig('[agent]\nname = "a\\"\n')).toThrow(
+      /bad escape/,
+    );
+  });
+
+  it('rejects constructor/prototype path segments', () => {
+    expect(() => parseTomlConfig('[constructor]\nx = 1\n')).toThrow(
+      /forbidden key 'constructor'/,
+    );
+    expect(() => parseTomlConfig('[agent]\nprototype.x = 1\n')).toThrow(
+      /forbidden key 'prototype'/,
+    );
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+});
+
+describe('config validation hardening (issue #69)', () => {
+  it('rejects unknown keys per section', () => {
+    expect(() => parseTomlConfig('[agent]\nname = "x"\nextra = 1\n')).toThrow(
+      /unknown key/,
+    );
+    expect(() =>
+      parseTomlConfig('[modes]\nsolo = true\nturbo = true\n'),
+    ).toThrow(/unknown key/);
+  });
+
+  it('rejects non-table sections', () => {
+    expect(() => parseTomlConfig('agent = "x"\n')).toThrow(/must be a table/);
+    expect(() => parseTomlConfig('modes = true\n')).toThrow(/must be a table/);
+    expect(() => parseTomlConfig('[roles.a]\nmodel = 42\n')).toThrow(
+      /non-empty string/,
+    );
+  });
+
+  it('rejects invalid thinking levels and approval shapes', () => {
+    expect(() => parseTomlConfig('[model]\nthinking = "ultra"\n')).toThrow(
+      /must be one of/,
+    );
+    expect(() => parseTomlConfig('[approvals]\nroute = "auto"\n')).toThrow(
+      /must be 'ask-user' or 'deny'/,
+    );
+    expect(() => parseTomlConfig('[approvals]\nautoApprove = "all"\n')).toThrow(
+      /string array/,
+    );
+    expect(() => parseTomlConfig('[approvals]\nautoApprove = [1]\n')).toThrow(
+      /string array/,
+    );
+    expect(() => parseTomlConfig('[modes]\nsolo = "yes"\n')).toThrow(
+      /must be a boolean/,
+    );
+  });
+
+  it('rejects negative numbers and non-string role tools', () => {
+    expect(() => parseTomlConfig('[journal]\nretentionDays = -1\n')).toThrow(
+      /non-negative number/,
+    );
+    expect(() => parseTomlConfig('[roles.a]\ntools = "read"\n')).toThrow(
+      /string array/,
+    );
+    expect(() => parseTomlConfig('[roles]\na = "nope"\n')).toThrow(
+      /must be a table/,
+    );
+  });
+
+  it('rejects empty-string required values', () => {
+    expect(() => parseTomlConfig('[agent]\nname = ""\n')).toThrow(
+      /non-empty string/,
+    );
+  });
+
+  it('passes non-record values through the budget guard', () => {
+    expect(() => assertNoBudgetKeys(null)).not.toThrow();
+    expect(() => assertNoBudgetKeys([])).not.toThrow();
+    expect(() => assertNoBudgetKeys('budgets')).not.toThrow();
+  });
+});
+
+describe('layer merge hardening (issue #69)', () => {
+  it('records no attempt when layers agree on a value', () => {
+    const merged = mergeLayered([
+      { layer: 'global', config: { model: { provider: 'g', id: 'm' } } },
+      {
+        layer: 'project',
+        config: { model: { provider: 'g', id: 'm' } },
+        trusted: true,
+      },
+    ]);
+    expect(merged.config.model?.provider).toBe('g');
+    expect(merged.overriddenAttempts).toEqual([]);
+  });
+
+  it('sorts layers regardless of input order (enterprise still wins)', () => {
+    const merged = mergeLayered([
+      { layer: 'agent', config: { model: { provider: 'rogue', id: 'm' } } },
+      { layer: 'enterprise', config: { model: { provider: 'ent', id: 'm' } } },
+    ]);
+    expect(merged.config.model?.provider).toBe('ent');
+    expect(merged.overriddenAttempts).toEqual(['model.provider']);
+  });
+
+  it('lets workspace beat session and session beat agent', () => {
+    const merged = mergeLayered([
+      { layer: 'agent', config: { model: { provider: 'a', id: 'm' } } },
+      { layer: 'session', config: { model: { provider: 's', id: 'm' } } },
+      { layer: 'workspace', config: { model: { provider: 'w', id: 'm' } } },
+    ]);
+    expect(merged.config.model?.provider).toBe('w');
+    expect(merged.overriddenAttempts).toEqual(
+      expect.arrayContaining(['model.provider']),
+    );
+  });
+
+  it('accepts an empty untrusted project layer', () => {
+    const merged = mergeLayered([{ layer: 'project', config: {} }]);
+    expect(merged.config).toEqual({});
+  });
+
+  it('treats reordered arrays as changed (order-sensitive compare)', () => {
+    const merged = mergeLayered([
+      {
+        layer: 'global',
+        config: { roles: { reviewer: { tools: ['a', 'b'] } } },
+      },
+      {
+        layer: 'project',
+        config: { roles: { reviewer: { tools: ['b', 'a'] } } },
+        trusted: true,
+      },
+    ]);
+    expect(merged.config.roles?.reviewer?.tools).toEqual(['a', 'b']);
+    expect(merged.overriddenAttempts).toEqual(['roles.reviewer.tools']);
+  });
+});
+
+describe('layered load hardening (issue #69)', () => {
+  it('wraps file errors with the layer name', () => {
+    const bridge = fakeBridge({ '/etc/kubic/config.toml': '[bad\n' });
+    const paths = defaultLayerPaths({
+      home: '/home/u',
+      projectRoot: '/repo',
+    });
+    try {
+      loadLayered(bridge, paths, { projectTrusted: true });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).toMatch(/layer 'enterprise'/);
+    }
+  });
+
+  it('wraps MCP violations with the offending layer', () => {
+    const paths = defaultLayerPaths({
+      home: '/home/u',
+      projectRoot: '/repo',
+    });
+    const bridge = fakeBridge({
+      '/home/u/.kubic/config.toml': '[mcp]\nenabled = true\n',
+    });
+    try {
+      loadLayered(bridge, paths, { projectTrusted: true });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpUnsupportedError);
+      expect((error as Error).message).toMatch(/layer 'global'/);
+    }
+  });
+
+  it('wraps budget violations with the offending layer', () => {
+    const paths = defaultLayerPaths({
+      home: '/home/u',
+      projectRoot: '/repo',
+    });
+    const bridge = fakeBridge({
+      '/home/u/.kubic/config.toml': '[budgets]\ndefault = 1\n',
+    });
+    expect(() => loadLayered(bridge, paths)).toThrow(/layer 'global'/);
+  });
+
+  it('skips project files pre-trust even when absent layers exist', () => {
+    const bridge = fakeBridge({
+      '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
+    });
+    const merged = loadLayered(
+      bridge,
+      defaultLayerPaths({ home: '/home/u', projectRoot: '/repo' }),
+      { projectTrusted: false },
+    );
+    expect(merged.config.model?.provider).toBe('g');
+  });
+
+  it('honors workspace roots and the default enterprise path', () => {
+    const paths = defaultLayerPaths({
+      home: '/home/u',
+      projectRoot: '/repo',
+      workspaceRoot: '/ws',
+    });
+    expect(paths.workspace).toBe('/ws/.kubic/config.toml');
+    expect(paths.enterprise).toBe('/etc/kubic/config.toml');
+    const bridge = fakeBridge({
+      '/ws/.kubic/config.toml': '[ui]\ntheme = "light"\n',
+    });
+    const merged = loadLayered(bridge, paths, { projectTrusted: true });
+    expect(merged.config.ui?.theme).toBe('light');
+  });
+});
+
+describe('config serialization hardening (issue #69)', () => {
+  it('emits role tables sorted by name', () => {
+    const text = serializeTomlConfig({
+      roles: {
+        zebra: { model: 'm' },
+        alpha: { model: 'm' },
+      },
+    });
+    expect(text.indexOf('[roles.alpha]')).toBeLessThan(
+      text.indexOf('[roles.zebra]'),
+    );
+  });
+
+  it('refuses to serialize nested tables as values', () => {
+    expect(() =>
+      serializeTomlConfig({ agent: { name: { nested: true } as never } }),
+    ).toThrow(/cannot serialize nested tables/);
+  });
+
+  it('classifies committed vs runtime paths exactly', () => {
+    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
+    expect(isCommittedConfigPath('.kubic/roles/a.md')).toBe(true);
+    expect(isCommittedConfigPath('other/config.toml')).toBe(false);
+    expect(isCommittedConfigPath('.kubic/sessions/x')).toBe(false);
+  });
+
+  it('reports only the missing gitignore entries', () => {
+    const partial = `.kubic/sessions/\n.kubic/journal/\n`;
+    expect(checkGitignoreSplit(partial).missing).toEqual([
+      '.kubic/artifacts/',
+      '.kubic/wt/',
+    ]);
   });
 });

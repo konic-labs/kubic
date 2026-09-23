@@ -13,8 +13,6 @@
 export const DEFAULT_VITEST_MUTATE = [
   'packages/trajectory/src/**/*.ts',
   '!packages/trajectory/src/**/*.test.ts',
-  'packages/trajectory/src/**/*.ts',
-  '!packages/trajectory/src/**/*.test.ts',
   'packages/core/src/**/*.ts',
   '!packages/core/src/**/*.test.ts',
   'packages/exec/src/**/*.ts',
@@ -31,7 +29,13 @@ export const DEFAULT_VITEST_MUTATE = [
   '!packages/tui/src/**/*.test.ts',
   'packages/host/src/doctor.ts',
   'packages/host/src/run-cli.ts',
-  'apps/kubic/src/headless-run.ts'
+  'apps/kubic/src/headless-run.ts',
+  'packages/host/src/config/**/*.ts',
+  '!packages/host/src/config/**/*.test.ts',
+  'packages/extensions/src/**/*.ts',
+  '!packages/extensions/src/**/*.test.ts',
+  'packages/agents/src/skills/**/*.ts',
+  '!packages/agents/src/skills/**/*.test.ts'
 ];
 export const DEFAULT_TAP_MUTATE = [
   'scripts/dep-lint.mjs',

@@ -80,6 +80,28 @@ export function checkTree(root) {
       const content = readFileSync(file, 'utf8');
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];
+        if (
+          (spec === 'node:fs' ||
+            spec.startsWith('node:fs/') ||
+            spec === 'fs' ||
+            spec === 'node:child_process' ||
+            spec.startsWith('node:child_process/') ||
+            spec === 'child_process') &&
+          owner !== 'exec' &&
+          !file.endsWith('.test.ts')
+        ) {
+          // I/O confinement (§9, issue #12): only packages/exec (the
+          // ExecutionEnv binding) touches node:fs/child_process. Tools go
+          // through the seam. Test scaffolding is exempt.
+          const line = content.slice(0, m.index).split('\n').length;
+          violations.push({
+            from: owner,
+            to: spec,
+            file: relative(root, file),
+            line,
+          });
+          continue;
+        }
         if (spec.startsWith('@earendil-works/')) {
           // Pi seam rule (§65): only packages/worker/src/pi-boundary.ts may
           // touch Pi modules — exact path match, no suffix bypass.

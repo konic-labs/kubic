@@ -1,8 +1,12 @@
 // Cheap read-only spawn path (issue #55; §81).
-// The spawn fast path is reads + admission checks only. Steps are
-// classified by prefix: `write-*` mutates, `net-*` touches the network,
-// everything else reads. Any mutating or network step disqualifies the
-// path — it must go through the full spawn lane instead. Pure.
+// Taxonomy: the spawn fast path is reads + admission checks only
+// (read-*, check-*). Two expensive families disqualify it — the WRITE
+// family (mutates worktree/fs: write-*, *-write) and the NET family
+// (touches the network: net-*, network-*). Names match case- and
+// separator-insensitively: lowercase, unify `_`/`.` to `-`, then flag
+// any `-`-separated token whose stem is `write` or `net`/`network` —
+// so `write_worktree`, `WRITE-worktree`, `net.fetch`,
+// `filesystem-write`, and `network-fetch` all disqualify. Pure.
 
 export class SpawnPathError extends Error {
   constructor(message: string) {
@@ -11,8 +15,14 @@ export class SpawnPathError extends Error {
   }
 }
 
+function normalizeStep(step: string): string {
+  return step.toLowerCase().replace(/[_.]/g, '-');
+}
+
 function isExpensiveStep(step: string): boolean {
-  return step.startsWith('write-') || step.startsWith('net-');
+  return normalizeStep(step)
+    .split('-')
+    .some((token) => token.startsWith('write') || token.startsWith('net'));
 }
 
 export function isCheapSpawnPath(steps: readonly string[]): boolean {

@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ATTACH_BUDGET_MS,
+  type BudgetEvaluation,
+  EmptySampleError,
   evaluateBudget,
   isNextSpawnUnblocked,
   isWithinBudget,
@@ -40,6 +42,39 @@ describe('p50/p95 gates with regression filing', () => {
     expect(result.regression).toMatch(/spawn/);
     expect(result.regression).toMatch(/500/);
     expect(result.regression).toMatch(/200/);
+  });
+
+  it('invokes onRegression with the breach record, silent on pass', () => {
+    const seen: BudgetEvaluation[] = [];
+    const breached = evaluateBudget(
+      'spawn',
+      [10, 20, 30, 40, 500],
+      (record) => {
+        seen.push(record);
+      },
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(breached);
+    expect(seen[0]?.regression).toMatch(/spawn/);
+
+    const quiet: BudgetEvaluation[] = [];
+    const passed = evaluateBudget('attach', [5, 10, 12, 20, 40], (record) => {
+      quiet.push(record);
+    });
+    expect(passed.within).toBe(true);
+    expect(quiet).toHaveLength(0);
+  });
+
+  it('treats p95 exactly at budget as a breach, like isWithinBudget', () => {
+    expect(isWithinBudget('spawn', SPAWN_BUDGET_MS)).toBe(false);
+    const atBudget = evaluateBudget('spawn', [200, 200, 200, 200, 200]);
+    expect(atBudget.p95).toBe(SPAWN_BUDGET_MS);
+    expect(atBudget.within).toBe(false);
+    expect(atBudget.regression).toMatch(/spawn/);
+  });
+
+  it('rejects empty samples instead of a vacuous pass', () => {
+    expect(() => evaluateBudget('spawn', [])).toThrow(EmptySampleError);
   });
 
   it('never lets N teardowns delay the next spawn past attach budget', () => {

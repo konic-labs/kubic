@@ -4,6 +4,7 @@
 export type { BudgetEvaluation, PerfBudgetKind } from './budgets.js';
 export {
   ATTACH_BUDGET_MS,
+  EmptySampleError,
   evaluateBudget,
   isNextSpawnUnblocked,
   isWithinBudget,

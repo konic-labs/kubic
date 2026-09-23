@@ -191,3 +191,17 @@ describe('replay acceptance (issue #13)', () => {
     expect(c.env.fs.readFile('w.txt')).toBe('first\n');
   });
 });
+
+describe('bash handle tracking (issue #11, slice C)', () => {
+  it('hands its process kill to trackHandle', async () => {
+    const tracked: Array<() => void> = [];
+    const out = await callOperation(
+      'bash',
+      { command: 'echo tracked' },
+      inv('inv-t1', new MemoryMemoStore()),
+      nodeCtx({ trackHandle: (kill) => tracked.push(kill) }),
+    );
+    expect(out.ok).toBe(true);
+    expect(tracked.length).toBe(1);
+  });
+});

@@ -2,6 +2,7 @@
 // the packages; this file only wires.
 
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
@@ -48,8 +49,37 @@ async function main(argv: string[]): Promise<number> {
         runHeadlessPrompt(prompt, options),
     });
   }
+  if (command === 'doctor') {
+    // Default probes are faux-only: providers are listed (never dialed),
+    // deps check the live node runtime, policy falls back to host
+    // defaults until config-sourced policy lands.
+    const assembled = assembleModels(process.cwd());
+    if (assembled.note !== null) console.log(assembled.note);
+    const [major = 0, minor = 0] = process.versions.node
+      .split('.')
+      .map((part) => Number(part));
+    return runDoctorCommand(rest, {
+      out: (line: string) => console.log(line),
+      probeProviders: () =>
+        assembled.models.getProviders().map((provider) => ({
+          id: provider.id,
+          reachable: true,
+          models: assembled.models
+            .getModels(provider.id)
+            .map((model) => model.id),
+        })),
+      checkDeps: () => [
+        {
+          id: 'node',
+          ok: major > 22 || (major === 22 && minor >= 19),
+          detail: `node ${process.versions.node} (need >=22.19)`,
+        },
+      ],
+      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+    });
+  }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor>',
   );
   return 1;
 }

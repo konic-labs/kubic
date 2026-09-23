@@ -15,6 +15,8 @@ import {
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import {
   type HeadlessRunResult,
+  mapCaughtErrorToTerminus,
+  mapLaneOutcomeToTerminus,
   mapTerminusToExitCode,
   runRunCommand,
 } from './run-cli.js';
@@ -108,6 +110,141 @@ describe('run -p exit-code contract (§78)', () => {
     });
     expect(exit).toBe(2);
     expect(o.lines.join('\n')).toMatch(/usage/i);
+  });
+});
+
+describe('run -p --session validation (issue #28, E4)', () => {
+  it('rejects a --session id outside [A-Za-z0-9_-] with exit 2 without calling run', async () => {
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(['-p', 'hello', '--session', '../evil'], {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return completedResult();
+      },
+    });
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(o.lines.join('\n')).toMatch(/session/i);
+  });
+});
+
+describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
+  it('maps a completed lane to completed', () => {
+    expect(mapLaneOutcomeToTerminus('completed')).toBe('completed');
+  });
+
+  it('maps lane failure to failed', () => {
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'tool_failed',
+        message: 'exit 1',
+      }),
+    ).toBe('failed');
+    expect(mapLaneOutcomeToTerminus('aborted')).toBe('failed');
+    expect(mapLaneOutcomeToTerminus('declined')).toBe('failed');
+  });
+
+  it('keeps classified budget/approval/workspace/provider errors as 3/4/5/6-bound termini', () => {
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'budget_exhausted',
+        message: 'token budget spent',
+      }),
+    ).toBe('budget_exhausted');
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'approval_denied',
+        message: 'denied by user',
+      }),
+    ).toBe('approval_denied');
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'workspace_failed',
+        message: 'worktree missing',
+      }),
+    ).toBe('workspace_unavailable');
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'provider_transient',
+        message: 'api unavailable',
+      }),
+    ).toBe('provider_probe_failed');
+  });
+});
+
+describe('run -p failure mapping (issue #28, E2)', () => {
+  it('maps a workspace-flavored run rejection to exit 5', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello'], {
+      out: o.write,
+      run: async () => {
+        throw Object.assign(new Error('unknown session: sess-nope'), {
+          name: 'SessionAttachError',
+        });
+      },
+    });
+    expect(exit).toBe(5);
+    expect(o.lines.join('\n')).toMatch(/unknown session/);
+  });
+
+  it('emits the mapped failure as a jq-able --json envelope', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello', '--json'], {
+      out: o.write,
+      run: async () => {
+        throw Object.assign(new Error('unknown session: sess-nope'), {
+          name: 'SessionAttachError',
+        });
+      },
+    });
+    expect(exit).toBe(5);
+    expect(o.lines.length).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(envelope.exitCode).toBe(5);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.status).toBe('workspace_unavailable');
+  });
+
+  it('maps a generic run rejection to exit 1', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello'], {
+      out: o.write,
+      run: async () => {
+        throw new Error('lane exploded');
+      },
+    });
+    expect(exit).toBe(1);
+    expect(o.lines.join('\n')).toMatch(/lane exploded/);
+  });
+
+  it('maps a persist rejection instead of throwing past the CLI', async () => {
+    const o = out();
+    const exit = await runRunCommand(['-p', 'hello'], {
+      out: o.write,
+      run: stubRun(completedResult()),
+      persist: async () => {
+        throw new Error('persist hook blew up');
+      },
+    });
+    expect(exit).toBe(1);
+    expect(o.lines.join('\n')).toMatch(/persist hook blew up/);
+  });
+});
+
+describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
+  it('maps ENOENT-flavored failures to workspace_unavailable', () => {
+    expect(mapCaughtErrorToTerminus(new Error('ENOENT: no such file'))).toBe(
+      'workspace_unavailable',
+    );
+  });
+
+  it('maps generic failures to failed', () => {
+    expect(mapCaughtErrorToTerminus(new Error('boom'))).toBe('failed');
   });
 });
 

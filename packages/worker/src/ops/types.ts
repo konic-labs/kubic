@@ -8,6 +8,7 @@ import type {
   ExecutionEnv,
   ProcessSnapshot,
 } from '../../../exec/src/env.js';
+import type { FileJournalStore } from '../../../exec/src/journal.js';
 
 export type JsonValue =
   | string
@@ -47,6 +48,12 @@ export interface OpContext {
   signal?: AbortSignal;
   onUpdate?: (snapshot: ProcessSnapshot) => void;
   checkpointStore?: CheckpointStore;
+  // Journal interception (issue #17): the lane's toolCallId for this call
+  // plus the session journal. write/edit record every mutation; a journal
+  // failure fails the op loud (journal_failed) — a silent gap in the
+  // recovery record is worse than a failed tool call.
+  toolCallId?: string;
+  journal?: FileJournalStore;
   // Lane abort support (issue #11): the op hands its process kill to the
   // lane's kill registry so requestLaneAbort drains in-flight trees.
   trackHandle?: (kill: () => void, invocation: ToolInvocation) => void;

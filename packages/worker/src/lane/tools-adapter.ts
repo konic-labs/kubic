@@ -8,6 +8,7 @@
 // throws propagate to the harness as faults.
 
 import type { CheckpointStore, ExecutionEnv } from '../../../exec/src/env.js';
+import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { callOperation, OPERATIONS } from '../ops/registry.js';
 import type { MemoStore, OpContext, ToolInvocation } from '../ops/types.js';
 import {
@@ -24,6 +25,10 @@ export interface KubicToolContext {
   memos: MemoStore;
   kills: OperationKillRegistry;
   checkpointStore?: CheckpointStore;
+  // Session journal for interception (issue #17): when set, write/edit
+  // record every mutation. Wired by the lane in slice D; absent in tests
+  // and journal-free contexts.
+  journal?: FileJournalStore;
 }
 
 function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
@@ -60,6 +65,10 @@ export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
         sessionId: toolContext.sessionId,
         agentId: toolContext.agentId,
         checkpointStore: toolContext.checkpointStore,
+        // The harness toolCallId is the journal's attribution key (issue
+        // #17): without it, intercepted entries could not name their call.
+        toolCallId,
+        journal: toolContext.journal,
         trackHandle: (kill) => toolContext.kills.track(inv.operationId, kill),
         onUpdate: (snapshot) =>
           onUpdate({

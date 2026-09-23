@@ -1,7 +1,12 @@
 // Trust + third-party refusal (issue #37; §31.1, §31.5). RED first.
 import { describe, expect, it } from 'vitest';
 import { ExtensionRefusedError } from './contract.js';
-import { assertFirstParty, isFirstParty, isOwnedPath } from './trust.js';
+import {
+  assertFirstParty,
+  FIRST_PARTY_PUBLISHERS,
+  isFirstParty,
+  isOwnedPath,
+} from './trust.js';
 
 const HOME = '/Users/tester';
 const OPTS = { homeDir: HOME, cwd: '/repo', allowlist: [] as string[] };
@@ -61,6 +66,52 @@ describe('extensions trust (issue #37, §31)', () => {
     const m = manifest({ publisher: 'evil-corp' });
     expect(() =>
       assertFirstParty(m, { ...OPTS, allowThirdParty: true } as never),
+    ).toThrow(ExtensionRefusedError);
+  });
+
+  it('rejects .. traversal that escapes owned paths', () => {
+    const traversals = [
+      `${HOME}/.pi/agent/extensions/../evil.js`,
+      '/repo/.pi/extensions/../evil',
+      '.pi/extensions/../evil',
+    ];
+    for (const evil of traversals) {
+      expect(isOwnedPath(evil, OPTS)).toBe(false);
+      expect(() =>
+        assertFirstParty(manifest({ sourcePath: evil }), OPTS),
+      ).toThrow(ExtensionRefusedError);
+    }
+  });
+
+  it('still accepts a legit nested path under owned dirs', () => {
+    expect(
+      isOwnedPath(`${HOME}/.pi/agent/extensions/budget/deep/nested`, OPTS),
+    ).toBe(true);
+    expect(isOwnedPath('/repo/.pi/extensions/budget/deep/nested', OPTS)).toBe(
+      true,
+    );
+    expect(() =>
+      assertFirstParty(
+        manifest({
+          sourcePath: `${HOME}/.pi/agent/extensions/budget/deep/nested`,
+        }),
+        OPTS,
+      ),
+    ).not.toThrow();
+  });
+
+  it('FIRST_PARTY_PUBLISHERS is frozen: push cannot admit third-party', () => {
+    expect(Object.isFrozen(FIRST_PARTY_PUBLISHERS)).toBe(true);
+    try {
+      (FIRST_PARTY_PUBLISHERS as unknown as string[]).push('evil-corp');
+    } catch {
+      // frozen in strict mode: push throws — still refused below either way
+    }
+    expect(
+      (FIRST_PARTY_PUBLISHERS as readonly string[]).includes('evil-corp'),
+    ).toBe(false);
+    expect(() =>
+      assertFirstParty(manifest({ publisher: 'evil-corp' }), OPTS),
     ).toThrow(ExtensionRefusedError);
   });
 });

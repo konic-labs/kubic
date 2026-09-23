@@ -24,4 +24,10 @@ describe('facet boundaries (issue #37, §32)', () => {
       assertFacetImports('worker', ['@kubic/agents', '@kubic/core']),
     ).not.toThrow();
   });
+
+  it('casefolds: ./Host.js is refused for a tui facet', () => {
+    expect(() => assertFacetImports('tui', ['./Host.js'])).toThrow(
+      FacetBoundaryError,
+    );
+  });
 });

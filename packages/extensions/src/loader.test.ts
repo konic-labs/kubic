@@ -60,4 +60,26 @@ describe('extension loader (issue #37, §31)', () => {
     );
     expect(loader.resolve('@kubic/agents')).toBe('@kubic/agents');
   });
+
+  it('refuses .. traversal on register AND resolve', () => {
+    const traversals = [
+      `${HOME}/.pi/agent/extensions/../evil.js`,
+      '/repo/.pi/extensions/../evil',
+      '.pi/extensions/../evil',
+    ];
+    for (const evil of traversals) {
+      const loader = new ExtensionLoader(OPTS);
+      expect(() =>
+        loader.register(manifest({ sourcePath: evil }), () => undefined),
+      ).toThrow(ExtensionRefusedError);
+      expect(() => loader.resolve(evil)).toThrow(ExtensionRefusedError);
+    }
+  });
+
+  it('still resolves a legit nested path under owned dirs', () => {
+    const loader = new ExtensionLoader(OPTS);
+    expect(
+      loader.resolve(`${HOME}/.pi/agent/extensions/budget/deep/nested`),
+    ).toBe(`${HOME}/.pi/agent/extensions/budget/deep/nested`);
+  });
 });

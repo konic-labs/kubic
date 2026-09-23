@@ -52,7 +52,7 @@ export class ServiceRegistry {
     if (entry === undefined) {
       throw new ServiceNotFoundError(`service not found: ${name}`);
     }
-    if (entry.local && opts.remote === true) {
+    if (entry.local && opts.remote) {
       throw new ServiceRemoteError(
         `service ${name} is local-only and is never resolvable remotely`,
       );

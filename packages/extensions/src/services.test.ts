@@ -1,7 +1,7 @@
 // Services: provide/provideMany/use/observe via env.use(); local:{true}
 // never remote (issue #37; §32). RED first.
 import { describe, expect, it } from 'vitest';
-import { createEnv, ServiceRegistry } from './services.js';
+import { createEnv, ServiceRegistry, ServiceRemoteError } from './services.js';
 
 describe('extension services (issue #37, §32)', () => {
   it('provides and uses a service via env.use()', () => {
@@ -41,5 +41,16 @@ describe('extension services (issue #37, §32)', () => {
     expect(() => registry.use('secrets/db', { remote: true })).toThrow(
       /local.*never remote|never.*remote/i,
     );
+  });
+
+  it('remote gate is fail-closed on truthy non-boolean flags', () => {
+    const registry = new ServiceRegistry();
+    registry.provide('secrets/db', { token: 's3cret' }, { local: true });
+    expect(() => registry.use('secrets/db', { remote: 1 } as never)).toThrow(
+      ServiceRemoteError,
+    );
+    expect(() =>
+      registry.use('secrets/db', { remote: 'yes' } as never),
+    ).toThrow(ServiceRemoteError);
   });
 });

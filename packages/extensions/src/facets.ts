@@ -14,15 +14,22 @@ export class FacetBoundaryError extends Error {
 }
 
 function mentionsHost(spec: string): boolean {
+  // Casefolded: filesystems and bundlers may resolve './Host.js' to the host
+  // facet, so compare lowercase. NOTE (dynamic-import() static-analysis
+  // limitation): this validator only sees static specifier strings handed to
+  // it; a dynamic import() with a computed (non-literal) expression cannot be
+  // statically analyzed, so runtime loaders must still refuse unowned targets
+  // via isOwnedPath/resolve — this check is defense-in-depth, not a sandbox.
+  const lower = spec.toLowerCase();
   return (
-    spec === '@kubic/host' ||
-    spec.startsWith('@kubic/host/') ||
-    /(^|\/)host(\/|$|\.|-)/.test(spec)
+    lower === '@kubic/host' ||
+    lower.startsWith('@kubic/host/') ||
+    /(^|\/)host(\/|$|\.|-)/.test(lower)
   );
 }
 
 function mentionsPiTui(spec: string): boolean {
-  return spec.includes('pi-tui');
+  return spec.toLowerCase().includes('pi-tui');
 }
 
 export function assertFacetImports(facet: FacetKind, imports: string[]): void {

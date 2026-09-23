@@ -5,25 +5,25 @@
 // Headless snapshots render directly (no VirtualTerminal in Pi 0.85.1)
 // like layout.test.ts. Faux-only: zero network, short real timers.
 import { describe, expect, it } from 'vitest';
-import type { Component } from './tui-boundary.js';
-import { CURSOR_MARKER } from './tui-boundary.js';
 import {
   APPROVAL_MIN_WIDTH,
+  type ApprovalOverlayHandle,
+  ApprovalView,
+  type ApprovalViewRequest,
   approvalKeyConflicts,
   approvalOverlayBounds,
   approvalOverlayOptions,
-  ApprovalView,
   createApprovalMemo,
+  dismissApprovalOverlay,
   renderApprovalInline,
   renderApprovalLines,
   resolveApprovalAction,
   shouldUseInlineFallback,
   showApprovalOverlay,
-  dismissApprovalOverlay,
   waitForApproval,
-  type ApprovalOverlayHandle,
-  type ApprovalViewRequest,
 } from './approval-view.js';
+import type { Component } from './tui-boundary.js';
+import { CURSOR_MARKER } from './tui-boundary.js';
 
 function request(): ApprovalViewRequest {
   return {
@@ -124,9 +124,7 @@ describe('approval focus (issue #26; §16.4/§16.6)', () => {
     unfocused: Array<{ target: Component | null } | undefined>;
     handle: ApprovalOverlayHandle;
     tui: {
-      showOverlay: (
-        component: Component,
-      ) => ApprovalOverlayHandle;
+      showOverlay: (component: Component) => ApprovalOverlayHandle;
     };
   } {
     const unfocused: Array<{ target: Component | null } | undefined> = [];
@@ -163,5 +161,38 @@ describe('approval focus (issue #26; §16.4/§16.6)', () => {
     expect(view.focused).toBe(false);
     expect(fake.unfocused).toEqual([{ target: editor }]);
     expect(view.render(100).join('\n')).not.toContain(CURSOR_MARKER);
+  });
+});
+
+describe('approval timeout + memoOnce (issue #26; §41)', () => {
+  it('denies with reason on maxPendingMs expiry and never hangs headless', async () => {
+    const memo = createApprovalMemo();
+    const verdict = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 20,
+    });
+    expect(verdict).toEqual({
+      approved: false,
+      reason: 'approval timed out after 20ms',
+    });
+    expect(memo.decided('k1')).toEqual(verdict);
+  });
+
+  it('persists decisions: restart/rerender never re-asks; races settle once', async () => {
+    const memo = createApprovalMemo();
+    const first = memo.submit('k1', { approved: true, by: 'allow-once' });
+    const raced = memo.submit('k1', {
+      approved: false,
+      reason: 'late deny',
+    });
+    expect(raced).toEqual(first);
+    const again = await waitForApproval('k1', {
+      memo,
+      maxPendingMs: 20,
+      awaitAnswer: () => {
+        throw new Error('must not re-ask');
+      },
+    });
+    expect(again).toEqual(first);
   });
 });

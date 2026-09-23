@@ -65,8 +65,7 @@ export function approvalOverlayOptions(): ApprovalOverlayOptions {
     anchor: 'center',
     // Capturing by design: the modal takes focus on show (nonCapturing
     // is never set). Narrow terminals skip the overlay via visible.
-    visible: (termWidth: number): boolean =>
-      termWidth >= APPROVAL_MIN_WIDTH,
+    visible: (termWidth: number): boolean => termWidth >= APPROVAL_MIN_WIDTH,
   };
 }
 
@@ -131,7 +130,6 @@ export function renderApprovalInline(
     ...renderApprovalLines(request, w),
   ];
 }
-
 
 // Keybinding registry (§16.6/§16.9). Defaults live here (not in Pi's
 // global KeybindingsManager — the tui seam exposes no registry writer),
@@ -290,4 +288,87 @@ export class ApprovalView implements Component, Focusable {
   }
 
   invalidate(): void {}
+}
+
+// memoOnce decisions (§41): first answer wins, persisted through the
+// injected store so a restart/rerender never re-asks. The store is
+// memory by default — file backing (like the host's approvals.json) is
+// composed by the caller, never by this module (I/O confinement).
+export interface ApprovalDecisionStore {
+  load(): Record<string, ApprovalDecision>;
+  save(decisions: Record<string, ApprovalDecision>): void;
+}
+
+export class MemoryApprovalDecisionStore implements ApprovalDecisionStore {
+  private decisions: Record<string, ApprovalDecision> = {};
+
+  load(): Record<string, ApprovalDecision> {
+    return { ...this.decisions };
+  }
+
+  save(decisions: Record<string, ApprovalDecision>): void {
+    this.decisions = { ...decisions };
+  }
+}
+
+export interface ApprovalMemo {
+  decided(key: string): ApprovalDecision | undefined;
+  submit(key: string, verdict: ApprovalDecision): ApprovalDecision;
+}
+
+export function createApprovalMemo(
+  store?: ApprovalDecisionStore,
+): ApprovalMemo {
+  const backing = store ?? new MemoryApprovalDecisionStore();
+  const decisions = new Map<string, ApprovalDecision>(
+    Object.entries(backing.load()),
+  );
+  return {
+    decided: (key: string): ApprovalDecision | undefined => decisions.get(key),
+    submit: (key: string, verdict: ApprovalDecision): ApprovalDecision => {
+      const existing = decisions.get(key);
+      if (existing !== undefined) return existing;
+      decisions.set(key, verdict);
+      backing.save(Object.fromEntries(decisions));
+      return verdict;
+    },
+  };
+}
+
+export interface ApprovalWaitOptions {
+  readonly memo: ApprovalMemo;
+  readonly maxPendingMs: number;
+  readonly awaitAnswer?: (key: string) => Promise<ApprovalDecision | undefined>;
+}
+
+// Timeout→deny (§41): every wait is bounded by maxPendingMs, so headless
+// (-p) runs settle without a user. Late answers lose to the memo latch.
+export function waitForApproval(
+  key: string,
+  options: ApprovalWaitOptions,
+): Promise<ApprovalDecision> {
+  const settled = options.memo.decided(key);
+  if (settled !== undefined) return Promise.resolve(settled);
+  const reason = `approval timed out after ${options.maxPendingMs}ms`;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ApprovalDecision>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(options.memo.submit(key, { approved: false, reason }));
+    }, options.maxPendingMs);
+    timer.unref?.();
+  });
+  const done = (verdict: ApprovalDecision): ApprovalDecision => {
+    if (timer !== undefined) clearTimeout(timer);
+    return verdict;
+  };
+  const answer = options.awaitAnswer?.(key);
+  if (answer === undefined) return timeout.then(done);
+  return Promise.race([
+    answer.then((verdict) =>
+      verdict === undefined
+        ? timeout
+        : Promise.resolve(options.memo.submit(key, verdict)),
+    ),
+    timeout,
+  ]).then(done);
 }

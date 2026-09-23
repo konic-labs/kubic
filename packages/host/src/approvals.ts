@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -195,6 +197,124 @@ export function summarizeRequest(
     return `${capability}: ${toolName} ${args['path']}`;
   }
   return `${capability}: ${toolName}`;
+}
+
+// File-backed store: decisions + full-access posture live beside the
+// session that scoped them, so a fresh session starts safe (no file →
+// default deny posture) and audit/doctor read the same files later.
+// Load is corrupt-tolerant; saves are atomic tmp+rename.
+export interface AccessPosture {
+  fullAccess: boolean;
+  enabledAt?: number;
+  enabledBy?: string;
+}
+
+export class FileApprovalStore implements ApprovalStore {
+  private readonly file: string;
+  private readonly postureFile: string;
+
+  constructor(dir: string) {
+    this.file = join(dir, 'approvals.json');
+    this.postureFile = join(dir, 'posture.json');
+  }
+
+  load(): Record<string, ApprovalVerdict> {
+    const bridge = createNodeFileBridge('/');
+    if (!bridge.exists(this.file)) return {};
+    try {
+      return JSON.parse(bridge.readTextFile(this.file)) as Record<
+        string,
+        ApprovalVerdict
+      >;
+    } catch {
+      return {};
+    }
+  }
+
+  save(decisions: Record<string, ApprovalVerdict>): void {
+    const bridge = createNodeFileBridge('/');
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    bridge.writeFile(tmp, JSON.stringify(decisions));
+    try {
+      bridge.renameFile(tmp, this.file);
+    } catch (error) {
+      try {
+        bridge.remove(tmp, false, true);
+      } catch {
+        // Best-effort tmp cleanup; the original error is what matters.
+      }
+      throw error;
+    }
+  }
+
+  loadPosture(): AccessPosture {
+    const bridge = createNodeFileBridge('/');
+    if (!bridge.exists(this.postureFile)) return { fullAccess: false };
+    try {
+      return JSON.parse(bridge.readTextFile(this.postureFile)) as AccessPosture;
+    } catch {
+      return { fullAccess: false };
+    }
+  }
+
+  savePosture(posture: AccessPosture): void {
+    const bridge = createNodeFileBridge('/');
+    const tmp = `${this.postureFile}.${process.pid}.tmp`;
+    bridge.writeFile(tmp, JSON.stringify(posture));
+    bridge.renameFile(tmp, this.postureFile);
+  }
+}
+
+// Adapter from the service to the worker's approve hook (issue #15 slice
+// C). Non-triggered calls pass immediately without touching the service;
+// triggered calls need every raised capability approved. Full-access
+// approves everything AND records the posture — indicated, recorded,
+// and doctor-visible — never a quiet bypass.
+export type ApprovalAsk = (call: {
+  toolName: string;
+  args: Record<string, unknown>;
+  toolCallId: string;
+}) => Promise<{ approved: true } | { approved: false; reason: string }>;
+
+export function createApprovalAsk(
+  service: ApprovalService,
+  ctx: TriggerContext,
+  store: FileApprovalStore,
+): ApprovalAsk {
+  return async (call) => {
+    const capabilities = detectTriggers(call.toolName, call.args, ctx);
+    if (capabilities.length === 0) return { approved: true };
+    const posture = store.loadPosture();
+    if (posture.fullAccess) {
+      return { approved: true };
+    }
+    for (const capability of capabilities) {
+      const verdict = await service.request({
+        key: approvalKey(call.toolName, capability, call.args),
+        capability,
+        toolName: call.toolName,
+        summary: summarizeRequest(call.toolName, capability, call.args),
+      });
+      if (!verdict.approved) {
+        return { approved: false, reason: verdict.reason };
+      }
+    }
+    return { approved: true };
+  };
+}
+
+export function enableFullAccess(
+  store: FileApprovalStore,
+  by: string,
+  clock: () => number = Date.now,
+): AccessPosture {
+  const posture: AccessPosture = {
+    fullAccess: true,
+    enabledAt: clock(),
+    enabledBy: by,
+  };
+  store.savePosture(posture);
+  return posture;
 }
 
 export interface ApprovalServiceOptions {

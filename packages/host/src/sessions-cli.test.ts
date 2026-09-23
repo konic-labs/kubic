@@ -96,3 +96,44 @@ describe('sessions CLI (issue #14, slice F)', () => {
     ).toBe(1);
   });
 });
+
+describe('sessions CLI approvals posture (issue #16, slice D)', () => {
+  it('records full-access on create with the flag and indicates on attach', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const created = await runSessionsCommand(
+      ['create', '--cwd', '/work', '--dangerously-skip-approvals'],
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(created).toBe(0);
+    expect(o.lines.some((line) => line.includes('full-access'))).toBe(true);
+    const id = o.lines[0] ?? '';
+    const o2 = out();
+    const attached = await runSessionsCommand(['attach', id, '--tail', '0'], {
+      sessionsRoot: root,
+      out: o2.write,
+    });
+    expect(attached).toBe(0);
+    expect(o2.lines.some((line) => line.includes('posture: full-access'))).toBe(
+      true,
+    );
+  });
+
+  it('defaults to approvals enforced', async () => {
+    const root = tmpRoot();
+    const o = out();
+    await runSessionsCommand(['create', '--cwd', '/work'], {
+      sessionsRoot: root,
+      out: o.write,
+    });
+    const id = o.lines[0] ?? '';
+    const o2 = out();
+    await runSessionsCommand(['attach', id, '--tail', '0'], {
+      sessionsRoot: root,
+      out: o2.write,
+    });
+    expect(
+      o2.lines.some((line) => line.includes('posture: approvals enforced')),
+    ).toBe(true);
+  });
+});

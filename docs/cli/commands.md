@@ -12,9 +12,10 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | tui | doctor | workers>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
+Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
 ## `kubic run -p <prompt> [--session <id>] [--json]`
 
@@ -31,6 +32,35 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 `error:` line comes first. Exit code is the §78 terminus map — see
 [exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
 value, an invalid `--session` id, or an unknown flag all exit 2.
+
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
+
+Opt-in orchestrator mode: plans N workers, spawns one worker process per
+subagent in its own git worktree (`kubic/<agent>` at
+`<root>/.kubic/wt/<agent>`), settles/merges FIFO through the merge queue
+with per-agent attribution, routes merge approvals to the user, and reaps.
+The manager authors nothing — workers commit on their own branches, the
+manager only merges. Worktrees and branches stay retained after the merge
+as evidence (only `kubic clean` disposes). Requires a git repo: outside one
+the command refuses with exit 2 and never silently runs solo. Worker runs
+need a configured provider (each worker is a child `kubic run -p`).
+
+| Flag | Meaning |
+| --- | --- |
+| `-p`, `--prompt <text>` | **Required** (unless `--resume`). The prompt every worker runs. |
+| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
+| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`. |
+| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
+| `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, optional `error` with a machine-readable `code`). |
+
+Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
+per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, one
+`merged:`/`reaped:` line per worker, then `result:`. Failures print
+`error: <message> code=<code>` and exit 1 (spawn/worker/merge/reap
+failures), 2 (usage, non-git refusal), or 4 (approval denied) — see
+[exit codes](exit-codes.md). A merge conflict aborts first (never a
+half-merged tree), stops the queue, and preserves the remaining candidates.
 
 ## `kubic tui [--session <id>]`
 

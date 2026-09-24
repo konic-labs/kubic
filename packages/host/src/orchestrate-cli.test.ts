@@ -1,0 +1,487 @@
+// `kubic orchestrate` (issue #76): plans, spawns workers in git worktrees,
+// settles/merges FIFO with per-agent attribution, and reaps. RED first:
+// every acceptance checkbox arrives here as a failing test.
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { NodeExecutionEnv } from '../../exec/src/env.js';
+import type {
+  OrchestrateCommandDeps,
+  OrchestratorRunState,
+} from './orchestrate-cli.js';
+import {
+  MergeConflictError,
+  managerCallsForMerge,
+  runOrchestrateCommand,
+} from './orchestrate-cli.js';
+import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import { addWorktree } from './orchestrator/worktree/add.js';
+
+interface FakeCalls {
+  ensure: string[];
+  run: string[];
+  merge: string[];
+  reap: string[];
+  approvals: string[];
+}
+
+interface FakeWorld {
+  deps: OrchestrateCommandDeps;
+  lines: string[];
+  debugLines: string[];
+  calls: FakeCalls;
+  saved: OrchestratorRunState[];
+}
+
+function makeWorld(
+  overrides: Partial<OrchestrateCommandDeps> = {},
+  hunksPerAgent?: Record<string, number>,
+): FakeWorld {
+  const lines: string[] = [];
+  const debugLines: string[] = [];
+  const calls: FakeCalls = {
+    ensure: [],
+    run: [],
+    merge: [],
+    reap: [],
+    approvals: [],
+  };
+  const saved: OrchestratorRunState[] = [];
+  const deps: OrchestrateCommandDeps = {
+    out: (line: string) => {
+      lines.push(line);
+    },
+    debug: (line: string) => {
+      debugLines.push(line);
+    },
+    now: () => 1700000000000,
+    isGitRepo: () => true,
+    ensureWorktree: (agentId: string) => {
+      calls.ensure.push(agentId);
+      return { path: `/repo/.kubic/wt/${agentId}`, branch: `kubic/${agentId}` };
+    },
+    runWorker: (agentId: string) => {
+      calls.run.push(agentId);
+      const count = hunksPerAgent?.[agentId] ?? 1;
+      const hunks: MergedHunk[] = [];
+      for (let i = 0; i < count; i += 1) {
+        hunks.push({
+          path: `${agentId}-${i}.txt`,
+          hunk: `@@ -0,0 +1 @@ +${agentId}-${i}`,
+        });
+      }
+      return hunks;
+    },
+    mergeBranch: (agentId: string) => {
+      calls.merge.push(agentId);
+    },
+    reapWorker: (agentId: string) => {
+      calls.reap.push(agentId);
+    },
+    requestApproval: (input: { agentId: string }) => {
+      calls.approvals.push(input.agentId);
+      return true;
+    },
+    loadState: () => undefined,
+    saveState: (state: OrchestratorRunState) => {
+      saved.push(structuredClone(state));
+    },
+    ...overrides,
+  };
+  return { deps, lines, debugLines, calls, saved };
+}
+
+function lastJsonLine(lines: string[]): Record<string, unknown> {
+  const raw = lines[lines.length - 1] as string;
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+describe('orchestrate usage (issue #76)', () => {
+  it('prints usage and exits 2 with no prompt', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand([], world.deps);
+    expect(code).toBe(2);
+    expect(world.lines[0]).toMatch(/^usage: kubic orchestrate/);
+    expect(world.calls.ensure).toEqual([]);
+  });
+
+  it('exits 2 on unknown flags, missing values, and bad ids', async () => {
+    const world = makeWorld();
+    expect(
+      await runOrchestrateCommand(['-p', 'x', '--bogus'], world.deps),
+    ).toBe(2);
+    expect(
+      await runOrchestrateCommand(
+        ['--session', 'no spaces!!', '-p', 'x'],
+        world.deps,
+      ),
+    ).toBe(2);
+    expect(
+      await runOrchestrateCommand(
+        ['-p', 'x', '--agents', 'good,bad/id'],
+        world.deps,
+      ),
+    ).toBe(2);
+    expect(
+      await runOrchestrateCommand(['-p', 'x', '--agents', 'a,a'], world.deps),
+    ).toBe(2);
+    expect(
+      await runOrchestrateCommand(['--resume', '-p', 'x'], world.deps),
+    ).toBe(2);
+  });
+});
+
+describe('orchestrate non-git refusal (issue #76)', () => {
+  it('refuses outside a git repo with exit 2 and never runs solo', async () => {
+    const world = makeWorld({ isGitRepo: () => false });
+    const code = await runOrchestrateCommand(
+      ['-p', 'do things', '--agents', 'alpha,beta'],
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.lines.join('\n')).toMatch(/git repository/);
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.calls.merge).toEqual([]);
+    expect(world.lines.some((line) => line.startsWith('worker:'))).toBe(false);
+    expect(world.lines.some((line) => line.startsWith('result:'))).toBe(false);
+  });
+});
+
+describe('orchestrate two-worker FIFO merge (issue #76)', () => {
+  it('spawns, runs, merges in agent order with per-agent attribution', async () => {
+    const world = makeWorld({}, { alpha: 2, beta: 1 });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo prompt', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.ensure).toEqual(['alpha', 'beta']);
+    expect(world.calls.run).toEqual(['alpha', 'beta']);
+    expect(world.calls.merge).toEqual(['alpha', 'beta']);
+    expect(world.calls.reap).toEqual(['alpha', 'beta']);
+    const text = world.lines.join('\n');
+    expect(text).toContain('merge order: alpha -> beta');
+    expect(text).toContain('worker: alpha');
+    expect(text).toContain('worker: beta');
+    expect(text).toContain('attribution: alpha=2 hunk(s), beta=1 hunk(s)');
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(state.merged).toEqual(['alpha', 'beta']);
+    expect(state.pending).toEqual([]);
+    expect(state.stopped).toBe(false);
+  });
+
+  it('emits a machine-readable --json envelope on success', async () => {
+    const world = makeWorld({}, { alpha: 2, beta: 1 });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--json'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const envelope = lastJsonLine(world.lines);
+    expect(envelope).toMatchObject({
+      ok: true,
+      exitCode: 0,
+      sessionId: 'sess-1',
+      status: 'completed',
+      mergeOrder: ['alpha', 'beta'],
+    });
+    const attribution = envelope.attribution as { agent: string }[];
+    expect(attribution.map((hunk) => hunk.agent).sort()).toEqual([
+      'alpha',
+      'alpha',
+      'beta',
+    ]);
+  });
+
+  it('keeps the manager write-free on the merge path', () => {
+    expect(() => assertManagerZeroWrites(managerCallsForMerge())).not.toThrow();
+    expect(managerCallsForMerge()).toContain('workspace_merge');
+  });
+});
+
+describe('orchestrate approvals (issue #76)', () => {
+  it('denies closed with exit 4 when the user decider says no', async () => {
+    const world = makeWorld({
+      requestApproval: () => false,
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(4);
+    expect(world.calls.merge).toEqual([]);
+    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
+  });
+
+  it('denies closed with exit 4 when no decider and no --yes (never silent)', async () => {
+    const world = makeWorld({ requestApproval: undefined });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(4);
+    expect(world.calls.merge).toEqual([]);
+  });
+
+  it('--yes auto-approves without asking', async () => {
+    const world = makeWorld({ requestApproval: undefined });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.approvals).toEqual([]);
+    expect(world.calls.merge).toEqual(['alpha', 'beta']);
+  });
+});
+
+describe('orchestrate failure codes (issue #76)', () => {
+  it('fails closed with a machine-readable error when a worker fails', async () => {
+    const world = makeWorld({
+      runWorker: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('boom');
+        return [{ path: 'a.txt', hunk: '@@ a' }];
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=worker_failed/);
+    // The spawned worker is still reaped; nothing merges.
+    expect(world.calls.merge).toEqual([]);
+    expect(world.calls.reap).toContain('alpha');
+  });
+
+  it('stops the queue fail-closed on an unresolvable conflict', async () => {
+    const world = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'beta') {
+          throw new MergeConflictError('beta', {
+            oursDiff: 'ours',
+            theirsDiff: 'theirs',
+          });
+        }
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(state.merged).toEqual(['alpha']);
+    expect(state.pending).toEqual(['beta']);
+    expect(state.stopped).toBe(true);
+    expect(state.blocked?.agentId).toBe('beta');
+  });
+
+  it('fails closed with a machine-readable error when reap fails', async () => {
+    const world = makeWorld({
+      reapWorker: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('zombie');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=reap_failed/);
+    expect(world.calls.merge).toEqual(['alpha', 'beta']);
+  });
+});
+
+describe('orchestrate crash-resume (issue #76)', () => {
+  it('resume with no stored state fails closed and machine-readable', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'ghost'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+    expect(world.calls.merge).toEqual([]);
+  });
+
+  it('kill mid-run resumes pending only: no double-merge, order intact', async () => {
+    // First run: killed while merging beta (alpha already merged + saved).
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('KILLED');
+      },
+    });
+    const code1 = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(killed.merged).toEqual(['alpha']);
+    expect(killed.pending).toEqual(['beta']);
+
+    // Resume: the stored state continues beta only; alpha never re-merges.
+    const second = makeWorld({
+      loadState: () => structuredClone(killed),
+    });
+    const code2 = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1'],
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(second.calls.ensure).toEqual(['beta']);
+    expect(second.calls.run).toEqual(['beta']);
+    expect(second.calls.merge).toEqual(['beta']);
+    expect(second.lines.join('\n')).toContain('merge order: alpha -> beta');
+    const done = second.saved[second.saved.length - 1] as OrchestratorRunState;
+    expect(done.merged).toEqual(['alpha', 'beta']);
+    expect(done.pending).toEqual([]);
+  });
+
+  it('resume on a stopped queue re-reports blocked and merges nothing', async () => {
+    const stopped: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: ['alpha'],
+      pending: ['beta'],
+      stopped: true,
+      blocked: { agentId: 'beta', oursDiff: 'o', theirsDiff: 't' },
+      records: [
+        {
+          agentId: 'alpha',
+          branch: 'kubic/alpha',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stopped) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.calls.merge).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+  });
+});
+
+describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => {
+  it('spawn → run → settle → merge to the session branch over real git', {
+    timeout: 30000,
+  }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kubic-orch-'));
+    const lines: string[] = [];
+    const provenance = {
+      sessionId: 'demosess',
+      agentId: 'manager',
+      toolCallId: 'demo',
+      turnId: 0,
+      operation: 'orchestrate_demo',
+    };
+    const git = async (args: string[]): Promise<string> => {
+      const env = new NodeExecutionEnv(root);
+      const done = await env.shell.spawn('git', args, { provenance }).wait();
+      if (done.exitCode !== 0) {
+        throw new Error(`git ${args.join(' ')} failed: ${done.stderr}`);
+      }
+      return done.stdout;
+    };
+    await git(['init', '-b', 'main']);
+    await git(['config', 'user.email', 'demo@kubic.dev']);
+    await git(['config', 'user.name', 'kubic demo']);
+    await git(['config', 'commit.gpgsign', 'false']);
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    await git(['add', 'base.txt']);
+    await git(['commit', '-m', 'base']);
+
+    const env = new NodeExecutionEnv(root);
+    const deps: OrchestrateCommandDeps = {
+      out: (line: string) => {
+        lines.push(line);
+      },
+      now: () => 1700000000000,
+      isGitRepo: () => true,
+      ensureWorktree: (agentId: string) =>
+        addWorktree(env, root, agentId, { sessionId: 'demosess' }).then(
+          (added) => ({ path: added.path, branch: added.branch }),
+        ),
+      runWorker: async (
+        agentId: string,
+        worktree: { path: string; branch: string },
+      ) => {
+        const wenv = new NodeExecutionEnv(worktree.path);
+        const run = async (args: string[]): Promise<void> => {
+          const done = await wenv.shell
+            .spawn('git', args, { provenance })
+            .wait();
+          if (done.exitCode !== 0) {
+            throw new Error(`git ${args.join(' ')} failed: ${done.stderr}`);
+          }
+        };
+        writeFileSync(
+          join(worktree.path, `task-${agentId}.txt`),
+          `from ${agentId}\n`,
+        );
+        await run(['add', `task-${agentId}.txt`]);
+        await run(['commit', '-m', `worker ${agentId}`]);
+        return [
+          {
+            path: `task-${agentId}.txt`,
+            hunk: `@@ -0,0 +1 @@ +from ${agentId}`,
+          },
+        ];
+      },
+      mergeBranch: async (agentId: string) => {
+        const done = await env.shell
+          .spawn(
+            'git',
+            ['merge', '--no-ff', `kubic/${agentId}`, '-m', `merge ${agentId}`],
+            { provenance },
+          )
+          .wait();
+        if (done.exitCode !== 0) {
+          await env.shell
+            .spawn('git', ['merge', '--abort'], { provenance })
+            .wait();
+          throw new MergeConflictError(agentId, {
+            oursDiff: done.stdout,
+            theirsDiff: done.stderr,
+          });
+        }
+      },
+      reapWorker: () => undefined,
+      requestApproval: () => true,
+      loadState: () => undefined,
+      saveState: () => undefined,
+    };
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'demosess'],
+      deps,
+    );
+    expect(code).toBe(0);
+    const log = await git(['log', '--format=%s']);
+    expect(log).toContain('merge alpha');
+    expect(log).toContain('merge beta');
+    // Merge queue ordering: alpha merged before beta.
+    expect(log.indexOf('merge alpha')).toBeGreaterThan(
+      log.indexOf('merge beta'),
+    );
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(join(root, 'task-alpha.txt'), 'utf8')).toContain(
+      'from alpha',
+    );
+    expect(readFileSync(join(root, 'task-beta.txt'), 'utf8')).toContain(
+      'from beta',
+    );
+    expect(lines.join('\n')).toContain('merge order: alpha -> beta');
+  });
+});

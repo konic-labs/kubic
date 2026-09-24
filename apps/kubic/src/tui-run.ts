@@ -22,6 +22,7 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
@@ -154,9 +155,7 @@ export async function runTuiCommand(
   }
   const app = createTuiApp({ sessionId: boot.sessionId, model: boot.model });
   const terminal = deps.createTerminal();
-  const screen = bootScreen(terminal, app.root);
-  screen.tui.setFocus(app.tree);
-  screen.render();
+  let screen: Screen | undefined;
   let stopped = false;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
@@ -169,7 +168,7 @@ export async function runTuiCommand(
     if (stopped) return;
     stopped = true;
     process.removeListener('SIGINT', onSigint);
-    screen.stop((line: string) => deps.out(line));
+    screen?.stop((line: string) => deps.out(line));
     void (async () => {
       try {
         await boot.close?.();
@@ -179,15 +178,38 @@ export async function runTuiCommand(
       resolveExit();
     })();
   };
-  process.once('SIGINT', onSigint);
-  screen.tui.addInputListener((data: string) => {
-    const routed = app.handleInput(data);
-    if (routed.quit) {
-      shutdown();
-      return { consume: true };
+  try {
+    const booted = bootScreen(terminal, app.root);
+    screen = booted;
+    booted.tui.setFocus(app.tree);
+    booted.render();
+    process.once('SIGINT', onSigint);
+    booted.tui.addInputListener((data: string) => {
+      const routed = app.handleInput(data);
+      if (routed.quit) {
+        shutdown();
+        return { consume: true };
+      }
+      return routed.consumed ? { consume: true } : undefined;
+    });
+  } catch (error) {
+    // Post-start setup (boot/setFocus/render/input routing) can throw
+    // after the alt-screen went active — restore the main screen and
+    // close the lane so the reject never strands either. The setup
+    // error stands.
+    process.removeListener('SIGINT', onSigint);
+    try {
+      screen?.stop((line: string) => deps.out(line));
+    } catch {
+      // Restore failures never mask the setup error.
     }
-    return routed.consumed ? { consume: true } : undefined;
-  });
+    try {
+      await boot.close?.();
+    } catch {
+      // Close failures never mask the setup error.
+    }
+    throw error;
+  }
   await exited;
   return RUN_EXIT_OK;
 }

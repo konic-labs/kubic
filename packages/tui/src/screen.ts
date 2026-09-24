@@ -18,7 +18,19 @@ export interface Screen {
 export function bootScreen(terminal: Terminal, root: VStack): Screen {
   const screen = new TuiAltScreen(terminal);
   screen.setLayoutRoot(root);
-  screen.start();
+  try {
+    screen.start();
+  } catch (error) {
+    // start() can throw after the terminal went active (alt-screen
+    // entered) — restore it best-effort so a mid-boot failure never
+    // strands the caller's terminal. The original error stands.
+    try {
+      screen.stop();
+    } catch {
+      // Restore failures never mask the start error.
+    }
+    throw error;
+  }
   return {
     tui: screen,
     render: () => screen.renderNow(true),

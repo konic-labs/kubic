@@ -198,4 +198,29 @@ describe('kubic tui (issue #75)', () => {
     expect(terminal.started).toBe(0);
     expect(lines.join('\n')).toContain('error: nope');
   });
+
+  it('restores the screen and closes the lane when setup throws after start', async () => {
+    let closed = 0;
+    const terminal = fakeTerminal(100);
+    terminal.hideCursor = () => {
+      throw new Error('setup boom');
+    };
+    await expect(
+      runTuiCommand(
+        [],
+        deps(terminal, {
+          bootLane: async (sessionId?: string) => ({
+            sessionId: sessionId ?? 's1',
+            model: 'faux/test',
+            close: () => {
+              closed += 1;
+            },
+          }),
+        }),
+      ),
+    ).rejects.toThrow('setup boom');
+    expect(terminal.started).toBe(1);
+    expect(terminal.stopped).toBe(1);
+    expect(closed).toBe(1);
+  });
 });

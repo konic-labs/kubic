@@ -41,7 +41,9 @@ final document (no cursor loss on interrupt). Below 80 columns the tree
 hides and transcript plus status stay. `--session <id>` resumes into an
 existing session (same `[A-Za-z0-9_-]` rule as `run` — anything else
 exits 2 before the lane boots). Lane boot failure exits 5 on a missing
-session, 6 with no reachable provider, 1 otherwise. Solo mode runs
+session, 6 with no reachable provider, 1 otherwise. Only `SIGINT`
+(`Ctrl-C`) is handled — `SIGTERM`/`SIGHUP` have no handler and exit
+without restoring the alt-screen. Solo mode runs
 in-process with your user authority: no isolation, no containment.
 
 ## `kubic sessions`

@@ -1,7 +1,10 @@
-// First-party bundle startup (issue #80; §33 skills). The on-disk bundle
-// under skills/budget loads at CLI startup through the #37 trust gates:
-// the manifest is data (validated, never executed), the factory stays
-// compiled-in first-party code. All bundle services provide local-only —
+// First-party bundle posture (issue #80; §33 skills). SCOPE: the on-disk
+// bundle under skills/budget is probed through the #37 trust gates from
+// `kubic doctor` only (the extension:bundle check) — run/tui/orchestrate
+// never call this probe and run bare, by design until persistence lands.
+// This module is a posture check, not a startup gate: the manifest is
+// data (validated, never executed), the factory stays compiled-in
+// first-party code. All bundle services provide local-only —
 // v1 has no remote extension resolution, so the remote-truthiness gate is
 // live on the real registry. Removing the bundle dir fails closed with
 // ExtensionStartupError, never a silent no-op. File access is injected
@@ -10,7 +13,7 @@
 
 import type { BudgetLimits } from './bundles/budget/contract.js';
 import { BUDGET_SERVICE } from './bundles/budget/contract.js';
-import { createBudgetBundle } from './bundles/budget/index.js';
+import { BUDGET_MANIFEST, createBudgetBundle } from './bundles/budget/index.js';
 import { renderBudgetStatus } from './bundles/budget/tui.js';
 import type { ExtensionManifest } from './contract.js';
 import { ExtensionRefusedError, FACET_KINDS } from './contract.js';
@@ -56,7 +59,11 @@ export interface ExtensionPosture {
 
 export const FIRST_PARTY_BUNDLE_NAME = 'kubic/budget';
 export const BUNDLE_MANIFEST_FILE = 'manifest.json';
-const MAX_ANCHOR_LEVELS = 6;
+// Upward-walk bound: 4 levels covers both shipped layouts exactly (src:
+// packages/extensions/src → root is 3; dist: dist/apps/kubic/src → root
+// is 4). Anything further up is outside the repo — fail closed instead
+// of escaping toward the filesystem root.
+const MAX_ANCHOR_LEVELS = 4;
 
 function startupMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -80,7 +87,7 @@ function resolveBundleDir(anchorDir: string, files: BundleDirFiles): string {
     if (isDir) return candidate;
   }
   throw new ExtensionStartupError(
-    `extension bundle dir missing: "skills/budget" not found from ${JSON.stringify(anchorDir)} (first-party bundle ${FIRST_PARTY_BUNDLE_NAME} unavailable — refusing startup, not running bare)`,
+    `extension bundle dir missing: "skills/budget" not found from ${JSON.stringify(anchorDir)} (first-party bundle ${FIRST_PARTY_BUNDLE_NAME} unavailable — failing the doctor posture, never a silent skip)`,
   );
 }
 
@@ -116,6 +123,36 @@ function readManifest(
     );
   }
   return parsed;
+}
+
+// Pin resolution: the on-disk manifest must agree with the compiled
+// BUDGET_MANIFEST pin (name already checked above; publisher+facets
+// here). The #37 trust gates admit any first-party publisher (kubic,
+// konic-labs) with an owned sourcePath, so gates alone cannot catch a
+// drifted bundle dir (shadow copy, hand edit) — fail closed on drift
+// and never fall through to another candidate.
+function assertManifestPin(path: string, manifest: ExtensionManifest): void {
+  const drifts: string[] = [];
+  if (manifest.publisher !== BUDGET_MANIFEST.publisher) {
+    drifts.push(
+      `publisher: on-disk ${JSON.stringify(manifest.publisher)} vs compiled pin ${JSON.stringify(BUDGET_MANIFEST.publisher)}`,
+    );
+  }
+  const pinnedFacets = [...BUDGET_MANIFEST.facets];
+  const onDiskFacets = [...manifest.facets];
+  const sameFacets =
+    onDiskFacets.length === pinnedFacets.length &&
+    onDiskFacets.every((facet) => pinnedFacets.includes(facet));
+  if (!sameFacets) {
+    drifts.push(
+      `facets: on-disk [${onDiskFacets.join(', ')}] vs compiled pin [${pinnedFacets.join(', ')}]`,
+    );
+  }
+  if (drifts.length > 0) {
+    throw new ExtensionStartupError(
+      `extension bundle drift: on-disk manifest ${JSON.stringify(path)} disagrees with the compiled ${FIRST_PARTY_BUNDLE_NAME} pin (${drifts.join('; ')}) — refusing`,
+    );
+  }
 }
 
 function isManifestShape(value: unknown): value is ExtensionManifest {
@@ -176,6 +213,26 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
       loaded: [],
       refused,
       detail: `extension bundle refused: ${reason}`,
+    };
+  }
+  // Pin resolution runs AFTER the trust gates so gate violations keep
+  // their gate errors (third-party, owned-path): the pin catches what
+  // the gates admit (a drifted publisher/facets on an otherwise
+  // first-party manifest). Fail closed, never fall through to another
+  // candidate — the walk already committed to the nearest dir.
+  try {
+    assertManifestPin(
+      opts.files.joinPath([bundleDir, BUNDLE_MANIFEST_FILE]),
+      manifest,
+    );
+  } catch (error) {
+    const reason = startupMessage(error);
+    refused.push({ attempt: `pin:${manifest.name}`, reason });
+    return {
+      ok: false,
+      loaded: [],
+      refused,
+      detail: reason,
     };
   }
   const loader = new ExtensionLoader(opts.trust);
@@ -270,6 +327,17 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
       attempt: `use:${BUDGET_SERVICE}:{remote:1}`,
       reason: startupMessage(error),
     });
+  }
+  // Defense in depth: the ok path must carry proof both live tripwires
+  // fired — a future edit that skips a probe must turn the posture red,
+  // not silently green.
+  if (refused.length < 2) {
+    return {
+      ok: false,
+      loaded: [],
+      refused,
+      detail: `extension trust tripwire: expected 2 refused bypass attempts, recorded ${refused.length} — refusing startup`,
+    };
   }
   return {
     ok: true,

@@ -180,18 +180,34 @@ function probeMessage(error: unknown): string {
 // the live startup probe here, so doctor reports the same loaded/refused
 // counts the trust checks produce. A degraded posture fails with reason
 // extension-posture (exit 1 via limitsDoctorExit); warn never applies —
-// a half-loaded bundle is a failure, not a disclosure.
+// a half-loaded bundle is a failure, not a disclosure. Defense in depth:
+// the ok path must carry proof both live tripwires fired (≥1 loaded
+// bundle, ≥2 refused attempts) — a structural {ok:true} with no refusals
+// fails, so a probe that skips its checks cannot report green.
+const EXTENSION_TRIPWIRES = 2;
 function extensionCheck(posture: ExtensionPostureInput): DoctorCheck {
   const base = {
     id: 'extension:bundle',
     label: 'extension bundle',
   };
-  if (posture.ok) {
+  if (
+    posture.ok &&
+    posture.loaded.length >= 1 &&
+    posture.refusedCount >= EXTENSION_TRIPWIRES
+  ) {
     return {
       ...base,
       status: 'pass',
       reason: 'ok',
       detail: posture.detail,
+    };
+  }
+  if (posture.ok) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'extension-posture',
+      detail: `extension posture degraded: ok reported with loaded=[${posture.loaded.join(', ')}] refused=${posture.refusedCount} (need >=1 loaded bundle and ${EXTENSION_TRIPWIRES} refused tripwires) — failing closed`,
     };
   }
   return {

@@ -240,6 +240,38 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
     );
   });
 
+  it('fails a hand-fed ok with zero refused tripwires (defense in depth)', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeExtensions = () => ({
+      ok: true,
+      loaded: ['kubic/budget'],
+      refusedCount: 0,
+      detail: 'loaded 1 (kubic/budget: budget: none configured), refused 0',
+    });
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain(
+      'FAIL extension:bundle (extension-posture)',
+    );
+  });
+
+  it('fails a hand-fed ok with an empty loaded list', async () => {
+    const lines: string[] = [];
+    const deps = cleanDeps((line: string) => lines.push(line));
+    deps.probeExtensions = () => ({
+      ok: true,
+      loaded: [],
+      refusedCount: 2,
+      detail: 'loaded 0, refused 2 (owned-path traversal, remote-flag use)',
+    });
+    const code = await runDoctorCommand([], deps);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain(
+      'FAIL extension:bundle (extension-posture)',
+    );
+  });
+
   it('maps a throwing extension probe to a structured fail', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));

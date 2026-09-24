@@ -7,7 +7,9 @@ describing it:
 
 - `budget/` — the `kubic/budget` bundle: the agents budget surface
   (`budget/limits`) on the public loader path. Removing it fails
-  closed; `kubic doctor` reports the extension posture.
+  closed; `kubic doctor` reports the extension posture (scope: doctor
+  only — `run`/`tui`/`orchestrate` run bare by design until persistence
+  lands; the probe is a posture check, not a startup gate).
 
 Third-party/MCP loading is out of scope (Phase 4 per #58 — requests
 are refused). Bundle wiring lives in `packages/extensions/src` (see

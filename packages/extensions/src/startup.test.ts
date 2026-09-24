@@ -54,6 +54,39 @@ function fakeFiles(
   };
 }
 
+function shadowFiles(
+  shadowDir: string,
+  shadowManifest: string,
+  realDir: string,
+): BundleDirFiles {
+  const shadowFile = normalize(`${shadowDir}/manifest.json`);
+  const realFile = normalize(`${realDir}/manifest.json`);
+  return {
+    joinPath: (parts: string[]) => normalize(parts.join('/')),
+    exists: (path: string) => {
+      const candidate = normalize(path);
+      return (
+        candidate === shadowDir ||
+        candidate === shadowFile ||
+        candidate === realDir ||
+        candidate === realFile
+      );
+    },
+    fileInfo: (path: string) => {
+      const candidate = normalize(path);
+      if (candidate === shadowDir || candidate === realDir)
+        return { isDirectory: true };
+      throw new Error(`ENOENT: no such file: ${path}`);
+    },
+    readTextFile: (path: string) => {
+      const candidate = normalize(path);
+      if (candidate === shadowFile) return shadowManifest;
+      if (candidate === realFile) return MANIFEST_JSON;
+      throw new Error(`ENOENT: no such file: ${path}`);
+    },
+  };
+}
+
 describe('first-party bundle startup (issue #80)', () => {
   it('loads the on-disk bundle through the trust gates, refusing both live bypasses', () => {
     const posture = probeFirstPartyPosture({
@@ -83,7 +116,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.loaded).toEqual([]);
     expect(posture.detail).toContain('extension bundle dir missing');
     expect(posture.detail).toContain('skills/budget');
-    expect(posture.detail).toContain('not running bare');
+    expect(posture.detail).toContain('never a silent skip');
   });
 
   it('refuses a tampered manifest (third-party publisher) through the same gates', () => {
@@ -145,6 +178,81 @@ describe('first-party bundle startup (issue #80)', () => {
       expect(posture.loaded).toEqual([]);
       expect(posture.detail).toContain('extension bundle');
     }
+  });
+
+  it('refuses an on-disk manifest whose publisher drifted from the compiled pin', () => {
+    // 'konic-labs' passes the #37 trust gates (first-party publisher,
+    // owned sourcePath) but disagrees with the compiled BUDGET_MANIFEST
+    // pin — fail closed on drift, never trust-gates-only.
+    const drifted = JSON.stringify({
+      name: 'kubic/budget',
+      publisher: 'konic-labs',
+      version: '0.0.0',
+      sourcePath: 'kubic/budget',
+      facets: ['contract', 'host', 'worker', 'tui'],
+    });
+    const posture = probeFirstPartyPosture({
+      anchorDir: '/repo/dist/apps/kubic/src',
+      files: fakeFiles('/repo', { dir: true, manifest: drifted }),
+      trust: OPTS,
+    });
+    expect(posture.ok).toBe(false);
+    expect(posture.loaded).toEqual([]);
+    expect(posture.detail).toContain('drift');
+  });
+
+  it('refuses an on-disk manifest whose facets drifted from the compiled pin', () => {
+    const drifted = JSON.stringify({
+      name: 'kubic/budget',
+      publisher: 'kubic',
+      version: '0.0.0',
+      sourcePath: 'kubic/budget',
+      facets: ['contract'],
+    });
+    const posture = probeFirstPartyPosture({
+      anchorDir: '/repo/dist/apps/kubic/src',
+      files: fakeFiles('/repo', { dir: true, manifest: drifted }),
+      trust: OPTS,
+    });
+    expect(posture.ok).toBe(false);
+    expect(posture.loaded).toEqual([]);
+    expect(posture.detail).toContain('drift');
+  });
+
+  it('fails closed on a nearer shadow manifest instead of falling through to the real bundle', () => {
+    const shadow = JSON.stringify({
+      name: 'kubic/budget',
+      publisher: 'konic-labs',
+      version: '0.0.0',
+      sourcePath: 'kubic/budget',
+      facets: ['contract', 'host', 'worker', 'tui'],
+    });
+    const posture = probeFirstPartyPosture({
+      anchorDir: '/repo/dist/apps/kubic/src',
+      files: shadowFiles(
+        '/repo/dist/apps/kubic/src/skills/budget',
+        shadow,
+        '/repo/skills/budget',
+      ),
+      trust: OPTS,
+    });
+    expect(posture.ok).toBe(false);
+    expect(posture.loaded).toEqual([]);
+    expect(posture.detail).toContain('drift');
+  });
+
+  it('does not walk past the repo-root bound looking for the bundle', () => {
+    // The bundle sits 5 levels above this anchor; the walk is capped at
+    // 4 (covers the dist layout exactly) so the probe fails closed
+    // instead of escaping toward the filesystem root.
+    const posture = probeFirstPartyPosture({
+      anchorDir: '/repo/d1/d2/d3/d4/d5',
+      files: fakeFiles('/repo', { dir: true, manifest: MANIFEST_JSON }),
+      trust: OPTS,
+    });
+    expect(posture.ok).toBe(false);
+    expect(posture.loaded).toEqual([]);
+    expect(posture.detail).toContain('extension bundle dir missing');
   });
 
   it('ships a valid on-disk manifest for kubic/budget under skills/', () => {

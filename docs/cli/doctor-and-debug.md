@@ -54,6 +54,9 @@ Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,
 `--skip license:kubic,limit:solo-no-isolation`) — useful to isolate a
 red check from noise. Skipping an id that matches no check exits 2, so
 a typo fails closed instead of silently passing.
+`--skip extension:bundle` is an explicit operator override for a
+known-broken install, not a recovery — the bundle stays unloaded while
+skipped.
 
 ## Where to look next when something is red
 

@@ -1,0 +1,147 @@
+// Prod replay re-execution runner (issue #78): re-runs the recorded
+// objective through the lane and maps the settled terminus into replay's
+// §78 subset. RED first.
+import { describe, expect, it } from 'vitest';
+import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
+import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { ReplayRunRequest } from './replay.js';
+import { createProdReplayRun } from './run-prod.js';
+
+function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
+  return buildTrajectoryExport({
+    task: { taskId: 'task-1', objective, role: 'writer' },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+    model: { provider: 'acme', model: 'm1', thinking: null, escalations: [] },
+    prompt: { text: 'Fix the widget', constraints: [] },
+    resources: { skills: [], promptTemplates: [] },
+    transfer: null,
+    actions: [],
+    observations: [],
+    state: { phase: 'done', snapshot: null },
+    provenance: {
+      sessionId: 'sess-1',
+      agentId: 'agent-1',
+      pid: null,
+      generation: 1,
+      worktree: '/repo/.kubic/wt/agent-1',
+      model: 'acme/m1',
+    },
+    environment: {
+      capturedFrom: 'used',
+      cwd: '/repo/.kubic/wt/agent-1',
+      env: {},
+    },
+    worktree: {
+      path: '/repo/.kubic/wt/agent-1',
+      baseRevision: 'abc123',
+      branch: null,
+    },
+    diff: { filesChanged: [], files: [] },
+    approvals: [],
+    timestamps: {
+      startedAt: '2026-09-23T10:00:00.000Z',
+      endedAt: '2026-09-23T10:01:00.000Z',
+    },
+    usage: {
+      inputTokens: 10,
+      outputTokens: 5,
+      cachedTokens: 0,
+      requests: 1,
+      costUsd: 0.01,
+      byModel: {},
+    },
+    result: {
+      status: 'completed',
+      summary: 'done',
+      failureCategory: null,
+      error: null,
+    },
+  });
+}
+
+function request(): ReplayRunRequest {
+  return {
+    tier: 'deterministic',
+    trajectory: 't.json',
+    model: 'acme/m1',
+    worktree: '/repo/.kubic/wt/agent-1',
+    lockfile: 'pins.json',
+    roleConfig: null,
+  };
+}
+
+describe('prod replay runner (issue #78)', () => {
+  it('re-executes the recorded objective and passes the terminus through', async () => {
+    const seen: Array<{ prompt: string; model: string }> = [];
+    const run = createProdReplayRun({
+      loadTrajectory: () => fixtureTrajectory(),
+      runPrompt: async (prompt, model) => {
+        seen.push({ prompt, model });
+        return { terminus: 'completed', summary: 'redone' };
+      },
+    });
+    const result = await run(request());
+    expect(result).toEqual({ terminus: 'completed', summary: 'redone' });
+    expect(seen).toEqual([{ prompt: 'Fix the widget', model: 'acme/m1' }]);
+  });
+
+  it('passes failed/workspace_unavailable/provider_probe_failed through', async () => {
+    for (const terminus of [
+      'failed',
+      'workspace_unavailable',
+      'provider_probe_failed',
+    ]) {
+      const run = createProdReplayRun({
+        loadTrajectory: () => fixtureTrajectory(),
+        runPrompt: async () => ({ terminus, summary: `${terminus} detail` }),
+      });
+      const result = await run(request());
+      expect(result.terminus).toBe(terminus);
+      expect(result.summary).toBe(`${terminus} detail`);
+    }
+  });
+
+  it('coarsens non-subset lane termini to failed with the summary preserved', async () => {
+    for (const terminus of [
+      'budget_exhausted',
+      'approval_denied',
+      'approval_timed_out',
+      'usage',
+    ]) {
+      const run = createProdReplayRun({
+        loadTrajectory: () => fixtureTrajectory(),
+        runPrompt: async () => ({ terminus, summary: `${terminus} detail` }),
+      });
+      const result = await run(request());
+      expect(result.terminus).toBe('failed');
+      expect(result.summary).toMatch(/detail/);
+    }
+  });
+
+  it('maps a throwing lane to failed instead of rejecting', async () => {
+    const run = createProdReplayRun({
+      loadTrajectory: () => fixtureTrajectory(),
+      runPrompt: async () => {
+        throw new Error('lane blew up');
+      },
+    });
+    const result = await run(request());
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toMatch(/lane blew up/);
+  });
+
+  it('refuses an empty objective without calling the lane', async () => {
+    let called = false;
+    const run = createProdReplayRun({
+      loadTrajectory: () => fixtureTrajectory('   '),
+      runPrompt: async () => {
+        called = true;
+        return { terminus: 'completed', summary: 'must not run' };
+      },
+    });
+    const result = await run(request());
+    expect(called).toBe(false);
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toMatch(/objective/);
+  });
+});

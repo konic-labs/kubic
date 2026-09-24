@@ -32,6 +32,7 @@ import {
 } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
+  type ModelSelection,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
@@ -45,6 +46,7 @@ import {
 export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
+  model?: ModelSelection;
   env?: ExecutionEnv;
   context?: Context;
 }
@@ -238,7 +240,10 @@ export async function runHeadlessPrompt(
     const models = deps.models ?? assembled.models;
     let model: ReturnType<typeof selectModel>;
     try {
-      model = selectModel(models);
+      // An explicit pin (replay re-execution at the declared model) wins
+      // over default selection; `kubic run` passes none and keeps the
+      // default first-registered-provider pick.
+      model = selectModel(models, deps.model);
     } catch (error) {
       if (error instanceof ModelSelectError) {
         return finished(

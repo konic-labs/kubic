@@ -485,3 +485,227 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
     expect(lines.join('\n')).toContain('merge order: alpha -> beta');
   });
 });
+
+describe('orchestrate pre-merge guard (issue #76 fix a)', () => {
+  it('runs the pre-merge guard before every merge, in FIFO order', async () => {
+    const order: string[] = [];
+    const world = makeWorld({
+      prepareMerge: (agentId: string) => {
+        order.push(`prepare:${agentId}`);
+      },
+      mergeBranch: (agentId: string) => {
+        order.push(`merge:${agentId}`);
+        world.calls.merge.push(agentId);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(order).toEqual([
+      'prepare:alpha',
+      'merge:alpha',
+      'prepare:beta',
+      'merge:beta',
+    ]);
+  });
+
+  it('fails closed without merging when the guard refuses a dirty tree', async () => {
+    const world = makeWorld({
+      prepareMerge: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('working tree not clean');
+      },
+      mergeBranch: (agentId: string) => {
+        world.calls.merge.push(agentId);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=merge_failed/);
+    expect(world.calls.merge).toEqual(['alpha']);
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(state.merged).toEqual(['alpha']);
+    expect(state.pending).toEqual(['beta']);
+  });
+});
+
+describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
+  it('persists a merging intent before each merge and clears it after', async () => {
+    type MergeEvent =
+      | { type: 'save'; merging: string | null }
+      | { type: 'merge'; agent: string };
+    const events: MergeEvent[] = [];
+    const world = makeWorld({
+      mergeBranch: (agentId: string) => {
+        events.push({ type: 'merge', agent: agentId });
+        world.calls.merge.push(agentId);
+      },
+      saveState: (state: OrchestratorRunState) => {
+        events.push({ type: 'save', merging: state.merging ?? null });
+        world.saved.push(structuredClone(state));
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    for (const agent of ['alpha', 'beta']) {
+      const intentIdx = events.findIndex(
+        (event) => event.type === 'save' && event.merging === agent,
+      );
+      const mergeIdx = events.findIndex(
+        (event) => event.type === 'merge' && event.agent === agent,
+      );
+      expect(intentIdx).toBeGreaterThanOrEqual(0);
+      expect(mergeIdx).toBeGreaterThanOrEqual(0);
+      expect(intentIdx).toBeLessThan(mergeIdx);
+    }
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(done.merging ?? null).toBeNull();
+  });
+
+  it('resume with an intent for an already-merged branch skips the worker without re-merging', async () => {
+    const killed: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: ['alpha'],
+      pending: ['beta'],
+      stopped: false,
+      merging: 'beta',
+      records: [
+        {
+          agentId: 'alpha',
+          branch: 'kubic/alpha',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({
+      loadState: () => structuredClone(killed),
+      isBranchMerged: (agentId: string) => agentId === 'beta',
+    });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.run).not.toContain('beta');
+    expect(world.calls.merge).not.toContain('beta');
+    expect(world.lines.join('\n')).toContain('merge order: alpha -> beta');
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(done.merged).toEqual(['alpha', 'beta']);
+    expect(done.pending).toEqual([]);
+  });
+
+  it('resume with an intent for an unmerged branch clears the intent and retries the worker', async () => {
+    const killed: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: ['alpha'],
+      pending: ['beta'],
+      stopped: false,
+      merging: 'beta',
+      records: [
+        {
+          agentId: 'alpha',
+          branch: 'kubic/alpha',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({
+      loadState: () => structuredClone(killed),
+      isBranchMerged: () => false,
+    });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.run).toEqual(['beta']);
+    expect(world.calls.merge).toEqual(['beta']);
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(done.merged).toEqual(['alpha', 'beta']);
+    expect(done.pending).toEqual([]);
+  });
+});
+
+describe('orchestrate state save failures (issue #76 fix c)', () => {
+  it('fails closed with state_save_failed when the state store throws', async () => {
+    const world = makeWorld({
+      saveState: () => {
+        throw new Error('disk full');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=state_save_failed/);
+    expect(world.calls.merge).toEqual([]);
+  });
+});
+
+describe('orchestrate resume state validation (issue #76 fix)', () => {
+  const validBase: OrchestratorRunState = {
+    version: 1,
+    sessionId: 'sess-1',
+    prompt: 'demo',
+    agents: ['alpha', 'beta'],
+    merged: ['alpha'],
+    pending: ['beta'],
+    stopped: false,
+    records: [
+      {
+        agentId: 'alpha',
+        branch: 'kubic/alpha',
+        hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+      },
+    ],
+  };
+
+  const malformed: Record<string, unknown>[] = [
+    {},
+    { version: 1, sessionId: 'sess-1' },
+    { ...validBase, version: 2 },
+    { ...validBase, merged: 'alpha' },
+    { ...validBase, pending: [42] },
+    { ...validBase, agents: 'alpha,beta' },
+    { ...validBase, stopped: 'no' },
+    { ...validBase, records: [{ agentId: 'alpha' }] },
+    { ...validBase, records: 'alpha' },
+    { ...validBase, merging: 42 },
+    {
+      ...validBase,
+      blocked: { agentId: 'beta', oursDiff: 'o' },
+    },
+  ];
+
+  it.each(malformed)(
+    'rejects malformed stored state as no_orchestrator_state',
+    async (stored) => {
+      const world = makeWorld({
+        loadState: () =>
+          structuredClone(stored) as unknown as OrchestratorRunState,
+      });
+      const code = await runOrchestrateCommand(
+        ['--resume', '--session', 'sess-1'],
+        world.deps,
+      );
+      expect(code).toBe(1);
+      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.calls.merge).toEqual([]);
+      expect(world.calls.run).toEqual([]);
+    },
+  );
+});

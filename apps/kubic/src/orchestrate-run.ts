@@ -1,9 +1,13 @@
 // Prod `kubic orchestrate` deps (issue #76): the composition root drives the
 // real EPIC E stack — git worktrees via addWorktree, worker runs as child
 // `kubic run -p` processes inside their worktrees (one process per subagent),
-// FIFO merge via `git merge` (abort-first, so the tree is never half-merged),
-// and session state under <repo>/.kubic/orchestrator/<session>.json through
-// the exec FileBridge. The manager authors nothing: worker commits run under
+// FIFO merge via `git merge` (a pre-merge guard aborts stale MERGE_HEAD
+// and refuses dirty trees, plus abort-after-failure, so the tree is
+// never half-merged), with a write-ahead merging intent per candidate
+// (kill between merge and save reconciles via merge-base --is-ancestor
+// instead of double-merging), and session state under
+// <repo>/.kubic/orchestrator/<session>.json written atomically (tmp +
+// rename, fail-closed) through the exec FileBridge. The manager authors nothing: worker commits run under
 // worker provenance, merges are worker-branch merges, and every merge passes
 // through the assertManagerZeroWrites gate in orchestrate-cli.ts.
 
@@ -17,7 +21,10 @@ import type {
   OrchestrateWorktree,
   OrchestratorRunState,
 } from '../../../packages/host/src/orchestrate-cli.js';
-import { MergeConflictError } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  MergeConflictError,
+  parseOrchestratorRunState,
+} from '../../../packages/host/src/orchestrate-cli.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import { isWorktreeError } from '../../../packages/host/src/orchestrator/worktree/errors.js';
@@ -124,6 +131,57 @@ export async function orchestrateDepsWithDefaults(
   };
 
   const storeName = (sessionId: string): string => `${sessionId}.json`;
+
+  // Pre-merge guard (issue #76 fix a): a kill-during-merge can leave a
+  // stale MERGE_HEAD behind, so a resume would merge onto a half-merged
+  // tree. Abort the stale merge first, then refuse a dirty tree — the
+  // merge never runs unless the tree is provably clean.
+  const ensureCleanMergeState = async (
+    repo: string,
+    agentId: string,
+  ): Promise<void> => {
+    const merging = await runGit(
+      repo,
+      ['rev-parse', '--verify', 'MERGE_HEAD'],
+      'cli',
+      'manager',
+      'merge-guard',
+    );
+    if (merging.exitCode === 0) {
+      debug(
+        `merge: stale MERGE_HEAD before merging '${agentId}' — aborting first`,
+      );
+      const abort = await runGit(
+        repo,
+        ['merge', '--abort'],
+        'cli',
+        'manager',
+        'merge-abort-stale',
+      );
+      if (abort.exitCode !== 0) {
+        throw new Error(
+          `stale merge in progress (MERGE_HEAD) and 'git merge --abort' failed: ${abort.stderr.trim().slice(0, 200)}`,
+        );
+      }
+    }
+    const status = await runGit(
+      repo,
+      ['status', '--porcelain=v1'],
+      'cli',
+      'manager',
+      'merge-status',
+    );
+    if (status.exitCode !== 0) {
+      throw new Error(
+        `pre-merge status check failed: ${status.stderr.trim().slice(0, 200)}`,
+      );
+    }
+    if (status.stdout.trim().length > 0) {
+      throw new Error(
+        `working tree not clean — refusing merge for worker '${agentId}': ${status.stdout.trim().slice(0, 200)}`,
+      );
+    }
+  };
 
   return {
     out: options.out,
@@ -263,6 +321,9 @@ export async function orchestrateDepsWithDefaults(
       worktree: OrchestrateWorktree,
     ): Promise<void> => {
       const repo = needRoot();
+      // Guard first (fix a): never merge onto a half-merged tree — the
+      // CLI also calls prepareMerge, this covers direct callers too.
+      await ensureCleanMergeState(repo, agentId);
       const merged = await runGit(
         repo,
         ['merge', '--no-ff', worktree.branch, '-m', `kubic: merge ${agentId}`],
@@ -291,6 +352,28 @@ export async function orchestrateDepsWithDefaults(
         );
       }
     },
+    prepareMerge: async (agentId: string): Promise<void> => {
+      await ensureCleanMergeState(needRoot(), agentId);
+    },
+    isBranchMerged: async (
+      agentId: string,
+      worktree: OrchestrateWorktree,
+    ): Promise<boolean> => {
+      // Write-ahead intent reconciliation (issue #76 fix b): exit 0
+      // means the worker branch is already an ancestor of the merge
+      // target, so resume marks it merged without re-running the worker.
+      // Any other exit (branch missing, not merged) means retry.
+      void agentId;
+      const repo = needRoot();
+      const done = await runGit(
+        repo,
+        ['merge-base', '--is-ancestor', worktree.branch, 'HEAD'],
+        'cli',
+        'manager',
+        'merge-check',
+      );
+      return done.exitCode === 0;
+    },
     reapWorker: (agentId: string): void => {
       // The child process was reaped at wait() inside runWorker; the
       // worktree + branch stay retained as evidence (§44.1 — only
@@ -315,27 +398,39 @@ export async function orchestrateDepsWithDefaults(
         );
         if (!bridge.exists(storeName(sessionId))) return undefined;
         const raw = bridge.readTextFile(storeName(sessionId));
-        const parsed = JSON.parse(raw) as OrchestratorRunState;
-        if (parsed.version !== 1 || parsed.sessionId !== sessionId)
-          return undefined;
-        return parsed;
+        // Structural validation (issue #76 fix): torn writes, hand
+        // edits, or newer versions fail closed as missing state —
+        // never a half-shaped object the resume path crashes on.
+        return parseOrchestratorRunState(JSON.parse(raw), sessionId);
       } catch {
         return undefined;
       }
     },
     saveState: (state: OrchestratorRunState): void => {
+      // Atomic + fail-closed (issue #76 fix c): write to a temp file in
+      // the same directory and rename over the target, so a kill can
+      // never leave a torn state file behind. Write errors propagate
+      // (the CLI maps them to state_save_failed) — never swallowed to
+      // debug-only.
+      const repo = needRoot();
+      const bridge = createNodeFileBridge(join(repo, '.kubic', 'orchestrator'));
+      const target = storeName(state.sessionId);
+      const tmp = `${target}.tmp.${process.pid}`;
       try {
-        const repo = needRoot();
-        const bridge = createNodeFileBridge(
-          join(repo, '.kubic', 'orchestrator'),
-        );
-        bridge.writeFile(
-          storeName(state.sessionId),
-          JSON.stringify(state, null, 2),
-        );
+        bridge.writeFile(tmp, JSON.stringify(state, null, 2));
+        bridge.renameFile(tmp, target);
       } catch (error) {
+        try {
+          bridge.remove(tmp);
+        } catch {
+          // Best-effort temp cleanup — the original error is what matters.
+        }
+        const message = error instanceof Error ? error.message : String(error);
         debug(
-          `state: save failed for session '${state.sessionId}': ${error instanceof Error ? error.message : String(error)}`,
+          `state: save failed for session '${state.sessionId}': ${message}`,
+        );
+        throw new Error(
+          `orchestrator state save failed for session '${state.sessionId}': ${message}`,
         );
       }
     },

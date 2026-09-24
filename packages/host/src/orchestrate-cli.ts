@@ -73,6 +73,84 @@ export interface OrchestratorRunState {
   stopped: boolean;
   blocked?: { agentId: string; oursDiff: string; theirsDiff: string };
   records: OrchestratedWorkerRecord[];
+  // Write-ahead merge intent (issue #76 fix): set to the agent being
+  // merged BEFORE the merge runs, cleared after the outcome is recorded.
+  // A kill between merge success and the post-merge save leaves the
+  // branch merged on disk but still pending in state — on resume the
+  // intent identifies the in-flight agent so the branch is checked with
+  // isBranchMerged and marked merged WITHOUT re-running the worker.
+  merging?: string | null;
+}
+
+// Stored resume state is untrusted JSON (a torn write, a hand edit, or
+// a newer version could land here). Structural validation: anything
+// that is not exactly a v1 state for this session is rejected, so
+// resume fails closed with no_orchestrator_state instead of crashing
+// on undefined.map / .push mid-run.
+export function parseOrchestratorRunState(
+  raw: unknown,
+  sessionId: string,
+): OrchestratorRunState | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.version !== 1 || value.sessionId !== sessionId) return undefined;
+  if (typeof value.prompt !== 'string') return undefined;
+  if (
+    !Array.isArray(value.agents) ||
+    !value.agents.every((entry) => typeof entry === 'string')
+  ) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(value.merged) ||
+    !value.merged.every((entry) => typeof entry === 'string')
+  ) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(value.pending) ||
+    !value.pending.every((entry) => typeof entry === 'string')
+  ) {
+    return undefined;
+  }
+  if (typeof value.stopped !== 'boolean') return undefined;
+  if (!Array.isArray(value.records)) return undefined;
+  for (const record of value.records) {
+    if (typeof record !== 'object' || record === null) return undefined;
+    const entry = record as Record<string, unknown>;
+    if (typeof entry.agentId !== 'string') return undefined;
+    if (typeof entry.branch !== 'string') return undefined;
+    if (!Array.isArray(entry.hunks)) return undefined;
+  }
+  if (value.blocked !== undefined) {
+    if (typeof value.blocked !== 'object' || value.blocked === null) {
+      return undefined;
+    }
+    const blocked = value.blocked as Record<string, unknown>;
+    if (typeof blocked.agentId !== 'string') return undefined;
+    if (typeof blocked.oursDiff !== 'string') return undefined;
+    if (typeof blocked.theirsDiff !== 'string') return undefined;
+  }
+  if (
+    value.merging !== undefined &&
+    value.merging !== null &&
+    typeof value.merging !== 'string'
+  ) {
+    return undefined;
+  }
+  return raw as OrchestratorRunState;
+}
+
+export class OrchestratorStateSaveError extends Error {
+  reason: string;
+
+  constructor(sessionId: string, reason: string) {
+    super(
+      `orchestrator state save failed for session '${sessionId}': ${reason}`,
+    );
+    this.name = 'OrchestratorStateSaveError';
+    this.reason = reason;
+  }
 }
 
 export interface OrchestrateWorktree {
@@ -103,6 +181,23 @@ export interface OrchestrateCommandDeps {
     agentId: string,
     worktree: OrchestrateWorktree,
   ) => void | Promise<void>;
+  // Pre-merge guard (issue #76 fix a): abort a stale MERGE_HEAD left by
+  // a kill-during-merge and refuse a dirty tree BEFORE the merge runs,
+  // so resume never merges onto a half-merged tree. Optional so older
+  // fakes keep working; absent means no guard (prod always provides it).
+  prepareMerge?: (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ) => void | Promise<void>;
+  // Already-merged probe (issue #76 fix b): true when the worker branch
+  // is an ancestor of the merge target (git merge-base --is-ancestor in
+  // prod). Used on resume to reconcile a leftover merging intent.
+  // Absent means unknown — resume retries the worker (fail-closed
+  // toward redoing work, never toward skipping a merge).
+  isBranchMerged?: (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ) => boolean | Promise<boolean>;
   reapWorker: (agentId: string) => void | Promise<void>;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
   loadState?: (
@@ -290,41 +385,43 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_USAGE;
   }
 
-  const saveState = async (state: OrchestratorRunState): Promise<void> => {
-    await deps.saveState?.(state);
-  };
-
-  // Resume: re-attach to the stored session. A stopped queue fails closed
-  // here — blocked candidates are re-reported, never retried silently.
+  // Resume: re-attach to the stored session. The stored payload is
+  // untrusted JSON — anything malformed fails closed here as
+  // no_orchestrator_state. A stopped queue also fails closed here —
+  // blocked candidates are re-reported, never retried silently.
   let state: OrchestratorRunState;
   if (parsed.resume) {
     const loaded = await deps.loadState?.(sessionId);
-    if (loaded === undefined) {
+    const resumed =
+      loaded === undefined
+        ? undefined
+        : parseOrchestratorRunState(loaded, sessionId);
+    if (resumed === undefined) {
       return fail(
         RUN_EXIT_FAILED,
         'no_orchestrator_state',
         `no orchestrator state for session '${sessionId}' — start a run first, then --resume to continue it`,
       );
     }
-    if (loaded.stopped) {
+    if (resumed.stopped) {
       return fail(
         RUN_EXIT_FAILED,
         'merge_conflict',
-        `merge queue stopped by the unresolvable conflict on '${loaded.blocked?.agentId ?? 'unknown'}': candidates preserved, nothing merged on resume`,
+        `merge queue stopped by the unresolvable conflict on '${resumed.blocked?.agentId ?? 'unknown'}': candidates preserved, nothing merged on resume`,
         {
-          workers: loaded.records.map((record) => ({
+          workers: resumed.records.map((record) => ({
             agentId: record.agentId,
             branch: record.branch,
             hunks: record.hunks.length,
           })),
-          mergeOrder: loaded.merged,
-          attribution: loaded.records.flatMap((record) =>
+          mergeOrder: resumed.merged,
+          attribution: resumed.records.flatMap((record) =>
             attributeMergedHunks(record.hunks, record.agentId),
           ),
         },
       );
     }
-    state = loaded;
+    state = resumed;
   } else {
     state = {
       version: 1,
@@ -379,27 +476,117 @@ export async function runOrchestrateCommand(
     return undefined;
   };
 
+  // Fail-closed state save (issue #76 fix c): a store throw used to
+  // escape as an unhandled rejection (or, in prod, be swallowed to
+  // debug-only). Now every save maps to a machine-readable
+  // state_save_failed envelope — the run never proceeds merge-side
+  // without its state persisted.
+  const saveOrFail = async (
+    next: OrchestratorRunState,
+  ): Promise<number | undefined> => {
+    try {
+      await deps.saveState?.(next);
+      return undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(
+        RUN_EXIT_FAILED,
+        'state_save_failed',
+        `orchestrator state save failed for session '${next.sessionId}': ${message}`,
+        partial(),
+      );
+    }
+  };
+
+  // Reconcile a leftover write-ahead merge intent (issue #76 fix b).
+  // A kill between merge success and the post-merge save leaves the
+  // branch merged on disk but still pending in state. When the intent
+  // names such a branch (merge-base --is-ancestor in prod), mark it
+  // merged WITHOUT re-running the worker — no double-merge. When the
+  // branch is not merged (kill before the merge, or a failed merge),
+  // drop the stale intent so the normal path retries the worker behind
+  // the pre-merge guard. Unknown (no isBranchMerged probe) retries.
+  const reconcileMergeIntent = async (): Promise<number | undefined> => {
+    const inFlight = state.merging;
+    if (inFlight === undefined || inFlight === null) return undefined;
+    if (!state.pending.includes(inFlight)) {
+      state = { ...state, merging: undefined };
+      return undefined;
+    }
+    let worktree: OrchestrateWorktree;
+    try {
+      worktree = await deps.ensureWorktree(inFlight);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(
+        RUN_EXIT_FAILED,
+        'spawn_failed',
+        `spawn failed for worker '${inFlight}': ${message}`,
+        partial(),
+      );
+    }
+    worktrees.set(inFlight, worktree);
+    let alreadyMerged = false;
+    try {
+      alreadyMerged =
+        (await deps.isBranchMerged?.(inFlight, worktree)) === true;
+    } catch {
+      alreadyMerged = false;
+    }
+    if (!alreadyMerged) {
+      state = { ...state, merging: undefined };
+      return undefined;
+    }
+    if (!state.records.some((record) => record.agentId === inFlight)) {
+      state.records.push({
+        agentId: inFlight,
+        branch: worktree.branch,
+        hunks: [],
+      });
+    }
+    state.merged.push(inFlight);
+    state.pending = state.pending.filter((entry) => entry !== inFlight);
+    state = { ...state, merging: undefined };
+    debug(
+      `reconciled: ${inFlight} (branch ${worktree.branch}) already merged — skipped re-run`,
+    );
+    const saveFailure = await saveOrFail(state);
+    if (saveFailure !== undefined) return saveFailure;
+    return undefined;
+  };
+
   // Spawn + run every pending worker, then enqueue in agent order. A kill
   // here leaves pending intact in the saved state, so resume retries the
   // workers that never reported — merged workers are never re-run.
   const spawned: string[] = [];
-  await saveState(state);
+  {
+    const reconcileFailure = await reconcileMergeIntent();
+    if (reconcileFailure !== undefined) return reconcileFailure;
+  }
+  {
+    const saveFailure = await saveOrFail(state);
+    if (saveFailure !== undefined) return saveFailure;
+  }
   for (const agentId of state.pending) {
-    let worktree: OrchestrateWorktree;
-    try {
-      worktree = await deps.ensureWorktree(agentId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = await reapSpawned(spawned);
-      void failure;
-      return fail(
-        RUN_EXIT_FAILED,
-        'spawn_failed',
-        `spawn failed for worker '${agentId}': ${message}`,
-        partial(),
-      );
+    // Resume may already hold this worktree (intent reconciliation
+    // resolved it for the isBranchMerged probe) — never ensure twice.
+    let worktree = worktrees.get(agentId);
+    if (worktree === undefined) {
+      try {
+        worktree = await deps.ensureWorktree(agentId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const failure = await reapSpawned(spawned);
+        void failure;
+        return fail(
+          RUN_EXIT_FAILED,
+          'spawn_failed',
+          `spawn failed for worker '${agentId}': ${message}`,
+          partial(),
+        );
+      }
+      worktrees.set(agentId, worktree);
     }
-    worktrees.set(agentId, worktree);
     spawned.push(agentId);
     const admission = scheduler.requestSpawn(
       { agentId, sessionId, worktree: worktree.path },
@@ -437,7 +624,8 @@ export async function runOrchestrateCommand(
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
   }
 
-  // Settle FIFO: approve → prove the manager trace write-free → merge →
+  // Settle FIFO: approve → persist the write-ahead merge intent →
+  // pre-merge guard → prove the manager trace write-free → merge →
   // attribute → record. Each merge is atomic per candidate and recorded
   // before the next dequeues, so a kill between merges resumes cleanly.
   let candidate = queue.dequeue();
@@ -448,7 +636,11 @@ export async function runOrchestrateCommand(
       ? true
       : await deps.requestApproval?.({ agentId, branch: worktree.branch });
     if (approved !== true) {
-      await saveState(state);
+      const saveFailure = await saveOrFail(state);
+      if (saveFailure !== undefined) {
+        await reapSpawned(spawned);
+        return saveFailure;
+      }
       await reapSpawned(spawned);
       return fail(
         RUN_EXIT_APPROVAL_DENIED,
@@ -457,7 +649,19 @@ export async function runOrchestrateCommand(
         partial(),
       );
     }
+    state = { ...state, merging: agentId };
+    {
+      const saveFailure = await saveOrFail(state);
+      if (saveFailure !== undefined) {
+        await reapSpawned(spawned);
+        return saveFailure;
+      }
+    }
     try {
+      // Pre-merge guard (fix a): a kill-during-merge can leave a stale
+      // MERGE_HEAD behind — abort it and refuse a dirty tree BEFORE the
+      // merge runs, so resume never merges onto a half-merged tree.
+      await deps.prepareMerge?.(agentId, worktree);
       assertManagerZeroWrites(managerCallsForMerge());
       await deps.mergeBranch(agentId, worktree);
     } catch (error) {
@@ -469,6 +673,7 @@ export async function runOrchestrateCommand(
         state = {
           ...state,
           stopped: true,
+          merging: undefined,
           blocked: {
             agentId,
             oursDiff: error.oursDiff,
@@ -479,7 +684,11 @@ export async function runOrchestrateCommand(
           // original order instead (resume retries exactly this set).
           pending: state.pending,
         };
-        await saveState(state);
+        const saveFailure = await saveOrFail(state);
+        if (saveFailure !== undefined) {
+          await reapSpawned(spawned);
+          return saveFailure;
+        }
         await reapSpawned(spawned);
         return fail(
           RUN_EXIT_FAILED,
@@ -489,7 +698,14 @@ export async function runOrchestrateCommand(
         );
       }
       const message = error instanceof Error ? error.message : String(error);
-      await saveState(state);
+      // The merge may have succeeded on disk before the throw (kill
+      // window) — keep the write-ahead intent so resume reconciles via
+      // isBranchMerged instead of double-merging.
+      const saveFailure = await saveOrFail(state);
+      if (saveFailure !== undefined) {
+        await reapSpawned(spawned);
+        return saveFailure;
+      }
       await reapSpawned(spawned);
       return fail(
         RUN_EXIT_FAILED,
@@ -502,7 +718,14 @@ export async function runOrchestrateCommand(
     state.records.push({ agentId, branch: worktree.branch, hunks });
     state.merged.push(agentId);
     state.pending = state.pending.filter((entry) => entry !== agentId);
-    await saveState(state);
+    state = { ...state, merging: undefined };
+    {
+      const saveFailure = await saveOrFail(state);
+      if (saveFailure !== undefined) {
+        await reapSpawned(spawned);
+        return saveFailure;
+      }
+    }
     debug(`merged: ${agentId} (branch ${worktree.branch})`);
     candidate = queue.dequeue();
   }

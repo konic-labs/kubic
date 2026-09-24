@@ -138,11 +138,14 @@ function assertManifestPin(path: string, manifest: ExtensionManifest): void {
       `publisher: on-disk ${JSON.stringify(manifest.publisher)} vs compiled pin ${JSON.stringify(BUDGET_MANIFEST.publisher)}`,
     );
   }
-  const pinnedFacets = [...BUDGET_MANIFEST.facets];
-  const onDiskFacets = [...manifest.facets];
+  const pinnedFacets = [...BUDGET_MANIFEST.facets].sort();
+  const onDiskFacets = [...manifest.facets].sort();
+  // Strict set equality (sorted element-wise): length + subset alone would
+  // accept a same-length array with a duplicated entry masking a missing
+  // facet (e.g. ['contract','contract',...] for a 4-facet pin).
   const sameFacets =
     onDiskFacets.length === pinnedFacets.length &&
-    onDiskFacets.every((facet) => pinnedFacets.includes(facet));
+    onDiskFacets.every((facet, index) => facet === pinnedFacets[index]);
   if (!sameFacets) {
     drifts.push(
       `facets: on-disk [${onDiskFacets.join(', ')}] vs compiled pin [${pinnedFacets.join(', ')}]`,

@@ -201,6 +201,27 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('drift');
   });
 
+  it('refuses a same-length facets array with a duplicated entry masking a missing facet', () => {
+    // Length + subset would accept ['contract','contract','host','worker']
+    // for the 4-facet pin despite missing 'tui' — strict set equality
+    // must fail closed.
+    const drifted = JSON.stringify({
+      name: 'kubic/budget',
+      publisher: 'kubic',
+      version: '0.0.0',
+      sourcePath: 'kubic/budget',
+      facets: ['contract', 'contract', 'host', 'worker'],
+    });
+    const posture = probeFirstPartyPosture({
+      anchorDir: '/repo/dist/apps/kubic/src',
+      files: fakeFiles('/repo', { dir: true, manifest: drifted }),
+      trust: OPTS,
+    });
+    expect(posture.ok).toBe(false);
+    expect(posture.loaded).toEqual([]);
+    expect(posture.detail).toContain('drift');
+  });
+
   it('refuses an on-disk manifest whose facets drifted from the compiled pin', () => {
     const drifted = JSON.stringify({
       name: 'kubic/budget',

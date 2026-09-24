@@ -113,19 +113,27 @@ usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> |
 
 ## `kubic diff | undo | log | status`
 
-VCS-independent change journal over `<root>/.kubic/journal` — works
-without git.
+VCS-independent change journal — works without git. Each command reads
+one store: `<root>/.kubic/journal` by default (the interactive solo
+journal for the current directory), or — with `--session <id>` — the
+headless-run session journal at `<sessions-root>/<id>/journal`
+(`~/.kubic/sessions` by default). `kubic run` prints the session's ref
+as `journal:<id>`; pass it verbatim (`--session journal:<id>` or
+`--session <id>`) to diff/undo that run's file effects from any cwd
+with no path lookup. `undo --dry-run` plans against the same store
+`diff` reads. Session ids accept only `[A-Za-z0-9_-]` — anything else
+(including `../` or absolute paths) exits 1 before any path is touched.
 
 ```
-usage: kubic <diff [--path <p>] [--agent <id>] [--json] | undo [<path>] [--step] [--dry-run] | log | status>
+usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
-| `diff [--path <p>] [--agent <id>] [--json]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent` without a value exits 1. |
-| `undo [<path>] [--step] [--dry-run]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus `undo: N restored, M non-reversible`. `nothing to undo` exits 0. **Exit 2 when any step was skipped as non-reversible** (`non-reversible (skipped): <p>`). |
-| `log [--json]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. |
-| `status` | `entries: N (reversible: R, non-reversible: M)` plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
+| `diff [--path <p>] [--agent <id>] [--json] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent`/`--session` without a value exits 1. |
+| `undo [<path>] [--step] [--dry-run] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus `undo: N restored, M non-reversible`. `nothing to undo` exits 0. **Exit 2 when any step was skipped as non-reversible** (`non-reversible (skipped): <p>`). The `--session` value selects the store, never the path scope. |
+| `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. |
+| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)` plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
 
 ## `kubic models`
 

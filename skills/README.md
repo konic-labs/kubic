@@ -1,4 +1,14 @@
 # skills/
 
-First-party skill bundles live here. Implemented in issue #36 (EPIC D) —
-this directory reserves the location so the scaffold matches §64.
+First-party skill bundles (issue #80; EPIC D scaffold §64). Each bundle
+is a directory with a `manifest.json` (data, validated through the
+first-party trust gates at startup — never executed) plus a `SKILL.md`
+describing it:
+
+- `budget/` — the `kubic/budget` bundle: the agents budget surface
+  (`budget/limits`) on the public loader path. Removing it fails
+  closed; `kubic doctor` reports the extension posture.
+
+Third-party/MCP loading is out of scope (Phase 4 per #58 — requests
+are refused). Bundle wiring lives in `packages/extensions/src` (see
+`startup.ts` and the `@kubic/extensions` docs).

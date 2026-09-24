@@ -2,6 +2,7 @@
 // kubic CLI composition root: argv in, exit code out. All logic lives in
 // the packages; this file only wires.
 
+import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
@@ -13,6 +14,7 @@ import { runExportCommand as runTrajectoryExportCommand } from '../../../package
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
+import { probeFirstPartyPosture } from '../../../packages/extensions/src/startup.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -147,6 +149,23 @@ async function main(argv: string[]): Promise<number> {
         },
       ],
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      // First-party extensions (issue #80): the startup probe loads the
+      // on-disk bundle through the trust gates and reports loaded/refused
+      // counts on the same checks — doctor fails closed when the bundle
+      // dir is gone.
+      probeExtensions: () => {
+        const posture = probeFirstPartyPosture({
+          anchorDir: dirname(fileURLToPath(import.meta.url)),
+          files: createNodeFileBridge('/'),
+          trust: { homeDir: homedir(), cwd: process.cwd(), allowlist: [] },
+        });
+        return {
+          ok: posture.ok,
+          loaded: posture.loaded,
+          refusedCount: posture.refused.length,
+          detail: posture.detail,
+        };
+      },
     });
   }
   if (command === 'orchestrate') {

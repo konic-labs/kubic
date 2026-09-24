@@ -25,13 +25,13 @@ import {
   runCostCommand,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
+import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   loadProdAuditSecrets,
   runAuditCommand,
 } from '../../../packages/host/src/policy/audit-cli.js';
 import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
-import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';

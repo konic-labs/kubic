@@ -86,10 +86,17 @@ describe('build/install contract (issue #74)', () => {
   });
 
   it('dist/ stays gitignored', () => {
+    // Probe a path *under* dist/: `check-ignore -q dist` only matches the
+    // dir-only `dist/` pattern when dist/ exists on disk, so a bare probe
+    // fails on fresh checkouts where `npm test` runs before any build (CI).
     try {
-      execFileSync('git', ['check-ignore', '-q', 'dist'], { cwd: ROOT });
+      execFileSync('git', ['check-ignore', '-q', 'dist/probe.js'], {
+        cwd: ROOT,
+      });
     } catch {
-      assert.fail('dist/ must stay gitignored (git check-ignore -q dist)');
+      assert.fail(
+        'dist/ must stay gitignored (git check-ignore -q dist/probe.js)',
+      );
     }
   });
 

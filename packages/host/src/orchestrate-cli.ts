@@ -121,6 +121,12 @@ export function parseOrchestratorRunState(
     if (typeof entry.agentId !== 'string') return undefined;
     if (typeof entry.branch !== 'string') return undefined;
     if (!Array.isArray(entry.hunks)) return undefined;
+    for (const hunk of entry.hunks) {
+      if (typeof hunk !== 'object' || hunk === null) return undefined;
+      const part = hunk as Record<string, unknown>;
+      if (typeof part.path !== 'string') return undefined;
+      if (typeof part.hunk !== 'string') return undefined;
+    }
   }
   if (value.blocked !== undefined) {
     if (typeof value.blocked !== 'object' || value.blocked === null) {

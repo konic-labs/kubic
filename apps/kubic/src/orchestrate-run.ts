@@ -11,6 +11,7 @@
 // worker provenance, merges are worker-branch merges, and every merge passes
 // through the assertManagerZeroWrites gate in orchestrate-cli.ts.
 
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
@@ -415,7 +416,7 @@ export async function orchestrateDepsWithDefaults(
       const repo = needRoot();
       const bridge = createNodeFileBridge(join(repo, '.kubic', 'orchestrator'));
       const target = storeName(state.sessionId);
-      const tmp = `${target}.tmp.${process.pid}`;
+      const tmp = `${target}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
       try {
         bridge.writeFile(tmp, JSON.stringify(state, null, 2));
         bridge.renameFile(tmp, target);

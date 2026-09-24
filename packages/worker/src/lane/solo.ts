@@ -3,6 +3,7 @@
 // tools all live in this process. Kubic adds no loop: accept → drive →
 // DriveOutcome, with retry waiting honored via notBefore.
 
+import { randomUUID } from 'node:crypto';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
   toolsForClasses,
@@ -10,6 +11,13 @@ import {
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  buildCompactPrompt,
+  type CompactionCheckpoint,
+  DEFAULT_RESERVE_TOKENS,
+  shouldCheckAt,
+  shouldCompact,
+} from '../compaction.js';
 import type { EscalationLadder } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
@@ -25,6 +33,8 @@ import {
 } from '../pi-boundary.js';
 import {
   assembleSystemPrompt,
+  buildCompactionRoute,
+  type CompactionRoute,
   escalatePinnedModel,
   type LaneBinding,
   type LaneRegistry,
@@ -101,6 +111,17 @@ export interface SoloPolicyOptions {
   contributions?: ToolContribution[];
 }
 
+// Harness compaction budget overrides. keepRecentTokens mirrors Pi's
+// DEFAULT_COMPACTION_SETTINGS (20000): Kubic owns the trigger reserve,
+// Pi owns the mechanism (checkpoints, summarization, spill files).
+export const SOLO_KEEP_RECENT_TOKENS = 20000;
+
+export interface SoloCompactionOptions {
+  enabled?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
+}
+
 // Caller contract: classes alone deploy the allowlist (setActiveTools) and
 // the innermost permission wrapper. Destructive/network/confine guards
 // deploy only when interceptors options are also passed — the lane cannot
@@ -137,6 +158,10 @@ export interface SoloBootOptions {
   // Model affinity pin (issue #82, rule 6): when set, boot pins the
   // boot model for the task; escalateSoloModel is the only path off it.
   taskId?: string;
+  // Harness compaction budget (issue #82): reserve defaults to Kubic's
+  // DEFAULT_RESERVE_TOKENS so the harness automatic path fires on the
+  // same threshold as shouldCompact.
+  compaction?: SoloCompactionOptions;
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its toolCallId.
   journal?: FileJournalStore;
@@ -190,6 +215,88 @@ export async function escalateSoloModel(
   return result;
 }
 
+export interface SoloCompactionCheck {
+  contextWindow: number;
+  contextTokens: number;
+  reserveTokens?: number;
+  checkpoint?: CompactionCheckpoint;
+  batchTerminal?: boolean;
+  focus?: string;
+  newRoutingId?: () => string;
+}
+
+export type SoloCompactionDecision =
+  | {
+      checked: false;
+      reason: 'checkpoint-skipped';
+      checkpoint: CompactionCheckpoint;
+    }
+  | {
+      checked: true;
+      compacted: false;
+      contextTokens: number;
+      threshold: number;
+    }
+  | {
+      checked: true;
+      compacted: true;
+      contextTokens: number;
+      threshold: number;
+      route: CompactionRoute;
+      prompt: string;
+    };
+
+// Turn-loop compaction checkpoint (issue #82, rule 7): Pi checkpoints
+// fire on interactive lanes only, the Kubic trigger formula decides, and
+// the compact run carries a fresh routing id with cache writes disabled
+// (rule 7) plus the verbatim caller focus. Never records usage itself.
+export async function maybeCompactSoloLane(
+  solo: SoloLane,
+  check: SoloCompactionCheck,
+  context: Context,
+): Promise<SoloCompactionDecision> {
+  const checkpoint = check.checkpoint ?? 'pre-prompt';
+  if (
+    shouldCheckAt(checkpoint, {
+      batchTerminal: check.batchTerminal ?? false,
+    }) === false
+  ) {
+    return { checked: false, reason: 'checkpoint-skipped', checkpoint };
+  }
+  const reserve = check.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+  const threshold = check.contextWindow - reserve;
+  if (
+    shouldCompact({
+      contextTokens: check.contextTokens,
+      contextWindow: check.contextWindow,
+      reserveTokens: reserve,
+    }) === false
+  ) {
+    return {
+      checked: true,
+      compacted: false,
+      contextTokens: check.contextTokens,
+      threshold,
+    };
+  }
+  const route = buildCompactionRoute(
+    solo.sessionId,
+    (check.newRoutingId ?? randomUUID)(),
+  );
+  const prompt = buildCompactPrompt(
+    check.focus === undefined ? {} : { focus: check.focus },
+  );
+  await solo.lane.compact({ customInstructions: prompt }, context);
+  return {
+    checked: true,
+    compacted: true,
+    contextTokens: check.contextTokens,
+    threshold,
+    route,
+    prompt,
+  };
+}
+
 export async function bootSoloLane(
   options: SoloBootOptions,
 ): Promise<SoloLane> {
@@ -222,6 +329,13 @@ export async function bootSoloLane(
             model: defaultSoloModelId(options.model),
           },
         }),
+      compaction: {
+        enabled: options.compaction?.enabled ?? true,
+        reserveTokens:
+          options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens:
+          options.compaction?.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      },
     },
     context,
   );

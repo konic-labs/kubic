@@ -148,6 +148,166 @@ describe('solo boot binds the lane registry (issue #82, rule 5)', () => {
   });
 });
 
+describe('solo turn-loop compaction (issue #82, rule 7)', () => {
+  const CONTEXT_WINDOW = 200000;
+  const THRESHOLD = CONTEXT_WINDOW - 16384;
+
+  async function bootLane() {
+    const { MemorySessionRepo } = await import('../pi-boundary.js');
+    const env = new FakeExecutionEnv({});
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    openSessions.push(session);
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('hi')]);
+    return bootSoloLane({
+      session,
+      models,
+      model: faux.getModel(),
+      env,
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+  }
+
+  it('stays quiet below and at the real threshold', async () => {
+    const { maybeCompactSoloLane } = await import('./solo.js');
+    const solo = await bootLane();
+    const compactSpy = vi.spyOn(solo.lane, 'compact');
+    try {
+      for (const tokens of [THRESHOLD - 1, THRESHOLD]) {
+        const decision = await maybeCompactSoloLane(
+          solo,
+          { contextWindow: CONTEXT_WINDOW, contextTokens: tokens },
+          BACKGROUND_CONTEXT,
+        );
+        expect(decision).toMatchObject({ checked: true, compacted: false });
+      }
+      expect(compactSpy).not.toHaveBeenCalled();
+    } finally {
+      compactSpy.mockRestore();
+    }
+  });
+
+  it('compacts one above threshold with a fresh routing id and no cache write', async () => {
+    const { maybeCompactSoloLane } = await import('./solo.js');
+    const solo = await bootLane();
+    const compactSpy = vi
+      .spyOn(solo.lane, 'compact')
+      .mockResolvedValue({ ok: true, value: { marker: 'compacted' } } as never);
+    const usageSpy = vi.spyOn(solo.lane, 'recordUsage');
+    try {
+      const decision = await maybeCompactSoloLane(
+        solo,
+        {
+          contextWindow: CONTEXT_WINDOW,
+          contextTokens: THRESHOLD + 1,
+          focus: 'focus on the auth flow',
+          newRoutingId: () => 'fresh-routing-1',
+        },
+        BACKGROUND_CONTEXT,
+      );
+      expect(compactSpy).toHaveBeenCalledTimes(1);
+      const args = compactSpy.mock.calls[0] as unknown as [
+        { customInstructions?: string },
+      ];
+      expect(args[0].customInstructions).toContain('focus on the auth flow');
+      expect(decision).toMatchObject({ checked: true, compacted: true });
+      if (decision.checked !== true || decision.compacted !== true) {
+        throw new Error('expected compaction');
+      }
+      expect(decision.route.routingId).toBe('fresh-routing-1');
+      expect(decision.route.routingId).not.toBe(solo.sessionId);
+      expect(decision.route.cacheRetention).toBe('none');
+      expect(decision.route.cacheWriteEnabled).toBe(false);
+      expect(usageSpy).not.toHaveBeenCalled();
+    } finally {
+      compactSpy.mockRestore();
+      usageSpy.mockRestore();
+    }
+  });
+
+  it('refuses a recycled routing id and skips batch-terminal checkpoints', async () => {
+    const { maybeCompactSoloLane } = await import('./solo.js');
+    const solo = await bootLane();
+    const compactSpy = vi.spyOn(solo.lane, 'compact');
+    try {
+      await expect(
+        maybeCompactSoloLane(
+          solo,
+          {
+            contextWindow: CONTEXT_WINDOW,
+            contextTokens: THRESHOLD + 1,
+            newRoutingId: () => solo.sessionId,
+          },
+          BACKGROUND_CONTEXT,
+        ),
+      ).rejects.toThrow(/fresh/);
+      const skipped = await maybeCompactSoloLane(
+        solo,
+        {
+          contextWindow: CONTEXT_WINDOW,
+          contextTokens: THRESHOLD + 1,
+          batchTerminal: true,
+        },
+        BACKGROUND_CONTEXT,
+      );
+      expect(skipped).toMatchObject({
+        checked: false,
+        reason: 'checkpoint-skipped',
+      });
+      expect(compactSpy).not.toHaveBeenCalled();
+    } finally {
+      compactSpy.mockRestore();
+    }
+  });
+});
+
+describe('solo boot wires harness compaction settings (issue #82)', () => {
+  it('passes Kubic reserve tokens as the harness compaction budget', async () => {
+    const { DEFAULT_RESERVE_TOKENS } = await import('../compaction.js');
+    const { MemorySessionRepo } = await import('../pi-boundary.js');
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    try {
+      const env = new FakeExecutionEnv({});
+      const repo = new MemorySessionRepo();
+      const session = await repo.create({}, BACKGROUND_CONTEXT);
+      openSessions.push(session);
+      const faux = fauxProvider();
+      const models = createModels();
+      models.setProvider(faux.provider);
+      faux.setResponses([fauxAssistantMessage('hi')]);
+      await bootSoloLane({
+        session,
+        models,
+        model: faux.getModel(),
+        env,
+        sessionId: session.metadata.id,
+        agentId: 'root',
+      });
+      const handed = (
+        createSpy.mock.calls[0] as unknown as Array<{
+          compaction: {
+            enabled: boolean;
+            reserveTokens: number;
+            keepRecentTokens: number;
+          };
+        }>
+      )[0].compaction;
+      expect(handed).toEqual({
+        enabled: true,
+        reserveTokens: DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens: 20000,
+      });
+      expect(handed.reserveTokens).toBe(16384);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+});
+
 describe('solo model escalation through the lane path (issue #82, rule 6)', () => {
   it('fires exactly once: event recorded, lane model switched, second attempt refused', async () => {
     const { createLadder } = await import('../model-select.js');

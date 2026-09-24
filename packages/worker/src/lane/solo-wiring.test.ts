@@ -363,7 +363,7 @@ describe('solo model escalation through the lane path (issue #82, rule 6)', () =
         BACKGROUND_CONTEXT,
         (e) => void seen.push(e),
       ),
-    ).rejects.toThrow(/bounded/);
+    ).rejects.toThrow(/bounded|no-op|same-model/);
     expect(seen).toHaveLength(1);
   });
 });

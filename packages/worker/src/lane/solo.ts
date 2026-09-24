@@ -19,6 +19,7 @@ import {
   shouldCompact,
 } from '../compaction.js';
 import type { EscalationLadder } from '../model-select.js';
+import { validateEscalation } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -190,9 +191,12 @@ export function splitSoloModelId(id: string): {
 }
 
 // The ONLY path off the pinned model through the lane: one-way,
-// ladder-bounded, recorded, and applied to the live lane. Throws before
-// any side effect when the step is off-ladder, downward, or over budget,
-// so a refused escalation never half-applies.
+// ladder-bounded, recorded, and applied to the live lane. Ordering is
+// parse → validate → setModel → record: the id-format parse and the
+// ladder pre-check both run BEFORE the live switch, and the ladder record
+// plus sink event fire only AFTER setModel resolves — so a refused step,
+// a malformed id, or a setModel rejection burns no escalation budget,
+// emits no event, and leaves affinity untouched.
 export async function escalateSoloModel(
   solo: SoloLane,
   ladder: EscalationLadder,
@@ -209,8 +213,16 @@ export async function escalateSoloModel(
       'no pinned affinity: boot with taskId before escalating',
     );
   }
+  const from = solo.affinity.modelId;
+  if (to === from) {
+    throw new PromptCacheError(
+      `refusing no-op escalation: already on '${to}' (same-model step)`,
+    );
+  }
+  const parsed = splitSoloModelId(to);
+  validateEscalation(ladder, from, to);
+  await solo.lane.setModel(parsed, context);
   const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
-  await solo.lane.setModel(splitSoloModelId(to), context);
   solo.affinity = result.affinity;
   return result;
 }
@@ -286,6 +298,10 @@ export async function maybeCompactSoloLane(
   const prompt = buildCompactPrompt(
     check.focus === undefined ? {} : { focus: check.focus },
   );
+  // NOTE (review, issue #82): the route fields intentionally do NOT thread
+  // into lane.compact — compact's `{ customInstructions }` parameter shape
+  // is Pi's signature boundary, so the route stays a Kubic-side decision
+  // record (fresh id, cache writes off) rather than a harness argument.
   await solo.lane.compact({ customInstructions: prompt }, context);
   return {
     checked: true,
@@ -347,20 +363,47 @@ export async function bootSoloLane(
     registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
   }
   let binding: LaneBinding | undefined;
+  // NIT (review, issue #82): the harness above boots BEFORE the registry
+  // continuation check, so a re-boot builds a second harness even when the
+  // lane is reused. Reordering to check-first was left alone: the harness
+  // owns policy/hook wiring with side effects, and a check-first reorder
+  // is not trivially safe.
   if (options.registry !== undefined) {
     const candidate: LaneBinding = {
       sessionId: options.sessionId,
       lane: SOLO_LANE_NAME,
       modelId: defaultSoloModelId(options.model),
     };
+    let existing: LaneBinding | undefined;
     try {
-      binding = options.registry.continuation(
+      existing = options.registry.continuation(
         options.sessionId,
         SOLO_LANE_NAME,
       );
-    } catch {
-      options.registry.spawn(candidate);
-      binding = { ...candidate };
+    } catch (err) {
+      // Absence-only catch: a missing lane falls through to spawn, but any
+      // other continuation failure (backend errors, programming errors)
+      // propagates instead of being masked as "no lane yet".
+      if (
+        err instanceof PromptCacheError &&
+        /no active lane/.test(err.message)
+      ) {
+        options.registry.spawn(candidate);
+        binding = { ...candidate };
+      } else {
+        throw err;
+      }
+    }
+    if (existing !== undefined) {
+      // Model agreement on reuse: the new lane runs the boot model, so a
+      // stale bound modelId must never be handed back silently.
+      if (existing.modelId !== candidate.modelId) {
+        throw new PromptCacheError(
+          `lane model mismatch for '${options.sessionId}/${SOLO_LANE_NAME}': ` +
+            `bound to '${existing.modelId}' but boot requested '${candidate.modelId}'`,
+        );
+      }
+      binding = existing;
     }
   }
   return {

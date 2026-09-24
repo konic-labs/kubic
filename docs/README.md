@@ -54,6 +54,7 @@ owner issue replaces the stub notice with content.
 | Page | Covers |
 | --- | --- |
 | [commands.md](cli/commands.md) | Every `kubic` command and flag |
+| [issue-81-live-smoke.md](smoke/issue-81-live-smoke.md) | Live provider smoke record: settled run + diff + undo + doctor, with gaps |
 | [exit-codes.md](cli/exit-codes.md) | Exit-code table (all six codes) |
 | [configuration.md](cli/configuration.md) | Config precedence and secrets |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |

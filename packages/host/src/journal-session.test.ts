@@ -117,4 +117,19 @@ describe('session journal reachability (issue #83)', () => {
     expect(existsSync(join(sessionsRoot, '..', 'evil', 'journal'))).toBe(false);
     expect(existsSync(join(sessionsRoot, '..', 'abs'))).toBe(false);
   });
+
+  it('refuses --session combined with a configured journal dir (explicit precedence)', async () => {
+    const sessionsRoot = tmpDir('sess-root-');
+    const root = tmpDir('ws-');
+    seedSessionJournal(sessionsRoot, 'sess-1', root);
+    const o = out();
+    const code = await runJournalCommand(['diff', '--session', 'sess-1'], {
+      root,
+      sessionsRoot,
+      journalDir: join(root, '.kubic', 'journal'),
+      out: o.write,
+    });
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toMatch(/conflicts with a configured journal dir/);
+  });
 });

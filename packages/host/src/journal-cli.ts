@@ -9,6 +9,7 @@ import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
 import { journalStatus, renderLog } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
+import { SESSION_ID_PATTERN } from './run-cli.js';
 
 export interface JournalCommandDeps {
   journalDir?: string;
@@ -39,12 +40,10 @@ function flagValue(
   return value;
 }
 
-// Session ids are path segments under the sessions root: accept only
-// [A-Za-z0-9_-] so --session can never escape into a path traversal
-// (same rule as run-cli's SESSION_ID_PATTERN, kept local so the journal
-// CLI never imports the run lane). Checked before any path join, so the
-// join below is contained by construction (#17 resolve/relative guard).
-const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+// Session ids are path segments under the sessions root: the shared
+// run-cli SESSION_ID_PATTERN ([A-Za-z0-9_-]) is checked before any path
+// join, so the join below is contained by construction (#17
+// resolve/relative guard). Imported (not copied) so the rule cannot drift.
 
 // The `journal:<id>` ref `kubic run` prints; accepted verbatim as the
 // --session value so the printed token needs no extra lookup.
@@ -65,7 +64,10 @@ function resolveJournalDir(
     return `error: invalid --session id ${JSON.stringify(session)} (use [A-Za-z0-9_-] or journal:<id>)`;
   }
   if (deps.journalDir !== undefined) {
-    return { dir: deps.journalDir };
+    // Explicit precedence, fail-closed: a programmatic journalDir plus an
+    // operator --session is ambiguous — refuse rather than silently
+    // ignoring one side.
+    return `error: --session ${JSON.stringify(session)} conflicts with a configured journal dir (use one store per invocation)`;
   }
   const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
   return { dir: join(sessionsRoot, id, 'journal') };

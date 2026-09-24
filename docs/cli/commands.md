@@ -123,6 +123,11 @@ as `journal:<id>`; pass it verbatim (`--session journal:<id>` or
 with no path lookup. `undo --dry-run` plans against the same store
 `diff` reads. Session ids accept only `[A-Za-z0-9_-]` — anything else
 (including `../` or absolute paths) exits 1 before any path is touched.
+File restores and the `status` repo line always resolve against the
+caller's cwd, not the session's original cwd — `--session` selects the
+journal store, never the working directory. `--session` combined with a
+programmatically configured journal dir is refused (one store per
+invocation).
 
 ```
 usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>

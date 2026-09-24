@@ -14,11 +14,13 @@ import {
   assembleModels,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
+import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { runHeadlessPrompt } from './headless-run.js';
+import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
 
 // License identity (issue #59): version comes from this app's own
@@ -128,6 +130,18 @@ async function main(argv: string[]): Promise<number> {
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
     });
   }
+  if (command === 'orchestrate') {
+    // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager lane,
+    // worker lifecycle, merge queue, approvals, worktrees) executes for
+    // real. Solo stays the default — `run` never enters this path.
+    return runOrchestrateCommand(
+      rest,
+      await orchestrateDepsWithDefaults({
+        out: (line: string) => console.log(line),
+        debug: (line: string) => console.error(line),
+      }),
+    );
+  }
   if (command === 'workers') {
     // The one-shot CLI owns a fresh process registry: no orchestrator
     // runs in this process, so a live invocation lists zero rows (both
@@ -143,7 +157,7 @@ async function main(argv: string[]): Promise<number> {
     return code === 1 ? 2 : code;
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | tui | doctor | workers>',
   );
   return 1;
 }

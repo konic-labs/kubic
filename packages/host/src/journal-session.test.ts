@@ -130,6 +130,8 @@ describe('session journal reachability (issue #83)', () => {
       out: o.write,
     });
     expect(code).toBe(1);
-    expect(o.lines.join('\n')).toMatch(/conflicts with a configured journal dir/);
+    expect(o.lines.join('\n')).toMatch(
+      /conflicts with a configured journal dir/,
+    );
   });
 });

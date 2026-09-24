@@ -8,8 +8,8 @@ import { FileJournalStore } from '../../exec/src/journal.js';
 import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
 import { journalStatus, renderLog } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
-import { defaultSessionsRoot } from './sessions-cli.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
+import { defaultSessionsRoot } from './sessions-cli.js';
 
 export interface JournalCommandDeps {
   journalDir?: string;

@@ -12,7 +12,7 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers | cost | perf | policy | audit>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 
@@ -136,6 +136,75 @@ carries no orchestrator, so the registry is empty — no text output (`--json` p
 
 An unknown flag prints `usage: kubic workers [--json] [--debug]` and
 exits 2 (no stack trace).
+
+## `kubic cost [--session <id>] [--json]`
+
+Per-agent cost readout over real session stats: one aggregate row per
+session (`agent <id> | model aggregate | <tokens> tokens ($<cost>)`),
+plus `task total $<sum> (<n> agents)` — the total is exactly Σ(rows).
+With `--session <id>` only that session is read (unknown session exits
+1); with no sessions stored it prints `no cost rows`, exit 0.
+
+| Flag | Meaning |
+| --- | --- |
+| `--session <id>` | Read only this session (same `[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before any store is touched). |
+| `--json` | The in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field. Exits 0. |
+
+An unknown flag prints `usage: kubic cost [--session <id>] [--json]`
+and exits 2.
+
+## `kubic perf --budget <kind> --samples <csv> [--json]`
+
+Perf-budget evaluation (faux-only: samples arrive as argv, no clock).
+A breach prints the exact filed regression string
+(`perf regression: <kind> p95=<p95>ms exceeds budget=<budget>ms …`)
+and exits 1; a pass prints nothing gated and exits 0.
+
+| Flag | Meaning |
+| --- | --- |
+| `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** Which budget to evaluate. Anything else exits 2. |
+| `--samples <ms,ms,…>` | **Required.** Comma-separated non-negative ms samples (at least one — empty exits 2, never a vacuous pass). |
+| `--json` | The full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`) — exit 0 on pass, 1 on breach. |
+
+A missing flag, an unknown kind, non-numeric samples, or an unknown
+flag prints `usage: kubic perf --budget <worktree|spawn|attach|teardown> --samples <ms,ms,…> [--json]`
+and exits 2.
+
+## `kubic policy --tool <name> [--json]`
+
+Policy query as a routing offer (never enforcement): `allow <tool>`
+or `deny <tool>` under the enterprise default (deny-by-default — a
+tool with no enterprise allow is denied). Tool names match case- and
+whitespace-insensitively.
+
+| Flag | Meaning |
+| --- | --- |
+| `--tool <name>` | **Required.** The tool to query. Missing or empty exits 2. |
+| `--json` | `{"tool", "decision"}` instead of the text line. Exits 0. |
+
+An unknown flag prints `usage: kubic policy --tool <name> [--json]`
+and exits 2.
+
+## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--json]`
+
+Audit-trail query: exact match on each supplied dimension, full
+14-field records out (one JSON object per line; `no audit records` +
+exit 0 when empty). Every printed record is redacted first —
+secret-shaped values and listed-secret inventory values become
+`[redacted-secret]` — so credentials stay sentinel-only. No audit
+persistence is wired yet, so the one-shot CLI reads zero rows; the
+filters and the redaction are live.
+
+| Flag | Meaning |
+| --- | --- |
+| `--mode <solo\|orchestrator>` | Filter on mode. Anything else exits 2. |
+| `--posture <name>` | Filter on posture. Needs a value. |
+| `--result <ok\|deny\|error>` | Filter on result. Anything else exits 2. |
+| `--json` | The matching records as a JSON array (same redaction). Exits 0. |
+
+A filter without a value or an unknown flag prints
+`usage: kubic audit [--mode <solo|orchestrator>] [--posture <name>] [--result <ok|deny|error>] [--json]`
+and exits 2.
 
 Back to the [docs index](../README.md). See also
 [exit codes](exit-codes.md), [configuration](configuration.md), and

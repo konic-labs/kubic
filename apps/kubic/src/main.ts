@@ -14,6 +14,14 @@ import {
   assembleModels,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  loadSessionCostRows,
+  runCostCommand,
+} from '../../../packages/host/src/ops/cost/cost-cli.js';
+import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
+import { runAuditCommand } from '../../../packages/host/src/policy/audit-cli.js';
+import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
@@ -128,6 +136,37 @@ async function main(argv: string[]): Promise<number> {
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
     });
   }
+  if (command === 'cost') {
+    // Per-agent cost over real session stats (one aggregate row per
+    // session); the task total is Σ(rows) by construction (issue #79).
+    return runCostCommand(rest, {
+      loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'perf') {
+    // Perf-budget evaluation over argv samples (faux-only, issue #79).
+    return runPerfCommand(rest, {
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'policy') {
+    // Routing offer over the enterprise default (deny-by-default, no
+    // config-sourced policy yet — issue #79 wires the query, not storage).
+    return runPolicyCommand(rest, {
+      resolvePolicy: () => resolveEffectivePolicy([]).policy,
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'audit') {
+    // Audit query over the record source (no audit persistence is wired
+    // yet, so the one-shot CLI reads zero rows — filters and the
+    // sentinel-only redaction are live, issue #79).
+    return runAuditCommand(rest, {
+      loadRecords: () => [],
+      out: (line: string) => console.log(line),
+    });
+  }
   if (command === 'workers') {
     // The one-shot CLI owns a fresh process registry: no orchestrator
     // runs in this process, so a live invocation lists zero rows (both
@@ -143,7 +182,7 @@ async function main(argv: string[]): Promise<number> {
     return code === 1 ? 2 : code;
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers | cost | perf | policy | audit>',
   );
   return 1;
 }

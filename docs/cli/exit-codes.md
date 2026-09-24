@@ -38,6 +38,15 @@
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown flags, bad `--session`), 5 missing session, 6 no
   reachable provider, 1 any other lane boot failure.
+- **`kubic cost`**: 0 success (including `no cost rows` on an empty
+  store), 1 unknown session / store failure, 2 usage errors. `--json`
+  emits the `toCostJson` shape field-for-field.
+- **`kubic perf`**: 0 pass (prints nothing gated), 1 breach (prints the
+  exact filed regression string), 2 usage errors. `--json` emits the
+  full evaluation either way.
+- **`kubic policy` / `kubic audit`**: 0 query (an offer, never an
+  enforcement), 2 usage errors. Audit output is redacted before
+  printing (secret shapes and listed values never appear).
 
 Back to the [docs index](../README.md). See also
 [commands](commands.md) and [doctor and debug](doctor-and-debug.md).

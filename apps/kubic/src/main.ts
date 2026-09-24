@@ -20,6 +20,17 @@ import {
   assembleModels,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  loadSessionCostRows,
+  runCostCommand,
+} from '../../../packages/host/src/ops/cost/cost-cli.js';
+import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
+import {
+  loadProdAuditSecrets,
+  runAuditCommand,
+} from '../../../packages/host/src/policy/audit-cli.js';
+import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
 import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
@@ -150,6 +161,41 @@ async function main(argv: string[]): Promise<number> {
       }),
     );
   }
+  if (command === 'cost') {
+    // Per-agent cost over real session stats (one aggregate row per
+    // session); the task total is Σ(rows) by construction (issue #79).
+    return runCostCommand(rest, {
+      loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'perf') {
+    // Perf-budget evaluation over argv samples (faux-only, issue #79).
+    return runPerfCommand(rest, {
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'policy') {
+    // Routing offer over the enterprise default (deny-by-default, no
+    // config-sourced policy yet — issue #79 wires the query, not storage).
+    return runPolicyCommand(rest, {
+      resolvePolicy: () => resolveEffectivePolicy([]).policy,
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'audit') {
+    // Audit query over the record source (no audit persistence is wired
+    // yet, so the one-shot CLI reads zero rows — filters and the
+    // sentinel-only redaction are live, issue #79). loadSecrets is the
+    // prod inventory hook (empty until persistence lands): wired
+    // end-to-end now so persistence cannot forget it — without it a
+    // non-shaped listed value would echo unredacted through --json.
+    return runAuditCommand(rest, {
+      loadRecords: () => [],
+      loadSecrets: loadProdAuditSecrets,
+      out: (line: string) => console.log(line),
+    });
+  }
   if (command === 'workers') {
     // The one-shot CLI owns a fresh process registry: no orchestrator
     // runs in this process, so a live invocation lists zero rows (both
@@ -201,7 +247,7 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | tui | doctor | workers | eval | benchmark | replay | export>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
   );
   return 1;
 }

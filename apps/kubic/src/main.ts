@@ -5,8 +5,14 @@
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import {
+  runBenchmarkCommand,
+  runEvalCommand,
+} from '../../../packages/eval/src/cli.js';
+import { runExportCommand as runTrajectoryExportCommand } from '../../../packages/eval/src/export-cli.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -14,11 +20,13 @@ import {
   assembleModels,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
+import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { runHeadlessPrompt } from './headless-run.js';
+import { runProdReplay } from './replay-run.js';
 import { runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
 
 // License identity (issue #59): version comes from this app's own
@@ -142,8 +150,44 @@ async function main(argv: string[]): Promise<number> {
     // usage errors as 2 (issue #77).
     return code === 1 ? 2 : code;
   }
+  if (command === 'eval' || command === 'benchmark') {
+    // Analysis surfaces (issue #78): the eval/benchmark presentation
+    // layer is library-owned (packages/eval/src/cli.ts, read-only); the
+    // root only supplies prod deps. Suite execution is injected: the
+    // binary scores recorded trajectories (--trajectory path, fully
+    // live); live task execution has no model-backed suite runner here,
+    // so --task refuses fail-closed instead of scoring fiction.
+    // Worktree cleanliness is a real git probe (packages/exec).
+    const run = command === 'eval' ? runEvalCommand : runBenchmarkCommand;
+    return run(rest, {
+      runSuite: async () => {
+        throw new Error(
+          'live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
+        );
+      },
+      ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'replay') {
+    // Replay at a declared tier (issue #78): recorded/compare are
+    // log-only; deterministic/live re-execute the recorded objective
+    // through the real solo lane at the declared model pin.
+    return runReplayCommand(rest, {
+      out: (line: string) => console.log(line),
+      run: (request) => runProdReplay(request),
+    });
+  }
+  if (command === 'export') {
+    // Trajectory inspection + RL dataset export (issue #78): reads
+    // trajectory export file(s) through the exec FileBridge.
+    return runTrajectoryExportCommand(rest, {
+      readFile: (path: string) => createNodeFileBridge('/').readTextFile(path),
+      out: (line: string) => console.log(line),
+    });
+  }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers | eval | benchmark | replay | export>',
   );
   return 1;
 }

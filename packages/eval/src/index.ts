@@ -8,6 +8,13 @@ export {
   runBenchmarkCommand,
   runEvalCommand,
 } from './cli.js';
+export type { ExportCliDeps, ExportDatasetType } from './export-cli.js';
+export {
+  EXPORT_EXIT_FAILED,
+  EXPORT_EXIT_OK,
+  EXPORT_EXIT_USAGE,
+  runExportCommand,
+} from './export-cli.js';
 export type {
   EvalRecord,
   EvalRecordInput,

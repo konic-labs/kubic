@@ -12,7 +12,7 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers | eval | benchmark | replay | export>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 
@@ -136,6 +136,77 @@ carries no orchestrator, so the registry is empty — no text output (`--json` p
 
 An unknown flag prints `usage: kubic workers [--json] [--debug]` and
 exits 2 (no stack trace).
+
+## `kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]`
+
+Score one suite against a task prompt or an existing trajectory
+export. `--worktree`, `--generation`, and `--tier` are mandatory
+provenance: a record missing any of them is rejected (exit 2), never
+stored. Every record carries `success`, `costUsd`, `tokens`,
+`latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
+`generation`, and `tier`.
+
+| Flag | Meaning |
+| --- | --- |
+| `--task <prompt>` | Execute the suite against a task prompt. Needs a live model-backed suite runner the binary does not ship — exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
+| `--trajectory <json>` | Score an existing trajectory export (inline JSON) without re-running anything. Fully live: exit 0 with the record, 1 when the gates fail it. |
+| `--suite <id>` | **Required.** One of the built-in suites (`swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff`; `terminal-live` and `agentic-live` are stubs and refuse with exit 2). Unknown suites exit 2. |
+| `--model <id>` | `provider/id` of the run (default `faux/faux`). |
+| `--worktree <path>` | **Required.** Where the run executed. |
+| `--generation <n>` | **Required.** Worker generation that ran. |
+| `--tier <smoke\|standard\|extended>` | **Required.** Published on every record. |
+| `--workspace inline\|worktree` | `worktree` refuses (exit 2) unless `git status --porcelain` in `--worktree` is clean; anything else exits 2. Default `inline`. |
+| `--thinking <level>` | Recorded on the record verbatim. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `record` or `error`) instead of the human line. Same exit code either way. |
+
+## `kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]`
+
+Run the reproducible matrix: every non-stub suite, or one via
+`--suite`. Stub suites report `skipped (stub)` with `success:false`
+(never as passing work) and never count toward the verdict — exit 0
+iff every executed suite succeeded, 1 if any failed, 2 on usage
+errors (unknown suite, missing provenance, dirty `--workspace
+worktree`, or a suite that needs the live runner the binary does not
+ship). Flags match `kubic eval` minus `--task`/`--trajectory` (each
+matrix row runs `benchmark:<suite-id>` as its task).
+
+## `kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
+
+Replay a versioned trajectory at a declared determinism tier. The
+tier is printed and present in `--json` for every result — tiers
+never silently downgrade: a tier that needs pins refuses (exit 2)
+without them.
+
+| Invocation | Meaning |
+| --- | --- |
+| `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exit 0 with the tier printed. |
+| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the solo lane at the pinned model. Refuses without both pins (exit 2); an unregistered pin exits 6 (`provider_probe_failed`). |
+| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config. Refuses without it (exit 2); `--model`/`--lockfile` are refused under live. |
+| `... --diff-against other.json` | Recorded compare: names the changed vars (`model`, `worktree`, `diff`); any difference exits 1 as the regression signal, identity exits 0. |
+
+`--worktree <path>` is an experimental override for the re-execution
+tiers (warned on text, `experimental:["worktree"]` in `--json`).
+Recorded with any of `--model`/`--lockfile`/`--role-config`/`--worktree`
+exits 2. Exit codes are the §78 subset 0/1/2/5/6 (see
+[exit codes](exit-codes.md)).
+
+## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
+
+Trajectory inspection plus RL dataset export over trajectory export
+files. Without `--type` the file is validated and described (schema,
+task, model, provenance, result, usage). With `--type` a dataset
+record is built and validated: `sft`, `tooluse`, and `coding` read
+`--trajectory` alone; `dpo`, `preference` (chosen plus rejected), and
+`grpo` (two-candidate group) additionally need `--against` — a stray
+`--against` on a single-trajectory type exits 2, as does a missing
+one on a pair/group type.
+
+Excluded pairs (env-failure or cross-boundary runs carry no
+capability signal) print their exclusion tag with exit 0 — never a
+training record. Stripped provenance or failure labels refuse with
+exit 2. Text mode prints the canonical record JSON; `--json` wraps it
+in `{ok, exitCode, type, record}` (or `{…, excluded}`). Exit 0
+exported/described, 1 build-or-validation failure, 2 usage/error.
 
 Back to the [docs index](../README.md). See also
 [exit codes](exit-codes.md), [configuration](configuration.md), and

@@ -175,7 +175,13 @@ export interface TreeViewOptions {
   clock?: () => number;
 }
 
-const TOGGLE_KEYS = new Set(['t', 'T', '\r', '\n', ' ']);
+export const TOGGLE_KEYS: ReadonlySet<string> = new Set([
+  't',
+  'T',
+  '\r',
+  '\n',
+  ' ',
+]);
 
 // Inner body: renders exact pre-truncated lines (no padding/wrap) so
 // headless snapshots assert content, not pixels. Pi's Text pads to the

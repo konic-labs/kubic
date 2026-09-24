@@ -19,6 +19,7 @@ import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { runHeadlessPrompt } from './headless-run.js';
+import { runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
 
 // License identity (issue #59): version comes from this app's own
 // package.json; the license half of the line is owned by core/license.ts.
@@ -92,6 +93,12 @@ async function main(argv: string[]): Promise<number> {
         runHeadlessPrompt(prompt, options),
     });
   }
+  if (command === 'tui') {
+    return runTuiCommand(
+      rest,
+      tuiDepsWithDefaults({ out: (line: string) => console.log(line) }),
+    );
+  }
   if (command === 'doctor') {
     // Default probes are faux-only: providers are listed (never dialed),
     // deps check the live node runtime, policy falls back to host
@@ -136,7 +143,7 @@ async function main(argv: string[]): Promise<number> {
     return code === 1 ? 2 : code;
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | doctor | workers>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | tui | doctor | workers>',
   );
   return 1;
 }

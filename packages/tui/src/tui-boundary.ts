@@ -22,6 +22,7 @@ export {
   Markdown,
   MouseRegion,
   matchesKey,
+  ProcessTerminal,
   ScrollView,
   Text,
   TuiAltScreen,

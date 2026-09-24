@@ -9,13 +9,30 @@ import { TuiAltScreen } from './tui-boundary.js';
 export interface Screen {
   render: () => void;
   stop: (print: (line: string) => void) => void;
+  // The live alt-screen (issue #75): the composition root needs
+  // setFocus/addInputListener to route keyboard input. Additive — the
+  // boot/render/stop lifecycle above is unchanged.
+  tui: TuiAltScreen;
 }
 
 export function bootScreen(terminal: Terminal, root: VStack): Screen {
   const screen = new TuiAltScreen(terminal);
   screen.setLayoutRoot(root);
-  screen.start();
+  try {
+    screen.start();
+  } catch (error) {
+    // start() can throw after the terminal went active (alt-screen
+    // entered) — restore it best-effort so a mid-boot failure never
+    // strands the caller's terminal. The original error stands.
+    try {
+      screen.stop();
+    } catch {
+      // Restore failures never mask the start error.
+    }
+    throw error;
+  }
   return {
+    tui: screen,
     render: () => screen.renderNow(true),
     stop: (print: (line: string) => void) => {
       for (const line of root.render(terminal.columns)) print(line);

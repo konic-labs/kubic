@@ -35,6 +35,9 @@
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
+- **`kubic tui`**: 0 clean quit (final document printed), 2 usage
+  errors (unknown flags, bad `--session`), 5 missing session, 6 no
+  reachable provider, 1 any other lane boot failure.
 
 Back to the [docs index](../README.md). See also
 [commands](commands.md) and [doctor and debug](doctor-and-debug.md).

@@ -10,6 +10,7 @@ import {
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import type { EscalationLadder } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -22,6 +23,17 @@ import {
   type Model,
   type Session,
 } from '../pi-boundary.js';
+import {
+  assembleSystemPrompt,
+  escalatePinnedModel,
+  type LaneBinding,
+  type LaneRegistry,
+  type ModelEscalationEvent,
+  PromptCacheError,
+  pinModelForTask,
+  type SystemPromptInput,
+  type TaskAffinity,
+} from '../prompts.js';
 import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
@@ -36,6 +48,43 @@ import {
 } from './wrap.js';
 
 export const SOLO_LANE_NAME = 'main';
+
+// Stable role seed for the assembled solo prompt (issue #82). The
+// sentences match the pre-#82 ad-hoc prompt; the wiring delta is that
+// boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
+// from prompts.ts instead of the `Working directory:` sentence.
+export const SOLO_ROLE = [
+  'You are a coding agent working in a terminal.',
+  'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
+  'Keep answers short and technical.',
+].join('\n');
+
+export interface SoloPromptInput {
+  cwd: string;
+  toolNames: string[];
+  metadata: Record<string, string>;
+  extraSections?: string[];
+}
+
+export function assembleSoloPrompt(input: SoloPromptInput): string {
+  const full: SystemPromptInput = {
+    role: SOLO_ROLE,
+    cwd: input.cwd,
+    toolNames: input.toolNames,
+    metadata: input.metadata,
+    ...(input.extraSections === undefined
+      ? {}
+      : { extraSections: input.extraSections }),
+  };
+  return assembleSystemPrompt(full);
+}
+
+export function defaultSoloModelId(model: {
+  provider: string;
+  id: string;
+}): string {
+  return `${model.provider}/${model.id}`;
+}
 
 export function defaultSoloPrompt(cwd: string): string {
   return [
@@ -81,6 +130,13 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
+  // LaneRegistry binding (issue #82, rule 5): when set, boot spawns the
+  // session/lane binding; a repeat boot for the same key reuses the
+  // continuation instead of re-spawning (which the registry rejects).
+  registry?: LaneRegistry;
+  // Model affinity pin (issue #82, rule 6): when set, boot pins the
+  // boot model for the task; escalateSoloModel is the only path off it.
+  taskId?: string;
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its toolCallId.
   journal?: FileJournalStore;
@@ -90,6 +146,48 @@ export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
   kills: OperationKillRegistry;
+  sessionId: string;
+  binding?: LaneBinding;
+  affinity?: TaskAffinity;
+}
+
+export function splitSoloModelId(id: string): {
+  provider: string;
+  modelId: string;
+} {
+  const slash = id.indexOf('/');
+  if (slash <= 0 || slash === id.length - 1) {
+    throw new PromptCacheError(
+      `solo model id must be 'provider/id' (got ${JSON.stringify(id)})`,
+    );
+  }
+  return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
+}
+
+// The ONLY path off the pinned model through the lane: one-way,
+// ladder-bounded, recorded, and applied to the live lane. Throws before
+// any side effect when the step is off-ladder, downward, or over budget,
+// so a refused escalation never half-applies.
+export async function escalateSoloModel(
+  solo: SoloLane,
+  ladder: EscalationLadder,
+  to: string,
+  reason: string,
+  context: Context,
+  sink?: (event: ModelEscalationEvent) => void,
+): Promise<{
+  affinity: TaskAffinity;
+  event: ModelEscalationEvent;
+}> {
+  if (solo.affinity === undefined) {
+    throw new PromptCacheError(
+      'no pinned affinity: boot with taskId before escalating',
+    );
+  }
+  const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
+  await solo.lane.setModel(splitSoloModelId(to), context);
+  solo.affinity = result.affinity;
+  return result;
 }
 
 export async function bootSoloLane(
@@ -105,17 +203,25 @@ export async function bootSoloLane(
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
+  const baseTools = kubicToolsToPiTools();
   const { harness } = await AgentHarness.create(
     {
       session: options.session,
       models: options.models,
       model: options.model,
-      tools: composeTools(
-        kubicToolsToPiTools(),
-        withPolicyContributions(options.policy),
-      ),
+      tools: composeTools(baseTools, withPolicyContributions(options.policy)),
       toolContext,
-      systemPrompt: options.systemPrompt ?? defaultSoloPrompt(options.env.cwd),
+      systemPrompt:
+        options.systemPrompt ??
+        assembleSoloPrompt({
+          cwd: options.env.cwd,
+          toolNames: baseTools.map((t) => t.name),
+          metadata: {
+            agent: options.agentId,
+            lane: SOLO_LANE_NAME,
+            model: defaultSoloModelId(options.model),
+          },
+        }),
     },
     context,
   );
@@ -126,7 +232,38 @@ export async function bootSoloLane(
   if (options.policy?.interceptors !== undefined) {
     registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
   }
-  return { harness, lane, kills };
+  let binding: LaneBinding | undefined;
+  if (options.registry !== undefined) {
+    const candidate: LaneBinding = {
+      sessionId: options.sessionId,
+      lane: SOLO_LANE_NAME,
+      modelId: defaultSoloModelId(options.model),
+    };
+    try {
+      binding = options.registry.continuation(
+        options.sessionId,
+        SOLO_LANE_NAME,
+      );
+    } catch {
+      options.registry.spawn(candidate);
+      binding = { ...candidate };
+    }
+  }
+  return {
+    harness,
+    lane,
+    kills,
+    sessionId: options.sessionId,
+    ...(binding === undefined ? {} : { binding }),
+    ...(options.taskId === undefined
+      ? {}
+      : {
+          affinity: pinModelForTask(
+            options.taskId,
+            defaultSoloModelId(options.model),
+          ),
+        }),
+  };
 }
 
 // Minimal drive surface: real AgentLanes satisfy this, and so do unit

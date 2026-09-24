@@ -5,6 +5,7 @@
 // enterprise allow is denied.
 
 import { type EffectivePolicy, isToolAllowed } from './enterprise.js';
+import { redactSecretShapes } from './secret-shapes.js';
 
 export const POLICY_EXIT_OK = 0;
 export const POLICY_EXIT_USAGE = 2;
@@ -48,10 +49,13 @@ export async function runPolicyCommand(
   if (tool === undefined) return usage(deps.out);
   const policy = await deps.resolvePolicy();
   const decision = isToolAllowed(policy, tool) ? 'allow' : 'deny';
+  // Fail-closed echo: the tool name is free-form argv and may carry
+  // secret-shaped material — the offer names the decision, never the secret.
+  const safeTool = redactSecretShapes(tool);
   if (json) {
-    deps.out(JSON.stringify({ tool, decision }, null, 2));
+    deps.out(JSON.stringify({ tool: safeTool, decision }, null, 2));
     return POLICY_EXIT_OK;
   }
-  deps.out(`${decision} ${tool}`);
+  deps.out(`${decision} ${safeTool}`);
   return POLICY_EXIT_OK;
 }

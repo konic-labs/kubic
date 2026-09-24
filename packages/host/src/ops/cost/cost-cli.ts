@@ -12,6 +12,7 @@ import {
   openSessionStore,
 } from '../../../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
+import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import {
@@ -88,8 +89,10 @@ export async function runCostCommand(
         return usage(deps.out);
       }
       if (!SESSION_ID_PATTERN.test(value)) {
+        // Fail-closed echo: the rejected id is argv-controlled and may
+        // carry secret-shaped material (e.g. a bearer token with spaces).
         deps.out(
-          `error: invalid --session id ${JSON.stringify(value)} (use [A-Za-z0-9_-])`,
+          `error: invalid --session id ${redactSecretShapes(JSON.stringify(value))} (use [A-Za-z0-9_-])`,
         );
         return usage(deps.out);
       }
@@ -104,11 +107,17 @@ export async function runCostCommand(
     rows = await deps.loadRows(sessionId);
   } catch (error) {
     if (error instanceof Error && error.name === 'SessionAttachError') {
-      deps.out(`error: unknown session: ${sessionId ?? ''}`);
+      // SESSION_ID_PATTERN admits sk-shaped strings, so the validated id
+      // echoing back here may carry secret-shaped material — redact it.
+      deps.out(
+        `error: unknown session: ${redactSecretShapes(sessionId ?? '')}`,
+      );
       return COST_EXIT_FAIL;
     }
+    // Store failures name the failure, never the secret: the message is
+    // store-controlled and may echo ids, paths, or tokens.
     deps.out(
-      `error: ${error instanceof Error ? error.message : String(error)}`,
+      `error: ${redactSecretShapes(error instanceof Error ? error.message : String(error))}`,
     );
     return COST_EXIT_FAIL;
   }

@@ -1,6 +1,7 @@
 // `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
 import { describe, expect, it } from 'vitest';
+import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
 import { runCostCommand } from './cost-cli.js';
 import {
   formatAgentCostRow,
@@ -163,5 +164,56 @@ describe('kubic cost usage (issue #79, §78)', () => {
     });
     expect(code).toBe(1);
     expect(cap.lines[0]).toMatch(/unknown session/);
+  });
+});
+
+describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
+  // Passes SESSION_ID_PATTERN ([A-Za-z0-9_-]) yet matches the sk secret
+  // shape: the unknown-session echo must not carry it.
+  const SHAPED_SESSION = 'SK-FAUX-TEST-KEY-0001';
+
+  it('redacts a secret-shaped session id in the unknown-session error', async () => {
+    const cap = capture();
+    const code = await runCostCommand(['--session', SHAPED_SESSION], {
+      loadRows: () => {
+        const error = new Error(`unknown session: ${SHAPED_SESSION}`);
+        error.name = 'SessionAttachError';
+        throw error;
+      },
+      out: cap.out,
+    });
+    expect(code).toBe(1);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(SHAPED_SESSION);
+    expect(text).toContain(REDACTED_SECRET);
+  });
+
+  it('redacts secret-shaped material in store error messages', async () => {
+    const cap = capture();
+    const code = await runCostCommand([], {
+      loadRows: () => {
+        throw new Error(`store boom ${SHAPED_SESSION}`);
+      },
+      out: cap.out,
+    });
+    expect(code).toBe(1);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(SHAPED_SESSION);
+    expect(text).toContain(REDACTED_SECRET);
+  });
+
+  it('redacts secret-shaped material in the invalid-session-id echo', async () => {
+    // A bearer-shaped value carries a space, so it fails the id pattern
+    // and lands in the invalid-id echo — which must not carry it.
+    const shaped = 'Bearer abcdefghij1234567890';
+    const cap = capture();
+    const code = await runCostCommand(['--session', shaped], {
+      loadRows: () => ROWS,
+      out: cap.out,
+    });
+    expect(code).toBe(2);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(shaped);
+    expect(text).toContain(REDACTED_SECRET);
   });
 });

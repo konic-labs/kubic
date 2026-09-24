@@ -173,3 +173,30 @@ describe('kubic audit usage (issue #79, §78)', () => {
     expect(code).toBe(2);
   });
 });
+
+describe('kubic audit prod secrets wiring (issue #79 fix cycle 1)', () => {
+  it('redacts a listed-inventory value supplied via the prod loadSecrets hook', async () => {
+    const cap = capture();
+    const code = await runAuditCommand(['--json'], {
+      loadRecords: seeded,
+      loadSecrets: () => [FAUX_LISTED],
+      out: cap.out,
+    });
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(FAUX_LISTED);
+    expect(text).toContain(REDACTED_SECRET);
+  });
+
+  it('redacts secret-shaped material in unknown filter-value errors', async () => {
+    const cap = capture();
+    const code = await runAuditCommand(['--mode', FAUX_SHAPED], {
+      loadRecords: seeded,
+      out: cap.out,
+    });
+    expect(code).toBe(2);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(FAUX_SHAPED);
+    expect(text).toContain(REDACTED_SECRET);
+  });
+});

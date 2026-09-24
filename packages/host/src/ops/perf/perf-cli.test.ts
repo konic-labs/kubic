@@ -1,6 +1,7 @@
 // `kubic perf` CLI tests (issue #79; §61). RED first: perf-cli.ts lands
 // after this file. Faux-only — samples are injected argv, no clock.
 import { describe, expect, it } from 'vitest';
+import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
 import { evaluateBudget } from './budgets.js';
 import { runPerfCommand } from './perf-cli.js';
 
@@ -130,5 +131,19 @@ describe('kubic perf usage (issue #79, §78)', () => {
       { out: cap.out },
     );
     expect(code).toBe(2);
+  });
+});
+
+describe('kubic perf secret backstop (issue #79 fix cycle 1)', () => {
+  it('redacts secret-shaped material in the unknown-budget error', () => {
+    const shaped = 'SK-FAUX-TEST-KEY-0001';
+    const cap = capture();
+    const code = runPerfCommand(['--budget', shaped, '--samples', '1,2,3'], {
+      out: cap.out,
+    });
+    expect(code).toBe(2);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(shaped);
+    expect(text).toContain(REDACTED_SECRET);
   });
 });

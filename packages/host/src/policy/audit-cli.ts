@@ -20,7 +20,19 @@ export const AUDIT_EXIT_USAGE = 2;
 export interface AuditCommandDeps {
   loadRecords: () => OrgAuditRecord[] | Promise<OrgAuditRecord[]>;
   secrets?: readonly string[];
+  // Prod secrets-inventory hook: the composition root passes its loader
+  // here so the listed inventory reaches redaction end-to-end (fail-open
+  // guard — omitting the inventory must never mean passthrough).
+  loadSecrets?: () => readonly string[] | Promise<readonly string[]>;
   out: (line: string) => void;
+}
+
+// Prod listed-secret inventory (issue #79). Audit persistence is not wired
+// yet, so this returns no values today; when persistence lands, return the
+// inventory here — runAuditCommand already consults loadSecrets, so the
+// prod path cannot forget it.
+export function loadProdAuditSecrets(): readonly string[] {
+  return [];
 }
 
 function usage(out: (line: string) => void): number {
@@ -74,13 +86,19 @@ export async function runAuditCommand(
       }
       if (arg === '--mode') {
         if (!isAuditMode(value)) {
-          deps.out(`error: unknown mode ${JSON.stringify(value)}`);
+          deps.out(
+            redactSecretShapes(`error: unknown mode ${JSON.stringify(value)}`),
+          );
           return usage(deps.out);
         }
         mode = value;
       } else if (arg === '--result') {
         if (!isAuditResult(value)) {
-          deps.out(`error: unknown result ${JSON.stringify(value)}`);
+          deps.out(
+            redactSecretShapes(
+              `error: unknown result ${JSON.stringify(value)}`,
+            ),
+          );
           return usage(deps.out);
         }
         result = value;
@@ -93,10 +111,14 @@ export async function runAuditCommand(
     }
   }
   const records = await deps.loadRecords();
+  // Union of both inventory channels: an explicit list plus whatever the
+  // injected loader returns — either source alone redacts.
+  const secrets = [
+    ...(deps.secrets ?? []),
+    ...((await deps.loadSecrets?.()) ?? []),
+  ];
   const filtered = queryAudits(records, { mode, posture, result });
-  const redacted = filtered.map((record) =>
-    redactAuditRecord(record, deps.secrets ?? []),
-  );
+  const redacted = filtered.map((record) => redactAuditRecord(record, secrets));
   if (json) {
     deps.out(JSON.stringify(redacted, null, 2));
     return AUDIT_EXIT_OK;

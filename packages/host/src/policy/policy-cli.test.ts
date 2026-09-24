@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { type EffectivePolicy, resolveEffectivePolicy } from './enterprise.js';
 import { runPolicyCommand } from './policy-cli.js';
+import { REDACTED_SECRET } from './secret-shapes.js';
 
 function capture() {
   const lines: string[] = [];
@@ -113,5 +114,39 @@ describe('kubic policy usage (issue #79, §78)', () => {
       out: cap.out,
     });
     expect(code).toBe(2);
+  });
+});
+
+describe('kubic policy secret backstop (issue #79 fix cycle 1)', () => {
+  // Tool names are free-form argv: a secret-shaped tool echoes back in the
+  // routing offer unless the echo is redacted.
+  const SHAPED_TOOL = 'SK-FAUX-TEST-KEY-0001';
+
+  it('redacts a secret-shaped tool name in the text offer', async () => {
+    const cap = capture();
+    const code = await runPolicyCommand(['--tool', SHAPED_TOOL], {
+      resolvePolicy: emptyPolicy,
+      out: cap.out,
+    });
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(SHAPED_TOOL);
+    expect(text).toContain(REDACTED_SECRET);
+    expect(text).toMatch(/^deny /);
+  });
+
+  it('redacts a secret-shaped tool name under --json', async () => {
+    const cap = capture();
+    const code = await runPolicyCommand(['--tool', SHAPED_TOOL, '--json'], {
+      resolvePolicy: emptyPolicy,
+      out: cap.out,
+    });
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    expect(text).not.toContain(SHAPED_TOOL);
+    expect(JSON.parse(text)).toEqual({
+      tool: REDACTED_SECRET,
+      decision: 'deny',
+    });
   });
 });

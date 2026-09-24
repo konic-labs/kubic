@@ -4,6 +4,7 @@
 // (exit 0); --json emits the full BudgetEvaluation either way. Samples
 // arrive as argv (faux-only: no clock, no I/O, no network).
 
+import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import {
   type BudgetEvaluation,
   evaluateBudget,
@@ -75,7 +76,11 @@ export function runPerfCommand(args: string[], deps: PerfCommandDeps): number {
   }
   if (kind === undefined || samplesRaw === undefined) return usage(deps.out);
   if (!isBudgetKind(kind)) {
-    deps.out(`error: unknown budget ${JSON.stringify(kind)}`);
+    // Fail-closed echo: the budget kind is argv-controlled and may carry
+    // secret-shaped material.
+    deps.out(
+      redactSecretShapes(`error: unknown budget ${JSON.stringify(kind)}`),
+    );
     return usage(deps.out);
   }
   const samples = parseSamples(samplesRaw);

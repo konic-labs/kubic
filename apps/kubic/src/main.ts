@@ -19,7 +19,10 @@ import {
   runCostCommand,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
-import { runAuditCommand } from '../../../packages/host/src/policy/audit-cli.js';
+import {
+  loadProdAuditSecrets,
+  runAuditCommand,
+} from '../../../packages/host/src/policy/audit-cli.js';
 import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
@@ -161,9 +164,13 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'audit') {
     // Audit query over the record source (no audit persistence is wired
     // yet, so the one-shot CLI reads zero rows — filters and the
-    // sentinel-only redaction are live, issue #79).
+    // sentinel-only redaction are live, issue #79). loadSecrets is the
+    // prod inventory hook (empty until persistence lands): wired
+    // end-to-end now so persistence cannot forget it — without it a
+    // non-shaped listed value would echo unredacted through --json.
     return runAuditCommand(rest, {
       loadRecords: () => [],
+      loadSecrets: loadProdAuditSecrets,
       out: (line: string) => console.log(line),
     });
   }

@@ -112,6 +112,22 @@ export function escalateModel(
   to: string,
   reason: string,
 ): { to: string } {
+  validateEscalation(ladder, from, to);
+  ladder.record.push({ from, to, reason, at: Date.now() });
+  return { to };
+}
+
+// Side-effect-free pre-check for escalateModel: throws the same errors
+// without consuming escalation budget. The solo lane validates with this
+// BEFORE touching the live lane, applies the model switch, and only then
+// records via escalateModel — so a refused or failed switch never burns
+// budget. (No-op from==to steps pass here; the lane rejects those
+// explicitly so a redundant event is never recorded.)
+export function validateEscalation(
+  ladder: EscalationLadder,
+  from: string,
+  to: string,
+): void {
   if (ladder.record.length >= ladder.maxEscalations) {
     throw new EscalationError(
       `escalation bounded: ${ladder.record.length} steps already (max ${ladder.maxEscalations})`,
@@ -129,8 +145,6 @@ export function escalateModel(
       `escalation is one-way: refusing down-step '${from}' -> '${to}'`,
     );
   }
-  ladder.record.push({ from, to, reason, at: Date.now() });
-  return { to };
 }
 
 export function supportedThinking(

@@ -3,6 +3,7 @@
 // tools all live in this process. Kubic adds no loop: accept → drive →
 // DriveOutcome, with retry waiting honored via notBefore.
 
+import { randomUUID } from 'node:crypto';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
   toolsForClasses,
@@ -10,6 +11,15 @@ import {
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  buildCompactPrompt,
+  type CompactionCheckpoint,
+  DEFAULT_RESERVE_TOKENS,
+  shouldCheckAt,
+  shouldCompact,
+} from '../compaction.js';
+import type { EscalationLadder } from '../model-select.js';
+import { validateEscalation } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -22,6 +32,19 @@ import {
   type Model,
   type Session,
 } from '../pi-boundary.js';
+import {
+  assembleSystemPrompt,
+  buildCompactionRoute,
+  type CompactionRoute,
+  escalatePinnedModel,
+  type LaneBinding,
+  type LaneRegistry,
+  type ModelEscalationEvent,
+  PromptCacheError,
+  pinModelForTask,
+  type SystemPromptInput,
+  type TaskAffinity,
+} from '../prompts.js';
 import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
@@ -37,6 +60,43 @@ import {
 
 export const SOLO_LANE_NAME = 'main';
 
+// Stable role seed for the assembled solo prompt (issue #82). The
+// sentences match the pre-#82 ad-hoc prompt; the wiring delta is that
+// boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
+// from prompts.ts instead of the `Working directory:` sentence.
+export const SOLO_ROLE = [
+  'You are a coding agent working in a terminal.',
+  'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
+  'Keep answers short and technical.',
+].join('\n');
+
+export interface SoloPromptInput {
+  cwd: string;
+  toolNames: string[];
+  metadata: Record<string, string>;
+  extraSections?: string[];
+}
+
+export function assembleSoloPrompt(input: SoloPromptInput): string {
+  const full: SystemPromptInput = {
+    role: SOLO_ROLE,
+    cwd: input.cwd,
+    toolNames: input.toolNames,
+    metadata: input.metadata,
+    ...(input.extraSections === undefined
+      ? {}
+      : { extraSections: input.extraSections }),
+  };
+  return assembleSystemPrompt(full);
+}
+
+export function defaultSoloModelId(model: {
+  provider: string;
+  id: string;
+}): string {
+  return `${model.provider}/${model.id}`;
+}
+
 export function defaultSoloPrompt(cwd: string): string {
   return [
     'You are a coding agent working in a terminal.',
@@ -50,6 +110,17 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
+}
+
+// Harness compaction budget overrides. keepRecentTokens mirrors Pi's
+// DEFAULT_COMPACTION_SETTINGS (20000): Kubic owns the trigger reserve,
+// Pi owns the mechanism (checkpoints, summarization, spill files).
+export const SOLO_KEEP_RECENT_TOKENS = 20000;
+
+export interface SoloCompactionOptions {
+  enabled?: boolean;
+  reserveTokens?: number;
+  keepRecentTokens?: number;
 }
 
 // Caller contract: classes alone deploy the allowlist (setActiveTools) and
@@ -81,6 +152,17 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
+  // LaneRegistry binding (issue #82, rule 5): when set, boot spawns the
+  // session/lane binding; a repeat boot for the same key reuses the
+  // continuation instead of re-spawning (which the registry rejects).
+  registry?: LaneRegistry;
+  // Model affinity pin (issue #82, rule 6): when set, boot pins the
+  // boot model for the task; escalateSoloModel is the only path off it.
+  taskId?: string;
+  // Harness compaction budget (issue #82): reserve defaults to Kubic's
+  // DEFAULT_RESERVE_TOKENS so the harness automatic path fires on the
+  // same threshold as shouldCompact.
+  compaction?: SoloCompactionOptions;
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its toolCallId.
   journal?: FileJournalStore;
@@ -90,6 +172,145 @@ export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
   kills: OperationKillRegistry;
+  sessionId: string;
+  binding?: LaneBinding;
+  affinity?: TaskAffinity;
+}
+
+export function splitSoloModelId(id: string): {
+  provider: string;
+  modelId: string;
+} {
+  const slash = id.indexOf('/');
+  if (slash <= 0 || slash === id.length - 1) {
+    throw new PromptCacheError(
+      `solo model id must be 'provider/id' (got ${JSON.stringify(id)})`,
+    );
+  }
+  return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
+}
+
+// The ONLY path off the pinned model through the lane: one-way,
+// ladder-bounded, recorded, and applied to the live lane. Ordering is
+// parse → validate → setModel → record: the id-format parse and the
+// ladder pre-check both run BEFORE the live switch, and the ladder record
+// plus sink event fire only AFTER setModel resolves — so a refused step,
+// a malformed id, or a setModel rejection burns no escalation budget,
+// emits no event, and leaves affinity untouched.
+export async function escalateSoloModel(
+  solo: SoloLane,
+  ladder: EscalationLadder,
+  to: string,
+  reason: string,
+  context: Context,
+  sink?: (event: ModelEscalationEvent) => void,
+): Promise<{
+  affinity: TaskAffinity;
+  event: ModelEscalationEvent;
+}> {
+  if (solo.affinity === undefined) {
+    throw new PromptCacheError(
+      'no pinned affinity: boot with taskId before escalating',
+    );
+  }
+  const from = solo.affinity.modelId;
+  if (to === from) {
+    throw new PromptCacheError(
+      `refusing no-op escalation: already on '${to}' (same-model step)`,
+    );
+  }
+  const parsed = splitSoloModelId(to);
+  validateEscalation(ladder, from, to);
+  await solo.lane.setModel(parsed, context);
+  const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
+  solo.affinity = result.affinity;
+  return result;
+}
+
+export interface SoloCompactionCheck {
+  contextWindow: number;
+  contextTokens: number;
+  reserveTokens?: number;
+  checkpoint?: CompactionCheckpoint;
+  batchTerminal?: boolean;
+  focus?: string;
+  newRoutingId?: () => string;
+}
+
+export type SoloCompactionDecision =
+  | {
+      checked: false;
+      reason: 'checkpoint-skipped';
+      checkpoint: CompactionCheckpoint;
+    }
+  | {
+      checked: true;
+      compacted: false;
+      contextTokens: number;
+      threshold: number;
+    }
+  | {
+      checked: true;
+      compacted: true;
+      contextTokens: number;
+      threshold: number;
+      route: CompactionRoute;
+      prompt: string;
+    };
+
+// Turn-loop compaction checkpoint (issue #82, rule 7): Pi checkpoints
+// fire on interactive lanes only, the Kubic trigger formula decides, and
+// the compact run carries a fresh routing id with cache writes disabled
+// (rule 7) plus the verbatim caller focus. Never records usage itself.
+export async function maybeCompactSoloLane(
+  solo: SoloLane,
+  check: SoloCompactionCheck,
+  context: Context,
+): Promise<SoloCompactionDecision> {
+  const checkpoint = check.checkpoint ?? 'pre-prompt';
+  if (
+    shouldCheckAt(checkpoint, {
+      batchTerminal: check.batchTerminal ?? false,
+    }) === false
+  ) {
+    return { checked: false, reason: 'checkpoint-skipped', checkpoint };
+  }
+  const reserve = check.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+  const threshold = check.contextWindow - reserve;
+  if (
+    shouldCompact({
+      contextTokens: check.contextTokens,
+      contextWindow: check.contextWindow,
+      reserveTokens: reserve,
+    }) === false
+  ) {
+    return {
+      checked: true,
+      compacted: false,
+      contextTokens: check.contextTokens,
+      threshold,
+    };
+  }
+  const route = buildCompactionRoute(
+    solo.sessionId,
+    (check.newRoutingId ?? randomUUID)(),
+  );
+  const prompt = buildCompactPrompt(
+    check.focus === undefined ? {} : { focus: check.focus },
+  );
+  // NOTE (review, issue #82): the route fields intentionally do NOT thread
+  // into lane.compact — compact's `{ customInstructions }` parameter shape
+  // is Pi's signature boundary, so the route stays a Kubic-side decision
+  // record (fresh id, cache writes off) rather than a harness argument.
+  await solo.lane.compact({ customInstructions: prompt }, context);
+  return {
+    checked: true,
+    compacted: true,
+    contextTokens: check.contextTokens,
+    threshold,
+    route,
+    prompt,
+  };
 }
 
 export async function bootSoloLane(
@@ -105,17 +326,32 @@ export async function bootSoloLane(
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
+  const baseTools = kubicToolsToPiTools();
   const { harness } = await AgentHarness.create(
     {
       session: options.session,
       models: options.models,
       model: options.model,
-      tools: composeTools(
-        kubicToolsToPiTools(),
-        withPolicyContributions(options.policy),
-      ),
+      tools: composeTools(baseTools, withPolicyContributions(options.policy)),
       toolContext,
-      systemPrompt: options.systemPrompt ?? defaultSoloPrompt(options.env.cwd),
+      systemPrompt:
+        options.systemPrompt ??
+        assembleSoloPrompt({
+          cwd: options.env.cwd,
+          toolNames: baseTools.map((t) => t.name),
+          metadata: {
+            agent: options.agentId,
+            lane: SOLO_LANE_NAME,
+            model: defaultSoloModelId(options.model),
+          },
+        }),
+      compaction: {
+        enabled: options.compaction?.enabled ?? true,
+        reserveTokens:
+          options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+        keepRecentTokens:
+          options.compaction?.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      },
     },
     context,
   );
@@ -126,7 +362,65 @@ export async function bootSoloLane(
   if (options.policy?.interceptors !== undefined) {
     registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
   }
-  return { harness, lane, kills };
+  let binding: LaneBinding | undefined;
+  // NIT (review, issue #82): the harness above boots BEFORE the registry
+  // continuation check, so a re-boot builds a second harness even when the
+  // lane is reused. Reordering to check-first was left alone: the harness
+  // owns policy/hook wiring with side effects, and a check-first reorder
+  // is not trivially safe.
+  if (options.registry !== undefined) {
+    const candidate: LaneBinding = {
+      sessionId: options.sessionId,
+      lane: SOLO_LANE_NAME,
+      modelId: defaultSoloModelId(options.model),
+    };
+    let existing: LaneBinding | undefined;
+    try {
+      existing = options.registry.continuation(
+        options.sessionId,
+        SOLO_LANE_NAME,
+      );
+    } catch (err) {
+      // Absence-only catch: a missing lane falls through to spawn, but any
+      // other continuation failure (backend errors, programming errors)
+      // propagates instead of being masked as "no lane yet".
+      if (
+        err instanceof PromptCacheError &&
+        /no active lane/.test(err.message)
+      ) {
+        options.registry.spawn(candidate);
+        binding = { ...candidate };
+      } else {
+        throw err;
+      }
+    }
+    if (existing !== undefined) {
+      // Model agreement on reuse: the new lane runs the boot model, so a
+      // stale bound modelId must never be handed back silently.
+      if (existing.modelId !== candidate.modelId) {
+        throw new PromptCacheError(
+          `lane model mismatch for '${options.sessionId}/${SOLO_LANE_NAME}': ` +
+            `bound to '${existing.modelId}' but boot requested '${candidate.modelId}'`,
+        );
+      }
+      binding = existing;
+    }
+  }
+  return {
+    harness,
+    lane,
+    kills,
+    sessionId: options.sessionId,
+    ...(binding === undefined ? {} : { binding }),
+    ...(options.taskId === undefined
+      ? {}
+      : {
+          affinity: pinModelForTask(
+            options.taskId,
+            defaultSoloModelId(options.model),
+          ),
+        }),
+  };
 }
 
 // Minimal drive surface: real AgentLanes satisfy this, and so do unit

@@ -39,6 +39,18 @@ export {
   ServiceRegistry,
   ServiceRemoteError,
 } from './services.js';
+export type {
+  BundleDirFiles,
+  ExtensionPosture,
+  PostureOptions,
+  RefusedAttempt,
+} from './startup.js';
+export {
+  BUNDLE_MANIFEST_FILE,
+  ExtensionStartupError,
+  FIRST_PARTY_BUNDLE_NAME,
+  probeFirstPartyPosture,
+} from './startup.js';
 export type { TrustOptions, TrustSubject } from './trust.js';
 export {
   assertFirstParty,

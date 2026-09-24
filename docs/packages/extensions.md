@@ -48,6 +48,7 @@ approval/trajectory/eval bundles.
 | `contract.ts` | `FacetKind`, `FACET_KINDS`, `ExtensionManifest`, `ExtensionRefusedError` |
 | `facets.ts` | `assertFacetImports`, `FacetBoundaryError` |
 | `loader.ts` | `FlushStage`, `FLUSH_ORDER`, `ActivationEnv`, `ActiveHandle`, `BundleFactory`, `ExtensionLoader` |
+| `startup.ts` | `BundleDirFiles`, `PostureOptions`, `RefusedAttempt`, `ExtensionPosture`, `BUNDLE_MANIFEST_FILE`, `ExtensionStartupError`, `FIRST_PARTY_BUNDLE_NAME`, `probeFirstPartyPosture` |
 | `services.ts` | `ServiceOptions`, `UseOptions`, `ServiceEntry`, `ServiceRemoteError`, `ServiceNotFoundError`, `ServiceRegistry`, `LoaderEnvView`, `createEnv` |
 | `cancellation.ts` | `CancellationDomain`, `CANCELLATION_DOMAINS`, `DisconnectController`, `TaskScope` |
 | `replicated.ts` | `CellDelta`, `CellSnapshot`, `ReplicatedCell` |
@@ -80,6 +81,32 @@ import runs; `resolve` validates jiti targets against owned paths;
 the flush stages. `ServiceRegistry` provides/consumes via
 `provide`/`provideMany`/`use`/`observe`; `use` on a missing service
 throws `ServiceNotFoundError`.
+
+### Startup (`startup.ts`, issue #80)
+
+SCOPE: the probe surfaces in `kubic doctor` only (the
+`extension:bundle` check) — `run`/`tui`/`orchestrate` never call it and
+run bare, by design until persistence lands. This is a posture check,
+not a startup gate. (Solo lane and manager lane decided out, not
+forgotten.) Every doctor invocation runs `probeFirstPartyPosture`: the
+on-disk manifest (`skills/budget/manifest.json`, data — never executed)
+is validated, compared to the compiled `BUDGET_MANIFEST` pin
+(name+publisher+facets — drift fails closed, even when the trust gates
+alone would admit it), `assertFirstParty` gates it, the bundle registers on the
+real `ExtensionLoader`, the compiled-in factory sets up and provides
+`budget/limits` local-only (v1 has no remote extension resolution), the
+`use` round-trip renders through the tui facet, and the two bypass
+probes (owned-path traversal, truthy remote flag) are attempted live —
+both refused, both counted. The upward walk for the bundle dir is
+capped at 4 levels (both shipped layouts resolve; anything further is
+outside the repo), and the ok path requires both tripwires refused —
+a structural ok with no refusals fails. Removing the bundle dir (or an unreadable
+/ tampered manifest) fails closed with `ExtensionStartupError` /
+`reason: extension-posture` (exit 1), never a silent skip. An
+admitted bypass fails the posture too — the #37 hardening regressing
+turns doctor red. Facet liveness: contract, host, and tui facets are
+consumed by this surface; the worker facet (`checkBudgetExhausted`)
+stays pure lane-side logic with unit coverage until a lane reads it.
 
 ### Budget bundle (`bundles/budget/`)
 

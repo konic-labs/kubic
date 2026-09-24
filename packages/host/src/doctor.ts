@@ -35,6 +35,7 @@ export type DoctorReason =
   | 'provider-down'
   | 'policy-mismatch'
   | 'deps-missing'
+  | 'extension-posture'
   | 'full-access'
   | 'skipped';
 
@@ -72,6 +73,21 @@ export interface DoctorDeps {
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
+  // First-party extension posture (issue #80): structural input so host
+  // never imports the extensions package — the composition root maps the
+  // real startup probe onto this shape. Absent (tests, unwired callers):
+  // no extension check, the legacy matrix is unchanged.
+  probeExtensions?: () => ExtensionPostureInput;
+}
+
+// Structural posture from the extensions startup probe
+// (packages/extensions/src/startup.ts): loaded bundle names plus the
+// refused-attempt count, both produced by the same trust checks.
+export interface ExtensionPostureInput {
+  ok: boolean;
+  loaded: string[];
+  refusedCount: number;
+  detail: string;
 }
 
 function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
@@ -160,6 +176,48 @@ function probeMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// First-party extension posture (issue #80): the composition root feeds
+// the live startup probe here, so doctor reports the same loaded/refused
+// counts the trust checks produce. A degraded posture fails with reason
+// extension-posture (exit 1 via limitsDoctorExit); warn never applies —
+// a half-loaded bundle is a failure, not a disclosure. Defense in depth:
+// the ok path must carry proof both live tripwires fired (≥1 loaded
+// bundle, ≥2 refused attempts) — a structural {ok:true} with no refusals
+// fails, so a probe that skips its checks cannot report green.
+const EXTENSION_TRIPWIRES = 2;
+function extensionCheck(posture: ExtensionPostureInput): DoctorCheck {
+  const base = {
+    id: 'extension:bundle',
+    label: 'extension bundle',
+  };
+  if (
+    posture.ok &&
+    posture.loaded.length >= 1 &&
+    posture.refusedCount >= EXTENSION_TRIPWIRES
+  ) {
+    return {
+      ...base,
+      status: 'pass',
+      reason: 'ok',
+      detail: posture.detail,
+    };
+  }
+  if (posture.ok) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'extension-posture',
+      detail: `extension posture degraded: ok reported with loaded=[${posture.loaded.join(', ')}] refused=${posture.refusedCount} (need >=1 loaded bundle and ${EXTENSION_TRIPWIRES} refused tripwires) — failing closed`,
+    };
+  }
+  return {
+    ...base,
+    status: 'fail',
+    reason: 'extension-posture',
+    detail: posture.detail,
+  };
+}
+
 // License identity (issue #59; §75.1): Kubic is MIT-licensed. The check
 // always passes — it surfaces the license at runtime and can never flip
 // the doctor exit code. The static correspondence (LICENSE text and the
@@ -212,6 +270,22 @@ export function collectDoctorChecks(
       reason: 'policy-mismatch',
       detail: probeMessage(error),
     });
+  }
+  // First-party extension posture (issue #80): opt-in via the injected
+  // probe — absent means no check (legacy matrices are unchanged). A
+  // throwing probe becomes a failing check, never a crash.
+  if (deps.probeExtensions !== undefined) {
+    try {
+      checks.push(extensionCheck(deps.probeExtensions()));
+    } catch (error) {
+      checks.push({
+        id: 'extension:bundle',
+        label: 'extension bundle',
+        status: 'fail',
+        reason: 'extension-posture',
+        detail: probeMessage(error),
+      });
+    }
   }
   // License identity (issue #59): reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.

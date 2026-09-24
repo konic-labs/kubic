@@ -1,0 +1,7 @@
+{
+  "facets": ["contract", "host", "worker", "tui"],
+  "name": "kubic/budget",
+  "publisher": "kubic",
+  "sourcePath": "kubic/budget",
+  "version": "0.0.0"
+}

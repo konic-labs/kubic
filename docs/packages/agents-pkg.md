@@ -27,9 +27,9 @@ budgets by default: `createBudget` never injects limits (issue #9; §71).
 | `artifacts.ts` | `ArtifactTest`, `TaskArtifact`, `ARTIFACT_FIELDS`, `ArtifactValidation`, `validateArtifact`, `sanitizeArtifact`, `SPAWN_DENY_FIELDS`, `SpawnIsolation`, `checkSpawnIsolation`, `ChildPromptInput`, `buildChildPrompt`, `assertPromptCarriesNoTranscript`, `ArtifactTranscriptEntry`, `renderArtifactTranscript`, `toTranscriptEntry`, `ArtifactTrajectoryRecord`, `toTrajectoryRecord`, `DebuggerHandoffInput`, `DebuggerHandoff`, `DebuggerHandoffBuild`, `buildDebuggerHandoff`, `freshDebuggerPrompt`, `estimateHandoffTokens`, `TOKEN_ECONOMICS_NOTE`, `containsCredential`, `redactArtifactText` |
 | `skills/skills.ts`, `skills/templates.ts` | Skill + prompt-template registries |
 | `memory.ts` | Agent memory surface |
-| `roles.ts` | Reserved stub (`export {}`) — role presets land with #44 |
-| `lifecycle.ts` | Reserved stub (`export {}`) — lifecycle owner is #42 |
-| `index.ts` | Reserved stub (`export {}`) — import per-module paths |
+| `roles.ts` | Pointer | Role presets live in `@kubic/host` `roles/roles-data.ts` over `.kubic/roles/*.md` (#44, closed) |
+| `lifecycle.ts` | Pointer | Lifecycle owner is `@kubic/worker` `lifecycle/` (#42) |
+| `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts
 

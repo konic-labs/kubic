@@ -41,7 +41,7 @@
     "packages/agents/src/skills/**/*.ts",
     "!packages/agents/src/skills/**/*.test.ts"
   ],
-  "ignorePatterns": ["pi/**", "docs/design/**", "examples/**"],
+  "ignorePatterns": ["pi/**", "docs/design/**"],
   "plugins": ["@stryker-mutator/vitest-runner"],
   "dryRunTimeoutMinutes": 5
 }

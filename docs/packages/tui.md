@@ -26,8 +26,8 @@ TUI-side analogue of the worker Pi boundary.
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines`, `DiffView` |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `shouldUseInlineFallback`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `renderApprovalInline`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
-| `views.ts`, `components.ts` | Reserved stubs (`export {}`) — view assembly lands with owners #23–#28 |
-| `index.ts` | Reserved stub (`export {}`) — import per-module paths |
+| `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts` (#23–#28); no shared or aggregated module |
+| `index.ts` | Pointer | No barrel — import per-module paths (`tui-boundary.js` seam + views); `tui/` stays presentation-only |
 
 ## Contracts
 

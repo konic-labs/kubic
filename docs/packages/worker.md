@@ -39,8 +39,9 @@ diff touching the boundary for maintainer review.
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
 | `prompts.ts` | `PromptCacheError`, `PROMPT_CACHE_RULES`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `appendTurnContent`, `LaneBinding`, `LaneRegistry`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
 | `compaction.ts` | `CompactionThreshold`, `compactionThreshold`, `shouldCompact`, `DEFAULT_RESERVE_TOKENS`, `CompactionCheckpoint`, `COMPACTION_CHECKPOINTS`, `CheckpointContext`, `shouldCheckAt`, `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `BranchSummaryEntry`, `BranchSummaryStore`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState`, `buildCompactedState` |
-| `approval-client.ts`, `session.ts`, `tools.ts`, `ops/` | Approval client, session wiring, tool surface, ops helpers |
-| `index.ts` | Reserved stub (`export {}`) — import per-module paths |
+| `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` (#16) + `lane/interceptors.ts`; sessions in `lane/session-store.ts` (#14); tools in `lane/tools-adapter.ts` (#11) |
+| `ops/` | Implemented | Operation implementations (read/write/edit/bash/git/…) + registry |
+| `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts
 

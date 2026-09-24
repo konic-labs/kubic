@@ -20,15 +20,15 @@ docs and code must never imply otherwise (design §59.1).
 | `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
 | `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `DoctorDeps`, `collectDoctorChecks` |
 | `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink` |
-| `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Worker supervision, dispatch, and the root agent |
+| `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
 | `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets) |
 | `roles/` | Role presets and role data |
 | `policy/` | Host-side policy wiring |
 | `replay/` | Replay surfaces over trajectory exports |
 | `ops/`, `limits/` | Perf budgets, honest-claims/skip-record guards, solo-warning + orchestrator notices |
 | `run-cli.ts`, `sessions-cli.ts`, `workers-cli.ts`, `journal-cli.ts`, `models-cli.ts`, `git-cli.ts` | Headless/CLI command implementations |
-| `credentials.ts` | Credential handling |
-| `index.ts` | Reserved stub (`export {}`) — import per-module paths |
+| `credentials.ts` | Pointer | Request-time refs in `config/secrets.ts` (#38); model-layer store in `@kubic/worker` `pi-boundary.ts` |
+| `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts
 

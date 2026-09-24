@@ -19,7 +19,7 @@
   "disableBail": false,
   "ignoreStatic": false,
   "mutate": ["scripts/dep-lint.mjs", "scripts/check-pinned-deps.mjs"],
-  "ignorePatterns": ["pi/**", "docs/design/**", "examples/**"],
+  "ignorePatterns": ["pi/**", "docs/design/**"],
   "plugins": ["@stryker-mutator/tap-runner"],
   "dryRunTimeoutMinutes": 5
 }

@@ -16,10 +16,10 @@ imports nothing internal — `scripts/dep-lint.mjs` rejects any
 | --- | --- | --- |
 | `presentation.ts` | Implemented | `KubicPresentationState` + sub-interfaces, `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
 | `license.ts` | Implemented | `KUBIC_LICENSE`, `KUBIC_LICENSE_FILE`, `formatVersionLine`, `formatLicenseDetail` |
-| `protocol.ts` | Reserved stub | `export {}` — wire shape lands with its owner |
-| `policy.ts` | Reserved stub | `export {}` — wire shape lands with its owner |
-| `session.ts` | Reserved stub | `export {}` — session shapes land with #14 |
-| `index.ts` | Reserved stub | `export {}` |
+| `protocol.ts` | Pointer | Owner module open — reserves the contract location (no wire protocol yet) |
+| `policy.ts` | Pointer | Permission-policy model lives in `@kubic/agents` `policy.ts` (#15) |
+| `session.ts` | Pointer | Session shapes live in `@kubic/worker` `lane/session-store.ts` (#14) |
+| `index.ts` | Pointer | No barrel — import `presentation.js` / `license.js` directly |
 
 ## Contracts
 

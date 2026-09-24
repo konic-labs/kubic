@@ -8,9 +8,11 @@ import { FileJournalStore } from '../../exec/src/journal.js';
 import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
 import { journalStatus, renderLog } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
+import { defaultSessionsRoot } from './sessions-cli.js';
 
 export interface JournalCommandDeps {
   journalDir?: string;
+  sessionsRoot?: string;
   root?: string;
   out: (line: string) => void;
 }
@@ -21,7 +23,7 @@ export function defaultJournalDir(root: string): string {
 
 function usage(out: (line: string) => void): number {
   out(
-    'usage: kubic <diff [--path <p>] [--agent <id>] [--json] | undo [<path>] [--step] [--dry-run] | log | status>',
+    'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>',
   );
   return 1;
 }
@@ -37,6 +39,38 @@ function flagValue(
   return value;
 }
 
+// Session ids are path segments under the sessions root: accept only
+// [A-Za-z0-9_-] so --session can never escape into a path traversal
+// (same rule as run-cli's SESSION_ID_PATTERN, kept local so the journal
+// CLI never imports the run lane). Checked before any path join, so the
+// join below is contained by construction (#17 resolve/relative guard).
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+// The `journal:<id>` ref `kubic run` prints; accepted verbatim as the
+// --session value so the printed token needs no extra lookup.
+const JOURNAL_REF_PREFIX = 'journal:';
+
+function resolveJournalDir(
+  deps: JournalCommandDeps,
+  root: string,
+  session: string | undefined,
+): { dir: string } | string {
+  if (session === undefined) {
+    return { dir: deps.journalDir ?? defaultJournalDir(root) };
+  }
+  const id = session.startsWith(JOURNAL_REF_PREFIX)
+    ? session.slice(JOURNAL_REF_PREFIX.length)
+    : session;
+  if (!SESSION_ID_PATTERN.test(id)) {
+    return `error: invalid --session id ${JSON.stringify(session)} (use [A-Za-z0-9_-] or journal:<id>)`;
+  }
+  if (deps.journalDir !== undefined) {
+    return { dir: deps.journalDir };
+  }
+  const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
+  return { dir: join(sessionsRoot, id, 'journal') };
+}
+
 export async function runJournalCommand(
   args: string[],
   deps: JournalCommandDeps,
@@ -44,9 +78,17 @@ export async function runJournalCommand(
   const [sub, ...rest] = args;
   if (sub === undefined) return usage(deps.out);
   const root = deps.root ?? process.cwd();
-  const store = new FileJournalStore(
-    deps.journalDir ?? defaultJournalDir(root),
-  );
+  const session = flagValue(rest, '--session');
+  if (session === 'missing') {
+    deps.out('error: --session needs a value');
+    return 1;
+  }
+  const journalDir = resolveJournalDir(deps, root, session);
+  if (typeof journalDir === 'string') {
+    deps.out(journalDir);
+    return 1;
+  }
+  const store = new FileJournalStore(journalDir.dir);
 
   if (sub === 'diff') {
     const path = flagValue(rest, '--path');
@@ -74,7 +116,12 @@ export async function runJournalCommand(
   if (sub === 'undo') {
     const dryRun = rest.includes('--dry-run');
     const step = rest.includes('--step');
-    const positional = rest.find((a) => !a.startsWith('--'));
+    // The --session value is a store selector, not a path scope: skip the
+    // flag and its value before looking for the positional <path>.
+    const scopeArgs = rest.filter(
+      (a, i) => a !== '--session' && rest[i - 1] !== '--session',
+    );
+    const positional = scopeArgs.find((a) => !a.startsWith('--'));
     const plan = planUndo(store, {
       ...(positional === undefined ? {} : { path: positional }),
       ...(step ? { step: true } : {}),

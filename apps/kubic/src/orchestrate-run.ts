@@ -18,6 +18,7 @@ import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
+import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
@@ -58,6 +59,7 @@ import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.j
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import type { WorkerStatus } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import { loadExtensionStartup } from './extension-startup.js';
 
 export interface OrchestrateRunOptions {
   out: (line: string) => void;
@@ -81,6 +83,8 @@ export interface OrchestrateRunOptions {
    * the child on the path under test is a REAL process either way.
    */
   workerEntry?: { cmd: string; args: string[] };
+  /** Prod inputs for the extension startup load — tests drive missing bundles here. */
+  extensionOptions?: PostureOptions;
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -234,10 +238,10 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
+  const workerRegistry = options.registry ?? new WorkerRegistry();
   // One registry for the whole invocation (issue #94): the orchestrator
   // writes rows here, `kubic workers` reads the same rows off disk, and a
   // caller can hand in a registry to observe a run from outside.
-  const workerRegistry = options.registry ?? new WorkerRegistry();
   // Every lifecycle-managed worker starts through this shell: it carries
   // the §3.8 allowlisted env to the OS (`env -i …`), which the exec Shell
   // seam alone cannot do. It is rooted at the WORKER's worktree — the
@@ -257,6 +261,18 @@ export async function orchestrateDepsWithDefaults(
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
   const worktreeStartedAt = new Map<string, number>();
+  // Extension startup (issue #93): the MANAGER lane loads the first-party
+  // bundle set through the same trust gates before it plans any worker — a
+  // missing/refused bundle refuses the whole orchestration (the named
+  // ExtensionStartupError escapes to the CLI's failure path) instead of
+  // managing a run whose extensions never loaded. The receipt is reported,
+  // never swallowed.
+  await loadExtensionStartup('orchestrate', cwd, {
+    receipt: (line) => debug(line),
+    ...(options.extensionOptions === undefined
+      ? {}
+      : { options: options.extensionOptions }),
+  });
   const top = await runGit(
     cwd,
     ['rev-parse', '--show-toplevel'],

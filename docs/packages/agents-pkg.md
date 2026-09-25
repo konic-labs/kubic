@@ -80,9 +80,14 @@ accounting; cost → host usage roll-up; wallClock → host watchdog;
 toolCalls → `before_tool` per-call gate; retries → separate retry
 budget). Exhaustion is `BudgetTermination` (`status:
 'budget_exhausted'`, `limit: BudgetLimit`) — a distinct termination,
-never a generic failure. `ReplayPin` pins 8 dims (`task`, `model`,
+never a generic failure. `ReplayPin` has **8 fields** (`task`, `model`,
 `thinking`, `toolSet`, `worktree`, `baseRevision`, `systemPrompt`,
-`resources`) diffed by `diffReplayPin` into `REPLAY_PIN_DIMS`.
+`resources`), pinned closed-world by `REPLAY_PIN_FIELDS`
+(`satisfies Record<keyof ReplayPin, true>`). `diffReplayPin` reports on
+**6** comparability *dimensions* — `REPLAY_PIN_DIMS` is `task`,
+`model+thinking` (the two fields are only meaningful together),
+`toolSet`, `worktree`, `baseRevision`, `prompt+resources` — so a pin
+diff names the dim that changed, not all eight raw fields.
 
 ### `TaskTransfer` (`transfer.ts`, §24)
 

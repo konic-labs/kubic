@@ -14,6 +14,7 @@
 // planned — and each mutation re-checks its own confinement.
 
 import { join } from 'node:path';
+import { answerHelp } from '../../../../core/src/cli-help.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
@@ -93,10 +94,11 @@ export interface CleanDeps {
   resolveRepoRoot?: (env: ExecutionEnv) => Promise<string | undefined>;
 }
 
+export const CLEAN_USAGE =
+  'usage: kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]',
-  );
+  out(CLEAN_USAGE);
   return CLEAN_EXIT_USAGE;
 }
 
@@ -366,6 +368,9 @@ export async function runCleanCommand(
   args: string[],
   deps: CleanDeps,
 ): Promise<number> {
+  // `--help`/`-h` is answered before argv parsing (issue #100).
+  const help = answerHelp(args, deps.out, CLEAN_USAGE);
+  if (help !== null) return help;
   const parsed = parseCleanArgs(args);
   if (!parsed.valid) {
     deps.out(`error: ${parsed.error}`);

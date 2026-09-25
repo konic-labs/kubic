@@ -3,6 +3,7 @@
 // 1 on usage errors, op failures, or outside-a-repo (with the reason —
 // the journal path `kubic diff/undo` keeps working without git).
 
+import { answerHelp } from '../../core/src/cli-help.js';
 import type { ExecutionEnv } from '../../exec/src/env.js';
 import {
   createInvocation,
@@ -22,10 +23,11 @@ export interface GitCommandDeps {
   out: (line: string) => void;
 }
 
+export const GIT_USAGE =
+  'usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> | commit -m <message>>';
+
 export function gitUsage(out: (line: string) => void): number {
-  out(
-    'usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> | commit -m <message>>',
-  );
+  out(GIT_USAGE);
   return 1;
 }
 
@@ -42,6 +44,9 @@ export async function runGitCommand(
   args: string[],
   deps: GitCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` is answered before any subcommand dispatch (issue #100).
+  const help = answerHelp(args, deps.out, GIT_USAGE);
+  if (help !== null) return help;
   const [sub, ...rest] = args;
   if (sub === undefined) return gitUsage(deps.out);
   const memos = new MemoryMemoStore();

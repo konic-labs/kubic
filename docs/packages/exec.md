@@ -7,7 +7,7 @@
 > Source: `packages/exec/src` (read-only — this page quotes it, never moves it).
 
 `@kubic/exec` is the execution-environment seam (issue #12; §9, §20.2,
-§3.7). Every tool runs through it — no tool imports
+§20.4, §3.7). Every tool runs through it — no tool imports
 `node:fs`/`child_process` directly (`scripts/dep-lint.mjs` rejects those
 imports everywhere else; test scaffolding is exempt). Solo has no
 isolation (§3.7): confinement here is a cwd guardrail against accidental
@@ -23,8 +23,6 @@ escapes, not a sandbox boundary.
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | Reconciliation entry points over journal entries |
-| `effects.ts` | `ReplayPolicy`, `REPLAY_POLICIES`, `ToolCall`, `ToolCallState`, `TOOL_CALL_STATES`, `ToolEvent`, `ToolEnd`, `advanceToolCall`, `EffectTicket`, `EffectGate`, `batchTerminates` |
-| `checkpoint-store.ts` | `FileCheckpointStore` |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
 | `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts` (#12); path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
@@ -81,13 +79,34 @@ views. Status (`JournalStatus`, `RepoState`) and undo (`UndoScope`,
 `UndoPlan`, `UndoResult`) build on the same entry store — see the module
 for their exact fields.
 
-### Effects (`effects.ts`)
+### Effects / replay (issue #97 — deleted, not wired)
 
-`REPLAY_POLICIES` is `['never', 'safe']`; `TOOL_CALL_STATES` covers the
-tool-call machine stepped by `advanceToolCall(call, event)`; `EffectGate`
-issues `EffectTicket`s and `batchTerminates(ends)` decides batch end.
-Replay declarations, the gate, and the batch machine are the Slice C
-surface — see the module for exact fields.
+There is **no Kubic-side replay kernel**. `effects.ts` (the `ToolCall`
+state machine, `EffectGate`, replay policies) and `checkpoint-store.ts`
+(`FileCheckpointStore`) were deleted: both reimplemented machinery the Pi
+harness already owns — the tool-call machine
+(`planned → effect_pending → outcome_ready → completed`, `replay:
+"never" | "safe"`, `pi-agent-core` `session/types.ts`) and the
+abort-aware admission gate (`execution/effect-gate.ts`).
+
+What actually ships in Kubic:
+
+- **Replay policy declaration.** `Operation.replay` is `'never' | 'safe'`
+  per operation (`packages/worker/src/ops/*`), mapped straight onto
+  `AgentHarnessTool.replay` by `@kubic/worker` `lane/tools-adapter.ts`.
+  Never-replay operations memoize their result under the invocation id
+  (`ops/registry.ts`), so a retry with the same invocation id returns the
+  recorded result instead of re-executing.
+- **`MemoryCheckpointStore`** (`env.ts`) is the `CheckpointStore` seam
+  behind `SpawnOptions.checkpointKey`/`checkpointStore`, exercised by the
+  exec and lane tests. No production caller supplies one, so **a
+  `kubic run`/`kubic orchestrate` invocation persists no checkpoint**.
+
+`kubic replay --tier deterministic|live` **re-executes** the recorded
+objective through the solo lane at the pinned model/role config. It does
+**not** replay recorded effects: there is no effect log to replay from,
+and a `replay:"never"` tool re-invokes when the re-execution reaches it.
+Only `--tier recorded` is log-only, and it never touches a lane.
 
 ## Dep-direction neighbours
 

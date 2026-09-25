@@ -48,7 +48,8 @@ approval/trajectory/eval bundles.
 | `contract.ts` | `FacetKind`, `FACET_KINDS`, `ExtensionManifest`, `ExtensionRefusedError` |
 | `facets.ts` | `assertFacetImports`, `FacetBoundaryError` |
 | `loader.ts` | `FlushStage`, `FLUSH_ORDER`, `ActivationEnv`, `ActiveHandle`, `BundleFactory`, `ExtensionLoader` |
-| `startup.ts` | `BundleDirFiles`, `PostureOptions`, `RefusedAttempt`, `ExtensionPosture`, `BUNDLE_MANIFEST_FILE`, `ExtensionStartupError`, `FIRST_PARTY_BUNDLE_NAME`, `probeFirstPartyPosture` |
+| `startup.ts` | `BundleDirFiles`, `PostureOptions`, `RefusedAttempt`, `ExtensionPosture`, `BundleLoad`, `BUNDLE_MANIFEST_FILE`, `ExtensionStartupError`, `FIRST_PARTY_BUNDLE_NAME`, `loadFirstPartyBundle`, `probeFirstPartyPosture` |
+| `runtime.ts` | `startFirstPartyExtensions`, `EXTENSION_STARTUP_COMMANDS`, `commandLoadsExtensions`, `postureFromStartup`, `budgetStatusOf`, `firstBreachedLimit`, `budgetLimitsOf`, `budgetToolGate`, `ExtensionBudgetError`, `ToolGateContribution` |
 | `services.ts` | `ServiceOptions`, `UseOptions`, `ServiceEntry`, `ServiceRemoteError`, `ServiceNotFoundError`, `ServiceRegistry`, `LoaderEnvView`, `createEnv` |
 | `cancellation.ts` | `CancellationDomain`, `CANCELLATION_DOMAINS`, `DisconnectController`, `TaskScope` |
 | `replicated.ts` | `CellDelta`, `CellSnapshot`, `ReplicatedCell` |
@@ -82,31 +83,46 @@ the flush stages. `ServiceRegistry` provides/consumes via
 `provide`/`provideMany`/`use`/`observe`; `use` on a missing service
 throws `ServiceNotFoundError`.
 
-### Startup (`startup.ts`, issue #80)
+### Startup (`startup.ts`, `runtime.ts`; issue #93)
 
-SCOPE: the probe surfaces in `kubic doctor` only (the
-`extension:bundle` check) — `run`/`tui`/`orchestrate` never call it and
-run bare, by design until persistence lands. This is a posture check,
-not a startup gate. (Solo lane and manager lane decided out, not
-forgotten.) Every doctor invocation runs `probeFirstPartyPosture`: the
-on-disk manifest (`skills/budget/manifest.json`, data — never executed)
-is validated, compared to the compiled `BUDGET_MANIFEST` pin
-(name+publisher+facets — drift fails closed, even when the trust gates
-alone would admit it), `assertFirstParty` gates it, the bundle registers on the
-real `ExtensionLoader`, the compiled-in factory sets up and provides
-`budget/limits` local-only (v1 has no remote extension resolution), the
-`use` round-trip renders through the tui facet, and the two bypass
-probes (owned-path traversal, truthy remote flag) are attempted live —
-both refused, both counted. The upward walk for the bundle dir is
-capped at 4 levels (both shipped layouts resolve; anything further is
-outside the repo), and the ok path requires both tripwires refused —
-a structural ok with no refusals fails. Removing the bundle dir (or an unreadable
-/ tampered manifest) fails closed with `ExtensionStartupError` /
-`reason: extension-posture` (exit 1), never a silent skip. An
-admitted bypass fails the posture too — the #37 hardening regressing
-turns doctor red. Facet liveness: contract, host, and tui facets are
-consumed by this surface; the worker facet (`checkBudgetExhausted`)
-stays pure lane-side logic with unit coverage until a lane reads it.
+What loads, when: `run`, `tui`, and `orchestrate` load the first-party bundle
+set at composition-root boot — the solo lane (`run`, `tui`) and the manager
+lane (`orchestrate`) go through the same loader
+(`loadFirstPartyBundle`), and `kubic doctor` reports the SAME startup
+object's counts (a projection, never a second probe). Commands that read
+state rather than boot a lane (`diff`, `undo`, `log`, `status`, `sessions`,
+`git`, `models`, `export`, `--version`, …) do not load extensions at all.
+
+The load: the on-disk manifest (`skills/budget/manifest.json`, data — never
+executed) is validated, compared to the compiled `BUDGET_MANIFEST` pin
+(name+publisher+facets — drift fails closed, even when the trust gates alone
+would admit it), gated by `assertFirstParty`, registered on the real
+`ExtensionLoader`, activated through the documented path (sync factory setup →
+async `onActivate` → `session_start`/`resources`/`provider` flush), and the
+`budget/limits` service is provided local-only (v1 has no remote extension
+resolution). Both bypass tripwires (owned-path traversal, truthy remote flag)
+run live on every load: both refused, both counted. The upward walk for the
+bundle dir is capped at 4 levels (both shipped layouts resolve; anything
+further is outside the repo), and the ok path requires both tripwires refused
+— a structural ok with no refusals fails.
+
+What is refused: anything not first-party (publisher `kubic`/`konic-labs`
+with an owned `sourcePath`), any manifest that drifts from the compiled pin,
+and any bundle whose load cannot complete. Removal is fail-closed and
+lane-specific: a missing/unreadable/tampered `skills/budget` throws
+`ExtensionStartupError` on `run`/`tui`/`orchestrate` — the command refuses to
+start rather than running bare (`kubic run` maps it to the `failed` terminus
+with the named message; the CLI prints `error: …` and exits non-zero) — while
+`kubic doctor` reports the same failure as its `FAIL extension:bundle
+(extension-posture)` line. An admitted bypass fails the load too: the #37
+hardening regressing turns every lane red, not just doctor.
+
+Facet liveness: no declared facet is dead. `contract` and `host` load the
+service; the tui facet renders the status text the startup object carries
+(`budgetStatusOf`); the worker facet's `checkBudgetExhausted` gates live tool
+calls through `budgetToolGate` — the contribution `apps/kubic` composes into
+the real solo tool stack, so a `maxToolCalls` budget actually bounds a run
+(`firstBreachedLimit` is the same check for a usage reading).
 
 ### Budget bundle (`bundles/budget/`)
 

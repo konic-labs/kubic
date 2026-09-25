@@ -19,9 +19,17 @@ file that no longer exists, or when a row's file has become reachable
 - The counts below were computed on `main@1e41191`; rows for files that later
   became reachable are removed as the owning issue lands (issue #92 wired
   `clean.ts`, `confinement.ts`, `list.ts` and `remove.ts`; its row for
-  `worktree/index.ts` stands — that barrel is still dead). `#102` itself owns
+  `worktree/index.ts` stands — that barrel is still dead). Issue #97 deleted
+  `packages/exec/src/{effects,checkpoint-store}.ts` (its rows are gone; the
+  surface is a documented deletion, not a wired seam). `#102` itself owns
   the 22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
   clusters belong to the sibling issues named in each row.
+- Issue #93 executed two of its six rows: `bundles/budget/worker.ts` (the
+  worker facet now gates live tool calls through the startup object) and
+  `src/index.ts` (the composition root imports the package surface). The four
+  remaining #93 rows (`cancellation.ts`, `facets.ts`, `replicated.ts`,
+  `secrets.ts`) stay dead: the loading path this issue adds does not consume
+  them, and they keep their existing owner rather than being claimed wired.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -44,15 +52,11 @@ file that no longer exists, or when a row's file has become reachable
 | 49 | `packages/eval/src/index.ts` | #101 | delete: dead barrel over the live eval CLI |
 | 84 | `packages/eval/src/rl/fixtures.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
 | 58 | `packages/eval/src/rl/index.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
-| 97 | `packages/exec/src/checkpoint-store.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
-| 89 | `packages/exec/src/effects.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
 | 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 39 | `packages/extensions/src/bundles/budget/worker.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 58 | `packages/extensions/src/cancellation.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
-| 61 | `packages/extensions/src/index.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 80 | `packages/extensions/src/replicated.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 45 | `packages/extensions/src/secrets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 896 | `packages/host/src/config/config.ts` | #90 | wire: config layer read at runtime (#90) |

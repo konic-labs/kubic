@@ -35,6 +35,7 @@
 // tests); this module never touches the network or a model. File reads
 // go through the exec FileBridge (I/O confinement).
 
+import { answerHelp } from '../../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import {
   parseTrajectoryExportJSON,
@@ -101,7 +102,7 @@ export interface ReplayEnvelope {
   error?: ReplayError;
 }
 
-const USAGE_MESSAGE =
+export const USAGE_MESSAGE =
   'usage: kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]';
 
 interface ReplayOptions {
@@ -587,6 +588,9 @@ export async function runReplayCommand(
   args: string[],
   deps: ReplayCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, USAGE_MESSAGE);
+  if (help !== null) return help;
   const parsed = parseArgs(args);
   if ('error' in parsed) {
     const err = parsed.error;

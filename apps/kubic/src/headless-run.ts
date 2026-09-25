@@ -13,6 +13,11 @@ import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
+import type {
+  BundleLoad,
+  PostureOptions,
+} from '../../../packages/extensions/src/startup.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
@@ -47,6 +52,7 @@ import {
   type OperationResultRecord,
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { loadExtensionStartup } from './extension-startup.js';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -60,6 +66,12 @@ export interface HeadlessRunDeps {
   model?: ModelSelection;
   env?: ExecutionEnv;
   context?: Context;
+  /** Preloaded extension startup object (tests); otherwise loaded here. */
+  extensions?: BundleLoad;
+  /** Prod inputs for the startup load — tests drive missing bundles here. */
+  extensionOptions?: PostureOptions;
+  /** Progress receipt for the extension load (one line, never swallowed). */
+  debug?: (line: string) => void;
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -312,6 +324,24 @@ export async function runHeadlessPrompt(
   }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
+  // Extension startup (issue #93): the solo lane loads the first-party
+  // bundle set through the trust gates BEFORE any store or lane exists — a
+  // missing/refused bundle fails this run closed (ExtensionStartupError maps
+  // to `failed` below with the named message) instead of running bare. The
+  // receipt always fires, so refusals are reported, never swallowed.
+  let extensions: BundleLoad | undefined;
+  try {
+    extensions =
+      deps.extensions ??
+      (await loadExtensionStartup('run', process.cwd(), {
+        receipt: (line) => deps.debug?.(line),
+        ...(deps.extensionOptions === undefined
+          ? {}
+          : { options: deps.extensionOptions }),
+      }));
+  } catch (error) {
+    return storeFailure(undefined, error);
+  }
   const bridge = createNodeFileBridge(root);
   const store = openSessionStore(root, bridge);
   let session: Session;
@@ -359,6 +389,12 @@ export async function runHeadlessPrompt(
       throw error;
     }
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    // Live facet consumption (issue #93): the loaded worker facet becomes a
+    // real tool-wrap contribution on the solo lane's tool stack, so the
+    // budget the CLI started with bounds every tool call. The contribution
+    // composes through the lane's own documented seam ({ id, wrap }).
+    const contributions =
+      extensions === undefined ? [] : [budgetToolGate(extensions)];
     const { lane } = await bootSoloLane({
       session,
       models,
@@ -367,6 +403,7 @@ export async function runHeadlessPrompt(
       sessionId: id,
       agentId: 'root',
       journal: new FileJournalStore(join(root, id, 'journal')),
+      policy: contributions.length > 0 ? { contributions } : undefined,
     });
     const admission = await lane.accept({ kind: 'prompt', prompt }, context);
     if (!admission.ok) {

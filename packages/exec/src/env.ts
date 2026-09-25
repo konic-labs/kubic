@@ -8,7 +8,11 @@
 // NodeExecutionEnv (cwd-scoped), FakeExecutionEnv (hermetic tests).
 // Slice B: streaming onUpdate, throttled change-gated checkpoints,
 // recordFinal crash-resume read point, detached process-group kill.
-// Slice C (next): replay declarations, EffectGate, ToolBatch machine.
+// Slice C (replay declarations + tool-call machine) is NOT reimplemented
+// here: the Pi harness owns the tool-call state machine
+// (`planned → effect_pending → outcome_ready → completed`, `replay:
+// "never" | "safe"`) and the admission gate. Kubic declares a policy per
+// operation and hands it to the harness (§20.2; issue #97).
 
 import { spawn } from 'node:child_process';
 import {
@@ -156,6 +160,13 @@ function encodeSnapshot(snapshot: ProcessSnapshot): string {
 // Durable recovery checkpoints (§20.4): at most every
 // CHECKPOINT_INTERVAL_MS and only when the encoded snapshot changed.
 // Clock is injectable so throttle behavior is unit-testable.
+//
+// Honest limit (issue #97): this store is the seam, not a wired product
+// path — no production caller supplies one to SpawnOptions today, so a
+// `kubic run`/`kubic orchestrate` invocation persists no checkpoint and
+// nothing resumes from one. The in-memory store is what the exec/lane
+// tests drive; crash recovery for a tool call is the harness's own
+// pending-progress snapshot (§20.4).
 export class MemoryCheckpointStore implements CheckpointStore {
   private readonly snapshots = new Map<string, ProcessSnapshot>();
   private readonly lastWrite = new Map<

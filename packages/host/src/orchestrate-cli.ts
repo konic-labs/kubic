@@ -12,6 +12,7 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
+import { answerHelp } from '../../core/src/cli-help.js';
 import type {
   AttributedHunk,
   MergedHunk,
@@ -32,10 +33,11 @@ import type { WorkerListRow } from './workers-cli.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
+export const ORCHESTRATE_USAGE =
+  'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]';
+
 export function orchestrateUsage(out: (line: string) => void): number {
-  out(
-    'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]',
-  );
+  out(ORCHESTRATE_USAGE);
   return RUN_EXIT_USAGE;
 }
 
@@ -390,6 +392,9 @@ export async function runOrchestrateCommand(
   args: string[],
   deps: OrchestrateCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` is answered before argv parsing (issue #100).
+  const help = answerHelp(args, deps.out, ORCHESTRATE_USAGE);
+  if (help !== null) return help;
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
   const parsed = parseArgs(args);
@@ -456,9 +461,7 @@ export async function runOrchestrateCommand(
     if (parsed.json) {
       return fail(RUN_EXIT_USAGE, 'not_a_repo', 'not a git repository');
     }
-    deps.out(
-      'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]',
-    );
+    deps.out(ORCHESTRATE_USAGE);
     return RUN_EXIT_USAGE;
   }
 

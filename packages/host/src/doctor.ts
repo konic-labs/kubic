@@ -9,6 +9,7 @@
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
+import { answerHelp } from '../../core/src/cli-help.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import { CAPABILITIES, validatePolicy } from './approvals.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
@@ -25,6 +26,8 @@ export const DOCTOR_EXIT_USAGE = 2;
 // §78 provider-failure code, mirroring kubic run: a doctor matrix with a
 // provider-down failure exits 6 (see limitsDoctorExit).
 export const DOCTOR_EXIT_PROVIDER = 6;
+
+const DOCTOR_USAGE = 'usage: kubic doctor [--skip <id[,id…]>] [--json]';
 
 // warn is informational only (issue #58 static §59.1 notices): it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
@@ -321,6 +324,9 @@ export async function runDoctorCommand(
   args: string[],
   deps: DoctorDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, DOCTOR_USAGE);
+  if (help !== null) return help;
   const skip: string[] = [];
   let json = false;
   for (let i = 0; i < args.length; i += 1) {

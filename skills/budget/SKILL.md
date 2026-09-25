@@ -9,12 +9,15 @@ breached limit.
 
 ## Manifest
 
-[`manifest.json`](manifest.json) is data, never code: at CLI startup
-`kubic doctor` reads it, validates it through the `#37` trust gates
+[`manifest.json`](manifest.json) is data, never code: from CLI startup
+the lane boots (`run`, `tui`, `orchestrate`) and `kubic doctor` read it
+through one loader, validate it through the `#37` trust gates
 (`assertFirstParty` — owned path plus first-party publisher, no
-bypass), registers it on the `ExtensionLoader`, and activates the
-compiled-in factory. Removing this directory fails closed (`extension
-bundle dir missing`), never a silent no-op.
+bypass), register it on the `ExtensionLoader`, and activate the
+compiled-in factory. Removing this directory fails closed everywhere
+(`extension bundle dir missing` → `ExtensionStartupError`): the lanes
+refuse to start, and `doctor` prints the matching FAIL line — never a
+silent no-op.
 
 ## Facets
 
@@ -24,6 +27,10 @@ bundle dir missing`), never a silent no-op.
 | `host` | Service registration (`provide`, local-only in v1) |
 | `worker` | `checkBudgetExhausted(usage, limits)` — breached limit name or `undefined` |
 | `tui` | `renderBudgetStatus(limits)` — read-only status text |
+
+The worker facet is consumed live: `budgetToolGate` wraps the solo
+lane's tool stack, so a configured `maxToolCalls` bounds a real run
+(the tui facet's status text rides the same startup object).
 
 Structural rules (enforced, not advisory): the tui facet imports the
 contract facet only (never host); the worker facet never imports

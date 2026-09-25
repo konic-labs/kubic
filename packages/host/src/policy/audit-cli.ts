@@ -6,6 +6,7 @@
 // secret-shaped values or listed-secret inventory values — credentials
 // stay sentinel-only.
 
+import { answerHelp } from '../../../core/src/cli-help.js';
 import {
   type AuditMode,
   type AuditResult,
@@ -35,10 +36,11 @@ export function loadProdAuditSecrets(): readonly string[] {
   return [];
 }
 
+export const AUDIT_USAGE =
+  'usage: kubic audit [--mode <solo|orchestrator>] [--posture <name>] [--result <ok|deny|error>] [--json]';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic audit [--mode <solo|orchestrator>] [--posture <name>] [--result <ok|deny|error>] [--json]',
-  );
+  out(AUDIT_USAGE);
   return AUDIT_EXIT_USAGE;
 }
 
@@ -70,6 +72,9 @@ export async function runAuditCommand(
   args: string[],
   deps: AuditCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, AUDIT_USAGE);
+  if (help !== null) return help;
   let json = false;
   let mode: AuditMode | undefined;
   let posture: string | undefined;

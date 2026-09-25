@@ -32,7 +32,7 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]`
+## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -42,6 +42,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
 | `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
+| `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel). Off by default; stdout stays consumable. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. |
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
@@ -50,6 +51,24 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 [exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
 value, an invalid `--session` id, a non-positive or non-integer
 `--timeout`/`--max-turns`, or an unknown flag all exit 2.
+
+### Where the spans go
+
+Lane and tool spans have two destinations, both documented:
+
+1. **stderr, behind `--debug`** — each span close writes one
+   `<label>: <name> …` line through the shared `DebugSink`. This is the
+   channel the interactive TUI debug view uses, so the vocabulary is
+   identical across modes. Silence (no `--debug`) is the default, which
+   keeps stdout consumable and the run's exit contract untouched.
+2. **the session artifact** — `run-spans.ts` also serializes the same
+   spans to `spans.jsonl` under the session's own directory
+   (`<sessions-root>/<session-id>/spans.jsonl`), one JSON object per
+   closed span. The artifact is evidence, not a surface: nothing reads it
+   back and no CLI command reports it yet (the aggregate is #95/#96's
+   telemetry work).
+
+Both are additive: a run with no spans still exits exactly as before.
 
 ## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
 
@@ -399,21 +418,40 @@ With `--session <id>` only that session is read (unknown session exits
 An unknown flag prints `usage: kubic cost [--session <id>] [--json]`
 and exits 2.
 
-## `kubic perf --budget <kind> --samples <csv> [--json]`
+## `kubic perf --budget <kind> (--measure | --samples <csv>) [--json]`
 
-Perf-budget evaluation (faux-only: samples arrive as argv, no clock).
+Perf-budget evaluation over the §61 constants. Exactly one sample
+source per run; two sources exist:
+
+- **`--measure`** — `kubic perf` runs the real thing and times it:
+  `spawn` cycles a real `node -e` child through the worker spawn
+  environment, `worktree` runs a real `git worktree add` / `remove` cycle
+  in a scratch dir. Issue #98; the measurement module is
+  `packages/host/src/ops/perf/measure.ts`. The default measurement source
+  is the live one (no composition-root wiring needed). `attach` and
+  `teardown` have no live substrate in the solo path yet, so `--measure`
+  on those kinds exits 2 with a message naming `--samples`.
+- **`--samples <ms,ms,…>` — the explicit, documented fallback.**
+  Operator-supplied ms samples; no clock is consulted. This is the
+  faux-only path used by the test suite and by any environment where
+  spawning a child (or `git`) is not available or not wanted. It is a
+  fallback, not the default.
+
 A breach prints the exact filed regression string
 (`perf regression: <kind> p95=<p95>ms exceeds budget=<budget>ms …`)
-and exits 1; a pass prints nothing gated and exits 0.
+and exits 1; a pass prints nothing gated and exits 0. `--measure` and
+`--samples` are mutually exclusive — both together exit 2 rather than
+silently picking one.
 
 | Flag | Meaning |
 | --- | --- |
 | `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** Which budget to evaluate. Anything else exits 2. |
-| `--samples <ms,ms,…>` | **Required.** Comma-separated non-negative ms samples (at least one — empty exits 2, never a vacuous pass). |
-| `--json` | The full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`) — exit 0 on pass, 1 on breach. |
+| `--measure` | Measure for real. Only `spawn` and `worktree` have a live source; the other kinds exit 2 and name `--samples`. |
+| `--samples <ms,ms,…>` | Fallback: comma-separated non-negative ms samples (at least one — empty exits 2, never a vacuous pass). |
+| `--json` | The full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`, plus the measured `source`/`samplesMs`) — exit 0 on pass, 1 on breach. |
 
 A missing flag, an unknown kind, non-numeric samples, or an unknown
-flag prints `usage: kubic perf --budget <worktree|spawn|attach|teardown> --samples <ms,ms,…> [--json]`
+flag prints `usage: kubic perf --budget <worktree|spawn|attach|teardown> (--measure | --samples <ms,ms,…>) [--json]`
 and exits 2.
 
 ## `kubic policy --tool <name> [--json]`

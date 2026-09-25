@@ -471,6 +471,42 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     expect(o.lines.join('\n')).toMatch(/unknown flag --bogus/);
   });
 
+  it('passes --debug through to the runner without gating the run (issue #98)', async () => {
+    const o = out();
+    const seen: { debug?: boolean } = {};
+    const exit = await runRunCommand(['-p', 'hi', '--debug'], {
+      out: o.write,
+      run: async (_prompt, options) => {
+        seen.debug = (options as { debug?: boolean }).debug;
+        return completedResult();
+      },
+    });
+    expect(exit).toBe(0);
+    expect(seen.debug).toBe(true);
+    // The text block is unchanged: --debug adds stderr, never stdout lines.
+    expect(o.lines).toEqual([
+      'result: did the thing',
+      'session: sess-1',
+      'journal: journal:42',
+      'usage: usage:42',
+      'trajectory: trajectory:42',
+    ]);
+  });
+
+  it('leaves debug unset when --debug is absent', async () => {
+    const o = out();
+    const seen: { debug?: boolean } = {};
+    const exit = await runRunCommand(['-p', 'hi'], {
+      out: o.write,
+      run: async (_prompt, options) => {
+        seen.debug = (options as { debug?: boolean }).debug;
+        return completedResult();
+      },
+    });
+    expect(exit).toBe(0);
+    expect(seen.debug).toBeUndefined();
+  });
+
   it('passes a valid --session id through to the runner', async () => {
     const o = out();
     const seen: { prompt?: string; sessionId?: string } = {};

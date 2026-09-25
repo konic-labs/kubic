@@ -30,6 +30,7 @@ file that no longer exists, or when a row's file has become reachable
   remaining #93 rows (`cancellation.ts`, `facets.ts`, `replicated.ts`,
   `secrets.ts`) stay dead: the loading path this issue adds does not consume
   them, and they keep their existing owner rather than being claimed wired.
+  its whole `ops/cost/*` + `ops/perf/*` cluster — see below.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -68,21 +69,6 @@ file that no longer exists, or when a row's file has become reachable
 | 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
 | 28 | `packages/host/src/limits/solo-warning.ts` | #89 | wire: emit the solo no-isolation warning on run/tui (#89) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
-| 48 | `packages/host/src/ops/cost/cache.ts` | #98 | wire: real measurements or delete (#98) |
-| 51 | `packages/host/src/ops/cost/compact-reuse.ts` | #98 | wire: real measurements or delete (#98) |
-| 78 | `packages/host/src/ops/cost/escalation.ts` | #98 | wire: real measurements or delete (#98) |
-| 52 | `packages/host/src/ops/cost/index.ts` | #98 | wire: real measurements or delete (#98) |
-| 62 | `packages/host/src/ops/cost/order.ts` | #98 | wire: real measurements or delete (#98) |
-| 28 | `packages/host/src/ops/cost/output-limits.ts` | #98 | wire: real measurements or delete (#98) |
-| 53 | `packages/host/src/ops/cost/response-cache.ts` | #98 | wire: real measurements or delete (#98) |
-| 56 | `packages/host/src/ops/cost/retry-ledger.ts` | #98 | wire: real measurements or delete (#98) |
-| 69 | `packages/host/src/ops/cost/role-model.ts` | #98 | wire: real measurements or delete (#98) |
-| 27 | `packages/host/src/ops/cost/spawn-gate.ts` | #98 | wire: real measurements or delete (#98) |
-| 31 | `packages/host/src/ops/perf/concurrency.ts` | #98 | wire: real measurements or delete (#98) |
-| 37 | `packages/host/src/ops/perf/index.ts` | #98 | wire: real measurements or delete (#98) |
-| 22 | `packages/host/src/ops/perf/merge-report.ts` | #98 | wire: real measurements or delete (#98) |
-| 53 | `packages/host/src/ops/perf/spans.ts` | #98 | wire: real measurements or delete (#98) |
-| 40 | `packages/host/src/ops/perf/spawn-path.ts` | #98 | wire: real measurements or delete (#98) |
 | 353 | `packages/host/src/orchestrator/approvals/budgets.ts` | #95 | wire: manager lane + subagent approvals (#95) |
 | 80 | `packages/host/src/orchestrator/approvals/index.ts` | #95 | wire: manager lane + subagent approvals (#95) |
 | 242 | `packages/host/src/orchestrator/approvals/request.ts` | #95 | wire: manager lane + subagent approvals (#95) |
@@ -100,7 +86,6 @@ file that no longer exists, or when a row's file has become reachable
 | 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
 | 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 206 | `packages/host/src/spans.ts` | #98 | wire: real measurements or delete (#98) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |
 | 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
@@ -114,3 +99,33 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+
+## Executed by #98 (the `ops/cost/*` + `ops/perf/*` cluster)
+
+Issue #98's rows are gone because the dispositions were executed, not
+rewritten. Two halves:
+
+- **Wired** (rows removed, files now reachable from the binary):
+  - `packages/host/src/spans.ts` — the §49.3 recorder now has a live
+    caller: `ops/perf/run-spans.ts`, driven by `apps/kubic/src/headless-run.ts`.
+  - `packages/host/src/ops/cost/cache.ts` — `prefixHitRate` /
+    `transparentCachingNote` now run over the real `cacheRead`/`cacheWrite`
+    counters on `kubic cost` rows (`ops/cost/cost-cli.ts`).
+  - `packages/host/src/ops/perf/{budgets,perf-cli}.ts` were already live and
+    stay live; `perf-cli.ts` gained the `--measure` path (new
+    `ops/perf/measure.ts`).
+- **Deleted** (no live substrate existed; deleting beats a fake caller):
+  - `ops/cost/{index,compact-reuse,escalation,order,output-limits,response-cache,retry-ledger,role-model,spawn-gate}.ts`
+    — §62 levers 3–8. Each had zero non-test importers outside its own
+    barrel; the barrel itself was dead. Wiring them would have meant
+    inventing callers for compaction, escalation, output limiting, a
+    response cache and a spawn gate that the shipped solo path does not
+    have.
+  - `ops/perf/{index,concurrency,merge-report,spans,spawn-path}.ts` —
+    a dead barrel plus §55 reporting helpers whose subjects (aggregate
+    admission, merge telemetry, the worker.start chain, the cheap-spawn
+    taxonomy) are owned by the orchestrator work (#94/#95) and were
+    unreachable from the binary.
+
+The §61 worker lifecycle budgets (`packages/worker/src/lifecycle/budgets.ts`)
+are NOT part of this cluster: their wiring belongs to #94.

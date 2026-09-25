@@ -1,9 +1,15 @@
-// `kubic cost [--session <id>] [--json]` (issue #79; §62).
+// `kubic cost [--session <id>] [--json]` (issue #79; §62, §49.2).
 // Presentation only over per-agent cost rows: one TUI row per agent plus
 // the task total, or the in-code `toCostJson` shape under --json. Rows
 // arrive injected (faux in tests); the prod loader below reads real
 // session stats out of the session store — this module never invents
 // costs, and the task total is always Σ(per-agent) by construction.
+//
+// Issue #98 (criterion 4) wires the §62 cache lever here: the same rows
+// that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so the
+// prefix hit-rate (§62 lever 2, cache.ts) is measured over real usage rows
+// and reported on the readout. No new top-level --json field: the extra
+// per-row numbers are additive inside the existing `agents` entries.
 
 import { answerHelp } from '../../../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
@@ -16,6 +22,7 @@ import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
+import { transparentCachingNote } from './cache.js';
 import {
   type AgentCostInput,
   formatAgentCostRow,
@@ -67,6 +74,11 @@ export async function loadSessionCostRows(
         costUsd: stats.usage.cost.total,
         input: stats.usage.input,
         output: stats.usage.output,
+        // §62 lever 2 (issue #98): the real prefix-cache counters off the
+        // session's usage rollup — this is what makes the reported hit-rate
+        // a measurement instead of an assumption.
+        cacheRead: stats.usage.cacheRead,
+        cacheWrite: stats.usage.cacheWrite,
       });
     } finally {
       await session.close(BACKGROUND_CONTEXT);
@@ -142,5 +154,15 @@ export async function runCostCommand(
   deps.out(
     `task total $${summary.taskTotal.toFixed(2)} (${summary.perAgent.length} agents)`,
   );
+  // §62 lever 2 over real usage rows (issue #98): reported only when the
+  // rows actually carried cache counters, so an unmeasured readout never
+  // shows a fabricated 0%.
+  if (summary.cache !== null) {
+    deps.out(
+      `cache: ${summary.cache.hits}/${summary.cache.total} sessions with prefix hits ` +
+        `(${Math.round(summary.cache.rate * 100)}%)`,
+    );
+    deps.out(transparentCachingNote());
+  }
   return COST_EXIT_OK;
 }

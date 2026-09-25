@@ -28,6 +28,12 @@ import type {
 } from '../../../packages/extensions/src/startup.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
+  attachToolSpans,
+  RunSpans,
+  serializeSpanArtifact,
+  type ToolHookRegistry,
+} from '../../../packages/host/src/ops/perf/run-spans.js';
+import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
   MAX_RUN_TIMEOUT_MS,
@@ -36,6 +42,7 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import type { DebugSink } from '../../../packages/host/src/spans.js';
 import {
   attachSession,
   createSession,
@@ -66,6 +73,10 @@ export interface HeadlessRunOptions {
   sessionId?: string;
   timeoutMs?: number;
   maxTurns?: number;
+  // §50 debug channel (issue #98): when set, the run emits its lane/tool
+  // debug lines to the injected sink (stderr in prod). The span artifact is
+  // written either way — spans are the durable half.
+  debug?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -91,6 +102,10 @@ export interface HeadlessRunDeps {
   // the mechanism already excludes `.git/`, `.kubic/` and `.gitignore` hits
   // on its own.
   reconcileOutOfScope?: string[];
+  // Debug sink for the §50 lines (issue #98). Defaults to stderr so a live
+  // `kubic run --debug` emits without the composition root wiring anything;
+  // tests inject an array collector instead.
+  debugSink?: DebugSink;
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -361,6 +376,18 @@ export async function runHeadlessPrompt(
   } catch (error) {
     return storeFailure(undefined, error);
   }
+  // §49.3 spans on the live path (issue #98): the run, its lane accept/drive
+  // steps and every harness tool call are recorded on the §29 SpanRecorder
+  // and persisted to <root>/<id>/spans.jsonl when the run settles. The
+  // recorder is created before the store so a store failure still leaves a
+  // (run-only) trace behind.
+  const spans = new RunSpans(
+    Date.now,
+    options.debug === true
+      ? (deps.debugSink ?? ((line: string) => console.error(line)))
+      : undefined,
+  );
+  const runSpan = spans.startRun();
   const bridge = createNodeFileBridge(root);
   const store = openSessionStore(root, bridge);
   let session: Session;
@@ -376,6 +403,20 @@ export async function runHeadlessPrompt(
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
+  // The span artifact is the durable half of criterion 1: written on every
+  // exit path (success or mapped failure) next to the session journal.
+  const flushSpans = (): void => {
+    spans.endRun(runSpan);
+    try {
+      bridge.appendFile(
+        join(id, 'spans.jsonl'),
+        serializeSpanArtifact(spans.trace(), runSpan, id),
+      );
+    } catch {
+      // Telemetry must never mask the run's own result: a failed artifact
+      // write is not a run failure.
+    }
+  };
   try {
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);
@@ -442,7 +483,7 @@ export async function runHeadlessPrompt(
     // composes through the lane's own documented seam ({ id, wrap }).
     const contributions =
       extensions === undefined ? [] : [budgetToolGate(extensions)];
-    const { lane } = await bootSoloLane({
+    const { harness, lane } = await bootSoloLane({
       session,
       models,
       model,
@@ -467,51 +508,71 @@ export async function runHeadlessPrompt(
             },
           }),
     });
-    const admission = await lane.accept({ kind: 'prompt', prompt }, context);
-    if (!admission.ok) {
-      const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
-      return finished(id, 'failed', message, message);
-    }
-    let driven: SettledDrive;
+    // Tool spans come from the harness's own hook registry, so they cover
+    // every tool the lane actually executes (issue #98). Detached in the
+    // finally below. A lane booted without a harness (unit stubs, future
+    // lanes) yields no registry: telemetry degrades to lane/run spans and
+    // never fails the run.
+    const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
     try {
-      driven = await driveWithGuard(
-        lane,
-        admission.value.operationId,
-        context,
-        options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
-        options.maxTurns,
-      );
-    } catch (error) {
-      // Guard exhaustion only: any other throw re-enters the outer
-      // storeFailure path below.
-      if (error instanceof TurnBudgetError || error instanceof WallClockError) {
-        const message = error.message;
-        return finished(id, 'budget_exhausted', message, message);
+      const acceptSpan = spans.startLane('accept');
+      const admission = await lane.accept({ kind: 'prompt', prompt }, context);
+      if (!admission.ok) {
+        const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
+        spans.endLane(acceptSpan, message);
+        return finished(id, 'failed', message, message);
       }
-      throw error;
+      spans.endLane(acceptSpan);
+      let driven: SettledDrive;
+      const driveSpan = spans.startLane('drive');
+      try {
+        driven = await driveWithGuard(
+          lane,
+          admission.value.operationId,
+          context,
+          options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+          options.maxTurns,
+        );
+      } catch (error) {
+        // Guard exhaustion only: any other throw re-enters the outer
+        // storeFailure path below.
+        if (
+          error instanceof TurnBudgetError ||
+          error instanceof WallClockError
+        ) {
+          const message = error.message;
+          spans.endLane(driveSpan, message);
+          return finished(id, 'budget_exhausted', message, message);
+        }
+        throw error;
+      }
+      spans.endLane(driveSpan);
+      if (driven.kind === 'waiting-deferred') {
+        const message =
+          'headless run suspended waiting on an approval that cannot arrive without a TTY';
+        return finished(id, 'approval_timed_out', message, message);
+      }
+      const record = asResultRecord(driven.outcome);
+      if (record === null) {
+        const detail =
+          JSON.stringify(driven.outcome)?.slice(0, 500) ??
+          String(driven.outcome);
+        const malformed = `lane yielded a malformed outcome: ${detail}`;
+        return finished(id, 'failed', malformed, malformed);
+      }
+      const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
+      if (terminus === 'completed') {
+        const entries = await lane.findEntries(undefined, context);
+        return finished(id, terminus, assistantSummary(entries) ?? prompt);
+      }
+      const summary =
+        record.error === undefined
+          ? `lane ${record.status} without detail`
+          : `${record.error.code}: ${record.error.message}`;
+      return finished(id, terminus, summary, summary);
+    } finally {
+      detachToolSpans();
     }
-    if (driven.kind === 'waiting-deferred') {
-      const message =
-        'headless run suspended waiting on an approval that cannot arrive without a TTY';
-      return finished(id, 'approval_timed_out', message, message);
-    }
-    const record = asResultRecord(driven.outcome);
-    if (record === null) {
-      const detail =
-        JSON.stringify(driven.outcome)?.slice(0, 500) ?? String(driven.outcome);
-      const malformed = `lane yielded a malformed outcome: ${detail}`;
-      return finished(id, 'failed', malformed, malformed);
-    }
-    const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
-    if (terminus === 'completed') {
-      const entries = await lane.findEntries(undefined, context);
-      return finished(id, terminus, assistantSummary(entries) ?? prompt);
-    }
-    const summary =
-      record.error === undefined
-        ? `lane ${record.status} without detail`
-        : `${record.error.code}: ${record.error.message}`;
-    return finished(id, terminus, summary, summary);
   } catch (error) {
     return storeFailure(id, error);
   } finally {
@@ -531,6 +592,7 @@ export async function runHeadlessPrompt(
         // A throwing debug sink must not mask the mapped result either.
       }
     }
+    flushSpans();
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {
@@ -540,3 +602,17 @@ export async function runHeadlessPrompt(
     }
   }
 }
+
+// The harness hook registry for tool spans, tolerant of a harness-less lane
+// (issue #98): unit stubs and future lane boots return only `{ lane }`, and
+// telemetry must degrade rather than fail the run. The returned registry
+// swallows subscriptions, so every caller stays branch-free.
+function toolHooksOf(
+  harness: { hooks?: unknown } | undefined,
+): ToolHookRegistry {
+  const hooks = harness?.hooks;
+  if (hooks === undefined || hooks === null) return NO_HOOKS;
+  return hooks as ToolHookRegistry;
+}
+
+const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };

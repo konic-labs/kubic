@@ -63,8 +63,11 @@
   store), 1 unknown session / store failure, 2 usage errors. `--json`
   emits the `toCostJson` shape field-for-field.
 - **`kubic perf`**: 0 pass (prints nothing gated), 1 breach (prints the
-  exact filed regression string), 2 usage errors. `--json` emits the
-  full evaluation either way.
+  exact filed regression string), 2 usage errors — including `--measure`
+  on a kind with no live source (`attach`/`teardown` today), which names
+  `--samples` in one `error:` line rather than passing vacuously.
+  `--json` emits the full evaluation either way, with `source` telling
+  callers whether the samples were measured or operator-supplied.
 - **`kubic policy` / `kubic audit`**: 0 query (an offer, never an
   enforcement), 2 usage errors. Audit output is redacted before
   printing (secret shapes and listed values never appear).

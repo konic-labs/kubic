@@ -523,7 +523,32 @@ export async function runOrchestrateCommand(
   try {
     managerLane = registerLane();
   } catch (error) {
+    // A refused lane is a run failure like any other, so it honours the
+    // output contract: one parseable envelope under --json (the failure
+    // happens before `fail()` exists, which is why this is built inline),
+    // prose plus the named code otherwise.
     const message = error instanceof Error ? error.message : String(error);
+    if (parsed.json) {
+      const status = statusForExit(RUN_EXIT_FAILED, 'manager_toolset_refused');
+      deps.out(
+        JSON.stringify({
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          sessionId,
+          status,
+          workers: [],
+          mergeOrder: [],
+          attribution: [],
+          graph: delegationGraphLines(sessionId, parsed.agents),
+          error: {
+            kind: status,
+            message,
+            code: 'manager_toolset_refused',
+          },
+        }),
+      );
+      return RUN_EXIT_FAILED;
+    }
     deps.out(`error: ${message} code=manager_toolset_refused`);
     return RUN_EXIT_FAILED;
   }

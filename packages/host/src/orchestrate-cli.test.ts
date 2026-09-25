@@ -1126,6 +1126,39 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     expect(world.calls.merge).toEqual([]);
   });
 
+  it('reports a refused lane as one machine-readable envelope under --json', async () => {
+    const world = makeWorld({
+      registerManagerLane: () =>
+        registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
+    });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+        '--json',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // --json is one parseable envelope on every failure path, including this
+    // one: a machine consumer must not have to parse prose.
+    const envelope = JSON.parse(
+      world.lines[world.lines.length - 1] as string,
+    ) as {
+      ok?: boolean;
+      status?: string;
+      error?: { code?: string; message?: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('manager_toolset_refused');
+    expect(envelope.error?.message).toMatch(/bash/);
+  });
+
   it('asserts the manager-lane trace write-free on every merge of a run', async () => {
     // The gate stays the real one: the injected wrapper records the trace
     // the run actually asserts over and then delegates to

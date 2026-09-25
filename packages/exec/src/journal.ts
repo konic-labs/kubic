@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { createNodeFileBridge } from './file-bridge.js';
+import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -16,6 +16,9 @@ export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 // undo needs the pre-image, and content addressing dedupes it — editing
 // the same large file twice stores the before-content once.
 export const LARGE_FILE_BYTES = 64 * 1024;
+// Chunk size for streamed hashing (issue #107): peak memory is one chunk, never
+// the file size. A file at or under this is read in a single call.
+export const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
 // Default size bound: the journal can never grow past this without an
 // explicit override. No default age bound — age pruning is opt-in via
 // retention config / `kubic clean` (issue #18's CLI).
@@ -65,6 +68,46 @@ export interface RetentionPolicy {
 
 export function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+/**
+ * Hash a file exactly as `sha256Hex(bridge.readTextFile(path))` does, without
+ * ever holding the whole file (issue #107).
+ *
+ * The digest must stay byte-identical for files already journaled: the baseline
+ * is compared against digests written by older versions, so a changed digest
+ * would read as "every file changed" and rewrite journal history. That means
+ * hashing the UTF-8 DECODE rather than the raw bytes — `readTextFile` returns a
+ * string and `sha256Hex` hashes it as utf8, so invalid sequences collapse to
+ * U+FFFD and must collapse identically here. The decoder is therefore carried
+ * across chunk boundaries, so a multi-byte character split between two reads
+ * decodes once.
+ *
+ * A bridge without `readFileRange` falls back to the whole-file read: correct,
+ * unbounded, and reachable only from a test double (the node bridge implements
+ * it, so every production walk is bounded).
+ */
+export function sha256HexOfFile(
+  bridge: FileBridge,
+  path: string,
+  size: number,
+): string {
+  const readRange = bridge.readFileRange?.bind(bridge);
+  if (readRange === undefined || size <= HASH_CHUNK_BYTES) {
+    return sha256Hex(bridge.readTextFile(path));
+  }
+  const decoder = new TextDecoder('utf-8');
+  const hash = createHash('sha256');
+  let offset = 0;
+  while (offset < size) {
+    const end = Math.min(offset + HASH_CHUNK_BYTES, size);
+    const chunk = decoder.decode(readRange(path, offset, end), { stream: true });
+    if (chunk !== '') hash.update(chunk, 'utf8');
+    offset = end;
+  }
+  const tail = decoder.decode();
+  if (tail !== '') hash.update(tail, 'utf8');
+  return hash.digest('hex');
 }
 
 type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
@@ -337,6 +380,13 @@ export type Baseline = Record<string, string>;
 
 export interface BaselineOptions {
   outOfScope?: string[];
+  /**
+   * Read seam (issue #107). Production always uses the node bridge; tests
+   * inject one to observe read sizes. The hashing bound depends on the
+   * bridge implementing `readFileRange`, so the seam is explicit rather than
+   * a module-level monkeypatch.
+   */
+  bridge?: FileBridge;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -447,7 +497,7 @@ export function captureBaseline(
   root: string,
   options: BaselineOptions = {},
 ): Baseline {
-  const bridge = createNodeFileBridge('/');
+  const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = new Set(options.outOfScope ?? []);
   let rules: IgnoreRule[] = [];
   if (bridge.exists(join(root, '.gitignore'))) {
@@ -483,8 +533,8 @@ export function captureBaseline(
         continue;
       } else {
         try {
-          const text = bridge.readTextFile(join(dir, info.name));
-          baseline[relPath] = sha256Hex(text);
+          const abs = join(dir, info.name);
+          baseline[relPath] = sha256HexOfFile(bridge, abs, info.size);
         } catch {
           // Vanished mid-walk: reconcile treats it as a delete.
         }

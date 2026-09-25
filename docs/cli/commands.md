@@ -345,8 +345,12 @@ composition paths therefore capture a **baseline** when the lane boots and
   never invents a pre-image. If an earlier attributed entry in the same run
   already stored that path's pre-image, the entry *is* reversible and `undo`
   restores it — the badge then reads `[unattributed]` alone.
-- Cost is bounded: unchanged files cost one hash and no blob; a sweep that
-  finds nothing appends nothing.
+- Cost is bounded: unchanged files cost one hash and no blob, and a file larger
+  than 4 MiB is hashed in chunks, so its boot and sweep cost is one chunk of
+  memory rather than the file size (a 256MB artifact measured below 1MB of heap
+  growth, where it previously cost 256MB). A sweep that finds nothing appends
+  nothing; a file that *did* change is read whole to store its after-content,
+  because that content is what `diff` and `undo` serve.
 - Fail-open: a baseline or sweep failure is reported on the debug receipt and
   never turns a finished run into a failed one.
 

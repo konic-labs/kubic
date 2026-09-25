@@ -17,7 +17,7 @@
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
 | 1 | `failed` | Run failed without a more specific cause; doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
 | 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with non-reversible skips (see below). |
-| 3 | `budget_exhausted` | The lane settled with a budget-classified error. |
+| 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
 | 4 | `approval_denied` | Approval denied — or timed out waiting (`approval_timed_out` maps here too; headless runs suspend this way when an approval cannot arrive without a TTY). |
 | 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. |
 | 6 | `provider_probe_failed` / provider-down | No reachable provider. Doctor exits 6 when any failing check has reason `provider-down`. |

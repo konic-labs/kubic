@@ -17,7 +17,7 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--json]`
+## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -25,13 +25,16 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
+| `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. |
+| `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. |
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 `usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`); on failure an
 `error:` line comes first. Exit code is the §78 terminus map — see
 [exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
-value, an invalid `--session` id, or an unknown flag all exit 2.
+value, an invalid `--session` id, a non-positive or non-integer
+`--timeout`/`--max-turns`, or an unknown flag all exit 2.
 
 ## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
 

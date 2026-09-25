@@ -112,8 +112,10 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'run') {
     return runRunCommand(rest, {
       out: (line: string) => console.log(line),
-      run: (prompt: string, options: { sessionId?: string }) =>
-        runHeadlessPrompt(prompt, options),
+      run: (
+        prompt: string,
+        options: { sessionId?: string; timeoutMs?: number; maxTurns?: number },
+      ) => runHeadlessPrompt(prompt, options),
     });
   }
   if (command === 'tui') {

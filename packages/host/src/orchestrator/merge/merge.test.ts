@@ -492,6 +492,41 @@ describe('resolver-dispatch path enforces reviewer readonly (issue #46 fix)', ()
   });
 });
 
+describe('manager lane plumbing on the merge path (issue #103)', () => {
+  // The live manager lane records its own delegation calls as it drives a
+  // worker to completion (spawn → wait → collect), and the merge path
+  // asserts over the combined trace. Lane plumbing authors nothing, so the
+  // authoring-scoped guard must pass it — while still refusing every
+  // authoring tool, with or without plumbing alongside.
+  it('passes the delegation trace a live lane records', () => {
+    expect(() =>
+      assertManagerZeroWrites([
+        'spawn_agent',
+        'workspace_diff',
+        'workspace_merge',
+        'workspace_apply',
+        'spawn_agent',
+        'wait_for_agent',
+        'collect_result',
+      ]),
+    ).not.toThrow();
+    expect(() => assertManagerZeroWrites(['send_to_agent'])).not.toThrow();
+    expect(() => assertManagerZeroWrites(['ask_user'])).not.toThrow();
+  });
+
+  it('still refuses authoring even when lane plumbing is present', () => {
+    for (const tool of ['write', 'edit', 'bash', 'git_commit']) {
+      expect(() =>
+        assertManagerZeroWrites(['wait_for_agent', 'collect_result', tool]),
+      ).toThrow(new RegExp(tool));
+    }
+    // The forbidden set is unchanged: lane plumbing never becomes a write.
+    expect(() => assertManagerZeroWrites(['send_to_agent', 'git_stage'])).toThrow(
+      /policy block/,
+    );
+  });
+});
+
 describe('per-agent merge telemetry (issue #46 §61)', () => {
   it('records phase timings and totals per agent', () => {
     const record = recordMergeTelemetry({

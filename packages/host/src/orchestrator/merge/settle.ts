@@ -11,14 +11,21 @@
 // in ../manager.ts (owned by another issue — do NOT widen this file to
 // duplicate it). This allowlist is a second-layer merge-path guard
 // scoped to AUTHORING: reads pass BY DESIGN — the assert is named
-// ZeroWrites because writes are what it forbids. DIVERGENCE, stated
+// ZeroWrites because writes are what it forbids. DIVERGENCES, stated
 // explicitly: manager.ts forbids read/ls/find/grep on the manager lane
 // entirely and allows lane plumbing (send_to_agent, wait_for_agent,
-// collect_result, ask_user, ...) this guard does not list, while this
-// guard allows reads manager.ts rejects. Both divergences are intended:
-// reads author nothing (safe to pass here), and lane plumbing never
-// appears on the merge path (correct to refuse here). Enforcement
-// lives on the real settle apply path below, not just in the helper.
+// collect_result, ask_user, ...) that this guard historically did not
+// list, while this guard allows reads manager.ts rejects. Both are
+// intended: reads author nothing (safe to pass here), and the lane
+// plumbing authors nothing either.
+//
+// Issue #103 (the manager lane goes live): the merge path now asserts over
+// the manager's REAL call record — the merge plumbing PLUS the lane's own
+// spawn → wait → collect sequence for every worker it drove. Lane plumbing
+// is therefore listed here (it never authors), so a completed run's trace
+// passes; every authoring tool is still refused, whether or not plumbing
+// appears alongside it. Enforcement lives on the real settle apply path
+// below, not just in the helper.
 
 import {
   type ApplyDecision,
@@ -31,6 +38,14 @@ export const MANAGER_MERGE_ALLOWLIST: readonly string[] = [
   'workspace_diff',
   'workspace_merge',
   'workspace_apply',
+  // §40 lane plumbing a live manager records while driving its workers
+  // (issue #103). Delegation calls only — none of them author.
+  'send_to_agent',
+  'wait_for_agent',
+  'cancel_agent',
+  'inspect_agent',
+  'collect_result',
+  'ask_user',
   'read',
   'ls',
   'find',

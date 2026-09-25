@@ -36,7 +36,18 @@ import type {
   MergedHunk,
 } from './orchestrator/merge/attribution.js';
 import { attributeMergedHunks } from './orchestrator/merge/attribution.js';
+import type {
+  ApprovalSnapshot,
+  ResolverRequest,
+  ResolverSpawnSpec,
+} from './orchestrator/merge/conflicts.js';
+import {
+  dispatchResolverSpec,
+  hashApprovalPolicy,
+  resolverPromptFor,
+} from './orchestrator/merge/conflicts.js';
 import { createMergeQueue } from './orchestrator/merge/queue.js';
+import { REVIEWER_READONLY_TOOLS } from './orchestrator/merge/review.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type {
@@ -267,6 +278,14 @@ export interface ApprovalInput {
   branch: string;
 }
 
+// What a resolver spawn reports back (issue #106). `resolved: true` is a
+// claim about the WORKTREE (the resolver committed its settlement there) and
+// is never taken as a claim about the merge: the manager re-runs the merge
+// and only a successful merge settles the candidate.
+export type ResolverOutcome =
+  | { resolved: true }
+  | { resolved: false; reason: string };
+
 export interface OrchestrateCommandDeps {
   out: (line: string) => void;
   debug?: (line: string) => void;
@@ -347,6 +366,25 @@ export interface OrchestrateCommandDeps {
   // sink. Only a QUEUED admission emits one: nothing else has a parallel
   // event to record.
   trajectoryEvent?: (event: ParallelTrajectoryEvent) => void;
+  // The manager's live approval snapshot (issue #106, §45.2). A resolver is
+  // spawned UNDER this snapshot — never a second policy — so a run that has
+  // no snapshot to carry cannot delegate: it stops the queue exactly as it
+  // did before delegation existed. The composition root supplies it from the
+  // installed policy; there is deliberately no default, because a fabricated
+  // snapshot would be a policy the manager never held.
+  approvalPolicy?: ApprovalSnapshot;
+  // The integrity hash of that snapshot. Absent means it is computed from the
+  // snapshot here; a caller may carry one to prove the stale-hash refusal.
+  policyHash?: string;
+  // The resolver spawn seam (issue #106, §45.2). Called with the built spec
+  // (both diffs, the writer tool set, the constraints, the frozen snapshot)
+  // when a merge conflict is genuine. `resolved: true` means the resolver
+  // reworked the tree and the manager should re-merge; anything else — a
+  // refusal, a failure, or no seam at all — keeps the pre-existing
+  // fail-closed terminus: the queue stops and the candidates are preserved.
+  runResolver?: (
+    request: ResolverRequest,
+  ) => Promise<ResolverOutcome> | ResolverOutcome;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
   loadState?: (
     sessionId: string,
@@ -443,6 +481,24 @@ export const MANAGER_LANE_SEQUENCE = [
   'wait_for_agent',
   'collect_result',
 ] as const;
+
+// The §45.2 inspect-before-dispatch toolset (issue #106): the manager reads
+// the conflict with the reviewer's read-only set, and that same set is what
+// `dispatchResolverSpec` proves read-only before the writer-resolver is
+// spawned. One list, re-exported from the merge path — a second copy here
+// could drift wider and make the read-only assert prove a filtered list
+// instead of the tools the inspection actually uses.
+export const MANAGER_INSPECTION_SEQUENCE = REVIEWER_READONLY_TOOLS;
+
+// What the manager tells the resolver it may not do. The resolver reworks the
+// conflicted tree (that is the whole point of §45.2) but stays inside the
+// settlement it was spawned for.
+export const RESOLVER_CONSTRAINTS: readonly string[] = [
+  'stay inside the worker worktree — never touch the manager repo tree',
+  'settle only the conflicted files listed in this spec',
+  'no network installs, no dependency changes',
+  'commit the resolution on this branch so the manager can re-merge',
+];
 
 interface ParsedArgs {
   prompt?: string;
@@ -1033,6 +1089,84 @@ export async function runOrchestrateCommand(
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
   }
 
+  // §45.2 conflict delegation (issue #106). The manager never resolves a
+  // conflict itself: on a genuine conflict it builds the writer-resolver spec
+  // (`dispatchResolverSpec` — both diffs, the implementer/debugger tool set,
+  // the settlement constraints), hands it to the composition root's resolver
+  // spawn seam, and re-merges. The spec is built from the manager's OWN live
+  // snapshot (`deps.approvalPolicy`), so the resolver runs under the same
+  // approval rules — the carried hash is recomputed inside the spec builder
+  // and the snapshot is frozen there, never widened. A run with no snapshot
+  // and no spawn seam cannot delegate: it reports why and falls through to
+  // the unchanged fail-closed terminus.
+  type DelegationAttempt =
+    | { outcome: 'delegated' }
+    | { outcome: 'unavailable'; reason: string }
+    | { outcome: 'failed'; message: string };
+  const delegateConflict = async (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+    conflict: MergeConflictError,
+  ): Promise<DelegationAttempt> => {
+    const snapshot: ApprovalSnapshot | undefined = deps.approvalPolicy;
+    if (snapshot === undefined) {
+      const reason =
+        'the run carries no manager approval snapshot to delegate under';
+      debug(`resolution: ${agentId} not delegated — ${reason}`);
+      return { outcome: 'unavailable', reason };
+    }
+    if (deps.runResolver === undefined) {
+      const reason = 'no resolver spawn seam is wired for this run';
+      debug(`resolution: ${agentId} not delegated — ${reason}`);
+      return { outcome: 'unavailable', reason };
+    }
+    let spec: ResolverSpawnSpec;
+    try {
+      spec = dispatchResolverSpec(
+        {
+          agentId,
+          role: 'implementer',
+          constraints: [...RESOLVER_CONSTRAINTS],
+          oursDiff: conflict.oursDiff,
+          theirsDiff: conflict.theirsDiff,
+          approvalPolicy: snapshot,
+          policyHash: deps.policyHash ?? hashApprovalPolicy(snapshot),
+        },
+        [...MANAGER_INSPECTION_SEQUENCE],
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      debug(`resolution: ${agentId} spec refused — ${message}`);
+      return { outcome: 'failed', message };
+    }
+    // The manager drives the resolver through the same delegation sequence it
+    // drives any worker with (spawn → wait → collect), so the merge-path
+    // trace asserted below still describes what the manager actually did.
+    recordLaneSequence();
+    try {
+      const outcome = await deps.runResolver({
+        agentId,
+        worktree: { path: worktree.path, branch: worktree.branch },
+        spec,
+        prompt: resolverPromptFor(spec),
+      });
+      if (outcome.resolved !== true) {
+        debug(
+          `resolution: resolver could not settle '${agentId}' — ${outcome.reason}`,
+        );
+        return { outcome: 'failed', message: outcome.reason };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      debug(`resolution: resolver failed for '${agentId}' — ${message}`);
+      return { outcome: 'failed', message };
+    }
+    debug(
+      `resolved: ${agentId} by a ${spec.role} resolver (${spec.conflict.files.length} conflicted file(s)) — re-merging`,
+    );
+    return { outcome: 'delegated' };
+  };
+
   // Settle FIFO: approve → persist the write-ahead merge intent →
   // pre-merge guard → prove the manager trace write-free → merge →
   // attribute → record. Each merge is atomic per candidate and recorded
@@ -1066,49 +1200,97 @@ export async function runOrchestrateCommand(
         return saveFailure;
       }
     }
-    try {
-      // Pre-merge guard (fix a): a kill-during-merge can leave a stale
-      // MERGE_HEAD behind — abort it and refuse a dirty tree BEFORE the
-      // merge runs, so resume never merges onto a half-merged tree.
+    // §45.2 conflict delegation (issue #106): a conflict the merge reports may
+    // be handed to a spawned resolver. Bounded to ONE resolver attempt per
+    // candidate — a second conflict on the re-merge is the terminus, never a
+    // retry loop. Both merge legs run the same guard → trace → merge sequence
+    // as the pre-#106 path, so the merge plumbing itself is unchanged.
+    const mergeAttempt = async (): Promise<void> => {
       await deps.prepareMerge?.(agentId, worktree);
-      // The trace holds the merge plumbing plus the lane's own recorded
-      // delegation calls (issue #103) — the manager's real call record over
-      // this run. A tainted trace throws and the merge never runs.
       assertWrites(managerCallsForMerge(laneCalls));
       await deps.mergeBranch(agentId, worktree);
+    };
+    let conflict: MergeConflictError | undefined;
+    let mergeFailure: unknown;
+    try {
+      await mergeAttempt();
     } catch (error) {
       if (error instanceof MergeConflictError) {
-        queue.markUnresolvable(agentId, {
-          oursDiff: error.oursDiff,
-          theirsDiff: error.theirsDiff,
-        });
-        state = {
-          ...state,
-          stopped: true,
-          merging: undefined,
-          blocked: {
-            agentId,
-            oursDiff: error.oursDiff,
-            theirsDiff: error.theirsDiff,
-          },
-          // The failed candidate was already dequeued, so the queue no
-          // longer lists it — pending keeps every unmerged agent in the
-          // original order instead (resume retries exactly this set).
-          pending: state.pending,
-        };
-        const saveFailure = await saveOrFail(state);
-        if (saveFailure !== undefined) {
-          await reapSpawned(spawned);
-          return saveFailure;
+        conflict = error;
+      } else {
+        mergeFailure = error;
+      }
+    }
+    let delegationNote: string | undefined;
+    if (conflict !== undefined) {
+      const attempt = await delegateConflict(agentId, worktree, conflict);
+      delegationNote =
+        attempt.outcome === 'unavailable'
+          ? attempt.reason
+          : attempt.outcome === 'failed'
+            ? attempt.message
+            : undefined;
+      if (attempt.outcome === 'delegated') {
+        // The resolver reworked the worker's worktree; only a successful
+        // re-merge settles the candidate, so the outcome is re-derived here
+        // rather than trusted from the resolver's own report.
+        conflict = undefined;
+        try {
+          await mergeAttempt();
+        } catch (error) {
+          if (error instanceof MergeConflictError) {
+            conflict = error;
+            debug(
+              `resolution: '${agentId}' still conflicted after the resolver — stopping the queue`,
+            );
+          } else {
+            mergeFailure = error;
+          }
         }
-        await reapSpawned(spawned);
-        return fail(
-          RUN_EXIT_FAILED,
-          'merge_conflict',
-          `merge conflict for worker '${agentId}': unresolvable automatically — queue stopped, candidates preserved`,
-          partial(),
+      } else {
+        debug(
+          `resolution: '${agentId}' not settled (${attempt.outcome === 'unavailable' ? attempt.reason : attempt.message})`,
         );
       }
+    }
+    if (conflict !== undefined) {
+      const error = conflict;
+      queue.markUnresolvable(agentId, {
+        oursDiff: error.oursDiff,
+        theirsDiff: error.theirsDiff,
+      });
+      state = {
+        ...state,
+        stopped: true,
+        merging: undefined,
+        blocked: {
+          agentId,
+          oursDiff: error.oursDiff,
+          theirsDiff: error.theirsDiff,
+        },
+        // The failed candidate was already dequeued, so the queue no
+        // longer lists it — pending keeps every unmerged agent in the
+        // original order instead (resume retries exactly this set).
+        pending: state.pending,
+      };
+      const saveFailure = await saveOrFail(state);
+      if (saveFailure !== undefined) {
+        await reapSpawned(spawned);
+        return saveFailure;
+      }
+      await reapSpawned(spawned);
+      // The shipped sentence is unchanged; the delegation outcome is appended
+      // so an operator reads WHY no resolver settled it (issue #106) instead
+      // of a silence that is indistinguishable from "delegation never ran".
+      return fail(
+        RUN_EXIT_FAILED,
+        'merge_conflict',
+        `merge conflict for worker '${agentId}': unresolvable automatically — queue stopped, candidates preserved${delegationNote === undefined ? '' : ` (resolver: ${delegationNote})`}`,
+        partial(),
+      );
+    }
+    if (mergeFailure !== undefined) {
+      const error = mergeFailure;
       const message = error instanceof Error ? error.message : String(error);
       // The merge may have succeeded on disk before the throw (kill
       // window) — keep the write-ahead intent so resume reconciles via

@@ -48,6 +48,7 @@ import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
 import {
+  approvalSnapshotFrom,
   configRefusalExit,
   doctorConfigProbe,
   doctorPolicyLoader,
@@ -260,11 +261,18 @@ async function main(argv: string[]): Promise<number> {
     // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager lane,
     // worker lifecycle, merge queue, approvals, worktrees) executes for
     // real. Solo stays the default — `run` never enters this path.
+    // Issue #106 (§45.2): the manager's own approval snapshot travels into
+    // the run so a delegated conflict resolver is spawned under exactly the
+    // policy the manager holds — the same config load this process already
+    // consumed, never a second default.
     return runOrchestrateCommand(
       rest,
       await orchestrateDepsWithDefaults({
         out: (line: string) => console.log(line),
         debug: (line: string) => console.error(line),
+        ...(cliConfig.runtime === undefined
+          ? {}
+          : { approvalPolicy: approvalSnapshotFrom(cliConfig.runtime) }),
       }),
     );
   }

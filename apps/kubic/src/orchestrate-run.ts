@@ -24,6 +24,7 @@ import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
+  ResolverOutcome,
   WorkerSpawnInfo,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
@@ -32,6 +33,15 @@ import {
   workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
+import type {
+  ApprovalSnapshot,
+  ResolverRequest,
+} from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import {
+  hashApprovalPolicy,
+  IMPLEMENTER_TOOLSET,
+} from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchestrator/parallel/visibility.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {
   isWorktreeError,
@@ -84,6 +94,20 @@ export interface OrchestrateRunOptions {
   workerEntry?: { cmd: string; args: string[] };
   /** Prod inputs for the extension startup load — tests drive missing bundles here. */
   extensionOptions?: PostureOptions;
+  /**
+   * The manager lane's own approval policy (issue #106, §45.2). Threaded in
+   * from the process's config load so a delegated conflict resolver runs
+   * under exactly the snapshot the manager holds — same route, same
+   * auto-approve set, same pending timeout, no second policy. Absent means
+   * the run cannot delegate: a conflict terminates as it did before.
+   */
+  approvalPolicy?: ApprovalSnapshot;
+  /**
+   * Where the §49.1 parallel trajectory records go (issue #106). Absent
+   * defaults to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl`
+   * (appended, best-effort — telemetry never fails a run).
+   */
+  trajectoryEvent?: (event: ParallelTrajectoryEvent) => void;
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -257,6 +281,11 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  // The orchestrator session this process is running (issue #106): the CLI
+  // creates every worker session through `createWorkerSession`, so the session
+  // id it carries is the run's own. The resolver seam below derives its own
+  // session id from it rather than inventing one.
+  let orchestratorSessionId: string | undefined;
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
   const worktreeStartedAt = new Map<string, number>();
@@ -421,10 +450,40 @@ export async function orchestrateDepsWithDefaults(
     for (const line of buildOrchestratorWorktreeNotice()) debug(line);
   };
 
+  // The manager's live approval snapshot (issue #106, §45.2): a resolver is
+  // spawned UNDER this snapshot — same route, same auto-approve set, same
+  // pending timeout — so there is no second policy on the delegation path.
+  // main.ts threads the loaded config's policy in; absent one (an embedder
+  // that wires no config) the resolver path is simply not delegated and the
+  // conflict terminates exactly as it did before delegation existed.
+  const approvalSnapshot = options.approvalPolicy;
   return {
     out: options.out,
     debug,
     isGitRepo: () => root !== undefined,
+    trajectoryEvent:
+      options.trajectoryEvent ??
+      ((event: ParallelTrajectoryEvent): void => {
+        // §49.1 trajectory record (issue #106): appended next to the run
+        // state, best-effort — a telemetry write must never fail a run.
+        if (root === undefined || orchestratorSessionId === undefined) return;
+        try {
+          createNodeFileBridge(join(root, '.kubic', 'orchestrator')).appendFile(
+            `${orchestratorSessionId}.trajectory.jsonl`,
+            `${JSON.stringify(event)}\n`,
+          );
+        } catch (error) {
+          debug(
+            `trajectory: could not append the parallel event: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }),
+    ...(approvalSnapshot === undefined
+      ? {}
+      : {
+          approvalPolicy: approvalSnapshot,
+          policyHash: hashApprovalPolicy(approvalSnapshot),
+        }),
     launches: launchesView(workerRegistry, launchedByAgent),
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
@@ -463,6 +522,7 @@ export async function orchestrateDepsWithDefaults(
       }
     },
     createWorkerSession: async (input) => {
+      orchestratorSessionId = input.sessionId;
       // Create the worker's session before the child spawns (issue #85):
       // `kubic run --session <id>` only ATTACHES, so without this the child
       // dies at attach (exit 5 "unknown session") before any model call.
@@ -717,6 +777,149 @@ export async function orchestrateDepsWithDefaults(
         'merge-check',
       );
       return done.exitCode === 0;
+    },
+    // §45.2 conflict delegation (issue #106): the resolver is a REAL child
+    // process, launched through the same lifecycle layer as every worker — the
+    // one difference is the prompt it runs and the branch it settles on. The
+    // manager never resolves; this seam exists so a genuine conflict gets an
+    // agent with the writer tool set instead of a stop.
+    runResolver: async (request: ResolverRequest): Promise<ResolverOutcome> => {
+      const repo = needRoot();
+      const sessionId = orchestratorSessionId ?? 'orch';
+      const workerSession = workerSessionFor(sessionId, request.agentId);
+      // §45.2 says the resolver runs under the implementer/debugger tool set.
+      // The spec carries that set; the child can only be handed a ROLE (its
+      // own `.kubic/roles/<name>.md` is what selects tools). So the resolver
+      // asks for the role the spec names when the document exists, and says
+      // so on the debug channel when it does not — the child then runs the
+      // default writer set, and the gap is reported rather than implied away.
+      const roleDoc = join(repo, '.kubic', 'roles', `${request.spec.role}.md`);
+      let roleDocPresent = false;
+      try {
+        roleDocPresent = new NodeExecutionEnv(repo).fs.stat(roleDoc).isFile;
+      } catch {
+        roleDocPresent = false;
+      }
+      if (!roleDocPresent) {
+        debug(
+          `gap: resolver '${request.agentId}' runs without --role (${roleDoc} is absent) — the child uses its default writer tool set`,
+        );
+      }
+      const launched = launchWorker(
+        {
+          workerId: request.agentId,
+          sessionId: workerSession,
+          role: request.spec.role,
+          owner: `orchestrate:${sessionId}`,
+          baseEnv: Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          cmd: options.workerEntry?.cmd ?? process.execPath,
+          args: [
+            ...(options.workerEntry?.args ?? [entryScript()]),
+            'run',
+            '-p',
+            request.prompt,
+            '--session',
+            workerSession,
+            ...(roleDocPresent ? ['--role', request.spec.role] : []),
+            '--json',
+            '--timeout',
+            String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
+          ],
+          provenance: provenanceFor(
+            workerSession,
+            request.agentId,
+            'resolver-run',
+          ),
+          ...(options.readyTimeoutMs === undefined
+            ? {}
+            : { readyTimeoutMs: options.readyTimeoutMs }),
+        },
+        {
+          shell: shellForWorktree(request.worktree.path),
+          registry: workerRegistry,
+          debug: (line) => debug(line),
+        },
+      );
+      const done = await launched.wait();
+      if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+        const failure = launched.failure();
+        return {
+          resolved: false,
+          reason: `resolver child exited ${done.exitCode}${failure === undefined ? '' : ` (${failure.code})`}`,
+        };
+      }
+      await launched.reap().catch(() => undefined);
+      // The resolver's own tool set is the spec's — the implementer set from
+      // the merge path. The child commits its settlement on the worker branch
+      // (kubic-run style staging below), so the manager can re-merge without
+      // ever authoring a line.
+      const status = await runGit(
+        request.worktree.path,
+        ['status', '--porcelain=v1'],
+        workerSession,
+        request.agentId,
+        'resolver-status',
+      );
+      if (status.exitCode === 0 && status.stdout.trim().length > 0) {
+        const stage = await runGit(
+          request.worktree.path,
+          ['add', '-A'],
+          workerSession,
+          request.agentId,
+          'resolver-stage',
+        );
+        if (stage.exitCode !== 0) {
+          return {
+            resolved: false,
+            reason: `resolver stage failed: ${stage.stderr.trim().slice(0, 200)}`,
+          };
+        }
+        const commit = await runGit(
+          request.worktree.path,
+          [
+            '-c',
+            'user.name=kubic-resolver',
+            '-c',
+            'user.email=kubic-resolver@local',
+            'commit',
+            '-m',
+            `resolver ${request.agentId}: settle conflict`,
+          ],
+          workerSession,
+          request.agentId,
+          'resolver-commit',
+        );
+        if (commit.exitCode !== 0) {
+          return {
+            resolved: false,
+            reason: `resolver commit failed: ${commit.stderr.trim().slice(0, 200)}`,
+          };
+        }
+      }
+      // The resolver's report is not the settlement: the manager re-merges and
+      // only a successful merge settles the candidate. What the resolver did
+      // to the tree is what this reports.
+      const probe = await runGit(
+        request.worktree.path,
+        ['status', '--porcelain=v1'],
+        workerSession,
+        request.agentId,
+        'resolver-clean',
+      );
+      if (probe.exitCode !== 0 || probe.stdout.trim().length > 0) {
+        return {
+          resolved: false,
+          reason: 'resolver left the worktree dirty — refusing to re-merge',
+        };
+      }
+      debug(
+        `resolver: '${request.agentId}' settled the conflict in ${request.worktree.path}`,
+      );
+      return { resolved: true };
     },
     reapWorker: (agentId: string): void => {
       // The child process was reaped at wait() inside runWorker; the

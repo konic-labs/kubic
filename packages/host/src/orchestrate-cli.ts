@@ -60,6 +60,7 @@ import {
   buildParallelWorkersExtra,
 } from './orchestrator/parallel/visibility.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
+import type { WorktreeStatus } from './orchestrator/worktree/status.js';
 import {
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
@@ -278,6 +279,52 @@ export interface ApprovalInput {
   branch: string;
 }
 
+// One retained worktree, as reported after the run (issue #106, §44.1).
+// `clean` is `undefined` when the status could not be read — a distinct state
+// from `false`, because "unreadable" must never render as "dirty" OR "clean".
+export interface RetainedWorktreeRow {
+  agentId: string;
+  branch: string;
+  worktree: string;
+  clean?: boolean;
+  staged?: string[];
+  unstaged?: string[];
+  untracked?: string[];
+  statusUnreadable?: string;
+}
+
+// One retained-worktree row, rendered as the operator's line (issue #106,
+// §44.1). A dirty row NAMES its files; an unreadable one says so instead of
+// claiming clean. Pure, so the text and the JSON row are the same fact.
+export function retainedRowLines(
+  rows: readonly RetainedWorktreeRow[],
+): string[] {
+  const lines = rows.map((row) => {
+    const prefix = `retained: ${row.agentId} branch=${row.branch} worktree=${row.worktree}`;
+    if (row.statusUnreadable !== undefined) {
+      return `${prefix} clean=unknown status-unreadable=${row.statusUnreadable}`;
+    }
+    const parts = [`clean=${row.clean === true}`];
+    if ((row.staged ?? []).length > 0) {
+      parts.push(`staged=[${(row.staged ?? []).join(', ')}]`);
+    }
+    if ((row.unstaged ?? []).length > 0) {
+      parts.push(`unstaged=[${(row.unstaged ?? []).join(', ')}]`);
+    }
+    if ((row.untracked ?? []).length > 0) {
+      parts.push(`untracked=[${(row.untracked ?? []).join(', ')}]`);
+    }
+    return `${prefix} ${parts.join(' ')}`;
+  });
+  if (lines.length > 0) {
+    // The retain semantics, stated where the operator reads the evidence.
+    lines.push(
+      'retain: worktree + branch kept as evidence — only `kubic clean` disposes',
+    );
+  }
+  return lines;
+}
+
 // What a resolver spawn reports back (issue #106). `resolved: true` is a
 // claim about the WORKTREE (the resolver committed its settlement there) and
 // is never taken as a claim about the merge: the manager re-runs the merge
@@ -366,6 +413,16 @@ export interface OrchestrateCommandDeps {
   // sink. Only a QUEUED admission emits one: nothing else has a parallel
   // event to record.
   trajectoryEvent?: (event: ParallelTrajectoryEvent) => void;
+  // Live status of a retained worktree (issue #106, §44.1). The run retains
+  // every worktree and branch as evidence; without this seam an operator
+  // cannot tell a clean retain from one still holding uncommitted work. It is
+  // the composition root's `git status` reader (`getWorktreeStatus`), so host
+  // stays free of an exec import. Absent means no retained-worktree lines —
+  // the run is otherwise unchanged, and nothing is guessed.
+  worktreeStatus?: (
+    path: string,
+    options: { sessionId: string; agentId: string },
+  ) => Promise<WorktreeStatus> | WorktreeStatus;
   // The manager's live approval snapshot (issue #106, §45.2). A resolver is
   // spawned UNDER this snapshot — never a second policy — so a run that has
   // no snapshot to carry cannot delegate: it stops the queue exactly as it
@@ -446,6 +503,10 @@ export interface OrchestrateEnvelope {
   // against. Reported, never a gate — the shipped loop is strictly sequential,
   // so `queued` above zero means a slot was genuinely occupied.
   parallel?: ParallelWorkersExtra;
+  // §44.1 retained-worktree status (issue #106): one row per worktree the run
+  // retained, with the measured dirtiness and the files that made it dirty.
+  // Same lines as the text output, so the two surfaces cannot disagree.
+  retained?: RetainedWorktreeRow[];
   error?: { kind: string; message: string; code: string };
 }
 
@@ -1337,6 +1398,44 @@ export async function runOrchestrateCommand(
   const attribution = state.records.flatMap((record) =>
     attributeMergedHunks(record.hunks, record.agentId),
   );
+  // §44.1 retained-worktree status (issue #106): every worktree this run
+  // created stayed on disk (that is the retain rule — only `kubic clean`
+  // disposes), so each one gets one line stating whether it is dirty and, if
+  // it is, WHICH files. The reader is measured: a status that cannot be read
+  // is reported as `clean=unknown`, never as a false clean.
+  const retained: RetainedWorktreeRow[] = [];
+  if (deps.worktreeStatus !== undefined) {
+    for (const agentId of spawned) {
+      const worktree = worktrees.get(agentId);
+      if (worktree === undefined) continue;
+      try {
+        const status = await deps.worktreeStatus(worktree.path, {
+          sessionId,
+          agentId,
+        });
+        retained.push({
+          agentId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          clean: status.clean,
+          staged: [...status.staged],
+          unstaged: [...status.unstaged],
+          untracked: [...status.untracked],
+        });
+      } catch (error) {
+        // Best-effort: an unreadable status is reported, never a false clean
+        // and never a run failure — the run already settled.
+        const message = error instanceof Error ? error.message : String(error);
+        retained.push({
+          agentId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          statusUnreadable: message.slice(0, 200),
+        });
+      }
+    }
+  }
+  const retainedLines = retainedRowLines(retained);
   // The admission surface of the whole run (issue #106): one snapshot, read
   // by the text lines, the JSON envelope and (per queued spawn) the
   // trajectory event, so the three can never disagree.
@@ -1368,6 +1467,9 @@ export async function runOrchestrateCommand(
       queued: parallel.queued,
       maxConcurrency: parallel.maxConcurrency,
     })}`,
+    // §44.1 retained-worktree status (issue #106) — after the run, one line
+    // per retained worktree, dirty ones naming their files.
+    ...retainedLines,
     `result: orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
   ];
   return emit(
@@ -1385,6 +1487,9 @@ export async function runOrchestrateCommand(
       attribution,
       graph: delegationGraphLines(sessionId, state.agents),
       parallel,
+      // Only present when a status reader is wired: an empty array would
+      // claim "no worktree was retained", which is not what happened.
+      ...(deps.worktreeStatus === undefined ? {} : { retained }),
     },
     textLines,
   );

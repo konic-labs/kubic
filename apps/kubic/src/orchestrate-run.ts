@@ -51,6 +51,7 @@ import {
   branchForAgent,
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import { getWorktreeStatus } from '../../../packages/host/src/orchestrator/worktree/status.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
   attachSession,
@@ -461,6 +462,19 @@ export async function orchestrateDepsWithDefaults(
     out: options.out,
     debug,
     isGitRepo: () => root !== undefined,
+    // §44.1 retained-worktree status (issue #106): the run retained these
+    // worktrees as evidence, so the operator is told which of them are dirty
+    // and where. Real `git -C <path> status --porcelain=v1 -b` through the
+    // exec Shell seam, anchored to the repo root so a foreign path can never
+    // be reported as a spawned worktree.
+    worktreeStatus: async (path, options) => {
+      const repo = root;
+      const env = new NodeExecutionEnv(repo ?? path);
+      return getWorktreeStatus(env, path, {
+        sessionId: options.sessionId,
+        ...(repo === undefined ? {} : { repoRoot: repo }),
+      });
+    },
     trajectoryEvent:
       options.trajectoryEvent ??
       ((event: ParallelTrajectoryEvent): void => {

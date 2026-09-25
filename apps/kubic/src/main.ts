@@ -15,6 +15,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
+import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
@@ -49,6 +50,7 @@ import {
   configRefusalExit,
   doctorConfigProbe,
   doctorPolicyLoader,
+  installedPolicyClasses,
   kubicConfigLoader,
   loadCliConfig,
   runtimeModelPin,
@@ -174,7 +176,13 @@ async function main(argv: string[]): Promise<number> {
     });
     return runTuiCommand(
       rest,
-      tuiDepsWithDefaults({ out: (line: string) => console.log(line) }),
+      tuiDepsWithDefaults({
+        out: (line: string) => console.log(line),
+        // Same policy install as `kubic run` (issue #86; #90 classes): the
+        // TUI drives the same solo lane, so a config that names classes
+        // must reach it here too.
+        ...installedPolicyClasses(cliConfig),
+      }),
     );
   }
   if (command === 'doctor') {
@@ -215,6 +223,17 @@ async function main(argv: string[]): Promise<number> {
       // Config-sourced approval policy (issue #90): the route/autoApprove
       // come from the loaded layers, not a hardcoded default.
       loadPolicy: doctorPolicyLoader(cliConfig),
+      // Installed policy (issue #86; §40.3): the classes and guards a run
+      // from THIS cwd actually installs — the same derivation
+      // (host/approvals.installedPolicyPosture) `kubic run` boots the lane
+      // with, over the same config projection it uses. Doctor reports the
+      // INSTALLED posture, so the line cannot describe a policy no run
+      // enforces; the config-sourced route above stays its own check.
+      installedPolicy: () =>
+        installedPolicyPosture({
+          workspace: process.cwd(),
+          ...installedPolicyClasses(cliConfig),
+        }),
       // First-party extensions (issues #80, #93): doctor reports the SAME
       // startup object the lanes boot with — the load below is the one
       // shared loader (packages/extensions/src/startup.ts), projected to the

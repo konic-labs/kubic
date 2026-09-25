@@ -287,14 +287,16 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
 });
 
 describe('runDoctorCommand mutation hardening (issue #68)', () => {
-  it('reports a reachable provider without models as 0 registered', async () => {
+  it('reports a listed-but-not-dialled provider without models as 0 registered', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => [{ id: 'local', reachable: true }];
     const code = await runDoctorCommand([], deps);
     expect(code).toBe(0);
+    // Issue #86 honesty: the default probe never dialled, and the line says
+    // so — a fabricated "reachable" would be a claim nothing measured.
     expect(lines.join('\n')).toContain(
-      'PASS provider:local (ok): reachable, 0 model(s) registered',
+      'PASS provider:local (ok): listed, not dialled, 0 model(s) registered',
     );
   });
 

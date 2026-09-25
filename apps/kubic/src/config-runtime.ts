@@ -160,6 +160,18 @@ export function runtimeRunDeps(result: CliConfigResult): {
   };
 }
 
+// Installed-policy classes (issue #86): the projection `doctor` and the `tui`
+// path read, over the SAME config load `kubic run` uses. Absent config →
+// absent classes → installSoloPolicy's documented SOLO_DEFAULTS, which is
+// exactly what a config-less run installs, so doctor's line and the lane's
+// posture are the same object (§40.3).
+export function installedPolicyClasses(result: CliConfigResult): {
+  classes?: PermissionClasses;
+} {
+  const classes = runtimeRunDeps(result).policyClasses;
+  return classes === undefined ? {} : { classes };
+}
+
 // `kubic doctor` config probe: the same load the rest of the process uses,
 // projected onto doctor's dependency-probe shape (doctor.ts is not this
 // issue's file and has no generic section hook, so the check rides the

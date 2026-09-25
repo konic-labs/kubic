@@ -22,6 +22,10 @@ import type {
   BundleLoad,
   PostureOptions,
 } from '../../../packages/extensions/src/startup.js';
+import {
+  type InstalledSoloPolicy,
+  installSoloPolicy,
+} from '../../../packages/host/src/approvals.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
@@ -82,6 +86,12 @@ export interface HeadlessRunDeps {
   // limit).
   policyClasses?: PermissionClasses;
   journalRetention?: JournalRetention;
+  // The installed-policy seat (issue #86). Absent means the shipped
+  // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
+  // network/confine guards and the approval ask, all derived by
+  // installSoloPolicy. Tests inject a variant here; nothing else may skip
+  // the install, which is why the default is not an opt-in.
+  policy?: InstalledSoloPolicy;
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -399,12 +409,31 @@ export async function runHeadlessPrompt(
       throw error;
     }
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    // Installed policy (issue #86; §40, §41): the composition root derives
+    // the classes and interceptor options the lane runs on, ONCE, from the
+    // same function doctor reads (host/approvals.installSoloPolicy). Config-
+    // sourced classes (issue #90) replace the documented SOLO_DEFAULTS; the
+    // destructive/network/confine guards and the approval ask are installed
+    // either way, so a run with no config is no longer a run with no policy.
+    // The workspace root is explicit — the lane cannot invent one.
+    const installed =
+      deps.policy ??
+      installSoloPolicy({
+        workspace: env.cwd,
+        ...(deps.policyClasses === undefined
+          ? {}
+          : { classes: deps.policyClasses }),
+        sessionDir: join(root, id),
+      });
     // Live facet consumption (issue #93): the loaded worker facet becomes a
     // real tool-wrap contribution on the solo lane's tool stack, so the
     // budget the CLI started with bounds every tool call. The contribution
-    // composes through the lane's own documented seam ({ id, wrap }).
-    const contributions =
-      extensions === undefined ? [] : [budgetToolGate(extensions)];
+    // composes through the lane's own documented seam ({ id, wrap }) and the
+    // installed policy's wrappers compose outermost of it.
+    const contributions = [
+      ...installed.contributions,
+      ...(extensions === undefined ? [] : [budgetToolGate(extensions)]),
+    ];
     const { lane } = await bootSoloLane({
       session,
       models,
@@ -416,22 +445,17 @@ export async function runHeadlessPrompt(
         join(root, id, 'journal'),
         deps.journalRetention ?? {},
       ),
-      // One policy object carrying both mechanisms (issues #90 + #93):
-      // the permission classes come from the loaded config (§40 allowlist;
-      // absent means the lane's own defaults, never a value invented here),
-      // and the extension facet composes as a tool-wrap contribution on the
-      // same stack. SoloPolicyOptions has three independent fields, so this
-      // is a union, not a choice.
-      ...(deps.policyClasses === undefined && contributions.length === 0
-        ? {}
-        : {
-            policy: {
-              ...(deps.policyClasses === undefined
-                ? {}
-                : { classes: deps.policyClasses }),
-              ...(contributions.length === 0 ? {} : { contributions }),
-            },
-          }),
+      // One policy object carrying all three mechanisms (#86 + #90 + #93):
+      // the classes come from the config layer when it supplies them and
+      // from the documented safe default otherwise, the interceptors are
+      // always installed, and the extension facet composes as a tool-wrap
+      // contribution on the same stack. SoloPolicyOptions has three
+      // independent fields, so this is a union, not a choice.
+      policy: {
+        classes: installed.classes,
+        interceptors: installed.interceptors,
+        ...(contributions.length === 0 ? {} : { contributions }),
+      },
     });
     const admission = await lane.accept({ kind: 'prompt', prompt }, context);
     if (!admission.ok) {
@@ -459,6 +483,20 @@ export async function runHeadlessPrompt(
     if (driven.kind === 'waiting-deferred') {
       const message =
         'headless run suspended waiting on an approval that cannot arrive without a TTY';
+      return finished(id, 'approval_timed_out', message, message);
+    }
+    // The installed policy refused an approval (issue #86). The block reaches
+    // the model as a tool error, so the lane settles `completed` — but a
+    // dangerous operation the user never approved did NOT happen, and
+    // reporting exit 0 would be the dishonest half of this issue. Read the
+    // recorded refusals directly: a run whose policy denied an approval maps
+    // to the §78 approval terminus (exit 4) with the refusal named.
+    const denials = installed.denials();
+    if (denials.length > 0) {
+      const named = denials
+        .map((denial) => `${denial.capability} (${denial.toolName})`)
+        .join(', ');
+      const message = `approval refused: ${named} — ${denials[0]?.reason ?? ''}`;
       return finished(id, 'approval_timed_out', message, message);
     }
     const record = asResultRecord(driven.outcome);

@@ -1,7 +1,25 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import type { PermissionClasses } from '../../agents/src/policy.js';
+import {
+  checkAgreement,
+  SOLO_DEFAULTS,
+  toolsForClasses,
+  validateClasses,
+} from '../../agents/src/policy.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import { redactReason } from '../../worker/src/lane/interceptors.js';
+import type {
+  PolicyInterceptorOptions,
+  PolicyTrigger,
+} from '../../worker/src/lane/interceptors.js';
+import {
+  confinePath,
+  defaultIsDestructive,
+  isNetworkCommand,
+  redactReason,
+} from '../../worker/src/lane/interceptors.js';
+import type { ToolContribution } from '../../worker/src/lane/wrap.js';
+import { withTelemetry } from '../../worker/src/lane/wrap.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -349,6 +367,232 @@ export function enableFullAccess(
   };
   store.savePosture(posture);
   return posture;
+}
+
+// The INSTALLED solo policy (issue #86; §40, §41, §59.1). This is the
+// single derivation both the lane boot and `kubic doctor` read, so §40.3
+// agreement between what doctor prints and what the lane enforces holds by
+// construction instead of by two hand-kept copies.
+//
+// Deny-by-default doctrine, stated once here:
+//   - classes: the explicit, documented safe default is SOLO_DEFAULTS
+//     (§12.1) — filesystem workspace-write, shell true, network none,
+//     git workspace, credentials none. Config-sourced classes REPLACE the
+//     default when the config layer supplies them; the restrictive tail
+//     (network none, credentials none) is what makes the default safe.
+//   - interceptors: destructive + network + confinement guards are ALWAYS
+//     installed, with the approval ask wired, so a destructive command in a
+//     non-interactive run is refused rather than executed. `workspace` is
+//     the confinement root: the lane cannot invent one, so it is explicit.
+//   - contributions: the telemetry wrapper is appended LAST, which makes it
+//     outermost — it therefore times (and records) a DENIED attempt too.
+//     The permission wrapper is composed by the lane itself, innermost, from
+//     the same classes (solo.ts withPolicyContributions) — never duplicated
+//     here.
+export interface SoloPolicyInput {
+  workspace: string;
+  /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
+  classes?: PermissionClasses;
+  /** Extension/facet contributions; telemetry composes outermost of them. */
+  contributions?: ToolContribution[];
+  /** Telemetry sink (issue #15 slice D); absent means no telemetry wrapper. */
+  telemetry?: (record: { toolName: string; durationMs: number }) => void;
+  /** Bounded approval wait (headless never answers; it denies on timeout). */
+  maxPendingMs?: number;
+  /** The approval route the shipped default runs on. */
+  route?: 'ask-user' | 'deny';
+  /** Stored decisions are scoped to one session (the shipped default). */
+  sessionScoped?: boolean;
+  /** Session dir carrying posture.json (session-scoped full access). */
+  sessionDir?: string;
+  /** Trigger sink (debug/trajectory), never consulted for the decision. */
+  onTrigger?: (trigger: PolicyTrigger) => void;
+  clock?: () => number;
+}
+
+// What the lane installed and what doctor must print, in ONE object.
+export interface InstalledPolicyPosture {
+  source: 'config' | 'default';
+  route: 'ask-user' | 'deny';
+  classes: PermissionClasses;
+  allowlist: string[];
+  interceptors: string[];
+  sessionScoped: boolean;
+  maxPendingMs: number;
+  fullAccess: boolean;
+}
+
+export interface RecordedApprovalDeny {
+  capability: string;
+  toolName: string;
+  reason: string;
+}
+
+// The named reason a challenged call is refused with while no surface can
+// collect a verdict. Named once, here, so the block reason, the doctor line
+// and the headless terminus all say the same sentence.
+export const NO_ANSWER_SURFACE_REASON =
+  'approval required, but no approval surface is installed on this command (headless has no TTY; the TUI overlay has not landed) — refusing the operation instead of running it unapproved';
+
+export interface InstalledSoloPolicy {
+  classes: PermissionClasses;
+  interceptors: PolicyInterceptorOptions;
+  contributions: ToolContribution[];
+  posture: InstalledPolicyPosture;
+  // Approvals this policy refused, in order. The composition root reads this
+  // after a drive: a headless run that hit an unanswerable approval must end
+  // as approval_timed_out (exit 4), never as a silent success.
+  denials: () => RecordedApprovalDeny[];
+  // The decider, exposed so a caller (or a test) can drive it directly.
+  ask: ApprovalAsk;
+}
+
+export function installedPolicyPosture(
+  input: SoloPolicyInput,
+): InstalledPolicyPosture {
+  const classes = validateClasses({ ...(input.classes ?? {}) });
+  const allowlist = toolsForClasses(classes);
+  // §40.3: the derived allowlist must agree with the classes it came from —
+  // a contradictory pair is refused by name here, never printed green.
+  const agreement = checkAgreement(classes, allowlist);
+  if (!agreement.agree) {
+    throw new PolicyValidationError(
+      `installed policy contradicts itself: ${agreement.reason}`,
+    );
+  }
+  const route = input.route ?? 'ask-user';
+  const sessionScoped = input.sessionScoped ?? true;
+  const fullAccess =
+    input.sessionDir === undefined
+      ? false
+      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess;
+  return {
+    source: input.classes === undefined ? 'default' : 'config',
+    route,
+    classes: { ...classes },
+    allowlist: [...allowlist],
+    // Named mechanisms, not adjectives: this is exactly what the lane
+    // registers (registerPolicyInterceptors) plus the execute-time wrapper
+    // the lane composes from `classes`.
+    interceptors: [
+      'permission-wrapper',
+      'destructive-guard',
+      'network-guard',
+      'confine-guard',
+      'approval',
+    ],
+    sessionScoped,
+    maxPendingMs: input.maxPendingMs ?? 60_000,
+    fullAccess,
+  };
+}
+
+export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
+  const posture = installedPolicyPosture(input);
+  const denials: RecordedApprovalDeny[] = [];
+  const store =
+    input.sessionDir === undefined
+      ? undefined
+      : new FileApprovalStore(input.sessionDir);
+  const service = new ApprovalService({
+    policy: validatePolicy({
+      route: posture.route,
+      sessionScoped: posture.sessionScoped,
+      maxPendingMs: posture.maxPendingMs,
+    }),
+    ...(store === undefined ? {} : { store }),
+    ...(input.clock === undefined ? {} : { clock: input.clock }),
+  });
+  const ask: ApprovalAsk = async (call) => {
+    if (
+      store !== undefined &&
+      store.loadPosture().fullAccess &&
+      posture.route === 'ask-user'
+    ) {
+      // Explicit, session-scoped full access — recorded, never implied.
+      return { approved: true, challenged: true };
+    }
+    const capabilities = detectTriggers(
+      call.toolName,
+      call.args,
+      triggerContextFor(posture.classes, input.workspace),
+    );
+    if (capabilities.length === 0) return { approved: true, challenged: false };
+    for (const capability of capabilities) {
+      const key = approvalKey(call.toolName, capability, call.args);
+      // A stored decision (a real answer, from a surface that has one) wins:
+      // first-answer-latched, exactly like every other approval path.
+      const decided = service.decided(key);
+      if (decided !== undefined) {
+        if (!decided.approved) {
+          denials.push({
+            capability,
+            toolName: call.toolName,
+            reason: decided.reason,
+          });
+          return { approved: false, reason: decided.reason };
+        }
+        continue;
+      }
+      if (posture.route === 'deny') {
+        // Configured refusal: named as the route, never as a timeout.
+        const reason = `denied by policy route (capability: ${capability})`;
+        denials.push({ capability, toolName: call.toolName, reason });
+        return { approved: false, reason };
+      }
+      // NO ANSWER SURFACE IS INSTALLED YET — neither `kubic run` (no TTY) nor
+      // `kubic tui` (the approval overlay is its own interaction surface,
+      // explicitly out of scope for #86) can collect a verdict. Waiting
+      // maxPendingMs for an answer that cannot arrive would be a silent hang
+      // and a 60s stall per dangerous call; the honest default is to refuse
+      // immediately and RECORD the refusal, so the composition root ends the
+      // run as approval_timed_out (exit 4, §78) instead of reporting a
+      // success the user never approved. The refusal is deliberately NOT
+      // persisted: it is a missing surface, not a user decision, and a later
+      // overlay must still be able to ask about the same operation.
+      const reason = `${NO_ANSWER_SURFACE_REASON} (capability: ${capability})`;
+      denials.push({ capability, toolName: call.toolName, reason });
+      return { approved: false, reason };
+    }
+    return { approved: true, challenged: true };
+  };
+  const contributions = [...(input.contributions ?? [])];
+  if (input.telemetry !== undefined) {
+    // Outermost by construction: appended last, so it wraps whatever the
+    // caller contributed and the lane's own permission(core) stack.
+    contributions.push(withTelemetry(input.telemetry));
+  }
+  return {
+    classes: posture.classes,
+    interceptors: {
+      workspace: input.workspace,
+      shell: posture.classes.shell,
+      network: posture.classes.network,
+      approve: ask,
+      ...(input.onTrigger === undefined ? {} : { onTrigger: input.onTrigger }),
+    },
+    contributions,
+    posture,
+    denials: () => [...denials],
+    ask,
+  };
+}
+
+// The trigger context the shipped default evaluates capabilities with: the
+// same classifiers the worker guards use (issue #15), so the approval
+// decision and the guard that blocks the call can never disagree.
+export function triggerContextFor(
+  classes: PermissionClasses,
+  workspace: string,
+): TriggerContext {
+  return {
+    workspace,
+    network: classes.network,
+    isDestructive: defaultIsDestructive,
+    isNetworkCommand,
+    isOutsideWorkspace: (path: string) =>
+      confinePath(workspace, path).rewritten,
+  };
 }
 
 export interface ApprovalServiceOptions {

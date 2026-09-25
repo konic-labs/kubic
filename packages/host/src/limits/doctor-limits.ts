@@ -2,7 +2,7 @@
 // Doctor reports exactly enforced-or-not. Static §59.1 notices report
 // warn (informational: the limit IS disclosed, never enforced and never
 // a protection claim) — warn never flips the doctor exit code. Degraded
-// posture — no reachable provider, missing dep, unenforceable v1 policy
+// posture — no available provider, missing dep, unenforceable v1 policy
 // value — fails with an honest message (provider-down exits 6, the rest
 // exit 1, via limitsDoctorExit). Schema/consistency failures stay owned
 // by #29's policy:approvals check: an invalid policy shape is not
@@ -22,6 +22,8 @@ export const LIMITS_DOCTOR_EXIT_PROVIDER = 6;
 export interface LimitProviderProbe {
   id: string;
   reachable: boolean;
+  /** Issue #86 honesty switch: true only when a real dial produced this. */
+  dialled?: boolean;
 }
 
 export interface LimitDepProbe {
@@ -86,8 +88,10 @@ export function staticLimitChecks(): DoctorCheck[] {
   ];
 }
 
-// Missing provider (§78): no reachable provider fails provider-down and
-// names the run exit code so the message stays honest end to end.
+// Missing provider (§78): no provider is configured, which is a different
+// statement from "a provider was dialled and did not answer" — the line never
+// implies a dial that did not happen (issue #86; §59.1). Failing here names
+// the run exit code, so the message stays honest end to end.
 export function providerAvailabilityCheck(
   probes: readonly LimitProviderProbe[],
 ): DoctorCheck {
@@ -95,8 +99,15 @@ export function providerAvailabilityCheck(
     id: 'limit:provider-availability',
     label: 'limit provider availability',
   };
-  const reachable = probes.filter((probe) => probe.reachable);
-  if (reachable.length === 0) {
+  // `dialled` is the issue-#86 honesty switch (mirrors ProviderProbe): absent
+  // means the provider was only LISTED, and the line says so rather than
+  // claiming reachability it never measured.
+  const dialled = (
+    probe: LimitProviderProbe & { dialled?: boolean },
+  ): boolean => probe.dialled === true;
+  const available = probes.filter((probe) => probe.reachable);
+  const proven = available.filter((probe) => dialled(probe));
+  if (available.length === 0) {
     const known = probes.map((probe) => probe.id).join(', ');
     return {
       ...base,
@@ -104,7 +115,7 @@ export function providerAvailabilityCheck(
       reason: 'provider-down',
       detail:
         known.length > 0
-          ? `no reachable provider (known: ${known}) — configure a provider; \`kubic run\` exits 6 on provider failure (§78)`
+          ? `no provider is available (listed: ${known}) — configure a provider; \`kubic run\` exits 6 on provider failure (§78)`
           : 'no providers configured — configure a provider; `kubic run` exits 6 on provider failure (§78)',
     };
   }
@@ -112,7 +123,10 @@ export function providerAvailabilityCheck(
     ...base,
     status: 'pass',
     reason: 'ok',
-    detail: `reachable: ${reachable.map((probe) => probe.id).join(', ')}`,
+    detail:
+      proven.length > 0
+        ? `dialled and reachable: ${proven.map((probe) => probe.id).join(', ')}`
+        : `listed, not dialled: ${available.map((probe) => probe.id).join(', ')}`,
   };
 }
 

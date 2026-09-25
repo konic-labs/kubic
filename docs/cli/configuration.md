@@ -53,6 +53,14 @@ key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
 instead of printing defaults.
 
+A refusal also stops the modes that execute an agent: `kubic run`,
+`kubic orchestrate` and `kubic tui` exit 1 with the named reason rather than
+proceeding on built-in defaults while you believe your config file is in
+force. `kubic config` and `kubic doctor` still run, so you can see what is
+wrong (doctor reports the load as `dep:config-load (deps-missing)`).
+Commands that consume no config projection (`sessions`, `git`, `diff`,
+`journal`, `clean`, …) are unaffected.
+
 A minimal `.kubic/config.toml` that actually changes behaviour — this exact
 block is parsed and loaded by `config-docs.test.ts`, so the page can never
 drift from the parser:

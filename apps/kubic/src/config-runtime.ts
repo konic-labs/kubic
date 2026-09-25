@@ -89,6 +89,31 @@ export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
   return result.runtime;
 }
 
+// Commands whose whole job is to tell the operator about the effective
+// configuration (or about a refusal) must still run when the load was
+// refused — otherwise the named reason has nowhere to surface.
+const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor']);
+
+// The modes that execute an agent under the configuration. They may not
+// proceed on defaults once the load was refused: silently running on
+// built-in values while the user believes their .kubic/config.toml is in
+// force is precisely the defect issue #90 exists to fix (§35.1 fail-closed).
+const CONFIG_CONSUMING_COMMANDS = new Set(['run', 'orchestrate', 'tui']);
+
+// Exit code for a refused config on the given command, or undefined when the
+// command may proceed. Kept beside the load so the policy lives in one place:
+// the caller prints `result.error` and returns this code (1 = `failed`, the
+// same code doctor uses for a config-shaped failure).
+export function configRefusalExit(
+  result: CliConfigResult,
+  command: string | undefined,
+): number | undefined {
+  if (result.runtime !== undefined) return undefined;
+  if (command === undefined) return undefined;
+  if (CONFIG_REPORTING_COMMANDS.has(command)) return undefined;
+  return CONFIG_CONSUMING_COMMANDS.has(command) ? 1 : undefined;
+}
+
 // `kubic config` loader: the command renders exactly what this returns.
 export function kubicConfigLoader(
   result: CliConfigResult,

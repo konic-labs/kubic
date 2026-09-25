@@ -46,6 +46,7 @@ import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import {
+  configRefusalExit,
   doctorConfigProbe,
   doctorPolicyLoader,
   kubicConfigLoader,
@@ -98,6 +99,14 @@ async function main(argv: string[]): Promise<number> {
   // secret refs. Commands below consume it through the seams in
   // ./config-runtime.js; nothing here re-derives a default by hand.
   const cliConfig = loadCliConfig();
+  // A refused config stops the agent-executing modes: they may not run on
+  // built-in defaults while the user believes their config file is in force.
+  // `config` and `doctor` still run so the named reason can be reported.
+  const refusalExit = configRefusalExit(cliConfig, command);
+  if (refusalExit !== undefined) {
+    console.log(`error: ${cliConfig.error ?? 'config refused'}`);
+    return refusalExit;
+  }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file

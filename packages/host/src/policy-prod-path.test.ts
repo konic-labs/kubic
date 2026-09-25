@@ -176,6 +176,67 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
     expect(transcript).not.toContain('is unavailable');
     expect(transcript).toContain('echo hi');
   });
+
+  it('the default posture is deny-by-default on network and credentials', () => {
+    // §40.3 / §59.1: the shipped default's restrictive tail is the point of
+    // the issue. Pinned as an assertion, not prose: if someone loosens the
+    // default to make a test pass, this fails.
+    const posture = installedPolicyPosture({ workspace: '/tmp/x' });
+    expect(posture.source).toBe('default');
+    expect(posture.classes.network).toBe('none');
+    expect(posture.classes.credentials).toBe('none');
+    expect(posture.classes.filesystem).toBe('workspace-write');
+    // Allowlisting is the tool-level half: the derived list is non-empty but
+    // it is a CLOSED set — every name must come from the class derivation.
+    expect(posture.allowlist).toContain('bash');
+    expect(posture.allowlist).toContain('read');
+    expect(posture.allowlist).not.toContain('*');
+  });
+
+  it('a network command is refused under the default (network=none)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'fetch something',
+      {},
+      {
+        sessionsRoot: root,
+        models: modelsWith([
+          fauxAssistantMessage([
+            fauxToolCall('bash', { command: 'curl https://example.com' }),
+          ]),
+          fauxAssistantMessage('done'),
+        ]),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    // The network guard blocks it; no surface can approve a network
+    // capability either, so the run reports the refused approval (exit 4)
+    // rather than claiming a success that reached the network. The refusal is
+    // the toolResult — the call was never executed, so no curl output exists.
+    const transcript = await transcriptOf(root, result.sessionId);
+    const entries = JSON.parse(transcript) as {
+      type?: string;
+      message?: {
+        role?: string;
+        toolName?: string;
+        isError?: boolean;
+        content?: { type: string; text?: string }[];
+      };
+    }[];
+    const toolResults = entries.filter(
+      (entry) => entry.message?.role === 'toolResult',
+    );
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]?.message?.toolName).toBe('bash');
+    expect(toolResults[0]?.message?.isError).toBe(true);
+    expect(toolResults[0]?.message?.content?.[0]?.text).toContain(
+      'not approved',
+    );
+    expect(toolResults[0]?.message?.content?.[0]?.text).toContain(
+      'no approval surface is installed',
+    );
+    expect(mapTerminusToExitCode(result.terminus)).toBe(4);
+  });
 });
 
 describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => {

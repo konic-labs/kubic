@@ -19,7 +19,13 @@
 // it gates CI alongside the other script gates.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -28,6 +34,13 @@ import {
   ensureRuntimeExcludeRules,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../packages/exec/src/runtime-exclude.ts';
+
+// Issue #90 criterion 5: the rule checker (`checkGitignoreSplit`) now runs on
+// a production path — `loadCliConfig` → `checkWorkspaceIgnoreSplit` on every
+// `kubic config` / `kubic doctor`. The host module cannot be imported here
+// (plain-node resolution does not map its `.js` specifiers), so this gate
+// pins the call sites by source text and leaves the rule agreement itself to
+// packages/host/src/config/runtime.test.ts, which imports the real module.
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -168,6 +181,61 @@ describe('this repo ships the split (issue #91)', () => {
       assert.match(main, new RegExp(`command === '${mode}'`));
     }
   });
+  // Issue #90 criterion 5: `checkGitignoreSplit` is the rule checker, and it
+  // is invoked by a real gate — `loadCliConfig` runs it on every
+  // `kubic config` / `kubic doctor`, not only in a unit test. Pin the call
+  // sites so the wiring cannot be dropped silently.
+  it('invokes the ignore-split check from the production config path', () => {
+    const runtime = readFileSync(
+      join(ROOT, 'apps', 'kubic', 'src', 'config-runtime.ts'),
+      'utf8',
+    );
+    assert.match(
+      runtime,
+      /checkWorkspaceIgnoreSplit\(bridge, cwd\)/,
+      'apps/kubic/src/config-runtime.ts must run the ignore-split check on the real repo',
+    );
+    const hostRuntime = readFileSync(
+      join(ROOT, 'packages', 'host', 'src', 'config', 'runtime.ts'),
+      'utf8',
+    );
+    assert.match(
+      hostRuntime,
+      /export function checkWorkspaceIgnoreSplit/,
+      'the production ignore-split check lives in packages/host/src/config/runtime.ts',
+    );
+    const probe = readFileSync(
+      join(ROOT, 'packages', 'host', 'src', 'config', 'config-doctor.ts'),
+      'utf8',
+    );
+    assert.match(
+      probe,
+      /ignoreSplitMissing/,
+      'doctor must report missing runtime-ignore prefixes',
+    );
+  });
+
+  it('agrees with the git ground truth for this repo, rule by rule', () => {
+    // Git decides independently: every shipped rule must really be ignored
+    // here, and the committed half must stay trackable. The production
+    // checker reads these same two files (it is pinned above), so this is
+    // the ground truth its verdict is measured against.
+    const exclude = join(ROOT, '.git', 'info', 'exclude');
+    const productionInput =
+      readFileSync(join(ROOT, '.gitignore'), 'utf8') +
+      '\n' +
+      (existsSync(exclude) ? readFileSync(exclude, 'utf8') : '');
+    for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
+      assert.equal(isIgnored(ROOT, `${entry}probe`), true);
+      assert.ok(
+        productionInput.includes(entry),
+        `the checker's input must carry the rule ${entry}`,
+      );
+    }
+    assert.equal(isIgnored(ROOT, '.kubic/config.toml'), false);
+    assert.equal(isIgnored(ROOT, '.kubic/roles/reviewer.md'), false);
+  });
+
   it('ignores its own runtime state, keeps roles trackable', () => {
     for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
       assert.equal(

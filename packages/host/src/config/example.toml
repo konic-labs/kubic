@@ -21,6 +21,13 @@ autoApprove = []
 sessionScoped = true
 requireJustification = false
 
+[permissions]
+filesystem = "workspace-write"
+shell = true
+network = "none"
+git = "workspace"
+credentials = "none"
+
 [journal]
 retentionDays = 30
 

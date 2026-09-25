@@ -15,6 +15,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
+import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -43,6 +44,15 @@ import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+import {
+  configRefusalExit,
+  doctorConfigProbe,
+  doctorPolicyLoader,
+  kubicConfigLoader,
+  loadCliConfig,
+  runtimeModelPin,
+  runtimeRunDeps,
+} from './config-runtime.js';
 import {
   extensionPostureForDoctor,
   loadExtensionStartup,
@@ -86,6 +96,20 @@ function cliVersion(): string {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
+  // Issue #90 (design §35.1): one config load for the whole process — paths
+  // per §35.1, the project layer behind the trust gate, documented env
+  // overrides, fail-closed on unknown/unsupported keys, budget keys and
+  // secret refs. Commands below consume it through the seams in
+  // ./config-runtime.js; nothing here re-derives a default by hand.
+  const cliConfig = loadCliConfig();
+  // A refused config stops the agent-executing modes: they may not run on
+  // built-in defaults while the user believes their config file is in force.
+  // `config` and `doctor` still run so the named reason can be reported.
+  const refusalExit = configRefusalExit(cliConfig, command);
+  if (refusalExit !== undefined) {
+    console.log(`error: ${cliConfig.error ?? 'config refused'}`);
+    return refusalExit;
+  }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file
@@ -132,7 +156,11 @@ async function main(argv: string[]): Promise<number> {
       run: (
         prompt: string,
         options: { sessionId?: string; timeoutMs?: number; maxTurns?: number },
-      ) => runHeadlessPrompt(prompt, options),
+      ) =>
+        runHeadlessPrompt(prompt, options, {
+          model: runtimeModelPin(cliConfig),
+          ...runtimeRunDeps(cliConfig),
+        }),
     });
   }
   if (command === 'tui') {
@@ -177,8 +205,15 @@ async function main(argv: string[]): Promise<number> {
           ok: major > 22 || (major === 22 && minor >= 19),
           detail: `node ${process.versions.node} (need >=22.19)`,
         },
+        // Issue #90: the config load is reported here — a refused config
+        // (unknown/unsupported key, distrusted project layer, [budgets],
+        // secret ref) and an incomplete runtime ignore split both fail
+        // closed with the named reason instead of being silently ignored.
+        doctorConfigProbe(cliConfig),
       ],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      // Config-sourced approval policy (issue #90): the route/autoApprove
+      // come from the loaded layers, not a hardcoded default.
+      loadPolicy: doctorPolicyLoader(cliConfig),
       // First-party extensions (issues #80, #93): doctor reports the SAME
       // startup object the lanes boot with — the load below is the one
       // shared loader (packages/extensions/src/startup.ts), projected to the
@@ -225,10 +260,20 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   if (command === 'policy') {
-    // Routing offer over the enterprise default (deny-by-default, no
-    // config-sourced policy yet — issue #79 wires the query, not storage).
+    // Routing offer over the enterprise default (deny-by-default): the
+    // enterprise policy engine is its own surface — the config-sourced
+    // APPROVAL policy (route/autoApprove) is reported by `kubic config`.
     return runPolicyCommand(rest, {
       resolvePolicy: () => resolveEffectivePolicy([]).policy,
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'config') {
+    // Effective configuration with the layer each value came from (issue
+    // #90): human lines, or --json for machines. Fails closed on a broken
+    // config instead of printing defaults.
+    return runConfigCommand(rest, {
+      load: kubicConfigLoader(cliConfig),
       out: (line: string) => console.log(line),
     });
   }
@@ -296,7 +341,7 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
   );
   return 1;
 }

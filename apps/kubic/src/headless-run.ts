@@ -9,10 +9,14 @@
 
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import {
+  FileJournalStore,
+  type JournalRetention,
+} from '../../../packages/exec/src/journal.js';
 import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
 import type {
   BundleLoad,
@@ -71,6 +75,12 @@ export interface HeadlessRunDeps {
   extensionOptions?: PostureOptions;
   /** Progress receipt for the extension load (one line, never swallowed). */
   debug?: (line: string) => void;
+  // Runtime config projections (issue #90): the permission classes and the
+  // journal retention bound the loaded configuration produced. Absent means
+  // the lane's own defaults and an unbounded journal (never an invented
+  // limit).
+  policyClasses?: PermissionClasses;
+  journalRetention?: JournalRetention;
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -389,8 +399,26 @@ export async function runHeadlessPrompt(
       env,
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(join(root, id, 'journal')),
-      policy: contributions.length > 0 ? { contributions } : undefined,
+      journal: new FileJournalStore(
+        join(root, id, 'journal'),
+        deps.journalRetention ?? {},
+      ),
+      // One policy object carrying both mechanisms (issues #90 + #93):
+      // the permission classes come from the loaded config (§40 allowlist;
+      // absent means the lane's own defaults, never a value invented here),
+      // and the extension facet composes as a tool-wrap contribution on the
+      // same stack. SoloPolicyOptions has three independent fields, so this
+      // is a union, not a choice.
+      ...(deps.policyClasses === undefined && contributions.length === 0
+        ? {}
+        : {
+            policy: {
+              ...(deps.policyClasses === undefined
+                ? {}
+                : { classes: deps.policyClasses }),
+              ...(contributions.length === 0 ? {} : { contributions }),
+            },
+          }),
     });
     const admission = await lane.accept({ kind: 'prompt', prompt }, context);
     if (!admission.ok) {

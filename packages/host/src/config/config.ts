@@ -71,6 +71,17 @@ export interface ApprovalsConfig {
   requireJustification?: boolean;
 }
 
+// Permission classes (§40) as a config section (issue #90): the values are
+// validated against the agents-owned level vocabulary (validateClasses) when
+// the runtime projection consumes them — never re-listed here.
+export interface PermissionsConfig {
+  filesystem?: string | boolean;
+  shell?: string | boolean;
+  network?: string | boolean;
+  git?: string | boolean;
+  credentials?: string | boolean;
+}
+
 export interface JournalConfig {
   retentionDays?: number;
 }
@@ -100,6 +111,7 @@ export interface KubicConfig {
   model?: ModelConfig;
   modes?: ModesConfig;
   approvals?: ApprovalsConfig;
+  permissions?: PermissionsConfig;
   journal?: JournalConfig;
   roles?: Record<string, RoleConfig>;
   orchestrator?: OrchestratorConfig;
@@ -122,12 +134,17 @@ const KNOWN_SECTIONS = new Set([
   'model',
   'modes',
   'approvals',
+  'permissions',
   'journal',
   'roles',
   'orchestrator',
   'ui',
   'session',
 ]);
+
+// Exported for the docs-drift gate (issue #90): the page's Shape paragraph
+// and example.toml must name exactly these sections.
+export const KNOWN_CONFIG_SECTIONS: readonly string[] = [...KNOWN_SECTIONS];
 
 // Canonical example (§35.2/§63) — kept in sync with example.toml (pinned by
 // test). Committed shape only: sessions/journal/artifacts/worktrees are
@@ -154,6 +171,13 @@ maxPendingMs = 30000
 autoApprove = []
 sessionScoped = true
 requireJustification = false
+
+[permissions]
+filesystem = "workspace-write"
+shell = true
+network = "none"
+git = "workspace"
+credentials = "none"
 
 [journal]
 retentionDays = 30
@@ -570,6 +594,35 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...(requireJustification === undefined ? {} : { requireJustification }),
     };
   }
+  const permissions = raw.permissions;
+  if (permissions !== undefined) {
+    if (!isRecord(permissions)) {
+      throw new ConfigError("'[permissions]' must be a table");
+    }
+    checkNoUnknown(
+      permissions,
+      new Set(['filesystem', 'shell', 'network', 'git', 'credentials']),
+      'permissions',
+    );
+    const parsed: PermissionsConfig = {};
+    for (const key of [
+      'filesystem',
+      'shell',
+      'network',
+      'git',
+      'credentials',
+    ] as const) {
+      const value = permissions[key];
+      if (value === undefined) continue;
+      if (typeof value !== 'string' && typeof value !== 'boolean') {
+        throw new ConfigError(
+          `'permissions': '${key}' must be a string level or a boolean`,
+        );
+      }
+      parsed[key] = value;
+    }
+    config.permissions = parsed;
+  }
   const journal = raw.journal;
   if (journal !== undefined) {
     if (!isRecord(journal)) {
@@ -685,6 +738,13 @@ export function serializeTomlConfig(config: KubicConfig): string {
   }
   if (config.approvals !== undefined) {
     emitTable(lines, 'approvals', config.approvals as Record<string, unknown>);
+  }
+  if (config.permissions !== undefined) {
+    emitTable(
+      lines,
+      'permissions',
+      config.permissions as Record<string, unknown>,
+    );
   }
   if (config.journal !== undefined) {
     emitTable(lines, 'journal', config.journal as Record<string, unknown>);
@@ -860,6 +920,20 @@ function withLayerContext(layer: ConfigLayer, error: unknown): never {
   throw new ConfigError(
     `layer '${layer}': ${error instanceof Error ? error.message : String(error)}`,
   );
+}
+
+// Parse one layer's text with the layer named on every failure (issue #90):
+// the runtime load parses layers itself so it can record which layer set
+// which leaf, and a failure must still name the offending layer.
+export function parseLayerConfig(
+  layer: ConfigLayer,
+  text: string,
+): KubicConfig {
+  try {
+    return parseTomlConfig(text);
+  } catch (error) {
+    withLayerContext(layer, error);
+  }
 }
 
 // Layered load through the exec FileBridge. Project-local files are refused

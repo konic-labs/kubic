@@ -59,10 +59,7 @@ file that no longer exists, or when a row's file has become reachable
 | 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 80 | `packages/extensions/src/replicated.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
 | 45 | `packages/extensions/src/secrets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
-| 896 | `packages/host/src/config/config.ts` | #90 | wire: config layer read at runtime (#90) |
-| 7 | `packages/host/src/config/index.ts` | #90 | wire: config layer read at runtime (#90) |
-| 292 | `packages/host/src/config/secrets.ts` | #90 | wire: config layer read at runtime (#90) |
-| 63 | `packages/host/src/config/stances.ts` | #90 | wire: config layer read at runtime (#90) |
+| 7 | `packages/host/src/config/index.ts` | #102 | delete: dead barrel over the now-live config modules (runtime.ts imports them per-module path, per docs/packages/host.md's "no barrel" convention) |
 | 4 | `packages/host/src/credentials.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 151 | `packages/host/src/handoff.ts` | #99 | wire: handoff contract (#99); AgentResult import is type-only |

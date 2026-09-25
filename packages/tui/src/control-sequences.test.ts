@@ -79,4 +79,38 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     expect(frame).toContain('evil');
     expect(frame).not.toContain(`${ESC}[2J`);
   });
+
+  it('does not let a TREE toolName emit raw escapes (third-pass finding)', () => {
+    // The second pass sanitized the transcript's toolCall cell, but the TREE
+    // path takes the lane event's `toolName` verbatim into AgentTreeState
+    // (tree.ts). Both come from the same model-supplied name, so the tree is
+    // the same class of untrusted input and was still a live leak.
+    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    app.applyLaneEvent({
+      type: 'tool-start',
+      toolCallId: 'tc-tree',
+      toolName: `ZZ${ESC}[2J${ESC}[31m${BEL}`,
+    });
+    const frame = app.render(100).join('\n');
+    expect(frame).toContain('ZZ');
+    expect(frame).not.toContain(`${ESC}[2J`);
+    expect(frame).not.toContain(`${ESC}[31m`);
+    expect(frame).not.toContain(BEL);
+  });
+
+  it('does not let the cancel-failure footer emit raw escapes', () => {
+    // The refusal path renders the lane's own error text into the footer;
+    // that text is JSON.stringify of whatever the lane threw, so it can
+    // carry controls like any other lane content. Measured: pi-tui's editor
+    // row already filters its own footer text (the only ESC bytes left in
+    // the frame are its focus styling, `\x1b[7m`/`\x1b[0m`), so this stays
+    // green as a regression pin rather than a new defence.
+    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    app.setEditorFooter(
+      `cancel failed: ${JSON.stringify({ message: `zap${ESC}[2J${BEL}` })}`,
+    );
+    const frame = app.render(60).join('\n');
+    expect(frame).not.toContain(`${ESC}[2J`);
+    expect(frame).not.toContain(BEL);
+  });
 });

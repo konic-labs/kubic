@@ -12,7 +12,7 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.

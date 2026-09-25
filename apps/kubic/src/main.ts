@@ -16,6 +16,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { probeFirstPartyPosture } from '../../../packages/extensions/src/startup.js';
+import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -44,6 +45,12 @@ import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+import {
+  doctorPolicyLoader,
+  kubicConfigLoader,
+  loadCliConfig,
+  runtimeModelPin,
+} from './config-runtime.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
@@ -83,6 +90,12 @@ function cliVersion(): string {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
+  // Issue #90 (design §35.1): one config load for the whole process — paths
+  // per §35.1, the project layer behind the trust gate, documented env
+  // overrides, fail-closed on unknown/unsupported keys, budget keys and
+  // secret refs. Commands below consume it through the seams in
+  // ./config-runtime.js; nothing here re-derives a default by hand.
+  const cliConfig = loadCliConfig();
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file
@@ -129,7 +142,10 @@ async function main(argv: string[]): Promise<number> {
       run: (
         prompt: string,
         options: { sessionId?: string; timeoutMs?: number; maxTurns?: number },
-      ) => runHeadlessPrompt(prompt, options),
+      ) =>
+        runHeadlessPrompt(prompt, options, {
+          model: runtimeModelPin(cliConfig),
+        }),
     });
   }
   if (command === 'tui') {
@@ -164,7 +180,7 @@ async function main(argv: string[]): Promise<number> {
           detail: `node ${process.versions.node} (need >=22.19)`,
         },
       ],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      loadPolicy: doctorPolicyLoader(cliConfig),
       // First-party extensions (issue #80): the startup probe loads the
       // on-disk bundle through the trust gates and reports loaded/refused
       // counts on the same checks — doctor fails closed when the bundle
@@ -222,10 +238,20 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   if (command === 'policy') {
-    // Routing offer over the enterprise default (deny-by-default, no
-    // config-sourced policy yet — issue #79 wires the query, not storage).
+    // Routing offer over the enterprise default (deny-by-default): the
+    // enterprise policy engine is its own surface — the config-sourced
+    // APPROVAL policy (route/autoApprove) is reported by `kubic config`.
     return runPolicyCommand(rest, {
       resolvePolicy: () => resolveEffectivePolicy([]).policy,
+      out: (line: string) => console.log(line),
+    });
+  }
+  if (command === 'config') {
+    // Effective configuration with the layer each value came from (issue
+    // #90): human lines, or --json for machines. Fails closed on a broken
+    // config instead of printing defaults.
+    return runConfigCommand(rest, {
+      load: kubicConfigLoader(cliConfig),
       out: (line: string) => console.log(line),
     });
   }
@@ -293,7 +319,7 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
   );
   return 1;
 }

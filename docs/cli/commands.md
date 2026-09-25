@@ -235,8 +235,38 @@ usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo 
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent`/`--session` without a value exits 1. |
 | `undo [<path>] [--step] [--dry-run] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus `undo: N restored, M non-reversible`. `nothing to undo` exits 0. **Exit 2 when any step was skipped as non-reversible** (`non-reversible (skipped): <p>`). The `--session` value selects the store, never the path scope. |
-| `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. |
-| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)` plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
+| `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
+| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
+
+### End-of-run reconciliation (issue #87)
+
+Interception alone has holes (§42.1 mechanism 2): a file moved by `bash`
+(`sed -i`, a formatter, `npm install` fallout, a build) never passes through
+Kubic's own `write`/`edit` operations, so nothing journals it. The run and TUI
+composition paths therefore capture a **baseline** when the lane boots and
+**sweep** the workspace when it ends:
+
+- The baseline is a metadata walk — sha256 per file, **no content copied** — of
+  the lane's workspace root (`§42.5`), persisted as
+  `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.
+- The sweep compares the tree against it and appends one entry per changed,
+  created or deleted path with `unattributed: true` and `toolCallId: null`.
+- Excluded from **both** walks: `.git/`, `.kubic/` (journal state is never
+  journaled) and anything the root `.gitignore` matches; caller-declared
+  out-of-scope paths are honoured when supplied.
+- Before-content is unknowable for these finds — the baseline holds hashes,
+  not copies — so they are recorded **hashes only**: `kubic diff` badges them
+  `[unattributed, non-reversible]` and `kubic undo` skips them naming the path
+  (`non-reversible (skipped): <p>`), exiting **2** without writing. The sweep
+  never invents a pre-image.
+- Cost is bounded: unchanged files cost one hash and no blob; a sweep that
+  finds nothing appends nothing.
+- Fail-open: a baseline or sweep failure is reported on the debug receipt and
+  never turns a finished run into a failed one.
+
+`kubic log` answers "did anything bypass the tools?" with the count line above;
+`kubic status` names it in the summary. `--json` keeps the raw entry array (the
+`unattributed` flag is on each entry there).
 
 ## `kubic models`
 

@@ -34,6 +34,12 @@ export interface JournalStatus {
   entries: number;
   reversible: number;
   nonReversible: number;
+  // Reconciliation finds (issue #87): entries an end-of-run sweep appended
+  // because nothing intercepted their change. Always non-reversible — the
+  // baseline holds hashes, never before-content — so this is a subset of
+  // `nonReversible`, surfaced on its own because it is the only evidence
+  // of work that bypassed every Kubic operation.
+  unattributed: number;
   repo: RepoState | null;
 }
 
@@ -68,13 +74,28 @@ export function journalStatus(
 ): JournalStatus {
   const entries = store.entries();
   let reversible = 0;
+  let unattributed = 0;
   for (const e of entries) {
     if (store.readBefore(e) !== null) reversible++;
+    if (e.unattributed === true) unattributed++;
   }
   return {
     entries: entries.length,
     reversible,
     nonReversible: entries.length - reversible,
+    unattributed,
     repo: readRepo(root),
   };
+}
+
+// One-line reconciliation summary for `kubic log` (issue #87): the count of
+// sweep finds over the whole journal, printed after the timeline so an
+// operator sees non-tool effects without scanning every line for the
+// `reconciled` marker. `log` prints it even when the journal is empty —
+// "0 of 0" is the honest answer, and it keeps the surface's shape stable
+// for scripts.
+export function reconciliationSummary(store: FileJournalStore): string {
+  const entries = store.entries();
+  const unattributed = entries.filter((e) => e.unattributed === true).length;
+  return `unattributed: ${unattributed} of ${entries.length} entr(ies) reconciled at run end`;
 }

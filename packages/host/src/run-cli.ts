@@ -115,7 +115,14 @@ export interface RunCommandDeps {
   out: (line: string) => void;
   run: (
     prompt: string,
-    options: { sessionId?: string; timeoutMs?: number; maxTurns?: number },
+    options: {
+      sessionId?: string;
+      timeoutMs?: number;
+      maxTurns?: number;
+      // §50 debug channel (issue #98): a boolean request is forwarded to the
+      // runner, which owns the sink (stderr in prod). Never gates the run.
+      debug?: boolean;
+    },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
   onScreenMount?: () => void;
@@ -138,7 +145,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 const RUN_USAGE =
-  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]';
+  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]';
 
 function usage(out: (line: string) => void): number {
   out(RUN_USAGE);
@@ -224,6 +231,7 @@ export async function runRunCommand(
   let sessionId: string | undefined;
   let timeoutMs: number | undefined;
   let maxTurns: number | undefined;
+  let debug = false;
   let json = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
@@ -258,6 +266,8 @@ export async function runRunCommand(
       }
       sessionId = value;
       i += 1;
+    } else if (arg === '--debug') {
+      debug = true;
     } else if (arg === '--json') {
       json = true;
     } else {
@@ -277,7 +287,12 @@ export async function runRunCommand(
   void deps.onScreenMount;
   let result: HeadlessRunResult;
   try {
-    result = await deps.run(prompt, { sessionId, timeoutMs, maxTurns });
+    result = await deps.run(prompt, {
+      sessionId,
+      timeoutMs,
+      maxTurns,
+      ...(debug ? { debug: true } : {}),
+    });
     await deps.persist?.(result);
   } catch (error) {
     result = runFailure(sessionId, error);

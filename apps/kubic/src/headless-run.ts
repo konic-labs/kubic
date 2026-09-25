@@ -85,6 +85,10 @@ export interface HeadlessRunDeps {
   // the lane's own defaults and an unbounded journal (never an invented
   // limit).
   policyClasses?: PermissionClasses;
+  // Issue #86: the config layer's own record of where the classes came from
+  // ('default' when nothing configured them). Absent means 'default' — the
+  // documented safe default, never an assumed operator choice.
+  policySource?: 'config' | 'default';
   journalRetention?: JournalRetention;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
@@ -423,6 +427,9 @@ export async function runHeadlessPrompt(
         ...(deps.policyClasses === undefined
           ? {}
           : { classes: deps.policyClasses }),
+        // The layer's own record, so the posture's `source` is the same
+        // answer doctor prints — never inferred from the object's shape.
+        source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
       });
     // Live facet consumption (issue #93): the loaded worker facet becomes a

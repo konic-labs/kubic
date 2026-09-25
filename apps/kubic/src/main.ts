@@ -51,6 +51,7 @@ import {
   doctorConfigProbe,
   doctorPolicyLoader,
   installedPolicyClasses,
+  installedPolicyDeps,
   kubicConfigLoader,
   loadCliConfig,
   runtimeModelPin,
@@ -182,6 +183,7 @@ async function main(argv: string[]): Promise<number> {
         // TUI drives the same solo lane, so a config that names classes
         // must reach it here too.
         ...installedPolicyClasses(cliConfig),
+        policySource: installedPolicyDeps(cliConfig).source,
       }),
     );
   }
@@ -223,8 +225,8 @@ async function main(argv: string[]): Promise<number> {
       // Config-sourced approval policy (issue #90): the route/autoApprove
       // come from the loaded layers, not a hardcoded default.
       loadPolicy: doctorPolicyLoader(cliConfig),
-      // Installed policy (issue #86; §40.3): the classes and guards a run
-      // from THIS cwd actually installs — the same derivation
+      // Installed policy (issue #86; §40.3): the classes, guards and source
+      // a run from THIS cwd actually installs — the same derivation
       // (host/approvals.installedPolicyPosture) `kubic run` boots the lane
       // with, over the same config projection it uses. Doctor reports the
       // INSTALLED posture, so the line cannot describe a policy no run
@@ -232,7 +234,7 @@ async function main(argv: string[]): Promise<number> {
       installedPolicy: () =>
         installedPolicyPosture({
           workspace: process.cwd(),
-          ...installedPolicyClasses(cliConfig),
+          ...installedPolicyDeps(cliConfig),
         }),
       // First-party extensions (issues #80, #93): doctor reports the SAME
       // startup object the lanes boot with — the load below is the one

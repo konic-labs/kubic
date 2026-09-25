@@ -114,6 +114,9 @@ export interface TuiRunOptions {
   // config-consuming command, so it takes the same projection `kubic run`
   // does. Absent means the documented SOLO_DEFAULTS.
   classes?: PermissionClasses;
+  // Issue #86: the config layer's own record of where the classes came from
+  // ('default' when nothing configured them). Absent means 'default'.
+  policySource?: 'config' | 'default';
   // The installed-policy seat (issue #86): the same derivation the headless
   // runner installs. Absent means the shipped default (classes above +
   // destructive/network/confine guards + the approval ask); tests inject a
@@ -167,6 +170,7 @@ export async function bootTuiLane(
       installSoloPolicy({
         workspace: env.cwd,
         ...(options.classes === undefined ? {} : { classes: options.classes }),
+        source: options.policySource ?? 'default',
         sessionDir: join(root, id),
       });
     const solo = await bootSoloLane({
@@ -213,15 +217,17 @@ export function tuiDepsWithDefaults(provided: {
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
+  policySource?: 'config' | 'default';
   policy?: InstalledSoloPolicy;
 }): TuiRunDeps {
-  const { classes, policy } = provided;
+  const { classes, policySource, policy } = provided;
   return {
     ...provided,
     createTerminal: () => new ProcessTerminal(),
     bootLane: (sessionId?: string) =>
       bootTuiLane(sessionId, {
         ...(classes === undefined ? {} : { classes }),
+        ...(policySource === undefined ? {} : { policySource }),
         ...(policy === undefined ? {} : { policy }),
       }),
   };

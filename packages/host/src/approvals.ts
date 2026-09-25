@@ -393,6 +393,13 @@ export interface SoloPolicyInput {
   workspace: string;
   /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
   classes?: PermissionClasses;
+  /**
+   * Where the classes came from, as the CONFIG LAYER recorded it. Absent
+   * falls back to the shape rule (classes present ⇒ 'config'), which is what
+   * legacy callers mean; the composition root always passes the layer's own
+   * answer, so a config-less install is never printed as 'config'.
+   */
+  source?: 'config' | 'default';
   /** Extension/facet contributions; telemetry composes outermost of them. */
   contributions?: ToolContribution[];
   /** Telemetry sink (issue #15 slice D); absent means no telemetry wrapper. */
@@ -467,7 +474,11 @@ export function installedPolicyPosture(
       ? false
       : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess;
   return {
-    source: input.classes === undefined ? 'default' : 'config',
+    // The layer's own answer when the caller supplies it (the composition
+    // root does); the shape rule only as the legacy fallback, so the printed
+    // source is never a guess about a config-less install.
+    source:
+      input.source ?? (input.classes === undefined ? 'default' : 'config'),
     route,
     classes: { ...classes },
     allowlist: [...allowlist],

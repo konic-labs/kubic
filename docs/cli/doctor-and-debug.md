@@ -15,10 +15,16 @@ kubic doctor [--skip <id[,id…]>] [--json]
 Each check prints one human line:
 
 ```
-PASS provider:local (ok): reachable, 1 model(s) registered
-FAIL provider:openai (provider-down): unreachable
+PASS provider:local (ok): listed, not dialled, 1 model(s) registered
+FAIL provider:openai (provider-down): listed, not dialled — unreachable
 doctor: 3 pass, 6 warn, 1 fail, 0 skip
 ```
+
+Provider lines are explicit about what was measured: `listed, not dialled`
+means the provider is registered in the catalog but nothing contacted it
+(the default probe — zero network). A probe that really dialled reports
+`dialled and reachable`; the line never claims reachability it did not
+observe.
 
 `--json` emits `{ok, exitCode, checks}` with the same checks and the
 same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other
@@ -38,13 +44,14 @@ Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,
 
 | Check id | Meaning | Red means → look at |
 | --- | --- | --- |
-| `provider:<id>` | Is the provider reachable, and how many models are registered? | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. |
+| `provider:<id>` | Is the provider reachable, and how many models are registered? (`listed, not dialled` when nothing contacted it.) | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. |
 | `dep:<id>` | Is the dependency present? (Today: `node`, needs >= 22.19.) | `reason: deps-missing` → install/upgrade the dep; the detail line says what was found. |
 | `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. | Your `[approvals]` config — see [configuration](configuration.md). |
+| `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented solo defaults otherwise. |
 | `extension:bundle` | Did the first-party bundle (`kubic/budget`, under `skills/budget/`) load through the trust gates? Reports `loaded N (…)` plus `refused M (…)` — the two live bypass probes (owned-path traversal, truthy remote flag) are refused on every run. | `reason: extension-posture` → the bundle dir is missing/unreadable, the manifest failed the trust gates, or (tripwire) a bypass was admitted: fix the install (`skills/budget/manifest.json`), never `--skip` it into silence. A fail exits 1. |
 | `license:kubic` | License identity (`MIT`). Always passes; reported, never skipped implicitly (explicit `--skip license:kubic` still works). | Nothing — informational. |
 | `policy:enforceability` | Can v1 actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the v1-unsupported key (MCP arrives in Phase 4). |
-| `limit:provider-availability` | Is at least one provider reachable? | Same as `provider:<id>` — configure a provider. |
+| `limit:provider-availability` | Is at least one provider available? (`listed, not dialled` unless a probe really dialled.) | Same as `provider:<id>` — configure a provider. |
 | `limit:deps-present` | Are all dep probes present? | Same as `dep:<id>`. |
 | `limit:<…>` (six static notices) | Honest §59.1 limits, always `warn`: solo has no isolation, worktrees separate writers only, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
 

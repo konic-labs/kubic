@@ -1,6 +1,6 @@
 # Kubic canonical config example (issue #38; design §35.2/§63).
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed (gitignored): sessions/ journal/ artifacts/ wt/
+# Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
 
 [agent]
 name = "kubic"

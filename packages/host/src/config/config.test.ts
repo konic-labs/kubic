@@ -7,6 +7,7 @@ import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   assertNoBudgetKeys,
   BudgetKeyError,
+  COMMITTED_CONFIG_FILES,
   CONFIG_LAYERS,
   ConfigError,
   type ConfigLayer,
@@ -593,6 +594,37 @@ describe('config serialization hardening (issue #69)', () => {
     expect(checkGitignoreSplit(partial).missing).toEqual([
       '.kubic/artifacts/',
       '.kubic/wt/',
+      '.kubic/orchestrator/',
     ]);
+  });
+
+  // Issue #91: the required-entry list is not a second copy of the rule
+  // set — it is derived from the module that writes the rules. If the two
+  // ever drift, this fails instead of shipping a gate that checks fiction.
+  it('derives the required entries from the shipped runtime rules', async () => {
+    const shipped = await import('../../../exec/src/runtime-exclude.js');
+    expect([...GITIGNORE_REQUIRED_ENTRIES]).toEqual([
+      ...shipped.RUNTIME_EXCLUDE_ENTRIES,
+    ]);
+    // The writer's own output satisfies this checker: if the two ever
+    // diverge, the gate built on `checkGitignoreSplit` would be checking
+    // rules nobody ships.
+    expect(
+      checkGitignoreSplit(shipped.applyRuntimeExcludeBlock('').text).missing,
+    ).toEqual([]);
+  });
+
+  // Issue #91 criterion 2: the committed half must stay trackable, proven
+  // against the rules that are actually shipped (not a hand-written list).
+  it('keeps every shipped runtime rule off the committed half', async () => {
+    const shipped = await import('../../../exec/src/runtime-exclude.js');
+    expect([...COMMITTED_CONFIG_FILES]).toEqual(['config.toml', 'roles/']);
+    for (const entry of shipped.RUNTIME_EXCLUDE_ENTRIES) {
+      const normalized = entry.replace(/^\.kubic\//, '').replace(/\/$/, '');
+      expect(isCommittedConfigPath(normalized)).toBe(false);
+      expect(isCommittedConfigPath(`.kubic/${normalized}/x`)).toBe(false);
+    }
+    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
+    expect(isCommittedConfigPath('.kubic/roles/reviewer.md')).toBe(true);
   });
 });

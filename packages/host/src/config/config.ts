@@ -13,6 +13,7 @@
 
 import { join } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
 import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 
 export const CONFIG_LAYERS = [
@@ -133,7 +134,7 @@ const KNOWN_SECTIONS = new Set([
 // runtime state, never config.
 export const EXAMPLE_TOML = `# Kubic canonical config example (issue #38; design §35.2/§63).
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed (gitignored): sessions/ journal/ artifacts/ wt/
+# Never committed: sessions/ journal/ artifacts/ wt/ orchestrator/
 
 [agent]
 name = "kubic"
@@ -818,16 +819,16 @@ export function defaultLayerPaths(args: {
 }
 
 // Committed vs gitignored split: config.toml + roles/*.md are committed;
-// sessions/journal/artifacts/worktrees are runtime state — gitignored and
-// never committed.
+// sessions/journal/artifacts/worktrees/orchestrator state are runtime —
+// gitignored and never committed.
 export const COMMITTED_CONFIG_FILES = ['config.toml', 'roles/'] as const;
 
-export const GITIGNORE_REQUIRED_ENTRIES = [
-  '.kubic/sessions/',
-  '.kubic/journal/',
-  '.kubic/artifacts/',
-  '.kubic/wt/',
-] as const;
+// The rule set is owned by the module that writes it (issue #91):
+// @kubic/exec `runtime-exclude.ts` is what `kubic run` / `kubic
+// orchestrate` ship into a user repo, so this list is a projection of
+// that module — never a second hand-maintained copy. `config.test.ts`
+// pins the two together, so a rule added there cannot go unchecked here.
+export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
 
 export function isCommittedConfigPath(path: string): boolean {
   const normalized = path.startsWith('.kubic/')

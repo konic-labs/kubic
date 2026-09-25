@@ -26,6 +26,7 @@ escapes, not a sandbox boundary.
 | `effects.ts` | `ReplayPolicy`, `REPLAY_POLICIES`, `ToolCall`, `ToolCallState`, `TOOL_CALL_STATES`, `ToolEvent`, `ToolEnd`, `advanceToolCall`, `EffectTicket`, `EffectGate`, `batchTerminates` |
 | `checkpoint-store.ts` | `FileCheckpointStore` |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
+| `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
 | `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts` (#12); path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |
 

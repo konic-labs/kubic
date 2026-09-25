@@ -82,6 +82,14 @@ round-tripped by `serializeTomlConfig`; `mergeLayered` merges
 `assertNoBudgetKeys` (budgets are opt-in, never smuggled via config) and
 `assertNoMcpConfig` (MCP unsupported → `McpUnsupportedError`).
 
+The ship-vs-ignore split (issue #91; §35, D34/D35) is not hand-kept twice:
+`GITIGNORE_REQUIRED_ENTRIES` is derived from `@kubic/exec`
+`runtime-exclude.ts` — the module `kubic run` / `kubic orchestrate`
+actually ship into a user repo's local `.git/info/exclude` under a
+rewritable marker block. `.kubic/` itself is never ignored, so
+`config.toml` + `roles/*.md` stay committable. Pinned by `config.test.ts`
+and gated repo-wide by `scripts/runtime-exclude.test.mjs`.
+
 ### Doctor (`doctor.ts`)
 
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is

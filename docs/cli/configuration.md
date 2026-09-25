@@ -57,9 +57,25 @@ no ambient leak.
 
 ## What lives where
 
+`.kubic/` is a **mixed** directory: configuration is committed, run state is
+not. The split, exactly as shipped:
+
 - **Committed**: `.kubic/config.toml`, `.kubic/roles/*.md`.
-- **Never committed (gitignored)**: `.kubic/sessions/`,
-  `.kubic/journal/`, `.kubic/artifacts/`, `.kubic/wt/` — runtime state.
+- **Runtime state (never committed)**: `.kubic/sessions/`,
+  `.kubic/journal/`, `.kubic/artifacts/`, `.kubic/wt/`,
+  `.kubic/orchestrator/`.
+- **How a user repo gets the rules**: every `kubic run` and
+  `kubic orchestrate` invocation (before it creates any state) writes
+  those five runtime prefixes into the repository's **local, uncommitted**
+  exclude file (`.git/info/exclude`), in a marked block it rewrites in
+  place on later runs — so nothing of Kubic's own appears in `git status`,
+  and your committed `.gitignore` is never touched by the tool. `.kubic/`
+  itself is deliberately **not** ignored: `config.toml` and `roles/*.md`
+  stay committable. Outside a git repository the write is a no-op (runtime
+  state is local wherever it is written), and the write never fails a run.
+  This repository ships the same five rules in its own `.gitignore` — the
+  rules, the writer, and this page are pinned together by
+  `scripts/runtime-exclude.test.mjs` and the config tests.
 - **Models**: `./models.json` in the working directory (custom providers
   registered on top of built-ins; a `loaded models.json:` /
   `models.json ignored:` note is printed on `models`/`doctor`/`run`).

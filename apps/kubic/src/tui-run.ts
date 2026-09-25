@@ -27,6 +27,10 @@ import {
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
+import {
+  shouldEmitSoloNotice,
+  soloTuiLine,
+} from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   mapCaughtErrorToTerminus,
@@ -478,6 +482,13 @@ export async function runTuiCommand(
   }
   const app = createTuiApp({ sessionId: boot.sessionId, model: boot.model });
   const terminal = deps.createTerminal();
+  // Solo no-isolation notice (issue #89): the trust statement is carried in
+  // the editor footer — the loop's always-visible status surface — from the
+  // first render, and it returns after every turn that has no outcome of its
+  // own to report. Suppressed for orchestrator-managed children
+  // (KUBIC_WORKER_ID set) and for the documented KUBIC_NO_NOTICE opt-out;
+  // the text is solo-warning.ts's, never re-worded here.
+  const notice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
   const turn =
     boot.loop === undefined
       ? undefined
@@ -522,6 +533,10 @@ export async function runTuiCommand(
     // target is the prompt. T/t no longer toggle (they type); Ctrl-T does.
     booted.tui.setFocus(app.editor);
     app.editor.bind(booted.tui);
+    // The trust statement is on screen before the operator types anything
+    // (issue #89): the footer is set before the first render, so the very
+    // first frame carries it. Empty when suppressed.
+    app.setEditorFooter(notice);
     booted.render();
     process.once('SIGINT', onSigint);
     stdin?.once('end', onStdinEnd);
@@ -576,7 +591,10 @@ export async function runTuiCommand(
           .run(prompt)
           .then((outcome) => {
             app.setBusy(false);
-            app.setEditorFooter(footerForOutcome(outcome));
+            // A completed turn has no outcome line of its own, so the footer
+            // falls back to the trust statement instead of going blank
+            // (issue #89) — a cancelled/failed turn keeps its own report.
+            app.setEditorFooter(footerForOutcome(outcome) || notice);
             if (!stopped) screen?.render();
           })
           .catch((error: unknown) => {

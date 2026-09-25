@@ -31,6 +31,10 @@ file that no longer exists, or when a row's file has become reachable
   `secrets.ts`) stay dead: the loading path this issue adds does not consume
   them, and they keep their existing owner rather than being claimed wired.
   its whole `ops/cost/*` + `ops/perf/*` cluster — see below.
+- Issue #89 executed its row: `packages/host/src/limits/solo-warning.ts` is
+  reachable now that the composition root emits the no-isolation notice on
+  `run` (stderr before the first turn) and `tui` (editor footer), so the row
+  is removed rather than kept.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -67,7 +71,6 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 13 | `packages/host/src/limits/orchestrator-notice.ts` | #95 | wire: orchestrator worktree messaging at the spawn site (#95) |
 | 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
-| 28 | `packages/host/src/limits/solo-warning.ts` | #89 | wire: emit the solo no-isolation warning on run/tui (#89) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
 | 353 | `packages/host/src/orchestrator/approvals/budgets.ts` | #95 | wire: manager lane + subagent approvals (#95) |
 | 80 | `packages/host/src/orchestrator/approvals/index.ts` | #95 | wire: manager lane + subagent approvals (#95) |

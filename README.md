@@ -15,10 +15,9 @@ registry, and review tooling live in `docs/design/` (local-only, gitignored).
 
 What is still open is refinement, not reach: [EPIC I](https://github.com/konic-labs/kubic/issues/73)
 tracks the remaining wiring gaps (config layers read at runtime, the
-extensions bundle at startup, the worker lifecycle and manager lane on the
-live spawn path, TUI input and views, journal reconciliation), each with its
-own issue. Out of scope for the install story: npm publishing, auto-update,
-installers.
+extensions bundle at startup, TUI input and views, journal reconciliation),
+each with its own issue. Out of scope for the install story: npm publishing,
+auto-update, installers.
 
 ## What Kubic is
 
@@ -27,9 +26,10 @@ in a version-control-independent journal, so `kubic diff` and `kubic undo` work 
 `~/Downloads` alike. Dangerous operations are approved by you.
 
 **Orchestrator mode is opt-in and session-scoped.** Turn it on and the `kubic orchestrate`
-command plays the manager: it fans one worker process plus one git worktree per subagent out,
-then merges what they produce. Every worker runs the same `-p` prompt; the design's manager
-*agent* lane is not wired yet. The mode requires a git repository.
+command plays the manager: it registers the §40 manager toolset, plans one step per worker,
+fans one worker process plus one git worktree per subagent out, then merges what they produce.
+Each worker runs its own plan step — role-driven prompts and per-worker approvals are later
+issues. The mode requires a git repository.
 
 There is no sandbox. Solo mode has no isolation at all, and the design says so plainly rather than
 implying otherwise — see §59.1 of the document.

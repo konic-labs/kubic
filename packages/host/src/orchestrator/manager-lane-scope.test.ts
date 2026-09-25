@@ -1,20 +1,24 @@
 // Orchestrator scope is pinned to what ships (issue #95; §5.2, §9.2, §12,
 // §40, §41, §45, §54, D7/D8/D12). This issue decided the delegation model
-// by measurement: the live path is a CLI-driven fan-out (the CLI process
-// plans N agents, spawns one worker per agent in its own worktree, merges
-// what they committed) and there is NO manager agent lane, no plan-derived
-// per-worker prompt, no role-driven prompt, and no per-worker approval
-// routing. Those four are re-scoped into named issues; these tests make the
-// claims load-bearing, the way clean-docs.test.ts does for `kubic clean`:
-//   - the architecture page must state the shipped model and name the
-//     future issues instead of promising the manager;
-//   - the CLI page must say plainly that every worker runs the same prompt
-//     and that the default is two agents executed one after another;
+// by measurement, then #103 closed the manager-lane gap it named. The live
+// path is a CLI-driven fan-out whose root lane now REGISTERS the §40 toolset
+// and authors a plan whose steps become per-worker prompts — so the docs
+// must state that, and may no longer claim the lane is unwired or that every
+// worker runs the same prompt. What remains unwired is still named by issue
+// (#104 role prompts, #105 per-worker approvals, #106 leftovers). These
+// tests make the claims load-bearing, the way clean-docs.test.ts does for
+// `kubic clean`:
+//   - the architecture page must state the shipped model — the CLI process
+//     registers the manager lane and plans per-worker prompts — and name the
+//     issues that own what is still missing;
+//   - the CLI page must say each worker runs its own plan step and that the
+//     default is two agents executed one after another;
 //   - D7/D8 in the local design registry must be amended rather than left
 //     contradicting the code (skipped in a fresh clone — registry is local);
 //   - every runtime-dead module under packages/host/src/orchestrator/ must
 //     have a ledger row that is a named issue or a deletion, and no row may
-//     still be owned by this issue (its dispositions are executed);
+//     still be owned by an executed issue — manager.ts is WIRED by #103, so
+//     it may not come back as a row;
 //   - the deleted orchestrator leftovers stay deleted.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -60,6 +64,14 @@ const NOW_REACHABLE = [
   'packages/host/src/orchestrate-cli.ts',
 ];
 
+// Wired by #103 (this issue's successor on the same surface): the manager
+// lane registers through the §40 allowlist and authors the plan whose steps
+// become the per-worker prompts. manager.ts is reachable from the binary, so
+// keeping a ledger row for it would fail the reachability gate.
+const MANAGER_LANE_REACHABLE = [
+  'packages/host/src/orchestrator/manager.ts',
+];
+
 function section(page: string, heading: string): string {
   const start = page.indexOf(heading);
   expect(start, `missing section ${heading}`).toBeGreaterThan(-1);
@@ -88,35 +100,40 @@ describe('orchestrator scope is honest (issue #95)', () => {
     // exactly the behaviour that does not ship. It must be gone.
     expect(body).not.toMatch(/the agent stops executing/i);
     expect(body).not.toMatch(/becomes a manager/i);
-    // What ships instead, stated as the model: the CLI is the manager.
+    // What ships instead, stated as the model: the CLI is the manager…
     expect(body).toMatch(/the CLI (process )?is the manager/i);
-    expect(body).toMatch(/same prompt/i);
-    // Each re-scoped gap is named with the issue that owns it.
+    // …and since #103 its lane REGISTERS the §40 toolset and plans a prompt
+    // per worker, so the page may not claim the lane is unwired or that
+    // every worker runs the same prompt.
+    expect(body).not.toMatch(/same prompt/i);
+    expect(body).not.toMatch(/no live lane registers/i);
+    expect(body).toMatch(/registers? (the )?(§40|manager) lane/i);
+    expect(body).toMatch(/plan step|per-worker prompt/i);
+    // Each remaining gap is named with the issue that owns it.
     for (const issue of [
-      MANAGER_LANE_ISSUE,
       ROLE_PROMPTS_ISSUE,
       WORKER_APPROVALS_ISSUE,
       ORCHESTRATOR_LEFTOVERS_ISSUE,
     ]) {
       expect(body, `architecture page must name ${issue}`).toContain(issue);
     }
+    // #103 is shipped, so it appears as history, never as a promise.
+    expect(body).not.toMatch(/#103\)? (is|will be|too)/i);
     // The §59.1 honest-limits line survives the rewrite.
     expect(body).toMatch(/separate concurrent writers only/i);
   });
 
-  it('the CLI page says every worker runs the same prompt, and how many run', () => {
+  it('the CLI page says each worker runs its own plan step, and how many run', () => {
     const page = readFileSync(COMMANDS_PAGE, 'utf8');
     const body = prose(section(page, '## `kubic orchestrate'));
-    // Prompts may not differ: the shipped run copies -p to every worker.
-    expect(body).toMatch(/same prompt|prompt every worker runs/i);
+    // Prompts differ now: each worker runs its own plan step.
+    expect(body).not.toMatch(/same prompt/i);
+    expect(body).not.toMatch(/prompts may not differ/i);
+    expect(body).toMatch(/plan step|per-worker prompt/i);
     expect(body).toMatch(/one after another|sequentially|serially/i);
-    // The shipped default and the re-scoped gaps are both named.
+    // The shipped default and the remaining gaps are both named.
     expect(body).toContain('worker-1,worker-2');
-    for (const issue of [
-      MANAGER_LANE_ISSUE,
-      ROLE_PROMPTS_ISSUE,
-      WORKER_APPROVALS_ISSUE,
-    ]) {
+    for (const issue of [ROLE_PROMPTS_ISSUE, WORKER_APPROVALS_ISSUE]) {
       expect(body, `orchestrate section must name ${issue}`).toContain(issue);
     }
   });
@@ -143,7 +160,10 @@ describe('orchestrator scope is honest (issue #95)', () => {
     for (const file of files) {
       const body = prose(readFileSync(file, 'utf8'));
       const where = file.slice(ROOT.length + 1);
-      // The agent does not become a manager: the CLI process is the manager.
+      // A claim about the AGENT becoming the manager is still false — the
+      // lane registered since #103 is the run's own toolset registration,
+      // not a model-driven agent. The shipped statement says the CLI process
+      // is the manager, which these patterns deliberately do not match.
       expect(body, `${where} must not claim a manager agent`).not.toMatch(
         /becomes a manager/i,
       );
@@ -156,6 +176,15 @@ describe('orchestrator scope is honest (issue #95)', () => {
         body,
         `${where} must not claim a manager fans work out`,
       ).not.toMatch(/manager fans work out|manager (then )?fans/i);
+      // The lane is wired now: no doc may still promise it as future work,
+      // and none may claim every worker runs one shared prompt.
+      expect(body, `${where} must not call the lane unwired`).not.toMatch(
+        /manager \*?agent\*? lane (is|are) not wired|not wired yet/i,
+      );
+      expect(
+        body,
+        `${where} must not claim one shared prompt`,
+      ).not.toMatch(/same `?-p`? prompt|every worker runs the same prompt/i);
     }
   });
 
@@ -239,13 +268,14 @@ describe('orchestrator scope is honest (issue #95)', () => {
       expect(row, `${path} must name its future issue`).toMatch(/#\d+/);
     }
     // The modules this issue disposed of stay disposed: deleted barrels are
-    // gone, and the dead modules keep their named-issue owners.
+    // gone, and the dead modules keep their named-issue owners. manager.ts is
+    // NOT in this list any more — #103 wired it, so a row for it would fail
+    // the reachability gate (asserted in MANAGER_LANE_REACHABLE below).
     const deadNow = [
       'packages/host/src/orchestrator/approvals/budgets.ts',
       'packages/host/src/orchestrator/approvals/request.ts',
       'packages/host/src/orchestrator/approvals/routing.ts',
       'packages/host/src/orchestrator/approvals/skip.ts',
-      'packages/host/src/orchestrator/manager.ts',
       'packages/host/src/orchestrator/merge/conflicts.ts',
       'packages/host/src/orchestrator/parallel/visibility.ts',
       'packages/host/src/orchestrator/worktree/status.ts',
@@ -270,9 +300,9 @@ describe('orchestrator scope is honest (issue #95)', () => {
         false,
       );
     }
-    // The modules this issue wired are out of the ledger (the gate fails on
-    // a row that became reachable).
-    for (const path of NOW_REACHABLE) {
+    // The modules wired since are out of the ledger (the gate fails on a row
+    // that became reachable) — including manager.ts, which #103 wired.
+    for (const path of [...NOW_REACHABLE, ...MANAGER_LANE_REACHABLE]) {
       expect(
         rows.has(path),
         `${path} is reachable — it must not stay in the ledger`,

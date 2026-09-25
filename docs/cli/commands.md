@@ -112,29 +112,35 @@ if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
 
-**The delegation model, as shipped (issue #95).** The CLI process is the
-manager: it reads `--agents`, creates one worktree per agent, spawns one
-child `kubic run` per agent and merges what they commit. There is no
-planning agent — the "plan" is the agent list — and **every worker runs the
-same prompt**: `-p` is passed to each child verbatim, so worker prompts may
-not differ today. The manager *agent* lane (§9.2/§40 allowlist),
-plan-derived per-worker prompts, role-driven prompts (§12) and per-worker
-approval routing with opt-in budgets (§41) are all re-scoped into named
-future issues: [#103](https://github.com/konic-labs/kubic/issues/103)
-(manager lane + plan → distinct prompts),
-[#104](https://github.com/konic-labs/kubic/issues/104) (role-driven
-prompts), [#105](https://github.com/konic-labs/kubic/issues/105)
+**The delegation model, as shipped (issues #95, #103).** The CLI process is the
+manager: it registers the manager lane's toolset through the §40 allowlist
+before anything spawns, derives a plan from `-p` (one step per worker), creates
+one worktree per agent, spawns one child `kubic run` per agent and merges what
+they commit. **Each worker runs its own plan step**: the prompt a child receives
+cites that worker's step (`Plan step 2 of 2 for agent 'beta': …`) and carries
+the objective — `-p` is the objective the plan is derived from, never copied to
+a worker verbatim. The plan persists with the session, so `--resume` replays
+each worker's own prompt rather than re-deriving one shared text. Role-driven
+prompt text (§12) and per-worker approval routing with opt-in budgets (§41)
+remain named future issues: [#104](https://github.com/konic-labs/kubic/issues/104)
+(role-driven prompts), [#105](https://github.com/konic-labs/kubic/issues/105)
 (per-worker approvals), [#106](https://github.com/konic-labs/kubic/issues/106)
 (conflict delegation, parallel surfacing, retained-worktree status). None of
 them runs today; nothing below depends on them.
+
+The lane registration is a gate, not a label: the run asks for exactly the §40
+toolset and a lane carrying anything else — an exec tool above all — refuses to
+start, exiting 1 with `code=manager_toolset_refused` and the offending tool
+named, before any worktree, session or child exists.
 
 The default agent set is **two** (`worker-1,worker-2`, D12) and the run
 spawns them **one after another** — the CLI's loop creates the worktree,
 session and child process for each agent in turn, so two workers do not
 overlap in wall-clock time. §45's "default concurrency is 4" describes the
-admission layer's cap (`ParallelScheduler`, default 4), which starts to
-matter as soon as `--agents` names more workers than can be admitted; the
-design reconciliation is recorded in
+admission layer's cap (`ParallelScheduler`, default 4), which is **not** what
+bounds a run today: this loop is strictly sequential, so it admits, awaits and
+releases one worker at a time and never approaches the cap. The design
+reconciliation is recorded in
 [design drift](../design-drift.md).
 
 The manager creates each worker's session before spawning its child. A
@@ -150,10 +156,10 @@ recreating it, so a killed run keeps one chain per worker.
 
 | Flag | Meaning |
 | --- | --- |
-| `-p`, `--prompt <text>` | **Required** (unless `--resume`). The prompt every worker runs — the same text for all of them (#103 will make prompts differ). |
+| `-p`, `--prompt <text>` | **Required** (unless `--resume`). The objective the manager derives the plan from; each worker receives its own plan step built on this text, never the text verbatim. |
 | `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, spawned one after another). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
-| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`; each worker's session id is `<id>-<agent>`. |
-| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
+| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
+| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, optional `error` with a machine-readable `code`). |
 
@@ -161,8 +167,9 @@ Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
 per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, one
 `merged:`/`reaped:` line per worker, then `result:`. Failures print
 `error: <message> code=<code>` and exit 1 (session creation, spawn, worker,
-merge, and reap failures), 2 (usage, non-git refusal), or 4 (approval
-denied) — see [exit codes](exit-codes.md). A merge conflict aborts first
+merge, reap and manager-toolset failures), 2 (usage, non-git refusal), or 4
+(approval denied) — see [exit codes](exit-codes.md). A merge conflict aborts
+first
 (never a half-merged tree), stops the queue, and preserves the remaining
 candidates.
 

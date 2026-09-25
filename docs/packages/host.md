@@ -25,8 +25,8 @@ docs and code must never imply otherwise (design §59.1).
 | `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
 | `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool spans on the run path, #98) |
 | `ops/cost/` | `cost-cli.ts` (`kubic cost`), `per-agent-cost.ts` (rows + Σ(per-agent) task total), `cache.ts` (§62 lever 2 prefix hit-rate, live since #98) |
-| `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
-| `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets) |
+| `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40, live since #103); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
+| `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets). `orchestrator/manager.ts` is live since #103: `MANAGER_ALLOWLIST` + `registerManagerLane` gate the run's toolset and `buildManagerPlan` authors the per-worker prompts |
 | `roles/` | Role presets and role data |
 | `policy/` | Host-side policy wiring |
 | `replay/` | Replay surfaces over trajectory exports |

@@ -41,7 +41,10 @@ import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import type { WorkerRolesPlan } from './roles/worker-roles.js';
-import { applyRolesToPlan, workerRoleAssignment } from './roles/worker-roles.js';
+import {
+  applyRolesToPlan,
+  workerRoleAssignment,
+} from './roles/worker-roles.js';
 import {
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,

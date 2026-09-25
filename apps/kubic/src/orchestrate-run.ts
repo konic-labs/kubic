@@ -41,8 +41,8 @@ import {
   branchForAgent,
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
-import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
+import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
   attachSession,
   createSession,

@@ -6,8 +6,6 @@
 // with the resolver's named reason, and --resume replays each worker's own
 // composed prompt. Faux/in-memory only: zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
-import { createRoleToolGuard } from './roles/resolver.js';
-import { planWorkerRoles } from './roles/worker-roles.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
@@ -20,6 +18,8 @@ import {
   registerManagerLane,
 } from './orchestrator/manager.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { createRoleToolGuard } from './roles/resolver.js';
+import { planWorkerRoles } from './roles/worker-roles.js';
 
 const REPO = '/repo';
 
@@ -66,13 +66,27 @@ function rolesFor(...docs: Record<string, string>[]): Record<string, string> {
   return Object.assign({}, ...docs);
 }
 
-function plannerDoc(prompt = 'You are the planner. Produce ordered steps.'): Record<string, string> {
-  return { [`${REPO}/.kubic/roles/planner.md`]: roleText('planner', PLANNER_FM, prompt) };
+function plannerDoc(
+  prompt = 'You are the planner. Produce ordered steps.',
+): Record<string, string> {
+  return {
+    [`${REPO}/.kubic/roles/planner.md`]: roleText(
+      'planner',
+      PLANNER_FM,
+      prompt,
+    ),
+  };
 }
 
-function implementerDoc(prompt = 'You are the implementer. Write the code.'): Record<string, string> {
+function implementerDoc(
+  prompt = 'You are the implementer. Write the code.',
+): Record<string, string> {
   return {
-    [`${REPO}/.kubic/roles/implementer.md`]: roleText('implementer', IMPLEMENTER_FM, prompt),
+    [`${REPO}/.kubic/roles/implementer.md`]: roleText(
+      'implementer',
+      IMPLEMENTER_FM,
+      prompt,
+    ),
   };
 }
 
@@ -85,21 +99,26 @@ interface World {
   calls: { run: string[]; merge: string[]; ensure: string[] };
 }
 
-function makeWorld(
-  overrides: Partial<OrchestrateCommandDeps> = {},
-): World {
+function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
   const lines: string[] = [];
   const saved: OrchestratorRunState[] = [];
   const prompts: { agentId: string; prompt: string }[] = [];
   const spawnInfo: { agentId: string; info?: WorkerSpawnInfo }[] = [];
-  const calls = { run: [] as string[], merge: [] as string[], ensure: [] as string[] };
+  const calls = {
+    run: [] as string[],
+    merge: [] as string[],
+    ensure: [] as string[],
+  };
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => lines.push(line),
     now: () => 1700000000000,
     isGitRepo: () => true,
     ensureWorktree: (agentId: string): OrchestrateWorktree => {
       calls.ensure.push(agentId);
-      return { path: `${REPO}/.kubic/wt/${agentId}`, branch: `kubic/${agentId}` };
+      return {
+        path: `${REPO}/.kubic/wt/${agentId}`,
+        branch: `kubic/${agentId}`,
+      };
     },
     createWorkerSession: (input) => ({ sessionId: input.workerSessionId }),
     runWorker: (
@@ -111,7 +130,9 @@ function makeWorld(
       calls.run.push(agentId);
       prompts.push({ agentId, prompt });
       spawnInfo.push({ agentId, ...(info === undefined ? {} : { info }) });
-      const hunks: MergedHunk[] = [{ path: `${agentId}.txt`, hunk: '@@ +1 @@' }];
+      const hunks: MergedHunk[] = [
+        { path: `${agentId}.txt`, hunk: '@@ +1 @@' },
+      ];
       return hunks;
     },
     mergeBranch: (agentId: string) => {
@@ -145,7 +166,15 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       loadWorkerRoles: roleLoaderFor(rolesFor(plannerDoc(), implementerDoc())),
     });
     const code = await runOrchestrateCommand(
-      ['-p', OBJECTIVE, '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        OBJECTIVE,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     expect(code).toBe(0);
@@ -184,7 +213,15 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     });
     expect(
       await runOrchestrateCommand(
-        ['-p', OBJECTIVE, '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+        [
+          '-p',
+          OBJECTIVE,
+          '--agents',
+          'alpha,beta',
+          '--session',
+          'sess-1',
+          '--yes',
+        ],
         first.deps,
       ),
     ).toBe(1);
@@ -215,7 +252,15 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
   it('keeps the plan step working when no role documents exist (solo default unaffected)', async () => {
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor({}) });
     const code = await runOrchestrateCommand(
-      ['-p', OBJECTIVE, '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        OBJECTIVE,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     expect(code).toBe(0);
@@ -231,7 +276,15 @@ describe('a withholding role withholds by absence (issue #104, criterion 2)', ()
       loadWorkerRoles: roleLoaderFor(rolesFor(plannerDoc(), implementerDoc())),
     });
     await runOrchestrateCommand(
-      ['-p', OBJECTIVE, '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        OBJECTIVE,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     // The tool set the worker lane registers is the role's resolved set,
@@ -279,7 +332,15 @@ describe('a contradictory role document refuses the run (issue #104, criterion 3
     );
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor(files) });
     const code = await runOrchestrateCommand(
-      ['-p', OBJECTIVE, '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        OBJECTIVE,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     expect(code).toBe(1);
@@ -318,7 +379,9 @@ describe('a contradictory role document refuses the run (issue #104, criterion 3
       world.deps,
     );
     expect(code).toBe(1);
-    const envelope = JSON.parse(world.lines[world.lines.length - 1] as string) as {
+    const envelope = JSON.parse(
+      world.lines[world.lines.length - 1] as string,
+    ) as {
       ok?: boolean;
       error?: { code?: string; message?: string };
     };

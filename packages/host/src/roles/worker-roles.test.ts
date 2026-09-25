@@ -129,7 +129,9 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(composed[1]).not.toContain('You are the planner.');
     // …and its own plan step: role prompt + step, never one replacing the
     // other.
-    expect(composed[0]).toContain("Plan step 1 of 2 for agent 'alpha': ship it");
+    expect(composed[0]).toContain(
+      "Plan step 1 of 2 for agent 'alpha': ship it",
+    );
     expect(composed[1]).toContain("Plan step 2 of 2 for agent 'beta': ship it");
   });
 

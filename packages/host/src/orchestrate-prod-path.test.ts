@@ -305,7 +305,10 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     const status = await gitOrThrow(root, ['status', '--porcelain=v1']);
     expect(status.trim()).toBe('');
     // The ignore must cover runtime state only — roles and config stay
-    // addable (issue #91 criterion 2).
+    // addable (issue #91 criterion 2). Ordering is load-bearing: `git add
+    // --dry-run` exits 0 only because the file exists (verified — with the
+    // path absent it exits 128 'pathspec did not match any files'), so the
+    // assertion cannot silently degrade into a no-op.
     env.fs.writeFile(join('.kubic', 'roles', 'planner.md'), '# planner');
     const added = await gitOrThrow(root, [
       'add',
@@ -355,6 +358,33 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
       sessionsRoot,
     });
     expect(env.fs.readFile(join('.kubic', '.gitignore'))).toBe('wt/\n');
+  });
+
+  it('a user-authored `*` .kubic/.gitignore still keeps the tree clean for the guard', async () => {
+    // Measured, not assumed (review of #85 raised the opposite): a USER-authored
+    // `.kubic/.gitignore` holding `*` does not re-break the pre-merge clean-tree
+    // guard — `*` covers the runtime state too, so `git status` stays empty and
+    // the merge can settle. What it does break is role/config addability, which
+    // is the user's own choice of rule, so the orchestrator leaves the file
+    // alone (pinned by the test above) and keeps its own rules in the exclude
+    // file. This test exists so the failure mode cannot silently drift.
+    const root = await initRepo();
+    const sessionsRoot = scratchRoot('kubic-orch-sessions-');
+    const env = new NodeExecutionEnv(root);
+    env.fs.writeFile(join('.kubic', '.gitignore'), '*\n');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      cwd: root,
+      sessionsRoot,
+    });
+    await deps.ensureWorktree('worker-1');
+    env.fs.writeFile(join('.kubic', 'orchestrator', 'state.json'), '{}');
+    const status = await gitOrThrow(root, ['status', '--porcelain=v1']);
+    expect(status.trim()).toBe('');
+    // The exclude file still carries the rules (the mechanism is not skipped
+    // just because a .gitignore exists).
+    const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
+    expect(exclude).toContain('.kubic/orchestrator/');
   });
 
   it('leaves the repo .gitignore and unrelated untracked files alone', async () => {

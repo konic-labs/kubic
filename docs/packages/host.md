@@ -14,7 +14,6 @@ docs and code must never imply otherwise (design §59.1).
 
 | Module | Exports |
 | --- | --- |
-| `handoff.ts` | `Handoff`, `HANDOFF_FIELDS`, `WriteScope`, `HandoffValidation`, `validateHandoff` |
 | `approvals.ts` | `CAPABILITIES`, `Capability`, `ApprovalPolicy`, `PolicyValidationError`, `validatePolicy`, `ApprovalRequest`, `ApprovalVerdict`, `ApprovalStore`, `MemoryApprovalStore`, `FileApprovalStore`, `TriggerContext`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `AccessPosture`, `ApprovalAsk`, `createApprovalAsk`, `enableFullAccess`, `ApprovalServiceOptions`, `ApprovalService` |
 | `config/config.ts` | `CONFIG_LAYERS`, `ConfigLayer`, `ConfigError`, `ProjectUntrustedError`, `BudgetKeyError`, `AgentConfig`, `ModelConfig`, `ModesConfig`, `ApprovalsConfig`, `PermissionsConfig`, `JournalConfig`, `RoleConfig`, `OrchestratorConfig`, `UiConfig`, `SessionConfig`, `KubicConfig`, `KNOWN_CONFIG_SECTIONS`, `EXAMPLE_TOML`, `assertNoBudgetKeys`, `parseTomlConfig`, `serializeTomlConfig`, `parseLayerConfig`, `LayerInput`, `MergeResult`, `mergeLayered`, `defaultLayerPaths`, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `isCommittedConfigPath`, `checkGitignoreSplit`, `loadLayered` |
 | `config/runtime.ts` | `loadRuntimeConfig`, `effectiveConfigView`, `renderEffectiveConfig`, `checkWorkspaceIgnoreSplit`, `RuntimeConfig`, `RuntimeConfigInputs`, `ConfigValueSource`, `EffectiveConfigView`, `RuntimeKeyEffect`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES`, `RUNTIME_DEFAULTS`, `MS_PER_DAY` — the load the binary actually runs on (#90) |
@@ -63,29 +62,6 @@ Two destinations, both documented on the
 A span that never settles stays open (`endMs: null`) rather than being
 dropped, and a run with no spans behaves exactly as before — the wiring
 is additive by construction.
-
-### `Handoff` (`handoff.ts`, §69–§70)
-
-A handoff carries the structured result, artifact REFERENCES (never
-contents), a diff reference, the worktree, and the constraint list —
-never a transcript, keeping a five-agent chain affordable (§69). Review
-loop (§70): planner → implementer → tester → reviewer → root; failures
-route to the debugger (tester failures NEVER re-plan); a `maxAttempts`
-bound per chain precedes escalation; the reviewer is read-only
-(`writeScope: 'none'`).
-
-| Field | Type | Required |
-| --- | --- | --- |
-| `result` | `AgentResult` ([worker](worker.md)) | yes |
-| `artifactIds` | `string[]` | yes |
-| `diffId` | `string` | no |
-| `worktree` | `string` (absolute path) | yes |
-| `constraints` | `string[]` | yes |
-| `writeScope` | `'none' \| 'worktree'` | yes |
-
-`HANDOFF_FIELDS` pins all 6 keys via
-`satisfies Record<keyof Handoff, true>`; `validateHandoff` additionally
-refuses any `transcript` key (§69).
 
 ### Approvals (`approvals.ts`, #48)
 

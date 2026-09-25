@@ -15,6 +15,7 @@
 // 2 usage/error (missing flags, unreadable/malformed files, refused
 // provenance — never an emitted record).
 
+import { answerHelp } from '../../core/src/cli-help.js';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
@@ -66,7 +67,7 @@ const NEEDS_AGAINST: ReadonlySet<ExportDatasetType> = new Set([
   'preference',
 ]);
 
-const USAGE_MESSAGE =
+export const USAGE_MESSAGE =
   'usage: kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]';
 
 interface ExportOptions {
@@ -189,6 +190,9 @@ export async function runExportCommand(
   args: string[],
   deps: ExportCliDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, USAGE_MESSAGE);
+  if (help !== null) return help;
   const parsed = parseArgs(args);
   if (parsed === null) {
     deps.out(USAGE_MESSAGE);

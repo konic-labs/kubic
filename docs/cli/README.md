@@ -7,6 +7,10 @@
 Commands operators run. Solo mode has no isolation — docs never imply
 otherwise.
 
+**Every command answers `--help`** (or `-h`) with its own usage line and exit 0 —
+one convention, applied before any argv validation
+(`packages/core/src/cli-help.ts`). Usage errors keep their own exit codes.
+
 ## Install and build
 
 A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary —

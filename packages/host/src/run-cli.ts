@@ -8,6 +8,7 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
+import { answerHelp } from '../../core/src/cli-help.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import { settleTerminalStatus } from '../../worker/src/lane/settle.js';
 import type { TerminalStatus } from '../../worker/src/pi-boundary.js';
@@ -136,10 +137,11 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 // ceiling, not a clamp: a silently shortened bound is worse than a refusal.
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
+const RUN_USAGE =
+  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]',
-  );
+  out(RUN_USAGE);
   return RUN_EXIT_USAGE;
 }
 
@@ -215,6 +217,9 @@ export async function runRunCommand(
   args: string[],
   deps: RunCommandDeps,
 ): Promise<number> {
+  // `--help` is answered before any argv validation (issue #100).
+  const help = answerHelp(args, deps.out, RUN_USAGE);
+  if (help !== null) return help;
   let prompt: string | undefined;
   let sessionId: string | undefined;
   let timeoutMs: number | undefined;

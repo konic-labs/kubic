@@ -10,6 +10,21 @@
 the version comes from the nearest `kubic` package manifest
 (`apps/kubic/package.json` for src runs, the repo root for `dist/` runs) —
 and exits 0.
+
+**`--help` is uniform across the commands.** Every command below answers
+`kubic <command> --help` (or `-h`) with exactly its own usage line and **exit 0**
+— the convention lives once in `packages/core/src/cli-help.ts` and is applied
+before any argv validation. Usage *errors* keep their own exit codes (a bad flag
+is still an error; a help request is not); each command's usage line lists
+exactly the flags its parser accepts.
+
+One documented exception, above this list: the **bare dispatcher** `kubic --help`
+is not a command's help path — it prints the top-level usage line and exits 1,
+because the dispatcher treats `--help` as an unknown command. `kubic --version`
+exits 0. Folding the dispatcher into the same convention means editing
+`apps/kubic/src/main.ts`, which is held by the TUI and prompt-loop work
+(issues #88, #93); until then this page describes the dispatcher as it behaves.
+
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command prints
 `usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
@@ -201,6 +216,10 @@ current directory (absent or invalid `models.json` is reported as a
 | (none) | `provider <id> (<name>)` plus one `  <model> — thinking: <levels> — $in/$out per 1M in/out` line per model; `no providers registered (add models.json or set provider env keys)` when empty. Exits 0. |
 | `--json` | The same catalog as JSON. Exits 0. |
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` or `error: …`. Needs a value; resolution failure exits 1. |
+
+An unknown flag prints `usage: kubic models [--json] [--resolve <provider/id>]`
+and exits 1 (it used to be silently ignored). `--help`/`-h` prints the same line
+and exits 0.
 
 ## `kubic doctor`
 

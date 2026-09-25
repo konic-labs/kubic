@@ -50,6 +50,14 @@ composition root:
 Dependencies flow one way (`scripts/dep-lint.mjs` enforces it): `tui`
 never imports `host`/`worker` implementation, the worker never imports
 `host`, and only the app root wires `host` and `tui` together.
+
+**Test contract.** There is no `VirtualTerminal` in the pinned Pi
+(`@earendil-works/pi-tui` 0.87.1 exports `ProcessTerminal` only) and Kubic
+declares no terminal-emulator dependency. TUI tests render the pure view
+functions directly into headless snapshot strings — no TTY, no alt-screen —
+and each view module records that in its header. See the
+[design-drift reconciliation](../design-drift.md).
+
 Per-package APIs live on the [package pages](../packages/README.md);
 command behaviour lives on the [CLI pages](../cli/README.md) — this
 section maps the boxes, not their interfaces.

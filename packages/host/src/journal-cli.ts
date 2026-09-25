@@ -4,6 +4,7 @@
 // 1 usage/IO errors, 2 undo completed with non-reversible skips.
 
 import { join } from 'node:path';
+import { answerHelp } from '../../core/src/cli-help.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
 import { journalStatus, renderLog } from '../../exec/src/journal-status.js';
@@ -22,10 +23,11 @@ export function defaultJournalDir(root: string): string {
   return join(root, '.kubic', 'journal');
 }
 
+const JOURNAL_USAGE =
+  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>',
-  );
+  out(JOURNAL_USAGE);
   return 1;
 }
 
@@ -77,6 +79,11 @@ export async function runJournalCommand(
   args: string[],
   deps: JournalCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the shared usage line and exits 0 (issue #100).
+  // The line names all four subcommands, so `kubic diff --help` and
+  // `kubic undo --help` answer with the same listing they belong to.
+  const help = answerHelp(args, deps.out, JOURNAL_USAGE);
+  if (help !== null) return help;
   const [sub, ...rest] = args;
   if (sub === undefined) return usage(deps.out);
   const root = deps.root ?? process.cwd();

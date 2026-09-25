@@ -4,6 +4,7 @@
 // touches the network, the model, or the filesystem.
 // Exit codes: 0 pass/completed, 1 evaluated-and-failed, 2 usage/error.
 
+import { answerHelp } from '../../core/src/cli-help.js';
 import type { EvalRecord } from './records.js';
 import {
   EvalRunnerError,
@@ -125,10 +126,14 @@ function emitError(
   return EVAL_EXIT_FAILED;
 }
 
+const EVAL_USAGE =
+  'usage: kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]';
+
+const BENCHMARK_USAGE =
+  'usage: kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]',
-  );
+  out(EVAL_USAGE);
   return EVAL_EXIT_USAGE;
 }
 
@@ -137,6 +142,9 @@ export async function runEvalCommand(
   args: string[],
   deps: EvalCliDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, EVAL_USAGE);
+  if (help !== null) return help;
   const parsed = parseArgs(args);
   if (parsed.workspaceInvalid) {
     deps.out('usage: --workspace must be one of inline|worktree');
@@ -205,15 +213,16 @@ export async function runBenchmarkCommand(
   args: string[],
   deps: EvalCliDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, BENCHMARK_USAGE);
+  if (help !== null) return help;
   const parsed = parseArgs(args);
   if (parsed.workspaceInvalid) {
     deps.out('usage: --workspace must be one of inline|worktree');
     return EVAL_EXIT_USAGE;
   }
   if (parsed.generation === undefined) {
-    deps.out(
-      'usage: kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]',
-    );
+    deps.out(BENCHMARK_USAGE);
     return EVAL_EXIT_USAGE;
   }
   const selected =

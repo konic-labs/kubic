@@ -5,6 +5,7 @@
 // session stats out of the session store — this module never invents
 // costs, and the task total is always Σ(per-agent) by construction.
 
+import { answerHelp } from '../../../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -33,8 +34,10 @@ export interface CostCommandDeps {
   out: (line: string) => void;
 }
 
+export const COST_USAGE = 'usage: kubic cost [--session <id>] [--json]';
+
 function usage(out: (line: string) => void): number {
-  out('usage: kubic cost [--session <id>] [--json]');
+  out(COST_USAGE);
   return COST_EXIT_USAGE;
 }
 
@@ -76,6 +79,9 @@ export async function runCostCommand(
   args: string[],
   deps: CostCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, COST_USAGE);
+  if (help !== null) return help;
   let json = false;
   let sessionId: string | undefined;
   for (let i = 0; i < args.length; i++) {

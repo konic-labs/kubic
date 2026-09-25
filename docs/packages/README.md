@@ -45,8 +45,10 @@ fails CI.
 apps/kubic  ← composition root: wires host + tui together
 ```
 
-I/O confinement (§9): only `@kubic/exec` touches
-`node:fs`/`node:child_process`. Pi seams (§65): `@kubic/worker` via
-`src/pi-boundary.ts` only, `@kubic/tui` via `src/tui-boundary.ts` only.
+I/O confinement (design §7 component split; enforced by
+`scripts/dep-lint.mjs`): only `@kubic/exec` touches
+`node:fs`/`node:child_process`, with test scaffolding exempt. Pi seams (§65):
+`@kubic/worker` via `src/pi-boundary.ts` only, `@kubic/tui` via
+`src/tui-boundary.ts` only.
 
 Back to the [docs index](../README.md).

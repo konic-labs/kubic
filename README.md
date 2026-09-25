@@ -4,17 +4,21 @@ Kubic is Konic's open-source terminal coding agent: model-agnostic, built direct
 harness, with a change journal that makes every edit reviewable and reversible, and an optional
 orchestrator mode that delegates to subagents in their own worktrees.
 
-**Status: implemented (solo mode).** A fresh clone plus Node >= 22.19 is
-enough to build a working `kubic` binary — see [Install](#install). The
-solo-mode commands (`run`, `sessions`, `git`, `models`, `diff` / `undo` /
-`log` / `status`, `doctor`) are implemented and specified under
-[`docs/cli/`](docs/cli/); the design document, decision registry, and review
-tooling live in `docs/design/` (local-only, gitignored).
+**Status: implemented.** A fresh clone plus Node >= 22.19 is enough to
+build a working `kubic` binary — see [Install](#install). Every command the
+binary dispatches is shipped and specified under [`docs/cli/`](docs/cli/):
+solo (`run`, `sessions`, `git`, `models`, `diff` / `undo` / `log` /
+`status`, `doctor`, `tui`), orchestrator mode (`orchestrate`, `clean`,
+`workers`), and the analysis surfaces (`eval`, `benchmark`, `replay`,
+`export`, `cost`, `perf`, `policy`, `audit`). The design document, decision
+registry, and review tooling live in `docs/design/` (local-only, gitignored).
 
-Still open: orchestrator mode, the interactive TUI, and the `workers`,
-eval/benchmark, and cost/policy wirings (issues
-[#75](https://github.com/konic-labs/kubic/issues/75)–[#79](https://github.com/konic-labs/kubic/issues/79)).
-Out of scope for the install story: npm publishing, auto-update, installers.
+What is still open is refinement, not reach: [EPIC I](https://github.com/konic-labs/kubic/issues/73)
+tracks the remaining wiring gaps (config layers read at runtime, the
+extensions bundle at startup, the worker lifecycle and manager lane on the
+live spawn path, TUI input and views, journal reconciliation), each with its
+own issue. Out of scope for the install story: npm publishing, auto-update,
+installers.
 
 ## What Kubic is
 
@@ -93,8 +97,9 @@ The document is Markdown; the explorer is a build artifact of it. Edit the Markd
   `type(scope): summary`, e.g. `docs(design): scope workspace behaviour to the mode`.
 - **The design document is the source of truth.** Decisions are recorded in
   `design-decisions.json`; their rationale lives with the sections that encode them.
-- **Cross-references use `§`** followed by the section number (`§40.11`). The build validates them
-  and fails loudly on dangling references.
+- **Cross-references use `§`** followed by the section number (`§59.1`). The design-explorer build
+  validates them and **exits non-zero on a dangling reference** — a typo in a section number
+  fails the build instead of shipping a dead link into the explorer.
 
 ## License
 

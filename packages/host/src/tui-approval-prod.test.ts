@@ -173,7 +173,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
       fauxAssistantMessage('done'),
     ]);
     const pending = runTuiCommand([], {
@@ -208,7 +210,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
       fauxAssistantMessage('after the denial'),
     ]);
     const pending = runTuiCommand([], {
@@ -260,7 +264,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
       fauxAssistantMessage('unreachable'),
     ]);
     const pending = runTuiCommand([], {
@@ -291,7 +297,9 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(70);
     const { models } = fauxModels([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
       fauxAssistantMessage('narrow done'),
     ]);
     const pending = runTuiCommand([], {

@@ -35,7 +35,10 @@
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 
 import type { KubicPresentationState } from '../../core/src/presentation.js';
-import { createApprovalSurface, type ApprovalSurface } from './approval-surface.js';
+import {
+  type ApprovalSurface,
+  createApprovalSurface,
+} from './approval-surface.js';
 import type {
   ApprovalDecision,
   ApprovalOverlayHandle,

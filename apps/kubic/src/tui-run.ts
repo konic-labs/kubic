@@ -44,8 +44,8 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
+import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
@@ -89,9 +89,9 @@ import {
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
 // object, so a verdict collected on screen is the verdict the lane receives.
-export interface TuiApprovalSeat {
-  (request: ApprovalRequest): Promise<ApprovalVerdict | undefined>;
-}
+export type TuiApprovalSeat = (
+  request: ApprovalRequest,
+) => Promise<ApprovalVerdict | undefined>;
 // The lane surface the loop drives. Narrow on purpose: the loop accepts a
 // prompt, drives to settlement, can abort, and reads committed entries to
 // refresh the transcript — nothing else. Every member is a real lane
@@ -157,9 +157,7 @@ export interface TuiRunOptions {
   // The answer seat (issue #96): the interactive path's approval surface.
   // Attached by runTuiCommand; absent means the no-surface refusal, which is
   // what `kubic tui` had before the overlay landed.
-  answer?: (
-    request: ApprovalRequest,
-  ) => Promise<ApprovalVerdict | undefined>;
+  answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
 }
 
 // Prod solo boot: same session/model setup as the headless runner

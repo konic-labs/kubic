@@ -44,6 +44,7 @@ import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
@@ -243,12 +244,17 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   if (command === 'workers') {
-    // The one-shot CLI owns a fresh process registry: no orchestrator
-    // runs in this process, so a live invocation lists zero rows (both
-    // views agree, exit 0). Spawn/reap stay orchestrator-internal.
+    // Issue #94: the rows come from the SHARED durable record the
+    // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`),
+    // not from a fresh empty `WorkerRegistry()` — that could only ever
+    // list zero rows while a run was live, which is the defect. The
+    // registry still backs the orchestrator's own in-process view.
     const registry = new WorkerRegistry();
     const code = await runWorkersCommand(rest, {
-      list: () => registry.list(),
+      list: () => {
+        const live = registry.list();
+        return live.length > 0 ? live : workersListFromRepo(process.cwd());
+      },
       out: (line: string) => console.log(line),
       debug: (line: string) => console.error(line),
     });

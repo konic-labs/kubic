@@ -46,6 +46,17 @@ import {
   openSessionStore,
   SessionAttachError,
 } from '../../../packages/worker/src/lane/session-store.js';
+import { LIFECYCLE_BUDGETS_MS } from '../../../packages/worker/src/lifecycle/budgets.js';
+import type { WorkerFailure } from '../../../packages/worker/src/lifecycle/launch.js';
+import { launchWorker } from '../../../packages/worker/src/lifecycle/launch.js';
+import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+import {
+  persistWorkerRows,
+  WORKER_ROWS_FILE,
+} from '../../../packages/worker/src/lifecycle/rows.js';
+import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
+import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
+import type { WorkerStatus } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 
 export interface OrchestrateRunOptions {
@@ -54,6 +65,52 @@ export interface OrchestrateRunOptions {
   cwd?: string;
   /** Worker sessions root; defaults to the user sessions root (~/.kubic/sessions). */
   sessionsRoot?: string;
+  /** The one worker registry the orchestrator and `kubic workers` share
+   *  (issue #94). Injectable so a test can read the live rows afterwards;
+   *  omitted means this run owns its own. */
+  registry?: WorkerRegistry;
+  /** How long a worker may take to print its readiness marker before the
+   *  launch is terminal SPAWN_FAILED (§13, §61). */
+  readyTimeoutMs?: number;
+  /** Wall-clock bound handed to each child `kubic run` (issue #94). */
+  workerTimeoutMs?: number;
+  /**
+   * How the child `kubic run` is reached (issue #94). Defaults to the
+   * built binary (`node bin/kubic.js`); a test that has no build output
+   * injects an argv that runs the same composition root from source, so
+   * the child on the path under test is a REAL process either way.
+   */
+  workerEntry?: { cmd: string; args: string[] };
+}
+
+export interface OrchestrateWorkerLaunches {
+  /** Live rows of this run's workers, from the shared registry. */
+  rows: () => ReturnType<WorkerRegistry['list']>;
+  /** §78 code the orchestrator reported for a worker that failed. */
+  failureOf: (agentId: string) => WorkerFailure | undefined;
+  /** Launch samples (spawn/attach/teardown ms) against §61 budgets. */
+  perf: () => { ok: boolean; breaches: string[] }[];
+}
+
+/** The `launches` view of a run, narrowed to the shape the host declares. */
+function launchesView(
+  registry: WorkerRegistry,
+  launched: Map<string, ReturnType<typeof launchWorker>>,
+): NonNullable<OrchestrateCommandDeps['launches']> {
+  return {
+    rows: () => registry.list(),
+    failureOf: (agentId: string) => {
+      const failure = launched.get(agentId)?.failure();
+      return failure === undefined
+        ? undefined
+        : { code: failure.code, message: failure.message };
+    },
+    perf: () =>
+      [...launched.values()].map((worker) => {
+        const { ok, breaches, sample } = worker.perf();
+        return { ok, breaches, sample };
+      }),
+  };
 }
 
 function provenanceFor(sessionId: string, agentId: string, tool: string) {
@@ -83,6 +140,58 @@ function entryScript(): string {
   const argv1 = process.argv[1];
   if (typeof argv1 === 'string' && argv1.endsWith('.js')) return argv1;
   return resolve(process.cwd(), 'bin', 'kubic.js');
+}
+
+// Wall-clock bound handed to each child `kubic run` (issue #94). A worker
+// that never settles is the failure mode with no named code: the child's
+// own guard turns it into exit 3 (budget_exhausted), which the lifecycle
+// layer reports as the §52 budget code — never a hang.
+const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
+
+// The readiness marker the child prints before its prompt is submitted
+// (§13, issue #94) lives on the CHILD side (headless-run.ts) — a worker
+// announces itself the moment its session is attached, so the launch
+// handshake times the real startup instead of prompt construction.
+
+export class WorkerRunFailure extends Error {
+  readonly code: 'spawn_failed' | 'worker_failed';
+
+  constructor(code: 'spawn_failed' | 'worker_failed', message: string) {
+    super(message);
+    this.name = 'WorkerRunFailure';
+    this.code = code;
+  }
+}
+
+// The §78 code a failed launch maps to. A launch that never became ready
+// is `spawn_failed` (the worker never started); a worker that ran and
+// reported a failure keeps `worker_failed`, with the §52 code named in
+// the message so the taxonomy stays visible.
+function workerRunError(
+  agentId: string,
+  done: { exitCode: number; stdout: string; stderr: string },
+  failure: WorkerFailure | undefined,
+): WorkerRunFailure {
+  const last = done.stdout.trim().split('\n').pop() ?? '';
+  let detail = done.stderr.trim() || done.stdout.trim();
+  try {
+    const envelope = JSON.parse(last) as { error?: { message?: string } };
+    if (typeof envelope.error?.message === 'string')
+      detail = envelope.error.message;
+  } catch {
+    // Non-JSON output — keep the raw detail.
+  }
+  if (failure?.code === 'process_spawn_failed') {
+    return new WorkerRunFailure(
+      'spawn_failed',
+      `spawn failed for worker '${agentId}': ${failure.message}`,
+    );
+  }
+  const suffix = failure === undefined ? '' : ` [${failure.code}]`;
+  return new WorkerRunFailure(
+    'worker_failed',
+    `worker run exited ${done.exitCode}: ${detail.slice(0, 300)}${suffix}`,
+  );
 }
 
 // Kubic's own state dir must never dirty the tree it sits in (§35: `.kubic/`
@@ -125,6 +234,29 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
+  // One registry for the whole invocation (issue #94): the orchestrator
+  // writes rows here, `kubic workers` reads the same rows off disk, and a
+  // caller can hand in a registry to observe a run from outside.
+  const workerRegistry = options.registry ?? new WorkerRegistry();
+  // Every lifecycle-managed worker starts through this shell: it carries
+  // the §3.8 allowlisted env to the OS (`env -i …`), which the exec Shell
+  // seam alone cannot do. It is rooted at the WORKER's worktree — the
+  // child's cwd is the directory its session was created with (#85), so
+  // the session attach inside the child finds its own cwd and the worker
+  // journals land with the worker.
+  let workerShellRoot: string | undefined;
+  let workerShell: ReturnType<typeof allowlistedShell> | undefined;
+  const shellForWorktree = (worktreePath: string): WorkerShell => {
+    if (workerShell === undefined || workerShellRoot !== worktreePath) {
+      workerShell = allowlistedShell(new NodeExecutionEnv(worktreePath).shell);
+      workerShellRoot = worktreePath;
+    }
+    return workerShell;
+  };
+  const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  // Worktree creation time per agent, so a launch sample can assert the
+  // §61 worktree budget alongside its own spawn/teardown legs.
+  const worktreeStartedAt = new Map<string, number>();
   const top = await runGit(
     cwd,
     ['rev-parse', '--show-toplevel'],
@@ -185,6 +317,24 @@ export async function orchestrateDepsWithDefaults(
   };
 
   const storeName = (sessionId: string): string => `${sessionId}.json`;
+
+  // The lifecycle rows live beside the run state under the repo's runtime
+  // dir (§35 keeps `.kubic/` out of the commit path).
+  const persistWorkerRowsNow = (): void => {
+    if (root === undefined) return;
+    try {
+      persistWorkerRows(
+        createNodeFileBridge(join(root, '.kubic', 'orchestrator')),
+        WORKER_ROWS_FILE,
+        workerRegistry.list(),
+      );
+    } catch (error) {
+      // Best-effort: a status listing must never fail a run.
+      debug(
+        `workers: could not persist lifecycle rows: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
 
   // Worker sessions live in the user sessions root (one store for the whole
   // CLI, `kubic sessions`/`diff --session` read the same place). Injected
@@ -248,14 +398,17 @@ export async function orchestrateDepsWithDefaults(
     out: options.out,
     debug,
     isGitRepo: () => root !== undefined,
+    launches: launchesView(workerRegistry, launchedByAgent),
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       const env = new NodeExecutionEnv(repo);
       ensureStateIgnored(repo, debug);
+      const worktreeStarted = Date.now();
       try {
         const added = await addWorktree(env, repo, agentId, {
           sessionId: 'cli',
         });
+        worktreeStartedAt.set(agentId, worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
         return { path: added.path, branch: added.branch };
       } catch (error) {
@@ -275,6 +428,7 @@ export async function orchestrateDepsWithDefaults(
             present = false;
           }
           if (!present) throw worktreeMissingError(path, branch);
+          worktreeStartedAt.set(agentId, worktreeStarted);
           return { path, branch };
         }
         throw error;
@@ -338,41 +492,76 @@ export async function orchestrateDepsWithDefaults(
       prompt: string,
       info?: WorkerSpawnInfo,
     ): Promise<MergedHunk[]> => {
-      const repo = needRoot();
-      void repo;
       const workerSession =
         info?.workerSessionId ??
         workerSessionFor(info?.sessionId ?? 'orch', agentId);
-      const child = new NodeExecutionEnv(worktree.path);
-      const done = await child.shell
-        .spawn(
-          process.execPath,
-          [
-            entryScript(),
+      // Issue #94: the worker starts through the lifecycle layer, never by
+      // reaching for the exec Shell here. launchWorker refuses a stale
+      // generation, registers the row `kubic workers` reads, builds the
+      // §3.8 allowlisted child env, waits for the readiness marker under a
+      // timeout (a silent child is terminal SPAWN_FAILED, not a raw exit
+      // code), records the §61 startup latency, and classifies a failed
+      // child through the §52 codes.
+      const launched = launchWorker(
+        {
+          workerId: agentId,
+          sessionId: workerSession,
+          role: 'worker',
+          owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
+          // The child's base env is the parent's, filtered by the §3.8
+          // allowlist inside the layer — never inherited wholesale.
+          baseEnv: Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          cmd: options.workerEntry?.cmd ?? process.execPath,
+          args: [
+            ...(options.workerEntry?.args ?? [entryScript()]),
             'run',
             '-p',
             prompt,
             '--session',
             workerSession,
             '--json',
+            '--timeout',
+            String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
           ],
-          { provenance: provenanceFor(workerSession, agentId, 'worker-run') },
-        )
-        .wait();
-      if (done.exitCode !== 0) {
-        const last = done.stdout.trim().split('\n').pop() ?? '';
-        let detail = done.stderr.trim() || done.stdout.trim();
-        try {
-          const envelope = JSON.parse(last) as { error?: { message?: string } };
-          if (typeof envelope.error?.message === 'string')
-            detail = envelope.error.message;
-        } catch {
-          // Non-JSON output — keep the raw detail.
-        }
-        throw new Error(
-          `worker run exited ${done.exitCode}: ${detail.slice(0, 300)}`,
-        );
+          provenance: provenanceFor(workerSession, agentId, 'worker-run'),
+          ...(options.readyTimeoutMs === undefined
+            ? {}
+            : { readyTimeoutMs: options.readyTimeoutMs }),
+          worktreeMs: (() => {
+            const started = worktreeStartedAt.get(agentId);
+            return started === undefined ? undefined : Date.now() - started;
+          })(),
+        },
+        {
+          shell: shellForWorktree(worktree.path),
+          registry: workerRegistry,
+          debug: (line) => debug(line),
+        },
+      );
+      launchedByAgent.set(agentId, launched);
+      // The row is written out the moment the worker is registered, so a
+      // concurrent/next `kubic workers` invocation lists it (§50) even if
+      // this launch later fails.
+      persistWorkerRowsNow();
+      // A launch that never became ready is already terminal; the read
+      // below is what turns it into the run's §78 `spawn_failed` code.
+      let done: { exitCode: number; stdout: string; stderr: string };
+      try {
+        done = await launched.wait();
+      } catch (error) {
+        persistWorkerRowsNow();
+        throw error;
       }
+      if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+        persistWorkerRowsNow();
+        throw workerRunError(agentId, done, launched.failure());
+      }
+      await launched.reap().catch(() => undefined);
+      persistWorkerRowsNow();
       // The worker authors (sole committer on its branch); the manager
       // never stages or commits — see assertManagerZeroWrites.
       const status = await runGit(
@@ -503,7 +692,20 @@ export async function orchestrateDepsWithDefaults(
     reapWorker: (agentId: string): void => {
       // The child process was reaped at wait() inside runWorker; the
       // worktree + branch stay retained as evidence (§44.1 — only
-      // `kubic clean` disposes). Reap here is the accounting step.
+      // `kubic clean` disposes). The lifecycle row is written out so a
+      // separate `kubic workers` invocation can list it (§50).
+      persistWorkerRowsNow();
+      const launched = launchedByAgent.get(agentId);
+      if (launched !== undefined) {
+        const perf = launched.perf();
+        if (!perf.ok) {
+          // §61 is asserted, not merely recorded: a launch that blew a
+          // budget names the breach on the debug channel.
+          debug(
+            `perf: worker '${agentId}' budget breach — ${perf.breaches.join('; ')}`,
+          );
+        }
+      }
       debug(`reaped: ${agentId} (worktree + branch retained)`);
     },
     requestApproval:

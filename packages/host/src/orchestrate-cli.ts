@@ -28,6 +28,7 @@ import {
   RUN_EXIT_USAGE,
   SESSION_ID_PATTERN,
 } from './run-cli.js';
+import type { WorkerListRow } from './workers-cli.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
@@ -242,6 +243,12 @@ export interface OrchestrateCommandDeps {
     worktree: OrchestrateWorktree,
   ) => boolean | Promise<boolean>;
   reapWorker: (agentId: string) => void | Promise<void>;
+  // Lifecycle observations for an embedder (issue #94): the live rows, the
+  // §78 code a failed worker reported, and the §61 launch samples with
+  // their budget verdict. The composition root (apps/kubic) supplies these
+  // from the worker lifecycle layer; the host side declares only the view
+  // it reads, so host keeps no implementation import (dep-lint).
+  launches?: OrchestrateLaunchObservations;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
   loadState?: (
     sessionId: string,
@@ -250,6 +257,33 @@ export interface OrchestrateCommandDeps {
     | undefined
     | Promise<OrchestratorRunState | undefined>;
   saveState?: (state: OrchestratorRunState) => void | Promise<void>;
+}
+
+// Launch accounting of this run's workers (issue #94), as the host sees it:
+// rows are registry rows (shape-only — host never imports worker), failure
+// is the §78 code the lifecycle layer reported, and perf carries the §61
+// sample with its budget verdict. All optional: an embedder that does not
+// care reads none of it.
+export interface OrchestrateLaunchFailureView {
+  code: string;
+  message: string;
+}
+export interface OrchestrateLaunchPerfView {
+  ok: boolean;
+  breaches: string[];
+  sample: {
+    spawnMs: number;
+    startupMs?: number;
+    attachMs?: number;
+    worktreeMs?: number;
+    teardownInitiateMs: number;
+    teardownSettledMs: number;
+  };
+}
+export interface OrchestrateLaunchObservations {
+  rows: () => WorkerListRow[];
+  failureOf: (agentId: string) => OrchestrateLaunchFailureView | undefined;
+  perf: () => OrchestrateLaunchPerfView[];
 }
 
 export type OrchestrateStatus =
@@ -692,9 +726,19 @@ export async function runOrchestrateCommand(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
+      // The lifecycle layer names the §78 code for the failure it saw
+      // (issue #94): a worker that never became ready is `spawn_failed`,
+      // anything else keeps `worker_failed`. The error is duck-typed here
+      // so host stays free of an implementation import.
+      const named =
+        typeof (error as { code?: unknown }).code === 'string'
+          ? ((error as { code: string }).code as
+              | 'spawn_failed'
+              | 'worker_failed')
+          : 'worker_failed';
       return fail(
         RUN_EXIT_FAILED,
-        'worker_failed',
+        named,
         `worker '${agentId}' failed: ${message}`,
         partial(),
       );

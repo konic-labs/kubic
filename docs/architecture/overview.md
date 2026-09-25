@@ -7,11 +7,12 @@
 Kubic is a terminal coding agent with one architecture and two modes.
 **Solo** is the default and the architecture itself: a single agent
 working directly in the user's directory. **Orchestrator** is an
-opt-in mode for delegation: the `kubic orchestrate` CLI process plays
-the manager — it fans one worker process plus one git worktree per
-subagent out and merges what they produce. The design's manager *agent*
-lane (§9.2) is not wired yet; the CLI is the manager in the shipped
-mode. Both modes share the same safety controls — the
+opt-in mode for delegation: the `kubic orchestrate` CLI process is the
+manager — it registers the §40 manager toolset, plans one step per worker,
+fans one worker process plus one git worktree per subagent out and merges
+what they produce. Role-driven prompts and per-worker approvals are the
+parts of §9.2 still open, on their own issues. Both modes share the same
+safety controls — the
 VCS-independent change journal and user-decided approvals.
 
 ## Topology
@@ -28,10 +29,12 @@ controls: approvals + journal       └── … merge what they produce
                                     controls: approvals + journal (unchanged)
 ```
 
-The shipped manager lane is the CLI, not an agent: every worker is a
-child `kubic run` that receives the same `-p` prompt, and the
-plan-delegating agent lane is issue
-[#103](https://github.com/konic-labs/kubic/issues/103). See
+The shipped manager lane is the CLI process: it registers the §40 manager
+toolset, plans one step per worker, and every worker is a child `kubic run`
+that runs its own plan step. Role-driven prompts and per-worker approvals
+are the parts of the design still unwired — issue
+[#104](https://github.com/konic-labs/kubic/issues/104) and
+[#105](https://github.com/konic-labs/kubic/issues/105). See
 [orchestrator](orchestrator.md) for the delegation model as shipped.
 
 Solo is the whole story for trust: there is exactly one trust zone —

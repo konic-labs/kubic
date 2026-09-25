@@ -2,10 +2,11 @@
 
 > Design ref: §5.2, §9.2, §44, §41.1, §45, §59.1 honest limits. Owner:
 > issue [#95](https://github.com/konic-labs/kubic/issues/95).
-> **Delegation model as shipped (issue #95, 2026-09-25):** the CLI process
-> is the manager. This page describes that model; the manager *agent* lane
-> the design describes (§9.2) is not wired, and the issues that own it are
-> named below.
+> **Delegation model as shipped (issue #103, 2026-09-25):** the CLI process
+> is the manager, and its root lane registers the §40 toolset and authors the
+> plan whose steps become the prompts its workers run. This page describes
+> that model; the parts of §9.2 that remain unwired (role-driven prompts,
+> per-worker approvals) are named with the issues that own them.
 
 Orchestrator is Kubic's opt-in delegation mode: `kubic orchestrate` spawns
 one worker process and one git worktree per subagent and merges what they
@@ -15,13 +16,21 @@ solo) — and `run` never delegates.
 
 ## How delegation actually works
 
-- **The CLI plans, the CLI merges.** The `kubic orchestrate` process reads
-  `--agents`, creates one worktree per agent, spawns one child `kubic run`
-  per agent, and settles them through the merge queue. There is no planning
-  agent in the loop: the "plan" is the agent list on the command line.
-- **Every worker runs the same prompt.** `-p` is handed to each child
-  verbatim. Worker prompts may not differ today; per-worker prompts derived
-  from a plan are issue [#103](https://github.com/konic-labs/kubic/issues/103).
+- **The CLI registers the manager lane, then plans and merges.** The
+  `kubic orchestrate` process registers its toolset through the §40
+  allowlist before anything spawns — the lane runs with exactly those ten
+  tools, and a lane that would carry an exec tool refuses to start rather
+  than running with one. It then reads `--agents`, authors a plan (one step
+  per worker, in agent order), creates one worktree per agent, spawns one
+  child `kubic run` per agent, and settles them through the merge queue.
+- **Each worker runs its own plan step.** The manager's plan prompt for a
+  worker cites that worker's step (`step 2 of 3`) and carries the run's
+  objective; `-p` is the objective the plan is derived from, never a string
+  handed to a worker verbatim. The plan is stored with the session, so
+  `--resume` replays each worker's own prompt instead of re-deriving one
+  shared text. Role-driven prompt text (§12) is still issue
+  [#104](https://github.com/konic-labs/kubic/issues/104).
+>>>>>>> feat/issue-103-manager-lane
 - **The CLI commits for the worker; the worker never commits.** A worker child
   is `kubic run`, which does not run `git commit`. After a worker exits 0 the
   orchestrator stages whatever it left on its branch (`git add -A`) and commits
@@ -29,8 +38,9 @@ solo) — and `run` never delegates.
   about *authorship of the change content*, not about who types `git commit`:
   the manager lane never authors what goes into a worker's change — it does not
   write, edit or apply files, and `assertManagerZeroWrites` proves the recorded
-  merge-path trace stays write-free. Merges are the only write the orchestrator
-  performs on the main tree.
+  merge-path trace — the merge plumbing plus the lane's own
+  spawn → wait → collect record — stays write-free. Merges are the only write
+  the orchestrator performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
   auto-approves; a headless run with no decider denies closed (exit 4).
   The *worker* approval layer — requests routed to the user with opt-in
@@ -45,12 +55,13 @@ solo) — and `run` never delegates.
   [#106](https://github.com/konic-labs/kubic/issues/106).
 
 The manager toolset the design fixes in §40 (`spawn_agent`, `wait_for_agent`,
-`workspace_merge`, …) is implemented as host contracts
-(`packages/host/src/orchestrator/manager.ts`) and checked by tests, but no
-live lane registers it — that wiring is issue
-[#103](https://github.com/konic-labs/kubic/issues/103) too. Until then the
-manager's tool allowlist is not what constrains delegation; the CLI's own
-argv is.
+`workspace_merge`, …) is live: `packages/host/src/orchestrator/manager.ts`
+exports `MANAGER_ALLOWLIST` and the registration the run validates itself
+against, so the allowlist is what constrains delegation on this path — a
+requested lane that differs from it refuses to start with the named
+`ManagerToolsetError` (exit 1, `code=manager_toolset_refused`). The root is
+still the CLI process rather than a model-driven agent; what the lane adds is
+the toolset gate and the plan.
 
 ## Concurrency
 
@@ -81,12 +92,13 @@ Merged worktrees and branches are retained as evidence — only
 ## When to reach for it
 
 One worker process plus a worktree each is the shape for parallelisable
-work across distinct areas of a repo. Because every worker runs the same
-prompt, a useful `orchestrate` invocations reads like "apply this change
-in each of these areas" rather than "do these different things" — until
-per-worker prompts land (#103). For everything else — and always by
-default — there is [solo](solo.md): one agent, in-process, no
-delegation overhead.
+work across distinct areas of a repo. Each worker runs its own plan step
+derived from the objective you pass with `-p`, so an `orchestrate`
+invocation reads like "apply this change in each of these areas"; per-role
+prompt text on top of that is
+[#104](https://github.com/konic-labs/kubic/issues/104). For everything else
+— and always by default — there is [solo](solo.md): one agent, in-process,
+no delegation overhead.
 
 Implementation detail lives on the [host package page](../packages/host.md)
 and the [worker package page](../packages/worker.md); command

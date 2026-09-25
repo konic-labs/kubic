@@ -90,9 +90,18 @@ describe('context contracts: the delete calls stay executed (#99)', () => {
     // worker process an argv prompt and a session id, never a transcript.
     // The architecture page must keep saying so, because that is now the
     // only statement of the guarantee.
+    //
+    // Issue #103 changed *what* prompt a worker gets — each worker now runs
+    // its own plan step instead of the shared `-p` verbatim — so the older
+    // "same prompt" wording is gone for good, and pinning that phrase would
+    // pin a claim the shipped code now contradicts. What must survive is the
+    // isolation guarantee: a worker is a separate PROCESS in its own
+    // worktree, handed a prompt and a session id rather than a parent
+    // transcript. That is what this asserts.
     const architecture = read(ARCHITECTURE);
     expect(architecture).toMatch(
-      /same prompt|separate process|one process per/i,
+      /separate process|one process per|worker process/i,
     );
+    expect(architecture).not.toMatch(/same prompt/i);
   });
 });

@@ -36,6 +36,12 @@ file that no longer exists, or when a row's file has become reachable
   (#103), `approvals/{budgets,request,routing,skip}.ts` (#105),
   `merge/conflicts.ts` + `parallel/visibility.ts` + `worktree/status.ts`
   (#106). No orchestrator row is owned by #95 any more.
+- Issue #103 executed its one row: **wired**
+  `packages/host/src/orchestrator/manager.ts` — the live `kubic orchestrate`
+  run registers its lane through `registerManagerLane`/`MANAGER_ALLOWLIST`
+  (a lane with an exec tool refuses to start) and authors the plan whose
+  steps are the per-worker prompts, so the module is reachable from the
+  binary and its row is removed rather than kept.
 - Issue #93 executed two of its six rows: `bundles/budget/worker.ts` (the
   worker facet now gates live tool calls through the startup object) and
   `src/index.ts` (the composition root imports the package surface). The four
@@ -107,7 +113,6 @@ file that no longer exists, or when a row's file has become reachable
 | 242 | `packages/host/src/orchestrator/approvals/request.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
 | 282 | `packages/host/src/orchestrator/approvals/routing.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
 | 151 | `packages/host/src/orchestrator/approvals/skip.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
-| 327 | `packages/host/src/orchestrator/manager.ts` | #103 | wire: manager lane + plan → distinct worker prompts (#103) |
 | 309 | `packages/host/src/orchestrator/merge/conflicts.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
 | 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |

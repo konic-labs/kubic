@@ -19,6 +19,10 @@ import {
   runOrchestrateCommand,
   workerSessionFor,
 } from './orchestrate-cli.js';
+import {
+  MANAGER_ALLOWLIST,
+  registerManagerLane,
+} from './orchestrator/manager.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
@@ -41,6 +45,8 @@ interface FakeWorld {
   calls: FakeCalls;
   saved: OrchestratorRunState[];
   runInfo: { agentId: string; workerSessionId: string }[];
+  /** The prompt each worker actually received (issue #103). */
+  prompts: { agentId: string; prompt: string }[];
 }
 
 function makeWorld(
@@ -60,6 +66,7 @@ function makeWorld(
   };
   const saved: OrchestratorRunState[] = [];
   const runInfo: { agentId: string; workerSessionId: string }[] = [];
+  const prompts: { agentId: string; prompt: string }[] = [];
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
       lines.push(line);
@@ -81,7 +88,7 @@ function makeWorld(
     runWorker: (
       agentId: string,
       _worktree: OrchestrateWorktree,
-      _prompt: string,
+      prompt: string,
       info?: WorkerSpawnInfo,
     ) => {
       calls.run.push(agentId);
@@ -90,6 +97,7 @@ function makeWorld(
         agentId,
         workerSessionId: info?.workerSessionId ?? '(none)',
       });
+      prompts.push({ agentId, prompt });
       const count = hunksPerAgent?.[agentId] ?? 1;
       const hunks: MergedHunk[] = [];
       for (let i = 0; i < count; i += 1) {
@@ -116,7 +124,7 @@ function makeWorld(
     },
     ...overrides,
   };
-  return { deps, lines, debugLines, calls, saved, runInfo };
+  return { deps, lines, debugLines, calls, saved, runInfo, prompts };
 }
 
 function lastJsonLine(lines: string[]): Record<string, unknown> {
@@ -952,4 +960,317 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
       expect(world.calls.run).toEqual([]);
     },
   );
+});
+
+// Issue #103: the manager lane is live. The run registers its toolset through
+// the §40 allowlist before anything spawns, the manager authors a plan whose
+// steps become the prompts the workers actually receive (never a copy of -p),
+// the plan rides the run state so --resume replays the same prompts, and the
+// merge-path trace proves the lane write-free over the real run.
+describe('orchestrate manager lane: plan → distinct worker prompts (issue #103)', () => {
+  const MANAGER_PROMPT = 'apply the change across each area';
+
+  // State as it was saved BEFORE #103 existed: no plan field at all.
+  const legacyState = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'sess-1',
+    prompt: MANAGER_PROMPT,
+    agents: ['alpha', 'beta'],
+    merged: [],
+    pending: ['alpha', 'beta'],
+    stopped: false,
+    records: [],
+  });
+
+  it('hands each worker a prompt that differs and cites its plan step', async () => {
+    const world = makeWorld({}, { alpha: 1, beta: 1 });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.prompts.map((entry) => entry.agentId)).toEqual([
+      'alpha',
+      'beta',
+    ]);
+    const [alpha, beta] = world.prompts;
+    // ≥2 worker prompts that differ…
+    expect(alpha?.prompt).not.toBe(beta?.prompt);
+    // …each citing its plan step…
+    expect(alpha?.prompt).toContain('step 1 of 2');
+    expect(beta?.prompt).toContain('step 2 of 2');
+    // …and no worker prompt is -p verbatim.
+    for (const entry of world.prompts) {
+      expect(entry.prompt).not.toBe(MANAGER_PROMPT);
+    }
+  });
+
+  it('stores the plan in the run state for replay', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const first = world.saved[0] as OrchestratorRunState;
+    expect(first.plan?.map((step) => step.agentId)).toEqual(['alpha', 'beta']);
+    expect(first.plan?.[0]?.prompt).toContain('step 1 of 2');
+    expect(first.plan?.[0]?.prompt).not.toBe(MANAGER_PROMPT);
+  });
+
+  it('--resume replays the stored per-worker prompts, not -p', async () => {
+    // First run is killed while merging beta; the saved state carries the
+    // manager's plan.
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('KILLED');
+      },
+    });
+    expect(
+      await runOrchestrateCommand(
+        [
+          '-p',
+          MANAGER_PROMPT,
+          '--agents',
+          'alpha,beta',
+          '--session',
+          'sess-1',
+          '--yes',
+        ],
+        first.deps,
+      ),
+    ).toBe(1);
+    const killed = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(killed.pending).toEqual(['beta']);
+
+    // Resume with NO -p at all: the prompts must come from stored state.
+    const second = makeWorld({ loadState: () => structuredClone(killed) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1', '--yes'],
+      second.deps,
+    );
+    expect(code).toBe(0);
+    expect(second.prompts).toHaveLength(1);
+    const replayed = second.prompts[0] as {
+      agentId: string;
+      prompt: string;
+    };
+    expect(replayed.agentId).toBe('beta');
+    // The replayed prompt is the stored step-2 prompt, verbatim — and is
+    // not the -p text.
+    expect(replayed.prompt).toBe(killed.plan?.[1]?.prompt);
+    expect(replayed.prompt).toContain('step 2 of 2');
+    expect(replayed.prompt).not.toBe(MANAGER_PROMPT);
+  });
+
+  it('re-derives the plan for a resumed state written before the plan existed', async () => {
+    // State saved before #103 carries no plan. Resume must still hand each
+    // worker its own step prompt (derived from the stored objective and
+    // agent list), never the shared -p text.
+    const legacy: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: MANAGER_PROMPT,
+      agents: ['alpha', 'beta'],
+      merged: [],
+      pending: ['alpha', 'beta'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(legacy) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1', '--yes'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const prompts = world.prompts.map((entry) => entry.prompt);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toBe(prompts[1]);
+    expect(prompts[0]).toContain('step 1 of 2');
+    expect(prompts[1]).toContain('step 2 of 2');
+    for (const prompt of prompts) expect(prompt).not.toBe(MANAGER_PROMPT);
+    // The derived plan is persisted, so the next resume replays it.
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(done.plan?.map((step) => step.agentId)).toEqual(['alpha', 'beta']);
+  });
+
+  it('rejects a malformed stored plan as no_orchestrator_state', async () => {
+    // A plan step that is not exactly id/step/total/prompt would reach
+    // runWorker as a non-string prompt — untrusted JSON fails closed.
+    const malformedPlan: Record<string, unknown>[] = [
+      { ...legacyState(), plan: 'alpha: do it' },
+      { ...legacyState(), plan: [{ agentId: 'alpha', step: 1, total: 1 }] },
+      {
+        ...legacyState(),
+        plan: [{ agentId: 'alpha', step: '1', total: 1, prompt: 'p' }],
+      },
+      { ...legacyState(), plan: [{ agentId: 'alpha', prompt: 'p' }] },
+    ];
+    for (const stored of malformedPlan) {
+      const world = makeWorld({
+        loadState: () =>
+          structuredClone(stored) as unknown as OrchestratorRunState,
+      });
+      const code = await runOrchestrateCommand(
+        ['--resume', '--session', 'sess-1', '--yes'],
+        world.deps,
+      );
+      expect(code).toBe(1);
+      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.calls.run).toEqual([]);
+      expect(world.calls.merge).toEqual([]);
+    }
+  });
+
+  it('registers the manager toolset through the §40 allowlist when the run starts', async () => {
+    const registered: (readonly string[] | undefined)[] = [];
+    const world = makeWorld({
+      registerManagerLane: (tools) => {
+        registered.push(tools);
+        return registerManagerLane(tools);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // Registered exactly once, with no override — the lane's canonical set.
+    expect(registered).toHaveLength(1);
+    expect(registered[0]).toBeUndefined();
+    // And that canonical registration is exactly the §40 allowlist.
+    expect([...registerManagerLane().tools].sort()).toEqual(
+      [...MANAGER_ALLOWLIST].sort(),
+    );
+    // The worker then ran (registration is not the end of the run).
+    expect(world.prompts).toHaveLength(1);
+  });
+
+  it('refuses to start when the manager lane carries an exec tool', async () => {
+    const world = makeWorld({
+      registerManagerLane: () =>
+        registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
+    });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const text = world.lines.join('\n');
+    expect(text).toMatch(/code=manager_toolset_refused/);
+    // The named error names the offending tool.
+    expect(text).toMatch(/bash/);
+    // Fail-closed: no worktree, no worker, no merge.
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.calls.merge).toEqual([]);
+  });
+
+  it('reports a refused lane as one machine-readable envelope under --json', async () => {
+    const world = makeWorld({
+      registerManagerLane: () =>
+        registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
+    });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+        '--json',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // --json is one parseable envelope on every failure path, including this
+    // one: a machine consumer must not have to parse prose.
+    const envelope = JSON.parse(
+      world.lines[world.lines.length - 1] as string,
+    ) as {
+      ok?: boolean;
+      status?: string;
+      error?: { code?: string; message?: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('manager_toolset_refused');
+    expect(envelope.error?.message).toMatch(/bash/);
+  });
+
+  it('asserts the manager-lane trace write-free on every merge of a run', async () => {
+    // The gate stays the real one: the injected wrapper records the trace
+    // the run actually asserts over and then delegates to
+    // assertManagerZeroWrites, so a tainted trace would still throw here.
+    const asserted: string[][] = [];
+    const world = makeWorld({
+      assertManagerZeroWrites: (trace) => {
+        asserted.push([...trace]);
+        assertManagerZeroWrites(trace);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha,beta',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // One assertion per merge, over a trace that carries both halves: the
+    // merge path and the lane's own spawn/wait/collect calls.
+    expect(asserted).toHaveLength(2);
+    for (const trace of asserted) {
+      expect(trace).toContain('workspace_merge');
+      expect(trace).toContain('spawn_agent');
+      expect(trace).toContain('wait_for_agent');
+      expect(trace).toContain('collect_result');
+      // Per worker, not once per run: the lane drove TWO workers, so its
+      // own record holds two spawn → wait → collect sequences (the merge
+      // plumbing contributes one further spawn_agent of its own).
+      expect(trace.filter((call) => call === 'wait_for_agent')).toHaveLength(2);
+      expect(trace.filter((call) => call === 'collect_result')).toHaveLength(2);
+      expect(trace.filter((call) => call === 'spawn_agent')).toHaveLength(3);
+      // The whole trace is still write-free.
+      expect(() => assertManagerZeroWrites(trace)).not.toThrow();
+    }
+  });
 });

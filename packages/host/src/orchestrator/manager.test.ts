@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertManagerToolset,
+  buildManagerPlan,
   buildModeAuditEvent,
   buildModeStatusJson,
   buildOrchestratorRefusal,
@@ -14,7 +15,12 @@ import {
   MANAGER_ALLOWLIST,
   MANAGER_EXIT_WORKSPACE_UNAVAILABLE,
   MANAGER_TRADE_DOC,
+  ManagerPolicyBlockedError,
+  ManagerToolsetError,
   parseOrchestratorToggle,
+  planStepFor,
+  recordManagerLaneCall,
+  registerManagerLane,
   resolveOrchestratorMode,
   runManagerStub,
   serializeOrchestratorToggle,
@@ -224,5 +230,93 @@ describe('manager trade doc (issue #40)', () => {
     expect(typeof MANAGER_TRADE_DOC).toBe('string');
     expect(MANAGER_TRADE_DOC.trim().length).toBeGreaterThan(80);
     expect(MANAGER_TRADE_DOC).not.toMatch(/\n/);
+  });
+});
+
+describe('manager lane registration (issue #103)', () => {
+  it('registers exactly the allowlist and hands the live toolset back', () => {
+    const lane = registerManagerLane(MANAGER_ALLOWLIST);
+    expect([...lane.tools].sort()).toEqual([...MANAGER_ALLOWLIST].sort());
+    // The registration is what assertManagerToolset must accept: the
+    // allowlist set the lane actually runs with.
+    expect(() => assertManagerToolset(lane.tools)).not.toThrow();
+  });
+
+  it('registers the canonical allowlist when no toolset is supplied', () => {
+    expect(registerManagerLane().tools).toHaveLength(MANAGER_ALLOWLIST.length);
+  });
+
+  it('refuses to start a lane carrying an exec tool, naming it', () => {
+    for (const tool of EXEC_FORBIDDEN_TOOLS) {
+      expect(() => registerManagerLane([...MANAGER_ALLOWLIST, tool])).toThrow(
+        new RegExp(tool),
+      );
+    }
+    expect(() => registerManagerLane([...MANAGER_ALLOWLIST, 'bash'])).toThrow(
+      ManagerToolsetError,
+    );
+    // A refusal is not a warning: the named error carries the allowlist rule.
+    expect(() => registerManagerLane([...MANAGER_ALLOWLIST, 'bash'])).toThrow(
+      /must equal the allowlist exactly/,
+    );
+  });
+
+  it('records allowlisted lane calls and refuses exec names fail-closed', () => {
+    const spy = createManagerCallSpy();
+    recordManagerLaneCall(spy, 'spawn_agent');
+    recordManagerLaneCall(spy, 'wait_for_agent');
+    recordManagerLaneCall(spy, 'collect_result');
+    expect(spy.calls).toEqual([
+      'spawn_agent',
+      'wait_for_agent',
+      'collect_result',
+    ]);
+    expect(spy.execCalls).toEqual([]);
+    for (const tool of EXEC_FORBIDDEN_TOOLS) {
+      expect(() => recordManagerLaneCall(spy, tool)).toThrow(
+        ManagerPolicyBlockedError,
+      );
+    }
+    // The refused calls never reach the trace.
+    expect(spy.calls).toEqual([
+      'spawn_agent',
+      'wait_for_agent',
+      'collect_result',
+    ]);
+    expect(spy.execCalls).toEqual([]);
+  });
+});
+
+describe('manager plan → per-worker prompts (issue #103)', () => {
+  it('authors one plan step per worker, in agent order', () => {
+    const plan = buildManagerPlan('apply the change', ['alpha', 'beta']);
+    expect(plan.map((step) => step.agentId)).toEqual(['alpha', 'beta']);
+    expect(plan.map((step) => step.step)).toEqual([1, 2]);
+  });
+
+  it('gives every worker a prompt that differs and cites its plan step', () => {
+    const plan = buildManagerPlan('apply the change', ['alpha', 'beta']);
+    const [alpha, beta] = plan;
+    expect(alpha?.prompt).not.toBe(beta?.prompt);
+    expect(alpha?.prompt).toContain('step 1 of 2');
+    expect(beta?.prompt).toContain('step 2 of 2');
+    expect(alpha?.prompt).toContain("agent 'alpha'");
+    expect(beta?.prompt).toContain("agent 'beta'");
+    // The objective travels with every step so the worker knows the goal…
+    expect(alpha?.prompt).toContain('apply the change');
+    // …but no worker prompt is the -p text verbatim.
+    for (const step of plan) expect(step.prompt).not.toBe('apply the change');
+  });
+
+  it('is deterministic: the same objective and agents replay the same plan', () => {
+    expect(buildManagerPlan('apply the change', ['alpha', 'beta'])).toEqual(
+      buildManagerPlan('apply the change', ['alpha', 'beta']),
+    );
+  });
+
+  it('finds a worker step by agent id and reports a missing one', () => {
+    const plan = buildManagerPlan('apply the change', ['alpha']);
+    expect(planStepFor(plan, 'alpha')?.step).toBe(1);
+    expect(planStepFor(plan, 'ghost')).toBeUndefined();
   });
 });

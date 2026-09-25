@@ -1,13 +1,17 @@
 // `kubic orchestrate` (issue #76; §5.2, §9/§9.1, §44, §41.1, §78).
-// Opt-in orchestrator entry: plans N workers, spawns them in git worktrees,
-// settles/merges FIFO through the merge queue with per-agent attribution,
-// routes merge approvals to the user, and reaps. Session-scoped with
-// crash-resume: merge state persists per session, so a kill mid-run
-// re-attaches and continues (or fails closed) — merges apply strictly
-// one-at-a-time in queue order, so the tree is never half-merged. The
-// manager authors nothing: every merge passes assertManagerZeroWrites over
-// the merge-path trace first. Solo stays the default — this command never
-// falls back to solo (outside a git repo it refuses with exit 2).
+// Opt-in orchestrator entry: the manager lane registers through the §40
+// toolset allowlist (issue #103 — a lane carrying an exec tool refuses to
+// start), authors a plan whose steps become the prompt each worker actually
+// runs (never a copy of -p), spawns them in git worktrees, settles/merges
+// FIFO through the merge queue with per-agent attribution, routes merge
+// approvals to the user, and reaps. Session-scoped with crash-resume: merge
+// state persists per session, so a kill mid-run re-attaches and continues
+// (or fails closed) — merges apply strictly one-at-a-time in queue order, so
+// the tree is never half-merged, and --resume replays each worker's stored
+// plan prompt. The manager authors nothing: every merge passes
+// assertManagerZeroWrites over the merge-path trace plus the lane's own
+// spawn/wait/collect calls first. Solo stays the default — this command
+// never falls back to solo (outside a git repo it refuses with exit 2).
 // Host owns presentation + orchestration only: git, processes, and files
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
@@ -19,6 +23,14 @@ import {
   renderDag,
 } from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
+import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
+import {
+  buildManagerPlan,
+  createManagerCallSpy,
+  planStepFor,
+  recordManagerLaneCall,
+  registerManagerLane,
+} from './orchestrator/manager.js';
 import type {
   AttributedHunk,
   MergedHunk,
@@ -82,6 +94,12 @@ export interface OrchestratorRunState {
   stopped: boolean;
   blocked?: { agentId: string; oursDiff: string; theirsDiff: string };
   records: OrchestratedWorkerRecord[];
+  // The manager-authored plan (issue #103, §9.2): one step per worker,
+  // carrying the prompt that worker runs. Persisted with the run so
+  // --resume replays each worker's own prompt instead of re-deriving one
+  // shared -p. Optional: state written before #103 has none, and the resume
+  // path then derives the plan from the stored objective and agent list.
+  plan?: ManagerPlanStep[];
   // Write-ahead merge intent (issue #76 fix): set to the agent being
   // merged BEFORE the merge runs, cleared after the outcome is recorded.
   // A kill between merge success and the post-merge save leaves the
@@ -135,6 +153,20 @@ export function parseOrchestratorRunState(
       const part = hunk as Record<string, unknown>;
       if (typeof part.path !== 'string') return undefined;
       if (typeof part.hunk !== 'string') return undefined;
+    }
+  }
+  // The stored plan (issue #103) is untrusted JSON like everything else: a
+  // step that is not exactly id/step/total/prompt would reach runWorker as
+  // a non-string prompt, so anything malformed fails closed here.
+  if (value.plan !== undefined) {
+    if (!Array.isArray(value.plan)) return undefined;
+    for (const step of value.plan) {
+      if (typeof step !== 'object' || step === null) return undefined;
+      const entry = step as Record<string, unknown>;
+      if (typeof entry.agentId !== 'string') return undefined;
+      if (typeof entry.step !== 'number') return undefined;
+      if (typeof entry.total !== 'number') return undefined;
+      if (typeof entry.prompt !== 'string') return undefined;
     }
   }
   if (value.blocked !== undefined) {
@@ -280,6 +312,19 @@ export interface OrchestrateCommandDeps {
   // from the worker lifecycle layer; the host side declares only the view
   // it reads, so host keeps no implementation import (dep-lint).
   launches?: OrchestrateLaunchObservations;
+  // The manager lane's registration seam (issue #103, §40). The run calls
+  // this BEFORE it spawns anything; the lane it returns is the toolset the
+  // root runs with. Defaults to `registerManagerLane()` — the §40 allowlist
+  // — and a caller that supplies anything else with an exec tool registered
+  // makes the registration throw, so the run refuses to start (exit 1,
+  // code=manager_toolset_refused) rather than running with exec tools.
+  registerManagerLane?: (tools?: readonly string[]) => ManagerLane;
+  // The zero-writes assertion the merge path runs (issue #103, criterion 3).
+  // Defaults to the shipped `assertManagerZeroWrites`; injectable so a test
+  // can observe the exact trace the run asserts over. A wrapper that throws
+  // on a tainted trace still fails the run closed — this is the gate, not a
+  // notification.
+  assertManagerZeroWrites?: (managerCalls: readonly string[]) => void;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
   loadState?: (
     sessionId: string,
@@ -343,14 +388,34 @@ export interface OrchestrateEnvelope {
 // apply only — every entry is on MANAGER_MERGE_ALLOWLIST, so the manager
 // merges worker-produced diffs but never authors. Pinned here so the
 // zero-writes invariant is observable without running a session.
-export function managerCallsForMerge(): string[] {
+//
+// Issue #103 adds the lane's own delegation calls (`managerLaneCalls`) on
+// top: a run that reaches the merge path has already spawned, waited on and
+// collected from its workers, so the trace asserted at every merge is the
+// merge plumbing PLUS that lane trace — the manager's real call record, not
+// just the four merge-path names.
+export function managerCallsForMerge(
+  laneCalls: readonly string[] = [],
+): string[] {
   return [
     'spawn_agent',
     'workspace_diff',
     'workspace_merge',
     'workspace_apply',
+    ...laneCalls,
   ];
 }
+
+// The delegation calls the lane records as it runs a worker to completion
+// (issue #103): spawn → wait → collect is the shipped per-worker sequence,
+// every name on the §40 allowlist and none of them authoring. The merge path
+// asserts over the recorded trace, so a manager that tried to author mid-lane
+// would taint it and the merge would refuse.
+export const MANAGER_LANE_SEQUENCE = [
+  'spawn_agent',
+  'wait_for_agent',
+  'collect_result',
+] as const;
 
 interface ParsedArgs {
   prompt?: string;
@@ -445,6 +510,48 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_USAGE;
   }
   const sessionId = parsed.sessionId ?? `orch-${now()}`;
+
+  // The manager lane registers BEFORE anything spawns (issue #103, §40).
+  // Registration validates the requested toolset against the allowlist, so
+  // a lane carrying an exec tool refuses to START here — the named
+  // ManagerToolsetError becomes `manager_toolset_refused`, exit 1, with
+  // nothing created. `registerManagerLane` is also the lane the run's
+  // manager calls are attributed to.
+  const registerLane = deps.registerManagerLane ?? registerManagerLane;
+  const assertWrites = deps.assertManagerZeroWrites ?? assertManagerZeroWrites;
+  let managerLane: ManagerLane;
+  try {
+    managerLane = registerLane();
+  } catch (error) {
+    // A refused lane is a run failure like any other, so it honours the
+    // output contract: one parseable envelope under --json (the failure
+    // happens before `fail()` exists, which is why this is built inline),
+    // prose plus the named code otherwise.
+    const message = error instanceof Error ? error.message : String(error);
+    if (parsed.json) {
+      const status = statusForExit(RUN_EXIT_FAILED, 'manager_toolset_refused');
+      deps.out(
+        JSON.stringify({
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          sessionId,
+          status,
+          workers: [],
+          mergeOrder: [],
+          attribution: [],
+          graph: delegationGraphLines(sessionId, parsed.agents),
+          error: {
+            kind: status,
+            message,
+            code: 'manager_toolset_refused',
+          },
+        }),
+      );
+      return RUN_EXIT_FAILED;
+    }
+    deps.out(`error: ${message} code=manager_toolset_refused`);
+    return RUN_EXIT_FAILED;
+  }
 
   const emit = (envelope: OrchestrateEnvelope, textLines: string[]): number => {
     if (parsed.json) {
@@ -555,9 +662,50 @@ export async function runOrchestrateCommand(
       pending: [...parsed.agents],
       stopped: false,
       records: [],
+      plan: buildManagerPlan(parsed.prompt as string, parsed.agents),
     };
   }
   const prompt = parsed.prompt ?? state.prompt;
+  // The manager's plan (issue #103): one step per worker, each carrying that
+  // worker's prompt. A resumed state written before #103 (or by a caller
+  // that dropped it) re-derives the plan from the stored objective and agent
+  // list, so --resume replays per-worker prompts either way — never the
+  // shared `-p` text.
+  if (state.plan === undefined) {
+    state = { ...state, plan: buildManagerPlan(prompt, state.agents) };
+  }
+  const plan = state.plan as ManagerPlanStep[];
+  const promptForWorker = (agentId: string): string => {
+    const step = planStepFor(plan, agentId);
+    return step === undefined ? prompt : step.prompt;
+  };
+  // The lane's own call trace (issue #103): the manager drives each worker
+  // through spawn → wait → collect, and each driven worker contributes its
+  // own sequence — recorded through the allowlist-checking recorder as the
+  // worker settles, so the trace the merge path asserts over is the
+  // manager's real record of what it did. Each step must be on the lane the
+  // registration handed back; a step the lane does not register would make
+  // the trace a claim about calls the lane cannot make, so it refuses.
+  const laneSpy = createManagerCallSpy();
+  const laneCalls: string[] = [];
+  // The lane must register every step the trace will claim — checked once,
+  // before anything spawns, so a lane that cannot make these calls refuses
+  // rather than recording a trace it cannot honour.
+  for (const step of MANAGER_LANE_SEQUENCE) {
+    if (!managerLane.tools.includes(step)) {
+      return fail(
+        RUN_EXIT_FAILED,
+        'manager_toolset_refused',
+        `manager lane does not register '${step}' — the delegation trace cannot be recorded`,
+      );
+    }
+  }
+  const recordLaneSequence = (): void => {
+    for (const step of MANAGER_LANE_SEQUENCE) {
+      recordManagerLaneCall(laneSpy, step);
+      laneCalls.push(step);
+    }
+  };
   const queue = createMergeQueue();
   const scheduler = new ParallelScheduler();
   const worktrees = new Map<string, OrchestrateWorktree>();
@@ -773,11 +921,21 @@ export async function runOrchestrateCommand(
       );
     }
     try {
-      const hunks = await deps.runWorker(agentId, worktree, prompt, {
-        sessionId,
-        workerSessionId,
-      });
+      // The worker runs ITS plan step's prompt (issue #103) — never the
+      // shared `-p` text.
+      const hunks = await deps.runWorker(
+        agentId,
+        worktree,
+        promptForWorker(agentId),
+        {
+          sessionId,
+          workerSessionId,
+        },
+      );
       hunksByAgent.set(agentId, [...hunks]);
+      // The lane drove this worker to completion — its spawn → wait →
+      // collect is part of the manager's real call record (issue #103).
+      recordLaneSequence();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
@@ -845,7 +1003,10 @@ export async function runOrchestrateCommand(
       // MERGE_HEAD behind — abort it and refuse a dirty tree BEFORE the
       // merge runs, so resume never merges onto a half-merged tree.
       await deps.prepareMerge?.(agentId, worktree);
-      assertManagerZeroWrites(managerCallsForMerge());
+      // The trace holds the merge plumbing plus the lane's own recorded
+      // delegation calls (issue #103) — the manager's real call record over
+      // this run. A tainted trace throws and the merge never runs.
+      assertWrites(managerCallsForMerge(laneCalls));
       await deps.mergeBranch(agentId, worktree);
     } catch (error) {
       if (error instanceof MergeConflictError) {

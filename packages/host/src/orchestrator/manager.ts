@@ -321,6 +321,88 @@ export function runManagerStub(spy: ManagerCallSpy, plan: string[]): string[] {
   return done;
 }
 
+// Slice 3 (issue #103): the live manager lane. Registration is the gate the
+// §40 allowlist is enforced at: a lane that asks for anything but the exact
+// ten-tool set refuses to START (assertManagerToolset throws the named
+// ManagerToolsetError) rather than running with an exec tool registered.
+// Exec tools are absent by construction — the caller cannot get a lane back
+// that carries one.
+export interface ManagerLane {
+  mode: OrchestratorMode;
+  /** The tools the lane actually runs with (the §40 set, in allowlist order). */
+  tools: readonly string[];
+  /** The allowlist the registration was validated against. */
+  allowlist: readonly string[];
+}
+
+export function registerManagerLane(tools?: readonly string[]): ManagerLane {
+  const laneTools = tools === undefined ? [...MANAGER_ALLOWLIST] : [...tools];
+  assertManagerToolset(laneTools);
+  return {
+    mode: 'orchestrator',
+    tools: laneTools,
+    allowlist: [...MANAGER_ALLOWLIST],
+  };
+}
+
+// The lane's own call trace (issue #103, §9.2/§40): every lane action is
+// classified by the same fail-closed policy the lane enforces, so an exec
+// name is refused BEFORE it can reach the spy — the trace can never show a
+// call the allowlist forbids.
+export function recordManagerLaneCall(
+  spy: ManagerCallSpy,
+  toolName: string,
+): void {
+  checkManagerCall(toolName);
+  spy.record(toolName);
+}
+
+// Slice 3 (issue #103): plan → N distinct worker prompts (§9.2, §5.2).
+// The manager authors one step per worker, in agent order, and each step
+// carries its own prompt. The shape is deterministic (worker id → step →
+// prompt) so a replay — a faux provider, a --resume, a test — derives the
+// same prompts from the same objective and agent list, never a copy of -p.
+export interface ManagerPlanStep {
+  agentId: string;
+  /** 1-based position of this step in the plan. */
+  step: number;
+  /** Total steps in the plan. */
+  total: number;
+  prompt: string;
+}
+
+function planPrompt(
+  step: number,
+  total: number,
+  agentId: string,
+  objective: string,
+): string {
+  return `Plan step ${step} of ${total} for agent '${agentId}': ${objective}`;
+}
+
+export function buildManagerPlan(
+  objective: string,
+  agents: readonly string[],
+): ManagerPlanStep[] {
+  const total = agents.length;
+  return agents.map((agentId, index) => {
+    const step = index + 1;
+    return {
+      agentId,
+      step,
+      total,
+      prompt: planPrompt(step, total, agentId, objective),
+    };
+  });
+}
+
+export function planStepFor(
+  plan: readonly ManagerPlanStep[],
+  agentId: string,
+): ManagerPlanStep | undefined {
+  return plan.find((entry) => entry.agentId === agentId);
+}
+
 // Slice 2: one-paragraph trade statement (§9.3).
 export const MANAGER_TRADE_DOC =
   'Orchestrator mode trades solo directness for auditable delegation: the root becomes a pure manager with only the ten §9.2 tools (spawn, message, wait, cancel, inspect, collect, workspace diff/apply/merge, ask_user), so every change arrives as a worker-produced diff the manager can review and merge but never silently author, while solo keeps the full exec lane for fast single-agent work at the cost of that separation; choose orchestrator when parallel reviewable work matters and solo when speed and direct control matter.';

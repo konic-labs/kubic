@@ -2,11 +2,12 @@
 
 > Design ref: §5.2, §9.2, §44, §41.1, §45, §59.1 honest limits. Owner:
 > issue [#95](https://github.com/konic-labs/kubic/issues/95).
-> **Delegation model as shipped (issue #103, 2026-09-25):** the CLI process
-> is the manager, and its root lane registers the §40 toolset and authors the
-> plan whose steps become the prompts its workers run. This page describes
-> that model; the parts of §9.2 that remain unwired (role-driven prompts,
-> per-worker approvals) are named with the issues that own them.
+> **Delegation model as shipped (issue #103, 2026-09-25; roles wired by
+> #104):** the CLI process is the manager, and its root lane registers the
+> §40 toolset and authors the plan whose steps become the prompts its workers
+> run — each worker under an assigned §12 role. This page describes that
+> model; the part of §9.2 that remains unwired (per-worker approvals) is
+> named with the issue that owns it.
 
 Orchestrator is Kubic's opt-in delegation mode: `kubic orchestrate` spawns
 one worker process and one git worktree per subagent and merges what they
@@ -23,14 +24,19 @@ solo) — and `run` never delegates.
   than running with one. It then reads `--agents`, authors a plan (one step
   per worker, in agent order), creates one worktree per agent, spawns one
   child `kubic run` per agent, and settles them through the merge queue.
-- **Each worker runs its own plan step.** The manager's plan prompt for a
-  worker cites that worker's step (`step 2 of 3`) and carries the run's
-  objective; `-p` is the objective the plan is derived from, never a string
-  handed to a worker verbatim. The plan is stored with the session, so
-  `--resume` replays each worker's own prompt instead of re-deriving one
-  shared text. Role-driven prompt text (§12) is still issue
-  [#104](https://github.com/konic-labs/kubic/issues/104).
->>>>>>> feat/issue-103-manager-lane
+- **Each worker runs its own plan step, under an assigned role.** The
+  manager's plan prompt for a worker cites that worker's step (`step 2 of 3`)
+  and carries the run's objective; `-p` is the objective the plan is derived
+  from, never a string handed to a worker verbatim. Since issue
+  [#104](https://github.com/konic-labs/kubic/issues/104) each worker is also
+  assigned one of the five §12 roles and runs that role's resolved tool set:
+  the worker prompt is the role document's `## Prompt` text plus the worker's
+  step, the child `kubic run` is told `--role <name>` so its own lane
+  registers exactly the role's tools (a withheld tool is never registered —
+  absence, not approval), and the role's model default travels through the
+  existing `KUBIC_MODEL` pin. The plan is stored with the session, so
+  `--resume` replays each worker's own composed prompt instead of
+  re-deriving one shared text.
 - **The CLI commits for the worker; the worker never commits.** A worker child
   is `kubic run`, which does not run `git commit`. After a worker exits 0 the
   orchestrator stages whatever it left on its branch (`git add -A`) and commits
@@ -46,10 +52,13 @@ solo) — and `run` never delegates.
   The *worker* approval layer — requests routed to the user with opt-in
   budgets (§41) — is issue
   [#105](https://github.com/konic-labs/kubic/issues/105).
-- **Roles are not on this path.** `.kubic/roles/*.md` exist and the resolver
-  parses them, but no worker is assigned a role and no role prompt is
-  composed; role-driven prompts are issue
-  [#104](https://github.com/konic-labs/kubic/issues/104).
+- **Roles are assigned on this path.** Each worker gets one of the five §12
+  roles (issue [#104](https://github.com/konic-labs/kubic/issues/104)): the
+  role document's `## Prompt` body and the worker's plan step compose that
+  worker's prompt, and the role's resolved tool set is what the worker lane
+  registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
+  do and which tools exist on its lane; a contradictory document refuses the
+  run before anything spawns, and `kubic doctor` prints the same refusal.
 - **Conflict delegation, parallel surfacing and retained-worktree status**
   are implemented and unreachable; they are issue
   [#106](https://github.com/konic-labs/kubic/issues/106).
@@ -94,9 +103,11 @@ Merged worktrees and branches are retained as evidence — only
 One worker process plus a worktree each is the shape for parallelisable
 work across distinct areas of a repo. Each worker runs its own plan step
 derived from the objective you pass with `-p`, so an `orchestrate`
-invocation reads like "apply this change in each of these areas"; per-role
-prompt text on top of that is
-[#104](https://github.com/konic-labs/kubic/issues/104). For everything else
+invocation reads like "apply this change in each of these areas"; the
+worker's assigned role (issue
+[#104](https://github.com/konic-labs/kubic/issues/104)) adds the role
+document's own prompt text and its resolved tool set on top of that
+step. For everything else
 — and always by default — there is [solo](solo.md): one agent, in-process,
 no delegation overhead.
 

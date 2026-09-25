@@ -86,7 +86,6 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 501 | `packages/agents/src/spec.ts` | #104 | wire: role-driven worker prompts (#104) — the ONLY non-test importer is `roles/roles-data.ts` (§38.2 spawn validation + model precedence), which #104 owns and whose own acceptance criteria require this row to be removed by that issue's PR; deleting it here would force deleting #104's module and its `ROLE_MODEL_DEFAULTS` data source, so #99 re-owns the row instead of stealing the scope |
 | 133 | `packages/agents/src/task.ts` | #99 | keep: type-only contract (`AgentTask`, `TaskResources`, `WorkspaceMode`, `validateAgentTask`, …) consumed by LIVE modules through `import type` — `host/src/workers-cli.ts`, `worker/src/lifecycle/{rows,registry}.ts`, `trajectory/src/schema.ts` (its schema mirrors the fields) and `roles-data.ts` (#104). The gate walks VALUE imports, so a types-only module can never be `reachable` by its own rule; deleting it would break the typecheck of live files. Re-owned from `wire:` to a named reason because #99 could not make it reachable without inventing a value import |
 | 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
@@ -117,7 +116,6 @@ file that no longer exists, or when a row's file has become reachable
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
 | 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 128 | `packages/host/src/orchestrator/worktree/status.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
-| 144 | `packages/host/src/roles/roles-data.ts` | #104 | wire: role-driven worker prompts (#104) — `BUILTIN_ROLE_NAMES`/`ROLE_MODEL_DEFAULTS`/`spawnForRole` are the delegation-side role data; #99 wires the resolver on the solo path and leaves this row to its owner |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |

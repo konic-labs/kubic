@@ -34,6 +34,33 @@ docs and code must never imply otherwise (design §59.1).
 
 ## Contracts
 
+### Spans and the debug channel (`spans.ts` + `ops/perf/run-spans.ts`, §29/§49.3/§50)
+
+`spans.ts` is the §49.3 recorder (`SpanRecorder` over `SPAN_NAMES`), the
+§50 debug vocabulary (`DEBUG_CLASSES`, nine classes) and the transcript
+sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
+maps what the lane and the harness actually do onto it and
+`apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
+`kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
+`pi.tool.execute`, with parent linkage and per-span ms.
+
+Two destinations, both documented on the
+[commands page](../cli/commands.md#where-the-spans-go):
+
+1. **stderr, behind `kubic run --debug`** — each span close emits one
+   §50-classed line through the shared `DebugSink`. Off by default, so
+   stdout stays consumable and the exit contract is unchanged. The prod
+   default sink is stderr inside `headless-run.ts` — the composition root
+   wires nothing.
+2. **the session artifact** — the same spans are serialized to
+   `spans.jsonl` under the session directory (`<sessionsRoot>/<id>/`),
+   one JSON object per closed span. Evidence only: nothing reads it back
+   yet (aggregation is #95/#96).
+
+A span that never settles stays open (`endMs: null`) rather than being
+dropped, and a run with no spans behaves exactly as before — the wiring
+is additive by construction.
+
 ### `Handoff` (`handoff.ts`, §69–§70)
 
 A handoff carries the structured result, artifact REFERENCES (never

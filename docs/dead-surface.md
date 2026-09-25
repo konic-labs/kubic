@@ -80,6 +80,13 @@ file that no longer exists, or when a row's file has become reachable
   `approval-surface.ts`, which is the answer seat the installed policy consults
   when a challenged call is deferred — the overlay the TUI was designed around
   and the inline fallback both render from it.
+- Issue #106 executed its parallel-surfacing row: **wired**
+  `packages/host/src/orchestrator/parallel/visibility.ts` — the live
+  `kubic orchestrate` run builds the §49.1 tree line, the §50 workers-extra row
+  (running/queued/cap) and the §49.1 trajectory event for a queued spawn, so
+  the module is reachable from the binary and its row is removed rather than
+  kept. Its siblings `merge/conflicts.ts` and `worktree/status.ts` are executed
+  below as that issue lands.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -115,7 +122,6 @@ file that no longer exists, or when a row's file has become reachable
 | 151 | `packages/host/src/orchestrator/approvals/skip.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
 | 309 | `packages/host/src/orchestrator/merge/conflicts.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
-| 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 128 | `packages/host/src/orchestrator/worktree/status.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 144 | `packages/host/src/roles/roles-data.ts` | #104 | wire: role-driven worker prompts (#104) — `BUILTIN_ROLE_NAMES`/`ROLE_MODEL_DEFAULTS`/`spawnForRole` are the delegation-side role data; #99 wires the resolver on the solo path and leaves this row to its owner |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

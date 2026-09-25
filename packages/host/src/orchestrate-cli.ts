@@ -39,6 +39,15 @@ import { attributeMergedHunks } from './orchestrator/merge/attribution.js';
 import { createMergeQueue } from './orchestrator/merge/queue.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
+import type {
+  ParallelTrajectoryEvent,
+  ParallelWorkersExtra,
+} from './orchestrator/parallel/visibility.js';
+import {
+  buildParallelTrajectoryEvent,
+  buildParallelTreeLine,
+  buildParallelWorkersExtra,
+} from './orchestrator/parallel/visibility.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import {
   RUN_EXIT_APPROVAL_DENIED,
@@ -325,6 +334,19 @@ export interface OrchestrateCommandDeps {
   // on a tainted trace still fails the run closed — this is the gate, not a
   // notification.
   assertManagerZeroWrites?: (managerCalls: readonly string[]) => void;
+  // The admission surface the run consults per spawn (issue #106, §49.1/§50).
+  // Defaults to `new ParallelScheduler()` — the shipped default cap of four.
+  // Injectable because the schedule is the thing being SURFACED now: a test
+  // that wants a genuinely queued spawn hands in a scheduler whose slots are
+  // already taken, instead of asserting a bookkeeping state the sequential
+  // loop cannot produce on its own.
+  scheduler?: ParallelScheduler;
+  // Where the §49.1 trajectory record of a queued spawn goes (issue #106).
+  // Absent means the event is built and reported on the debug channel only —
+  // the CLI owns no trajectory store, so the composition root supplies the
+  // sink. Only a QUEUED admission emits one: nothing else has a parallel
+  // event to record.
+  trajectoryEvent?: (event: ParallelTrajectoryEvent) => void;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
   loadState?: (
     sessionId: string,
@@ -381,6 +403,11 @@ export interface OrchestrateEnvelope {
   // `delegationGraphLines`. Present on every envelope — a run that never
   // spawned still has a manager node, so the shape is stable for consumers.
   graph: string[];
+  // The §49.1/§50 admission surface of this run (issue #106): the running and
+  // queued counts the scheduler actually held, plus the cap they are measured
+  // against. Reported, never a gate — the shipped loop is strictly sequential,
+  // so `queued` above zero means a slot was genuinely occupied.
+  parallel?: ParallelWorkersExtra;
   error?: { kind: string; message: string; code: string };
 }
 
@@ -707,7 +734,28 @@ export async function runOrchestrateCommand(
     }
   };
   const queue = createMergeQueue();
-  const scheduler = new ParallelScheduler();
+  // The admission surface (issue #106, §49.1/§50): the scheduler was already
+  // consulted per spawn, but nothing it computed reached the operator. The
+  // counts are kept as a HIGH-WATER over the run — the most the admission
+  // layer ever held — so a run that drained every slot still reports what it
+  // reached, and `queued` above zero can only come from a slot that was
+  // genuinely occupied at the time of the request.
+  const scheduler = deps.scheduler ?? new ParallelScheduler();
+  let runningHighWater = 0;
+  let queuedHighWater = 0;
+  const observeAdmission = (): void => {
+    runningHighWater = Math.max(runningHighWater, scheduler.runningCount());
+    queuedHighWater = Math.max(queuedHighWater, scheduler.queuedCount());
+  };
+  // The workers-extra row for the surfaces (§50). `usage` is deliberately
+  // absent: a worker is a separate process whose usage rows land in its own
+  // session store, so a number this process never measured is not reported.
+  const parallelExtra = (): ParallelWorkersExtra =>
+    buildParallelWorkersExtra({
+      running: runningHighWater,
+      queued: queuedHighWater,
+      maxConcurrency: scheduler.maxConcurrency(),
+    });
   const worktrees = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
   for (const record of state.records) {
@@ -863,6 +911,10 @@ export async function runOrchestrateCommand(
       { agentId, sessionId, worktree: worktree.path },
       'autonomous',
     );
+    // The admission layer's own numbers, sampled right after the request
+    // (issue #106, §49.1/§50) — the point at which running/queued are the
+    // truth the operator was previously never shown.
+    observeAdmission();
     if (admission.outcome === 'denied') {
       const failure = await reapSpawned(spawned);
       void failure;
@@ -884,6 +936,22 @@ export async function runOrchestrateCommand(
       debug(
         `admission: worker '${agentId}' queued at position ${admission.position} despite sequential spawn — releasing and proceeding`,
       );
+      // A queued spawn is the one admission outcome that HAS a parallel
+      // event to record (issue #106, §49.1): the §49.1 tree line carries the
+      // queue depth, and the plain JSON record goes to the trajectory sink
+      // the composition root wires. `wakeups` is empty by construction here:
+      // the sequential loop releases the worker's slot only after it settles
+      // and nothing else is waiting, so the drain has nothing to admit —
+      // naming a wakeup that never happened would be a fabricated record.
+      if (deps.trajectoryEvent !== undefined) {
+        deps.trajectoryEvent(
+          buildParallelTrajectoryEvent({
+            sessionId,
+            ...parallelExtra(),
+            wakeups: [],
+          }),
+        );
+      }
     }
     // Create the worker session BEFORE spawning the child (issue #85):
     // `kubic run --session <id>` only attaches, so a child spawned without
@@ -1087,6 +1155,10 @@ export async function runOrchestrateCommand(
   const attribution = state.records.flatMap((record) =>
     attributeMergedHunks(record.hunks, record.agentId),
   );
+  // The admission surface of the whole run (issue #106): one snapshot, read
+  // by the text lines, the JSON envelope and (per queued spawn) the
+  // trajectory event, so the three can never disagree.
+  const parallel = parallelExtra();
   const perAgent = state.records
     .map((record) => `${record.agentId}=${record.hunks.length} hunk(s)`)
     .join(', ');
@@ -1104,6 +1176,16 @@ export async function runOrchestrateCommand(
     ...delegationGraphLines(sessionId, state.agents).map(
       (line) => `dag: ${line}`,
     ),
+    // §49.1/§50 (issue #106): the admission surface, measured. The counters
+    // are the high-water the scheduler held; the cap is the one it judged
+    // against. The tree line is the same snapshot in the §49.1 shape.
+    `parallel: running ${parallel.running} queued ${parallel.queued} cap ${parallel.maxConcurrency}`,
+    `tree: ${buildParallelTreeLine({
+      sessionId,
+      running: parallel.running,
+      queued: parallel.queued,
+      maxConcurrency: parallel.maxConcurrency,
+    })}`,
     `result: orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
   ];
   return emit(
@@ -1120,6 +1202,7 @@ export async function runOrchestrateCommand(
       mergeOrder: [...state.merged],
       attribution,
       graph: delegationGraphLines(sessionId, state.agents),
+      parallel,
     },
     textLines,
   );

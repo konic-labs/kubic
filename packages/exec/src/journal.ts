@@ -564,6 +564,13 @@ export function captureBaseline(
       if (info.isDirectory) {
         walk(join(dir, info.name), relPath);
       } else if (info.isFile === false) {
+        // Not a regular file: a FIFO/socket/device must never be read. A
+        // synchronous read of a named pipe blocks until a writer opens it,
+        // which would wedge baseline capture at boot with no way to time out
+        // (issue #87 follow-up: `kubic run` hung forever in such a workspace).
+        // `undefined` means the bridge did not classify it: assume regular.
+        // Skipped deliberately (biome's noUselessContinue fix deletes a bare
+        // trailing `continue` together with this rationale — do not re-add it).
       } else {
         try {
           const abs = join(dir, info.name);

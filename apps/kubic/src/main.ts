@@ -29,6 +29,10 @@ import {
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
 import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
 import {
+  cleanDepsWithDefaults,
+  runCleanCommand,
+} from '../../../packages/host/src/orchestrator/worktree/clean.js';
+import {
   loadProdAuditSecrets,
   runAuditCommand,
 } from '../../../packages/host/src/policy/audit-cli.js';
@@ -182,6 +186,17 @@ async function main(argv: string[]): Promise<number> {
       }),
     );
   }
+  if (command === 'clean') {
+    // Explicit-only disposer for retained orchestrator worktrees/branches
+    // (issue #92, §42.4/§44.1/§78): the library path owns planning and git.
+    return runCleanCommand(
+      rest,
+      cleanDepsWithDefaults({
+        env: new NodeExecutionEnv(process.cwd()),
+        out: (line: string) => console.log(line),
+      }),
+    );
+  }
   if (command === 'cost') {
     // Per-agent cost over real session stats (one aggregate row per
     // session); the task total is Σ(rows) by construction (issue #79).
@@ -268,7 +283,7 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
+    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
   );
   return 1;
 }

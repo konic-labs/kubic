@@ -42,6 +42,16 @@
   and the non-git refusal (never silently solo); 4 approval denied (the
   decider is the user — rerun with `--yes` to auto-approve). `--json`
   reports the same code in its `exitCode` field.
+- **`kubic clean`**: 0 success — including `--dry-run` (which mutates
+  nothing) and a second run over an already-clean repo
+  (`clean: nothing to prune`); 1 a hard failure (a dirty worktree without
+  `--force`, a failing branch delete, an unknown `--session`), with one
+  `error:` line per failure and nothing half-disposed (a worktree that
+  survived keeps its branch); 2 usage errors (unknown flag, missing or
+  invalid flag value, `--all` with `--session`) and the non-repo refusal
+  (`… needs a git repository … nothing was removed`, nothing touched).
+  `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
+  failures?}` and reports the same code in `exitCode`.
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown flags, bad `--session`), 5 missing session, 6 no
   reachable provider, 1 any other lane boot failure.

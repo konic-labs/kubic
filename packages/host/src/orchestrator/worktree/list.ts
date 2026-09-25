@@ -4,6 +4,7 @@
 
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { notARepoError, WorktreeError } from './errors.js';
+import { parseBranchAgent } from './naming.js';
 
 export interface WorktreeEntry {
   path: string;
@@ -46,6 +47,45 @@ export function parseWorktreePorcelain(output: string): WorktreeEntry[] {
   }
   flush();
   return entries;
+}
+
+// Retained `kubic/<agent>` branches (issue #92): the branch half of the
+// spawned set. Enumeration is namespace-only — anything outside the
+// `kubic/` prefix is never even considered for disposal.
+export async function listSpawnedBranches(
+  env: ExecutionEnv,
+  options?: { sessionId?: string },
+): Promise<string[]> {
+  const provenance: Provenance = {
+    sessionId: options?.sessionId ?? 'cli',
+    agentId: 'manager',
+    toolCallId: 'worktree-branch-list',
+    turnId: 0,
+    operation: 'worktree_branch_list',
+  };
+  const handle = env.shell.spawn(
+    'git',
+    ['branch', '--list', 'kubic/*', '--format=%(refname:short)'],
+    { provenance },
+  );
+  const done = await handle.wait();
+  if (done.exitCode !== 0) {
+    if (/not a git repository/i.test(done.stderr)) {
+      throw notARepoError(env.cwd);
+    }
+    throw new WorktreeError(
+      'list_failed',
+      `git branch --list kubic/* failed (exit ${done.exitCode}): ${done.stderr.trim().slice(0, 200)}`,
+      1,
+    );
+  }
+  const branches: string[] = [];
+  for (const raw of done.stdout.split('\n')) {
+    const branch = raw.trim();
+    if (branch === '' || parseBranchAgent(branch) === null) continue;
+    branches.push(branch);
+  }
+  return branches;
 }
 
 export async function listWorktrees(

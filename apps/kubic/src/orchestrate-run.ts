@@ -97,8 +97,15 @@ function entryScript(): string {
 // `*` file into `.kubic/.gitignore`, which ignored the roles too — verified
 // to break `git add .kubic/roles/new-role.md` — so it defers here instead.
 // Best-effort: a repo we cannot write into fails later with its own named code.
-function ensureStateIgnored(root: string): void {
-  ensureRuntimeExcludeRules({ cwd: root });
+// The outcome still reaches the debug channel — a skipped/unavailable write is
+// otherwise indistinguishable from a successful one (issue #85 review).
+function ensureStateIgnored(root: string, debug: (line: string) => void): void {
+  const outcome = ensureRuntimeExcludeRules({ cwd: root });
+  if (outcome.skipped !== undefined) {
+    debug(
+      `state ignore: skipped (${outcome.skipped})${outcome.detail === undefined ? '' : `: ${outcome.detail}`}`,
+    );
+  }
 }
 
 async function askUser(question: string): Promise<boolean> {
@@ -140,7 +147,7 @@ export async function orchestrateDepsWithDefaults(
   // a repo we cannot write into fails later with its own named code.
   if (root !== undefined) {
     try {
-      ensureStateIgnored(root);
+      ensureStateIgnored(root, debug);
     } catch {
       // Intentionally swallowed — the named failure comes from the write path.
     }
@@ -244,7 +251,7 @@ export async function orchestrateDepsWithDefaults(
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       const env = new NodeExecutionEnv(repo);
-      ensureStateIgnored(repo);
+      ensureStateIgnored(repo, debug);
       try {
         const added = await addWorktree(env, repo, agentId, {
           sessionId: 'cli',

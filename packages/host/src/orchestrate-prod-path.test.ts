@@ -10,6 +10,7 @@
 //   2. a surviving worker branch with no worktree directory must fail with
 //      a named §78 code, never a raw `spawn … ENOENT` crash.
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -312,6 +313,33 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
       '.kubic/roles/planner.md',
     ]);
     expect(added).toContain('planner.md');
+  });
+
+  it('reports a skipped exclude write on the debug channel instead of swallowing it', async () => {
+    // A repo whose exclude FILE refuses the write (read-only): the setup pass
+    // is best-effort BY DESIGN and must stay that way, but a skipped write is
+    // otherwise indistinguishable from a successful one, so the outcome must
+    // reach the debug channel (issue #85 review, diagnosability).
+    // `.git/info/exclude` exists from `git init`, so the file's own mode
+    // governs — a read-only `.git` directory alone does not block the write.
+    const root = await initRepo();
+    const sessionsRoot = scratchRoot('kubic-orch-sessions-');
+    const excludeFile = join(root, '.git', 'info', 'exclude');
+    chmodSync(excludeFile, 0o444);
+    try {
+      const lines: string[] = [];
+      await orchestrateDepsWithDefaults({
+        out: () => undefined,
+        debug: (line) => lines.push(line),
+        cwd: root,
+        sessionsRoot,
+      });
+      expect(
+        lines.some((l) => l.includes('state ignore') && l.includes('skipped')),
+      ).toBe(true);
+    } finally {
+      chmodSync(excludeFile, 0o644);
+    }
   });
 
   it('defers to the shared exclude file and never writes a .kubic/.gitignore', async () => {

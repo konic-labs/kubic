@@ -17,6 +17,10 @@ import {
   FileJournalStore,
   type JournalRetention,
 } from '../../../packages/exec/src/journal.js';
+import {
+  beginReconciliation,
+  type RunReconciliation,
+} from '../../../packages/exec/src/journal-reconcile.js';
 import { budgetToolGate } from '../../../packages/extensions/src/runtime.js';
 import type {
   BundleLoad,
@@ -96,6 +100,11 @@ export interface HeadlessRunDeps {
   // installSoloPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
   policy?: InstalledSoloPolicy;
+  // Declared out-of-scope paths for the §42.5 baseline (issue #87). Nothing
+  // in the shipped config populates this yet, so it stays absent by default —
+  // the mechanism already excludes `.git/`, `.kubic/` and `.gitignore` hits
+  // on its own.
+  reconcileOutOfScope?: string[];
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -378,6 +387,9 @@ export async function runHeadlessPrompt(
     return storeFailure(options.sessionId, error);
   }
   const id = session.metadata.id;
+  // Declared outside the try so the `finally` sweep below can reach it
+  // (issue #87): assigned once the lane's env (the workspace root) exists.
+  let reconciliation: RunReconciliation | undefined;
   try {
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);
@@ -432,6 +444,31 @@ export async function runHeadlessPrompt(
         source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
       });
+    const journal = new FileJournalStore(
+      join(root, id, 'journal'),
+      deps.journalRetention ?? {},
+    );
+    // §42.5 baseline (issue #87, §42.1 mechanism 2): captured ONCE, before
+    // the first turn, as a metadata walk (hashes only, no blobs) that skips
+    // `.git/`, `.kubic/` and `.gitignore` hits on its own. A capture failure
+    // is not a run failure — the sweep then simply has no baseline to
+    // compare against.
+    try {
+      reconciliation = beginReconciliation({
+        store: journal,
+        root: env.cwd,
+        runId: id,
+        sessionId: id,
+        agentId: 'root',
+        ...(deps.reconcileOutOfScope === undefined
+          ? {}
+          : { outOfScope: deps.reconcileOutOfScope }),
+      });
+    } catch (error) {
+      deps.debug?.(
+        `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     // Live facet consumption (issue #93): the loaded worker facet becomes a
     // real tool-wrap contribution on the solo lane's tool stack, so the
     // budget the CLI started with bounds every tool call. The contribution
@@ -448,10 +485,7 @@ export async function runHeadlessPrompt(
       env,
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(
-        join(root, id, 'journal'),
-        deps.journalRetention ?? {},
-      ),
+      journal,
       // One policy object carrying all three mechanisms (#86 + #90 + #93):
       // the classes come from the config layer when it supplies them and
       // from the documented safe default otherwise, the interceptors are
@@ -526,6 +560,22 @@ export async function runHeadlessPrompt(
   } catch (error) {
     return storeFailure(id, error);
   } finally {
+    // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
+    // turn, on every exit path (completed, guard exhaustion, deferred wait,
+    // malformed outcome, an unexpected throw). Runs BEFORE the session close
+    // so a close failure cannot skip it, and never changes the mapped
+    // result: a sweep failure is reported on the debug receipt only.
+    try {
+      reconciliation?.sweep();
+    } catch (error) {
+      try {
+        deps.debug?.(
+          `reconcile: sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } catch {
+        // A throwing debug sink must not mask the mapped result either.
+      }
+    }
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {

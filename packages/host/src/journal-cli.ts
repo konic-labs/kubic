@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
-import { journalStatus, renderLog } from '../../exec/src/journal-status.js';
+import {
+  journalStatus,
+  reconciliationSummary,
+  renderLog,
+} from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
@@ -161,15 +165,22 @@ export async function runJournalCommand(
 
   if (sub === 'log') {
     const lines = renderLog(store);
-    if (lines.length === 0) {
-      deps.out('journal is empty');
-      return 0;
-    }
+    // `--json` stays the raw entries array (the count is derivable from the
+    // `unattributed` flags there); the human path gains the summary line.
     if (rest.includes('--json')) {
       deps.out(JSON.stringify(store.entries(), null, 2));
       return 0;
     }
-    for (const line of lines) deps.out(line);
+    if (lines.length === 0) {
+      deps.out('journal is empty');
+    } else {
+      for (const line of lines) deps.out(line);
+    }
+    // Issue #87: the reconciliation count is part of `log`'s contract — it
+    // is the only surface that answers "did anything bypass the tools?"
+    // without the operator grepping for the `reconciled` marker. Printed
+    // for an empty journal too, so scripts see a stable shape.
+    deps.out(reconciliationSummary(store));
     return 0;
   }
 
@@ -177,6 +188,12 @@ export async function runJournalCommand(
     const status = journalStatus(store, root);
     deps.out(
       `entries: ${status.entries} (reversible: ${status.reversible}, non-reversible: ${status.nonReversible})`,
+    );
+    // Issue #87: unattributed entries are a subset of non-reversible ones;
+    // naming the count keeps reconciliation visible in the summary, not
+    // only in the per-entry `reconciled` marker.
+    deps.out(
+      `unattributed: ${status.unattributed} of ${status.entries} (reconciled at run end)`,
     );
     if (status.repo === null) {
       deps.out('repo: non-repo directory (journal works without git)');

@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
-import { journalStatus, renderLog } from './journal-status.js';
+import {
+  journalStatus,
+  reconciliationSummary,
+  renderLog,
+} from './journal-status.js';
 
 function seed(): FileJournalStore {
   const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
@@ -66,5 +70,35 @@ describe('journal log + status (issue #18, slice C)', () => {
     );
     const status = journalStatus(seed(), root);
     expect(status.repo?.branch).toBe('feature/nested');
+  });
+});
+
+describe('unattributed count (issue #87)', () => {
+  it('counts reconciliation finds separately in status', () => {
+    const status = journalStatus(seed(), mkdtempSync(join(tmpdir(), 'ws-')));
+    expect(status.entries).toBe(2);
+    expect(status.unattributed).toBe(1);
+  });
+
+  it('renders the count as a log summary line, keeping per-entry lines', () => {
+    const lines = renderLog(seed());
+    expect(lines).toHaveLength(2);
+    expect(reconciliationSummary(seed())).toBe(
+      'unattributed: 1 of 2 entr(ies) reconciled at run end',
+    );
+  });
+
+  it('summarizes an empty journal without inventing entries', () => {
+    const empty = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    expect(journalStatus(empty, mkdtempSync(join(tmpdir(), 'ws-')))).toEqual({
+      entries: 0,
+      reversible: 0,
+      nonReversible: 0,
+      unattributed: 0,
+      repo: null,
+    });
+    expect(reconciliationSummary(empty)).toBe(
+      'unattributed: 0 of 0 entr(ies) reconciled at run end',
+    );
   });
 });

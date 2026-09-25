@@ -10,6 +10,7 @@
 // only the fields the tree reads are typed here. `usage`/`fault` events
 // are ignored.
 
+import { sanitizeLaneText } from './lane-cells.js';
 import type { Component, MouseRegionHandler } from './tui-boundary.js';
 import { MouseRegion } from './tui-boundary.js';
 
@@ -80,19 +81,25 @@ export function applyLaneEvent(
     case 'tool-start': {
       if (typeof event.toolCallId !== 'string') return;
       if (typeof event.toolName !== 'string') return;
+      // Issue #88, third-pass review finding: the name is model-supplied
+      // (pi-agent-core copies it straight off the assistant's tool call), so
+      // it carries the same control sequences as any other lane content and
+      // must not reach the frame raw. Sanitized HERE, at the tree's ingress,
+      // so every render path downstream is covered by one choke point.
+      const toolName = sanitizeLaneText(event.toolName);
       const at = now();
       const existing = state.tools.find((t) => t.id === event.toolCallId);
       if (existing === undefined) {
         state.tools.push({
           id: event.toolCallId,
-          name: event.toolName,
+          name: toolName,
           done: false,
           error: false,
           durationMs: undefined,
           startedAt: at,
         });
       } else {
-        existing.name = event.toolName;
+        existing.name = toolName;
         existing.done = false;
         existing.error = false;
         existing.durationMs = undefined;
@@ -103,12 +110,13 @@ export function applyLaneEvent(
     case 'tool-end': {
       if (typeof event.toolCallId !== 'string') return;
       if (typeof event.toolName !== 'string') return;
+      const toolName = sanitizeLaneText(event.toolName);
       const at = now();
       const existing = state.tools.find((t) => t.id === event.toolCallId);
       if (existing === undefined) {
         state.tools.push({
           id: event.toolCallId,
-          name: event.toolName,
+          name: toolName,
           done: true,
           error: event.isError === true,
           durationMs: undefined,

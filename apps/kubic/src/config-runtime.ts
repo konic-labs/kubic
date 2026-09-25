@@ -30,6 +30,7 @@ import {
   type RuntimeConfig,
 } from '../../../packages/host/src/config/runtime.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
+import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
 
 export interface CliConfigResult {
@@ -165,6 +166,22 @@ export function runtimeRunDeps(result: CliConfigResult): {
       runtime.journal.maxAgeMs === undefined
         ? {}
         : { maxAgeMs: runtime.journal.maxAgeMs },
+  };
+}
+
+// The manager lane's approval snapshot for the orchestrator path (issue #106,
+// §45.2), over the SAME config load every other consumer uses: a delegated
+// conflict resolver is spawned under exactly this policy, so the `route`,
+// `autoApprove` and `maxPendingMs` here must be the ones in force — never a
+// second default invented at the spawn site. `sessionScoped` and
+// `requireJustification` are lane-local concerns (§41) and are not part of the
+// snapshot the resolver carries.
+export function approvalSnapshotFrom(runtime: RuntimeConfig): ApprovalSnapshot {
+  const policy = runtime.approvals.policy;
+  return {
+    route: policy.route,
+    autoApprove: [...policy.autoApprove],
+    maxPendingMs: policy.maxPendingMs,
   };
 }
 

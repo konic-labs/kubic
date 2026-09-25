@@ -112,7 +112,7 @@ if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
 
-**The delegation model, as shipped (issues #95, #103, #104).** The CLI process is the
+**The delegation model, as shipped (issues #95, #103, #104, #106).** The CLI process is the
 manager: it registers the manager lane's toolset through the §40 allowlist
 before anything spawns, derives a plan from `-p` (one step per worker), creates
 one worktree per agent, spawns one child `kubic run` per agent and merges what
@@ -131,9 +131,7 @@ prints. The plan persists with the session, so `--resume` replays each
 worker's own composed prompt rather than re-deriving one shared text.
 Per-worker approval routing with opt-in budgets (§41)
 remains a named future issue: [#105](https://github.com/konic-labs/kubic/issues/105)
-(per-worker approvals), alongside [#106](https://github.com/konic-labs/kubic/issues/106)
-(conflict delegation, parallel surfacing, retained-worktree status). Neither
-runs today; nothing below depends on it.
+(per-worker approvals). It does not run today; nothing below depends on it.
 
 The lane registration is a gate, not a label: the run asks for exactly the §40
 toolset and a lane carrying anything else — an exec tool above all — refuses to
@@ -149,6 +147,20 @@ bounds a run today: this loop is strictly sequential, so it admits, awaits and
 releases one worker at a time and never approaches the cap. The design
 reconciliation is recorded in
 [design drift](../design-drift.md).
+
+The admission numbers the layer holds are **reported, not hidden** (issue #106):
+every run prints one `parallel: running <n> queued <n> cap <n>` line and one
+§49.1 `tree: <session> parallel <running>/<cap>` line, and both counters travel
+in the `--json` envelope as `parallel: { running, queued, maxConcurrency }`.
+The counters are the *high-water* the scheduler actually reached over the run,
+and the cap is the scheduler's own resolution of it — so `queued` above zero
+means a slot really was occupied when the spawn was requested, never a number
+computed for display. A spawn the admission layer queues also emits one §49.1
+trajectory record (`{ kind: "parallel", sessionId, running, queued,
+maxConcurrency, wakeups }`, appended to
+`<root>/.kubic/orchestrator/<session>.trajectory.jsonl`). Because the shipped
+loop is sequential, `queued` stays 0 on a default run — the lines exist so the
+cap is visible when it *is* reached, not to claim it gates anything.
 
 The manager creates each worker's session before spawning its child. A
 child `kubic run --session <id>` only *attaches* — it never creates — so
@@ -168,18 +180,39 @@ recreating it, so a killed run keeps one chain per worker.
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. |
 
 Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
 per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
 `dag:` lines (`node …`/`edge …`) for the delegation graph, one
-`merged:`/`reaped:` line per worker, then `result:`. Failures print
-`error: <message> code=<code>` and exit 1 (session creation, spawn, worker,
-merge, reap and manager-toolset failures), 2 (usage, non-git refusal), or 4
-(approval denied) — see [exit codes](exit-codes.md). A merge conflict aborts
-first
-(never a half-merged tree), stops the queue, and preserves the remaining
-candidates.
+`merged:`/`reaped:` line per worker, then the admission surface and the
+retained evidence, then `result:`. Two lines carry the §49.1/§50 admission
+numbers of the run — `parallel: running <n> queued <n> cap <n>` and
+`tree: <session> parallel <running>/<cap>` (with ` (queued <n>)` appended when
+anything was queued). One `retained: <agent> branch=<b> worktree=<path>
+clean=<bool>` line follows per retained worktree, and a dirty one names the
+files that made it dirty (`staged=[…] unstaged=[…] untracked=[…]`, each list
+omitted when empty); a status that could not be read prints `clean=unknown`
+with the reason, never a false `clean=true`. The block closes with
+`retain: worktree + branch kept as evidence — only \`kubic clean\` disposes`.
+
+Failures print `error: <message> code=<code>` and exit 1 (session creation,
+spawn, worker, merge, reap and manager-toolset failures), 2 (usage, non-git
+refusal), or 4 (approval denied) — see [exit codes](exit-codes.md).
+
+**A genuine merge conflict is delegated, never resolved by the manager**
+(issue #106, §45.2). The merge aborts first (never a half-merged tree); the
+manager then builds the writer-resolver spec — both diffs, the conflicted file
+list, the implementer tool set, the settlement constraints — from **its own
+live approval snapshot** (the hash is recomputed and the snapshot frozen inside
+the spec, so there is no second policy and no bypass) and spawns a resolver
+child in that worker's worktree. Only a successful **re-merge** settles the
+candidate: a resolver's report is never taken as the settlement. If the
+resolver cannot settle it, if the re-merge conflicts again, or if the run had
+no snapshot or no resolver seam, the queue stops exactly as before
+(`code=merge_conflict`, exit 1) and the remaining candidates are preserved —
+the failure line names the resolver outcome so a delegation attempt is never
+indistinguishable from no attempt at all.
 
 ## `kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]`
 

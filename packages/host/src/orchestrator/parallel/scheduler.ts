@@ -101,6 +101,15 @@ export class ParallelScheduler {
     return this.queue.length;
   }
 
+  // The resolved admission cap this scheduler judges against (issue #106,
+  // §49.1/§50): a surface that reports running/queued must report the cap
+  // they are measured against, and it must be the SAME resolution the
+  // admission decision used — a second computation at the caller would be
+  // free to drift. Pure getter, no state change.
+  maxConcurrency(): number {
+    return resolveMaxConcurrency(this.limits, this.sessionOverride);
+  }
+
   pendingIds(): string[] {
     return this.queue.map((entry) => entry.request.agentId);
   }

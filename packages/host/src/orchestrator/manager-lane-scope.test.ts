@@ -273,9 +273,6 @@ describe('orchestrator scope is honest (issue #95)', () => {
       'packages/host/src/orchestrator/approvals/request.ts',
       'packages/host/src/orchestrator/approvals/routing.ts',
       'packages/host/src/orchestrator/approvals/skip.ts',
-      'packages/host/src/orchestrator/merge/conflicts.ts',
-      'packages/host/src/orchestrator/parallel/visibility.ts',
-      'packages/host/src/orchestrator/worktree/status.ts',
     ];
     for (const path of deadNow) {
       const row = rows.get(path);

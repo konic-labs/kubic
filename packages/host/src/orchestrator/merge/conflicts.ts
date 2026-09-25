@@ -306,3 +306,39 @@ export function dispatchResolverSpec(
   assertReviewerReadonly(reviewerTools);
   return buildResolverSpec(input);
 }
+
+// The reviewer's read-only set, re-exported here so a caller on the merge
+// path names ONE import for the §45.2 sequence (inspect read-only, then
+// dispatch the writer) instead of reaching into review.js and risking a
+// second, drifting list. Same frozen list, never a copy.
+export { REVIEWER_READONLY_TOOLS } from './review.js';
+
+// What a delegated resolution actually is (issue #106, §45.2): the manager
+// never edits, so the conflict is handed to a spawned resolver that reworks
+// the conflicted tree inside the worker's OWN worktree, under the spec above.
+// `prompt` is the resolver's instruction text — settlement constraints and
+// the conflicted file list, never a transcript (§25.2/§69).
+export interface ResolverRequest {
+  agentId: string;
+  worktree: { path: string; branch: string };
+  spec: ResolverSpawnSpec;
+  prompt: string;
+}
+
+// The resolver's prompt: derived from the spec alone, so the text a resolver
+// receives cannot describe anything the spec did not carry.
+export function resolverPromptFor(spec: ResolverSpawnSpec): string {
+  const files =
+    spec.conflict.files.length === 0
+      ? '(no file headers in either diff)'
+      : spec.conflict.files.join(', ');
+  return [
+    `Resolve the merge conflict left by worker '${spec.conflict.agentId}' in this worktree.`,
+    `Conflicted files: ${files}.`,
+    ...spec.constraints.map((constraint) => `Constraint: ${constraint}`),
+    spec.role === 'implementer'
+      ? 'You have the implementer tool set: rework the tree, commit on this branch, and stop.'
+      : 'You have the debugger tool set: rework the tree, commit on this branch, and stop.',
+    'Both sides are attached: the manager never resolves a conflict itself.',
+  ].join('\n');
+}

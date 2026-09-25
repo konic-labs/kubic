@@ -16,8 +16,11 @@ file that no longer exists, or when a row's file has become reachable
 - Ledger counts only move down, or move with a named justification for a new
   intentionally-kept seam. No `TODO`/`FIXME` marks dead code: this file is
   the single place that tracks it.
-- The counts below were computed on `main@1e41191`. `#102` itself owns the
-  22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
+- The counts below were computed on `main@1e41191`; rows for files that later
+  became reachable are removed as the owning issue lands (issue #92 wired
+  `clean.ts`, `confinement.ts`, `list.ts` and `remove.ts`; its row for
+  `worktree/index.ts` stands — that barrel is still dead). `#102` itself owns
+  the 22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
   clusters belong to the sibling issues named in each row.
 
 | LOC | file | owner | disposition |
@@ -90,12 +93,8 @@ file that no longer exists, or when a row's file has become reachable
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
 | 49 | `packages/host/src/orchestrator/parallel/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
 | 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 228 | `packages/host/src/orchestrator/worktree/clean.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
-| 78 | `packages/host/src/orchestrator/worktree/confinement.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
-| 63 | `packages/host/src/orchestrator/worktree/index.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
-| 78 | `packages/host/src/orchestrator/worktree/list.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
-| 86 | `packages/host/src/orchestrator/worktree/remove.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
 | 128 | `packages/host/src/orchestrator/worktree/status.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 63 | `packages/host/src/orchestrator/worktree/index.ts` | #92 | delete: dead barrel over the worktree modules (issue #92 wired its siblings, not the barrel) |
 | 5 | `packages/host/src/policy/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
 | 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
 | 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |

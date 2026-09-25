@@ -480,7 +480,6 @@ export function captureBaseline(
         // which would wedge baseline capture at boot with no way to time out
         // (issue #87 follow-up: `kubic run` hung forever in such a workspace).
         // `undefined` means the bridge did not classify it: assume regular.
-        continue;
       } else {
         try {
           const text = bridge.readTextFile(join(dir, info.name));

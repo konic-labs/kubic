@@ -132,9 +132,10 @@ The default agent set is **two** (`worker-1,worker-2`, D12) and the run
 spawns them **one after another** — the CLI's loop creates the worktree,
 session and child process for each agent in turn, so two workers do not
 overlap in wall-clock time. §45's "default concurrency is 4" describes the
-admission layer's cap (`ParallelScheduler`, default 4), which starts to
-matter as soon as `--agents` names more workers than can be admitted; the
-design reconciliation is recorded in
+admission layer's cap (`ParallelScheduler`, default 4), which is **not** what
+bounds a run today: this loop is strictly sequential, so it admits, awaits and
+releases one worker at a time and never approaches the cap. The design
+reconciliation is recorded in
 [design drift](../design-drift.md).
 
 The manager creates each worker's session before spawning its child. A
@@ -155,10 +156,11 @@ recreating it, so a killed run keeps one chain per worker.
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, optional `error` with a machine-readable `code`). |
+| `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. |
 
 Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
-per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, one
+per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, the
+`dag:` lines (`node …`/`edge …`) for the delegation graph, one
 `merged:`/`reaped:` line per worker, then `result:`. Failures print
 `error: <message> code=<code>` and exit 1 (session creation, spawn, worker,
 merge, and reap failures), 2 (usage, non-git refusal), or 4 (approval

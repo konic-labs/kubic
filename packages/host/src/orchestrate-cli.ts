@@ -467,6 +467,12 @@ export async function runOrchestrateCommand(
       OrchestrateEnvelope,
       'workers' | 'mergeOrder' | 'attribution'
     >,
+    // The agents the envelope should describe. Defaults to the parsed list,
+    // which is right for the pre-state failures (usage/non-git refusals) —
+    // but a resume run has no -p/--agents, so its parsed list is the CLI
+    // default and the graph would name workers that are not in the run while
+    // `workers` described the stored session (review finding F5).
+    graphAgents?: readonly string[],
   ): number => {
     const status = statusForExit(exitCode, code);
     return emit(
@@ -478,9 +484,7 @@ export async function runOrchestrateCommand(
         workers: partial?.workers ?? [],
         mergeOrder: partial?.mergeOrder ?? [],
         attribution: partial?.attribution ?? [],
-        // Parsed agents, never `state`: `fail` is reachable before the run
-        // state exists (usage/non-git refusals), so it must not read it.
-        graph: delegationGraphLines(sessionId, parsed.agents),
+        graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
       },
       [`session: ${sessionId}`],
@@ -535,6 +539,9 @@ export async function runOrchestrateCommand(
             attributeMergedHunks(record.hunks, record.agentId),
           ),
         },
+        // The stored session's agents: workers above describe this run, so
+        // the graph must too (review finding F5).
+        resumed.agents,
       );
     }
     state = resumed;
@@ -719,7 +726,16 @@ export async function runOrchestrateCommand(
       );
     }
     if (admission.outcome === 'queued') {
-      debug(`queued: worker '${agentId}' at position ${admission.position}`);
+      // Review finding F2: this loop is strictly sequential — it awaits each
+      // worker before requesting the next admission — so concurrency is 1 and
+      // no slot is ever contended. A `queued` outcome can therefore only come
+      // from bookkeeping that was never released, and reporting it would tell
+      // an operator that a cap is gating the run when nothing is. The slot is
+      // released as soon as the worker settles (below), so the admission layer
+      // stays truthful if the loop ever becomes concurrent.
+      debug(
+        `admission: worker '${agentId}' queued at position ${admission.position} despite sequential spawn — releasing and proceeding`,
+      );
     }
     // Create the worker session BEFORE spawning the child (issue #85):
     // `kubic run --session <id>` only attaches, so a child spawned without
@@ -783,6 +799,11 @@ export async function runOrchestrateCommand(
       );
     }
     queue.enqueue({ agentId, branch: worktree.branch });
+    // Release the admission slot now that this worker has settled (review
+    // finding F2: `complete` was never called, so `running` grew unbounded and
+    // every worker past the cap was reported queued — a signal that could not
+    // be true for a loop that awaits each worker before requesting the next).
+    scheduler.complete(agentId);
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
   }
 

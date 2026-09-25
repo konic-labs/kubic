@@ -590,8 +590,9 @@ export async function orchestrateDepsWithDefaults(
       }
       await launched.reap().catch(() => undefined);
       persistWorkerRowsNow();
-      // The worker authors (sole committer on its branch); the manager
-      // never stages or commits — see assertManagerZeroWrites.
+      // The worker does not commit; the orchestrator stages what it left and
+      // commits on its behalf. The invariant is that the manager lane never
+      // authors the change content (see assertManagerZeroWrites).
       const status = await runGit(
         worktree.path,
         ['status', '--porcelain=v1'],

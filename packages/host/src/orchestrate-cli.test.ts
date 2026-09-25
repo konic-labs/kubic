@@ -397,6 +397,78 @@ describe('orchestrate crash-resume (issue #76)', () => {
     expect(world.calls.run).toEqual([]);
     expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
   });
+
+  it('reports the resumed session agents in the envelope graph, not the CLI defaults', async () => {
+    // Review finding F5: `fail` built the DAG from `parsed.agents`, which on a
+    // resume run (no -p/--agents) is the command-line default list — so the
+    // envelope named workers that are not in the run while `workers` described
+    // the stored session. The graph must agree with `workers`.
+    const stopped: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-g',
+      prompt: 'demo',
+      agents: ['a1', 'a2', 'a3'],
+      merged: ['a1'],
+      pending: ['a2', 'a3'],
+      stopped: true,
+      blocked: { agentId: 'a2', oursDiff: 'o', theirsDiff: 't' },
+      records: [
+        {
+          agentId: 'a1',
+          branch: 'kubic/a1',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stopped) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-g', '--json'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines);
+    const workers = envelope.workers as { agentId: string }[];
+    const graph = envelope.graph as string[];
+    const nodes = graph.filter((line) => line.startsWith('node '));
+    // The stored agents, and nothing else — no worker-1/worker-2 defaults.
+    expect(nodes).toEqual([
+      'node sess-g',
+      'node sess-g-a1',
+      'node sess-g-a2',
+      'node sess-g-a3',
+    ]);
+    for (const worker of workers) {
+      expect(graph).toContain(`node sess-g-${worker.agentId}`);
+    }
+  });
+
+  it('does not report a phantom queue: a settled worker releases its admission slot', async () => {
+    // Review finding F2: `scheduler.complete()` was never called and
+    // `requestSpawn` ran sequentially, so with six agents and the default cap
+    // of four the fifth and sixth were reported `queued: ... at position N` —
+    // while they spawned and merged immediately anyway. A false signal: the
+    // docs claimed the cap "starts to matter" above four, and an operator
+    // reading `queued:` believes a limit is gating the run.
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      ['-p', 'do it', '--agents', 'a1,a2,a3,a4,a5,a6'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.merge).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
+    // Concurrency is 1 (the loop awaits each worker before the next request),
+    // so no slot is ever contended: a queued report can only come from stale
+    // bookkeeping, never from a real cap.
+    expect(world.debugLines.filter((l) => l.includes('queued'))).toEqual([]);
+    expect(world.calls.order.filter((l) => l.startsWith('run:'))).toEqual([
+      'run:a1',
+      'run:a2',
+      'run:a3',
+      'run:a4',
+      'run:a5',
+      'run:a6',
+    ]);
+  });
 });
 
 describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => {

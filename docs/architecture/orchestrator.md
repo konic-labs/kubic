@@ -22,10 +22,15 @@ solo) — and `run` never delegates.
 - **Every worker runs the same prompt.** `-p` is handed to each child
   verbatim. Worker prompts may not differ today; per-worker prompts derived
   from a plan are issue [#103](https://github.com/konic-labs/kubic/issues/103).
-- **Workers author, the CLI merges.** Each worker is the sole committer on
-  its own branch; the orchestrator never stages or commits. Every merge
-  passes `assertManagerZeroWrites` over the merge-path trace, and merges are
-  the only write the orchestrator performs on the main tree.
+- **The CLI commits for the worker; the worker never commits.** A worker child
+  is `kubic run`, which does not run `git commit`. After a worker exits 0 the
+  orchestrator stages whatever it left on its branch (`git add -A`) and commits
+  it under `kubic-worker` provenance, then merges. The invariant that holds is
+  about *authorship of the change content*, not about who types `git commit`:
+  the manager lane never authors what goes into a worker's change — it does not
+  write, edit or apply files, and `assertManagerZeroWrites` proves the recorded
+  merge-path trace stays write-free. Merges are the only write the orchestrator
+  performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
   auto-approves; a headless run with no decider denies closed (exit 4).
   The *worker* approval layer — requests routed to the user with opt-in
@@ -53,9 +58,11 @@ The shipped default is **two** agents (`worker-1,worker-2`, D12) and the run
 spawns them **one after another** — the loop creates a worktree, session and
 child process per agent in turn, so two workers do not overlap in wall-clock
 time. The admission layer that gates concurrency (default cap 4) is the
-`ParallelScheduler`; raising the run's agent count with `--agents` is what
-makes the queue and its limits observable. §45 says four concurrent
-subagents and D12 is amended to two; see
+`ParallelScheduler`; it is registered and consulted per spawn, but it is **not**
+what bounds a run today — the loop is strictly sequential and releases each
+worker's slot before requesting the next, so it admits one at a time and never
+approaches the cap. §45 says four concurrent subagents and D12 is amended to
+two; see
 [design drift](../design-drift.md) for the reconciliation.
 
 ## Worktrees are scheduling, not isolation

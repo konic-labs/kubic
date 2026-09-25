@@ -16,10 +16,19 @@
 //   the draft, reporting `cancel` separately from `quit` so the root can
 //   abort an in-flight turn before it exits.
 //
+// Issue #96 adds the §17 always-inspectable pair as a panel row between the
+// transcript and the status bar: `Ctrl-O` opens the current run's diff (the
+// selected tool call's effects) and `Ctrl-R` opens the session journal; the
+// same key closes its panel again. Journal rows arrive through
+// `setJournalChanges` — sanitized at ingress by view-panel.ts — so the
+// content of a tool's files never reaches a render function raw.
+//
 // Key map (the shipped loop; docs/cli/commands.md mirrors it):
 //   Enter            submit the draft
 //   Ctrl-J, Shift+Enter, `\`+Enter   newline (multi-line entry)
 //   Ctrl-T           toggle the tree
+//   Ctrl-O           toggle the diff panel (this run's changes)
+//   Ctrl-R           toggle the journal panel (the whole session)
 //   Ctrl-C           cancel the in-flight turn; quit when idle (a second
 //                    Ctrl-C during a turn also quits)
 //   Esc              quit
@@ -38,8 +47,20 @@ import { createTranscriptView, type TranscriptView } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
 import { parseKey } from './tui-boundary.js';
+import {
+  DiffPanel,
+  type JournalChangeLike,
+  JournalPanel,
+  type PanelMode,
+} from './view-panel.js';
 
-export type { LaneEntryLike, LaneEventLike, Viewport };
+export type {
+  JournalChangeLike,
+  LaneEntryLike,
+  LaneEventLike,
+  PanelMode,
+  Viewport,
+};
 
 export interface TuiAppSeed {
   readonly sessionId: string;
@@ -103,6 +124,20 @@ export interface TuiApp {
   setBusy(busy: boolean): void;
   isBusy(): boolean;
   setEditorFooter(text: string): void;
+  // Issue #96: the §17 inspectable pair.
+  setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
+  setJournalFilter(filter: JournalFilterLike): void;
+  setDiffToolCall(toolCallId: string | null): void;
+  panelMode(): PanelMode;
+  openPanel(mode: PanelMode): void;
+}
+
+// Structural mirror of journal-view's JournalFilter (kept local so the app's
+// public surface does not re-export another module's type name for callers
+// that only pass a filter through).
+export interface JournalFilterLike {
+  readonly path?: string;
+  readonly agent?: string;
 }
 
 // The layout's fourth row is one component (issue #22 owns arrangement
@@ -155,11 +190,26 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const status = new StatusBar(barState);
   const editor = new PromptEditor();
   const editorRow = new EditorRow(editor);
+  // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
+  // the layout hides the row entirely while the mode is 'closed', so a
+  // keypress never leaves blank space behind.
+  const diffPanel = new DiffPanel();
+  const journalPanel = new JournalPanel();
+  let mode: PanelMode = 'closed';
+  const panelBody: Component = {
+    render: (width: number): string[] =>
+      mode === 'diff' ? diffPanel.render(width) : journalPanel.render(width),
+    invalidate: (): void => {
+      diffPanel.invalidate();
+      journalPanel.invalidate();
+    },
+  };
   const root = buildLayoutRoot({
     tree,
     transcript: transcript.component,
     status,
     editor: editorRow,
+    panel: { component: panelBody, isOpen: () => mode !== 'closed' },
   });
   let busy = false;
   let revision = 0;
@@ -203,12 +253,34 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #96: Ctrl-O / Ctrl-R toggle the §17 inspectable pair. Both are
+      // free of pi-tui's own bindings (probed: editor bindings claim
+      // a/b/c/d/e/f/g/j/k/u/w/y, the alt-screen claims the arrows, home/end,
+      // page keys and ctrl+shift+*), and both are classified through the same
+      // seam as every other global key.
+      if (keyId === 'ctrl+o') {
+        mode = mode === 'diff' ? 'closed' : 'diff';
+        return { quit: false, consumed: true, cancel: false };
+      }
+      if (keyId === 'ctrl+r') {
+        mode = mode === 'journal' ? 'closed' : 'journal';
+        return { quit: false, consumed: true, cancel: false };
+      }
       editor.handleInput(data);
       return { quit: false, consumed: true, cancel: false };
     },
     finalDocument: (width: number): string[] => root.render(width),
     applyLaneEvent: (event: LaneEventLike): void => {
       tree.update(event);
+      // The diff panel follows the run: a tool call that starts or ends is
+      // what "the current run's changes" means, so the panel's default
+      // selection tracks it (an explicit setDiffToolCall still wins).
+      if (
+        (event.type === 'tool-start' || event.type === 'tool-end') &&
+        typeof event.toolCallId === 'string'
+      ) {
+        diffPanel.followToolCall(event.toolCallId);
+      }
     },
     applyLaneEntries: (entries: ReadonlyArray<LaneEntryLike>): void => {
       // The revision counter makes every apply a fresh snapshot: the
@@ -236,6 +308,20 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
       editorRow.setFooter(text);
+    },
+    setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
+      diffPanel.setChanges(rows);
+      journalPanel.setChanges(rows);
+    },
+    setJournalFilter: (filter: JournalFilterLike): void => {
+      journalPanel.setFilter(filter);
+    },
+    setDiffToolCall: (toolCallId: string | null): void => {
+      diffPanel.setToolCall(toolCallId);
+    },
+    panelMode: (): PanelMode => mode,
+    openPanel: (next: PanelMode): void => {
+      mode = next;
     },
   };
 }

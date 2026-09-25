@@ -47,6 +47,11 @@ file that no longer exists, or when a row's file has become reachable
   reachable now that the composition root emits the no-isolation notice on
   `run` (stderr before the first turn) and `tui` (editor footer), so the row
   is removed rather than kept.
+- Issue #96 executed two of its three rows: `packages/tui/src/diff-view.ts`
+  and `journal-view.ts` are now reached from the binary through
+  `view-panel.ts` → `tui-app.ts` (the `Ctrl-O` diff panel and the `Ctrl-R`
+  journal panel), so their rows are removed. `approval-view.ts` keeps its row
+  until the overlay's answer seat lands.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -99,9 +104,7 @@ file that no longer exists, or when a row's file has become reachable
 | 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
 | 410 | `packages/tui/src/approval-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 5 | `packages/tui/src/components.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 175 | `packages/tui/src/diff-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 6 | `packages/tui/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 93 | `packages/tui/src/journal-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 5 | `packages/worker/src/approval-client.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

@@ -15,6 +15,7 @@
 // honoured key is a silent no-op.
 
 import { join } from 'node:path';
+import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
@@ -22,6 +23,10 @@ import {
   beginReconciliation,
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
+import {
+  type InstalledSoloPolicy,
+  installSoloPolicy,
+} from '../../../packages/host/src/approvals.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   mapCaughtErrorToTerminus,
@@ -110,6 +115,18 @@ export interface TuiRunDeps {
 export interface TuiRunOptions {
   sessionsRoot?: string;
   env?: NodeExecutionEnv;
+  // Config-sourced permission classes (issue #90): the TUI is a
+  // config-consuming command, so it takes the same projection `kubic run`
+  // does. Absent means the documented SOLO_DEFAULTS.
+  classes?: PermissionClasses;
+  // Issue #86: the config layer's own record of where the classes came from
+  // ('default' when nothing configured them). Absent means 'default'.
+  policySource?: 'config' | 'default';
+  // The installed-policy seat (issue #86): the same derivation the headless
+  // runner installs. Absent means the shipped default (classes above +
+  // destructive/network/confine guards + the approval ask); tests inject a
+  // variant. `kubic tui` drives the same lane, so it takes the same policy.
+  policy?: InstalledSoloPolicy;
   // Model registry injection (issue #87): the same seam `runHeadlessPrompt`
   // takes as `models`, so the reconciliation tests can boot the REAL path
   // hermetically with faux models. Absent means the assembled prod catalog.
@@ -177,6 +194,19 @@ export async function bootTuiLane(
     const models = options.models ?? assembled.models;
     const model = selectModel(models);
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
+    // Installed policy (issue #86): `kubic tui` drives the same solo lane as
+    // `kubic run`, so it installs the same policy — one derivation
+    // (host/approvals.installSoloPolicy), which is also what `doctor`
+    // reports. Without this the interactive path would be the unprotected
+    // one, which is the defect this issue exists to close.
+    const installed =
+      options.policy ??
+      installSoloPolicy({
+        workspace: env.cwd,
+        ...(options.classes === undefined ? {} : { classes: options.classes }),
+        source: options.policySource ?? 'default',
+        sessionDir: join(root, id),
+      });
     const solo = await bootSoloLane({
       session,
       models,
@@ -185,6 +215,15 @@ export async function bootTuiLane(
       sessionId: id,
       agentId: 'root',
       journal,
+      // The same installed policy `kubic run` boots with (issue #86): one
+      // derivation, so the interactive path is not the unprotected one.
+      policy: {
+        classes: installed.classes,
+        interceptors: installed.interceptors,
+        ...(installed.contributions.length === 0
+          ? {}
+          : { contributions: installed.contributions }),
+      },
     });
     return {
       sessionId: id,
@@ -211,11 +250,22 @@ export async function bootTuiLane(
 
 export function tuiDepsWithDefaults(provided: {
   out: (line: string) => void;
+  // Config projections (issues #86, #90): the TUI installs the same policy
+  // the headless runner does. Absent means the documented safe default.
+  classes?: PermissionClasses;
+  policySource?: 'config' | 'default';
+  policy?: InstalledSoloPolicy;
 }): TuiRunDeps {
+  const { classes, policySource, policy } = provided;
   return {
     ...provided,
     createTerminal: () => new ProcessTerminal(),
-    bootLane: (sessionId?: string) => bootTuiLane(sessionId),
+    bootLane: (sessionId?: string) =>
+      bootTuiLane(sessionId, {
+        ...(classes === undefined ? {} : { classes }),
+        ...(policySource === undefined ? {} : { policySource }),
+        ...(policy === undefined ? {} : { policy }),
+      }),
   };
 }
 

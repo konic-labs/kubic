@@ -58,11 +58,16 @@ export interface DoctorReport {
 
 // Provider probe input mirrors CustomProviderSpec (models-config.ts)
 // plus reachability — set by an injected faux prober, never by dialing.
+// `dialled` (issue #86) is the honesty switch: absent/false means the
+// provider was only LISTED (registered in the catalog, never contacted),
+// and the printed line says so. A probe that really contacted the provider
+// sets it true, and only then may the line claim a dial.
 export interface ProviderProbe {
   id: string;
   reachable: boolean;
   detail?: string;
   models?: string[];
+  dialled?: boolean;
 }
 
 export interface DepProbe {
@@ -76,11 +81,91 @@ export interface DoctorDeps {
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
+  // The INSTALLED policy (issue #86; §40.3, §41.4) — the same posture object
+  // the lane booted with, so the line cannot print a posture the run does
+  // not enforce. Absent (legacy callers/tests): no installed-policy check,
+  // the existing matrix is unchanged.
+  installedPolicy?: () => InstalledPolicyPosture;
   // First-party extension posture (issue #80): structural input so host
   // never imports the extensions package — the composition root maps the
   // real startup probe onto this shape. Absent (tests, unwired callers):
   // no extension check, the legacy matrix is unchanged.
   probeExtensions?: () => ExtensionPostureInput;
+}
+
+// The installed posture, described once in host/approvals.ts. Host owns the
+// derivation (it is the module that also owns the approval service); doctor
+// only renders it, which is why this import is type-only plus a structural
+// re-declaration here — the value comes in through `installedPolicy`.
+export interface InstalledPolicyPosture {
+  source: 'config' | 'default';
+  route: 'ask-user' | 'deny';
+  classes: {
+    filesystem: string;
+    shell: boolean | string;
+    network: string;
+    git: boolean | string;
+    credentials: string;
+  };
+  allowlist: string[];
+  interceptors: string[];
+  sessionScoped: boolean;
+  maxPendingMs: number;
+  fullAccess: boolean;
+}
+
+function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
+  const base = { id: 'policy:installed', label: 'policy installed' };
+  // §40.3: what doctor prints must be what the lane enforces. The posture
+  // carries both halves, so a contradiction is detectable from the object
+  // itself — an empty allowlist is a real posture (filesystem none), a
+  // missing guard list is not.
+  if (posture.interceptors.length === 0) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail:
+        'installed policy declares no interceptors — nothing would guard a destructive command',
+    };
+  }
+  if (
+    posture.route === 'ask-user' &&
+    !posture.interceptors.includes('approval')
+  ) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail:
+        'installed policy routes to ask-user without an approval interceptor — a challenged call could never be decided',
+    };
+  }
+  if (posture.classes.credentials !== 'none' && posture.fullAccess) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail:
+        'installed policy combines credential access with full-access posture — contradictory install',
+    };
+  }
+  return {
+    ...base,
+    status: 'pass',
+    reason: 'ok',
+    detail:
+      `source=${posture.source}, filesystem=${posture.classes.filesystem}, ` +
+      `shell=${String(posture.classes.shell)}, network=${posture.classes.network}, ` +
+      `git=${String(posture.classes.git)}, credentials=${posture.classes.credentials}; ` +
+      `${posture.allowlist.length} allowed tool(s): ${posture.allowlist.join(', ')}; ` +
+      `guards: ${posture.interceptors.join(', ')}; route=${posture.route}` +
+      `${
+        posture.fullAccess
+          ? '; FULL ACCESS recorded for this session — every guard stands down for challenged calls'
+          : ''
+      }`,
+  };
 }
 
 // Structural posture from the extensions startup probe
@@ -95,14 +180,19 @@ export interface ExtensionPostureInput {
 
 function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
   return probes.map((probe) => {
+    const count = probe.models?.length ?? 0;
+    // Honesty (issue #86; §59.1): a provider that was never dialled must not
+    // be reported as reachable. The default line states listed-vs-dialled
+    // plainly; a probe that supplies its own detail keeps it (that is where
+    // a real dial's outcome, or a real failure, is named).
+    const listed = probe.dialled === true ? 'dialled' : 'listed, not dialled';
     if (probe.reachable) {
-      const count = probe.models?.length ?? 0;
       return {
         id: `provider:${probe.id}`,
         label: `provider ${probe.id}`,
         status: 'pass' as DoctorStatus,
         reason: 'ok' as DoctorReason,
-        detail: probe.detail ?? `reachable, ${count} model(s) registered`,
+        detail: probe.detail ?? `${listed}, ${count} model(s) registered`,
       };
     }
     return {
@@ -110,7 +200,7 @@ function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
       label: `provider ${probe.id}`,
       status: 'fail' as DoctorStatus,
       reason: 'provider-down' as DoctorReason,
-      detail: probe.detail ?? 'unreachable',
+      detail: probe.detail ?? `${listed} — unreachable`,
     };
   });
 }
@@ -273,6 +363,23 @@ export function collectDoctorChecks(
       reason: 'policy-mismatch',
       detail: probeMessage(error),
     });
+  }
+  // Installed policy (issue #86): opt-in via the injected probe — absent
+  // means no check, so legacy matrices are unchanged. A throwing probe
+  // becomes a failing check, never a crash: an unenforceable install must
+  // fail the matrix with policy-mismatch, never pass quietly.
+  if (deps.installedPolicy !== undefined) {
+    try {
+      checks.push(installedPolicyCheck(deps.installedPolicy()));
+    } catch (error) {
+      checks.push({
+        id: 'policy:installed',
+        label: 'policy installed',
+        status: 'fail',
+        reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
   }
   // First-party extension posture (issue #80): opt-in via the injected
   // probe — absent means no check (legacy matrices are unchanged). A

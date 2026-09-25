@@ -148,16 +148,56 @@ export function runtimeModelPin(
 export function runtimeRunDeps(result: CliConfigResult): {
   policyClasses?: PermissionClasses;
   journalRetention?: JournalRetention;
+  // Issue #86: where the classes came from, per the config layer's own
+  // record. Threaded to the run path so the posture the lane installs and
+  // the posture `doctor` prints carry the SAME source (§40.3) — a config
+  // that sets only, say, `[journal]` still runs the documented defaults and
+  // must not be reported as operator-configured classes.
+  policySource: 'config' | 'default';
 } {
   const runtime = result.runtime;
-  if (runtime === undefined) return {};
+  if (runtime === undefined) return { policySource: 'default' };
   return {
     policyClasses: { ...runtime.permissions.classes },
+    policySource:
+      runtime.permissions.source === 'defaults' ? 'default' : 'config',
     journalRetention:
       runtime.journal.maxAgeMs === undefined
         ? {}
         : { maxAgeMs: runtime.journal.maxAgeMs },
   };
+}
+
+// Installed-policy projection (issue #86): what `doctor` reports and what the
+// `run`/`tui` installs read, over the SAME config load the run path uses.
+//
+// `source` is the honesty switch, taken from the config layer's own record
+// (runtime.permissions.source) rather than from the shape of the object: a
+// config-less install yields SOLO_DEFAULTS through validateClasses, so
+// "classes are present" does NOT mean "the operator configured them". Only a
+// real layer (file/env/cli) makes it 'config'.
+export function installedPolicyDeps(result: CliConfigResult): {
+  classes?: PermissionClasses;
+  source: 'config' | 'default';
+} {
+  const { policyClasses, policySource } = runtimeRunDeps(result);
+  return {
+    ...(policySource === 'config' && policyClasses !== undefined
+      ? { classes: policyClasses }
+      : {}),
+    source: policySource,
+  };
+}
+
+// The projection `doctor` and the `tui` path read, over the SAME config load
+// `kubic run` uses. Absent config → absent classes → installSoloPolicy's
+// documented SOLO_DEFAULTS, which is exactly what a config-less run installs,
+// so doctor's line and the lane's posture are the same object (§40.3).
+export function installedPolicyClasses(result: CliConfigResult): {
+  classes?: PermissionClasses;
+} {
+  const { classes } = installedPolicyDeps(result);
+  return classes === undefined ? {} : { classes };
 }
 
 // `kubic doctor` config probe: the same load the rest of the process uses,

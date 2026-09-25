@@ -47,6 +47,12 @@ export interface RunReconciliationOptions {
   agentId: string;
   /** Caller-declared out-of-scope paths (§35), excluded from both walks. */
   outOfScope?: string[];
+  /**
+   * Walk notices the operator should see (issue #107): a very large file being
+   * hashed at boot, or a bridge that cannot read ranges so the bound is off.
+   * The headless runner routes this to its debug channel.
+   */
+  onNotice?: (detail: string) => void;
   /** Clock seam for deterministic entry timestamps. */
   now?: () => number;
 }
@@ -74,8 +80,13 @@ export function beginReconciliation(
     );
   }
   const dir = dirname(options.store.indexPath);
-  const baselineOptions: BaselineOptions =
-    options.outOfScope === undefined ? {} : { outOfScope: options.outOfScope };
+  const baselineOptions: BaselineOptions = {};
+  if (options.outOfScope !== undefined) {
+    baselineOptions.outOfScope = options.outOfScope;
+  }
+  if (options.onNotice !== undefined) {
+    baselineOptions.onNotice = options.onNotice;
+  }
   const baseline = captureBaseline(options.root, baselineOptions);
   saveBaseline(dir, options.runId, baseline);
   const now = options.now ?? Date.now;

@@ -514,6 +514,10 @@ export async function runHeadlessPrompt(
         runId: id,
         sessionId: id,
         agentId: 'root',
+        // #107 review follow-up: a very large file (or a bridge without ranged
+        // reads) is named on the existing debug channel rather than silently
+        // costing its size at boot.
+        onNotice: (detail: string) => deps.debug?.(`reconcile: ${detail}`),
         ...(deps.reconcileOutOfScope === undefined
           ? {}
           : { outOfScope: deps.reconcileOutOfScope }),

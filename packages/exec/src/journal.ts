@@ -19,6 +19,15 @@ export const LARGE_FILE_BYTES = 64 * 1024;
 // Chunk size for streamed hashing (issue #107): peak memory is one chunk, never
 // the file size. A file at or under this is read in a single call.
 export const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
+// Above this apparent size the walk NAMES the file rather than hashing it in
+// silence (issue #107 scope item 2; review follow-up). The posture is
+// deliberately "hashed streaming anyway, but reported": skipping the file
+// would make a change to it invisible to the journal — the one thing a change
+// journal must never do — while a sparse or genuinely huge file costs its
+// apparent size in boot I/O (measured: a 4 GiB-apparent sparse file streamed
+// ~4 GiB of zeros in 8475ms, memory bounded). Naming it is what turns
+// unbounded work into a visible cost instead of a silent one.
+export const HASH_NOTICE_BYTES = 256 * 1024 * 1024;
 // Default size bound: the journal can never grow past this without an
 // explicit override. No default age bound — age pruning is opt-in via
 // retention config / `kubic clean` (issue #18's CLI).
@@ -91,17 +100,39 @@ export function sha256HexOfFile(
   bridge: FileBridge,
   path: string,
   size: number,
+  onUnbounded?: (detail: string) => void,
 ): string {
   const readRange = bridge.readFileRange?.bind(bridge);
-  if (readRange === undefined || size <= HASH_CHUNK_BYTES) {
+  if (readRange === undefined) {
+    // Silence was the option the issue ruled out. Every production bridge
+    // supplies the method, so this is a partial double or a future adapter —
+    // but an unlogged revert to whole-file reads cannot be detected in the
+    // field, so it is reported through the caller's receipt hook.
+    onUnbounded?.(
+      `bounded hashing unavailable for ${path} (${size} bytes): the file bridge does not implement readFileRange — reading it whole`,
+    );
     return sha256Hex(bridge.readTextFile(path));
   }
-  const decoder = new TextDecoder('utf-8');
+  if (size <= HASH_CHUNK_BYTES) {
+    return sha256Hex(bridge.readTextFile(path));
+  }
+  // `ignoreBOM: true` is load-bearing, not a stylistic choice. The default
+  // decoder STRIPS a leading U+FEFF while `readFileSync(path, 'utf8')` keeps
+  // it, so without this flag a BOM-prefixed file above the chunk size hashed
+  // differently from the pre-change code — measured: 8MiB with a BOM diverged
+  // while the no-BOM control matched. The consequence was the exact failure
+  // this bound must not cause: a baseline written by the older build swept by
+  // this one appends a spurious unattributed write, and a tool-authored change
+  // gets a duplicate entry shadowing it. A BOM-prefixed CSV/JSON export is all
+  // it takes, nothing malicious.
+  const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
   const hash = createHash('sha256');
   let offset = 0;
   while (offset < size) {
     const end = Math.min(offset + HASH_CHUNK_BYTES, size);
-    const chunk = decoder.decode(readRange(path, offset, end), { stream: true });
+    const chunk = decoder.decode(readRange(path, offset, end), {
+      stream: true,
+    });
     if (chunk !== '') hash.update(chunk, 'utf8');
     offset = end;
   }
@@ -387,6 +418,14 @@ export interface BaselineOptions {
    * a module-level monkeypatch.
    */
   bridge?: FileBridge;
+  /**
+   * Report a walk condition the operator should know about (issue #107 review
+   * follow-up). Used for the one case that used to be silent: a bridge without
+   * `readFileRange` reverts to whole-file reads, so a file larger than
+   * `HASH_CHUNK_BYTES` costs its size at boot. Production bridges always
+   * implement it; the hook exists so the fallback can never be invisible.
+   */
+  onNotice?: (detail: string) => void;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -525,16 +564,22 @@ export function captureBaseline(
       if (info.isDirectory) {
         walk(join(dir, info.name), relPath);
       } else if (info.isFile === false) {
-        // Not a regular file: a FIFO/socket/device must never be read. A
-        // synchronous read of a named pipe blocks until a writer opens it,
-        // which would wedge baseline capture at boot with no way to time out
-        // (issue #87 follow-up: `kubic run` hung forever in such a workspace).
-        // `undefined` means the bridge did not classify it: assume regular.
-        continue;
       } else {
         try {
           const abs = join(dir, info.name);
-          baseline[relPath] = sha256HexOfFile(bridge, abs, info.size);
+          if (info.size > HASH_NOTICE_BYTES) {
+            // Hashed anyway (a skipped file would hide real changes) but named,
+            // so an operator can see why boot took as long as it did.
+            options.onNotice?.(
+              `hashing a very large file: ${relPath} (${info.size} bytes) — boot reads its full apparent size`,
+            );
+          }
+          baseline[relPath] = sha256HexOfFile(
+            bridge,
+            abs,
+            info.size,
+            options.onNotice,
+          );
         } catch {
           // Vanished mid-walk: reconcile treats it as a delete.
         }
@@ -653,7 +698,12 @@ export function reconcile(
   ctx: ReconcileContext,
   options: BaselineOptions = {},
 ): number {
-  const bridge = createNodeFileBridge('/');
+  // Same read seam as captureBaseline (review finding): the hash honoured
+  // `options.bridge` but this after-content read used the module-level node
+  // bridge, so an injected double observed only half the walk — and a test
+  // proved a bound production did not fully have. One bridge for the whole
+  // reconcile now.
+  const bridge = options.bridge ?? createNodeFileBridge('/');
   const current = captureBaseline(root, options);
   const latest = new Map<string, { afterHash: string | null }>();
   for (const e of store.entries()) {

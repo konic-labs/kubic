@@ -162,8 +162,11 @@ export async function bootTuiLane(
       : await attachSession(store, sessionId, context);
   const id = session.metadata.id;
   // §42.5 baseline + end-of-run sweep (issue #87): the TUI's run end is its
-  // close — quit, SIGINT, EOF — so the sweep rides the same single-shot
-  // `close` the boot hands the loop. Assigned inside the try below.
+  // close — quit, SIGINT, EOF — so the sweep rides that `close`. There is no
+  // closed-latch: idempotence comes from `reconcile`'s per-path after-hash
+  // comparison, so a second close on an unchanged tree appends nothing, while
+  // a mutation landing between two closes IS appended (pinned by the exec
+  // suite). Assigned inside the try below.
   let reconciliation: RunReconciliation | undefined;
   const close = async (): Promise<void> => {
     try {

@@ -77,7 +77,7 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
     expect(statusOut.join('\n')).toContain('unattributed: 1 of 1');
   });
 
-  it('sweeps once: a second close appends nothing more', async () => {
+  it('appends nothing on a second close over an unchanged tree', async () => {
     const sessionsRoot = tmpRoot('reconcile-tui-once-');
     const workspace = tmpRoot('ws-tui-once-');
     writeFileSync(join(workspace, 'file.txt'), 'v1\n');

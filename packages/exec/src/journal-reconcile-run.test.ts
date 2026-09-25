@@ -4,11 +4,13 @@
 // capture ONCE at lane boot, persist the hashes beside the session journal,
 // sweep ONCE at run end.
 // RED: packages/exec/src/journal-reconcile.ts does not exist yet.
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -182,5 +184,66 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     expect(run.sweep()).toBe(1);
     expect(run.sweep()).toBe(0);
     expect(store.entries()).toHaveLength(1);
+  });
+
+  // A named pipe blocks `readFileSync` until a writer opens it, so capturing
+  // a baseline over a workspace holding one wedges the run at boot forever —
+  // not even a test timeout fires, because the block is synchronous. The walk
+  // must treat a special file as "not journalable" and keep going.
+  it('does not block on a named pipe in the workspace (regression)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ws-fifo-'));
+    writeFileSync(join(root, 'keep.txt'), 'v1\n');
+    execFileSync('mkfifo', [join(root, 'pipe')]);
+    const store = journalStore();
+    const run = beginReconciliation({
+      root,
+      store,
+      runId: 'sess-fifo',
+      sessionId: 'sess-fifo',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    // The regular file is journaled; the pipe is skipped, not read.
+    expect(Object.keys(run.baseline)).toEqual(['keep.txt']);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // The docs used to promise unattributed entries are ALWAYS non-reversible
+  // and exit 2. They are not: `readBefore` serves any entry whose `beforeHash`
+  // resolves to a stored blob, and the sweep sets `beforeHash` from the
+  // baseline. When an earlier tool entry in the same run already stored that
+  // pre-image, undo CAN restore it — and must, rather than refusing.
+  it('reports a sweep entry reversible when a pre-image was stored earlier (regression)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ws-preimage-'));
+    writeFileSync(join(root, 'f.txt'), 'v1-boot\n');
+    const store = journalStore();
+    const run = beginReconciliation({
+      root,
+      store,
+      runId: 'sess-pre',
+      sessionId: 'sess-pre',
+      agentId: 'root',
+      now: () => NOW,
+    });
+    // The `write` tool rewrites it, storing the v1-boot pre-image.
+    store.append({
+      path: 'f.txt',
+      op: 'write',
+      before: 'v1-boot\n',
+      after: 'v2-tool\n',
+      bytesDelta: 0,
+      sessionId: 'sess-pre',
+      agentId: 'root',
+      toolCallId: 't1',
+      timestamp: NOW,
+    });
+    // An external writer changes it again; the sweep attributes that to nobody.
+    writeFileSync(join(root, 'f.txt'), 'v3-external\n');
+    expect(run.sweep()).toBe(1);
+    const sweepEntry = store.entries().find((e) => e.unattributed === true);
+    expect(sweepEntry).toBeDefined();
+    // The pre-image resolves, so this entry is reversible in fact.
+    expect(store.readBefore(sweepEntry as never)).toBe('v1-boot\n');
+    rmSync(root, { recursive: true, force: true });
   });
 });

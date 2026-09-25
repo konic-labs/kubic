@@ -35,10 +35,13 @@ export interface JournalStatus {
   reversible: number;
   nonReversible: number;
   // Reconciliation finds (issue #87): entries an end-of-run sweep appended
-  // because nothing intercepted their change. Always non-reversible — the
-  // baseline holds hashes, never before-content — so this is a subset of
-  // `nonReversible`, surfaced on its own because it is the only evidence
-  // of work that bypassed every Kubic operation.
+  // because nothing intercepted their change. Usually non-reversible — the
+  // baseline holds hashes, never before-content — but NOT a subset of
+  // `nonReversible`: when an earlier attributed entry in the same run stored
+  // the pre-image for that path, `readBefore` resolves and undo can restore
+  // it (pinned by journal-reconcile-run.test.ts). Surfaced on its own
+  // because it is the only evidence of work that bypassed every Kubic
+  // operation.
   unattributed: number;
   repo: RepoState | null;
 }

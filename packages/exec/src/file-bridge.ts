@@ -24,6 +24,15 @@ export interface BridgeFileInfo {
   path: string;
   isDirectory: boolean;
   isSymbolicLink: boolean;
+  /**
+   * True only for regular files. False for FIFOs, sockets and device nodes,
+   * which must never be read: a synchronous read of a named pipe blocks until
+   * a writer opens it (issue #87 follow-up — a FIFO in the workspace wedged
+   * baseline capture at boot, and no test timeout can fire on a sync block).
+   * Optional so existing fake bridges stay valid; `undefined` means "assume a
+   * regular file", which is what a synthetic entry intends.
+   */
+  isFile?: boolean;
   size: number;
   mtimeMs: number;
 }
@@ -61,6 +70,7 @@ function infoOf(abs: string): BridgeFileInfo {
     path: abs,
     isDirectory: stat.isDirectory(),
     isSymbolicLink: stat.isSymbolicLink(),
+    isFile: stat.isFile(),
     size: stat.size,
     mtimeMs: stat.mtimeMs,
   };

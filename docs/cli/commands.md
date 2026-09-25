@@ -339,10 +339,12 @@ composition paths therefore capture a **baseline** when the lane boots and
   journaled) and anything the root `.gitignore` matches; caller-declared
   out-of-scope paths are honoured when supplied.
 - Before-content is unknowable for these finds — the baseline holds hashes,
-  not copies — so they are recorded **hashes only**: `kubic diff` badges them
-  `[unattributed, non-reversible]` and `kubic undo` skips them naming the path
+  not copies — so they are recorded **hashes only** and the badge is
+  `[unattributed, non-reversible]`: `kubic undo` skips them naming the path
   (`non-reversible (skipped): <p>`), exiting **2** without writing. The sweep
-  never invents a pre-image.
+  never invents a pre-image. If an earlier attributed entry in the same run
+  already stored that path's pre-image, the entry *is* reversible and `undo`
+  restores it — the badge then reads `[unattributed]` alone.
 - Cost is bounded: unchanged files cost one hash and no blob; a sweep that
   finds nothing appends nothing.
 - Fail-open: a baseline or sweep failure is reported on the debug receipt and

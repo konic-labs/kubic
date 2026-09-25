@@ -474,11 +474,17 @@ export function captureBaseline(
       if (isIgnored(rules, relPath, info.isDirectory)) continue;
       if (info.isDirectory) {
         walk(join(dir, info.name), relPath);
+      } else if (info.isFile === false) {
+        // Not a regular file: a FIFO/socket/device must never be read. A
+        // synchronous read of a named pipe blocks until a writer opens it,
+        // which would wedge baseline capture at boot with no way to time out
+        // (issue #87 follow-up: `kubic run` hung forever in such a workspace).
+        // `undefined` means the bridge did not classify it: assume regular.
+        continue;
       } else {
         try {
-          baseline[relPath] = sha256Hex(
-            bridge.readTextFile(join(dir, info.name)),
-          );
+          const text = bridge.readTextFile(join(dir, info.name));
+          baseline[relPath] = sha256Hex(text);
         } catch {
           // Vanished mid-walk: reconcile treats it as a delete.
         }

@@ -47,7 +47,6 @@ import {
   openSessionStore,
   SessionAttachError,
 } from '../../../packages/worker/src/lane/session-store.js';
-import { LIFECYCLE_BUDGETS_MS } from '../../../packages/worker/src/lifecycle/budgets.js';
 import type { WorkerFailure } from '../../../packages/worker/src/lifecycle/launch.js';
 import { launchWorker } from '../../../packages/worker/src/lifecycle/launch.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
@@ -57,7 +56,6 @@ import {
 } from '../../../packages/worker/src/lifecycle/rows.js';
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
-import type { WorkerStatus } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import { loadExtensionStartup } from './extension-startup.js';
 

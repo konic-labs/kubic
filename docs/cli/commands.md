@@ -112,21 +112,28 @@ if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
 
-**The delegation model, as shipped (issues #95, #103).** The CLI process is the
+**The delegation model, as shipped (issues #95, #103, #104).** The CLI process is the
 manager: it registers the manager lane's toolset through the §40 allowlist
 before anything spawns, derives a plan from `-p` (one step per worker), creates
 one worktree per agent, spawns one child `kubic run` per agent and merges what
-they commit. **Each worker runs its own plan step**: the prompt a child receives
-cites that worker's step (`Plan step 2 of 2 for agent 'beta': …`) and carries
-the objective — `-p` is the objective the plan is derived from, never copied to
-a worker verbatim. The plan persists with the session, so `--resume` replays
-each worker's own prompt rather than re-deriving one shared text. Role-driven
-prompt text (§12) and per-worker approval routing with opt-in budgets (§41)
-remain named future issues: [#104](https://github.com/konic-labs/kubic/issues/104)
-(role-driven prompts), [#105](https://github.com/konic-labs/kubic/issues/105)
-(per-worker approvals), [#106](https://github.com/konic-labs/kubic/issues/106)
-(conflict delegation, parallel surfacing, retained-worktree status). None of
-them runs today; nothing below depends on them.
+they commit. **Each worker runs its own plan step under an assigned role**: the
+prompt a child receives cites that worker's step (`Plan step 2 of 2 for agent
+'beta': …`), carries the objective, and opens with the `## Prompt` text of the
+role that worker was assigned — `-p` is the objective the plan is derived from,
+never copied to a worker verbatim. The role also decides the worker's lane: the
+child is told `--role <name>` and registers exactly that role's resolved tool
+set, so a tool the role does not hold is never registered (absence, not
+approval, withholds it), and the role's model default travels through the
+existing `KUBIC_MODEL` pin. A contradictory role document (or one with no
+`## Prompt` section) refuses the run with the resolver's named reason under
+`code=role_refused` before anything spawns — the same refusal `kubic doctor`
+prints. The plan persists with the session, so `--resume` replays each
+worker's own composed prompt rather than re-deriving one shared text.
+Per-worker approval routing with opt-in budgets (§41)
+remains a named future issue: [#105](https://github.com/konic-labs/kubic/issues/105)
+(per-worker approvals), alongside [#106](https://github.com/konic-labs/kubic/issues/106)
+(conflict delegation, parallel surfacing, retained-worktree status). Neither
+runs today; nothing below depends on it.
 
 The lane registration is a gate, not a label: the run asks for exactly the §40
 toolset and a lane carrying anything else — an exec tool above all — refuses to

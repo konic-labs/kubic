@@ -1,15 +1,19 @@
-// First-party bundle posture (issue #80; §33 skills). SCOPE: the on-disk
-// bundle under skills/budget is probed through the #37 trust gates from
-// `kubic doctor` only (the extension:bundle check) — run/tui/orchestrate
-// never call this probe and run bare, by design until persistence lands.
-// This module is a posture check, not a startup gate: the manifest is
-// data (validated, never executed), the factory stays compiled-in
-// first-party code. All bundle services provide local-only —
+// First-party bundle posture + startup loading (issues #80, #93; §33 skills
+// loading, §32 facets/services). SCOPE: the on-disk bundle under skills/budget
+// is resolved through the #37 trust gates by ONE loader — loadFirstPartyBundle
+// — which backs both surfaces:
+//   - the startup gate: `run`, `tui`, and `orchestrate` load it at
+//     composition-root boot (solo and manager lanes alike) and refuse to run
+//     bare — a missing/unreadable/refused bundle throws
+//     ExtensionStartupError, never a silent no-op;
+//   - the posture projection: `kubic doctor` reports the SAME object's
+//     loaded/refused counts (no second probe, so counts cannot drift).
+// The manifest is data (validated, never executed); the factory stays
+// compiled-in first-party code. All bundle services provide local-only —
 // v1 has no remote extension resolution, so the remote-truthiness gate is
-// live on the real registry. Removing the bundle dir fails closed with
-// ExtensionStartupError, never a silent no-op. File access is injected
-// (a structural subset of the exec FileBridge) — this module never
-// imports node:fs (I/O confinement, §9).
+// live on the real registry. File access is injected (a structural subset of
+// the exec FileBridge) — this module never imports node:fs (I/O confinement,
+// §9).
 
 import type { BudgetLimits } from './bundles/budget/contract.js';
 import { BUDGET_SERVICE } from './bundles/budget/contract.js';
@@ -57,6 +61,21 @@ export interface ExtensionPosture {
   detail: string;
 }
 
+// The full loading result: the posture (what doctor reports) plus the live
+// objects the startup gate hands down — the registry holding the loaded
+// services, the limits the bundle pinned, and the loader's own registered
+// names. ONE loading implementation backs both probeFirstPartyPosture and
+// the startup gate (issue #93), so doctor's counts cannot drift from what
+// actually loaded.
+export interface BundleLoad extends ExtensionPosture {
+  registry: ServiceRegistry;
+  limits: BudgetLimits;
+  /** ExtensionLoader.registered after the load — empty when nothing registered. */
+  registered: string[];
+  /** Rendered tui-facet status for the loaded limits. */
+  statusText: string;
+}
+
 export const FIRST_PARTY_BUNDLE_NAME = 'kubic/budget';
 export const BUNDLE_MANIFEST_FILE = 'manifest.json';
 // Upward-walk bound: 4 levels covers both shipped layouts exactly (src:
@@ -87,7 +106,7 @@ function resolveBundleDir(anchorDir: string, files: BundleDirFiles): string {
     if (isDir) return candidate;
   }
   throw new ExtensionStartupError(
-    `extension bundle dir missing: "skills/budget" not found from ${JSON.stringify(anchorDir)} (first-party bundle ${FIRST_PARTY_BUNDLE_NAME} unavailable — failing the doctor posture, never a silent skip)`,
+    `extension bundle dir missing: "skills/budget" not found from ${JSON.stringify(anchorDir)} (first-party bundle ${FIRST_PARTY_BUNDLE_NAME} unavailable — refusing startup, never a silent skip)`,
   );
 }
 
@@ -176,47 +195,45 @@ function isManifestShape(value: unknown): value is ExtensionManifest {
   );
 }
 
-// Posture probe: performs the synchronous load (manifest → assertFirstParty
-// → loader.register → factory setup → local provide → use round-trip) plus
-// the two live bypass attempts (owned-path traversal, truthy remote flag).
-// Never throws: every failure is data (ok:false + detail), so doctor can
-// report it. A bypass that is unexpectedly ADMITTED fails the posture —
-// the #37 hardening regressing must turn doctor red, not silent.
-export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
+// Shared loading core (issue #93): resolve the bundle dir, read+pin-check the
+// manifest, gate it through assertFirstParty, register it on a real
+// ExtensionLoader, and ACTIVATE it on the loader's documented path
+// (activateAll: factory setup → awaited onActivate → the three flush
+// stages). Used by BOTH the doctor posture probe and the startup gate — one
+// implementation, so reported counts cannot drift from what loaded.
+// Never throws: every failure is data.
+export async function loadFirstPartyBundle(
+  opts: PostureOptions,
+): Promise<BundleLoad> {
   const refused: RefusedAttempt[] = [];
+  const empty = (detail: string): BundleLoad => ({
+    ok: false,
+    loaded: [],
+    refused,
+    detail,
+    registry: new ServiceRegistry(),
+    limits: opts.limits ?? {},
+    registered: [],
+    statusText: '',
+  });
   let bundleDir: string;
   try {
     bundleDir = resolveBundleDir(opts.anchorDir, opts.files);
   } catch (error) {
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: startupMessage(error),
-    };
+    return empty(startupMessage(error));
   }
   let manifest: ExtensionManifest;
   try {
     manifest = readManifest(opts.files, bundleDir);
   } catch (error) {
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: startupMessage(error),
-    };
+    return empty(startupMessage(error));
   }
   try {
     assertFirstParty(manifest, opts.trust);
   } catch (error) {
     const reason = startupMessage(error);
     refused.push({ attempt: `manifest:${manifest.name}`, reason });
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension bundle refused: ${reason}`,
-    };
+    return empty(`extension bundle refused: ${reason}`);
   }
   // Pin resolution runs AFTER the trust gates so gate violations keep
   // their gate errors (third-party, owned-path): the pin catches what
@@ -231,46 +248,32 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
   } catch (error) {
     const reason = startupMessage(error);
     refused.push({ attempt: `pin:${manifest.name}`, reason });
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: reason,
-    };
+    return empty(reason);
   }
   const loader = new ExtensionLoader(opts.trust);
-  const bundle = createBudgetBundle(opts.limits ?? {});
+  const limits: BudgetLimits = opts.limits ?? {};
+  const bundle = createBudgetBundle(limits);
   try {
     loader.register(manifest, bundle.factory);
   } catch (error) {
     const reason = startupMessage(error);
     refused.push({ attempt: `register:${manifest.name}`, reason });
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension bundle refused: ${reason}`,
-    };
+    return empty(`extension bundle refused: ${reason}`);
   }
   const registry = new ServiceRegistry();
   const provided: string[] = [];
-  const handle = bundle.factory({
-    use: (name: string, useOpts?: { remote?: boolean }) =>
-      registry.use(name, useOpts ?? {}),
+  await loader.activateAll({
+    use: (name: string) => registry.use(name),
     provide: (name: string, impl: unknown) => {
       registry.provide(name, impl, { local: true });
       provided.push(name);
     },
     flush: (_stage: string) => undefined,
   });
-  void handle;
   if (!provided.includes(BUDGET_SERVICE)) {
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension bundle ${manifest.name} provided no services — refusing empty activation`,
-    };
+    return empty(
+      `extension bundle ${manifest.name} provided no services — refusing empty activation`,
+    );
   }
   let statusText: string;
   try {
@@ -278,30 +281,21 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
       registry.use(BUDGET_SERVICE) as BudgetLimits,
     );
   } catch (error) {
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension bundle ${manifest.name} failed the provide/use round-trip (${startupMessage(error)})`,
-    };
+    return empty(
+      `extension bundle ${manifest.name} failed the provide/use round-trip (${startupMessage(error)})`,
+    );
   }
   const traversal = `${opts.trust.cwd}/.pi/extensions/../evil.js`;
   try {
     loader.resolve(traversal);
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension trust tripwire: owned-path traversal ${JSON.stringify(traversal)} was admitted — refusing startup`,
-    };
+    return empty(
+      `extension trust tripwire: owned-path traversal ${JSON.stringify(traversal)} was admitted — refusing startup`,
+    );
   } catch (error) {
     if (!(error instanceof ExtensionRefusedError)) {
-      return {
-        ok: false,
-        loaded: [],
-        refused,
-        detail: `extension trust tripwire: traversal probe failed unexpectedly (${startupMessage(error)})`,
-      };
+      return empty(
+        `extension trust tripwire: traversal probe failed unexpectedly (${startupMessage(error)})`,
+      );
     }
     refused.push({
       attempt: `resolve:${traversal}`,
@@ -310,21 +304,14 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
   }
   try {
     registry.use(BUDGET_SERVICE, { remote: 1 } as never);
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail:
-        'extension trust tripwire: truthy remote flag { remote: 1 } was admitted on a local-only service — refusing startup',
-    };
+    return empty(
+      'extension trust tripwire: truthy remote flag { remote: 1 } was admitted on a local-only service — refusing startup',
+    );
   } catch (error) {
     if (!(error instanceof ServiceRemoteError)) {
-      return {
-        ok: false,
-        loaded: [],
-        refused,
-        detail: `extension trust tripwire: remote-flag probe failed unexpectedly (${startupMessage(error)})`,
-      };
+      return empty(
+        `extension trust tripwire: remote-flag probe failed unexpectedly (${startupMessage(error)})`,
+      );
     }
     refused.push({
       attempt: `use:${BUDGET_SERVICE}:{remote:1}`,
@@ -335,17 +322,30 @@ export function probeFirstPartyPosture(opts: PostureOptions): ExtensionPosture {
   // fired — a future edit that skips a probe must turn the posture red,
   // not silently green.
   if (refused.length < 2) {
-    return {
-      ok: false,
-      loaded: [],
-      refused,
-      detail: `extension trust tripwire: expected 2 refused bypass attempts, recorded ${refused.length} — refusing startup`,
-    };
+    return empty(
+      `extension trust tripwire: expected 2 refused bypass attempts, recorded ${refused.length} — refusing startup`,
+    );
   }
   return {
     ok: true,
     loaded: [manifest.name],
     refused,
+    registry,
+    limits,
+    registered: loader.registered,
+    statusText,
     detail: `loaded 1 (${manifest.name}: ${statusText}), refused 2 (owned-path traversal, remote-flag use)`,
   };
+}
+
+// Posture probe: the load above, shaped as the doctor posture (issue #80's
+// surface). Never throws: every failure is data (ok:false + detail), so
+// doctor can report it. A bypass that is unexpectedly ADMITTED fails the
+// posture — the #37 hardening regressing must turn doctor red, not silent.
+export async function probeFirstPartyPosture(
+  opts: PostureOptions,
+): Promise<ExtensionPosture> {
+  const { registry: _registry, ...posture } = await loadFirstPartyBundle(opts);
+  void _registry;
+  return posture;
 }

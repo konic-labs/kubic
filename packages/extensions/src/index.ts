@@ -25,6 +25,17 @@ export type {
 export { ExtensionLoader, FLUSH_ORDER } from './loader.js';
 export type { CellDelta, CellSnapshot } from './replicated.js';
 export { ReplicatedCell } from './replicated.js';
+export {
+  budgetLimitsOf,
+  budgetStatusOf,
+  budgetToolGate,
+  commandLoadsExtensions,
+  EXTENSION_STARTUP_COMMANDS,
+  ExtensionBudgetError,
+  firstBreachedLimit,
+  postureFromStartup,
+  startFirstPartyExtensions,
+} from './runtime.js';
 export type { SecretFacade } from './secrets.js';
 export { SecretRemoteError, SecretStore } from './secrets.js';
 export type {
@@ -41,6 +52,7 @@ export {
 } from './services.js';
 export type {
   BundleDirFiles,
+  BundleLoad,
   ExtensionPosture,
   PostureOptions,
   RefusedAttempt,
@@ -49,6 +61,7 @@ export {
   BUNDLE_MANIFEST_FILE,
   ExtensionStartupError,
   FIRST_PARTY_BUNDLE_NAME,
+  loadFirstPartyBundle,
   probeFirstPartyPosture,
 } from './startup.js';
 export type { TrustOptions, TrustSubject } from './trust.js';

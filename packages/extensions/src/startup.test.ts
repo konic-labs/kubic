@@ -88,8 +88,8 @@ function shadowFiles(
 }
 
 describe('first-party bundle startup (issue #80)', () => {
-  it('loads the on-disk bundle through the trust gates, refusing both live bypasses', () => {
-    const posture = probeFirstPartyPosture({
+  it('loads the on-disk bundle through the trust gates, refusing both live bypasses', async () => {
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: MANIFEST_JSON }),
       trust: OPTS,
@@ -106,8 +106,8 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('refused 2');
   });
 
-  it('fails closed with a clear error when the bundle dir is gone, never a silent no-op', () => {
-    const posture = probeFirstPartyPosture({
+  it('fails closed with a clear error when the bundle dir is gone, never a silent no-op', async () => {
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: false }),
       trust: OPTS,
@@ -119,7 +119,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('never a silent skip');
   });
 
-  it('refuses a tampered manifest (third-party publisher) through the same gates', () => {
+  it('refuses a tampered manifest (third-party publisher) through the same gates', async () => {
     const tampered = JSON.stringify({
       name: 'kubic/budget',
       publisher: 'evil-corp',
@@ -127,7 +127,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: 'kubic/budget',
       facets: ['contract'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: tampered }),
       trust: OPTS,
@@ -140,7 +140,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('third-party');
   });
 
-  it('refuses a tampered manifest (traversal sourcePath) through the same gates', () => {
+  it('refuses a tampered manifest (traversal sourcePath) through the same gates', async () => {
     const tampered = JSON.stringify({
       name: 'kubic/budget',
       publisher: 'kubic',
@@ -148,7 +148,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: `${HOME}/.pi/agent/extensions/../evil.js`,
       facets: ['contract'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: tampered }),
       trust: OPTS,
@@ -158,7 +158,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('not an owned path');
   });
 
-  it('refuses invalid JSON and unknown bundle names with a clear error', () => {
+  it('refuses invalid JSON and unknown bundle names with a clear error', async () => {
     for (const manifest of [
       '{not json',
       JSON.stringify({
@@ -169,7 +169,7 @@ describe('first-party bundle startup (issue #80)', () => {
         facets: ['contract'],
       }),
     ]) {
-      const posture = probeFirstPartyPosture({
+      const posture = await probeFirstPartyPosture({
         anchorDir: '/repo/dist/apps/kubic/src',
         files: fakeFiles('/repo', { dir: true, manifest }),
         trust: OPTS,
@@ -180,7 +180,7 @@ describe('first-party bundle startup (issue #80)', () => {
     }
   });
 
-  it('refuses an on-disk manifest whose publisher drifted from the compiled pin', () => {
+  it('refuses an on-disk manifest whose publisher drifted from the compiled pin', async () => {
     // 'konic-labs' passes the #37 trust gates (first-party publisher,
     // owned sourcePath) but disagrees with the compiled BUDGET_MANIFEST
     // pin — fail closed on drift, never trust-gates-only.
@@ -191,7 +191,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: 'kubic/budget',
       facets: ['contract', 'host', 'worker', 'tui'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: drifted }),
       trust: OPTS,
@@ -201,7 +201,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('drift');
   });
 
-  it('refuses a same-length facets array with a duplicated entry masking a missing facet', () => {
+  it('refuses a same-length facets array with a duplicated entry masking a missing facet', async () => {
     // Length + subset would accept ['contract','contract','host','worker']
     // for the 4-facet pin despite missing 'tui' — strict set equality
     // must fail closed.
@@ -212,7 +212,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: 'kubic/budget',
       facets: ['contract', 'contract', 'host', 'worker'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: drifted }),
       trust: OPTS,
@@ -222,7 +222,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('drift');
   });
 
-  it('refuses an on-disk manifest whose facets drifted from the compiled pin', () => {
+  it('refuses an on-disk manifest whose facets drifted from the compiled pin', async () => {
     const drifted = JSON.stringify({
       name: 'kubic/budget',
       publisher: 'kubic',
@@ -230,7 +230,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: 'kubic/budget',
       facets: ['contract'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: fakeFiles('/repo', { dir: true, manifest: drifted }),
       trust: OPTS,
@@ -240,7 +240,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('drift');
   });
 
-  it('fails closed on a nearer shadow manifest instead of falling through to the real bundle', () => {
+  it('fails closed on a nearer shadow manifest instead of falling through to the real bundle', async () => {
     const shadow = JSON.stringify({
       name: 'kubic/budget',
       publisher: 'konic-labs',
@@ -248,7 +248,7 @@ describe('first-party bundle startup (issue #80)', () => {
       sourcePath: 'kubic/budget',
       facets: ['contract', 'host', 'worker', 'tui'],
     });
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/dist/apps/kubic/src',
       files: shadowFiles(
         '/repo/dist/apps/kubic/src/skills/budget',
@@ -262,11 +262,11 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('drift');
   });
 
-  it('does not walk past the repo-root bound looking for the bundle', () => {
+  it('does not walk past the repo-root bound looking for the bundle', async () => {
     // The bundle sits 5 levels above this anchor; the walk is capped at
     // 4 (covers the dist layout exactly) so the probe fails closed
     // instead of escaping toward the filesystem root.
-    const posture = probeFirstPartyPosture({
+    const posture = await probeFirstPartyPosture({
       anchorDir: '/repo/d1/d2/d3/d4/d5',
       files: fakeFiles('/repo', { dir: true, manifest: MANIFEST_JSON }),
       trust: OPTS,
@@ -276,7 +276,7 @@ describe('first-party bundle startup (issue #80)', () => {
     expect(posture.detail).toContain('extension bundle dir missing');
   });
 
-  it('ships a valid on-disk manifest for kubic/budget under skills/', () => {
+  it('ships a valid on-disk manifest for kubic/budget under skills/', async () => {
     const repoRoot = dirname(
       dirname(dirname(dirname(fileURLToPath(import.meta.url)))),
     );

@@ -12,6 +12,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -48,6 +49,13 @@ export interface FileBridge {
   joinPath(parts: string[]): string;
   readTextFile(path: string): string;
   readBinaryFile(path: string): Uint8Array;
+  /**
+   * Read `[start, end)` bytes (issue #107). Optional so existing bridges stay
+   * valid; when absent the journal falls back to whole-file reads, which is
+   * correct-but-unbounded. The node bridge implements it, so every production
+   * walk is bounded.
+   */
+  readFileRange?(path: string, start: number, end: number): Uint8Array;
   readTextLines(path: string, maxLines?: number): string[];
   openTextLineReader(path: string): BridgeLineReader;
   writeFile(path: string, content: string | Uint8Array): void;
@@ -100,6 +108,19 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       readFileSync(absolutePath(path), 'utf8'),
     readBinaryFile: (path: string): Uint8Array =>
       readFileSync(absolutePath(path)),
+    // Range read (issue #107): the journal hashes large files in chunks so a
+    // 256MB artifact costs one chunk of memory, not 256MB.
+    readFileRange: (path: string, start: number, end: number): Uint8Array => {
+      const handle = openSync(absolutePath(path), 'r');
+      try {
+        const length = Math.max(0, end - start);
+        const buffer = Buffer.allocUnsafe(length);
+        const read = readSync(handle, buffer, 0, length, start);
+        return buffer.subarray(0, read);
+      } finally {
+        closeSync(handle);
+      }
+    },
     readTextLines: (path: string, maxLines?: number): string[] => {
       const lines = splitLines(readFileSync(absolutePath(path), 'utf8'));
       return maxLines === undefined ? lines : lines.slice(0, maxLines);

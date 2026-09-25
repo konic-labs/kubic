@@ -361,8 +361,19 @@ composition paths therefore capture a **baseline** when the lane boots and
   never invents a pre-image. If an earlier attributed entry in the same run
   already stored that path's pre-image, the entry *is* reversible and `undo`
   restores it — the badge then reads `[unattributed]` alone.
-- Cost is bounded: unchanged files cost one hash and no blob; a sweep that
-  finds nothing appends nothing.
+- Cost is bounded: unchanged files cost one hash and no blob, and a file larger
+  than 4 MiB is hashed in chunks, so its boot and sweep cost is one chunk of
+  memory rather than the file size (a 256MB artifact measured below 1MB of heap
+  growth, where it previously cost 256MB). A sweep that finds nothing appends
+  nothing; a file that *did* change is read whole to store its after-content,
+  because that content is what `diff` and `undo` serve — that read costs twice
+  the file size in heap while it runs (measured: 128MB for a 64MiB file).
+- Chunking bounds *memory*, not *time*: the walk still reads a file's full
+  apparent size, so a sparse or genuinely huge file costs its size in I/O at
+  boot. A file above 256 MiB is named on the debug channel
+  (`reconcile: hashing a very large file: <path> (<bytes>)`) so the cost is
+  visible instead of silent; nothing is skipped, because a skipped file's
+  changes would be invisible to the journal.
 - Fail-open: a baseline or sweep failure is reported on the debug receipt and
   never turns a finished run into a failed one.
 

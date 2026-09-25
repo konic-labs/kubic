@@ -16,6 +16,7 @@
 //     have a ledger row that is a named issue or a deletion, and no row may
 //     still be owned by this issue (its dispositions are executed);
 //   - the deleted orchestrator leftovers stay deleted.
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,6 +118,44 @@ describe('orchestrator scope is honest (issue #95)', () => {
       WORKER_APPROVALS_ISSUE,
     ]) {
       expect(body, `orchestrate section must name ${issue}`).toContain(issue);
+    }
+  });
+
+  it('no shipped doc claims a manager agent that the binary does not run', () => {
+    // The re-scope must hold for EVERY reader-facing doc, not only the two
+    // pages this issue edited. README.md and docs/architecture/solo.md
+    // carried the same false claim after the merge, which is exactly the
+    // defect the re-scope exists to remove — so pin the class, not the sites.
+    //
+    // Scope is the TRACKED docs: docs/design/ is gitignored local design work
+    // that legitimately describes intent rather than shipped behaviour, and
+    // it carries its own `shipped-differently` notes.
+    const listed = execFileSync('git', ['ls-files', 'docs', 'README.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    const files = listed
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.endsWith('.md'))
+      .map((line) => join(ROOT, line));
+    expect(files.length).toBeGreaterThan(20);
+    for (const file of files) {
+      const body = prose(readFileSync(file, 'utf8'));
+      const where = file.slice(ROOT.length + 1);
+      // The agent does not become a manager: the CLI process is the manager.
+      expect(body, `${where} must not claim a manager agent`).not.toMatch(
+        /becomes a manager/i,
+      );
+      expect(
+        body,
+        `${where} must not claim the agent stops executing`,
+      ).not.toMatch(/stops executing/i);
+      // A manager "fanning work out" is the same unwired lane in other words.
+      expect(
+        body,
+        `${where} must not claim a manager fans work out`,
+      ).not.toMatch(/manager fans work out|manager (then )?fans/i);
     }
   });
 

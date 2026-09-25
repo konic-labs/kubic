@@ -26,9 +26,10 @@ installers.
 in a version-control-independent journal, so `kubic diff` and `kubic undo` work in a monorepo and in
 `~/Downloads` alike. Dangerous operations are approved by you.
 
-**Orchestrator mode is opt-in.** Turn it on and the same agent becomes a manager: it stops
-executing, delegates to subagents that each get their own process and their own git worktree, and
-merges what they produce. The mode is session-scoped and requires a git repository.
+**Orchestrator mode is opt-in and session-scoped.** Turn it on and the `kubic orchestrate`
+command plays the manager: it fans one worker process plus one git worktree per subagent out,
+then merges what they produce. Every worker runs the same `-p` prompt; the design's manager
+*agent* lane is not wired yet. The mode requires a git repository.
 
 There is no sandbox. Solo mode has no isolation at all, and the design says so plainly rather than
 implying otherwise — see §59.1 of the document.

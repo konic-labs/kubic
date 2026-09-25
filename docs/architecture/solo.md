@@ -43,8 +43,10 @@ With no boundary to lean on, solo relies on two controls:
 ## When solo is not the mode
 
 Delegation needs [orchestrator](orchestrator.md): an opt-in,
-session-scoped mode where a manager fans work out to one worker
-process plus one git worktree per subagent. Orchestrator requires a
+session-scoped mode where the `kubic orchestrate` command is the manager —
+it fans one worker process plus one git worktree per subagent out and
+merges what they produce. The design's manager *agent* lane is not wired
+yet (#103); every worker runs the same prompt. Orchestrator requires a
 git repository and falls back to solo without one. The trust story
 does not change there — approvals and the journal stay the controls.
 

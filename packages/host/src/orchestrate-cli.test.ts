@@ -898,6 +898,18 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
 describe('orchestrate manager lane: plan → distinct worker prompts (issue #103)', () => {
   const MANAGER_PROMPT = 'apply the change across each area';
 
+  // State as it was saved BEFORE #103 existed: no plan field at all.
+  const legacyState = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'sess-1',
+    prompt: MANAGER_PROMPT,
+    agents: ['alpha', 'beta'],
+    merged: [],
+    pending: ['alpha', 'beta'],
+    stopped: false,
+    records: [],
+  });
+
   it('hands each worker a prompt that differs and cites its plan step', async () => {
     const world = makeWorld({}, { alpha: 1, beta: 1 });
     const code = await runOrchestrateCommand(
@@ -993,6 +1005,65 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     expect(replayed.prompt).toBe(killed.plan?.[1]?.prompt);
     expect(replayed.prompt).toContain('step 2 of 2');
     expect(replayed.prompt).not.toBe(MANAGER_PROMPT);
+  });
+
+  it('re-derives the plan for a resumed state written before the plan existed', async () => {
+    // State saved before #103 carries no plan. Resume must still hand each
+    // worker its own step prompt (derived from the stored objective and
+    // agent list), never the shared -p text.
+    const legacy: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: MANAGER_PROMPT,
+      agents: ['alpha', 'beta'],
+      merged: [],
+      pending: ['alpha', 'beta'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(legacy) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1', '--yes'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const prompts = world.prompts.map((entry) => entry.prompt);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toBe(prompts[1]);
+    expect(prompts[0]).toContain('step 1 of 2');
+    expect(prompts[1]).toContain('step 2 of 2');
+    for (const prompt of prompts) expect(prompt).not.toBe(MANAGER_PROMPT);
+    // The derived plan is persisted, so the next resume replays it.
+    const done = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(done.plan?.map((step) => step.agentId)).toEqual(['alpha', 'beta']);
+  });
+
+  it('rejects a malformed stored plan as no_orchestrator_state', async () => {
+    // A plan step that is not exactly id/step/total/prompt would reach
+    // runWorker as a non-string prompt — untrusted JSON fails closed.
+    const malformedPlan: Record<string, unknown>[] = [
+      { ...legacyState(), plan: 'alpha: do it' },
+      { ...legacyState(), plan: [{ agentId: 'alpha', step: 1, total: 1 }] },
+      {
+        ...legacyState(),
+        plan: [{ agentId: 'alpha', step: '1', total: 1, prompt: 'p' }],
+      },
+      { ...legacyState(), plan: [{ agentId: 'alpha', prompt: 'p' }] },
+    ];
+    for (const stored of malformedPlan) {
+      const world = makeWorld({
+        loadState: () =>
+          structuredClone(stored) as unknown as OrchestratorRunState,
+      });
+      const code = await runOrchestrateCommand(
+        ['--resume', '--session', 'sess-1', '--yes'],
+        world.deps,
+      );
+      expect(code).toBe(1);
+      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.calls.run).toEqual([]);
+      expect(world.calls.merge).toEqual([]);
+    }
   });
 
   it('registers the manager toolset through the §40 allowlist when the run starts', async () => {

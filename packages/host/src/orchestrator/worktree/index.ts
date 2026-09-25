@@ -20,11 +20,15 @@ export type {
   JournalPruneResult,
 } from './clean.js';
 export {
+  CLEAN_EXIT_FAILURE,
   CLEAN_EXIT_OK,
   CLEAN_EXIT_USAGE,
+  cleanDepsWithDefaults,
   parseCleanArgs,
   planClean,
+  planSessionClean,
   runCleanCommand,
+  sessionAgentsFromState,
 } from './clean.js';
 export {
   isOutsideWorktree,
@@ -44,7 +48,11 @@ export {
   worktreeMissingError,
 } from './errors.js';
 export type { WorktreeEntry } from './list.js';
-export { listWorktrees, parseWorktreePorcelain } from './list.js';
+export {
+  listSpawnedBranches,
+  listWorktrees,
+  parseWorktreePorcelain,
+} from './list.js';
 export {
   AGENT_ID_PATTERN,
   branchForAgent,
@@ -54,7 +62,11 @@ export {
   WORKTREE_BRANCH_PREFIX,
 } from './naming.js';
 export type { RemoveWorktreeOptions, RemoveWorktreeResult } from './remove.js';
-export { removeWorktree } from './remove.js';
+export {
+  deleteSpawnedBranch,
+  pruneWorktrees,
+  removeWorktree,
+} from './remove.js';
 export type {
   MergedWorktree,
   SettledWorktree,

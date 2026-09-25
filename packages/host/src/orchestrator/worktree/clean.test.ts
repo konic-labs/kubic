@@ -139,9 +139,38 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(code).toBe(0);
     expect(policies).toHaveLength(1);
     expect(policies[0]?.maxBytes).toBe(100 * 1024 * 1024);
-    expect(lines.join('\n')).toContain(
-      'journal: pruned 2 entr(ies), freed 64 byte(s)',
-    );
+    const text = lines.join('\n');
+    expect(text).toContain('journal: pruned 2 entr(ies), freed 64 byte(s)');
+    // The journal prune is the work this invocation did — never reported as
+    // a no-op.
+    expect(text).not.toContain('clean: nothing to prune');
+  });
+
+  it('reports a journal-only prune honestly on an otherwise clean repo', async () => {
+    const env = new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': TOPLEVEL,
+      'git worktree list --porcelain': {
+        exitCode: 0,
+        stdout: 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n',
+        stderr: '',
+      },
+      'git branch --list kubic/* --format=%(refname:short)': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
+    });
+    const lines: string[] = [];
+    const code = await runCleanCommand(['--journal', '--max-bytes', '10'], {
+      env,
+      out: (line: string) => lines.push(line),
+      pruneJournal: () => ({ entries: 3, bytes: 99 }),
+    });
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('journal: pruned 3 entr(ies), freed 99 byte(s)');
+    expect(text).not.toContain('nothing to prune');
   });
 
   it('plans only spawned worktrees, never the main checkout', () => {

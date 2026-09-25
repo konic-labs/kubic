@@ -13,6 +13,7 @@
 // hand-made worktree, a foreign branch, or the main checkout is never
 // planned — and each mutation re-checks its own confinement.
 
+import { join } from 'node:path';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
@@ -297,7 +298,7 @@ function defaultSessionAgents(
 ): string[] | undefined {
   try {
     const bridge = createNodeFileBridge(
-      joinPath(repoRoot, '.kubic/orchestrator'),
+      join(repoRoot, '.kubic', 'orchestrator'),
     );
     const name = `${sessionId}.json`;
     if (!bridge.exists(name)) return undefined;
@@ -307,16 +308,15 @@ function defaultSessionAgents(
   }
 }
 
-// Local join keeps the host module free of node:path for a two-segment concat.
-function joinPath(root: string, leaf: string): string {
-  return `${root.replace(/\/+$/, '')}/${leaf}`;
+function sessionStorePath(repoRoot: string, sessionId: string): string {
+  return join(repoRoot, '.kubic', 'orchestrator', `${sessionId}.json`);
 }
 
 function defaultPruneJournal(
   policy: { maxAgeMs?: number; maxBytes?: number },
   repoRoot: string,
 ): JournalPruneResult {
-  const store = new FileJournalStore(joinPath(repoRoot, '.kubic/journal'));
+  const store = new FileJournalStore(join(repoRoot, '.kubic', 'journal'));
   return store.enforceRetention(policy);
 }
 
@@ -398,7 +398,7 @@ export async function runCleanCommand(
       );
       if (agents === undefined) {
         deps.out(
-          `error: no retained set for session '${options.sessionId}' — expected ${joinPath(repoRoot, `.kubic/orchestrator/${options.sessionId}.json`)}; nothing was removed`,
+          `error: no retained set for session '${options.sessionId}' — expected ${sessionStorePath(repoRoot, options.sessionId)}; nothing was removed`,
         );
         return CLEAN_EXIT_FAILURE;
       }
@@ -545,7 +545,14 @@ export async function runCleanCommand(
   for (const failure of failures) {
     deps.out(`error: ${failure.message}`);
   }
-  if (removed.length === 0 && deleted.length === 0 && failures.length === 0) {
+  // "nothing to prune" only when the invocation disposed nothing at all —
+  // a journal-only prune already reported its own counts below.
+  if (
+    removed.length === 0 &&
+    deleted.length === 0 &&
+    failures.length === 0 &&
+    !bounded
+  ) {
     deps.out('clean: nothing to prune');
   }
   if (bounded) {

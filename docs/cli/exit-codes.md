@@ -30,7 +30,10 @@
   `exitCode` field.
 - **`kubic diff/undo/log/status`**: 0 success (including empty diff and
   clean dry-run), 1 usage/IO errors — except `undo`, which exits **2**
-  when it restored but skipped non-reversible steps.
+  when it restored but skipped non-reversible steps. Entries an end-of-run
+  reconciliation sweep appended (`unattributed`) always land in that
+  skipped class: the baseline holds hashes, not pre-images, so they are
+  reported `non-reversible (skipped)` and exit 2, writing nothing.
 - **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.

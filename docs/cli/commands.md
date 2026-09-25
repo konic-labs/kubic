@@ -51,6 +51,24 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 value, an invalid `--session` id, a non-positive or non-integer
 `--timeout`/`--max-turns`, or an unknown flag all exit 2.
 
+**Installed policy** (issue #86). A run always boots the lane with a
+permission policy, whether or not a config names one: the five permission
+classes (`[permissions]` when configured, the documented solo defaults
+otherwise — `filesystem = workspace-write`, `shell = true`,
+`network = none`, `git = workspace`, `credentials = none`), the derived
+tool allowlist (a tool outside it is refused at execute time, not merely
+omitted), and the `destructive-guard` / `network-guard` / `confine-guard`
+interceptors wired to an approval ask. `kubic doctor` prints this same
+installed object as `policy:installed`.
+
+A destructive or network-raising call needs an approval. `kubic run` has
+no TTY, and the TUI approval overlay has not landed, so a challenged call
+is **refused rather than executed**, and the run ends `approval_timed_out`
+(exit 4) with the refusal named on the `error:` line. To run such an
+operation deliberately, record session-scoped full access first
+(`kubic sessions create --dangerously-skip-approvals`, or a prior
+`kubic sessions attach` decision) — it is never implied.
+
 ## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
 
 Opt-in orchestrator mode: plans N workers, spawns one worker process per
@@ -135,7 +153,14 @@ on the bottom row. Below 80 columns the tree hides and transcript plus
 status stay. `--session <id>` resumes into an existing session (same
 `[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before the lane
 boots). Lane boot failure exits 5 on a missing session, 6 with no
-reachable provider, 1 otherwise.
+provider available, 1 otherwise.
+
+The TUI drives the same solo lane as `kubic run`, so it installs the same
+policy (see **Installed policy** under `kubic run` above): the classes,
+the derived allowlist, and the destructive/network/confine guards with the
+approval ask. The approval overlay is its own interaction surface and has
+not landed yet, so a challenged call is refused the same way it is
+headless.
 
 The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in

@@ -48,6 +48,7 @@ const PROVENANCE: Provenance = {
 // code. Prompt directives drive it (the prompt is the one field the live
 // path passes through untouched):
 //   ENVDUMP=<path>  write the child's OWN environment to that path
+//   PROMPTDUMPDIR=<dir>  write the prompt it was given to <dir>/<worker id>.txt
 //   SILENT          never print the marker (a boot that never announces)
 //   SLEEP=<ms>      stay alive after announcing (so a timeout can fire)
 //   EXIT=<n>        exit with n (default 6, the provider-less boundary)
@@ -62,6 +63,10 @@ if (dump !== null) {
 }
 const sleep = /SLEEP=(\\d+)/.exec(prompt);
 const exitCode = Number(/EXIT=(\\d+)/.exec(prompt)?.[1] ?? '6');
+const dumpDir = /PROMPTDUMPDIR=(\\S+)/.exec(prompt);
+if (dumpDir !== null) {
+  writeFileSync(dumpDir[1] + '/' + (process.env.KUBIC_WORKER_ID ?? 'worker') + '.txt', prompt);
+}
 if (!prompt.includes('SILENT')) {
   process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 }
@@ -300,6 +305,48 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     expect(h.deps.launches?.failureOf('worker-1')?.code).toBe(
       'process_spawn_failed',
     );
+  });
+});
+
+describe('prod orchestrate path: the manager lane per-worker prompts (issue #103)', () => {
+  it('hands each real child its own plan step, not the shared -p', async () => {
+    // The end-to-end claim: the prompt the manager authors through the plan
+    // is the argv the real worker process receives. The fixture writes the
+    // prompt it was given under its own worker id (PROMPTDUMPDIR=<dir>), so
+    // the check reads each child's OWN view — not the spawn call the test
+    // could have gotten wrong.
+    const h = await harness();
+    const dumpDir = scratchRoot('kubic-orch-prompts-');
+    const objective = `do the thing EXIT=0 PROMPTDUMPDIR=${dumpDir}`;
+    // EXIT=0: the child starts, announces itself and exits clean with no
+    // work committed, so the run settles both workers end to end.
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        objective,
+        '--agents',
+        'alpha,beta',
+        '--yes',
+        '--session',
+        'lifecycle',
+      ],
+      h.deps,
+    );
+    expect(code).toBe(0);
+    const promptOf = (agentId: string): string =>
+      readFileSync(join(dumpDir, `${agentId}.txt`), 'utf8');
+    const alpha = promptOf('alpha');
+    const beta = promptOf('beta');
+    // Two worker prompts that differ…
+    expect(alpha).not.toBe(beta);
+    // …each citing its plan step…
+    expect(alpha).toContain('step 1 of 2');
+    expect(beta).toContain('step 2 of 2');
+    expect(alpha).toContain("agent 'alpha'");
+    expect(beta).toContain("agent 'beta'");
+    // …and no worker prompt is -p verbatim.
+    expect(alpha).not.toBe(objective);
+    expect(beta).not.toBe(objective);
   });
 });
 

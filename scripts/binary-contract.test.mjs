@@ -3,7 +3,16 @@
 // assertion logic is exercised without dist/ — the real binary run lives in
 // scripts/binary-contract.mjs (CI: the `binary-contract` job).
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -268,6 +277,43 @@ describe('CI wiring (issue #101)', () => {
         md.includes(needle),
         `docs/contributing.md must list \`${needle}\` so contributors run the CI gates locally`,
       );
+    }
+  });
+
+  it('a failing run leaves no temp dir behind (cleanup survives the exit path)', () => {
+    // The contract exits non-zero on violation; process.exit() would kill the
+    // process before the finally-block cleanup, leaking one scratch dir per
+    // failing run. Point TMPDIR at a fresh dir and force the failure path.
+    const sandbox = mkdtempSync(join(tmpdir(), 'bc-cleanup-'));
+    try {
+      const entry = join(ROOT, 'dist/apps/kubic/src/main.js');
+      const stashed = `${entry}.cleanup-probe`;
+      const hadDist = existsSync(entry);
+      if (hadDist) renameSync(entry, stashed);
+      try {
+        const result = spawnSync(
+          process.execPath,
+          ['scripts/binary-contract.mjs'],
+          {
+            cwd: ROOT,
+            env: { ...process.env, TMPDIR: sandbox },
+            encoding: 'utf8',
+          },
+        );
+        assert.equal(result.status, 1, 'the missing-dist path must exit 1');
+        const leftovers = readdirSync(sandbox).filter((n) =>
+          n.startsWith('kubic-binary-contract-'),
+        );
+        assert.deepEqual(
+          leftovers,
+          [],
+          'no scratch dir may survive a failing run',
+        );
+      } finally {
+        if (hadDist) renameSync(stashed, entry);
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
     }
   });
 });

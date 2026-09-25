@@ -239,6 +239,34 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(h.lines.join('\n')).toMatch(/role document/i);
   });
 
+  it('lets an explicit operator model pin outrank the role default', async () => {
+    // §12.1 precedence: the role default is the LOWEST-precedence choice. An
+    // operator who pinned KUBIC_MODEL must keep it — the delegation path may
+    // not quietly replace their model with a role default.
+    const h = await harness();
+    const previous = process.env.KUBIC_MODEL;
+    process.env.KUBIC_MODEL = 'acme/m9';
+    try {
+      const code = await runOrchestrateCommand(
+        [
+          '-p',
+          `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+          '--agents',
+          'alpha',
+          '--yes',
+          '--session',
+          'pinsession',
+        ],
+        h.deps,
+      );
+      expect(code).toBe(0);
+      expect(readDump(h.dumpDir, 'alpha', 'model')).toBe('acme/m9');
+    } finally {
+      if (previous === undefined) delete process.env.KUBIC_MODEL;
+      else process.env.KUBIC_MODEL = previous;
+    }
+  });
+
   it('resolves role documents from the run cwd, not the process cwd', async () => {
     // The composition root is given an explicit cwd (a caller embedding the
     // run); the role documents must come from THAT repo. A process-cwd read

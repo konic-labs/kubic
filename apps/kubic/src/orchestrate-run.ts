@@ -560,14 +560,18 @@ export async function orchestrateDepsWithDefaults(
           // allowlist inside the layer — never inherited wholesale. The
           // role's model default (issue #104, §12.1) travels through the
           // EXISTING `KUBIC_MODEL` pin: the child's own selectModel honours
-          // it, so no new model plumbing is introduced.
+          // it, so no new model plumbing is introduced. A default is the
+          // LOWEST-precedence choice, so it is only sent when the operator
+          // has not pinned a model of their own — an explicit KUBIC_MODEL in
+          // the environment outranks the role's default, never the reverse.
           baseEnv: {
             ...Object.fromEntries(
               Object.entries(process.env).filter(
                 (entry): entry is [string, string] => entry[1] !== undefined,
               ),
             ),
-            ...(info?.modelRef === undefined
+            ...(info?.modelRef === undefined ||
+            process.env.KUBIC_MODEL !== undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
           },

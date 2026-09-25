@@ -186,7 +186,7 @@ export function tuiDepsWithDefaults(provided: {
 }
 
 export interface TuiTurnOutcome {
-  readonly status: 'completed' | 'cancelled' | 'failed' | 'busy';
+  readonly status: 'completed' | 'cancelled' | 'failed';
   readonly detail?: string;
 }
 
@@ -196,7 +196,6 @@ export interface TuiTurnOutcome {
 export function footerForOutcome(outcome: TuiTurnOutcome): string {
   if (outcome.status === 'completed') return '';
   if (outcome.status === 'cancelled') return 'cancelled';
-  if (outcome.status === 'busy') return 'busy — wait for the turn to finish';
   return `error: ${outcome.detail ?? 'the turn failed'}`;
 }
 

@@ -1,0 +1,125 @@
+# Dead-surface ledger (issue #102)
+
+Every non-test source file that no runtime path reaches gets an owner here:
+an issue that wires it, `delete`, or `keep:` with the reason. The gate
+(`scripts/reachability.mjs`) recomputes reachability from the binary entry
+(`apps/kubic/src/main.ts`, the only module `bin/kubic.js` can reach) by
+walking VALUE imports — `import type` is erased and never makes a file
+reachable — and fails when a dead file has no row here, when a row names a
+file that no longer exists, or when a row's file has become reachable
+(dispositions must be executed, not forgotten).
+
+- Method: BFS over `import` / `import()` specifiers, `.js` specifiers
+  resolved to `.ts` sources, `packages/*/src` + `apps/*/src`, excluding
+  `*.test.ts`, `pi/`, `dist/`, `node_modules/`. Recompute with
+  `node scripts/reachability.mjs --report` (`--json` for machines).
+- Ledger counts only move down, or move with a named justification for a new
+  intentionally-kept seam. No `TODO`/`FIXME` marks dead code: this file is
+  the single place that tracks it.
+- The counts below were computed on `main@1e41191`. `#102` itself owns the
+  22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
+  clusters belong to the sibling issues named in each row.
+
+| LOC | file | owner | disposition |
+| --- | --- | --- | --- |
+| 728 | `packages/agents/src/artifacts.ts` | #99 | wire: context contracts (#99) |
+| 314 | `packages/agents/src/graph.ts` | #99 | wire: context contracts (#99) |
+| 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 533 | `packages/agents/src/memory.ts` | #99 | wire: context contracts (#99) |
+| 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 485 | `packages/agents/src/skills/skills.ts` | #99 | wire: context contracts (#99) |
+| 338 | `packages/agents/src/skills/templates.ts` | #99 | wire: context contracts (#99) |
+| 501 | `packages/agents/src/spec.ts` | #99 | wire: context contracts (#99) |
+| 133 | `packages/agents/src/task.ts` | #99 | wire: context contracts (#99) |
+| 142 | `packages/agents/src/transfer.ts` | #99 | wire: context contracts (#99) |
+| 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 95 | `packages/core/src/presentation.ts` | #96 | wire: TUI view contract (#96); imported only by dead transcript/tui-app |
+| 4 | `packages/core/src/protocol.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/core/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 49 | `packages/eval/src/index.ts` | #101 | delete: dead barrel over the live eval CLI |
+| 84 | `packages/eval/src/rl/fixtures.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
+| 58 | `packages/eval/src/rl/index.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
+| 97 | `packages/exec/src/checkpoint-store.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
+| 89 | `packages/exec/src/effects.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
+| 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 39 | `packages/extensions/src/bundles/budget/worker.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 58 | `packages/extensions/src/cancellation.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 55 | `packages/extensions/src/facets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 61 | `packages/extensions/src/index.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 80 | `packages/extensions/src/replicated.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 45 | `packages/extensions/src/secrets.ts` | #93 | wire: first-party bundle loaded at startup (#93) |
+| 896 | `packages/host/src/config/config.ts` | #90 | wire: config layer read at runtime (#90) |
+| 7 | `packages/host/src/config/index.ts` | #90 | wire: config layer read at runtime (#90) |
+| 292 | `packages/host/src/config/secrets.ts` | #90 | wire: config layer read at runtime (#90) |
+| 63 | `packages/host/src/config/stances.ts` | #90 | wire: config layer read at runtime (#90) |
+| 4 | `packages/host/src/credentials.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 151 | `packages/host/src/handoff.ts` | #99 | wire: handoff contract (#99); AgentResult import is type-only |
+| 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 13 | `packages/host/src/limits/orchestrator-notice.ts` | #95 | wire: orchestrator worktree messaging at the spawn site (#95) |
+| 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
+| 28 | `packages/host/src/limits/solo-warning.ts` | #89 | wire: emit the solo no-isolation warning on run/tui (#89) |
+| 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
+| 48 | `packages/host/src/ops/cost/cache.ts` | #98 | wire: real measurements or delete (#98) |
+| 51 | `packages/host/src/ops/cost/compact-reuse.ts` | #98 | wire: real measurements or delete (#98) |
+| 78 | `packages/host/src/ops/cost/escalation.ts` | #98 | wire: real measurements or delete (#98) |
+| 52 | `packages/host/src/ops/cost/index.ts` | #98 | wire: real measurements or delete (#98) |
+| 62 | `packages/host/src/ops/cost/order.ts` | #98 | wire: real measurements or delete (#98) |
+| 28 | `packages/host/src/ops/cost/output-limits.ts` | #98 | wire: real measurements or delete (#98) |
+| 53 | `packages/host/src/ops/cost/response-cache.ts` | #98 | wire: real measurements or delete (#98) |
+| 56 | `packages/host/src/ops/cost/retry-ledger.ts` | #98 | wire: real measurements or delete (#98) |
+| 69 | `packages/host/src/ops/cost/role-model.ts` | #98 | wire: real measurements or delete (#98) |
+| 27 | `packages/host/src/ops/cost/spawn-gate.ts` | #98 | wire: real measurements or delete (#98) |
+| 31 | `packages/host/src/ops/perf/concurrency.ts` | #98 | wire: real measurements or delete (#98) |
+| 37 | `packages/host/src/ops/perf/index.ts` | #98 | wire: real measurements or delete (#98) |
+| 22 | `packages/host/src/ops/perf/merge-report.ts` | #98 | wire: real measurements or delete (#98) |
+| 53 | `packages/host/src/ops/perf/spans.ts` | #98 | wire: real measurements or delete (#98) |
+| 40 | `packages/host/src/ops/perf/spawn-path.ts` | #98 | wire: real measurements or delete (#98) |
+| 353 | `packages/host/src/orchestrator/approvals/budgets.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 80 | `packages/host/src/orchestrator/approvals/index.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 242 | `packages/host/src/orchestrator/approvals/request.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 282 | `packages/host/src/orchestrator/approvals/routing.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 151 | `packages/host/src/orchestrator/approvals/skip.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 327 | `packages/host/src/orchestrator/manager.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 309 | `packages/host/src/orchestrator/merge/conflicts.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 55 | `packages/host/src/orchestrator/merge/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
+| 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
+| 49 | `packages/host/src/orchestrator/parallel/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
+| 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #95 | wire: manager lane + subagent approvals (#95) |
+| 228 | `packages/host/src/orchestrator/worktree/clean.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 78 | `packages/host/src/orchestrator/worktree/confinement.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 63 | `packages/host/src/orchestrator/worktree/index.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 78 | `packages/host/src/orchestrator/worktree/list.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 86 | `packages/host/src/orchestrator/worktree/remove.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 128 | `packages/host/src/orchestrator/worktree/status.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
+| 5 | `packages/host/src/policy/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
+| 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
+| 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |
+| 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 206 | `packages/host/src/spans.ts` | #98 | wire: real measurements or delete (#98) |
+| 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |
+| 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
+| 410 | `packages/tui/src/approval-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
+| 5 | `packages/tui/src/components.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 175 | `packages/tui/src/diff-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
+| 6 | `packages/tui/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 93 | `packages/tui/src/journal-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
+| 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 5 | `packages/worker/src/approval-client.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 157 | `packages/worker/src/lane/events.ts` | #102 | keep: seam — reachable once the owning issue wires it |
+| 253 | `packages/worker/src/lane/failures.ts` | #102 | keep: seam — reachable once the owning issue wires it |
+| 56 | `packages/worker/src/lifecycle/budgets.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
+| 91 | `packages/worker/src/lifecycle/env.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
+| 121 | `packages/worker/src/lifecycle/reap.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
+| 242 | `packages/worker/src/lifecycle/spawn.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
+| 135 | `packages/worker/src/lifecycle/status.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
+| 134 | `packages/worker/src/result.ts` | #94 | wire: worker lifecycle (#94) — every importer today is `import type` (erased) |
+| 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 76 | `packages/worker/src/usage.ts` | #102 | keep: seam — reachable once the owning issue wires it |

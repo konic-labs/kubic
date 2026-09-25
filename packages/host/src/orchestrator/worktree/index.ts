@@ -41,6 +41,7 @@ export {
   WORKTREE_EXIT_NOT_A_REPO,
   WORKTREE_EXIT_USAGE,
   WorktreeError,
+  worktreeMissingError,
 } from './errors.js';
 export type { WorktreeEntry } from './list.js';
 export { listWorktrees, parseWorktreePorcelain } from './list.js';

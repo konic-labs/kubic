@@ -45,11 +45,22 @@ as evidence (only `kubic clean` disposes). Requires a git repo: outside one
 the command refuses with exit 2 and never silently runs solo. Worker runs
 need a configured provider (each worker is a child `kubic run -p`).
 
+The manager creates each worker's session before spawning its child. A
+child `kubic run --session <id>` only *attaches* — it never creates — so
+the manager creates `<orchestrator-session>-<agent>` (e.g.
+`orch-1790…-worker-1`) with that agent's worktree as its cwd (worker
+sessions under the sessions root, worker journals inside the worktree).
+Without the session the child would die at attach (exit 5,
+`unknown session`); if creation fails, or a worktree vanished while its
+branch survived, the run fails closed as `spawn_failed` before spawning
+anything. `--resume` re-attaches an existing worker session instead of
+recreating it, so a killed run keeps one chain per worker.
+
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required** (unless `--resume`). The prompt every worker runs. |
 | `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
-| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`. |
+| `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, optional `error` with a machine-readable `code`). |
@@ -57,10 +68,11 @@ need a configured provider (each worker is a child `kubic run -p`).
 Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
 per worker, `merge order: a -> b`, `attribution: a=<n> hunk(s), …`, one
 `merged:`/`reaped:` line per worker, then `result:`. Failures print
-`error: <message> code=<code>` and exit 1 (spawn/worker/merge/reap
-failures), 2 (usage, non-git refusal), or 4 (approval denied) — see
-[exit codes](exit-codes.md). A merge conflict aborts first (never a
-half-merged tree), stops the queue, and preserves the remaining candidates.
+`error: <message> code=<code>` and exit 1 (session creation, spawn, worker,
+merge, and reap failures), 2 (usage, non-git refusal), or 4 (approval
+denied) — see [exit codes](exit-codes.md). A merge conflict aborts first
+(never a half-merged tree), stops the queue, and preserves the remaining
+candidates.
 
 ## `kubic tui [--session <id>]`
 

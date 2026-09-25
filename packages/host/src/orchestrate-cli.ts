@@ -164,6 +164,31 @@ export interface OrchestrateWorktree {
   branch: string;
 }
 
+// Worker-session naming (issue #85): one session per (orchestrator session,
+// agent), so a worker's journals/usage/trajectory resolve inside its own
+// worktree. The id must satisfy SESSION_ID_PATTERN — the child refuses
+// anything else with exit 2 before it can attach.
+export function workerSessionFor(sessionId: string, agentId: string): string {
+  return `${sessionId}-${agentId}`;
+}
+
+// What the manager must do before spawning a worker (issue #85): `kubic run
+// --session <id>` only ATTACHES, so the manager creates the session with an
+// explicit id first. The spawn then happens with the same id.
+export interface WorkerSessionRequest {
+  sessionId: string;
+  agentId: string;
+  workerSessionId: string;
+  worktree: OrchestrateWorktree;
+}
+
+// The id the child attaches to, handed to runWorker so the create step and
+// the spawn cannot drift apart.
+export interface WorkerSpawnInfo {
+  sessionId: string;
+  workerSessionId: string;
+}
+
 export interface ApprovalInput {
   agentId: string;
   branch: string;
@@ -177,11 +202,23 @@ export interface OrchestrateCommandDeps {
   ensureWorktree: (
     agentId: string,
   ) => OrchestrateWorktree | Promise<OrchestrateWorktree>;
+  // Session creation (issue #85): the manager creates the worker session
+  // (explicit id, cwd = the worker worktree) BEFORE the child spawns,
+  // because `kubic run --session <id>` only attaches. Required for a run:
+  // omitted means the spawn path cannot produce an attachable session, so
+  // the run fails closed as `spawn_failed` instead of spawning a child
+  // that dies at attach (exit 5 "unknown session").
+  createWorkerSession: (
+    input: WorkerSessionRequest,
+  ) =>
+    | { sessionId: string }
+    | undefined
+    | Promise<{ sessionId: string } | undefined>;
   runWorker: (
     agentId: string,
     worktree: OrchestrateWorktree,
     prompt: string,
-    info?: { sessionId: string },
+    info?: WorkerSpawnInfo,
   ) => MergedHunk[] | Promise<MergedHunk[]>;
   mergeBranch: (
     agentId: string,
@@ -611,9 +648,45 @@ export async function runOrchestrateCommand(
     if (admission.outcome === 'queued') {
       debug(`queued: worker '${agentId}' at position ${admission.position}`);
     }
+    // Create the worker session BEFORE spawning the child (issue #85):
+    // `kubic run --session <id>` only attaches, so a child spawned without
+    // a session dies at attach (exit 5 "unknown session"). The session is
+    // created with the worker's worktree as cwd, so the worker's journals
+    // and session state land with the worker. Omitted hook or a failed
+    // create fails closed as spawn_failed — never a doomed spawn.
+    const workerSessionId = workerSessionFor(sessionId, agentId);
+    try {
+      const created = await deps.createWorkerSession?.({
+        sessionId,
+        agentId,
+        workerSessionId,
+        worktree,
+      });
+      if (created === undefined) {
+        const failure = await reapSpawned(spawned);
+        void failure;
+        return fail(
+          RUN_EXIT_FAILED,
+          'spawn_failed',
+          `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`,
+          partial(),
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = await reapSpawned(spawned);
+      void failure;
+      return fail(
+        RUN_EXIT_FAILED,
+        'spawn_failed',
+        `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`,
+        partial(),
+      );
+    }
     try {
       const hunks = await deps.runWorker(agentId, worktree, prompt, {
         sessionId,
+        workerSessionId,
       });
       hunksByAgent.set(agentId, [...hunks]);
     } catch (error) {

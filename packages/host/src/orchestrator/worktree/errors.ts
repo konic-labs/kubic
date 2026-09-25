@@ -13,6 +13,7 @@ export type WorktreeErrorCode =
   | 'invalid_agent'
   | 'add_failed'
   | 'already_exists'
+  | 'worktree_missing'
   | 'list_failed'
   | 'status_failed'
   | 'remove_failed'
@@ -42,6 +43,22 @@ export function notARepoError(repoRoot: string): WorktreeError {
     'not_a_repo',
     `orchestrator worktree needs a git repository at ${repoRoot} — run in solo mode here (\`kubic run -p\`) or retry inside a git worktree`,
     WORKTREE_EXIT_NOT_A_REPO,
+  );
+}
+
+// Resume tolerance path (issue #85): the branch survived a killed run but
+// the worktree directory is gone (`rm -rf .kubic && git worktree prune`).
+// Without this check the caller hands a non-existent cwd to the child
+// spawn, which dies as a raw `spawn … ENOENT` uncaught event — no §78
+// code, no usable message. Fail closed with a named code instead.
+export function worktreeMissingError(
+  path: string,
+  branch: string,
+): WorktreeError {
+  return new WorktreeError(
+    'worktree_missing',
+    `worktree ${path} is gone but branch ${branch} exists — recreate it with \`kubic orchestrate\` in a clean checkout or remove the branch first (nothing was spawned)`,
+    1,
   );
 }
 

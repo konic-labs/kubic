@@ -59,9 +59,10 @@ file that no longer exists, or when a row's file has become reachable
   untrusted-cwd exclusion — its row is gone) and gave the inert contracts
   **deletions** where no honest consumer exists (`skills/templates.ts`,
   `artifacts.ts`, `memory.ts`, `transfer.ts`,
-  `host/src/handoff.ts`). Roles wire on the live path; `spec.ts` and
-  `budget.ts` were NOT deletable (live consumers — see their rows) and
-  `graph.ts` is live via #95. See the rows below.
+  `host/src/handoff.ts`). Roles wire on the live path. Not deletable and
+  not dead, so no row: `budget.ts` (the scheduler imports `RunMode`, the
+  extensions bundle imports `createBudget`) and `graph.ts` (live via #95).
+  `spec.ts` keeps a re-owned row; `task.ts` moves to a `keep:` reason.
 - Issue #89 executed its row: `packages/host/src/limits/solo-warning.ts` is
   reachable now that the composition root emits the no-isolation notice on
   `run` (stderr before the first turn) and `tui` (editor footer), so the row
@@ -73,7 +74,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 501 | `packages/agents/src/spec.ts` | #104 | wire: role-driven worker prompts (#104) — the ONLY non-test importer is `roles/roles-data.ts` (§38.2 spawn validation + model precedence), which #104 owns and whose own acceptance criteria require this row to be removed by that issue's PR; deleting it here would force deleting #104's module and its `ROLE_MODEL_DEFAULTS` data source, so #99 re-owns the row instead of stealing the scope |
-| 133 | `packages/agents/src/task.ts` | #99 | wire: context contracts (#99) |
+| 133 | `packages/agents/src/task.ts` | #99 | keep: type-only contract (`AgentTask`, `TaskResources`, `WorkspaceMode`, `validateAgentTask`, …) consumed by LIVE modules through `import type` — `host/src/workers-cli.ts`, `worker/src/lifecycle/{rows,registry}.ts`, `trajectory/src/schema.ts` (its schema mirrors the fields) and `roles-data.ts` (#104). The gate walks VALUE imports, so a types-only module can never be `reachable` by its own rule; deleting it would break the typecheck of live files. Re-owned from `wire:` to a named reason because #99 could not make it reachable without inventing a value import |
 | 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 95 | `packages/core/src/presentation.ts` | #96 | wire: TUI view contract (#96); imported only by dead transcript/tui-app |

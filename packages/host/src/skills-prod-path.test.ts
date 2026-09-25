@@ -10,7 +10,7 @@
 // about the system-prompt bytes handed to AgentHarness.create, observed
 // through the same spy seam solo-wiring.test.ts uses.
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';

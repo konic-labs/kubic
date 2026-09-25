@@ -44,6 +44,13 @@ Activation order is fixed: sync factory `setup` → async `onActivate` →
 refused at `register`/`resolve` time with `ExtensionRefusedError`; there
 is no bypass flag.
 
+The first-party bundle set loads at startup (issue #93): `run`, `tui`,
+and `orchestrate` load it at boot and refuse to start when it is missing
+(`ExtensionStartupError`), while `kubic doctor` reports the same startup
+object's counts. Facet liveness: the tui facet renders the startup
+status text and the worker facet's limit check wraps the live tool
+stack — see the [`@kubic/extensions` docs](../../docs/packages/extensions.md).
+
 ## Dogfood
 
 `bundles/budget` is the first Kubic feature on this path: it delegates to

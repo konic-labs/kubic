@@ -2,7 +2,6 @@
 // kubic CLI composition root: argv in, exit code out. All logic lives in
 // the packages; this file only wires.
 
-import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
@@ -15,7 +14,7 @@ import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
-import { probeFirstPartyPosture } from '../../../packages/extensions/src/startup.js';
+import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -44,6 +43,10 @@ import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
+import {
+  extensionPostureForDoctor,
+  loadExtensionStartup,
+} from './extension-startup.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
@@ -133,6 +136,13 @@ async function main(argv: string[]): Promise<number> {
     });
   }
   if (command === 'tui') {
+    // Extension startup (issue #93): the TUI lane loads the first-party
+    // bundle set at dispatch, through the same gates — a degraded load
+    // throws here (named ExtensionStartupError) instead of opening the
+    // alt-screen on a run whose extensions never loaded.
+    await loadExtensionStartup('tui', process.cwd(), {
+      receipt: (line) => console.error(line),
+    });
     return runTuiCommand(
       rest,
       tuiDepsWithDefaults({ out: (line: string) => console.log(line) }),
@@ -147,6 +157,10 @@ async function main(argv: string[]): Promise<number> {
     const [major = 0, minor = 0] = process.versions.node
       .split('.')
       .map((part) => Number(part));
+    // The extension startup load happens ONCE here (issue #93): the object
+    // every lane also loads, taken as data so the checks below can print a
+    // named failure instead of the process dying before it reports.
+    const extensionPosture = await extensionPostureForDoctor();
     return runDoctorCommand(rest, {
       out: (line: string) => console.log(line),
       probeProviders: () =>
@@ -165,23 +179,12 @@ async function main(argv: string[]): Promise<number> {
         },
       ],
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      // First-party extensions (issue #80): the startup probe loads the
-      // on-disk bundle through the trust gates and reports loaded/refused
-      // counts on the same checks — doctor fails closed when the bundle
-      // dir is gone.
-      probeExtensions: () => {
-        const posture = probeFirstPartyPosture({
-          anchorDir: dirname(fileURLToPath(import.meta.url)),
-          files: createNodeFileBridge('/'),
-          trust: { homeDir: homedir(), cwd: process.cwd(), allowlist: [] },
-        });
-        return {
-          ok: posture.ok,
-          loaded: posture.loaded,
-          refusedCount: posture.refused.length,
-          detail: posture.detail,
-        };
-      },
+      // First-party extensions (issues #80, #93): doctor reports the SAME
+      // startup object the lanes boot with — the load below is the one
+      // shared loader (packages/extensions/src/startup.ts), projected to the
+      // posture shape. No second probe exists, so the counts cannot drift
+      // from what actually loaded; a degraded load reports the named failure.
+      probeExtensions: () => extensionPosture,
     });
   }
   if (command === 'orchestrate') {
@@ -298,5 +301,15 @@ async function main(argv: string[]): Promise<number> {
   return 1;
 }
 
-const code = await main(process.argv.slice(2));
-process.exit(code);
+// Extension startup failures are named one-liners, not stack traces (issue
+// #93): the lane boots above refuse to run bare, and the CLI reports that
+// refusal as `error: …` with the failure exit code. Every other error keeps
+// its existing path (no behavior change for unrelated failures).
+try {
+  const code = await main(process.argv.slice(2));
+  process.exit(code);
+} catch (error) {
+  if (!(error instanceof ExtensionStartupError)) throw error;
+  console.error(`error: ${error.message}`);
+  process.exit(1);
+}

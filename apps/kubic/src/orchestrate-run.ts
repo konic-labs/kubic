@@ -84,6 +84,13 @@ export interface OrchestrateRunOptions {
   /** Wall-clock bound handed to each child `kubic run` (issue #94). */
   workerTimeoutMs?: number;
   /**
+   * How the resolver child is reached (issue #106, §45.2). Defaults to
+   * `workerEntry` — the resolver IS a `kubic run` child, so a test that
+   * scripts a resolver fixture sets this; prod leaves it unset and the entry
+   * is the same one every worker uses.
+   */
+  resolverEntry?: { cmd: string; args: string[] };
+  /**
    * How the child `kubic run` is reached (issue #94). Defaults to the
    * built binary (`node bin/kubic.js`); a test that has no build output
    * injects an argv that runs the same composition root from source, so
@@ -757,9 +764,47 @@ export async function orchestrateDepsWithDefaults(
         );
         const output = `${merged.stdout}\n${merged.stderr}`;
         if (/conflict/i.test(output)) {
+          // §45.2 (issue #106): the resolver spec promises BOTH DIFFS. The
+          // merge's own stdout/stderr carry git's conflict MESSAGES, not
+          // diffs, so the real ones are read here: each side's changes since
+          // the common ancestor. Best-effort with a named fallback — a
+          // conflict must still be reported as a conflict if a diff read
+          // fails, never crash the merge path.
+          const base = await runGit(
+            repo,
+            ['merge-base', 'HEAD', worktree.branch],
+            'cli',
+            'manager',
+            'conflict-base',
+          );
+          const baseRev = base.exitCode === 0 ? base.stdout.trim() : undefined;
+          const sideDiff = async (
+            spec: string,
+            tool: string,
+          ): Promise<string | undefined> => {
+            const diff = await runGit(
+              repo,
+              ['diff', '--no-color', spec],
+              'cli',
+              'manager',
+              tool,
+            );
+            return diff.exitCode === 0 ? diff.stdout.slice(0, 8000) : undefined;
+          };
+          const ours =
+            baseRev === undefined
+              ? undefined
+              : await sideDiff(`${baseRev}..HEAD`, 'conflict-ours');
+          const theirs =
+            baseRev === undefined
+              ? undefined
+              : await sideDiff(
+                  `${baseRev}..${worktree.branch}`,
+                  'conflict-theirs',
+                );
           throw new MergeConflictError(agentId, {
-            oursDiff: merged.stdout.slice(0, 2000),
-            theirsDiff: merged.stderr.slice(0, 2000),
+            oursDiff: ours ?? merged.stdout.slice(0, 2000),
+            theirsDiff: theirs ?? merged.stderr.slice(0, 2000),
           });
         }
         throw new Error(
@@ -827,9 +872,13 @@ export async function orchestrateDepsWithDefaults(
               (entry): entry is [string, string] => entry[1] !== undefined,
             ),
           ),
-          cmd: options.workerEntry?.cmd ?? process.execPath,
+          cmd:
+            options.resolverEntry?.cmd ??
+            options.workerEntry?.cmd ??
+            process.execPath,
           args: [
-            ...(options.workerEntry?.args ?? [entryScript()]),
+            ...(options.resolverEntry?.args ??
+              options.workerEntry?.args ?? [entryScript()]),
             'run',
             '-p',
             request.prompt,

@@ -68,9 +68,41 @@ Every issue, every wave, no freelancing:
 
 Each implementation wave updates its docs page in the same commit — a
 behaviour change without its docs page is incomplete and fails review.
-`node scripts/check-docs-links.mjs` must pass (it runs in CI via
-`npm test`). The area map lives on the
+`node scripts/check-docs-links.mjs` must pass (it runs in CI as the
+standalone `npm run docs:check` step, and again inside `npm test` via
+`scripts/check-docs-links.test.mjs`). The area map lives on the
 [docs index](README.md#separation-of-concerns-soc).
+
+## CI gates (run these locally)
+
+A push runs the `verify` job (the suites + linters below) and the
+`binary-contract` job (the shipped artifact), each on node 22 and 24 —
+the `mutation` job is disabled (`if: false`, see "Known blocker").
+Mirror both before you push — same commands, same order:
+
+```sh
+npm ci
+npm test                    # scripts/*.test.mjs via node --test
+npm run test:unit           # vitest
+npm run typecheck
+npm run lint:deps
+npm run check:pi
+npx biome ci .              # exact CI lint parity (never --no-verify)
+npm run docs:check          # dangling links + dep-table drift
+npm run build               # tsc -> gitignored dist/
+npm run test:binary-contract  # runs the built bin: version / doctor / run
+```
+
+`npm run test:binary-contract` (`scripts/binary-contract.mjs`) is the
+install-story gate: with `dist/` built it asserts the exact
+`kubic <version> (license: MIT)` line (exit 0), `kubic doctor` exiting 6
+with `FAIL limit:provider-availability (provider-down)`, and a
+provider-less `kubic run -p` exiting 6 while still printing the
+`session:`/`journal:`/`usage:`/`trajectory:` refs. It is hermetic — the
+probes run under a temp `HOME` with no `models.json` in the cwd, so no
+provider and no network. Move `dist/apps/kubic/src/main.js` aside to
+watch it fail: a broken dist path or entry fails the job, not a human
+review.
 
 ## The gate
 

@@ -23,6 +23,25 @@ jobs:
       - run: npm run lint:deps
       - run: npm run check:pi
       - run: npx biome ci .
+      - run: npm run docs:check
+  binary-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      # The shipped artifact (bin/kubic.js over dist/) is proven per push:
+      # build, then pin the version line, doctor's provider-down exit 6 +
+      # reason, and the provider-less run -p ref triple. Hermetic: HOME is a
+      # temp dir, no models.json in the cwd, no provider, no network.
+      - run: npm run build
+      - run: npm run test:binary-contract
   mutation:
     runs-on: ubuntu-latest
     # Temporarily disabled: the vitest side grinds ~9h per run (20k mutants x

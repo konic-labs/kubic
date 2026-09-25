@@ -23,8 +23,9 @@
     "lint:deps": "node scripts/dep-lint.mjs",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs scripts/build-contract.test.mjs",
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs scripts/build-contract.test.mjs scripts/binary-contract.test.mjs",
     "docs:check": "node scripts/check-docs-links.mjs",
+    "test:binary-contract": "node scripts/binary-contract.mjs",
     "test:mutation:vitest": "stryker run",
     "test:mutation:tap": "stryker run stryker.tap.conf.json",
     "test:mutation": "npm run test:mutation:vitest && npm run test:mutation:tap && node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 && node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80"

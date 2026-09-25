@@ -3,16 +3,20 @@
 // row's file becomes reachable — never to re-report what the ledger already
 // carries. Fixtures build throwaway trees so the real repo is never mutated.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   allSources,
+  checkSurface,
   computeReachable,
   deadFiles,
   parseLedger,
 } from './reachability.mjs';
+
+const ROOT = join(import.meta.dirname, '..');
 
 function tree(files) {
   const root = mkdtempSync(join(tmpdir(), 'reach-gate-'));
@@ -119,4 +123,67 @@ test('the ledger parses LOC, path and disposition rows', () => {
       });
     },
   );
+});
+
+test('a 3-column ledger row parses too (disposition only)', () => {
+  withTree(
+    {
+      'docs/dead-surface.md':
+        '| LOC | file | disposition |\n| --- | --- | --- |\n| 7 | `packages/a/src/y.ts` | keep: seam |\n',
+    },
+    (root) => {
+      const rows = parseLedger(root);
+      assert.deepEqual(rows.get('packages/a/src/y.ts'), {
+        loc: 7,
+        disposition: 'keep: seam',
+      });
+    },
+  );
+});
+
+test('the CLI gate runs from a path containing a space', () => {
+  // The main-module guard must not depend on the raw (percent-encoded)
+  // .pathname: under a spaced root that comparison fails and the script
+  // exits 0 without checking anything — a gate that silently passes.
+  const base = mkdtempSync(join(tmpdir(), 'reach-spaced-'));
+  const spaced = join(base, 'a dir with spaces');
+  try {
+    mkdirSync(spaced);
+    cpSync(join(ROOT, 'scripts'), join(spaced, 'scripts'), { recursive: true });
+    cpSync(join(ROOT, 'docs'), join(spaced, 'docs'), { recursive: true });
+    mkdirSync(join(spaced, 'packages', 'a', 'src'), { recursive: true });
+    mkdirSync(join(spaced, 'apps', 'app', 'src'), { recursive: true });
+    writeFileSync(
+      join(spaced, 'apps', 'app', 'src', 'main.ts'),
+      'export const x = 1;\n',
+    );
+    // One dead file with no ledger row: the gate MUST fail loudly here.
+    writeFileSync(
+      join(spaced, 'packages', 'a', 'src', 'dead.ts'),
+      'export const dead = 1;\n',
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(spaced, 'scripts', 'reachability.mjs')],
+      { cwd: spaced, encoding: 'utf8' },
+    );
+    assert.equal(
+      result.status,
+      1,
+      `expected exit 1 from a spaced path, got ${result.status} (silent pass = the bug)`,
+    );
+    assert.match(result.stderr, /no ledger row/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('the real tree’s gate state is the ledger’s state', () => {
+  // Locks in the shipped invariant: every dead file is ledgered, no row is
+  // stale and no row has gone reachable. If a sibling issue wires or deletes
+  // a file without updating the ledger, this fails with the offending path.
+  const result = checkSurface(ROOT);
+  assert.deepEqual(result.uncovered, [], 'dead files must all be ledgered');
+  assert.deepEqual(result.stale, [], 'no ledger row may name a missing file');
+  assert.deepEqual(result.wired, [], 'no ledger row may still be reachable');
 });

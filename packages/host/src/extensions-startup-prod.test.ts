@@ -19,10 +19,7 @@ import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import {
-  startFirstPartyExtensions,
-  type ToolGateContribution,
-} from '../../extensions/src/runtime.js';
+import { startFirstPartyExtensions } from '../../extensions/src/runtime.js';
 import type { BundleDirFiles } from '../../extensions/src/startup.js';
 import { ExtensionStartupError } from '../../extensions/src/startup.js';
 import {

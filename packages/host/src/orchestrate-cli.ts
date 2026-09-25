@@ -40,6 +40,8 @@ import { createMergeQueue } from './orchestrator/merge/queue.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
+import type { WorkerRolesPlan } from './roles/worker-roles.js';
+import { applyRolesToPlan, workerRoleAssignment } from './roles/worker-roles.js';
 import {
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
@@ -224,10 +226,16 @@ export interface WorkerSessionRequest {
 }
 
 // The id the child attaches to, handed to runWorker so the create step and
-// the spawn cannot drift apart.
+// the spawn cannot drift apart. Issue #104 adds the worker's assigned role
+// and the role's resolved tool set + model pin: what the lane registers is
+// the role's own set (§12.1/§40 — absence, not approval, withholds a tool),
+// and the model default travels through the existing model pin.
 export interface WorkerSpawnInfo {
   sessionId: string;
   workerSessionId: string;
+  role?: string;
+  tools?: string[];
+  modelRef?: string;
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -312,6 +320,16 @@ export interface OrchestrateCommandDeps {
   // from the worker lifecycle layer; the host side declares only the view
   // it reads, so host keeps no implementation import (dep-lint).
   launches?: OrchestrateLaunchObservations;
+  // §12 role assignment on the delegation path (issue #104): returns the
+  // plan of per-worker role assignments, composed from `.kubic/roles/*.md`
+  // through the live loader (roles-boot.ts). The run composes each worker's
+  // prompt as the role's `## Prompt` text + that worker's plan step, and
+  // hands the role's resolved tool set down the spawn. A refusal
+  // (`refused` non-empty) fails the run closed as `role_refused` with the
+  // resolver's named reason BEFORE anything spawns. Omitted means no role
+  // documents (the plan prompt stands, unchanged). Synchronous so the
+  // composition root can read the directory with the real FileBridge.
+  loadWorkerRoles?: (agents: readonly string[]) => WorkerRolesPlan;
   // The manager lane's registration seam (issue #103, §40). The run calls
   // this BEFORE it spawns anything; the lane it returns is the toolset the
   // root runs with. Defaults to `registerManagerLane()` — the §40 allowlist
@@ -662,9 +680,37 @@ export async function runOrchestrateCommand(
       pending: [...parsed.agents],
       stopped: false,
       records: [],
-      plan: buildManagerPlan(parsed.prompt as string, parsed.agents),
     };
   }
+  // Role documents on the delegation path (issue #104, §12/§12.1). The
+  // loader runs BEFORE anything spawns or merges: a contradictory document
+  // (§40.3) or a role with no `## Prompt` instructions refuses the run with
+  // the resolver's named reason — never a silent fallback to an
+  // instruction-less prompt. Keyed on the STATE's agent list (not the
+  // parsed one), because a --resume run carries no --agents and the workers
+  // it retries are the stored session's: assignment is a deterministic
+  // function of that order, so every worker keeps the role it had.
+  const rolePlan: WorkerRolesPlan = deps.loadWorkerRoles?.(state.agents) ?? {
+    assignments: [],
+    refused: [],
+  };
+  if (rolePlan.refused.length > 0) {
+    const reasons = rolePlan.refused.map((entry) => entry.reason).join('; ');
+    return fail(
+      RUN_EXIT_FAILED,
+      'role_refused',
+      `role document refused the run: ${reasons}`,
+      undefined,
+      state.agents,
+    );
+  }
+  // Each worker prompt is composed as the assigned role's `## Prompt` text
+  // PLUS that worker's plan step — never one replacing the other. The
+  // composed plan is what persists, so `--resume` replays each worker's own
+  // composed prompt. With no role documents this is the identity, so the
+  // plan prompt stands unchanged.
+  const composeRoles = (steps: ManagerPlanStep[]): ManagerPlanStep[] =>
+    applyRolesToPlan(rolePlan.assignments, steps);
   const prompt = parsed.prompt ?? state.prompt;
   // The manager's plan (issue #103): one step per worker, each carrying that
   // worker's prompt. A resumed state written before #103 (or by a caller
@@ -672,12 +718,30 @@ export async function runOrchestrateCommand(
   // list, so --resume replays per-worker prompts either way — never the
   // shared `-p` text.
   if (state.plan === undefined) {
-    state = { ...state, plan: buildManagerPlan(prompt, state.agents) };
+    state = {
+      ...state,
+      plan: composeRoles(buildManagerPlan(prompt, state.agents)),
+    };
   }
   const plan = state.plan as ManagerPlanStep[];
   const promptForWorker = (agentId: string): string => {
     const step = planStepFor(plan, agentId);
     return step === undefined ? prompt : step.prompt;
+  };
+  // The role half of a worker's spawn info (issue #104): the assigned role,
+  // its resolved tool set and its model default. Empty for a worker with no
+  // assignment (no role documents), so the spawn info keeps its #85 shape.
+  const spawnRoleInfo = (
+    agentId: string,
+    roles: WorkerRolesPlan,
+  ): Pick<WorkerSpawnInfo, 'role' | 'tools' | 'modelRef'> => {
+    const assignment = workerRoleAssignment(roles, agentId);
+    if (assignment === undefined) return {};
+    return {
+      role: assignment.role,
+      tools: [...assignment.tools],
+      modelRef: assignment.modelRef,
+    };
   };
   // The lane's own call trace (issue #103): the manager drives each worker
   // through spawn → wait → collect, and each driven worker contributes its
@@ -930,6 +994,11 @@ export async function runOrchestrateCommand(
         {
           sessionId,
           workerSessionId,
+          // The role this worker was assigned and the tool set its lane
+          // must register (§12.1/§40): the resolved set is what withholds
+          // a tool — absence, never approval. Absent means no role
+          // document exists for this worker, so nothing is narrowed.
+          ...spawnRoleInfo(agentId, rolePlan),
         },
       );
       hunksByAgent.set(agentId, [...hunks]);

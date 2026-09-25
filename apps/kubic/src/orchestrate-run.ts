@@ -42,6 +42,7 @@ import {
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import {
   attachSession,
   createSession,
@@ -426,6 +427,20 @@ export async function orchestrateDepsWithDefaults(
     debug,
     isGitRepo: () => root !== undefined,
     launches: launchesView(workerRegistry, launchedByAgent),
+    // §12 role assignment on the delegation path (issue #104): the real
+    // `.kubic/roles/*.md` documents are read through the exec FileBridge at
+    // orchestrator startup, resolved by the live loader (roles-boot.ts), and
+    // projected to one role per worker. The refusal is fail-closed in the
+    // CLI (role_refused) with the resolver's named reason; this hook only
+    // reports what the documents say — it never invents a role.
+    loadWorkerRoles: (agents: readonly string[]) => {
+      const cwd = options.cwd ?? process.cwd();
+      return planWorkerRoles({
+        bridge: createNodeFileBridge(cwd),
+        cwd,
+        agents,
+      });
+    },
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       emitWorktreeNotice();
@@ -534,15 +549,28 @@ export async function orchestrateDepsWithDefaults(
         {
           workerId: agentId,
           sessionId: workerSession,
-          role: 'worker',
+          // §12.1 role on the worker lane (issue #104): the child `kubic run`
+          // loads `.kubic/roles/<name>.md` from its own worktree and registers
+          // exactly that role's resolved tool set — a withheld tool is never
+          // registered (absence, not approval). The lifecycle row keeps the
+          // role name too (§50: who started, as what).
+          role: info?.role ?? 'worker',
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
-          // allowlist inside the layer — never inherited wholesale.
-          baseEnv: Object.fromEntries(
-            Object.entries(process.env).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
+          // allowlist inside the layer — never inherited wholesale. The
+          // role's model default (issue #104, §12.1) travels through the
+          // EXISTING `KUBIC_MODEL` pin: the child's own selectModel honours
+          // it, so no new model plumbing is introduced.
+          baseEnv: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
             ),
-          ),
+            ...(info?.modelRef === undefined
+              ? {}
+              : { KUBIC_MODEL: info.modelRef }),
+          },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
             ...(options.workerEntry?.args ?? [entryScript()]),
@@ -551,6 +579,7 @@ export async function orchestrateDepsWithDefaults(
             prompt,
             '--session',
             workerSession,
+            ...(info?.role === undefined ? [] : ['--role', info.role]),
             '--json',
             '--timeout',
             String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),

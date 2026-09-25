@@ -26,6 +26,11 @@ import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
+import {
+  createInteractiveSeat,
+  formatWorkerAskQuestion,
+  workerSeatForRun,
+} from './orchestrator/approvals/worker-asks.js';
 
 const PROVENANCE: Provenance = {
   sessionId: 'issue-105',
@@ -181,6 +186,120 @@ async function prodHarness(boundMs = 8_000): Promise<ProdHarness> {
   const lines: string[] = [];
   const debugLines: string[] = [];
   return { root, sessionsRoot, fixture, asked, lines, debugLines };
+}
+
+describe('the run attaches a seat when a user is present (issue #105)', () => {
+  it('a TTY run gets the interactive seat; a headless run gets none', () => {
+    // The prod decision, as a pure function of `isTTY` (the same test the
+    // shipped merge prompt uses). This is the wiring that makes a worker's
+    // challenged call reach the user on a real `kubic orchestrate`, and the
+    // wiring that keeps a headless run denying closed instead of hanging.
+    expect(workerSeatForRun(false)).toBeUndefined();
+    const seat = workerSeatForRun(true, { prompt: async () => 'y' });
+    expect(seat).toBeDefined();
+  });
+
+  it("the seat the run attaches presents the ask and returns the user's verdict", async () => {
+    const asked: string[] = [];
+    const seat = workerSeatForRun(true, {
+      prompt: async (question: string) => {
+        asked.push(question);
+        return 'y';
+      },
+    });
+    const verdict = await seat?.(baseRequest());
+    expect(verdict?.approved).toBe(true);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain('worker-1');
+    expect(asked[0]).toContain('network');
+  });
+
+  it('the prod deps factory is what consults the TTY decision', async () => {
+    // The mutation this pins: dropping the `?? workerSeatForRun(...)` fallback
+    // from `orchestrateDepsWithDefaults` left the pure-function tests above
+    // GREEN — they exercise `workerSeatForRun` directly, so nothing noticed
+    // that the production factory never called it. That is the exact defect
+    // this issue exists to fix (measured before the wiring: the real
+    // `kubic orchestrate` entry point passed no seat at all, so a worker's
+    // challenged call denied closed instead of reaching the user). The
+    // assertion is on the production SOURCE, because the decision is a
+    // property of that factory and cannot be observed from a request object.
+    const source = readFileSync(
+      join(
+        import.meta.dirname,
+        '..',
+        '..',
+        '..',
+        'apps',
+        'kubic',
+        'src',
+        'orchestrate-run.ts',
+      ),
+      'utf8',
+    );
+    expect(source).toContain('workerSeatForRun(process.stdin.isTTY === true)');
+    // And it must be the DEFAULT for the seat, not a branch that bypasses it.
+    expect(source).toMatch(
+      /options\.approvalsSeat\s*\?\?\s*workerSeatForRun\(process\.stdin\.isTTY === true\)/,
+    );
+  });
+
+  it('a run with an injected seat uses it verbatim — prod only supplies the default', async () => {
+    // The composition root's precedence rule: an injected seat WINS over the
+    // TTY default, which is how an embedder (or a test) states its own
+    // surface. Asserted on the real factory so the rule cannot drift.
+    const h = await prodHarness();
+    const injected: OrchestratorApprovalRequest[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => h.lines.push(line),
+      debug: () => undefined,
+      cwd: h.root,
+      sessionsRoot: h.sessionsRoot,
+      approvalsSeat: async (request) => {
+        injected.push(request);
+        return { approved: false, reason: 'the injected seat declined' };
+      },
+      workerEntry: {
+        cmd: process.execPath,
+        args: [
+          '--experimental-strip-types',
+          '--import',
+          join(dirname(h.fixture), 'loader-register.mjs'),
+          h.fixture,
+        ],
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'do the work', '--session', 'orch-105', '--agents', 'worker-1'],
+      deps,
+    );
+    // The injected seat was consulted (not bypassed in favour of the TTY
+    // default), its denial reached the child, and the child denied closed.
+    expect(injected).toHaveLength(1);
+    expect(injected[0]?.agentId).toBe('worker-1');
+    expect(code).toBe(4);
+  }, 60_000);
+});
+
+// A minimal, complete request envelope: what the interactive seat reads to
+// compose the question the user sees. Kept explicit so the display contract is
+// pinned rather than incidental.
+function baseRequest(): OrchestratorApprovalRequest {
+  return {
+    key: 'a'.repeat(16),
+    agentId: 'worker-1',
+    sessionId: 'orch-105',
+    trigger: 'network',
+    toolName: 'bash',
+    // The envelope the seat reads: a SUMMARY of the challenged call (never raw
+    // args — those stay inside the envelope's canonical form) and the
+    // justification the ask carries.
+    summary: 'curl https://example.com/1.tgz',
+    justification: 'worker-1 needs the network for its step',
+    worktree: '/repo/.kubic/wt/worker-1',
+    role: 'worker',
+    provenance: { parentSessionId: 'orch-105' },
+  };
 }
 
 describe('per-worker approvals: the mailbox crosses the process boundary (issue #105)', () => {

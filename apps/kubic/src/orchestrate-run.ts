@@ -35,6 +35,7 @@ import {
   createOrchestratorApprovalsRun,
   type WorkerApprovalsRun,
   type WorkerAskSeat,
+  workerSeatForRun,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
@@ -300,8 +301,13 @@ export async function orchestrateDepsWithDefaults(
   let workerShell: ReturnType<typeof allowlistedShell> | undefined;
   // Per-worker approvals (issue #105): the seat a TTY run attaches, and the
   // live approvals layer once the CLI constructs it (so the child's own env
-  // can carry its mailbox path).
-  const optionsSeat = options.approvalsSeat;
+  // can carry its mailbox path). The prod default is the interactive seat when
+  // this process has a terminal — the same `process.stdin.isTTY` test the
+  // shipped merge prompt uses — so a worker's challenged call reaches the user
+  // on a real `kubic orchestrate` run. A caller may inject a seat instead
+  // (tests do); headless keeps NO seat and denies closed on the bound.
+  const optionsSeat =
+    options.approvalsSeat ?? workerSeatForRun(process.stdin.isTTY === true);
   let approvalsActive: WorkerApprovalsRun | undefined;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
     if (workerShell === undefined || workerShellRoot !== worktreePath) {

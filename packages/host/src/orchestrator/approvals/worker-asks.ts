@@ -23,7 +23,9 @@
 //     global, and a fresh session starts enforced;
 //   - the manager's only view of an ask: buildManagerBlockedIndicator
 //     (read-only). attemptManagerApprove is refused and audited.
+
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { FileBridge } from '../../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
@@ -222,6 +224,81 @@ export type WorkerAskSeat = (
 // by:'user' — never a manager grant and never a model claim.
 export function createStandingAnswerSeat(): WorkerAskSeat {
   return async () => ({ approved: true, by: 'user' });
+}
+
+// The USER's seat on an interactive run: what a TTY orchestration attaches so
+// a worker's challenged call is PRESENTED — the §41.2 dialog. It is the same
+// primitive the shipped merge prompt uses (readline over stdio), reduced to
+// one question and one yes/no. `prompt` is injectable so the contract (ask,
+// parse, return) is testable without a real terminal; prod passes nothing and
+// gets the readline prompt.
+//
+// Two properties are deliberate:
+//   - the DISPLAY text is composed from the request envelope (worker, trigger,
+//     justification), never from a model's own claim about what it wants;
+//   - only an explicit yes approves. An empty line, a "n", EOF or an error all
+//     refuse, so a mistyped Enter can never grant a dangerous capability.
+export function createInteractiveSeat(
+  options: { prompt?: (question: string) => Promise<string> } = {},
+): WorkerAskSeat {
+  const ask =
+    options.prompt ??
+    (async (question: string): Promise<string> => {
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stderr,
+      });
+      try {
+        return await new Promise<string>((resolveAnswer) => {
+          rl.question(question, resolveAnswer);
+        });
+      } finally {
+        rl.close();
+      }
+    });
+  return async (request) => {
+    const question = formatWorkerAskQuestion(request);
+    let answer: string;
+    try {
+      answer = await ask(`${question} [y/N] `);
+    } catch {
+      // A prompt that cannot even be asked is not consent.
+      return { approved: false, reason: 'approval prompt failed — denied' };
+    }
+    if (!/^y(es)?\s*$/i.test(answer.trim())) {
+      return {
+        approved: false,
+        reason: answer.trim() === '' ? 'no answer — denied' : 'user declined',
+      };
+    }
+    return { approved: true, by: 'user' };
+  };
+}
+
+// The prod decision: does THIS run have a user to ask? A run started from a
+// terminal does, and attaches the interactive seat; a headless run (CI, a
+// pipe, a cron job) does not, and attaches nothing — its asks deny closed on
+// the bound, which is the shipped exit-4 posture. Kept as a pure function of
+// `isTTY` so the decision is testable without a terminal, and so the one place
+// that decides is the same place that is asserted.
+export function workerSeatForRun(
+  isTTY: boolean,
+  options: { prompt?: (question: string) => Promise<string> } = {},
+): WorkerAskSeat | undefined {
+  return isTTY ? createInteractiveSeat(options) : undefined;
+}
+
+// The question the user reads, built from the request envelope only. It names
+// the worker, the capability that needs approving and the justification the
+// request carries, so approving is an informed act rather than a reflex.
+export function formatWorkerAskQuestion(
+  request: OrchestratorApprovalRequest,
+): string {
+  const reason =
+    request.justification === undefined || request.justification.trim() === ''
+      ? 'no justification given'
+      : request.justification.trim();
+  return `worker '${request.agentId}' requests ${request.trigger} (${request.toolName}): ${reason} — approve?`;
 }
 
 // The worker CHILD's seat: what a spawned `kubic run` attaches so a

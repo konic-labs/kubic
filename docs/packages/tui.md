@@ -23,6 +23,9 @@ TUI-side analogue of the worker Pi boundary.
 | `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneSnapshot` (re-export), `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `AgentTreeState`, `createTreeState`, `toggleTree`, `LaneEventLike`, `applyLaneEvent`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
+| `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding) |
+| `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2) |
+| `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TUI_QUIT_KEY`, `TUI_ESCAPE_KEY`, `TUI_EOF_KEY`, `TUI_TREE_TOGGLE_KEY`, `TuiApp`, `createTuiApp`, `seedFromPresentation` |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines`, `DiffView` |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `shouldUseInlineFallback`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `renderApprovalInline`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
@@ -79,6 +82,20 @@ module owns arrangement only.
   (`renderJournalLines`) under `DiffRenderOptions`.
 - **Screen** (`screen.ts`): `bootScreen(terminal, root)` boots the alt
   screen from a layout root.
+- **Editor** (`editor-view.ts`): `PromptEditor` wraps Pi's `Editor` with a
+  lazily bound TUI handle (`bind`), Enter submit (empty drafts are
+  ignored), multi-line entry (Ctrl-J / Shift+Enter / `\`+Enter), submit
+  history, and focus forwarding for the IME cursor marker. `setDisabled`
+  blocks submit for the duration of a turn.
+- **Lane cells** (`lane-cells.ts`): `entriesToCells` turns committed lane
+  entries into ordered transcript cells (`› ` prompts, `tool <name>` calls,
+  truncated tool output) — the §15.2 coarse-cell feed the prompt loop
+  re-applies after every turn.
+- **App** (`tui-app.ts`): `createTuiApp` arranges the views and routes
+  input. The shipped key map is Enter (submit), Ctrl-J / Shift+Enter /
+  `\`+Enter (newline), Ctrl-T (tree toggle), Ctrl-C (cancel while a turn
+  runs, else quit), Esc (quit), Ctrl-D (quit on an empty draft). Plain
+  characters — including `t`/`T` — belong to the editor.
 
 ### Presentation state
 

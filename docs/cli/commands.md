@@ -130,16 +130,49 @@ and exits 2 without touching anything (§78). See
 ## `kubic tui [--session <id>]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
-transcript, and status rows render in root order; `T`/`t` toggles the
-tree, `Ctrl-C` quits — quitting restores the main screen and prints the
-final document (no cursor loss on interrupt). Below 80 columns the tree
-hides and transcript plus status stay. `--session <id>` resumes into an
-existing session (same `[A-Za-z0-9_-]` rule as `run` — anything else
-exits 2 before the lane boots). Lane boot failure exits 5 on a missing
-session, 6 with no reachable provider, 1 otherwise. Only `SIGINT`
-(`Ctrl-C`) is handled — `SIGTERM`/`SIGHUP` have no handler and exit
-without restoring the alt-screen. Solo mode runs
-in-process with your user authority: no isolation, no containment.
+transcript, and status rows render in root order, with the prompt editor
+on the bottom row. Below 80 columns the tree hides and transcript plus
+status stay. `--session <id>` resumes into an existing session (same
+`[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before the lane
+boots). Lane boot failure exits 5 on a missing session, 6 with no
+reachable provider, 1 otherwise.
+
+The loop is real: type a prompt, press `Enter` to submit, and the solo
+lane drives it with events streaming into the views — tool calls appear in
+the tree, the transcript grows with the committed conversation, and the
+status bar fills with usage rows. While a turn runs the editor disables
+submit; `Ctrl-C` cancels the in-flight operation and keeps the session
+alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
+
+| Key | Meaning |
+| --- | --- |
+| `Enter` | **Submit** the prompt (an empty draft submits nothing). |
+| `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
+| `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
+| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
+| `Esc` | Quit. |
+| `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
+| EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
+
+These keys are classified by the terminal library's key decoder, not by
+matching raw bytes, so they work on terminals that negotiate the Kitty
+keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
+as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
+send the legacy control bytes. A refused cancel is reported in the editor
+footer (`cancel failed: …`) instead of being swallowed — the turn keeps
+running and the key is never a silent no-op.
+
+Quitting restores the main screen and prints the final document (no cursor
+loss on interrupt). Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
+`SIGTERM`/`SIGHUP` have no handler and exit without restoring the
+alt-screen. Solo mode runs in-process with your user authority: no
+isolation, no containment.
+
+Text rendered in the transcript is stripped of terminal control sequences
+before it reaches the frame: assistant text and tool output are untrusted
+input, so ANSI escapes (`\x1b[2J`, colour codes, cursor moves) and C0
+controls such as BEL are removed rather than executed by the operator's
+terminal. The renderer's own styling is unaffected.
 
 ## `kubic sessions`
 

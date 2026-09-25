@@ -57,4 +57,26 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     const frame = app.render(60).join('\n');
     expect(frame).not.toContain(`${ESC}[2J`);
   });
+
+  it('does not let a tool NAME emit raw escapes (second-pass finding)', () => {
+    // The first pass sanitized text content but not the tool-call name, so a
+    // model emitting a call named `evil\x1b[2Jname` still rendered the
+    // clear-screen sequence. Names are model-supplied, so they are the same
+    // class of untrusted input.
+    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    app.applyLaneEntries([
+      {
+        id: 'e3',
+        seq: 3,
+        type: 'message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'tc1', name: `evil${ESC}[2Jname` }],
+        },
+      },
+    ]);
+    const frame = app.render(60).join('\n');
+    expect(frame).toContain('evil');
+    expect(frame).not.toContain(`${ESC}[2J`);
+  });
 });

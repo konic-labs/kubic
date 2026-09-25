@@ -123,7 +123,15 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
       }
       const name = nameOf(part);
       if (name !== undefined) {
-        push(toolCallIdOf(part, index), 'tool', `${TOOL_CALL_PREFIX}${name}`);
+        // The tool NAME is untrusted too: it comes from the model's tool
+        // call, so it can carry the same control sequences as the text
+        // (reviewer finding, second pass — a name of `evil\x1b[2Jname`
+        // rendered the clear-screen sequence into the frame).
+        push(
+          toolCallIdOf(part, index),
+          'tool',
+          `${TOOL_CALL_PREFIX}${sanitizeLaneText(name)}`,
+        );
       }
     });
     return cells;

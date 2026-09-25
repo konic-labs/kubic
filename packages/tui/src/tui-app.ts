@@ -35,6 +35,14 @@
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 
 import type { KubicPresentationState } from '../../core/src/presentation.js';
+import { createApprovalSurface } from './approval-surface.js';
+import type {
+  ApprovalDecision,
+  ApprovalOverlayHandle,
+  ApprovalOverlayTui,
+  ApprovalViewRequest,
+} from './approval-view.js';
+import { ApprovalView, showApprovalOverlay } from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
 import { entriesToCells, type LaneEntryLike } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
@@ -61,6 +69,10 @@ export type {
   PanelMode,
   Viewport,
 };
+
+// The request the overlay answers: approval-view.ts's own request shape, named
+// here so the composition root and the app agree on one type.
+export type TuiApprovalRequest = ApprovalViewRequest;
 
 export interface TuiAppSeed {
   readonly sessionId: string;
@@ -130,6 +142,12 @@ export interface TuiApp {
   setDiffToolCall(toolCallId: string | null): void;
   panelMode(): PanelMode;
   openPanel(mode: PanelMode): void;
+  // Issue #96: the approval surface. The composition root hands the app the
+  // live alt-screen's overlay seat at boot (before that, or on a terminal with
+  // no overlay seat, the inline body is the surface).
+  attachApprovalOverlay(host: ApprovalOverlayTui): void;
+  requestApproval(request: TuiApprovalRequest): Promise<ApprovalDecision>;
+  hasPendingApproval(): boolean;
 }
 
 // Structural mirror of journal-view's JournalFilter (kept local so the app's
@@ -190,6 +208,19 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const status = new StatusBar(barState);
   const editor = new PromptEditor();
   const editorRow = new EditorRow(editor);
+  // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
+  // overlay cannot be composited (Pi's visible() gate refuses), so the
+  // request renders here, in the transcript's own row: the layout engine owns
+  // the sizing, so the body is never spliced into a frame by guessing row
+  // offsets. While `inlineBody` is empty the slot is the transcript.
+  let inlineBody: string[] = [];
+  const transcriptSlot: Component = {
+    render: (width: number): string[] =>
+      inlineBody.length > 0 ? inlineBody : transcript.render(width),
+    invalidate: (): void => {
+      transcript.component.invalidate();
+    },
+  };
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -206,7 +237,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   const root = buildLayoutRoot({
     tree,
-    transcript: transcript.component,
+    transcript: transcriptSlot,
     status,
     editor: editorRow,
     panel: { component: panelBody, isOpen: () => mode !== 'closed' },
@@ -222,20 +253,98 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     consumed: true,
     cancel: false,
   });
+  // ── Issue #96: the approval surface ───────────────────────────────────────
+  // The surface collects the verdict; the app owns the two places it can be
+  // SEEN from (the overlay seat handed in by the composition root, and the
+  // inline body below APPROVAL_MIN_WIDTH). pi-tui's hide() is permanent
+  // ("cannot be shown again"), so each request gets a fresh ApprovalView and
+  // the old one is dismissed first.
+  const approvalSurface = createApprovalSurface();
+  // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
+  // name here rather than binding one action to two keys silently.
+  approvalSurface.checkKeys();
+  let overlayHost: ApprovalOverlayTui | undefined;
+  let overlayHandle: ApprovalOverlayHandle | undefined;
+  let overlayView: ApprovalView | undefined;
+  const dismissOverlay = (): void => {
+    if (overlayView !== undefined && overlayHandle !== undefined) {
+      // unfocus-first: after hide() Pi's unfocus early-returns (the entry is
+      // gone), so the explicit editor target would be lost.
+      overlayHandle.unfocus({ target: editor });
+      overlayView.focused = false;
+      overlayHandle.hide();
+    }
+    overlayView = undefined;
+    overlayHandle = undefined;
+  };
+  // Bring the overlay in line with the surface. Called after every decision
+  // and after every ask, so the shown request is always the pending one.
+  const syncOverlay = (): void => {
+    const request = approvalSurface.pending();
+    if (request === undefined) {
+      if (overlayView !== undefined) dismissOverlay();
+      return;
+    }
+    if (overlayHandle !== undefined) {
+      // A different request while one was shown: the previous view is spent.
+      if (overlayView?.getRequest().key === request.key) return;
+      dismissOverlay();
+    }
+    if (overlayHost === undefined) return;
+    const view = new ApprovalView({
+      request,
+      // The decision itself is taken by the app (it owns the loop); this
+      // callback exists because ApprovalView requires the seat, and it must
+      // not double-apply — the loop's own handler is the single path.
+      onDecision: () => {},
+    });
+    overlayView = view;
+    overlayHandle = showApprovalOverlay(overlayHost, view);
+  };
+  const settleApproval = (): void => {
+    syncOverlay();
+    inlineBody = [];
+  };
   return {
     root,
     tree,
     transcript,
     status,
     editor,
-    render: (width: number): string[] => root.render(width),
+    render: (width: number): string[] => {
+      const pendingRequest = approvalSurface.pending();
+      // Below the minimum the overlay must not be the surface (Pi's visible()
+      // gate refuses to composite it there), so the request renders in the
+      // transcript's slot instead — one of the two is always the surface.
+      inlineBody =
+        pendingRequest !== undefined &&
+        approvalSurface.usesInlineFallback(width)
+          ? approvalSurface.renderInline(width)
+          : [];
+      return root.render(width);
+    },
     handleInput: (data: string): TuiInputResult => {
       // Classified by pi-tui's parseKey so both encodings are honoured:
       // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
       const keyId = keyIdOf(data);
+      // Issue #96: a shown approval owns the decision keys FIRST — above every
+      // global binding. Answering with Esc must deny the request, not quit the
+      // session; the operator can still quit after the request settles. A key
+      // the surface does not claim falls through to the normal loop (so the
+      // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
+      if (approvalSurface.isShowing() && approvalSurface.decide(data)) {
+        settleApproval();
+        return { quit: false, consumed: true, cancel: false };
+      }
       if (keyId === 'ctrl+c') {
         // Always classified as cancel; the root decides whether the process
-        // exits (idle) or the in-flight turn aborts (busy).
+        // exits (idle) or the in-flight turn aborts (busy). A pending approval
+        // is denied first: nobody is left waiting on a verdict that can no
+        // longer arrive (the turn would otherwise hang to the lane's timeout).
+        if (approvalSurface.isShowing()) {
+          approvalSurface.cancelPending();
+          settleApproval();
+        }
         return { quit: true, consumed: true, cancel: true };
       }
       if (keyId === 'escape') return quit();
@@ -323,5 +432,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     openPanel: (next: PanelMode): void => {
       mode = next;
     },
+    attachApprovalOverlay: (host: ApprovalOverlayTui): void => {
+      overlayHost = host;
+      // A request that arrived before boot finished is shown now.
+      syncOverlay();
+    },
+    requestApproval: (
+      request: TuiApprovalRequest,
+    ): Promise<ApprovalDecision> => {
+      const pending = approvalSurface.ask(request);
+      syncOverlay();
+      return pending;
+    },
+    hasPendingApproval: (): boolean => approvalSurface.isShowing(),
   };
 }

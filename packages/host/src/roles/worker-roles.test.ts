@@ -184,6 +184,26 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(plan.assignments).toEqual([]);
   });
 
+  it('refuses when a worker maps to a role with no document, while zero documents stay a no-op', () => {
+    // Two documents, three workers: the third maps to a role whose file is
+    // absent. That is a configuration the operator half-made, so it refuses
+    // by name — composing a prompt with no role would silently ignore the
+    // documents that DO exist. Zero documents is the untouched default
+    // (pinned above), so the two cases must not be conflated.
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta', 'gamma'],
+    });
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'planner',
+      'implementer',
+    ]);
+    expect(plan.refused).toHaveLength(1);
+    expect(plan.refused[0]?.name).toBe('tester');
+    expect(plan.refused[0]?.reason).toMatch(/no role document for 'tester'/);
+  });
+
   it('assigns no role at all when the workspace has no role documents', () => {
     // An absent `.kubic/roles/` is the normal case (the solo default is
     // unaffected) — the delegation path then keeps the plan prompt.

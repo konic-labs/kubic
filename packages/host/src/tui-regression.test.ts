@@ -4,9 +4,33 @@
 // proof lives here next to run-prod-path.test.ts. This file never
 // imports @kubic/tui (dep-lint): the fake terminal satisfies the seam
 // structurally. Faux lane boot only — zero network.
+
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { runTuiCommand } from '../../../apps/kubic/src/tui-run.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../worker/src/pi-boundary.js';
 import { runRunCommand } from './run-cli.js';
+
+function tmpRoot(): string {
+  return mkdtempSync(join(tmpdir(), 'tui-regression-'));
+}
+
+function fauxModels(texts: string[]): MutableModels {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
+  return models;
+}
 
 function fakeTerminal(width: number) {
   const writes: string[] = [];
@@ -94,5 +118,68 @@ describe('tui entry regression (issue #75)', () => {
     });
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('result: hi');
+  });
+
+  it('headless `kubic run` exit codes and transcript are unchanged by the loop (issue #88)', async () => {
+    // Criterion 6: the prompt loop must not alter the headless path. A real
+    // lane run through the same composition root (apps/kubic) with faux
+    // models, driving the same `runHeadlessPrompt` the loop shares the lane
+    // boot with. NOTE: run-cli's `onScreenMount` hook is never invoked
+    // (`void deps.onScreenMount`), so the alt-screen invariant is asserted on
+    // the emitted output — the only thing a user could actually observe.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const code = await runRunCommand(['-p', 'headless hi'], {
+      out: (line: string) => lines.push(line),
+      run: (prompt: string) =>
+        runHeadlessPrompt(
+          prompt,
+          {},
+          {
+            sessionsRoot: root,
+            models: fauxModels(['headless answer']),
+            env: new FakeExecutionEnv({}),
+          },
+        ),
+    });
+    expect(code).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('result: headless answer');
+    expect(doc).toContain('usage: usage:');
+    expect(doc).toContain('journal: journal:');
+    expect(doc).toContain('trajectory: trajectory:');
+    // No alt-screen escape sequences ever reach the headless output.
+    expect(doc).not.toContain('?1049h');
+    expect(doc).not.toContain('?1049l');
+  });
+
+  it('headless run keeps each terminus on its §78 exit code (issue #88)', async () => {
+    const cases: Array<[string, number]> = [
+      ['completed', 0],
+      ['failed', 1],
+      ['usage', 2],
+      ['budget_exhausted', 3],
+      ['approval_timed_out', 4],
+      ['workspace_unavailable', 5],
+      ['provider_probe_failed', 6],
+    ];
+    for (const [terminus, expected] of cases) {
+      const lines: string[] = [];
+      const code = await runRunCommand(['-p', 'x'], {
+        out: (line: string) => lines.push(line),
+        run: async () => ({
+          terminus: terminus as never,
+          summary: 's',
+          sessionId: 's',
+          journalRef: 'journal:s',
+          usageRef: 'usage:s',
+          trajectoryRef: 'trajectory:s',
+          ...(terminus === 'failed'
+            ? { error: { kind: 'failed' as const, message: 's' } }
+            : {}),
+        }),
+      });
+      expect([terminus, code]).toEqual([terminus, expected]);
+    }
   });
 });

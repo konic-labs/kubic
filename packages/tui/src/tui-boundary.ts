@@ -10,8 +10,10 @@
 
 export type {
   Component,
+  EditorTheme,
   Focusable,
   MouseRegionHandler,
+  SelectListTheme,
   StackEntryOptions,
   Terminal,
   TUI,

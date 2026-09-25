@@ -211,11 +211,103 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(await pending).toBe(0);
     const doc = lines.join('\n');
     // The tree reflects the tool call: applyLaneEvent has a production
-    // caller on the loop path.
-    expect(doc).toContain('bash');
+    // caller on the loop path. Asserted on the TREE's own rendering — the
+    // glyph + duration line ('✓ bash 1ms') that only AgentTreeView produces
+    // (the transcript writes 'tool bash', with no glyph and no duration), so
+    // deleting `this.app.applyLaneEvent(event)` from TuiTurnRunner turns
+    // this red. Verified by mutation: it does.
+    expect(doc).toMatch(/✓ bash \d+ms/);
     // The status bar carries a real usage row: setUsage has a production
-    // caller too.
-    expect(doc).toMatch(/in \d+ out \d+/);
+    // caller too. The row values come from the lane's usage event, so a
+    // dropped `setUsage` call must also turn this red (verified).
+    expect(doc).toMatch(/in [1-9]\d* out [1-9]\d*/);
+  });
+
+  it('surfaces a refused abort as a footer, never an unhandled rejection', async () => {
+    // RED before the fix: TuiTurnRunner.cancel() awaited requestLaneAbort,
+    // which THROWS LaneDriveError when the lane refuses (lane/abort.ts:59),
+    // and the key path did `void turn.cancel().then(...)` with no catch — so
+    // a refusal escaped as an unhandledRejection (observed:
+    // "lane abort failed for <id>: {\"message\":\"lane refuses abort\"}") and
+    // the operator saw nothing happen at all.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let admitted: () => void = () => {};
+    const landed = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    const { models } = fauxModels([
+      async () => {
+        // The model runs only after the lane ADMITTED the prompt, so waiting
+        // here proves the abort below takes the in-flight path (admitted,
+        // operationId set) rather than the latched pre-admission path — the
+        // two have different catches and only the former was the bug.
+        admitted();
+        await gated;
+        return fauxAssistantMessage('done');
+      },
+    ]);
+    const base = fauxLaneBoot(root, models);
+    const bootLane: TuiRunDeps['bootLane'] = async (sessionId?: string) => {
+      const booted = await base(sessionId);
+      const loop = booted.loop;
+      if (loop === undefined) throw new Error('faux boot returned no loop');
+      return {
+        sessionId: booted.sessionId,
+        model: booted.model,
+        loop: {
+          accept: loop.accept,
+          lane: loop.lane,
+          findEntries: loop.findEntries,
+          events: loop.events,
+          kills: loop.kills,
+          context: loop.context,
+          // The lane refuses every abort request — the reviewer's scenario.
+          requestAbort: async () => ({
+            ok: false as const,
+            error: { message: 'lane refuses abort' },
+          }),
+        },
+      };
+    };
+    const pending = runTuiCommand([], {
+      out: (line: string) => lines.push(line),
+      createTerminal: () => fake.terminal,
+      bootLane,
+    });
+    try {
+      await waitFor(() => fake.counts.started === 1);
+      for (const ch of 'stuck') fake.feed(ch);
+      fake.feed('\r');
+      // Wait for the lane to ADMIT before cancelling: this is the in-flight
+      // path where the abort is issued against a live operationId.
+      await landed;
+      fake.feed('\x03'); // cancel: the lane will refuse
+      // The refusal is REPORTED — either by the cancel path's own catch or by
+      // the turn's failure path; either way the operator sees the named
+      // reason instead of nothing happening. Asserting the stable prefix
+      // only: the footer is width-clamped, so the trailing JSON detail is
+      // truncated on a 100-column screen.
+      await waitFor(() => fake.writes.join('').includes('lane abort failed'));
+      expect(fake.counts.stopped).toBe(0);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toEqual([]);
+      release();
+      fake.feed('\x03'); // idle again: Ctrl-C quits
+      expect(await pending).toBe(0);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
   });
 
   it('cancels the in-flight turn on Ctrl-C without killing the process', async () => {
@@ -257,6 +349,28 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
+  });
+
+  it('quits on the Kitty-protocol form of Esc and Ctrl-D, not only legacy bytes', async () => {
+    // RED before the fix: the loop compared raw input against legacy
+    // control bytes ('\x1b', '\x04'), so a Kitty-class terminal — which
+    // sends CSI-u sequences ('\x1b[27u' for Esc, '\x1b[100;5u' for Ctrl-D)
+    // — hit the fall-through branch and did nothing: `consumed: true` with
+    // no effect, the exact silent no-op key the criterion forbids. Verified
+    // from the pinned pi-tui: parseKey('\x1b[27u') === 'escape'.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models } = fauxModels(['hello']);
+    const pending = runTuiCommand([], {
+      out: (line: string) => lines.push(line),
+      createTerminal: () => fake.terminal,
+      bootLane: fauxLaneBoot(root, models),
+    });
+    await waitFor(() => fake.counts.started === 1);
+    fake.feed('\x1b[27u');
+    expect(await pending).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
   });
 
   it('quits on a second Ctrl-C during a turn, matching the documented key table', async () => {

@@ -1,0 +1,60 @@
+// Lane text must not carry terminal control sequences into the frame
+// (issue #88, reviewer finding 1). The loop is what FEEDS lane content
+// (assistant text, tool results) into the transcript for the first time, so
+// a model or a tool can otherwise drive the terminal directly: clearing the
+// screen ('\x1b[2J'), repainting colour, ringing the bell, or — on a
+// terminal that honours them — moving the cursor over the status bar.
+//
+// RED before the fix: entriesToCells passed text through verbatim and the
+// assertion below failed with `has raw ESC: true` (verified by dumping the
+// rendered frame: 'HI\u001b[2J\u001b[31mRED\u001b[0m\u0007END').
+import { describe, expect, it } from 'vitest';
+import { createTuiApp } from './tui-app.js';
+
+const ESC = '\u001b';
+const BEL = '\u0007';
+
+function frameWith(text: string): string {
+  const app = createTuiApp({ sessionId: 's', model: 'm' });
+  app.applyLaneEntries([
+    {
+      id: 'e1',
+      seq: 1,
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    },
+  ]);
+  return app.render(60).join('\n');
+}
+
+describe('terminal control sequences from lane content (issue #88)', () => {
+  it('does not let assistant text emit raw escapes or the bell', () => {
+    const frame = frameWith(`HI${ESC}[2J${ESC}[31mRED${ESC}[0m${BEL}END`);
+    // The words survive (the operator still reads what the model said)...
+    expect(frame).toContain('HI');
+    expect(frame).toContain('RED');
+    expect(frame).toContain('END');
+    // ...but no control byte from lane content reaches the terminal. The
+    // renderer's own styling is untouched — this is about CONTENT only.
+    expect(frame).not.toContain(`${ESC}[2J`);
+    expect(frame).not.toContain(`${ESC}[31m`);
+    expect(frame).not.toContain(BEL);
+  });
+
+  it('does not let tool-result text emit raw escapes either', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    app.applyLaneEntries([
+      {
+        id: 'e2',
+        seq: 2,
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          content: [{ type: 'text', text: `ok${ESC}[2Jgone` }],
+        },
+      },
+    ]);
+    const frame = app.render(60).join('\n');
+    expect(frame).not.toContain(`${ESC}[2J`);
+  });
+});

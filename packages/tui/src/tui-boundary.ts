@@ -25,6 +25,7 @@ export {
   MouseRegion,
   matchesKey,
   ProcessTerminal,
+  parseKey,
   ScrollView,
   Text,
   TuiAltScreen,

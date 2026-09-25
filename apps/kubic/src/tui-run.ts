@@ -335,6 +335,9 @@ export class TuiTurnRunner {
   // Cancels the in-flight operation. Returns false when nothing is running,
   // so the caller can fall through to quit. Before the admission lands the
   // request is latched and replayed by `run`, so the key is never lost.
+  // It THROWS when the lane refuses the abort (requestLaneAbort wraps the
+  // refusal in LaneDriveError); the key handler catches it and reports it,
+  // so a refusal is never a silent no-op and never an unhandled rejection.
   async cancel(): Promise<boolean> {
     if (!this.isRunning()) return false;
     this.aborted = true;
@@ -453,9 +456,25 @@ export async function runTuiCommand(
           if (!turn.isCancelling()) {
             app.setEditorFooter('cancelling…');
             screen?.render();
-            void turn.cancel().then(() => {
-              if (!stopped) screen?.render();
-            });
+            void turn
+              .cancel()
+              .then((accepted) => {
+                if (stopped) return;
+                // A refused abort must never be silent: without this the
+                // operator presses Ctrl-C, the lane refuses (requestLaneAbort
+                // throws LaneDriveError), and the screen shows nothing —
+                // a no-op key with no explanation. The loop keeps running.
+                if (!accepted)
+                  app.setEditorFooter('cancel failed — turn still running');
+                screen?.render();
+              })
+              .catch((error: unknown) => {
+                if (stopped) return;
+                app.setEditorFooter(
+                  `cancel failed: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                screen?.render();
+              });
             return { consume: true };
           }
         }

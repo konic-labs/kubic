@@ -6,11 +6,7 @@
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
 import { describe, expect, it } from 'vitest';
-import {
-  createTuiApp,
-  seedFromPresentation,
-  TUI_TREE_TOGGLE_KEY,
-} from './tui-app.js';
+import { createTuiApp, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
@@ -44,13 +40,16 @@ describe('tui app root (issue #75)', () => {
       toolName: 'read',
     });
     expect(app.render(100).join('\n')).toContain('read');
-    expect(app.handleInput(TUI_TREE_TOGGLE_KEY)).toEqual({
+    // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
+    // the classification goes through parseKey — the legacy byte here and
+    // the Kitty CSI-u form ('\x1b[116;5u') below.
+    expect(app.handleInput('\x14')).toEqual({
       quit: false,
       consumed: true,
       cancel: false,
     });
     expect(app.render(100).join('\n')).toContain('…1 call');
-    expect(app.handleInput(TUI_TREE_TOGGLE_KEY)).toEqual({
+    expect(app.handleInput('\x1b[116;5u')).toEqual({
       quit: false,
       consumed: true,
       cancel: false,

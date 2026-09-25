@@ -55,9 +55,23 @@ function toolCallIdOf(part: unknown, index: number): string {
 }
 
 function truncate(text: string): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
+  const oneLine = sanitizeLaneText(text).replace(/\s+/g, ' ').trim();
   if (oneLine.length <= TOOL_RESULT_MAX_CHARS) return oneLine;
   return `${oneLine.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`;
+}
+
+// Lane text is untrusted terminal input (issue #88, reviewer finding 1):
+// assistant text and tool output can contain ESC-prefixed control sequences
+// ('\x1b[2J' clears the screen, '\x1b[31m' repaints colour, '\x1b[<n>A'
+// moves the cursor over the status bar) and C0 controls like BEL. Passing
+// them through verbatim lets a model or a tool drive the operator's
+// terminal. Everything except tab/newline is dropped; the renderer's own
+// styling is untouched because only CONTENT is sanitized here.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+const CONTROL_SEQUENCES = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+export function sanitizeLaneText(text: string): string {
+  return text.replace(CONTROL_SEQUENCES, '');
 }
 
 function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
@@ -81,6 +95,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     const text = parts
       .map(textOf)
       .filter((t) => t !== undefined)
+      .map((t) => sanitizeLaneText(t))
       .join('\n');
     push('user', 'text', text === '' ? '' : `${PROMPT_PREFIX}${text}`);
     return cells;
@@ -99,7 +114,11 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     parts.forEach((part, index) => {
       const text = textOf(part);
       if (text !== undefined) {
-        push(`text${index === 0 ? '' : `:${index}`}`, 'text', text.trim());
+        push(
+          `text${index === 0 ? '' : `:${index}`}`,
+          'text',
+          sanitizeLaneText(text).trim(),
+        );
         return;
       }
       const name = nameOf(part);

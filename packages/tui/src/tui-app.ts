@@ -37,6 +37,7 @@ import {
 import { createTranscriptView, type TranscriptView } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
+import { parseKey } from './tui-boundary.js';
 
 export type { LaneEntryLike, LaneEventLike, Viewport };
 
@@ -66,10 +67,25 @@ export interface TuiInputResult {
   readonly cancel: boolean;
 }
 
-export const TUI_QUIT_KEY = '\x03';
-export const TUI_ESCAPE_KEY = '\x1b';
-export const TUI_EOF_KEY = '\x04';
-export const TUI_TREE_TOGGLE_KEY = '\x14';
+// The global keys are classified by pi-tui's own `parseKey`, never by
+// comparing raw bytes (issue #88, reviewer finding): a Kitty-class terminal
+// negotiates the keyboard protocol and sends CSI-u sequences — Esc arrives
+// as '\x1b[27u', Ctrl-D as '\x1b[100;5u', Ctrl-C as '\x1b[27;5;99~' — so a
+// `data === '\x1b'` test silently misses them and the key becomes a no-op
+// (consumed, no effect), exactly what "no silent no-op key" forbids. The
+// editor already routes through Pi's `matchesKey`; these four keys now use
+// the same classification as the rest of the loop. The legacy byte forms
+// ('\x03', '\x1b', '\x04', '\x14') still parse to the same ids, so nothing
+// is lost for terminals that do not negotiate the protocol.
+function keyIdOf(data: string): string | undefined {
+  try {
+    return parseKey(data);
+  } catch {
+    // Unparseable input is not one of the global keys; it belongs to the
+    // editor (parseKey throws on sequences it does not recognise).
+    return undefined;
+  }
+}
 
 export interface TuiApp {
   readonly root: VStack;
@@ -164,13 +180,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     editor,
     render: (width: number): string[] => root.render(width),
     handleInput: (data: string): TuiInputResult => {
-      if (data === TUI_QUIT_KEY) {
+      // Classified by pi-tui's parseKey so both encodings are honoured:
+      // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
+      const keyId = keyIdOf(data);
+      if (keyId === 'ctrl+c') {
         // Always classified as cancel; the root decides whether the process
         // exits (idle) or the in-flight turn aborts (busy).
         return { quit: true, consumed: true, cancel: true };
       }
-      if (data === TUI_ESCAPE_KEY) return quit();
-      if (data === TUI_EOF_KEY) {
+      if (keyId === 'escape') return quit();
+      if (keyId === 'ctrl+d') {
         // Ctrl-D quits only on an empty draft — the shell convention. While
         // typing it stays Pi's delete-forward, so the key is never a silent
         // no-op in either state.
@@ -180,7 +199,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         }
         return quit();
       }
-      if (data === TUI_TREE_TOGGLE_KEY) {
+      if (keyId === 'ctrl+t') {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }

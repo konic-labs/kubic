@@ -92,11 +92,25 @@ alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
 
+These keys are classified by the terminal library's key decoder, not by
+matching raw bytes, so they work on terminals that negotiate the Kitty
+keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
+as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
+send the legacy control bytes. A refused cancel is reported in the editor
+footer (`cancel failed: …`) instead of being swallowed — the turn keeps
+running and the key is never a silent no-op.
+
 Quitting restores the main screen and prints the final document (no cursor
 loss on interrupt). Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
 `SIGTERM`/`SIGHUP` have no handler and exit without restoring the
 alt-screen. Solo mode runs in-process with your user authority: no
 isolation, no containment.
+
+Text rendered in the transcript is stripped of terminal control sequences
+before it reaches the frame: assistant text and tool output are untrusted
+input, so ANSI escapes (`\x1b[2J`, colour codes, cursor moves) and C0
+controls such as BEL are removed rather than executed by the operator's
+terminal. The renderer's own styling is unaffected.
 
 ## `kubic sessions`
 

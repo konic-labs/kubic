@@ -21,23 +21,38 @@ import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
+  WorkerSpawnInfo,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   MergeConflictError,
   parseOrchestratorRunState,
+  workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
-import { isWorktreeError } from '../../../packages/host/src/orchestrator/worktree/errors.js';
+import {
+  isWorktreeError,
+  worktreeMissingError,
+} from '../../../packages/host/src/orchestrator/worktree/errors.js';
 import {
   branchForAgent,
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import {
+  attachSession,
+  createSession,
+  openSessionStore,
+  SessionAttachError,
+} from '../../../packages/worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 
 export interface OrchestrateRunOptions {
   out: (line: string) => void;
   debug?: (line: string) => void;
   cwd?: string;
+  /** Worker sessions root; defaults to the user sessions root (~/.kubic/sessions). */
+  sessionsRoot?: string;
 }
 
 function provenanceFor(sessionId: string, agentId: string, tool: string) {
@@ -67,6 +82,21 @@ function entryScript(): string {
   const argv1 = process.argv[1];
   if (typeof argv1 === 'string' && argv1.endsWith('.js')) return argv1;
   return resolve(process.cwd(), 'bin', 'kubic.js');
+}
+
+// Kubic's own state dir must never dirty the tree it sits in (§35: `.kubic/`
+// is gitignored). A fresh `git init` scratch repo has no ignore entry, so the
+// dir shows up as `?? .kubic/` and the pre-merge guard refuses every merge —
+// no run can settle. The self-ignoring entry is written once and never
+// overwritten, so a repo's own `.kubic/.gitignore` (if any) stands.
+function ensureStateIgnored(env: NodeExecutionEnv): void {
+  const ignorePath = join('.kubic', '.gitignore');
+  try {
+    if (env.fs.stat(ignorePath).isFile) return;
+  } catch {
+    // No entry yet — fall through and write one.
+  }
+  env.fs.writeFile(ignorePath, '*\n');
 }
 
 async function askUser(question: string): Promise<boolean> {
@@ -100,6 +130,20 @@ export async function orchestrateDepsWithDefaults(
     return root;
   };
 
+  // The orchestrator writes its state under `<repo>/.kubic/` from the very
+  // first save (and adds worktrees under it). Make sure that dir never dirties
+  // the tree it sits in (§35: `.kubic/` is gitignored) BEFORE the first write
+  // — otherwise a fresh scratch repo shows `?? .kubic/` and the pre-merge
+  // guard refuses every merge, so no run can ever settle. Best-effort here:
+  // a repo we cannot write into fails later with its own named code.
+  if (root !== undefined) {
+    try {
+      ensureStateIgnored(new NodeExecutionEnv(root));
+    } catch {
+      // Intentionally swallowed — the named failure comes from the write path.
+    }
+  }
+
   // The session branch at start is the merge target and the hunk base.
   // Resolved lazily (only inside a repo) and cached per process.
   let baseRef: string | undefined;
@@ -132,6 +176,13 @@ export async function orchestrateDepsWithDefaults(
   };
 
   const storeName = (sessionId: string): string => `${sessionId}.json`;
+
+  // Worker sessions live in the user sessions root (one store for the whole
+  // CLI, `kubic sessions`/`diff --session` read the same place). Injected
+  // in tests; the real run uses the default root.
+  const sessionsRoot = options.sessionsRoot ?? defaultSessionsRoot();
+  const sessionBridge = createNodeFileBridge(sessionsRoot);
+  const sessionStore = openSessionStore(sessionsRoot, sessionBridge);
 
   // Pre-merge guard (issue #76 fix a): a kill-during-merge can leave a
   // stale MERGE_HEAD behind, so a resume would merge onto a half-merged
@@ -191,6 +242,7 @@ export async function orchestrateDepsWithDefaults(
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       const env = new NodeExecutionEnv(repo);
+      ensureStateIgnored(env);
       try {
         const added = await addWorktree(env, repo, agentId, {
           sessionId: 'cli',
@@ -199,25 +251,89 @@ export async function orchestrateDepsWithDefaults(
         return { path: added.path, branch: added.branch };
       } catch (error) {
         // Resume tolerance: the worktree/branch from a killed run is
-        // reused — never rebuilt over, never silently dropped.
+        // reused — never rebuilt over, never silently dropped. The
+        // directory must really be there: handing a vanished path to the
+        // child spawn dies as a raw `spawn … ENOENT` uncaught event with
+        // no §78 code (issue #85), so fail closed with a named error.
         if (isWorktreeError(error) && error.code === 'already_exists') {
-          return {
-            path: pathForAgent(repo, agentId),
-            branch: branchForAgent(agentId),
-          };
+          const path = pathForAgent(repo, agentId);
+          const branch = branchForAgent(agentId);
+          const probe = new NodeExecutionEnv(repo);
+          let present = false;
+          try {
+            present = probe.fs.stat(path).isDirectory;
+          } catch {
+            present = false;
+          }
+          if (!present) throw worktreeMissingError(path, branch);
+          return { path, branch };
         }
         throw error;
       }
+    },
+    createWorkerSession: async (input) => {
+      // Create the worker's session before the child spawns (issue #85):
+      // `kubic run --session <id>` only ATTACHES, so without this the child
+      // dies at attach (exit 5 "unknown session") before any model call.
+      // The cwd is the worker's WORKTREE, so worker journals, usage, and
+      // session state land with the worker — never in the parent repo.
+      // Resume tolerance: a session left by a killed run is re-attached
+      // (one chain), never recreated into a "Session already exists" fail.
+      try {
+        const existing = await attachSession(
+          sessionStore,
+          input.workerSessionId,
+          BACKGROUND_CONTEXT,
+        );
+        // The worker's whole point is that its state travels with its
+        // worktree: a session recorded against a different cwd (a hand
+        // re-pointed id, a worktree moved and re-added) would silently
+        // journal somewhere else. Fail closed rather than misuse it.
+        const recorded = existing.metadata.cwd;
+        await existing.close(BACKGROUND_CONTEXT);
+        if (recorded !== input.worktree.path) {
+          throw new Error(
+            `session '${input.workerSessionId}' belongs to ${recorded ?? '(no cwd)'}, not the worker worktree ${input.worktree.path}`,
+          );
+        }
+        debug(
+          `session: reusing '${input.workerSessionId}' from the killed run`,
+        );
+        return { sessionId: input.workerSessionId };
+      } catch (error) {
+        if (!(error instanceof SessionAttachError)) throw error;
+      }
+      const session = await createSession(
+        sessionStore,
+        input.worktree.path,
+        BACKGROUND_CONTEXT,
+        input.workerSessionId,
+      );
+      const id = session.metadata.id;
+      try {
+        // The session dir exists; create the journal dir the worker's
+        // file effects will land in (same layout as `kubic run`, E3) so
+        // `journal:<id>` resolves for the worker's worktree effects.
+        sessionBridge.createDir(join(id, 'journal'));
+      } finally {
+        await session.close(BACKGROUND_CONTEXT);
+      }
+      debug(
+        `session: created '${id}' for worker '${input.agentId}' (cwd ${input.worktree.path})`,
+      );
+      return { sessionId: id };
     },
     runWorker: async (
       agentId: string,
       worktree: OrchestrateWorktree,
       prompt: string,
-      info?: { sessionId: string },
+      info?: WorkerSpawnInfo,
     ): Promise<MergedHunk[]> => {
       const repo = needRoot();
       void repo;
-      const workerSession = `${info?.sessionId ?? 'orch'}-${agentId}`;
+      const workerSession =
+        info?.workerSessionId ??
+        workerSessionFor(info?.sessionId ?? 'orch', agentId);
       const child = new NodeExecutionEnv(worktree.path);
       const done = await child.shell
         .spawn(

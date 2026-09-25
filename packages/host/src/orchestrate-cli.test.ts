@@ -8,23 +8,30 @@ import { describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type {
   OrchestrateCommandDeps,
+  OrchestrateWorktree,
   OrchestratorRunState,
+  WorkerSessionRequest,
+  WorkerSpawnInfo,
 } from './orchestrate-cli.js';
 import {
   MergeConflictError,
   managerCallsForMerge,
   runOrchestrateCommand,
+  workerSessionFor,
 } from './orchestrate-cli.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
+import { SESSION_ID_PATTERN } from './run-cli.js';
 
 interface FakeCalls {
   ensure: string[];
+  create: string[];
   run: string[];
   merge: string[];
   reap: string[];
   approvals: string[];
+  order: string[];
 }
 
 interface FakeWorld {
@@ -33,6 +40,7 @@ interface FakeWorld {
   debugLines: string[];
   calls: FakeCalls;
   saved: OrchestratorRunState[];
+  runInfo: { agentId: string; workerSessionId: string }[];
 }
 
 function makeWorld(
@@ -43,12 +51,15 @@ function makeWorld(
   const debugLines: string[] = [];
   const calls: FakeCalls = {
     ensure: [],
+    create: [],
     run: [],
     merge: [],
     reap: [],
     approvals: [],
+    order: [],
   };
   const saved: OrchestratorRunState[] = [];
+  const runInfo: { agentId: string; workerSessionId: string }[] = [];
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
       lines.push(line);
@@ -62,8 +73,23 @@ function makeWorld(
       calls.ensure.push(agentId);
       return { path: `/repo/.kubic/wt/${agentId}`, branch: `kubic/${agentId}` };
     },
-    runWorker: (agentId: string) => {
+    createWorkerSession: (input) => {
+      calls.create.push(input.agentId);
+      calls.order.push(`create:${input.agentId}`);
+      return { sessionId: input.workerSessionId };
+    },
+    runWorker: (
+      agentId: string,
+      _worktree: OrchestrateWorktree,
+      _prompt: string,
+      info?: WorkerSpawnInfo,
+    ) => {
       calls.run.push(agentId);
+      calls.order.push(`run:${agentId}`);
+      runInfo.push({
+        agentId,
+        workerSessionId: info?.workerSessionId ?? '(none)',
+      });
       const count = hunksPerAgent?.[agentId] ?? 1;
       const hunks: MergedHunk[] = [];
       for (let i = 0; i < count; i += 1) {
@@ -90,7 +116,7 @@ function makeWorld(
     },
     ...overrides,
   };
-  return { deps, lines, debugLines, calls, saved };
+  return { deps, lines, debugLines, calls, saved, runInfo };
 }
 
 function lastJsonLine(lines: string[]): Record<string, unknown> {
@@ -379,6 +405,7 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
   }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'kubic-orch-'));
     const lines: string[] = [];
+    const createdSessions: string[] = [];
     const provenance = {
       sessionId: 'demosess',
       agentId: 'manager',
@@ -414,6 +441,10 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
         addWorktree(env, root, agentId, { sessionId: 'demosess' }).then(
           (added) => ({ path: added.path, branch: added.branch }),
         ),
+      createWorkerSession: (input) => {
+        createdSessions.push(input.workerSessionId);
+        return { sessionId: input.workerSessionId };
+      },
       runWorker: async (
         agentId: string,
         worktree: { path: string; branch: string },
@@ -483,6 +514,8 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
       'from beta',
     );
     expect(lines.join('\n')).toContain('merge order: alpha -> beta');
+    // Every worker's session was created before its child spawned.
+    expect(createdSessions).toEqual(['demosess-alpha', 'demosess-beta']);
   });
 });
 
@@ -652,6 +685,145 @@ describe('orchestrate state save failures (issue #76 fix c)', () => {
     );
     expect(code).toBe(1);
     expect(world.lines.join('\n')).toMatch(/code=state_save_failed/);
+    expect(world.calls.merge).toEqual([]);
+  });
+});
+
+describe('orchestrate worker session creation (issue #85)', () => {
+  it('creates each worker session before its child spawns, with the attach id', async () => {
+    const world = makeWorld({}, { alpha: 1, beta: 1 });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // Creation strictly precedes the spawn for each worker: `kubic run`
+    // with an explicit --session only ATTACHES, so a child spawned before
+    // its session exists dies at attach (exit 5 "unknown session").
+    expect(world.calls.order).toEqual([
+      'create:alpha',
+      'run:alpha',
+      'create:beta',
+      'run:beta',
+    ]);
+    // The id the manager creates is exactly the id the child attaches to.
+    expect(world.runInfo).toEqual([
+      { agentId: 'alpha', workerSessionId: 'sess-1-alpha' },
+      { agentId: 'beta', workerSessionId: 'sess-1-beta' },
+    ]);
+  });
+
+  it('names the worker session after the orchestrator session and the agent', () => {
+    expect(workerSessionFor('orch-1700000000000', 'worker-1')).toBe(
+      'orch-1700000000000-worker-1',
+    );
+    // The derived id must satisfy the CLI's --session rule, else the child
+    // refuses it as a usage error (exit 2) before any attach.
+    expect(SESSION_ID_PATTERN.test(workerSessionFor('sess-1', 'w-1'))).toBe(
+      true,
+    );
+  });
+
+  it('fails closed as spawn_failed when the creation hook is omitted', async () => {
+    const world = makeWorld({ createWorkerSession: undefined });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    // Never a child that cannot attach, and nothing merges.
+    expect(world.calls.run).toEqual([]);
+    expect(world.calls.merge).toEqual([]);
+    expect(world.calls.reap).toContain('alpha');
+  });
+
+  it('fails closed as spawn_failed when session creation throws', async () => {
+    const world = makeWorld({
+      createWorkerSession: () => {
+        throw new Error('sessions root not writable');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const text = world.lines.join('\n');
+    expect(text).toMatch(/code=spawn_failed/);
+    expect(text).toMatch(/sessions root not writable/);
+    expect(world.calls.run).toEqual([]);
+    expect(world.calls.merge).toEqual([]);
+  });
+
+  it('carries the worker worktree on the creation request', async () => {
+    const seen: WorkerSessionRequest[] = [];
+    const world = makeWorld({
+      createWorkerSession: (input) => {
+        seen.push(input);
+        world.calls.create.push(input.agentId);
+        return { sessionId: input.workerSessionId };
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // The session cwd is the WORKER's worktree: worker journals and
+    // session files land with the worker, not in the parent repo.
+    expect(seen).toEqual([
+      {
+        sessionId: 'sess-1',
+        agentId: 'alpha',
+        workerSessionId: 'sess-1-alpha',
+        worktree: { path: '/repo/.kubic/wt/alpha', branch: 'kubic/alpha' },
+      },
+    ]);
+  });
+
+  it('resume creates the session again for the retried worker only', async () => {
+    const killed: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha', 'beta'],
+      merged: ['alpha'],
+      pending: ['beta'],
+      stopped: false,
+      records: [
+        {
+          agentId: 'alpha',
+          branch: 'kubic/alpha',
+          hunks: [{ path: 'a.txt', hunk: '@@ a' }],
+        },
+      ],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(killed) });
+    const code = await runOrchestrateCommand(
+      ['--resume', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.order).toEqual(['create:beta', 'run:beta']);
+    expect(world.calls.create).toEqual(['beta']);
+  });
+});
+
+describe('orchestrate spawn failures (issue #85)', () => {
+  it('maps a refused worktree to spawn_failed with the named code', async () => {
+    const world = makeWorld({
+      ensureWorktree: () => {
+        throw new Error('worktree missing for worker-1');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
   });
 });

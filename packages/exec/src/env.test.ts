@@ -236,3 +236,35 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
     },
   );
 });
+
+describe('execution env spawn failures (issue #85)', () => {
+  it('settles wait() with a named error instead of crashing on a missing binary', async () => {
+    // A spawn that cannot start the child emits 'error' (ENOENT) and never
+    // 'close'. Without a handler Node re-throws it as an uncaught
+    // exception, so the caller (the orchestrator manager) dies raw: no
+    // exit code, no §78 code line. wait() must settle with exit 127 and
+    // the reason on stderr instead.
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn('kubic-no-such-binary-xyz', [], {
+      provenance: PROV,
+    });
+    const result = await handle.wait();
+    expect(result.exitCode).toBe(127);
+    expect(result.stderr).toMatch(/ENOENT/);
+    expect(result.stderr).toMatch(/kubic-no-such-binary-xyz/);
+    expect(result.provenance).toEqual(PROV);
+  });
+
+  it('reports the spawn reason through onUpdate as well', async () => {
+    const { env } = makeNodeEnv();
+    const seen: string[] = [];
+    const handle = env.shell.spawn('kubic-no-such-binary-xyz', [], {
+      provenance: PROV,
+      onUpdate: (snapshot) => {
+        if (snapshot.stderr !== '') seen.push(snapshot.stderr);
+      },
+    });
+    await handle.wait();
+    expect(seen.join('\n')).toMatch(/ENOENT/);
+  });
+});

@@ -211,6 +211,7 @@ class NodeShell implements Shell {
     });
     let stdout = '';
     let stderr = '';
+    let settled = false;
     const snapshot = (): ProcessSnapshot => ({
       stdout,
       stderr,
@@ -240,7 +241,33 @@ class NodeShell implements Shell {
       emit(wantCheckpoint);
     });
     const done = new Promise<ShellResult>((resolveDone) => {
+      // A spawn that cannot start the child emits 'error' and never
+      // 'close'. Unhandled, Node re-throws it as an uncaught exception and
+      // the caller dies raw — no result, no exit code (issue #85: this is
+      // the `spawn <path> ENOENT` crash). Settle wait() with a named
+      // failure instead, so every caller reads it through the same seam.
+      child.on('error', (error: Error) => {
+        if (settled) return;
+        settled = true;
+        const message = `${error.message}\n`;
+        stderr += message;
+        const result: ShellResult = {
+          exitCode: 127,
+          stdout,
+          stderr,
+          provenance: options.provenance,
+        };
+        if (options.checkpointKey && options.checkpointStore) {
+          options.checkpointStore.recordFinal(options.checkpointKey, {
+            ...result,
+          });
+        }
+        options.onUpdate?.({ ...result }, undefined);
+        resolveDone(result);
+      });
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
         const result: ShellResult = {
           exitCode: code ?? 1,
           stdout,

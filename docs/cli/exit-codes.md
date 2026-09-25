@@ -35,13 +35,14 @@
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
-- **`kubic orchestrate`**: 0 all workers merged; 1 spawn/worker/merge/reap
-  failure or resume with no state (`error: … code=<code>` names it:
-  `spawn_failed`, `worker_failed`, `spawn_denied`, `merge_failed`,
-  `merge_conflict`, `no_orchestrator_state`, `reap_failed`); 2 usage errors
-  and the non-git refusal (never silently solo); 4 approval denied (the
-  decider is the user — rerun with `--yes` to auto-approve). `--json`
-  reports the same code in its `exitCode` field.
+- **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,
+  spawn, worker, merge, or reap failure, or resume with no state
+  (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
+  `spawn_denied`, `merge_failed`, `merge_conflict`,
+  `no_orchestrator_state`, `reap_failed`); 2 usage errors and the non-git
+  refusal (never silently solo); 4 approval denied (the decider is the
+  user — rerun with `--yes` to auto-approve). `--json` reports the same
+  code in its `exitCode` field.
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown flags, bad `--session`), 5 missing session, 6 no
   reachable provider, 1 any other lane boot failure.

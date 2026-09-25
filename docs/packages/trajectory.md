@@ -120,7 +120,7 @@ Shape ownership (this package imports none of them — structural
 snapshots pinned by the golden fixture test): Provenance/ExecutionEnv in
 [@kubic/exec](exec.md) `env.ts`, `AgentResult` in
 [@kubic/worker](worker.md) `result.ts`, `AgentTask`/transfer in
-[@kubic/agents](agents-pkg.md) `task.ts`/`transfer.ts`, FileChange diffs
+[@kubic/agents](agents-pkg.md) `task.ts`, FileChange diffs
 in `exec` `journal-diff.ts`, ApprovalPolicy/verdicts in
 [@kubic/host](host.md) `approvals.ts`, `KubicUsageRow` in `worker`
 `usage.ts`, §52 codes in `worker` `lane/failures.ts`.

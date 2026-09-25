@@ -43,6 +43,26 @@ file that no longer exists, or when a row's file has become reachable
   `secrets.ts`) stay dead: the loading path this issue adds does not consume
   them, and they keep their existing owner rather than being claimed wired.
   its whole `ops/cost/*` + `ops/perf/*` cluster — see below.
+- Issue #99 wired the roles half on the live solo path: `packages/host/
+  src/roles/resolver.ts` is reachable through
+  `packages/host/src/roles/roles-boot.ts` (loaded by
+  `apps/kubic/src/headless-run.ts` for `kubic run --role`, with
+  `roleDoctorChecks` surfaced through doctor's `probeRoles` seam), so its
+  row is gone. `roles-data.ts` keeps a row: its spawn-side data
+  (`spawnForRole` + model defaults) belongs to the delegation path (#104)
+  — wiring it here would be a fabricated caller.
+- Issue #99 executed the **delete** half of its table as well: `packages/agents/src/artifacts.ts`, `memory.ts`, `transfer.ts` and `packages/host/src/handoff.ts` had zero non-test importers and no honest consumer on the shipped path, so they were deleted with their tests rather than wired to an invented caller (the sibling issues' standard: a fabricated caller is worse than a deletion). The design sections those modules implemented — §24/§25 (context isolation/sharing, transfer grants) are enforced by structure instead: the shipped delegation hands each worker PROCESS an argv prompt and a session id, never a parent transcript, so there is nothing to validate at object level; §28 (memory lifetimes) has no live path — the harness session store is the only persistence; §69 (no-transcript guarantee) holds by construction on the process boundary. The sections are recorded as **not-yet-implemented** in [design-drift](design-drift.md) because the design document itself is local-only.
+- Issue #99 executed the skills half of its scope: **wired**
+  `packages/agents/src/skills/skills.ts` (`discoverSkills` +
+  `formatSkillsForSystemPrompt` run at solo boot through
+  `packages/host/src/skills-boot.ts`, honouring `--no-skills` and the
+  untrusted-cwd exclusion — its row is gone) and gave the inert contracts
+  **deletions** where no honest consumer exists (`skills/templates.ts`,
+  `artifacts.ts`, `memory.ts`, `transfer.ts`,
+  `host/src/handoff.ts`). Roles wire on the live path. Not deletable and
+  not dead, so no row: `budget.ts` (the scheduler imports `RunMode`, the
+  extensions bundle imports `createBudget`) and `graph.ts` (live via #95).
+  `spec.ts` keeps a re-owned row; `task.ts` moves to a `keep:` reason.
 - Issue #89 executed its row: `packages/host/src/limits/solo-warning.ts` is
   reachable now that the composition root emits the no-isolation notice on
   `run` (stderr before the first turn) and `tui` (editor footer), so the row
@@ -50,16 +70,11 @@ file that no longer exists, or when a row's file has become reachable
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
-| 728 | `packages/agents/src/artifacts.ts` | #99 | wire: context contracts (#99) |
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 533 | `packages/agents/src/memory.ts` | #99 | wire: context contracts (#99) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 485 | `packages/agents/src/skills/skills.ts` | #99 | wire: context contracts (#99) |
-| 338 | `packages/agents/src/skills/templates.ts` | #99 | wire: context contracts (#99) |
-| 501 | `packages/agents/src/spec.ts` | #99 | wire: context contracts (#99) |
-| 133 | `packages/agents/src/task.ts` | #99 | wire: context contracts (#99) |
-| 142 | `packages/agents/src/transfer.ts` | #99 | wire: context contracts (#99) |
+| 501 | `packages/agents/src/spec.ts` | #104 | wire: role-driven worker prompts (#104) — the ONLY non-test importer is `roles/roles-data.ts` (§38.2 spawn validation + model precedence), which #104 owns and whose own acceptance criteria require this row to be removed by that issue's PR; deleting it here would force deleting #104's module and its `ROLE_MODEL_DEFAULTS` data source, so #99 re-owns the row instead of stealing the scope |
+| 133 | `packages/agents/src/task.ts` | #99 | keep: type-only contract (`AgentTask`, `TaskResources`, `WorkspaceMode`, `validateAgentTask`, …) consumed by LIVE modules through `import type` — `host/src/workers-cli.ts`, `worker/src/lifecycle/{rows,registry}.ts`, `trajectory/src/schema.ts` (its schema mirrors the fields) and `roles-data.ts` (#104). The gate walks VALUE imports, so a types-only module can never be `reachable` by its own rule; deleting it would break the typecheck of live files. Re-owned from `wire:` to a named reason because #99 could not make it reachable without inventing a value import |
 | 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 95 | `packages/core/src/presentation.ts` | #96 | wire: TUI view contract (#96); imported only by dead transcript/tui-app |
@@ -78,7 +93,6 @@ file that no longer exists, or when a row's file has become reachable
 | 7 | `packages/host/src/config/index.ts` | #102 | delete: dead barrel over the now-live config modules (runtime.ts imports them per-module path, per docs/packages/host.md's "no barrel" convention) |
 | 4 | `packages/host/src/credentials.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 151 | `packages/host/src/handoff.ts` | #99 | wire: handoff contract (#99); AgentResult import is type-only |
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
@@ -91,8 +105,7 @@ file that no longer exists, or when a row's file has become reachable
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
 | 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 128 | `packages/host/src/orchestrator/worktree/status.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
-| 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
-| 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |
+| 144 | `packages/host/src/roles/roles-data.ts` | #104 | wire: role-driven worker prompts (#104) — `BUILTIN_ROLE_NAMES`/`ROLE_MODEL_DEFAULTS`/`spawnForRole` are the delegation-side role data; #99 wires the resolver on the solo path and leaves this row to its owner |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |

@@ -91,6 +91,12 @@ export interface DoctorDeps {
   // real startup probe onto this shape. Absent (tests, unwired callers):
   // no extension check, the legacy matrix is unchanged.
   probeExtensions?: () => ExtensionPostureInput;
+  // Role documents (issue #99; §41.4, §40.3): the loaded `.kubic/roles/*.md`
+  // set projected onto DoctorChecks — a contradictory role reports
+  // fail/policy-mismatch with the resolver's named reason, and a refused
+  // run can never print green. Absent: no role checks (legacy matrices are
+  // unchanged).
+  probeRoles?: () => DoctorCheck[];
 }
 
 // The installed posture, described once in host/approvals.ts. Host owns the
@@ -393,6 +399,23 @@ export function collectDoctorChecks(
         label: 'extension bundle',
         status: 'fail',
         reason: 'extension-posture',
+        detail: probeMessage(error),
+      });
+    }
+  }
+  // Role documents (issue #99): opt-in via the injected probe — absent
+  // means no role checks. A throwing probe becomes one failing check, and
+  // every check the probe returns is passed through verbatim (the probe
+  // owns the §40.3 reason text; doctor does not rewrite it).
+  if (deps.probeRoles !== undefined) {
+    try {
+      checks.push(...deps.probeRoles());
+    } catch (error) {
+      checks.push({
+        id: 'role:documents',
+        label: 'role documents',
+        status: 'fail',
+        reason: 'policy-mismatch',
         detail: probeMessage(error),
       });
     }

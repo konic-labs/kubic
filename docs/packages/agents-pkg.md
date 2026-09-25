@@ -20,13 +20,10 @@ budgets by default: `createBudget` never injects limits (issue #9; §71).
 | --- | --- |
 | `task.ts` | `AgentTask`, `AGENT_TASK_FIELDS`, `AgentRole`, `ModelSelection`, `ScopedModel`, `TaskResources`, `TaskArtifactRef`, `WorkspaceMode`, `WORKSPACE_MODES`, `TaskValidation`, `validateAgentTask` |
 | `budget.ts` | `AgentBudget`, `RetryBudget`, `createBudget`, `BudgetLimit`, `BUDGET_LIMITS`, `BUDGET_OWNERSHIP`, `BudgetEnforcer`, `BudgetTermination`, `terminateForBudget`, `ReplayPin`, `REPLAY_PIN_FIELDS`, `REPLAY_PIN_DIMS`, `diffReplayPin`, `RunMode`, `BlockedSpawnOutcome`, `resolveBlockedSpawn` |
-| `transfer.ts` | `TaskTransfer`, `TransferValidation`, `TransferError`, `TransferLogRecord`, `validateTransferSpawn`, `grantRefFor`, `buildTransferLog`, `isBudgetConfigured`, `serializeTransfer` |
-| `spec.ts` | `SubagentSpec`, `SUBAGENT_SPEC_FIELDS`, `SpecValidation`, `validateSubagentSpec`, `SessionKey`, `specKeyOf`, `GenerationState`, `createGenerationState`, `allocateGeneration`, `GenerationCheck`, `validateGenerationSend`, `SpawnRequest`, `SpawnHandle`, `SpawnOutcome`, `spawnAgent`, `SessionSnapshot`, `SessionConfig`, `forkSessionConfig`, `ChildSession`, `openChildSession`, `WorkerProvenance`, `provenanceFor`, `SubagentResult`, `SubagentResultStatus`, `SUBAGENT_RESULT_STATUSES`, `buildSubagentResult`, `validateSubagentResult` |
 | `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `validateClasses`, `PolicyValidationError` |
 | `graph.ts` | `EdgeKind`, `EDGE_KINDS`, `AgentEdge`, `EDGE_FIELDS`, `GraphError`, `GraphStore`, `createGraph`, `addNode`, `addEdge`, `consumers`, `producers`, `topoOrder`, `subgraph`, `renderDag`, `CostRollup`, `rollupCost`, `serializeGraph`, `attachGraph`, `estimateEdgeTokens` |
-| `artifacts.ts` | `ArtifactTest`, `TaskArtifact`, `ARTIFACT_FIELDS`, `ArtifactValidation`, `validateArtifact`, `sanitizeArtifact`, `SPAWN_DENY_FIELDS`, `SpawnIsolation`, `checkSpawnIsolation`, `ChildPromptInput`, `buildChildPrompt`, `assertPromptCarriesNoTranscript`, `ArtifactTranscriptEntry`, `renderArtifactTranscript`, `toTranscriptEntry`, `ArtifactTrajectoryRecord`, `toTrajectoryRecord`, `DebuggerHandoffInput`, `DebuggerHandoff`, `DebuggerHandoffBuild`, `buildDebuggerHandoff`, `freshDebuggerPrompt`, `estimateHandoffTokens`, `TOKEN_ECONOMICS_NOTE`, `containsCredential`, `redactArtifactText` |
-| `skills/skills.ts`, `skills/templates.ts` | Skill + prompt-template registries |
-| `memory.ts` | Agent memory surface |
+| `skills/skills.ts` | Skill registry (discovery, gating, prompt injection — wired at solo boot, issue #99) |
+| `spec.ts` | `SubagentSpec`, `SUBAGENT_SPEC_FIELDS`, `SpecValidation`, `validateSubagentSpec`, `SessionKey`, `specKeyOf`, `GenerationState`, `createGenerationState`, `allocateGeneration`, `GenerationCheck`, `validateGenerationSend`, `SpawnRequest`, `SpawnHandle`, `SpawnOutcome`, `spawnAgent`, `SessionSnapshot`, `SessionConfig`, `forkSessionConfig`, `ChildSession`, `openChildSession`, `WorkerProvenance`, `provenanceFor`, `SubagentResult`, `SubagentResultStatus`, `SUBAGENT_RESULT_STATUSES`, `buildSubagentResult`, `validateSubagentResult` (runtime-dead today; consumed only by `roles/roles-data.ts`, owned by #104) |
 | `roles.ts` | Pointer | Role presets live in `@kubic/host` `roles/roles-data.ts` over `.kubic/roles/*.md` (#44, closed) |
 | `lifecycle.ts` | Pointer | Lifecycle owner is `@kubic/worker` `lifecycle/` (#42) |
 | `index.ts` | Pointer | No barrel — import per-module paths |
@@ -88,15 +85,6 @@ never a generic failure. `ReplayPin` has **8 fields** (`task`, `model`,
 `model+thinking` (the two fields are only meaningful together),
 `toolSet`, `worktree`, `baseRevision`, `prompt+resources` — so a pin
 diff names the dim that changed, not all eight raw fields.
-
-### `TaskTransfer` (`transfer.ts`, §24)
-
-`TaskTransfer` is `AgentTask` — no second schema, only spawn-time
-enforcement: `validateTransferSpawn` rejects `transcript` carriage
-(§24), defaults a missing budget key to `{}` (§71 opt-in), requires
-worktree + grant (`workspaceMode` + non-empty `toolNames`) to arrive
-together, then seals the transfer to the closed `AGENT_TASK_FIELDS`
-list so only task + worktree + grant ever travel to the child.
 
 ### `SubagentSpec` (`spec.ts`, §6.2)
 

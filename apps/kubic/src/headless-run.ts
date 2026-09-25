@@ -8,6 +8,7 @@
 // parent-linked to the last existing entry under a random id (E4).
 
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
@@ -41,6 +42,16 @@ import {
   serializeSpanArtifact,
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
+import type {
+  ResolvedRole,
+  RoleLayerInput,
+} from '../../../packages/host/src/roles/resolver.js';
+import {
+  roleDocPath,
+  rolePromptFor,
+  type SelectedRole,
+  selectRole,
+} from '../../../packages/host/src/roles/roles-boot.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -50,6 +61,7 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import {
   attachSession,
@@ -81,6 +93,16 @@ export interface HeadlessRunOptions {
   sessionId?: string;
   timeoutMs?: number;
   maxTurns?: number;
+  // §29.3 skills surface (issue #99): `--no-skills` disables layered
+  // discovery and `--skill <path>` adds one explicitly (repeatable —
+  // explicit intent applies even under --no-skills).
+  noSkills?: boolean;
+  skills?: string[];
+  // §12.1 role selection (issue #99): `--role <name>` boots the lane as
+  // the role document `.kubic/roles/<name>.md` defines — its prompt text
+  // replaces the solo constant and its resolved tool set becomes the
+  // lane's allowlist. Absent means the solo default, unchanged.
+  role?: string;
   // §50 debug channel (issue #98): when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
@@ -124,6 +146,22 @@ export interface HeadlessRunDeps {
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
+  // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
+  // real home directory, this process's cwd, and the documented trust
+  // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
+  // Tests inject a home/cwd/trust triple to drive discovery over a fixture.
+  skills?: {
+    homeDir?: string;
+    cwd?: string;
+    trusted?: boolean;
+  };
+  // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
+  // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
+  // through the real FileBridge. Tests inject a fixture cwd.
+  roles?: {
+    cwd?: string;
+    layers?: RoleLayerInput[];
+  };
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -534,6 +572,74 @@ export async function runHeadlessPrompt(
       ...installed.contributions,
       ...(extensions === undefined ? [] : [budgetToolGate(extensions)]),
     ];
+    // §29.3 skills on the live path (issue #99): discovery runs at boot
+    // through the real FileBridge, the project roots stay gated behind the
+    // documented trust opt-in, and the model-visible blocks are appended to
+    // the assembled system prompt as a suffix section. A refusal here is
+    // not fatal by design (skills are context, never a gate) — the loader
+    // reports unreadable skills on the debug channel and continues.
+    const skills = bootSkills({
+      bridge,
+      cwd: deps.skills?.cwd ?? process.cwd(),
+      homeDir: deps.skills?.homeDir ?? homedir(),
+      trusted:
+        deps.skills?.trusted ??
+        (process.env.KUBIC_TRUST_PROJECT === '1' ||
+          process.env.KUBIC_TRUST_PROJECT === 'true'),
+      ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
+      ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
+      log: (line) => deps.debug?.(`skills: ${line}`),
+    });
+    if (skills.skills.length > 0) {
+      deps.debug?.(
+        `skills: ${skills.skills.length} loaded (${skills.skills
+          .map((skill) => `${skill.name}@${skill.source}`)
+          .join(', ')})`,
+      );
+    }
+    // §12.1 role selection (issue #99): `--role` loads the role document
+    // and derives BOTH halves of the lane boot from it — the prompt text
+    // (the document's `## Prompt`) and the tool allowlist (the resolved
+    // set). All four refusals are fail-closed with a named reason: an
+    // unknown role, a contradictory document (§40.3), a document with no
+    // instructions, and a parse failure. Nothing is invented, and an
+    // absent --role leaves the solo boot byte-identical.
+    let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    if (options.role !== undefined) {
+      const rolesBridge = createNodeFileBridge(
+        deps.roles?.cwd ?? process.cwd(),
+      );
+      const rolesCwd = deps.roles?.cwd ?? process.cwd();
+      let selected: SelectedRole;
+      try {
+        selected = selectRole({
+          bridge: rolesBridge,
+          cwd: rolesCwd,
+          role: options.role,
+          ...(deps.roles?.layers === undefined
+            ? {}
+            : { layers: deps.roles.layers }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      let promptText: string;
+      try {
+        const path = roleDocPath(rolesCwd, selected.doc.name);
+        promptText = rolePromptFor(
+          selected.doc,
+          rolesBridge.readTextFile(path),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      deps.debug?.(
+        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
+      );
+      role = { resolved: selected.resolved, prompt: promptText };
+    }
     const { harness, lane } = await bootSoloLane({
       session,
       models,
@@ -542,6 +648,15 @@ export async function runHeadlessPrompt(
       sessionId: id,
       agentId: 'root',
       journal,
+      ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
+      ...(role === undefined
+        ? {}
+        : {
+            rolePrompt: role.prompt,
+            ...(role.resolved.tools.length === 0
+              ? {}
+              : { toolAllowlist: role.resolved.tools }),
+          }),
       // One policy object carrying all three mechanisms (#86 + #90 + #93):
       // the classes come from the config layer when it supplies them and
       // from the documented safe default otherwise, the interceptors are

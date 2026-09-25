@@ -19,7 +19,18 @@ import type {
   ScopedModel,
   TaskResources,
 } from './task.js';
-import { isBudgetConfigured } from './transfer.js';
+
+// §71: only a configured budget travels. Omitted or empty means no limits
+// — never a smuggled default. Moved here from the deleted `transfer.ts`
+// (issue #99) because this is the only surviving caller of the rule.
+function isBudgetConfigured(budget: AgentBudget | undefined): boolean {
+  return (
+    budget !== undefined &&
+    typeof budget === 'object' &&
+    budget !== null &&
+    Object.keys(budget).length > 0
+  );
+}
 
 export interface SubagentSpec {
   sessionId: string;

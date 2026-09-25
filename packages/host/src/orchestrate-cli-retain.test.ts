@@ -11,7 +11,11 @@ import type {
   OrchestrateWorktree,
   OrchestratorRunState,
 } from './orchestrate-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
+import {
+  RETAINED_FILES_PER_LINE,
+  retainedRowLines,
+  runOrchestrateCommand,
+} from './orchestrate-cli.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import type { WorktreeStatus } from './orchestrator/worktree/status.js';
 import { markMerged, settleWorktree } from './orchestrator/worktree/status.js';
@@ -153,6 +157,41 @@ describe('orchestrate retained-worktree status (issue #106, §44.1)', () => {
     );
     expect(code).toBe(0);
     expect(world.lines.filter((l) => l.startsWith('retained: '))).toEqual([]);
+  });
+
+  it('sanitizes and bounds the file names on a retained line', () => {
+    // Names come from `git status` inside a worktree the workers wrote: a
+    // name carrying control bytes must render inert, not drive the operator's
+    // terminal, and a worktree with thousands of untracked files must not
+    // produce an unbounded line.
+    const hostile = ['\u001b[31mred.txt', 'plain.txt'];
+    const [line] = retainedRowLines([
+      {
+        agentId: 'alpha',
+        branch: 'kubic/alpha',
+        worktree: '/repo/.kubic/wt/alpha',
+        clean: false,
+        untracked: hostile,
+      },
+    ]);
+    expect(line).not.toContain('\u001b');
+    expect(line).toContain('plain.txt');
+
+    const many = Array.from(
+      { length: RETAINED_FILES_PER_LINE + 300 },
+      (_, i) => `f${i}.txt`,
+    );
+    const [bounded] = retainedRowLines([
+      {
+        agentId: 'alpha',
+        branch: 'kubic/alpha',
+        worktree: '/repo/.kubic/wt/alpha',
+        clean: false,
+        untracked: many,
+      },
+    ]);
+    expect(bounded).toContain('(+300 more)');
+    expect(bounded.length).toBeLessThan(1000);
   });
 
   it('the retain presenters keep the §44.1 semantics on the live path', () => {

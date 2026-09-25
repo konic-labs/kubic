@@ -49,6 +49,7 @@ import {
 import { createMergeQueue } from './orchestrator/merge/queue.js';
 import { REVIEWER_READONLY_TOOLS } from './orchestrator/merge/review.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import { sanitizeReasonField } from './orchestrator/parallel/limits.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type {
   ParallelTrajectoryEvent,
@@ -293,6 +294,30 @@ export interface RetainedWorktreeRow {
   statusUnreadable?: string;
 }
 
+// How many file names one retained line lists before it summarizes. A
+// worktree can hold thousands of untracked files (`node_modules`, a build
+// dir), and a line that long is unreadable AND unbounded — the count is what
+// the operator acts on, so the tail is summarized rather than dropped
+// silently.
+export const RETAINED_FILES_PER_LINE = 20;
+
+// One file list for a retained line, bounded and sanitized. Names come from
+// `git status` inside a worktree the WORKERS wrote, so a name carrying
+// control bytes (ANSI/CSI/bidi) must render inert rather than drive the
+// terminal that reads the line — the same strip set the scheduler's deny
+// reasons use.
+function fileList(label: string, files: readonly string[]): string | undefined {
+  if (files.length === 0) return undefined;
+  const shown = files
+    .slice(0, RETAINED_FILES_PER_LINE)
+    .map((file) => sanitizeReasonField(file))
+    .join(', ');
+  const hidden = files.length - RETAINED_FILES_PER_LINE;
+  return hidden > 0
+    ? `${label}=[${shown}] (+${hidden} more)`
+    : `${label}=[${shown}]`;
+}
+
 // One retained-worktree row, rendered as the operator's line (issue #106,
 // §44.1). A dirty row NAMES its files; an unreadable one says so instead of
 // claiming clean. Pure, so the text and the JSON row are the same fact.
@@ -302,17 +327,15 @@ export function retainedRowLines(
   const lines = rows.map((row) => {
     const prefix = `retained: ${row.agentId} branch=${row.branch} worktree=${row.worktree}`;
     if (row.statusUnreadable !== undefined) {
-      return `${prefix} clean=unknown status-unreadable=${row.statusUnreadable}`;
+      return `${prefix} clean=unknown status-unreadable=${sanitizeReasonField(row.statusUnreadable)}`;
     }
     const parts = [`clean=${row.clean === true}`];
-    if ((row.staged ?? []).length > 0) {
-      parts.push(`staged=[${(row.staged ?? []).join(', ')}]`);
-    }
-    if ((row.unstaged ?? []).length > 0) {
-      parts.push(`unstaged=[${(row.unstaged ?? []).join(', ')}]`);
-    }
-    if ((row.untracked ?? []).length > 0) {
-      parts.push(`untracked=[${(row.untracked ?? []).join(', ')}]`);
+    for (const part of [
+      fileList('staged', row.staged ?? []),
+      fileList('unstaged', row.unstaged ?? []),
+      fileList('untracked', row.untracked ?? []),
+    ]) {
+      if (part !== undefined) parts.push(part);
     }
     return `${prefix} ${parts.join(' ')}`;
   });

@@ -672,14 +672,18 @@ export async function runOrchestrateCommand(
     const step = planStepFor(plan, agentId);
     return step === undefined ? prompt : step.prompt;
   };
-  // The lane's own call trace (issue #103): every worker this run drives
-  // contributes its spawn → wait → collect sequence, recorded through the
-  // allowlist-checking recorder, so the trace the merge path asserts over is
-  // the manager's real record of what it did. Each step must be on the lane
-  // the registration handed back — a step the lane does not register would
-  // make the trace a claim about calls the lane cannot make, so it refuses.
+  // The lane's own call trace (issue #103): the manager drives each worker
+  // through spawn → wait → collect, and each driven worker contributes its
+  // own sequence — recorded through the allowlist-checking recorder as the
+  // worker settles, so the trace the merge path asserts over is the
+  // manager's real record of what it did. Each step must be on the lane the
+  // registration handed back; a step the lane does not register would make
+  // the trace a claim about calls the lane cannot make, so it refuses.
   const laneSpy = createManagerCallSpy();
   const laneCalls: string[] = [];
+  // The lane must register every step the trace will claim — checked once,
+  // before anything spawns, so a lane that cannot make these calls refuses
+  // rather than recording a trace it cannot honour.
   for (const step of MANAGER_LANE_SEQUENCE) {
     if (!managerLane.tools.includes(step)) {
       return fail(
@@ -688,9 +692,13 @@ export async function runOrchestrateCommand(
         `manager lane does not register '${step}' — the delegation trace cannot be recorded`,
       );
     }
-    recordManagerLaneCall(laneSpy, step);
-    laneCalls.push(step);
   }
+  const recordLaneSequence = (): void => {
+    for (const step of MANAGER_LANE_SEQUENCE) {
+      recordManagerLaneCall(laneSpy, step);
+      laneCalls.push(step);
+    }
+  };
   const queue = createMergeQueue();
   const scheduler = new ParallelScheduler();
   const worktrees = new Map<string, OrchestrateWorktree>();
@@ -909,6 +917,9 @@ export async function runOrchestrateCommand(
         },
       );
       hunksByAgent.set(agentId, [...hunks]);
+      // The lane drove this worker to completion — its spawn → wait →
+      // collect is part of the manager's real call record (issue #103).
+      recordLaneSequence();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);

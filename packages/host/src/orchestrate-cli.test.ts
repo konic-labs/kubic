@@ -1191,6 +1191,14 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       expect(trace).toContain('spawn_agent');
       expect(trace).toContain('wait_for_agent');
       expect(trace).toContain('collect_result');
+      // Per worker, not once per run: the lane drove TWO workers, so its
+      // own record holds two spawn → wait → collect sequences (the merge
+      // plumbing contributes one further spawn_agent of its own).
+      expect(trace.filter((call) => call === 'wait_for_agent')).toHaveLength(2);
+      expect(trace.filter((call) => call === 'collect_result')).toHaveLength(2);
+      expect(trace.filter((call) => call === 'spawn_agent')).toHaveLength(3);
+      // The whole trace is still write-free.
+      expect(() => assertManagerZeroWrites(trace)).not.toThrow();
     }
   });
 });

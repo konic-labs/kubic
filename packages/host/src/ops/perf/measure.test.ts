@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  type ExecutionEnv,
   FakeExecutionEnv,
   NodeExecutionEnv,
 } from '../../../../exec/src/env.js';
@@ -148,6 +149,49 @@ describe('measureSamples: worktree source (issue #98)', () => {
 describe('MEASURED_BUDGET_KINDS (issue #98)', () => {
   it('covers at least spawn and worktree', () => {
     expect([...MEASURED_BUDGET_KINDS].sort()).toEqual(['spawn', 'worktree']);
+  });
+});
+
+describe('measureSamples: spawn argv plumbing (issue #98 follow-up)', () => {
+  // A recording seam: measureSpawnOnce must hand the configured argv to the
+  // shell. Asserting only sample count/values left this unpinned — replacing
+  // `command.args` with `[]` kept every existing test green.
+  class RecordingEnv extends FakeExecutionEnv {
+    readonly seen: string[][] = [];
+    private readonly base = new FakeExecutionEnv({});
+    override readonly shell = {
+      spawn: (
+        cmd: string,
+        args: string[],
+        options: Parameters<ExecutionEnv['shell']['spawn']>[2],
+      ) => {
+        this.seen.push([cmd, ...args]);
+        return this.base.shell.spawn(cmd, args, options);
+      },
+    };
+  }
+
+  it('passes the requested argv through to the spawned child', async () => {
+    const env = new RecordingEnv({});
+    await measureSamples({
+      kind: 'spawn',
+      samples: 2,
+      env,
+      spawnCommand: { cmd: 'node', args: ['-e', 'process.exit(0)'] },
+    });
+    expect(env.seen).toHaveLength(2);
+    expect(env.seen[0]).toEqual(['node', '-e', 'process.exit(0)']);
+  });
+
+  it('defaults to a real, argument-bearing node one-liner', async () => {
+    const env = new RecordingEnv({});
+    await measureSamples({ kind: 'spawn', samples: 1, env });
+    expect(env.seen).toHaveLength(1);
+    // The default measures process-start latency, so it must carry argv —
+    // an empty argv would still "pass" while measuring a bare interpreter.
+    expect(env.seen[0]?.[0]).toBe(process.execPath);
+    expect(env.seen[0]?.[1]).toBe('-e');
+    expect(env.seen[0]?.[2]).toBe('0');
   });
 });
 

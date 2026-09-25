@@ -1116,6 +1116,21 @@ export async function runOrchestrateCommand(
       }
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
+      // The child's own approval terminus (issue #105) wins over the generic
+      // worker_failed: a worker that denied itself closed on a bounded wait
+      // (or on its configured budget) ended on a named approval/budget code,
+      // and reporting it as a crash would misstate what the user decided.
+      const approval = (
+        error as { approval?: { code: string; exitCode: number } }
+      ).approval;
+      if (approval !== undefined) {
+        return fail(
+          approval.exitCode,
+          approval.code,
+          `worker '${agentId}': ${message}`,
+          partial(),
+        );
+      }
       // The lifecycle layer names the §78 code for the failure it saw
       // (issue #94): a worker that never became ready is `spawn_failed`,
       // anything else keeps `worker_failed`. The error is duck-typed here

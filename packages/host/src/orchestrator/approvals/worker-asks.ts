@@ -435,6 +435,9 @@ export function readPendingWorkerAsks(
     if (bridge.exists(answerFilePath(key))) continue;
     let published: PublishedWorkerAsk;
     try {
+      // entry.name is relative to the bridge root (the approvals dir), so the
+      // ask lives under ASKS_DIR — reading the bare name would miss it and
+      // silently report nothing pending.
       const raw = JSON.parse(
         bridge.readTextFile(join(ASKS_DIR, entry.name)),
       ) as PublishedWorkerAsk;
@@ -505,9 +508,13 @@ export async function awaitWorkerAskAnswer(
         reason: `approval timed out after ${options.maxPendingMs}ms with no user presentation — denied`,
       };
     }
+    // NOT unref'd on purpose: the wait IS live work. A child whose only
+    // pending task is waiting for its answer must stay alive until the bound
+    // elapses; an unref'd timer lets node drain the loop and exit with an
+    // unsettled top-level await (13) — a silent exit instead of the named
+    // denial this bound promises.
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, pollMs);
-      timer.unref?.();
+      setTimeout(resolve, pollMs);
     });
   }
 }

@@ -170,12 +170,45 @@ const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 
 export class WorkerRunFailure extends Error {
   readonly code: 'spawn_failed' | 'worker_failed';
+  /**
+   * The approval-layer terminus the child declared for itself (issue #105).
+   * A worker child denies closed on its own bounded wait or on a configured
+   * budget, and reports that as its §78 terminus; the run must keep the
+   * named code (exit 4 / exit 3) instead of flattening it to worker_failed,
+   * or a user's refusal would look like a crash.
+   */
+  readonly approval?: { code: string; exitCode: number };
 
-  constructor(code: 'spawn_failed' | 'worker_failed', message: string) {
+  constructor(
+    code: 'spawn_failed' | 'worker_failed',
+    message: string,
+    approval?: { code: string; exitCode: number },
+  ) {
     super(message);
     this.name = 'WorkerRunFailure';
     this.code = code;
+    if (approval !== undefined) this.approval = approval;
   }
+}
+
+// The approval terminus a child's own exit declares (issue #105): the child
+// maps its denial/budget outcome to a §78 exit code and names it in its JSON
+// status. Read from the child's own report — never invented here.
+function approvalTerminusOf(
+  exitCode: number,
+  status: string | undefined,
+): { code: string; exitCode: number } | undefined {
+  if (exitCode === 4) {
+    return {
+      code:
+        status === 'approval_timed_out'
+          ? 'approval_timeout'
+          : 'approval_denied',
+      exitCode,
+    };
+  }
+  if (exitCode === 3) return { code: 'BUDGET_EXHAUSTED', exitCode };
+  return undefined;
 }
 
 // The §78 code a failed launch maps to. A launch that never became ready
@@ -189,13 +222,19 @@ function workerRunError(
 ): WorkerRunFailure {
   const last = done.stdout.trim().split('\n').pop() ?? '';
   let detail = done.stderr.trim() || done.stdout.trim();
+  let status: string | undefined;
   try {
-    const envelope = JSON.parse(last) as { error?: { message?: string } };
+    const envelope = JSON.parse(last) as {
+      error?: { message?: string };
+      status?: string;
+    };
     if (typeof envelope.error?.message === 'string')
       detail = envelope.error.message;
+    if (typeof envelope.status === 'string') status = envelope.status;
   } catch {
     // Non-JSON output — keep the raw detail.
   }
+  const approval = approvalTerminusOf(done.exitCode, status);
   if (failure?.code === 'process_spawn_failed') {
     return new WorkerRunFailure(
       'spawn_failed',
@@ -206,6 +245,7 @@ function workerRunError(
   return new WorkerRunFailure(
     'worker_failed',
     `worker run exited ${done.exitCode}: ${detail.slice(0, 300)}${suffix}`,
+    approval,
   );
 }
 

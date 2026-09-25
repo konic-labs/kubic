@@ -485,10 +485,16 @@ export async function orchestrateDepsWithDefaults(
       ((event: ParallelTrajectoryEvent): void => {
         // §49.1 trajectory record (issue #106): appended next to the run
         // state, best-effort — a telemetry write must never fail a run.
-        if (root === undefined || orchestratorSessionId === undefined) return;
+        if (root === undefined) return;
         try {
+          // The EVENT carries the session id, and the sink reads that one:
+          // the first spawn's admission request happens before this run has
+          // created any worker session, so a sink keyed on the run's
+          // captured id silently dropped exactly the event it exists to
+          // record (measured: the queue event fired, the file never
+          // appeared).
           createNodeFileBridge(join(root, '.kubic', 'orchestrator')).appendFile(
-            `${orchestratorSessionId}.trajectory.jsonl`,
+            `${event.sessionId}.trajectory.jsonl`,
             `${JSON.stringify(event)}\n`,
           );
         } catch (error) {

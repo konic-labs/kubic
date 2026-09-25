@@ -15,7 +15,9 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
+  DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
+  MAX_RUN_TIMEOUT_MS,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToTerminus,
   SESSION_ID_PATTERN,
@@ -29,6 +31,8 @@ import {
 import {
   bootSoloLane,
   driveToSettled,
+  type LaneDriver,
+  type SettledDrive,
 } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
@@ -43,12 +47,36 @@ import {
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
 
+export interface HeadlessRunOptions {
+  sessionId?: string;
+  timeoutMs?: number;
+  maxTurns?: number;
+}
+
 export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
   model?: ModelSelection;
   env?: ExecutionEnv;
   context?: Context;
+}
+
+// Guard exhaustion surfaces as control flow, never as a lane failure:
+// caught below and mapped to budget_exhausted with the ref triple intact.
+class TurnBudgetError extends Error {
+  readonly turns: number;
+  constructor(turns: number) {
+    super(`turn budget exhausted after ${turns} turns`);
+    this.turns = turns;
+  }
+}
+
+class WallClockError extends Error {
+  readonly ms: number;
+  constructor(ms: number) {
+    super(`run timed out after ${ms}ms`);
+    this.ms = ms;
+  }
 }
 
 function refs(
@@ -123,6 +151,41 @@ function asResultRecord(outcome: unknown): OperationResultRecord | null {
     return null;
   if (record.error !== undefined && !isRecordError(record.error)) return null;
   return record as OperationResultRecord;
+}
+
+// Guarded drive (issue #84): the lane's turn loop runs under a wall-clock
+// bound and a turn bound. Exhaustion throws a guard error (caught below,
+// mapped to budget_exhausted with the ref triple intact) — never a lane
+// failure, never a hang. The pending drive promise is abandoned on
+// timeout; the session close in the caller's finally still runs.
+async function driveWithGuard(
+  lane: LaneDriver,
+  operationId: string,
+  context: Context,
+  boundMs: number,
+  maxTurns: number | undefined,
+): Promise<SettledDrive> {
+  let turns = 0;
+  const counting: LaneDriver = {
+    drive: async (driveOptions, driveContext) => {
+      turns += 1;
+      if (maxTurns !== undefined && turns > maxTurns) {
+        throw new TurnBudgetError(turns - 1);
+      }
+      return lane.drive(driveOptions, driveContext);
+    },
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      driveToSettled(counting, operationId, context),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new WallClockError(boundMs)), boundMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function tipId(entries: readonly unknown[]): string | null {
@@ -206,7 +269,7 @@ async function recordPrompt(
 
 export async function runHeadlessPrompt(
   prompt: string,
-  options: { sessionId?: string },
+  options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
@@ -217,6 +280,33 @@ export async function runHeadlessPrompt(
     !SESSION_ID_PATTERN.test(options.sessionId)
   ) {
     const invalid = `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-])`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  // Guard overrides are validated before any store or lane exists: an
+  // invalid bound fails closed with the usage terminus (exit 2) and never
+  // boots a lane. Unset bounds fall through to the CLI default below.
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
+  ) {
+    const invalid = `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (need a positive integer of milliseconds)`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  // Same ceiling as the CLI (defense-in-depth for direct callers): above
+  // 2^31-1 ms setTimeout clamps to 1 ms, which would fire the "bound"
+  // immediately and misreport budget_exhausted.
+  if (
+    options.timeoutMs !== undefined &&
+    options.timeoutMs > MAX_RUN_TIMEOUT_MS
+  ) {
+    const invalid = `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (max ${MAX_RUN_TIMEOUT_MS})`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  if (
+    options.maxTurns !== undefined &&
+    (!Number.isInteger(options.maxTurns) || options.maxTurns <= 0)
+  ) {
+    const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
@@ -270,11 +360,24 @@ export async function runHeadlessPrompt(
       const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
       return finished(id, 'failed', message, message);
     }
-    const driven = await driveToSettled(
-      lane,
-      admission.value.operationId,
-      context,
-    );
+    let driven: SettledDrive;
+    try {
+      driven = await driveWithGuard(
+        lane,
+        admission.value.operationId,
+        context,
+        options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        options.maxTurns,
+      );
+    } catch (error) {
+      // Guard exhaustion only: any other throw re-enters the outer
+      // storeFailure path below.
+      if (error instanceof TurnBudgetError || error instanceof WallClockError) {
+        const message = error.message;
+        return finished(id, 'budget_exhausted', message, message);
+      }
+      throw error;
+    }
     if (driven.kind === 'waiting-deferred') {
       const message =
         'headless run suspended waiting on an approval that cannot arrive without a TTY';

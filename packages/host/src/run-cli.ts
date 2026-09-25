@@ -114,7 +114,7 @@ export interface RunCommandDeps {
   out: (line: string) => void;
   run: (
     prompt: string,
-    options: { sessionId?: string },
+    options: { sessionId?: string; timeoutMs?: number; maxTurns?: number },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
   onScreenMount?: () => void;
@@ -125,9 +125,47 @@ export interface RunCommandDeps {
 // Checked here (exit 2) before any store attach is attempted.
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+// Default wall-clock bound for a headless run (issue #84): a model that
+// never stops thinking settles as budget_exhausted instead of hanging
+// the process forever. Overridable per invocation with --timeout.
+export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
+
+// setTimeout stores its delay in a 32-bit signed int: anything above this
+// clamps to 1 ms (TimeoutOverflowWarning), so an accepted "bound" would
+// fire almost immediately and misreport budget_exhausted. Parse-time
+// ceiling, not a clamp: a silently shortened bound is worse than a refusal.
+export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
+
 function usage(out: (line: string) => void): number {
-  out('usage: kubic run -p <prompt> [--session <id>] [--json]');
+  out(
+    'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--json]',
+  );
   return RUN_EXIT_USAGE;
+}
+
+function parsePositiveInt(
+  flag: string,
+  value: string | undefined,
+  out: (line: string) => void,
+  max?: number,
+): number | null {
+  // null = unusable (error already reported); the caller exits 2.
+  if (value === undefined || value.startsWith('--')) {
+    out(`error: ${flag} needs a value`);
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    out(
+      `error: invalid ${flag} ${JSON.stringify(value)} (need a positive integer)`,
+    );
+    return null;
+  }
+  if (max !== undefined && parsed > max) {
+    out(`error: invalid ${flag} ${JSON.stringify(value)} (max ${max})`);
+    return null;
+  }
+  return parsed;
 }
 
 // Store/attach/runner rejections never escape past the CLI (E2): a
@@ -179,6 +217,8 @@ export async function runRunCommand(
 ): Promise<number> {
   let prompt: string | undefined;
   let sessionId: string | undefined;
+  let timeoutMs: number | undefined;
+  let maxTurns: number | undefined;
   let json = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
@@ -189,6 +229,21 @@ export async function runRunCommand(
         return RUN_EXIT_USAGE;
       }
       prompt = value;
+      i += 1;
+    } else if (arg === '--timeout') {
+      const parsed = parsePositiveInt(
+        '--timeout',
+        args[i + 1],
+        deps.out,
+        MAX_RUN_TIMEOUT_MS,
+      );
+      if (parsed === null) return RUN_EXIT_USAGE;
+      timeoutMs = parsed;
+      i += 1;
+    } else if (arg === '--max-turns') {
+      const parsed = parsePositiveInt('--max-turns', args[i + 1], deps.out);
+      if (parsed === null) return RUN_EXIT_USAGE;
+      maxTurns = parsed;
       i += 1;
     } else if (arg === '--session') {
       const value = args[i + 1];
@@ -217,7 +272,7 @@ export async function runRunCommand(
   void deps.onScreenMount;
   let result: HeadlessRunResult;
   try {
-    result = await deps.run(prompt, { sessionId });
+    result = await deps.run(prompt, { sessionId, timeoutMs, maxTurns });
     await deps.persist?.(result);
   } catch (error) {
     result = runFailure(sessionId, error);

@@ -167,6 +167,76 @@ describe('kubic cost usage (issue #79, §78)', () => {
   });
 });
 
+describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
+  const CACHED_ROWS = [
+    {
+      agentId: 'sess-hit',
+      model: 'aggregate',
+      costUsd: 0.4,
+      input: 100,
+      output: 20,
+      cacheRead: 900,
+      cacheWrite: 0,
+    },
+    {
+      agentId: 'sess-miss',
+      model: 'aggregate',
+      costUsd: 0.1,
+      input: 80,
+      output: 10,
+      cacheRead: 0,
+      cacheWrite: 500,
+    },
+  ];
+
+  it('reports the prefix hit-rate from the real usage rows it loaded', async () => {
+    const cap = capture();
+    const code = await runCostCommand([], {
+      loadRows: () => CACHED_ROWS,
+      out: cap.out,
+    });
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    // 1 of 2 sessions had a cache read > 0: a real measurement over the
+    // rows the loader returned, never an invented number.
+    expect(text).toMatch(/cache: 1\/2 sessions with prefix hits/);
+    expect(text).toMatch(/50%/);
+  });
+
+  it('states that caching is transparent on the same readout', async () => {
+    const cap = capture();
+    await runCostCommand([], { loadRows: () => CACHED_ROWS, out: cap.out });
+    expect(cap.lines.join('\n')).toMatch(/caching is transparent/);
+  });
+
+  it('keeps the --json top-level shape field-for-field and adds cache per row', async () => {
+    const cap = capture();
+    const code = await runCostCommand(['--json'], {
+      loadRows: () => CACHED_ROWS,
+      out: cap.out,
+    });
+    expect(code).toBe(0);
+    const head = cap.lines[0];
+    if (head === undefined) throw new Error('missing cost --json line');
+    const parsed = JSON.parse(head) as {
+      agents: Array<Record<string, unknown>>;
+      taskTotal: number;
+    };
+    // Criterion 5: the documented top-level shape is untouched.
+    expect(Object.keys(parsed).sort()).toEqual(['agents', 'taskTotal']);
+    // The new aggregation is additive: inside the existing per-agent rows.
+    expect(parsed.agents[0]?.cacheRead).toBe(900);
+    expect(parsed.agents[1]?.cacheWrite).toBe(500);
+    expect(parsed.taskTotal).toBeCloseTo(0.5);
+  });
+
+  it('stays quiet about cache when the loader returned no cache data', async () => {
+    const cap = capture();
+    await runCostCommand([], { loadRows: () => ROWS, out: cap.out });
+    expect(cap.lines.join('\n')).not.toMatch(/prefix hits/);
+  });
+});
+
 describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
   // Passes SESSION_ID_PATTERN ([A-Za-z0-9_-]) yet matches the sk secret
   // shape: the unknown-session echo must not carry it.

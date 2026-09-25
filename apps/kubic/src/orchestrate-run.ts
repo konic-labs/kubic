@@ -16,7 +16,10 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  createNodeFileBridge as createNodeFileBridgeForApprovals,
+} from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
@@ -31,6 +34,11 @@ import {
   parseOrchestratorRunState,
   workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  createOrchestratorApprovalsRun,
+  type WorkerApprovalsRun,
+  type WorkerAskSeat,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {
@@ -84,6 +92,10 @@ export interface OrchestrateRunOptions {
   workerEntry?: { cmd: string; args: string[] };
   /** Prod inputs for the extension startup load — tests drive missing bundles here. */
   extensionOptions?: PostureOptions;
+  /** Where the user's verdict on a worker ask is collected (issue #105).
+   *  Absent means no surface is attached: every ask denies closed on its
+   *  bound, which is what a non-interactive run keeps. */
+  approvalsSeat?: WorkerAskSeat;
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -249,6 +261,11 @@ export async function orchestrateDepsWithDefaults(
   // journals land with the worker.
   let workerShellRoot: string | undefined;
   let workerShell: ReturnType<typeof allowlistedShell> | undefined;
+  // Per-worker approvals (issue #105): the seat a TTY run attaches, and the
+  // live approvals layer once the CLI constructs it (so the child's own env
+  // can carry its mailbox path).
+  const optionsSeat = options.approvalsSeat;
+  let approvalsActive: WorkerApprovalsRun | undefined;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
     if (workerShell === undefined || workerShellRoot !== worktreePath) {
       workerShell = allowlistedShell(new NodeExecutionEnv(worktreePath).shell);
@@ -462,6 +479,36 @@ export async function orchestrateDepsWithDefaults(
         throw error;
       }
     },
+    // Per-worker approvals (issue #105): the run constructs ONE approvals
+    // layer when the CLI asked for one. Its mailbox path travels to each child
+    // through the §3.8 allowlist (KUBIC_APPROVALS_DIR), so a challenged call
+    // the child cannot answer is published for the manager to route to the
+    // user — never stopped at a missing surface.
+    approvals: (options: {
+      sessionId: string;
+      maxPendingMs: number;
+      autoApprove: boolean;
+      budget?: unknown;
+      fullAccess?: boolean;
+    }): WorkerApprovalsRun => {
+      const run = createOrchestratorApprovalsRun({
+        dir: join(needRoot(), '.kubic', 'orchestrator'),
+        sessionId: options.sessionId,
+        maxPendingMs: options.maxPendingMs,
+        ...(options.autoApprove ? { autoApprove: true } : {}),
+        ...(options.budget === undefined ? {} : { budget: options.budget }),
+        ...(options.fullAccess ? { fullAccess: true } : {}),
+        // The TTY seat when this run has a user attached; a run with `--yes`
+        // answers with the standing seat instead, and a run with neither
+        // denies closed on the router's own bound (never a silent hang).
+        ...(options.autoApprove || optionsSeat === undefined
+          ? {}
+          : { seat: optionsSeat }),
+        debug: (line) => debug(line),
+      });
+      approvalsActive = run;
+      return run;
+    },
     createWorkerSession: async (input) => {
       // Create the worker's session before the child spawns (issue #85):
       // `kubic run --session <id>` only ATTACHES, so without this the child
@@ -537,12 +584,23 @@ export async function orchestrateDepsWithDefaults(
           role: 'worker',
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
-          // allowlist inside the layer — never inherited wholesale.
-          baseEnv: Object.fromEntries(
-            Object.entries(process.env).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
+          // allowlist inside the layer — never inherited wholesale. The
+          // approvals mailbox (issue #105) is added here, not inherited: the
+          // child learns where to publish an ask it cannot answer, and which
+          // orchestrator session it belongs to.
+          baseEnv: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
             ),
-          ),
+            ...(approvalsActive === undefined
+              ? {}
+              : {
+                  KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
+                  KUBIC_ORCHESTRATOR_SESSION: workerSession,
+                }),
+          },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
             ...(options.workerEntry?.args ?? [entryScript()]),

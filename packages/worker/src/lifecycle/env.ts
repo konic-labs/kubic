@@ -20,6 +20,13 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // marker under this id and the orchestrator matches it, so the id is
   // part of the child's world — never the parent's whole environment.
   'KUBIC_WORKER_ID',
+  // Per-worker approvals (issue #105): the orchestration run tells its child
+  // where the ask mailbox is and which orchestrator session it belongs to, so
+  // a challenged call the child cannot answer reaches the USER through the
+  // manager instead of dying at a missing surface. Both are non-secret
+  // locations/identifiers — the same class as KUBIC_WORKER_ID.
+  'KUBIC_APPROVALS_DIR',
+  'KUBIC_ORCHESTRATOR_SESSION',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

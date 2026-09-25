@@ -4,6 +4,7 @@
 // arrives injected (faux in tests); deny-by-default holds — a tool with no
 // enterprise allow is denied.
 
+import { answerHelp } from '../../../core/src/cli-help.js';
 import { type EffectivePolicy, isToolAllowed } from './enterprise.js';
 import { redactSecretShapes } from './secret-shapes.js';
 
@@ -15,8 +16,10 @@ export interface PolicyCommandDeps {
   out: (line: string) => void;
 }
 
+export const POLICY_USAGE = 'usage: kubic policy --tool <name> [--json]';
+
 function usage(out: (line: string) => void): number {
-  out('usage: kubic policy --tool <name> [--json]');
+  out(POLICY_USAGE);
   return POLICY_EXIT_USAGE;
 }
 
@@ -24,6 +27,9 @@ export async function runPolicyCommand(
   args: string[],
   deps: PolicyCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, POLICY_USAGE);
+  if (help !== null) return help;
   let json = false;
   let tool: string | undefined;
   for (let i = 0; i < args.length; i++) {

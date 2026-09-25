@@ -4,6 +4,20 @@
 > `packages/host/src/config/config.ts` (layers, TOML, merge),
 > `secrets.ts` (request-time secrets), `stances.ts` (refusals).
 > This table matches that implementation exactly.
+>
+> **Not yet wired at runtime** (issue
+> [#90](https://github.com/konic-labs/kubic/issues/90)): the layer
+> machinery, the TOML parser, the commit-vs-ignore split, and the secrets
+> resolver below are implemented and tested as a library, but no command
+> reads a config file yet — `kubic run` / `orchestrate` / `doctor` /
+> `models` do not consult `config.toml`, `~/.kubic/config.toml` or
+> `/etc/kubic/config.toml` today (`doctor`'s policy check runs on host
+> defaults, and `packages/host/src/config/config.ts` is on the
+> [dead-surface ledger](../dead-surface.md) under #90). What *is* live and
+> unchanged: the runtime-exclude split in
+> [What lives where](#what-lives-where) and the `models.json` /
+> `$ENV_VAR`-via-`models.json` secret refs used by `kubic models` and
+> `kubic run`.
 
 ## Precedence: first layer wins
 

@@ -4,6 +4,7 @@
 // (exit 0); --json emits the full BudgetEvaluation either way. Samples
 // arrive as argv (faux-only: no clock, no I/O, no network).
 
+import { answerHelp } from '../../../../core/src/cli-help.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import {
   type BudgetEvaluation,
@@ -22,10 +23,11 @@ export interface PerfCommandDeps {
   out: (line: string) => void;
 }
 
+export const PERF_USAGE =
+  'usage: kubic perf --budget <worktree|spawn|attach|teardown> --samples <ms,ms,…> [--json]';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic perf --budget <worktree|spawn|attach|teardown> --samples <ms,ms,…> [--json]',
-  );
+  out(PERF_USAGE);
   return PERF_EXIT_USAGE;
 }
 
@@ -47,6 +49,9 @@ function parseSamples(raw: string): number[] | null {
 }
 
 export function runPerfCommand(args: string[], deps: PerfCommandDeps): number {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, PERF_USAGE);
+  if (help !== null) return help;
   let json = false;
   let kind: string | undefined;
   let samplesRaw: string | undefined;

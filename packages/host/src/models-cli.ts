@@ -3,6 +3,7 @@
 // models.json customs registered by the caller). Presentation only.
 
 import { join } from 'node:path';
+import { answerHelp } from '../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
@@ -24,6 +25,9 @@ export interface ModelsCommandDeps {
 // Composition helper: fresh models plus models.json customs when present.
 // File access goes through the exec bridge (I/O confinement) — absent or
 // invalid models.json is reported, never thrown past the CLI.
+export const MODELS_USAGE =
+  'usage: kubic models [--json] [--resolve <provider/id>]';
+
 export function assembleModels(cwd: string): {
   models: MutableModels;
   note: string | null;
@@ -52,6 +56,9 @@ export async function runModelsCommand(
   args: string[],
   deps: ModelsCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` is answered before argv parsing (issue #100).
+  const help = answerHelp(args, deps.out, MODELS_USAGE);
+  if (help !== null) return help;
   const json = args.includes('--json');
   const resolveAt = args.indexOf('--resolve');
   if (resolveAt !== -1) {
@@ -73,6 +80,14 @@ export async function runModelsCommand(
       );
       return 1;
     }
+  }
+  // Fail-closed on unknown flags (issue #100): they used to be silently
+  // ignored, so a typo'd flag looked like a plain catalog readout.
+  const unknown = args.filter((arg) => arg !== '--json');
+  if (unknown.length > 0) {
+    deps.out(`error: unknown flag ${unknown[0]}`);
+    deps.out(MODELS_USAGE);
+    return 1;
   }
   const catalog = deps.models.getProviders().map((provider) => ({
     id: provider.id,

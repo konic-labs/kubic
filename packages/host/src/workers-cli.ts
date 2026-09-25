@@ -6,6 +6,7 @@
 // touches processes, the filesystem, or the network.
 
 import type { TaskResources } from '../../agents/src/task.js';
+import { answerHelp } from '../../core/src/cli-help.js';
 
 export interface WorkerListRow {
   workerId: string;
@@ -50,8 +51,10 @@ function formatResources(resources: TaskResources | undefined): string {
   return parts.length > 0 ? parts.join(' ') : '-';
 }
 
+const WORKERS_USAGE = 'usage: kubic workers [--json] [--debug]';
+
 function usage(out: (line: string) => void): number {
-  out('usage: kubic workers [--json] [--debug]');
+  out(WORKERS_USAGE);
   return 1;
 }
 
@@ -59,6 +62,9 @@ export async function runWorkersCommand(
   args: string[],
   deps: WorkersCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
+  const help = answerHelp(args, deps.out, WORKERS_USAGE);
+  if (help !== null) return help;
   const unknown = args.filter((a) => a !== '--json' && a !== '--debug');
   if (unknown.length > 0) return usage(deps.out);
   const now = deps.now?.() ?? Date.now();

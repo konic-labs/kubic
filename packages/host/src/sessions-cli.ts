@@ -5,6 +5,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { answerHelp } from '../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -25,10 +26,11 @@ export function defaultSessionsRoot(): string {
   return join(homedir(), '.kubic', 'sessions');
 }
 
+const SESSIONS_USAGE =
+  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>]>';
+
 function usage(out: (line: string) => void): number {
-  out(
-    'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>]>',
-  );
+  out(SESSIONS_USAGE);
   return 1;
 }
 
@@ -36,6 +38,9 @@ export async function runSessionsCommand(
   args: string[],
   deps: SessionsCommandDeps,
 ): Promise<number> {
+  // `--help`/`-h` is answered before any subcommand dispatch (issue #100).
+  const help = answerHelp(args, deps.out, SESSIONS_USAGE);
+  if (help !== null) return help;
   const [sub, ...rest] = args;
   if (sub === undefined) return usage(deps.out);
   const root = deps.sessionsRoot ?? defaultSessionsRoot();

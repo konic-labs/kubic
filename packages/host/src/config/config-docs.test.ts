@@ -17,7 +17,11 @@ import {
   KNOWN_CONFIG_SECTIONS,
   parseTomlConfig,
 } from './config.js';
-import { loadRuntimeConfig, RUNTIME_KEY_EFFECTS } from './runtime.js';
+import {
+  effectiveConfigView,
+  loadRuntimeConfig,
+  RUNTIME_KEY_EFFECTS,
+} from './runtime.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..', '..');
@@ -126,21 +130,52 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     }
   });
 
+  it("loads this repo's own .kubic/config.toml and maps every key", () => {
+    // The repository dogfoods the feature: its own project layer must parse,
+    // load, and reach each projection — no decoration.
+    const repoConfig = join(REPO_ROOT, '.kubic', 'config.toml');
+    const bridge = createNodeFileBridge(REPO_ROOT);
+    const runtime = loadRuntimeConfig({
+      bridge,
+      home: '/home/u',
+      cwd: REPO_ROOT,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: true,
+    });
+    expect(bridge.readTextFile(repoConfig).length).toBeGreaterThan(0);
+    expect(runtime.model).toEqual({
+      provider: 'local',
+      id: 'llama3',
+      thinking: 'medium',
+    });
+    expect(runtime.modelSource).toBe('project');
+    expect(runtime.approvals.source).toBe('project');
+    expect(runtime.permissions.classes.network).toBe('none');
+    expect(runtime.journal.retentionDays).toBe(30);
+    expect(runtime.modes.solo).toBe(true);
+    // Committed, not ignored: the split this repo ships keeps it trackable.
+    expect(runtime.projectTrusted).toBe(true);
+    const view = effectiveConfigView(runtime);
+    expect(view.values.length).toBeGreaterThan(0);
+    expect(view.values.every((entry) => entry.layer === 'project')).toBe(true);
+  });
+
   it('loads the documented example through the real FileBridge from disk', () => {
-    // Same file, production bridge: proves the doc example works through the
-    // same I/O path a user's `.kubic/config.toml` takes.
-    const bridge = createNodeFileBridge(EXAMPLE);
+    // Same content, production bridge: proves the doc example works through
+    // the same I/O path a user's `.kubic/config.toml` takes, and that a
+    // distrusted project layer is refused by name rather than half-applied.
+    const bridge = createNodeFileBridge(dirname(EXAMPLE));
     const runtime = loadRuntimeConfig({
       bridge,
       home: '/home/u',
       cwd: '/repo',
       enterprisePath: '/nonexistent/config.toml',
       projectTrusted: false,
-      session: parseTomlConfig(bridge.readTextFile(EXAMPLE)),
+      session: parseTomlConfig(readFileSync(EXAMPLE, 'utf8')),
     });
     expect(runtime.journal.retentionDays).toBe(30);
     expect(runtime.approvals.policy.route).toBe('ask-user');
-    void REPO_ROOT;
+    expect(runtime.journal.maxAgeMs).toBe(30 * 86_400_000);
   });
 });
 

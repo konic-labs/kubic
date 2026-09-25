@@ -401,7 +401,7 @@ function loadLayers(
         layerInputs.push({ layer, config: programmatic });
       continue;
     }
-    const present = path !== undefined && inputs.bridge.exists(path);
+    const present = path !== undefined && safeExists(inputs.bridge, path);
     reports.push({
       layer,
       path,
@@ -760,6 +760,30 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
 // the bridge (repo `.gitignore` + local `.git/info/exclude`) and reports the
 // missing prefixes by name — the same check the config tests pin, now on a
 // production path.
+//
+// `lstat` on a path under a non-directory throws ENOTDIR (a git WORKTREE has
+// a `.git` FILE, not a directory). Absence is the answer we want there, so
+// every existence probe in this module goes through this guard — a config
+// load must never crash on a repository layout.
+function safeExists(bridge: Pick<FileBridge, 'exists'>, path: string): boolean {
+  try {
+    return bridge.exists(path);
+  } catch {
+    return false;
+  }
+}
+
+function safeReadTextFile(
+  bridge: Pick<FileBridge, 'readTextFile'>,
+  path: string,
+): string | undefined {
+  try {
+    return bridge.readTextFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
 export function checkWorkspaceIgnoreSplit(
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>,
   cwd: string,
@@ -769,14 +793,16 @@ export function checkWorkspaceIgnoreSplit(
   // runtime state stays local wherever it is written. Reporting a missing
   // split there would be a false alarm, so `applicable` is false and no
   // rules are claimed to be absent.
-  const applicable = bridge.exists(`${cwd}/.git`);
+  const applicable = safeExists(bridge, `${cwd}/.git`);
   const candidates = [`${cwd}/.gitignore`, `${cwd}/.git/info/exclude`];
   const checked: string[] = [];
   let text = '';
   for (const path of candidates) {
-    if (!bridge.exists(path)) continue;
+    if (!safeExists(bridge, path)) continue;
+    const content = safeReadTextFile(bridge, path);
+    if (content === undefined) continue;
     checked.push(path);
-    text += `${bridge.readTextFile(path)}\n`;
+    text += `${content}\n`;
   }
   return {
     missing: applicable ? checkGitignoreSplit(text).missing : [],

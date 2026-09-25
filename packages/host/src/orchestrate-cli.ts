@@ -12,13 +12,13 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
-import { answerHelp } from '../../core/src/cli-help.js';
 import {
   addEdge,
   addNode,
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
+import { answerHelp } from '../../core/src/cli-help.js';
 import type {
   AttributedHunk,
   MergedHunk,

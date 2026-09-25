@@ -16,7 +16,7 @@
 //     have a ledger row that is a named issue or a deletion, and no row may
 //     still be owned by this issue (its dispositions are executed);
 //   - the deleted orchestrator leftovers stay deleted.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -29,12 +29,7 @@ const ROOT = join(
   '..',
   '..',
 );
-const ARCHITECTURE_PAGE = join(
-  ROOT,
-  'docs',
-  'architecture',
-  'orchestrator.md',
-);
+const ARCHITECTURE_PAGE = join(ROOT, 'docs', 'architecture', 'orchestrator.md');
 const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
 const LEDGER = join(ROOT, 'docs', 'dead-surface.md');
 const REGISTRY = join(ROOT, 'docs', 'design', 'design-decisions.json');
@@ -146,7 +141,9 @@ describe('orchestrator scope is honest (issue #95)', () => {
       expect(entry, `${id} must exist in the registry`).toBeDefined();
       const text = `${entry?.decision ?? ''}\n${entry?.rationale ?? ''}`;
       // An amendment is dated and names the issue that records the reality.
-      expect(text, `${id} must be amended`).toMatch(/Amended \d{4}-\d{2}-\d{2}/);
+      expect(text, `${id} must be amended`).toMatch(
+        /Amended \d{4}-\d{2}-\d{2}/,
+      );
       expect(text, `${id} must name the manager-lane issue`).toContain(
         MANAGER_LANE_ISSUE,
       );
@@ -154,7 +151,9 @@ describe('orchestrator scope is honest (issue #95)', () => {
     // D7's amendment states what the mode actually ships.
     expect(byId.get('D7')?.decision ?? '').toMatch(/CLI/);
     // D8's amendment states the shipped session-scoped entry point.
-    expect(byId.get('D8')?.decision ?? '').toMatch(/kubic orchestrate|--session/);
+    expect(byId.get('D8')?.decision ?? '').toMatch(
+      /kubic orchestrate|--session/,
+    );
   });
 
   it('gives every runtime-dead orchestrator module a ledger row it can execute', () => {
@@ -173,9 +172,35 @@ describe('orchestrator scope is honest (issue #95)', () => {
       if (!path.startsWith('packages/')) continue;
       rows.set(path, cells.slice(2).join(' | '));
     }
-    // Every dead module the reachability gate reports lives here with an
-    // owner that is a named issue or an executed deletion — never #95 (this
-    // issue's dispositions are executed, not deferred to itself).
+    // EVERY module under packages/host/src/orchestrator/ (non-test sources)
+    // has a three-way disposition: reachable (in no ledger row), named-issue
+    // (a row whose owner is an open issue), or deleted (gone from the tree).
+    // Nothing may stay undisposed, and no row may be owned by #95.
+    const dir = join(ROOT, 'packages', 'host', 'src', 'orchestrator');
+    const modules: string[] = [];
+    const walk = (current: string): void => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const full = join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) {
+          continue;
+        }
+        modules.push(full.slice(ROOT.length + 1));
+      }
+    };
+    walk(dir);
+    expect(modules.length).toBeGreaterThan(20);
+    for (const path of modules) {
+      const row = rows.get(path);
+      if (row === undefined) continue; // reachable: no row is the disposition
+      expect(row, `${path} must not stay owned by #95`).not.toMatch(/#95\b/);
+      expect(row, `${path} must name its future issue`).toMatch(/#\d+/);
+    }
+    // The modules this issue disposed of stay disposed: deleted barrels are
+    // gone, and the dead modules keep their named-issue owners.
     const deadNow = [
       'packages/host/src/orchestrator/approvals/budgets.ts',
       'packages/host/src/orchestrator/approvals/request.ts',

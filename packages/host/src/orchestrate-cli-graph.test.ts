@@ -11,7 +11,10 @@ import type {
   OrchestrateWorktree,
   OrchestratorRunState,
 } from './orchestrate-cli.js';
-import { delegationGraphLines, runOrchestrateCommand } from './orchestrate-cli.js';
+import {
+  delegationGraphLines,
+  runOrchestrateCommand,
+} from './orchestrate-cli.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 
 function depsFor(lines: string[]): OrchestrateCommandDeps {
@@ -60,12 +63,12 @@ describe('delegation DAG (issue #95, §54)', () => {
     };
     expect(envelope.graph).toBeDefined();
     const graph = envelope.graph ?? [];
-    expect(graph.some((line) => /edge .+ -> .+-alpha \[delegated\]/.test(line))).toBe(
-      true,
-    );
-    expect(graph.some((line) => /edge .+ -> .+-beta \[delegated\]/.test(line))).toBe(
-      true,
-    );
+    expect(
+      graph.some((line) => /edge .+ -> .+-alpha \[delegated\]/.test(line)),
+    ).toBe(true);
+    expect(
+      graph.some((line) => /edge .+ -> .+-beta \[delegated\]/.test(line)),
+    ).toBe(true);
 
     const textLines: string[] = [];
     const textCode = await runOrchestrateCommand(

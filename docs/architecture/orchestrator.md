@@ -4,9 +4,10 @@
 > issue [#95](https://github.com/konic-labs/kubic/issues/95).
 > **Delegation model as shipped (issue #103, 2026-09-25):** the CLI process
 > is the manager, and its root lane registers the §40 toolset and authors the
-> plan whose steps become the prompts its workers run. This page describes
-> that model; the parts of §9.2 that remain unwired (role-driven prompts,
-> per-worker approvals) are named with the issues that own them.
+> plan whose steps become the prompts its workers run, and worker asks route
+> to the user through the per-run approval router (issue #105). This page
+> describes that model; the parts of §9.2 that remain unwired (role-driven
+> prompts) are named with the issue that owns them.
 
 Orchestrator is Kubic's opt-in delegation mode: `kubic orchestrate` spawns
 one worker process and one git worktree per subagent and merges what they
@@ -43,9 +44,21 @@ solo) — and `run` never delegates.
   the orchestrator performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
   auto-approves; a headless run with no decider denies closed (exit 4).
-  The *worker* approval layer — requests routed to the user with opt-in
-  budgets (§41) — is issue
-  [#105](https://github.com/konic-labs/kubic/issues/105).
+- **A worker's dangerous call goes to you too (issue #105).** Network,
+  destructive-shell, outside-write, install and push calls a worker child
+  raises are routed to the user through one approval router per run, over a
+  mailbox under `<repo>/.kubic/orchestrator/approvals/` — the child publishes
+  the ask, the manager presents it, the verdict travels back. The wait is
+  bounded on both ends (a question nobody can answer denies closed with
+  `approval_timeout` rather than hanging), decisions are durable and memoized
+  so an answered operation is never re-asked, and a denial reaches the worker
+  as a named status (exit 4) instead of a crash. Budgets are **opt-in per
+  spawn** (§71): no configuration enforces nothing, a configured budget blocks
+  with `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own. The
+  full-access posture is session-scoped (§41.4) — enabled per session,
+  indicated, recorded, never global. The manager's only view of a pending ask
+  is a read-only blocked indicator; a manager approval attempt is refused and
+  audited.
 - **Roles are not on this path.** `.kubic/roles/*.md` exist and the resolver
   parses them, but no worker is assigned a role and no role prompt is
   composed; role-driven prompts are issue

@@ -58,7 +58,8 @@ interface Harness {
   debugLines: string[];
   raised: OrchestratorApprovalRequest[];
   published: PublishedWorkerAsk[];
-  approvals: WorkerApprovalsRun;
+  /** The layer the CLI constructed through `deps.approvals`. */
+  readonly approvals: WorkerApprovalsRun;
   dir: string;
 }
 
@@ -67,8 +68,6 @@ type Decision = { approved: boolean; reason?: string };
 interface HarnessOptions {
   maxPendingMs?: number;
   agents?: string[];
-  budget?: unknown;
-  fullAccess?: boolean;
   noSeat?: boolean;
   /** The trigger each worker raises; default `network` for worker-1. */
   triggerFor?: (agentId: string) => string;
@@ -88,25 +87,7 @@ function harness(
   const debugLines: string[] = [];
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
-  const approvals = createOrchestratorApprovalsRun({
-    dir,
-    sessionId: 'orch-105',
-    maxPendingMs: options.maxPendingMs ?? 400,
-    ...(options.noSeat === true
-      ? {}
-      : {
-          seat: async (request: OrchestratorApprovalRequest) => {
-            raised.push(request);
-            const verdict = decide(request);
-            return verdict.approved
-              ? { approved: true, by: 'user' }
-              : { approved: false, reason: verdict.reason ?? 'denied' };
-          },
-        }),
-    ...(options.budget === undefined ? {} : { budget: options.budget }),
-    ...(options.fullAccess === true ? { fullAccess: true } : {}),
-    debug: (line) => debugLines.push(line),
-  });
+  let built: WorkerApprovalsRun | undefined;
   const mailbox = join(dir, 'approvals');
   const deps: OrchestrateCommandDeps = {
     out: (line) => lines.push(line),
@@ -165,9 +146,53 @@ function harness(
     mergeBranch: () => undefined,
     reapWorker: () => undefined,
     requestApproval: () => true,
-    approvals: () => approvals,
+    // The production seam, faithfully: the CLI owns the run options and the
+    // composition root BUILDS the layer from them. A harness that fabricated
+    // its own run here would pass while prod dropped an option on the floor —
+    // which is exactly how the per-spawn budget override went missing.
+    approvals: (cliOptions) => {
+      built = createOrchestratorApprovalsRun({
+        dir,
+        sessionId: cliOptions.sessionId,
+        maxPendingMs: options.maxPendingMs ?? cliOptions.maxPendingMs,
+        ...(cliOptions.autoApprove ? { autoApprove: true } : {}),
+        ...(cliOptions.budget === undefined
+          ? {}
+          : { budget: cliOptions.budget }),
+        ...(cliOptions.budgetForAgent === undefined
+          ? {}
+          : { budgetForAgent: cliOptions.budgetForAgent }),
+        ...(cliOptions.fullAccess === true ? { fullAccess: true } : {}),
+        ...(options.noSeat === true
+          ? {}
+          : {
+              seat: async (request: OrchestratorApprovalRequest) => {
+                raised.push(request);
+                const verdict = decide(request);
+                return verdict.approved
+                  ? { approved: true, by: 'user' as const }
+                  : { approved: false, reason: verdict.reason ?? 'denied' };
+              },
+            }),
+        debug: (line) => debugLines.push(line),
+      });
+      return built;
+    },
   };
-  return { deps, lines, debugLines, raised, published, approvals, dir };
+  return {
+    deps,
+    lines,
+    debugLines,
+    raised,
+    published,
+    get approvals(): WorkerApprovalsRun {
+      if (built === undefined) {
+        throw new Error('the CLI never constructed the approvals layer');
+      }
+      return built;
+    },
+    dir,
+  };
 }
 
 describe('per-worker approvals on the delegation path (issue #105)', () => {
@@ -268,11 +293,17 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     // code.
     const limited = harness(() => ({ approved: true }), {
       agents: ['worker-1'],
-      budget: { maxToolCalls: 1 },
       asksPerWorker: 2,
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'do the work'],
+      [
+        '-p',
+        'do the work',
+        '--agents',
+        'worker-1',
+        '--budget',
+        'maxToolCalls=1',
+      ],
       limited.deps,
     );
     expect(code).toBe(3);
@@ -366,12 +397,69 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     expect(h.raised).toHaveLength(1);
   });
 
-  it('AC5: the full-access posture is session-scoped, indicated, and enforced again for a fresh session', async () => {
+  it('AC3b: `--budget <agent>:<dims>` scopes an override to THAT spawn and never widens another', async () => {
+    // Shared spec: 2 tool calls (worker-2 can do its two and finish).
+    // Per-spawn override for worker-1: ZERO calls allowed — the very first
+    // brokered call must exhaust it, so the run ends 3-bound on worker-1.
     const h = harness(() => ({ approved: true }), {
       agents: ['worker-1'],
-      fullAccess: true,
+      // Two brokered calls: the first consumes the single allowance, the
+      // second exceeds it and is blocked before it can reach the user.
+      asksPerWorker: 2,
     });
-    const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps);
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        'do the work',
+        '--agents',
+        'worker-1',
+        '--budget',
+        'worker-1:maxToolCalls=1',
+      ],
+      h.deps,
+    );
+    expect(code).toBe(3);
+    expect(h.lines.join('\n')).toContain('BUDGET_EXHAUSTED');
+    // The gate in force for THAT spawn was the OVERRIDE — not a default, and
+    // not a shared spec (none was given here).
+    const inForce = h.approvals.budgetFor('worker-1') as
+      | Record<string, unknown>
+      | undefined;
+    expect(inForce).toEqual({ maxToolCalls: 1 });
+    // No shared spec was configured, so the RUN-level budget stays empty: an
+    // override never silently becomes a limit for the whole run.
+    expect(h.approvals.budget()).toBeUndefined();
+
+    // And with NO budget on the flag at all, the same worker does two calls
+    // with no limit: the override cannot leak into a spawn the user did not
+    // budget, and absence still enforces nothing.
+    const clean = harness(() => ({ approved: true }), {
+      agents: ['worker-1'],
+      asksPerWorker: 2,
+    });
+    const cleanCode = await runOrchestrateCommand(
+      ['-p', 'do the work', '--agents', 'worker-1'],
+      clean.deps,
+    );
+    expect(cleanCode).toBe(0);
+    expect(clean.approvals.budget()).toBeUndefined();
+    expect(clean.raised).toHaveLength(2);
+  });
+
+  it('AC5: the full-access posture is session-scoped, indicated, and enforced again for a fresh session', async () => {
+    const h = harness(() => ({ approved: true }), { agents: ['worker-1'] });
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        'do the work',
+        '--session',
+        'orch-105',
+        '--agents',
+        'worker-1',
+        '--full-access',
+      ],
+      h.deps,
+    );
     expect(code).toBe(0);
     // The posture was indicated on the surface (never quiet).
     expect(h.debugLines.join('\n')).toMatch(/full-access approvals skipped/);

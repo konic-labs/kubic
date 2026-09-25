@@ -16,10 +16,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  createNodeFileBridge,
-  createNodeFileBridge as createNodeFileBridgeForApprovals,
-} from '../../../packages/exec/src/file-bridge.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
@@ -529,6 +526,7 @@ export async function orchestrateDepsWithDefaults(
       maxPendingMs: number;
       autoApprove: boolean;
       budget?: unknown;
+      budgetForAgent?: (agentId: string) => unknown;
       fullAccess?: boolean;
     }): WorkerApprovalsRun => {
       const run = createOrchestratorApprovalsRun({
@@ -537,6 +535,12 @@ export async function orchestrateDepsWithDefaults(
         maxPendingMs: options.maxPendingMs,
         ...(options.autoApprove ? { autoApprove: true } : {}),
         ...(options.budget === undefined ? {} : { budget: options.budget }),
+        // Per-spawn budget spec (§71, issue #105): the CLI decodes
+        // `--budget <agent>:<dims>` and this hands it to the spawn's own gate,
+        // so an override never widens another worker's limit.
+        ...(options.budgetForAgent === undefined
+          ? {}
+          : { budgetForAgent: options.budgetForAgent }),
         ...(options.fullAccess ? { fullAccess: true } : {}),
         // The TTY seat when this run has a user attached; a run with `--yes`
         // answers with the standing seat instead, and a run with neither

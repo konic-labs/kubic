@@ -596,6 +596,14 @@ export interface WorkerApprovalsRun {
   };
   /** Opt-in budget in force for this run; undefined = none. */
   budget: () => OrchestratorBudget | undefined;
+  /**
+   * The budget gate actually in force for ONE spawn — the per-agent override
+   * when `--budget <agent>:<dims>` named it, otherwise the shared spec.
+   * undefined means this spawn is unbudgeted. Reading it is the only way to
+   * tell an override apart from a shared limit (both block with the same
+   * code), and it is read-only: budgets are configured before the spawn.
+   */
+  budgetFor: (agentId: string) => OrchestratorBudget | undefined;
   /** The live session-scoped full-access grant, if the user opted in. */
   fullAccessGrant: () => SessionSkipRecord | undefined;
   audit: () => readonly RouterAuditEvent[];
@@ -879,6 +887,7 @@ export function createOrchestratorApprovalsRun(
     managerApprove: (key) => decisions.managerApprove(key),
     requestBudgetRaise: (input) => refuseRaise(input.agentId, input.proposed),
     budget: () => sharedPlan.budget,
+    budgetFor: (agentId) => planFor(agentId).budget,
     fullAccessGrant: () => fullAccessLive(),
     audit: () => auditLog.events(),
     decisions,

@@ -35,7 +35,6 @@ import {
   emitSoloWarning,
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
-import { createWorkerMailboxSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   attachToolSpans,
@@ -43,6 +42,7 @@ import {
   serializeSpanArtifact,
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
+import { createWorkerMailboxSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type {
   ResolvedRole,
   RoleLayerInput,

@@ -346,6 +346,8 @@ export interface OrchestrateCommandDeps {
     maxPendingMs: number;
     autoApprove: boolean;
     budget?: unknown;
+    /** Per-spawn override: the budget for THAT worker's gate (§71). */
+    budgetForAgent?: (agentId: string) => unknown;
     fullAccess?: boolean;
   }) => WorkerApprovalsRun;
   loadState?: (
@@ -834,12 +836,12 @@ export async function runOrchestrateCommand(
     maxPendingMs: ORCHESTRATE_APPROVAL_BOUND_MS,
     autoApprove: parsed.autoApprove,
     ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),
+    // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
+    // of THAT spawn only; absent, the shared spec applies.
+    budgetForAgent: (agentId: string) =>
+      parsed.budgetsByAgent[agentId] ?? parsed.budget,
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
   });
-  const budgetForAgent = (agentId: string): unknown =>
-    // A per-agent spec is the budget for THAT spawn: it replaces the shared
-    // spec for the named worker only, and never widens it.
-    parsed.budgetsByAgent[agentId] ?? parsed.budget;
   const approvalScopeFor = (
     agentId: string,
     worktree: OrchestrateWorktree,

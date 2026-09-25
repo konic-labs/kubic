@@ -283,7 +283,7 @@ describe('prod orchestrate path: stale branch without a worktree (issue #85)', (
 });
 
 describe('prod orchestrate path: kubic state never dirties the tree (issue #85)', () => {
-  it('keeps .kubic invisible to git status in a repo with no ignore entry', async () => {
+  it('keeps .kubic runtime state invisible to git status in a repo with no ignore entry', async () => {
     const root = await initRepo();
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     const deps = await orchestrateDepsWithDefaults({
@@ -297,27 +297,35 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     // (`?? .kubic/`) and no run can ever settle.
     await deps.ensureWorktree('worker-1');
     const env = new NodeExecutionEnv(root);
-    const probe = env.fs.readFile('/.kubic/.gitignore'.slice(1));
-    expect(probe).toBe('*\n');
+    // The rules land in the repo-local exclude file (issue #91's single
+    // source of truth), NOT in a `.kubic/.gitignore` that would ignore the
+    // committable roles/config alongside the runtime state.
     env.fs.writeFile(join('.kubic', 'orchestrator', 'state.json'), '{}');
     const status = await gitOrThrow(root, ['status', '--porcelain=v1']);
     expect(status.trim()).toBe('');
+    // The ignore must cover runtime state only — roles and config stay
+    // addable (issue #91 criterion 2).
+    env.fs.writeFile(join('.kubic', 'roles', 'planner.md'), '# planner');
+    const added = await gitOrThrow(root, [
+      'add',
+      '--dry-run',
+      '.kubic/roles/planner.md',
+    ]);
+    expect(added).toContain('planner.md');
   });
 
-  it('never overwrites a .kubic/.gitignore that is already there', async () => {
+  it('defers to the shared exclude file and never writes a .kubic/.gitignore', async () => {
     const root = await initRepo();
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     const env = new NodeExecutionEnv(root);
-    // A previous run's entry (or the repo's own choice) must stand — e.g. a
-    // hand-tuned file that ignores only part of the state dir.
+    // A hand-tuned `.kubic/.gitignore` from an older run must stand untouched,
+    // and the orchestrator must not create one.
     env.fs.writeFile(join('.kubic', '.gitignore'), 'wt/\n');
-    // Building the deps is what runs the setup pass.
     await orchestrateDepsWithDefaults({
       out: () => undefined,
       cwd: root,
       sessionsRoot,
     });
-    // The orchestrator ran its own setup and left the file exactly as it was.
     expect(env.fs.readFile(join('.kubic', '.gitignore'))).toBe('wt/\n');
   });
 

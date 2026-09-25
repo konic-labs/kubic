@@ -126,8 +126,15 @@ No raw `ENOENT` stack trace, no `node:events` crash — a named
   the design has that dir gitignored (§35) — but nothing wrote the ignore
   entry, so a fresh `git init` repo showed `?? .kubic/` and the pre-merge
   guard refused every merge (`working tree not clean`). Fixed in this issue:
-  the composition root writes a self-ignoring `<root>/.kubic/.gitignore`
-  once and never overwrites an existing one.
+  the orchestrate path now ships the runtime ignore rules into the repo-local
+  exclude file via issue #91's `ensureRuntimeExcludeRules` (the same
+  mechanism `kubic run` uses), so `.kubic/` runtime state stays invisible
+  while `.kubic/roles/*.md` and `config.toml` stay committable. An earlier
+  revision of this fix wrote a self-ignoring `<root>/.kubic/.gitignore`
+  containing `*`; that was replaced on `main` because it also ignored the
+  committable roles (verified: `git add .kubic/roles/new-role.md` refused
+  with *"The following paths are ignored by one of your .gitignore files"*,
+  contradicting issue #91 criterion 2).
 
 ## Secret sweep
 

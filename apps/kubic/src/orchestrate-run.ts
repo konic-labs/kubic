@@ -17,6 +17,7 @@ import { createInterface } from 'node:readline';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
@@ -85,18 +86,19 @@ function entryScript(): string {
 }
 
 // Kubic's own state dir must never dirty the tree it sits in (§35: `.kubic/`
-// is gitignored). A fresh `git init` scratch repo has no ignore entry, so the
-// dir shows up as `?? .kubic/` and the pre-merge guard refuses every merge —
-// no run can settle. The self-ignoring entry is written once and never
-// overwritten, so a repo's own `.kubic/.gitignore` (if any) stands.
-function ensureStateIgnored(env: NodeExecutionEnv): void {
-  const ignorePath = join('.kubic', '.gitignore');
-  try {
-    if (env.fs.stat(ignorePath).isFile) return;
-  } catch {
-    // No entry yet — fall through and write one.
-  }
-  env.fs.writeFile(ignorePath, '*\n');
+// runtime state is ignored). A fresh `git init` scratch repo has no ignore
+// entry, so the dir shows up as `?? .kubic/` and the pre-merge guard refuses
+// every merge — no run can settle.
+//
+// The rules come from issue #91's single source of truth (the same mechanism
+// `kubic run` uses at dispatch): the five runtime prefixes go into the
+// repo-local, uncommitted exclude file, so `.kubic/roles/*.md` and
+// `config.toml` stay committable. An earlier version of this helper wrote a
+// `*` file into `.kubic/.gitignore`, which ignored the roles too — verified
+// to break `git add .kubic/roles/new-role.md` — so it defers here instead.
+// Best-effort: a repo we cannot write into fails later with its own named code.
+function ensureStateIgnored(root: string): void {
+  ensureRuntimeExcludeRules({ cwd: root });
 }
 
 async function askUser(question: string): Promise<boolean> {
@@ -138,7 +140,7 @@ export async function orchestrateDepsWithDefaults(
   // a repo we cannot write into fails later with its own named code.
   if (root !== undefined) {
     try {
-      ensureStateIgnored(new NodeExecutionEnv(root));
+      ensureStateIgnored(root);
     } catch {
       // Intentionally swallowed — the named failure comes from the write path.
     }
@@ -242,7 +244,7 @@ export async function orchestrateDepsWithDefaults(
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       const env = new NodeExecutionEnv(repo);
-      ensureStateIgnored(env);
+      ensureStateIgnored(repo);
       try {
         const added = await addWorktree(env, repo, agentId, {
           sessionId: 'cli',

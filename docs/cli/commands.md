@@ -51,6 +51,16 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 value, an invalid `--session` id, a non-positive or non-integer
 `--timeout`/`--max-turns`, or an unknown flag all exit 2.
 
+A fresh solo start announces its trust model before the first turn: three
+`warning: solo mode has no isolation …` lines on **stderr** (never stdout —
+`--json` stays one parseable envelope). Suppressed when the process is an
+orchestrator-managed worker child (`KUBIC_WORKER_ID` set; that mode's own
+worktree limit is what `kubic doctor` reports) and by the opt-out
+`KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
+per process start, not per session. `kubic tui` shows the same statement
+as its one-line form in the editor footer, and the re-execution tiers of
+`kubic replay` announce it too (they drive this same run path).
+
 ## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
 
 Opt-in orchestrator mode: plans N workers, spawns one worker process per
@@ -166,7 +176,12 @@ Quitting restores the main screen and prints the final document (no cursor
 loss on interrupt). Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
 `SIGTERM`/`SIGHUP` have no handler and exit without restoring the
 alt-screen. Solo mode runs in-process with your user authority: no
-isolation, no containment.
+isolation, no containment. The no-isolation statement is on screen from the
+first frame: the editor footer carries the one-line form at startup and
+returns after every completed turn (a cancelled or failed turn reports that
+outcome instead). It is suppressed for orchestrator-managed worker children
+(`KUBIC_WORKER_ID` set) and by the opt-out `KUBIC_NO_NOTICE=1`; see
+[`kubic run`](#kubic-run--p-prompt---session-id---timeout-ms---max-turns-n---json).
 
 Text rendered in the transcript is stripped of terminal control sequences
 before it reaches the frame: assistant text and tool output are untrusted

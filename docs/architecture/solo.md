@@ -18,9 +18,15 @@ trusted, and anything the agent can reach, a mistaken or manipulated
 instruction can reach too. Solo is a single trust zone, and these docs
 never imply otherwise (§59.1).
 
-This is announced, not buried: every fresh start prints the solo
-no-isolation warning, and the TUI carries the same one-line trust
-statement, so both surfaces read identically.
+This is announced, not buried: every process start announces it from one
+source (`packages/host/src/limits/solo-warning.ts`), so the two surfaces
+cannot drift apart. `kubic run` prints the three-line warning block on
+stderr before the first turn; `kubic tui` carries the one-line form in the
+editor footer from the first render. Suppressed for orchestrator-managed
+worker children (`KUBIC_WORKER_ID` set — `kubic doctor` reports that mode's
+own worktree limit) and by the opt-out `KUBIC_NO_NOTICE=1`; a `--session`
+resume still announces, because the rule is per process start, not per
+session.
 
 ## The controls that exist instead
 

@@ -22,6 +22,10 @@ import type {
   BundleLoad,
   PostureOptions,
 } from '../../../packages/extensions/src/startup.js';
+import {
+  emitSoloWarning,
+  shouldEmitSoloNotice,
+} from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
@@ -364,6 +368,15 @@ export async function runHeadlessPrompt(
     return storeFailure(options.sessionId, error);
   }
   const id = session.metadata.id;
+  // Solo no-isolation notice (issue #89): the trust model is announced on
+  // stderr before the first turn, once per process start, using the module
+  // strings verbatim so `kubic tui` reads identically. Suppressed for
+  // orchestrator-managed children (KUBIC_WORKER_ID set — `kubic doctor`
+  // reports that mode's own worktree limit) and for the documented
+  // KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json` stays parseable.
+  if (shouldEmitSoloNotice(process.env)) {
+    emitSoloWarning((line) => process.stderr.write(`${line}\n`));
+  }
   try {
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);

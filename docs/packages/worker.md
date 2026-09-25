@@ -127,6 +127,33 @@ tests use fixture rows, never network or paid tokens.
 `buildSpawnEnv`, `redactEnvForLog`); detached exits are reaped with a
 1s teardown budget (`TEARDOWN_BUDGET_MS`).
 
+### Live spawn path (issue #94: `launch.ts`, `shell.ts`, `rows.ts`)
+
+`kubic orchestrate` starts every worker through `launchWorker`, so the
+lifecycle is enforced on the path that actually spawns: the
+stale-generation guard refuses before any side effect, the row is
+registered before the child runs (`created → spawning → ready → running`
+via `assertTransition`), the readiness marker is awaited under a timeout,
+and `launched.perf()` reports the §61 sample against
+`LIFECYCLE_BUDGETS_MS`
+(worktree 300 / spawn 200 / attach 50 / teardown 1000 ms). The §3.8
+allowlist reaches the OS through `allowlistedShell` (`env -i …`, since
+the exec Shell seam carries no env field); `KUBIC_WORKER_ID` is on the
+allowlist so a worker announces itself, and an ordinary `kubic run`
+prints no marker. Registry rows persist to
+`<repo>/.kubic/orchestrator/workers.json` (§35 keeps that out of git) and
+`kubic workers` reads them back — one shared record, never a fresh empty
+registry.
+
+Failure taxonomy on that path: a worker that never becomes ready is
+terminal `SPAWN_FAILED` and the run reports the §78 code `spawn_failed`
+(the §52 code `process_spawn_failed`); a worker that ran and failed keeps
+`worker_failed`, with its §52 code named inline (a provider-less child
+exits 6 → `provider_transient`, as
+[exit-codes](../cli/exit-codes.md) documents). Both map to exit 1; a
+worker whose launch never becomes ready also records no `startupMs` — an
+unfinished launch never claims a budget pass it did not measure.
+
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md),

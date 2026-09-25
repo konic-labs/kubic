@@ -16,6 +16,10 @@ export const ENV_ALLOWLIST: readonly string[] = [
   'CLICOLOR',
   'KUBIC_MODEL',
   'KUBIC_DEBUG',
+  // The worker's own identity (issue #94): the child prints its readiness
+  // marker under this id and the orchestrator matches it, so the id is
+  // part of the child's world — never the parent's whole environment.
+  'KUBIC_WORKER_ID',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

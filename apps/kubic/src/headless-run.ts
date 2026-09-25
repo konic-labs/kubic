@@ -43,6 +43,7 @@ import {
   type LaneDriver,
   type SettledDrive,
 } from '../../../packages/worker/src/lane/solo.js';
+import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -366,6 +367,18 @@ export async function runHeadlessPrompt(
   try {
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);
+    // Readiness handshake (issue #94; §13): when this process IS a worker
+    // (`kubic orchestrate` launches it with KUBIC_WORKER_ID in the §3.8
+    // allowlist), announce that the worker is up the moment its session is
+    // attached and its prompt recorded. The orchestrator's launch waits
+    // for exactly this line — a child that never prints it is terminal
+    // SPAWN_FAILED instead of a silent hang, and the latency to it is the
+    // §61 startup sample. An ordinary `kubic run` has no worker id and
+    // prints nothing extra.
+    const workerId = process.env.KUBIC_WORKER_ID;
+    if (workerId !== undefined && workerId !== '') {
+      process.stdout.write(`${readyMarker(workerId)}\n`);
+    }
     const assembled = assembleModels(process.cwd());
     const models = deps.models ?? assembled.models;
     let model: ReturnType<typeof selectModel>;

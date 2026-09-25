@@ -113,13 +113,5 @@ file that no longer exists, or when a row's file has become reachable
 | 5 | `packages/worker/src/approval-client.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 157 | `packages/worker/src/lane/events.ts` | #102 | keep: seam — reachable once the owning issue wires it |
-| 253 | `packages/worker/src/lane/failures.ts` | #102 | keep: seam — reachable once the owning issue wires it |
-| 56 | `packages/worker/src/lifecycle/budgets.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
-| 91 | `packages/worker/src/lifecycle/env.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
-| 121 | `packages/worker/src/lifecycle/reap.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
-| 242 | `packages/worker/src/lifecycle/spawn.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
-| 135 | `packages/worker/src/lifecycle/status.ts` | #94 | wire: worker lifecycle routed through the live spawn path (#94) |
-| 134 | `packages/worker/src/result.ts` | #94 | wire: worker lifecycle (#94) — every importer today is `import type` (erased) |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 76 | `packages/worker/src/usage.ts` | #102 | keep: seam — reachable once the owning issue wires it |

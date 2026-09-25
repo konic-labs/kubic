@@ -12,6 +12,12 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
+import {
+  addEdge,
+  addNode,
+  createGraph,
+  renderDag,
+} from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
 import type {
   AttributedHunk,
@@ -192,6 +198,29 @@ export interface WorkerSpawnInfo {
   workerSessionId: string;
 }
 
+// The §54 delegation DAG (§49.1 projection): the shipped run is one manager
+// fanning out to N workers, so the manager→worker edges are projected
+// through the agents-package graph module instead of being re-drawn here.
+// §54's point is that this is a DAG, not a tree — a worker can feed a
+// reviewer and a reviewer can serve two producers — so the projection is
+// generated from explicit edge records over real session ids (the
+// orchestrator session is the manager node; each worker's node is the
+// session its child attaches to, `workerSessionFor`) rather than assumed
+// from the fan-out shape. Refs only: an edge carries no transcript
+// (§25.2/§69).
+export function delegationGraphLines(
+  sessionId: string,
+  agents: readonly string[],
+): string[] {
+  const store = createGraph();
+  const manager = addNode(store, sessionId);
+  for (const agentId of agents) {
+    const worker = addNode(store, workerSessionFor(sessionId, agentId));
+    addEdge(store, { from: manager, to: worker, kind: 'delegated' });
+  }
+  return renderDag(store);
+}
+
 export interface ApprovalInput {
   agentId: string;
   branch: string;
@@ -303,6 +332,10 @@ export interface OrchestrateEnvelope {
   workers: { agentId: string; branch: string; hunks: number }[];
   mergeOrder: string[];
   attribution: AttributedHunk[];
+  // The §54 delegation DAG of this run (§49.1 projection), rendered by
+  // `delegationGraphLines`. Present on every envelope — a run that never
+  // spawned still has a manager node, so the shape is stable for consumers.
+  graph: string[];
   error?: { kind: string; message: string; code: string };
 }
 
@@ -445,6 +478,9 @@ export async function runOrchestrateCommand(
         workers: partial?.workers ?? [],
         mergeOrder: partial?.mergeOrder ?? [],
         attribution: partial?.attribution ?? [],
+        // Parsed agents, never `state`: `fail` is reachable before the run
+        // state exists (usage/non-git refusals), so it must not read it.
+        graph: delegationGraphLines(sessionId, parsed.agents),
         error: { kind: status, message, code },
       },
       [`session: ${sessionId}`],
@@ -882,6 +918,10 @@ export async function runOrchestrateCommand(
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `merged: ${agentId}`),
     ...spawned.map((agentId) => `reaped: ${agentId}`),
+    // §54: the delegation shape, one line per node/edge of the run's DAG.
+    ...delegationGraphLines(sessionId, state.agents).map(
+      (line) => `dag: ${line}`,
+    ),
     `result: orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
   ];
   return emit(
@@ -897,6 +937,7 @@ export async function runOrchestrateCommand(
       })),
       mergeOrder: [...state.merged],
       attribution,
+      graph: delegationGraphLines(sessionId, state.agents),
     },
     textLines,
   );

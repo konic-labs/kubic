@@ -112,6 +112,31 @@ if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
 
+**The delegation model, as shipped (issue #95).** The CLI process is the
+manager: it reads `--agents`, creates one worktree per agent, spawns one
+child `kubic run` per agent and merges what they commit. There is no
+planning agent — the "plan" is the agent list — and **every worker runs the
+same prompt**: `-p` is passed to each child verbatim, so worker prompts may
+not differ today. The manager *agent* lane (§9.2/§40 allowlist),
+plan-derived per-worker prompts, role-driven prompts (§12) and per-worker
+approval routing with opt-in budgets (§41) are all re-scoped into named
+future issues: [#103](https://github.com/konic-labs/kubic/issues/103)
+(manager lane + plan → distinct prompts),
+[#104](https://github.com/konic-labs/kubic/issues/104) (role-driven
+prompts), [#105](https://github.com/konic-labs/kubic/issues/105)
+(per-worker approvals), [#106](https://github.com/konic-labs/kubic/issues/106)
+(conflict delegation, parallel surfacing, retained-worktree status). None of
+them runs today; nothing below depends on them.
+
+The default agent set is **two** (`worker-1,worker-2`, D12) and the run
+spawns them **one after another** — the CLI's loop creates the worktree,
+session and child process for each agent in turn, so two workers do not
+overlap in wall-clock time. §45's "default concurrency is 4" describes the
+admission layer's cap (`ParallelScheduler`, default 4), which starts to
+matter as soon as `--agents` names more workers than can be admitted; the
+design reconciliation is recorded in
+[design drift](../design-drift.md).
+
 The manager creates each worker's session before spawning its child. A
 child `kubic run --session <id>` only *attaches* — it never creates — so
 the manager creates `<orchestrator-session>-<agent>` (e.g.
@@ -125,8 +150,8 @@ recreating it, so a killed run keeps one chain per worker.
 
 | Flag | Meaning |
 | --- | --- |
-| `-p`, `--prompt <text>` | **Required** (unless `--resume`). The prompt every worker runs. |
-| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
+| `-p`, `--prompt <text>` | **Required** (unless `--resume`). The prompt every worker runs — the same text for all of them (#103 will make prompts differ). |
+| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, spawned one after another). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json`; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges. Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |

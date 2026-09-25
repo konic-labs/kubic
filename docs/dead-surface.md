@@ -24,6 +24,18 @@ file that no longer exists, or when a row's file has become reachable
   surface is a documented deletion, not a wired seam). `#102` itself owns
   the 22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
   clusters belong to the sibling issues named in each row.
+- Issue #95 re-scoped the manager lane and executed its orchestrator
+  dispositions: **deleted** the dead barrels
+  (`orchestrator/{approvals,merge,parallel,worktree}/index.ts`,
+  `policy/index.ts` — no importer anywhere), **wired**
+  `packages/agents/src/graph.ts` (§54 delegation DAG rendered by
+  `orchestrate-cli.ts` → `delegationGraphLines`) and
+  `limits/orchestrator-notice.ts` (emitted once per run at the first spawn
+  site in `apps/kubic/src/orchestrate-run.ts`, its row is gone), and gave the
+  remaining dead orchestrator modules **named-issue** owners: `manager.ts`
+  (#103), `approvals/{budgets,request,routing,skip}.ts` (#105),
+  `merge/conflicts.ts` + `parallel/visibility.ts` + `worktree/status.ts`
+  (#106). No orchestrator row is owned by #95 any more.
 - Issue #93 executed two of its six rows: `bundles/budget/worker.ts` (the
   worker facet now gates live tool calls through the startup object) and
   `src/index.ts` (the composition root imports the package surface). The four
@@ -39,7 +51,6 @@ file that no longer exists, or when a row's file has become reachable
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
 | 728 | `packages/agents/src/artifacts.ts` | #99 | wire: context contracts (#99) |
-| 314 | `packages/agents/src/graph.ts` | #99 | wire: context contracts (#99) |
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 533 | `packages/agents/src/memory.ts` | #99 | wire: context contracts (#99) |
@@ -69,23 +80,17 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/dispatch.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 151 | `packages/host/src/handoff.ts` | #99 | wire: handoff contract (#99); AgentResult import is type-only |
 | 4 | `packages/host/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 13 | `packages/host/src/limits/orchestrator-notice.ts` | #95 | wire: orchestrator worktree messaging at the spawn site (#95) |
 | 117 | `packages/host/src/limits/skip-records.ts` | #86 | wire: full-access skip records surface with approvals (#86/#48) |
 | 18 | `packages/host/src/limits/trust-first.ts` | #100 | wire: docs ordering note consumed by help/docs rendering (#100) |
-| 353 | `packages/host/src/orchestrator/approvals/budgets.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 80 | `packages/host/src/orchestrator/approvals/index.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 242 | `packages/host/src/orchestrator/approvals/request.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 282 | `packages/host/src/orchestrator/approvals/routing.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 151 | `packages/host/src/orchestrator/approvals/skip.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 327 | `packages/host/src/orchestrator/manager.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 309 | `packages/host/src/orchestrator/merge/conflicts.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 55 | `packages/host/src/orchestrator/merge/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
+| 353 | `packages/host/src/orchestrator/approvals/budgets.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
+| 242 | `packages/host/src/orchestrator/approvals/request.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
+| 282 | `packages/host/src/orchestrator/approvals/routing.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
+| 151 | `packages/host/src/orchestrator/approvals/skip.ts` | #105 | wire: per-worker approvals + opt-in budgets (#105) |
+| 327 | `packages/host/src/orchestrator/manager.ts` | #103 | wire: manager lane + plan → distinct worker prompts (#103) |
+| 309 | `packages/host/src/orchestrator/merge/conflicts.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
-| 49 | `packages/host/src/orchestrator/parallel/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
-| 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #95 | wire: manager lane + subagent approvals (#95) |
-| 128 | `packages/host/src/orchestrator/worktree/status.ts` | #92 | wire: kubic clean / worktree lifecycle (#92) |
-| 63 | `packages/host/src/orchestrator/worktree/index.ts` | #92 | delete: dead barrel over the worktree modules (issue #92 wired its siblings, not the barrel) |
-| 5 | `packages/host/src/policy/index.ts` | #95 | delete: barrel over dead modules; #95 reconciles the orchestrator leftovers |
+| 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
+| 128 | `packages/host/src/orchestrator/worktree/status.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
 | 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

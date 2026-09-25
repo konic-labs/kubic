@@ -1,27 +1,62 @@
 # Orchestrator mode
 
-> Design ref: §5.2, §9.2, §44, §41.1, §59.1 honest limits. Owner:
-> issue [#62](https://github.com/konic-labs/kubic/issues/62).
+> Design ref: §5.2, §9.2, §44, §41.1, §45, §59.1 honest limits. Owner:
+> issue [#95](https://github.com/konic-labs/kubic/issues/95).
+> **Delegation model as shipped (issue #95, 2026-09-25):** the CLI process
+> is the manager. This page describes that model; the manager *agent* lane
+> the design describes (§9.2) is not wired, and the issues that own it are
+> named below.
 
-Orchestrator is Kubic's opt-in delegation mode. The agent stops
-executing and becomes a manager: it fans work out to subagents, each
-of which gets its own worker process and its own git worktree, then
-merges what they produce. The mode is session-scoped and requires a
-git repository — outside one, the request is refused and the run
-continues in [solo](solo.md).
+Orchestrator is Kubic's opt-in delegation mode: `kubic orchestrate` spawns
+one worker process and one git worktree per subagent and merges what they
+produce. The mode is session-scoped, requires a git repository — outside
+one the request is refused and nothing runs (there is no silent fallback to
+solo) — and `run` never delegates.
 
-## How delegation works
+## How delegation actually works
 
-- The manager holds a small allowlist of delegation and
-  workspace-merge tools only. Direct execution (shell, file reads and
-  writes, search) is forbidden to the manager structurally, not by
-  flag — it can direct work, never do it.
-- Each subagent runs as a worker in its own process, confined to its
-  own worktree. Writes landing outside the agent's worktree raise an
-  approval instead of proceeding silently (§44, §41.1).
-- Results flow back through collection and merge: the manager reviews,
-  attributes, and settles worker output into the main tree,
-  with conflicts surfaced rather than auto-resolved.
+- **The CLI plans, the CLI merges.** The `kubic orchestrate` process reads
+  `--agents`, creates one worktree per agent, spawns one child `kubic run`
+  per agent, and settles them through the merge queue. There is no planning
+  agent in the loop: the "plan" is the agent list on the command line.
+- **Every worker runs the same prompt.** `-p` is handed to each child
+  verbatim. Worker prompts may not differ today; per-worker prompts derived
+  from a plan are issue [#103](https://github.com/konic-labs/kubic/issues/103).
+- **Workers author, the CLI merges.** Each worker is the sole committer on
+  its own branch; the orchestrator never stages or commits. Every merge
+  passes `assertManagerZeroWrites` over the merge-path trace, and merges are
+  the only write the orchestrator performs on the main tree.
+- **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
+  auto-approves; a headless run with no decider denies closed (exit 4).
+  The *worker* approval layer — requests routed to the user with opt-in
+  budgets (§41) — is issue
+  [#105](https://github.com/konic-labs/kubic/issues/105).
+- **Roles are not on this path.** `.kubic/roles/*.md` exist and the resolver
+  parses them, but no worker is assigned a role and no role prompt is
+  composed; role-driven prompts are issue
+  [#104](https://github.com/konic-labs/kubic/issues/104).
+- **Conflict delegation, parallel surfacing and retained-worktree status**
+  are implemented and unreachable; they are issue
+  [#106](https://github.com/konic-labs/kubic/issues/106).
+
+The manager toolset the design fixes in §40 (`spawn_agent`, `wait_for_agent`,
+`workspace_merge`, …) is implemented as host contracts
+(`packages/host/src/orchestrator/manager.ts`) and checked by tests, but no
+live lane registers it — that wiring is issue
+[#103](https://github.com/konic-labs/kubic/issues/103) too. Until then the
+manager's tool allowlist is not what constrains delegation; the CLI's own
+argv is.
+
+## Concurrency
+
+The shipped default is **two** agents (`worker-1,worker-2`, D12) and the run
+spawns them **one after another** — the loop creates a worktree, session and
+child process per agent in turn, so two workers do not overlap in wall-clock
+time. The admission layer that gates concurrency (default cap 4) is the
+`ParallelScheduler`; raising the run's agent count with `--agents` is what
+makes the queue and its limits observable. §45 says four concurrent
+subagents and D12 is amended to two; see
+[design drift](../design-drift.md) for the reconciliation.
 
 ## Worktrees are scheduling, not isolation
 
@@ -33,10 +68,16 @@ otherwise (§59.1). The model is never trusted in either mode, so
 approvals plus the change journal stay the controls here too; see
 [change journal and safety](journal-and-safety.md).
 
+Merged worktrees and branches are retained as evidence — only
+`kubic clean` disposes.
+
 ## When to reach for it
 
-One agent plus a worktree each is the shape for parallelisable work
-across distinct areas of a repo. For everything else — and always by
+One worker process plus a worktree each is the shape for parallelisable
+work across distinct areas of a repo. Because every worker runs the same
+prompt, a useful `orchestrate` invocations reads like "apply this change
+in each of these areas" rather than "do these different things" — until
+per-worker prompts land (#103). For everything else — and always by
 default — there is [solo](solo.md): one agent, in-process, no
 delegation overhead.
 

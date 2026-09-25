@@ -46,10 +46,12 @@ import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import {
+  doctorConfigProbe,
   doctorPolicyLoader,
   kubicConfigLoader,
   loadCliConfig,
   runtimeModelPin,
+  runtimeRunDeps,
 } from './config-runtime.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
@@ -145,6 +147,7 @@ async function main(argv: string[]): Promise<number> {
       ) =>
         runHeadlessPrompt(prompt, options, {
           model: runtimeModelPin(cliConfig),
+          ...runtimeRunDeps(cliConfig),
         }),
     });
   }
@@ -179,6 +182,11 @@ async function main(argv: string[]): Promise<number> {
           ok: major > 22 || (major === 22 && minor >= 19),
           detail: `node ${process.versions.node} (need >=22.19)`,
         },
+        // Issue #90: the config load is reported here — a refused config
+        // (unknown/unsupported key, distrusted project layer, [budgets],
+        // secret ref) and an incomplete runtime ignore split both fail
+        // closed with the named reason instead of being silently ignored.
+        doctorConfigProbe(cliConfig),
       ],
       loadPolicy: doctorPolicyLoader(cliConfig),
       // First-party extensions (issue #80): the startup probe loads the

@@ -9,10 +9,14 @@
 
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import {
+  FileJournalStore,
+  type JournalRetention,
+} from '../../../packages/exec/src/journal.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
@@ -59,6 +63,12 @@ export interface HeadlessRunDeps {
   model?: ModelSelection;
   env?: ExecutionEnv;
   context?: Context;
+  // Runtime config projections (issue #90): the permission classes and the
+  // journal retention bound the loaded configuration produced. Absent means
+  // the lane's own defaults and an unbounded journal (never an invented
+  // limit).
+  policyClasses?: PermissionClasses;
+  journalRetention?: JournalRetention;
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -353,7 +363,16 @@ export async function runHeadlessPrompt(
       env,
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(join(root, id, 'journal')),
+      journal: new FileJournalStore(
+        join(root, id, 'journal'),
+        deps.journalRetention ?? {},
+      ),
+      // Issue #90: the permission classes come from the loaded config — the
+      // lane derives its allowlist from them (§40). Absent config value
+      // means the lane's own defaults, never a value invented here.
+      ...(deps.policyClasses === undefined
+        ? {}
+        : { policy: { classes: deps.policyClasses } }),
     });
     const admission = await lane.accept({ kind: 'prompt', prompt }, context);
     if (!admission.ok) {

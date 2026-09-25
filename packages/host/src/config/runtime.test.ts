@@ -442,4 +442,56 @@ describe('effective config view (issue #90)', () => {
     );
     expect(rendered).not.toContain('sk-live-abcdef1234567890');
   });
+
+  // The acceptance criterion's own bar: a .kubic/config.toml value must
+  // measurably change a live behaviour, not merely parse. This drives the
+  // real solo lane with the classes the config produced and asserts the
+  // lane's own allowlist — the same set applyToolPolicy installs.
+  it('narrows a live lane allowlist from [permissions] in config', async () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[permissions]\nfilesystem = "read"\nshell = false\ngit = false\nnetwork = "none"\n',
+      },
+      { projectTrusted: true },
+    );
+    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
+    const { applyToolPolicy } = await import(
+      '../../../worker/src/lane/policy.js'
+    );
+    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
+    const {
+      BACKGROUND_CONTEXT,
+      createModels,
+      fauxAssistantMessage,
+      fauxProvider,
+      MemorySessionRepo,
+    } = await import('../../../worker/src/pi-boundary.js');
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('hi')]);
+    const booted = await bootSoloLane({
+      session,
+      models,
+      model: faux.getModel(),
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+      policy: { classes: runtime.permissions.classes },
+    });
+    const allowed = await applyToolPolicy(
+      booted.harness,
+      booted.lane,
+      runtime.permissions.classes,
+      BACKGROUND_CONTEXT,
+    );
+    expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read']);
+    const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
+    expect(active).not.toContain('bash');
+    expect(active).not.toContain('write');
+    await session.close(BACKGROUND_CONTEXT);
+  });
 });

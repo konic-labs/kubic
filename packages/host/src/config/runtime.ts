@@ -763,7 +763,13 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
 export function checkWorkspaceIgnoreSplit(
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>,
   cwd: string,
-): { missing: string[]; checked: string[] } {
+): { missing: string[]; checked: string[]; applicable: boolean } {
+  // Outside a git repository there is nothing to ignore: `kubic run` ships
+  // its exclude rules into `.git/info/exclude`, which does not exist, and
+  // runtime state stays local wherever it is written. Reporting a missing
+  // split there would be a false alarm, so `applicable` is false and no
+  // rules are claimed to be absent.
+  const applicable = bridge.exists(`${cwd}/.git`);
   const candidates = [`${cwd}/.gitignore`, `${cwd}/.git/info/exclude`];
   const checked: string[] = [];
   let text = '';
@@ -772,5 +778,9 @@ export function checkWorkspaceIgnoreSplit(
     checked.push(path);
     text += `${bridge.readTextFile(path)}\n`;
   }
-  return { missing: checkGitignoreSplit(text).missing, checked };
+  return {
+    missing: applicable ? checkGitignoreSplit(text).missing : [],
+    checked,
+    applicable,
+  };
 }

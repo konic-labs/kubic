@@ -16,12 +16,20 @@
 // module never imports node:fs.
 
 import { homedir } from 'node:os';
+import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import type { JournalRetention } from '../../../packages/exec/src/journal.js';
+import {
+  buildConfigDoctorInput,
+  configDoctorProbe,
+} from '../../../packages/host/src/config/config-doctor.js';
 import {
   checkWorkspaceIgnoreSplit,
+  effectiveConfigView,
   loadRuntimeConfig,
   type RuntimeConfig,
 } from '../../../packages/host/src/config/runtime.js';
+import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
 
 export interface CliConfigResult {
@@ -32,9 +40,9 @@ export interface CliConfigResult {
   // distrusted project layer, a budget key, a secret ref in config).
   error: string | undefined;
   // The repo's committed-vs-ignored split (§35/D35), reported by
-  // `kubic config` and available to doctor: the five runtime prefixes must
-  // be ignored and config.toml + roles/*.md must stay committable.
-  ignoreSplit: { missing: string[]; checked: string[] };
+  // `kubic config` and by doctor: the five runtime prefixes must be ignored
+  // and config.toml + roles/*.md must stay committable.
+  ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
 }
 
 export interface CliConfigOptions {
@@ -106,4 +114,50 @@ export function runtimeModelPin(
   const selection = result.runtime?.model;
   if (selection === undefined) return undefined;
   return { provider: selection.provider, id: selection.id };
+}
+
+// The remaining `kubic run` projections (issue #90): the permission classes
+// the lane derives its tool allowlist from (§40) and the journal retention
+// bound enforced on every append (§42.4). A refused config contributes
+// nothing here — the run itself fails closed before this matters.
+export function runtimeRunDeps(result: CliConfigResult): {
+  policyClasses?: PermissionClasses;
+  journalRetention?: JournalRetention;
+} {
+  const runtime = result.runtime;
+  if (runtime === undefined) return {};
+  return {
+    policyClasses: { ...runtime.permissions.classes },
+    journalRetention:
+      runtime.journal.maxAgeMs === undefined
+        ? {}
+        : { maxAgeMs: runtime.journal.maxAgeMs },
+  };
+}
+
+// `kubic doctor` config probe: the same load the rest of the process uses,
+// projected onto doctor's dependency-probe shape (doctor.ts is not this
+// issue's file and has no generic section hook, so the check rides the
+// `checkDeps` channel and renders in both the human and --json output).
+export function doctorConfigProbe(result: CliConfigResult): DepProbe {
+  const { missing, applicable } = result.ignoreSplit;
+  if (result.runtime === undefined) {
+    return configDoctorProbe(
+      buildConfigDoctorInput({
+        error: result.error ?? 'config refused',
+        ignoreSplitMissing: missing,
+        ignoreSplitApplicable: applicable,
+      }),
+    );
+  }
+  const view = effectiveConfigView(result.runtime);
+  return configDoctorProbe(
+    buildConfigDoctorInput({
+      values: view.values,
+      projectTrusted: view.projectTrusted,
+      budgetsConfigured: view.budgets.configured,
+      ignoreSplitMissing: missing,
+      ignoreSplitApplicable: applicable,
+    }),
+  );
 }

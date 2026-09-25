@@ -26,6 +26,22 @@ import {
 
 export const ROLES_DIR = '.kubic/roles';
 
+/**
+ * True when `error` is the filesystem saying `dir` is not there — ENOENT for a
+ * missing path, ENOTDIR for a component that is a file. Any other failure
+ * (EACCES, EIO, a corrupt document) is a real problem and must propagate, so
+ * this deliberately checks the code and the path rather than catching broadly.
+ */
+function isAbsentDir(error: unknown, dir: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code !== 'ENOENT' && code !== 'ENOTDIR') return false;
+  const path = (error as { path?: unknown }).path;
+  // Some fs errors carry no path; the code alone is still unambiguous here
+  // because this try block wraps exactly one directory read.
+  return path === undefined || path === dir;
+}
+
 // The document path for a role name: `.kubic/roles/<name>.md` under the
 // workspace. Pure join, no fs access — the bridge reads it.
 export function roleDocPath(cwd: string, name: string): string {
@@ -69,6 +85,13 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
         `role document under ${ROLES_DIR} is invalid: ${error.message}`,
       );
     }
+    // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
+    // workspaces have no role documents and the solo default is unaffected.
+    // Letting the raw ENOENT escape made every `kubic doctor` red once the
+    // probe was wired to the binary (measured). An unreadable directory that
+    // DOES exist still throws — the distinction is between "nothing there"
+    // and "there but broken", and only the former is silent.
+    if (isAbsentDir(error, dir)) return { docs: [], resolved: [], refused: [] };
     throw error;
   }
   const resolved: ResolvedRole[] = [];

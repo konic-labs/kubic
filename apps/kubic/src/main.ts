@@ -41,6 +41,7 @@ import {
 import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
+import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
@@ -242,6 +243,17 @@ async function main(argv: string[]): Promise<number> {
       // posture shape. No second probe exists, so the counts cannot drift
       // from what actually loaded; a degraded load reports the named failure.
       probeExtensions: () => extensionPosture,
+      // §40.3 role-document posture (issue #99): the SAME probe `kubic run
+      // --role <name>` uses to select and validate a role, run over this
+      // cwd's `.kubic/roles/*.md`. A contradictory document (declared classes
+      // vs tool set) or a parse refusal is reported here with the resolver's
+      // named reason, so a role the lane would refuse is visible before the
+      // run instead of at boot. Absent or empty directory reports clean.
+      probeRoles: () =>
+        rolesDoctorProbe({
+          cwd: process.cwd(),
+          bridge: createNodeFileBridge(process.cwd()),
+        }),
     });
   }
   if (command === 'orchestrate') {

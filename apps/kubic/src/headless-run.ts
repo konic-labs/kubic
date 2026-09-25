@@ -42,6 +42,7 @@ import {
   serializeSpanArtifact,
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
+import { createWorkerMailboxSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type {
   ResolvedRole,
   RoleLayerInput,
@@ -163,6 +164,12 @@ export interface HeadlessRunDeps {
     layers?: RoleLayerInput[];
   };
 }
+
+// The bounded wait a worker CHILD gives the manager for an answer to a
+// challenged call (issue #105, §41.2): long enough for a human to read the
+// dialog, short enough that a run never looks hung. The child denies closed
+// with the named status when it elapses.
+const DEFAULT_WORKER_APPROVAL_BOUND_MS = 120_000;
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
 // caught below and mapped to budget_exhausted with the ref triple intact.
@@ -524,6 +531,21 @@ export async function runHeadlessPrompt(
     // destructive/network/confine guards and the approval ask are installed
     // either way, so a run with no config is no longer a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
+    // Per-worker approvals (issue #105): when this process IS an
+    // orchestrator-managed worker child, the orchestration's run told it where
+    // the ask mailbox is. The seat published there is what turns a challenged
+    // call into a question for the USER instead of a dead end.
+    const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
+    const approvalsSeat =
+      approvalMailboxDir === undefined || approvalMailboxDir.trim() === ''
+        ? undefined
+        : createWorkerMailboxSeat({
+            dir: approvalMailboxDir,
+            // The child's own bound. It sits BELOW the orchestration's bound on
+            // purpose: the child denies closed with the named status rather
+            // than outliving the run that would answer it.
+            maxPendingMs: DEFAULT_WORKER_APPROVAL_BOUND_MS,
+          });
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -535,6 +557,13 @@ export async function runHeadlessPrompt(
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
+        // Per-worker approvals (issue #105): an orchestrator-managed child
+        // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
+        // seat, so a challenged call it cannot answer itself reaches the USER
+        // through the manager instead of dying at "no approval surface". The
+        // wait is bounded inside the seat, so a manager that never answers
+        // denies closed rather than hanging the child's turn.
+        ...(approvalsSeat === undefined ? {} : { answer: approvalsSeat }),
       });
     const journal = new FileJournalStore(
       join(root, id, 'journal'),

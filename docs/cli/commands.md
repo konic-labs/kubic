@@ -129,9 +129,40 @@ existing `KUBIC_MODEL` pin. A contradictory role document (or one with no
 `code=role_refused` before anything spawns — the same refusal `kubic doctor`
 prints. The plan persists with the session, so `--resume` replays each
 worker's own composed prompt rather than re-deriving one shared text.
-Per-worker approval routing with opt-in budgets (§41)
-remains a named future issue: [#105](https://github.com/konic-labs/kubic/issues/105)
-(per-worker approvals). It does not run today; nothing below depends on it.
+Conflict delegation with parallel surfacing and retained-worktree status
+(issue #106) runs today — see below; so do per-worker approvals and opt-in
+budgets (issue #105, §41/§71).
+
+**Per-worker approvals and opt-in budgets (issue #105, §41.1/§41.2/§71).** A
+worker child is a real `kubic run` process, so its dangerous calls are
+challenged by the installed policy — and on this path the challenge routes to
+**you**, not to the manager. The orchestration constructs one approval router
+per run (a durable decision store and an append-only audit log under
+`<repo>/.kubic/orchestrator/approvals/`, decisions memoized, never re-asked)
+and hands each child the ask mailbox through the child env
+(`KUBIC_APPROVALS_DIR`). A challenged call — network, destructive shell,
+outside-write, install, push — publishes its ask, the manager presents it to
+you, and your verdict travels back to the worker:
+
+- **A denial is data, not a crash.** The worker is told `approval_denied`, and
+  the run ends exit **4** with the offending worker and trigger named.
+- **The wait is bounded on both ends.** An ask that no surface can answer
+  (headless, no TTY) denies closed with the reason `approval_timeout` — exit
+  **4** — on the run's bound; the child denies on its own bound too, so a run
+  never hangs on a question nobody can answer.
+- **Budgets are opt-in per spawn (§71).** With no `--budget` the run applies no
+  limit at all. With one configured, a worker that exceeds it is blocked with
+  `BUDGET_EXHAUSTED` and the run exits **3**. A worker cannot raise its own
+  budget: the raise is refused and audited.
+- **`--full-access` is the session-scoped skip (§41.4).** It is stored per
+  session, indicated on the surface, recorded for audit/doctor, and a fresh
+  session starts enforced again.
+- **The manager can only look.** Its whole view of a pending ask is a read-only
+  blocked indicator; a manager approve attempt is refused and audited.
+
+`--yes` is the user's standing answer for **merges** (it does not silently
+approve a worker's dangerous call — the ask is still presented to the decider
+that exists).
 
 The lane registration is a gate, not a label: the run asks for exactly the §40
 toolset and a lane carrying anything else — an exec tool above all — refuses to
@@ -180,6 +211,8 @@ recreating it, so a killed run keeps one chain per worker.
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
+| `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`. Absent means **no limit is applied**; a worker exceeding it ends `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own budget. |
+| `--full-access` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated and recorded. A fresh session starts enforced again. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. |
 
 Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line

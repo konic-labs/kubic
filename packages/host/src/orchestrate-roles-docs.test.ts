@@ -98,12 +98,30 @@ describe('no tracked doc claims roles are absent from the delegation path (#104)
     const ledger = prose('docs/dead-surface.md');
     expect(ledger).not.toContain('packages/agents/src/spec.ts');
     expect(ledger).not.toContain('packages/host/src/roles/roles-data.ts');
-    // The rows owned by the sibling issues stay untouched.
-    expect(ledger).toContain(
-      'packages/host/src/orchestrator/approvals/budgets.ts',
+    // The rows owned by the sibling issues move with the siblings: a row may
+    // stay only for a module that is STILL dead. When this pin was written,
+    // `approvals/budgets.ts` (#105) and `merge/conflicts.ts` (#106) were
+    // unreachable, so their rows were the right call. Both siblings have since
+    // landed and wired them, and the reachability gate fails on a row for a
+    // reachable file — so the surviving property is the stronger one: those
+    // two must carry NO row, and the still-dead #98 module must keep its.
+    //
+    // Scoped to TABLE ROWS, never the whole file: the prose below the table
+    // names these paths on purpose, recording what each issue executed, and a
+    // blanket `not.toContain` would fail on that honest narration (measured
+    // first, then written this way). A row is what the gate reads.
+    const row = (path: string): RegExp =>
+      new RegExp(
+        `\\|\\s*\\d+\\s*\\|\\s*\`${path.replaceAll('/', '\\/')}\`\\s*\\|`,
+      );
+    expect(ledger).not.toMatch(
+      row('packages/host/src/orchestrator/approvals/budgets.ts'),
     );
-    expect(ledger).toContain(
-      'packages/host/src/orchestrator/merge/conflicts.ts',
+    expect(ledger).not.toMatch(
+      row('packages/host/src/orchestrator/merge/conflicts.ts'),
+    );
+    expect(ledger).toMatch(
+      row('packages/host/src/orchestrator/merge/telemetry.ts'),
     );
   });
 });

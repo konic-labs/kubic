@@ -23,6 +23,10 @@ import {
   renderDag,
 } from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
+import type {
+  WorkerApprovalScope,
+  WorkerApprovalsRun,
+} from './orchestrator/approvals/worker-asks.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,
@@ -78,8 +82,13 @@ import type { WorkerListRow } from './workers-cli.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
+// The bounded wait for a per-worker approval ask (issue #105, §41.2). A fixed
+// run-level contract rather than a caller knob: an ask that no seat can answer
+// must deny closed on a human timescale, never hang the run headless.
+export const ORCHESTRATE_APPROVAL_BOUND_MS = 60_000;
+
 export const ORCHESTRATE_USAGE =
-  'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]';
+  'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--full-access] [--json]';
 
 export function orchestrateUsage(out: (line: string) => void): number {
   out(ORCHESTRATE_USAGE);
@@ -487,6 +496,21 @@ export interface OrchestrateCommandDeps {
     request: ResolverRequest,
   ) => Promise<ResolverOutcome> | ResolverOutcome;
   requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
+  // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
+  // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
+  // composition root owns construction (its dir, its TTY seat, its debug
+  // sink), so the host side declares only the factory it calls. Absent means
+  // no approval layer: worker asks then never reach a user — which is exactly
+  // the defect this issue fixes, so prod always supplies it.
+  approvals?: (options: {
+    sessionId: string;
+    maxPendingMs: number;
+    autoApprove: boolean;
+    budget?: unknown;
+    /** Per-spawn override: the budget for THAT worker's gate (§71). */
+    budgetForAgent?: (agentId: string) => unknown;
+    fullAccess?: boolean;
+  }) => WorkerApprovalsRun;
   loadState?: (
     sessionId: string,
   ) =>
@@ -612,6 +636,74 @@ interface ParsedArgs {
   resume: boolean;
   autoApprove: boolean;
   json: boolean;
+  // Opt-in budgets (§71, issue #105): absent means NO budget is applied to a
+  // spawn. Per-worker overrides arrive as --budget <agent>=<dims>; the shared
+  // --budget <dims> applies to every worker of the run.
+  budget?: unknown;
+  budgetsByAgent: Record<string, unknown>;
+  fullAccess: boolean;
+}
+
+// --budget maxToolCalls=10                                  (every worker)
+// --budget worker-1:maxToolCalls=10;worker-2:maxCostUsd=1   (per spawn)
+// Opt-in only: a malformed value is a usage error, never a silently dropped
+// limit (a dropped limit would run a worker unbounded while looking bounded).
+export const BUDGET_DIMENSIONS: readonly string[] = [
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+];
+
+export interface ParsedBudgetSpec {
+  shared?: Record<string, number>;
+  byAgent: Record<string, Record<string, number>>;
+}
+
+function parseBudgetDims(raw: string): Record<string, number> | undefined {
+  const dims: Record<string, number> = {};
+  for (const part of raw.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) continue;
+    const equals = trimmed.indexOf('=');
+    if (equals <= 0) return undefined;
+    const name = trimmed.slice(0, equals).trim();
+    const value = Number(trimmed.slice(equals + 1));
+    if (!Number.isFinite(value) || !(value > 0)) return undefined;
+    if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
+    dims[name] = value;
+  }
+  return Object.keys(dims).length === 0 ? undefined : dims;
+}
+
+export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
+  // Per-agent entries are `<agent>:<dims>` clauses separated by ';' so a
+  // comma stays inside one agent's dimension list.
+  const byAgent: Record<string, Record<string, number>> = {};
+  let shared: Record<string, number> | undefined;
+  for (const clause of raw.split(';')) {
+    const trimmed = clause.trim();
+    if (trimmed.length === 0) continue;
+    const colon = trimmed.indexOf(':');
+    const head = colon > 0 ? trimmed.slice(0, colon).trim() : '';
+    if (head.length > 0 && !BUDGET_DIMENSIONS.includes(head)) {
+      if (validateAgentId(head).length > 0) return undefined;
+      const dims = parseBudgetDims(trimmed.slice(colon + 1));
+      if (dims === undefined) return undefined;
+      byAgent[head] = dims;
+      continue;
+    }
+    const dims = parseBudgetDims(trimmed);
+    if (dims === undefined) return undefined;
+    shared = { ...(shared ?? {}), ...dims };
+  }
+  if (shared === undefined && Object.keys(byAgent).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(shared === undefined ? {} : { shared }),
+    byAgent,
+  };
 }
 
 function parseAgents(raw: string): string[] | undefined {
@@ -633,6 +725,8 @@ function parseArgs(args: string[]): ParsedArgs | undefined {
     resume: false,
     autoApprove: false,
     json: false,
+    budgetsByAgent: {},
+    fullAccess: false,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
@@ -657,6 +751,21 @@ function parseArgs(args: string[]): ParsedArgs | undefined {
       parsed.resume = true;
     } else if (arg === '--yes') {
       parsed.autoApprove = true;
+    } else if (arg === '--full-access') {
+      // §41.4: the user's explicit per-session opt-in to skip approvals. The
+      // posture stays session-scoped — this flag cannot make it global.
+      parsed.fullAccess = true;
+    } else if (arg === '--budget') {
+      // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
+      // nothing configured → no limit applied. A malformed spec is refused
+      // (usage), never silently dropped.
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) return undefined;
+      const spec = parseBudgetSpec(value);
+      if (spec === undefined) return undefined;
+      parsed.budget = spec.shared;
+      parsed.budgetsByAgent = spec.byAgent;
+      i += 1;
     } else if (arg === '--json') {
       parsed.json = true;
     } else {
@@ -969,6 +1078,35 @@ export async function runOrchestrateCommand(
     hunksByAgent.set(record.agentId, record.hunks);
   }
 
+  // Per-worker approvals + opt-in budgets (issue #105; §41.1, §41.2, §71).
+  // One approvals run for the whole orchestration: the router, its durable
+  // decision store, the ask mailbox the workers publish to, the per-spawn
+  // budget gates and the session-scoped full-access posture. Constructed only
+  // when the composition root wired the factory — a caller with no approval
+  // layer keeps the old behaviour instead of a half-wired one.
+  const approvalsRun = deps.approvals?.({
+    sessionId,
+    // The bound is a fixed run-level contract, not a caller knob: a headless
+    // ask must deny closed on a human timescale, never hang.
+    maxPendingMs: ORCHESTRATE_APPROVAL_BOUND_MS,
+    autoApprove: parsed.autoApprove,
+    ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),
+    // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
+    // of THAT spawn only; absent, the shared spec applies.
+    budgetForAgent: (agentId: string) =>
+      parsed.budgetsByAgent[agentId] ?? parsed.budget,
+    ...(parsed.fullAccess ? { fullAccess: true } : {}),
+  });
+  const approvalScopeFor = (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ): WorkerApprovalScope => ({
+    sessionId,
+    agentId,
+    worktree: worktree.path,
+    role: 'worker',
+  });
+
   const partial = (): Pick<
     OrchestrateEnvelope,
     'workers' | 'mergeOrder' | 'attribution'
@@ -1198,6 +1336,12 @@ export async function runOrchestrateCommand(
     try {
       // The worker runs ITS plan step's prompt (issue #103) — never the
       // shared `-p` text.
+      // Approvals (issue #105): the pump routes whatever this worker publishes
+      // to the user while it runs, and the budget gate for this spawn is the
+      // one its own --budget (or the shared spec) configured.
+      if (approvalsRun !== undefined) {
+        approvalsRun.beginWorker(approvalScopeFor(agentId, worktree));
+      }
       const hunks = await deps.runWorker(
         agentId,
         worktree,
@@ -1212,13 +1356,63 @@ export async function runOrchestrateCommand(
           ...spawnRoleInfo(agentId, rolePlan),
         },
       );
+      // The worker settled: route any ask that raced its exit, then read the
+      // terminal outcome its run produced (a denial or a budget hit is NOT a
+      // spawn failure — it carries its own named code and exit).
+      if (approvalsRun !== undefined) {
+        const scope = approvalScopeFor(agentId, worktree);
+        const raced = await approvalsRun.pump(scope);
+        approvalsRun.endWorker(agentId);
+        const termination = raced ?? approvalsRun.takeTermination(agentId);
+        if (termination !== undefined) {
+          await reapSpawned(spawned);
+          return fail(
+            termination.exitCode,
+            termination.code,
+            termination.message,
+            partial(),
+          );
+        }
+      }
       hunksByAgent.set(agentId, [...hunks]);
       // The lane drove this worker to completion — its spawn → wait →
       // collect is part of the manager's real call record (issue #103).
       recordLaneSequence();
     } catch (error) {
+      // A worker that exited non-zero because the USER denied it (or because a
+      // configured budget ran out) reports the approval layer's named status in
+      // the child's own §78 terminus; that code wins over the generic
+      // worker_failed so the run's exit stays 3/4-bound instead of 1-bound.
+      if (approvalsRun !== undefined) {
+        approvalsRun.endWorker(agentId);
+        const termination = approvalsRun.takeTermination(agentId);
+        if (termination !== undefined) {
+          await reapSpawned(spawned);
+          return fail(
+            termination.exitCode,
+            termination.code,
+            termination.message,
+            partial(),
+          );
+        }
+      }
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
+      // The child's own approval terminus (issue #105) wins over the generic
+      // worker_failed: a worker that denied itself closed on a bounded wait
+      // (or on its configured budget) ended on a named approval/budget code,
+      // and reporting it as a crash would misstate what the user decided.
+      const approval = (
+        error as { approval?: { code: string; exitCode: number } }
+      ).approval;
+      if (approval !== undefined) {
+        return fail(
+          approval.exitCode,
+          approval.code,
+          `worker '${agentId}': ${message}`,
+          partial(),
+        );
+      }
       // The lifecycle layer names the §78 code for the failure it saw
       // (issue #94): a worker that never became ready is `spawn_failed`,
       // anything else keeps `worker_failed`. The error is duck-typed here

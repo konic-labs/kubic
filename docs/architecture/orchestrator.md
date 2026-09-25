@@ -3,11 +3,12 @@
 > Design ref: §5.2, §9.2, §44, §41.1, §45, §59.1 honest limits. Owner:
 > issue [#95](https://github.com/konic-labs/kubic/issues/95).
 > **Delegation model as shipped (issue #103, 2026-09-25; roles wired by
-> #104):** the CLI process is the manager, and its root lane registers the
-> §40 toolset and authors the plan whose steps become the prompts its workers
-> run — each worker under an assigned §12 role. This page describes that
-> model; the part of §9.2 that remains unwired (per-worker approvals) is
-> named with the issue that owns it.
+> #104, per-worker approvals by #105):** the CLI process is the manager, and
+> its root lane registers the §40 toolset and authors the plan whose steps
+> become the prompts its workers run — each worker under an assigned §12 role,
+> and worker asks routed to the user through the per-run approval router with
+> opt-in budgets. This page describes that model; the parts of §9.2 that
+> remain unwired are named with the issue that owns them.
 
 Orchestrator is Kubic's opt-in delegation mode: `kubic orchestrate` spawns
 one worker process and one git worktree per subagent and merges what they
@@ -49,9 +50,21 @@ solo) — and `run` never delegates.
   the orchestrator performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
   auto-approves; a headless run with no decider denies closed (exit 4).
-  The *worker* approval layer — requests routed to the user with opt-in
-  budgets (§41) — is issue
-  [#105](https://github.com/konic-labs/kubic/issues/105).
+- **A worker's dangerous call goes to you too (issue #105).** Network,
+  destructive-shell, outside-write, install and push calls a worker child
+  raises are routed to the user through one approval router per run, over a
+  mailbox under `<repo>/.kubic/orchestrator/approvals/` — the child publishes
+  the ask, the manager presents it, the verdict travels back. The wait is
+  bounded on both ends (a question nobody can answer denies closed with
+  `approval_timeout` rather than hanging), decisions are durable and memoized
+  so an answered operation is never re-asked, and a denial reaches the worker
+  as a named status (exit 4) instead of a crash. Budgets are **opt-in per
+  spawn** (§71): no configuration enforces nothing, a configured budget blocks
+  with `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own. The
+  full-access posture is session-scoped (§41.4) — enabled per session,
+  indicated, recorded, never global. The manager's only view of a pending ask
+  is a read-only blocked indicator; a manager approval attempt is refused and
+  audited.
 - **Roles are assigned on this path.** Each worker gets one of the five §12
   roles (issue [#104](https://github.com/konic-labs/kubic/issues/104)): the
   role document's `## Prompt` body and the worker's plan step compose that
@@ -85,7 +98,6 @@ solo) — and `run` never delegates.
   clean=<bool>` — and a dirty one names the files (`staged`/`unstaged`/
   `untracked` kept apart). A status that cannot be read prints
   `clean=unknown` with the reason, never a false clean.
->>>>>>> feat/issue-106-conflict-parallel-status
 
 The manager toolset the design fixes in §40 (`spawn_agent`, `wait_for_agent`,
 `workspace_merge`, …) is live: `packages/host/src/orchestrator/manager.ts`

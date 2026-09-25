@@ -5,9 +5,9 @@
 // and authors a plan whose steps become per-worker prompts — so the docs
 // must state that, and may no longer claim the lane is unwired or that every
 // worker runs the same prompt. What remains unwired is still named by issue
-// (#104 role prompts, #105 per-worker approvals, #106 leftovers). These
-// tests make the claims load-bearing, the way clean-docs.test.ts does for
-// `kubic clean`:
+// (#104 role prompts, #106 leftovers); #105 wired the per-worker approvals it
+// owned. These tests make the claims load-bearing, the way clean-docs.test.ts
+// does for `kubic clean`:
 //   - the architecture page must state the shipped model — the CLI process
 //     registers the manager lane and plans per-worker prompts — and name the
 //     issues that own what is still missing;
@@ -69,6 +69,29 @@ const NOW_REACHABLE = [
 // become the per-worker prompts. manager.ts is reachable from the binary, so
 // keeping a ledger row for it would fail the reachability gate.
 const MANAGER_LANE_REACHABLE = ['packages/host/src/orchestrator/manager.ts'];
+
+// Wired by #105 (the approvals successor, same surface): the orchestrator
+// approval layer — request envelopes, the router with its bounded wait and
+// durable decisions, opt-in budgets, the session-scoped skip — is constructed
+// per run and consulted from the delegation path (worker-asks.ts + the CLI).
+// Each of the four was a named-issue row once; none may come back as one.
+const WORKER_APPROVALS_REACHABLE = [
+  'packages/host/src/orchestrator/approvals/budgets.ts',
+  'packages/host/src/orchestrator/approvals/request.ts',
+  'packages/host/src/orchestrator/approvals/routing.ts',
+  'packages/host/src/orchestrator/approvals/skip.ts',
+];
+
+// Wired by #106 (the leftovers successor, same surface): conflict delegation
+// (merge/conflicts.ts), the §49.1 parallel counts + trajectory event
+// (parallel/visibility.ts) and retained-worktree dirtiness (worktree/status.ts)
+// all reach the shipped orchestrate path. These three ARE this issue's own
+// named-issue rows, so a returning row would fail the reachability gate.
+const ORCHESTRATOR_LEFTOVERS_REACHABLE = [
+  'packages/host/src/orchestrator/merge/conflicts.ts',
+  'packages/host/src/orchestrator/parallel/visibility.ts',
+  'packages/host/src/orchestrator/worktree/status.ts',
+];
 
 function section(page: string, heading: string): string {
   const start = page.indexOf(heading);
@@ -265,27 +288,13 @@ describe('orchestrator scope is honest (issue #95)', () => {
       expect(row, `${path} must name its future issue`).toMatch(/#\d+/);
     }
     // The modules this issue disposed of stay disposed: deleted barrels are
-    // gone, and the dead modules keep their named-issue owners. manager.ts is
-    // NOT in this list any more — #103 wired it, so a row for it would fail
-    // the reachability gate (asserted in MANAGER_LANE_REACHABLE below).
-    const deadNow = [
-      'packages/host/src/orchestrator/approvals/budgets.ts',
-      'packages/host/src/orchestrator/approvals/request.ts',
-      'packages/host/src/orchestrator/approvals/routing.ts',
-      'packages/host/src/orchestrator/approvals/skip.ts',
-    ];
-    for (const path of deadNow) {
-      const row = rows.get(path);
-      expect(row, `${path} needs a ledger row`).toBeDefined();
-      expect(row, `${path} must name a future issue or a deletion`).toMatch(
-        new RegExp(
-          `${MANAGER_LANE_ISSUE}|${WORKER_APPROVALS_ISSUE}|${ORCHESTRATOR_LEFTOVERS_ISSUE}|#98|delete`,
-        ),
-      );
-      expect(row, `${path} must not stay owned by #95`).not.toMatch(/#95\b/);
-    }
-    // The orchestrator rows this issue executed are gone, and no row names a
-    // deleted file (the gate fails on both, this pins the intent).
+    // gone, and a module that a successor issue wired must not come back as a
+    // row. Every module that once carried a named-issue row is now REACHABLE
+    // (manager.ts via #103; the conflict/parallel/retain trio via #106; the
+    // four approvals modules via #105) — verified with the reachability report,
+    // never assumed. So there is no "still dead, needs a row" list left on this
+    // surface: the reachable lists below carry the whole pin. A row for any of
+    // them fails the reachability gate for real.
     for (const path of DELETED) {
       expect(rows.has(path), `${path} was deleted — drop its ledger row`).toBe(
         false,
@@ -295,8 +304,14 @@ describe('orchestrator scope is honest (issue #95)', () => {
       );
     }
     // The modules wired since are out of the ledger (the gate fails on a row
-    // that became reachable) — including manager.ts, which #103 wired.
-    for (const path of [...NOW_REACHABLE, ...MANAGER_LANE_REACHABLE]) {
+    // that became reachable) — including manager.ts, which #103 wired, and
+    // the four approvals modules, which #105 wired.
+    for (const path of [
+      ...NOW_REACHABLE,
+      ...MANAGER_LANE_REACHABLE,
+      ...WORKER_APPROVALS_REACHABLE,
+      ...ORCHESTRATOR_LEFTOVERS_REACHABLE,
+    ]) {
       expect(
         rows.has(path),
         `${path} is reachable — it must not stay in the ledger`,

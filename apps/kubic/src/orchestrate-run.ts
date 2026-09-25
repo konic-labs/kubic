@@ -32,6 +32,12 @@ import {
   parseOrchestratorRunState,
   workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  createOrchestratorApprovalsRun,
+  type WorkerApprovalsRun,
+  type WorkerAskSeat,
+  workerSeatForRun,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from '../../../packages/host/src/orchestrator/merge/attribution.js';
 import type {
   ApprovalSnapshot,
@@ -114,6 +120,10 @@ export interface OrchestrateRunOptions {
    * (appended, best-effort — telemetry never fails a run).
    */
   trajectoryEvent?: (event: ParallelTrajectoryEvent) => void;
+  /** Where the user's verdict on a worker ask is collected (issue #105).
+   *  Absent means no surface is attached: every ask denies closed on its
+   *  bound, which is what a non-interactive run keeps. */
+  approvalsSeat?: WorkerAskSeat;
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -188,12 +198,45 @@ const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 
 export class WorkerRunFailure extends Error {
   readonly code: 'spawn_failed' | 'worker_failed';
+  /**
+   * The approval-layer terminus the child declared for itself (issue #105).
+   * A worker child denies closed on its own bounded wait or on a configured
+   * budget, and reports that as its §78 terminus; the run must keep the
+   * named code (exit 4 / exit 3) instead of flattening it to worker_failed,
+   * or a user's refusal would look like a crash.
+   */
+  readonly approval?: { code: string; exitCode: number };
 
-  constructor(code: 'spawn_failed' | 'worker_failed', message: string) {
+  constructor(
+    code: 'spawn_failed' | 'worker_failed',
+    message: string,
+    approval?: { code: string; exitCode: number },
+  ) {
     super(message);
     this.name = 'WorkerRunFailure';
     this.code = code;
+    if (approval !== undefined) this.approval = approval;
   }
+}
+
+// The approval terminus a child's own exit declares (issue #105): the child
+// maps its denial/budget outcome to a §78 exit code and names it in its JSON
+// status. Read from the child's own report — never invented here.
+function approvalTerminusOf(
+  exitCode: number,
+  status: string | undefined,
+): { code: string; exitCode: number } | undefined {
+  if (exitCode === 4) {
+    return {
+      code:
+        status === 'approval_timed_out'
+          ? 'approval_timeout'
+          : 'approval_denied',
+      exitCode,
+    };
+  }
+  if (exitCode === 3) return { code: 'BUDGET_EXHAUSTED', exitCode };
+  return undefined;
 }
 
 // The §78 code a failed launch maps to. A launch that never became ready
@@ -207,13 +250,19 @@ function workerRunError(
 ): WorkerRunFailure {
   const last = done.stdout.trim().split('\n').pop() ?? '';
   let detail = done.stderr.trim() || done.stdout.trim();
+  let status: string | undefined;
   try {
-    const envelope = JSON.parse(last) as { error?: { message?: string } };
+    const envelope = JSON.parse(last) as {
+      error?: { message?: string };
+      status?: string;
+    };
     if (typeof envelope.error?.message === 'string')
       detail = envelope.error.message;
+    if (typeof envelope.status === 'string') status = envelope.status;
   } catch {
     // Non-JSON output — keep the raw detail.
   }
+  const approval = approvalTerminusOf(done.exitCode, status);
   if (failure?.code === 'process_spawn_failed') {
     return new WorkerRunFailure(
       'spawn_failed',
@@ -224,6 +273,7 @@ function workerRunError(
   return new WorkerRunFailure(
     'worker_failed',
     `worker run exited ${done.exitCode}: ${detail.slice(0, 300)}${suffix}`,
+    approval,
   );
 }
 
@@ -279,6 +329,16 @@ export async function orchestrateDepsWithDefaults(
   // journals land with the worker.
   let workerShellRoot: string | undefined;
   let workerShell: ReturnType<typeof allowlistedShell> | undefined;
+  // Per-worker approvals (issue #105): the seat a TTY run attaches, and the
+  // live approvals layer once the CLI constructs it (so the child's own env
+  // can carry its mailbox path). The prod default is the interactive seat when
+  // this process has a terminal — the same `process.stdin.isTTY` test the
+  // shipped merge prompt uses — so a worker's challenged call reaches the user
+  // on a real `kubic orchestrate` run. A caller may inject a seat instead
+  // (tests do); headless keeps NO seat and denies closed on the bound.
+  const optionsSeat =
+    options.approvalsSeat ?? workerSeatForRun(process.stdin.isTTY === true);
+  let approvalsActive: WorkerApprovalsRun | undefined;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
     if (workerShell === undefined || workerShellRoot !== worktreePath) {
       workerShell = allowlistedShell(new NodeExecutionEnv(worktreePath).shell);
@@ -560,6 +620,43 @@ export async function orchestrateDepsWithDefaults(
         throw error;
       }
     },
+    // Per-worker approvals (issue #105): the run constructs ONE approvals
+    // layer when the CLI asked for one. Its mailbox path travels to each child
+    // through the §3.8 allowlist (KUBIC_APPROVALS_DIR), so a challenged call
+    // the child cannot answer is published for the manager to route to the
+    // user — never stopped at a missing surface.
+    approvals: (options: {
+      sessionId: string;
+      maxPendingMs: number;
+      autoApprove: boolean;
+      budget?: unknown;
+      budgetForAgent?: (agentId: string) => unknown;
+      fullAccess?: boolean;
+    }): WorkerApprovalsRun => {
+      const run = createOrchestratorApprovalsRun({
+        dir: join(needRoot(), '.kubic', 'orchestrator'),
+        sessionId: options.sessionId,
+        maxPendingMs: options.maxPendingMs,
+        ...(options.autoApprove ? { autoApprove: true } : {}),
+        ...(options.budget === undefined ? {} : { budget: options.budget }),
+        // Per-spawn budget spec (§71, issue #105): the CLI decodes
+        // `--budget <agent>:<dims>` and this hands it to the spawn's own gate,
+        // so an override never widens another worker's limit.
+        ...(options.budgetForAgent === undefined
+          ? {}
+          : { budgetForAgent: options.budgetForAgent }),
+        ...(options.fullAccess ? { fullAccess: true } : {}),
+        // The TTY seat when this run has a user attached; a run with `--yes`
+        // answers with the standing seat instead, and a run with neither
+        // denies closed on the router's own bound (never a silent hang).
+        ...(options.autoApprove || optionsSeat === undefined
+          ? {}
+          : { seat: optionsSeat }),
+        debug: (line) => debug(line),
+      });
+      approvalsActive = run;
+      return run;
+    },
     createWorkerSession: async (input) => {
       orchestratorSessionId = input.sessionId;
       // Create the worker's session before the child spawns (issue #85):
@@ -641,13 +738,15 @@ export async function orchestrateDepsWithDefaults(
           role: info?.role ?? 'worker',
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
-          // allowlist inside the layer — never inherited wholesale. The
-          // role's model default (issue #104, §12.1) travels through the
-          // EXISTING `KUBIC_MODEL` pin: the child's own selectModel honours
-          // it, so no new model plumbing is introduced. A default is the
-          // LOWEST-precedence choice, so it is only sent when the operator
-          // has not pinned a model of their own — an explicit KUBIC_MODEL in
-          // the environment outranks the role's default, never the reverse.
+          // allowlist inside the layer — never inherited wholesale. Two
+          // additions ride on top: the role's model default (issue #104,
+          // §12.1) travels through the EXISTING `KUBIC_MODEL` pin — the
+          // child's own selectModel honours it, so no new model plumbing is
+          // introduced, and a default is the LOWEST-precedence choice, so it
+          // is only sent when the operator has not pinned a model of their
+          // own — and the approvals mailbox (issue #105) is added here, not
+          // inherited: the child learns where to publish an ask it cannot
+          // answer, and which orchestrator session it belongs to.
           baseEnv: {
             ...Object.fromEntries(
               Object.entries(process.env).filter(
@@ -658,6 +757,12 @@ export async function orchestrateDepsWithDefaults(
             process.env.KUBIC_MODEL !== undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
+            ...(approvalsActive === undefined
+              ? {}
+              : {
+                  KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
+                  KUBIC_ORCHESTRATOR_SESSION: workerSession,
+                }),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [

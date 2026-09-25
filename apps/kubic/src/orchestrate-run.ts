@@ -57,6 +57,7 @@ import {
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import { loadExtensionStartup } from './extension-startup.js';
 
 export interface OrchestrateRunOptions {
@@ -408,6 +409,18 @@ export async function orchestrateDepsWithDefaults(
     }
   };
 
+  // The §59.1 honest-limits notice travels with the FIRST spawn of a run
+  // (issue #95 wired the pure-string module at its spawn site): every worker
+  // gets one worktree and one process, and that separates concurrent
+  // writers only — it is not isolation and not containment. Printed once so
+  // the operator sees it before any worker runs, never per worker.
+  let noticeEmitted = false;
+  const emitWorktreeNotice = (): void => {
+    if (noticeEmitted) return;
+    noticeEmitted = true;
+    for (const line of buildOrchestratorWorktreeNotice()) debug(line);
+  };
+
   return {
     out: options.out,
     debug,
@@ -415,6 +428,7 @@ export async function orchestrateDepsWithDefaults(
     launches: launchesView(workerRegistry, launchedByAgent),
     ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
+      emitWorktreeNotice();
       const env = new NodeExecutionEnv(repo);
       ensureStateIgnored(repo, debug);
       const worktreeStarted = Date.now();

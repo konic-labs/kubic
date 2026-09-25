@@ -43,6 +43,14 @@ file that no longer exists, or when a row's file has become reachable
   `secrets.ts`) stay dead: the loading path this issue adds does not consume
   them, and they keep their existing owner rather than being claimed wired.
   its whole `ops/cost/*` + `ops/perf/*` cluster — see below.
+- Issue #99 wired the roles half on the live solo path: `packages/host/
+  src/roles/resolver.ts` is reachable through
+  `packages/host/src/roles/roles-boot.ts` (loaded by
+  `apps/kubic/src/headless-run.ts` for `kubic run --role`, with
+  `roleDoctorChecks` surfaced through doctor's `probeRoles` seam), so its
+  row is gone. `roles-data.ts` keeps a row: its spawn-side data
+  (`spawnForRole` + model defaults) belongs to the delegation path (#104)
+  — wiring it here would be a fabricated caller.
 - Issue #99 executed the skills half of its scope: **wired**
   `packages/agents/src/skills/skills.ts` (`discoverSkills` +
   `formatSkillsForSystemPrompt` run at solo boot through
@@ -97,8 +105,7 @@ file that no longer exists, or when a row's file has become reachable
 | 39 | `packages/host/src/orchestrator/merge/telemetry.ts` | #98 | wire: merge telemetry through spans (#98); imported only by dead merge-report/index |
 | 78 | `packages/host/src/orchestrator/parallel/visibility.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
 | 128 | `packages/host/src/orchestrator/worktree/status.ts` | #106 | wire: conflict delegation, parallel surfacing, retained-worktree status (#106) |
-| 419 | `packages/host/src/roles/resolver.ts` | #99 | wire: role documents parsed and applied (#99) |
-| 144 | `packages/host/src/roles/roles-data.ts` | #99 | wire: role documents parsed and applied (#99) |
+| 144 | `packages/host/src/roles/roles-data.ts` | #104 | wire: role-driven worker prompts (#104) — `BUILTIN_ROLE_NAMES`/`ROLE_MODEL_DEFAULTS`/`spawnForRole` are the delegation-side role data; #99 wires the resolver on the solo path and leaves this row to its owner |
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |

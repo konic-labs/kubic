@@ -42,6 +42,17 @@ import {
   serializeSpanArtifact,
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
+import type {
+  ResolvedRole,
+  RoleLayerInput,
+} from '../../../packages/host/src/roles/resolver.js';
+import {
+  ROLES_DIR,
+  roleDocPath,
+  rolePromptFor,
+  type SelectedRole,
+  selectRole,
+} from '../../../packages/host/src/roles/roles-boot.js';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -88,6 +99,11 @@ export interface HeadlessRunOptions {
   // explicit intent applies even under --no-skills).
   noSkills?: boolean;
   skills?: string[];
+  // §12.1 role selection (issue #99): `--role <name>` boots the lane as
+  // the role document `.kubic/roles/<name>.md` defines — its prompt text
+  // replaces the solo constant and its resolved tool set becomes the
+  // lane's allowlist. Absent means the solo default, unchanged.
+  role?: string;
   // §50 debug channel (issue #98): when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
@@ -139,6 +155,13 @@ export interface HeadlessRunDeps {
     homeDir?: string;
     cwd?: string;
     trusted?: boolean;
+  };
+  // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
+  // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
+  // through the real FileBridge. Tests inject a fixture cwd.
+  roles?: {
+    cwd?: string;
+    layers?: RoleLayerInput[];
   };
 }
 
@@ -575,6 +598,49 @@ export async function runHeadlessPrompt(
           .join(', ')})`,
       );
     }
+    // §12.1 role selection (issue #99): `--role` loads the role document
+    // and derives BOTH halves of the lane boot from it — the prompt text
+    // (the document's `## Prompt`) and the tool allowlist (the resolved
+    // set). All four refusals are fail-closed with a named reason: an
+    // unknown role, a contradictory document (§40.3), a document with no
+    // instructions, and a parse failure. Nothing is invented, and an
+    // absent --role leaves the solo boot byte-identical.
+    let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    if (options.role !== undefined) {
+      const rolesBridge = createNodeFileBridge(
+        deps.roles?.cwd ?? process.cwd(),
+      );
+      const rolesCwd = deps.roles?.cwd ?? process.cwd();
+      let selected: SelectedRole;
+      try {
+        selected = selectRole({
+          bridge: rolesBridge,
+          cwd: rolesCwd,
+          role: options.role,
+          ...(deps.roles?.layers === undefined
+            ? {}
+            : { layers: deps.roles.layers }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      let promptText: string;
+      try {
+        const path = roleDocPath(rolesCwd, selected.doc.name);
+        promptText = rolePromptFor(
+          selected.doc,
+          rolesBridge.readTextFile(path),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      deps.debug?.(
+        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
+      );
+      role = { resolved: selected.resolved, prompt: promptText };
+    }
     const { harness, lane } = await bootSoloLane({
       session,
       models,
@@ -584,6 +650,14 @@ export async function runHeadlessPrompt(
       agentId: 'root',
       journal,
       ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
+      ...(role === undefined
+        ? {}
+        : {
+            rolePrompt: role.prompt,
+            ...(role.resolved.tools.length === 0
+              ? {}
+              : { toolAllowlist: role.resolved.tools }),
+          }),
       // One policy object carrying all three mechanisms (#86 + #90 + #93):
       // the classes come from the config layer when it supplies them and
       // from the documented safe default otherwise, the interceptors are

@@ -124,6 +124,9 @@ export interface RunCommandDeps {
       // (never a value); `--skill` is repeatable and additive.
       noSkills?: boolean;
       skills?: string[];
+      // §12.1 role selection (issue #99): forwarded to the runner, which
+      // loads `.kubic/roles/<name>.md` and fails closed on a refusal.
+      role?: string;
       // §50 debug channel (issue #98): a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
@@ -150,7 +153,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 const RUN_USAGE =
-  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--skill <path>] [--no-skills] [--debug] [--json]';
+  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>] [--no-skills] [--debug] [--json]';
 
 function usage(out: (line: string) => void): number {
   out(RUN_USAGE);
@@ -236,6 +239,7 @@ export async function runRunCommand(
   let sessionId: string | undefined;
   let timeoutMs: number | undefined;
   let maxTurns: number | undefined;
+  let role: string | undefined;
   let noSkills = false;
   const skills: string[] = [];
   let debug = false;
@@ -273,6 +277,14 @@ export async function runRunCommand(
       }
       sessionId = value;
       i += 1;
+    } else if (arg === '--role') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        deps.out('error: --role needs a value');
+        return RUN_EXIT_USAGE;
+      }
+      role = value;
+      i += 1;
     } else if (arg === '--no-skills') {
       noSkills = true;
     } else if (arg === '--skill') {
@@ -308,6 +320,7 @@ export async function runRunCommand(
       sessionId,
       timeoutMs,
       maxTurns,
+      ...(role === undefined ? {} : { role }),
       ...(noSkills ? { noSkills: true } : {}),
       ...(skills.length === 0 ? {} : { skills: [...skills] }),
       ...(debug ? { debug: true } : {}),

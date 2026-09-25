@@ -75,11 +75,15 @@ export interface SoloPromptInput {
   toolNames: string[];
   metadata: Record<string, string>;
   extraSections?: string[];
+  // §12.1 role text override (issue #99): the role document's `## Prompt`
+  // body replaces the SOLO_ROLE constant. Absent means the constant, so
+  // every pre-existing caller assembles identical bytes.
+  role?: string;
 }
 
 export function assembleSoloPrompt(input: SoloPromptInput): string {
   const full: SystemPromptInput = {
-    role: SOLO_ROLE,
+    role: input.role ?? SOLO_ROLE,
     cwd: input.cwd,
     toolNames: input.toolNames,
     metadata: input.metadata,
@@ -173,6 +177,17 @@ export interface SoloBootOptions {
   // blocks land as suffix sections only. Ignored when `systemPrompt` is
   // given: an explicit prompt is byte-authoritative.
   promptSections?: string[];
+  // §12.1 role prompt (issue #99): replaces the hardcoded SOLO_ROLE seed
+  // with the role document's own `## Prompt` text. The assembled
+  // cwd/tools/meta lines are unchanged — the role supplies the instruction
+  // half only, so the prompt-cache prefix rules (#33) still hold.
+  rolePrompt?: string;
+  // §40 role tool allowlist (issue #99): the resolved role tool set is
+  // applied with lane.setActiveTools, so a tool the role does not declare
+  // is never registered — absence, not approval. Applied AFTER the
+  // class-derived policy so the role is the narrower of the two (a role
+  // can only narrow, never widen, what the permission classes allow).
+  toolAllowlist?: string[];
 }
 
 export interface SoloLane {
@@ -334,6 +349,23 @@ export async function bootSoloLane(
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
   const baseTools = kubicToolsToPiTools();
+  // §12.1 role narrowing (issue #99): the role's resolved tool set is the
+  // NARROWER of the two allowlists — a role can never widen what the
+  // permission classes permit. Computed BEFORE the harness boots so the
+  // assembled `tools:` line names exactly what the lane registers: the
+  // model must be told the truth about its own tool set (§40.3), and the
+  // value is fixed for the boot, so the prompt-cache prefix (#33) is still
+  // byte-stable across turns.
+  const classAllowed =
+    options.policy?.classes === undefined
+      ? undefined
+      : toolsForClasses(validateClasses({ ...options.policy.classes }));
+  const effectiveToolNames =
+    options.toolAllowlist === undefined
+      ? baseTools.map((t) => t.name)
+      : classAllowed === undefined
+        ? [...options.toolAllowlist]
+        : options.toolAllowlist.filter((tool) => classAllowed.includes(tool));
   const { harness } = await AgentHarness.create(
     {
       session: options.session,
@@ -345,12 +377,17 @@ export async function bootSoloLane(
         options.systemPrompt ??
         assembleSoloPrompt({
           cwd: options.env.cwd,
-          toolNames: baseTools.map((t) => t.name),
+          toolNames: effectiveToolNames,
           metadata: {
             agent: options.agentId,
             lane: SOLO_LANE_NAME,
             model: defaultSoloModelId(options.model),
           },
+          // §12.1 role prompt (issue #99): the document's own text replaces
+          // the solo constant; absent, the constant stands.
+          ...(options.rolePrompt === undefined
+            ? {}
+            : { role: options.rolePrompt }),
           // Context blocks appended as suffix sections (issue #99): the
           // role/cwd/tools/meta prefix stays byte-stable for the prompt
           // cache, and a caller with no blocks assembles the same bytes
@@ -372,6 +409,15 @@ export async function bootSoloLane(
   const lane = await harness.lane(SOLO_LANE_NAME, context);
   if (options.policy?.classes !== undefined) {
     await applyToolPolicy(harness, lane, options.policy.classes, context);
+  }
+  // §12.1 role narrowing (issue #99): the role's resolved tool set is the
+  // NARROWER of the two allowlists — applied after the class-derived one,
+  // so a role can never widen what the permission classes permit. An empty
+  // set is the noTools case (the lane allow-lists nothing). The absence
+  // guard (issue #43's createRoleToolGuard) stays available to callers;
+  // registration-time absence is what this pins.
+  if (options.toolAllowlist !== undefined) {
+    await lane.setActiveTools(effectiveToolNames, context);
   }
   if (options.policy?.interceptors !== undefined) {
     registerPolicyInterceptors(harness.hooks, options.policy.interceptors);

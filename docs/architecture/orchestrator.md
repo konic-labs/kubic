@@ -50,9 +50,32 @@ solo) — and `run` never delegates.
   parses them, but no worker is assigned a role and no role prompt is
   composed; role-driven prompts are issue
   [#104](https://github.com/konic-labs/kubic/issues/104).
-- **Conflict delegation, parallel surfacing and retained-worktree status**
-  are implemented and unreachable; they are issue
-  [#106](https://github.com/konic-labs/kubic/issues/106).
+- **A genuine conflict is delegated to a spawned resolver — the manager never
+  resolves a conflict itself.** The manager cannot write file content by
+  design, so when a merge reports a real conflict it builds the §45.2
+  writer-resolver spec — both diffs, the
+  conflicted file list, the implementer tool set, the settlement constraints —
+  from its own live approval snapshot (the carried hash is recomputed and the
+  snapshot frozen inside the spec: no second policy, no bypass) and spawns a
+  resolver child in that worker's worktree. The resolver commits its
+  settlement on the worker's branch; the manager **re-merges**, and only a
+  successful re-merge settles the candidate. A resolver report is never the
+  settlement. If the resolver cannot settle it, if the re-merge conflicts
+  again, or if the run carries no snapshot or no resolver seam, the queue
+  stops and the remaining candidates are preserved, exactly as before — the
+  failure line names the resolver outcome so an attempt is visible.
+- **The admission numbers are surfaced.** Every run prints the §49.1/§50
+  surface — `parallel: running <n> queued <n> cap <n>` and
+  `tree: <session> parallel <running>/<cap>` — and carries it in the `--json`
+  envelope; a spawn the admission layer queues also appends one §49.1
+  trajectory record. The counters are the high-water the scheduler actually
+  held and the cap is its own resolution of it, so the numbers state what
+  happened rather than what was requested.
+- **A retained worktree reports whether it is dirty.** Each retained worktree
+  gets one line after the run — `retained: <agent> branch=<b> worktree=<path>
+  clean=<bool>` — and a dirty one names the files (`staged`/`unstaged`/
+  `untracked` kept apart). A status that cannot be read prints
+  `clean=unknown` with the reason, never a false clean.
 
 The manager toolset the design fixes in §40 (`spawn_agent`, `wait_for_agent`,
 `workspace_merge`, …) is live: `packages/host/src/orchestrator/manager.ts`
@@ -87,7 +110,9 @@ approvals plus the change journal stay the controls here too; see
 [change journal and safety](journal-and-safety.md).
 
 Merged worktrees and branches are retained as evidence — only
-`kubic clean` disposes.
+`kubic clean` disposes. Retaining without reporting would leave an operator
+unable to tell a clean retain from one still holding uncommitted work, so
+every retain is reported with its measured dirtiness (§44.1, issue #106).
 
 ## When to reach for it
 

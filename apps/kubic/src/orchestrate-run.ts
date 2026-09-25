@@ -37,10 +37,7 @@ import type {
   ApprovalSnapshot,
   ResolverRequest,
 } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
-import {
-  hashApprovalPolicy,
-  IMPLEMENTER_TOOLSET,
-} from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { hashApprovalPolicy } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchestrator/parallel/visibility.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {

@@ -14,6 +14,7 @@ import { runExportCommand as runTrajectoryExportCommand } from '../../../package
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
+import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { probeFirstPartyPosture } from '../../../packages/extensions/src/startup.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
@@ -78,6 +79,15 @@ function cliVersion(): string {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
+  // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never
+  // reach a user repo's commit path. Before either mode that creates it,
+  // ship the runtime ignore rules into the repo-local exclude file
+  // (idempotent, fail-open, never dirties a committed .gitignore) — so the
+  // first run/orchestrate leaves `git status` clean while `.kubic/roles`
+  // and `config.toml` stay trackable. Skipped outside a git repo.
+  if (command === 'run' || command === 'orchestrate') {
+    ensureRuntimeExcludeRules({ cwd: process.cwd() });
+  }
   if (command === '--version' || command === '-V') {
     console.log(formatVersionLine(cliVersion()));
     return 0;

@@ -67,6 +67,13 @@ file that no longer exists, or when a row's file has become reachable
   reachable now that the composition root emits the no-isolation notice on
   `run` (stderr before the first turn) and `tui` (editor footer), so the row
   is removed rather than kept.
+- Issue #96 executed its three rows: `packages/tui/src/diff-view.ts`,
+  `journal-view.ts` and `approval-view.ts` are all reached from the binary now.
+  The first two through `view-panel.ts` → `tui-app.ts` (the `Ctrl-O` diff panel
+  and the `Ctrl-R` journal panel); `approval-view.ts` through
+  `approval-surface.ts`, which is the answer seat the installed policy consults
+  when a challenged call is deferred — the overlay the TUI was designed around
+  and the inline fallback both render from it.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -110,11 +117,8 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |
 | 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
-| 410 | `packages/tui/src/approval-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 5 | `packages/tui/src/components.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 175 | `packages/tui/src/diff-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 6 | `packages/tui/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 93 | `packages/tui/src/journal-view.ts` | #96 | wire: TUI approval/diff/journal views (#96) |
 | 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 5 | `packages/worker/src/approval-client.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

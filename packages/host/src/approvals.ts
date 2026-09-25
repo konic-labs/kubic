@@ -411,6 +411,15 @@ export interface SoloPolicyInput {
   sessionScoped?: boolean;
   /** Session dir carrying posture.json (session-scoped full access). */
   sessionDir?: string;
+  /**
+   * The answer seat (issue #96): the command's own surface for collecting a
+   * verdict on a challenged call. Attached only by commands with a user
+   * attached (`kubic tui`); absent means the immediate no-surface refusal
+   * below, which is what every headless run keeps. An ask that resolves
+   * `undefined` is a seat that could not answer — the service's own
+   * maxPendingMs bound denies it rather than hanging the turn.
+   */
+  answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
   /** Trigger sink (debug/trajectory), never consulted for the decision. */
   onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
@@ -511,6 +520,10 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       maxPendingMs: posture.maxPendingMs,
     }),
     ...(store === undefined ? {} : { store }),
+    // The seat's ask is the service's awaitAnswer: the service races it
+    // against its own maxPendingMs bound, so a seat that never resolves
+    // denies on timeout (never hangs) exactly like the headless path.
+    ...(input.answer === undefined ? {} : { awaitAnswer: input.answer }),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
   const ask: ApprovalAsk = async (call) => {
@@ -546,14 +559,34 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
         denials.push({ capability, toolName: call.toolName, reason });
         return { approved: false, reason };
       }
-      // NO ANSWER SURFACE IS INSTALLED YET — neither `kubic run` (no TTY) nor
-      // `kubic tui` (the approval overlay is its own interaction surface,
-      // explicitly out of scope for #86) can collect a verdict. Waiting
-      // maxPendingMs for an answer that cannot arrive would be a silent hang
-      // and a 60s stall per dangerous call; the honest default is to refuse
-      // immediately and RECORD the refusal, so the composition root ends the
-      // run as approval_timed_out (exit 4, §78) instead of reporting a
-      // success the user never approved. The refusal is deliberately NOT
+      // An answer seat is attached (issue #96): the TUI is a command with a
+      // user attached, so the verdict can be collected instead of refused.
+      // The wait is bounded by maxPendingMs inside the service — a seat that
+      // never answers denies on timeout rather than hanging the turn.
+      if (input.answer !== undefined) {
+        const verdict = await service.request({
+          key,
+          capability,
+          toolName: call.toolName,
+          summary: summarizeRequest(call.toolName, capability, call.args),
+        });
+        if (!verdict.approved) {
+          denials.push({
+            capability,
+            toolName: call.toolName,
+            reason: verdict.reason,
+          });
+          return { approved: false, reason: verdict.reason };
+        }
+        continue;
+      }
+      // NO ANSWER SURFACE IS INSTALLED — `kubic run` has no TTY, and a `kubic
+      // tui` whose seat was never attached cannot collect a verdict either.
+      // Waiting maxPendingMs for an answer that cannot arrive would be a
+      // silent hang and a 60s stall per dangerous call; the honest default is
+      // to refuse immediately and RECORD the refusal, so the composition root
+      // ends the run as approval_timed_out (exit 4, §78) instead of reporting
+      // a success the user never approved. The refusal is deliberately NOT
       // persisted: it is a missing surface, not a user decision, and a later
       // overlay must still be able to ask about the same operation.
       const reason = `${NO_ANSWER_SURFACE_REASON} (capability: ${capability})`;

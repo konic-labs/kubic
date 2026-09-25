@@ -230,10 +230,24 @@ alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
+| `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
+| `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
+| `a` | Approval overlay: **allow once** the challenged call. |
+| `s` | Approval overlay: **allow for the session**. |
+| `d`, `Esc` | Approval overlay: **deny** the challenged call. |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
-| `Esc` | Quit. |
+| `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
+
+A challenged call opens the **approval overlay** instead of being refused: it
+names the tool class and the exact command, so the decision is made on what
+was actually asked, not on the tool's name. Below 80 columns the overlay
+falls back to an inline slot in the transcript (`! approval (inline)`) rather
+than rendering an unusable box — a narrow terminal can still answer. Denying
+leaves the session running; the transcript shows the refusal instead of the
+call's result. Quitting with an ask still pending denies it, so a shutdown
+cannot strand the turn.
 
 These keys are classified by the terminal library's key decoder, not by
 matching raw bytes, so they work on terminals that negotiate the Kitty

@@ -113,6 +113,15 @@ export function renderApprovalLines(
     `Approval required: ${request.capability}`,
     `tool: ${request.toolName}`,
   ];
+  // The host's own words for the challenge (issue #96): the installed policy
+  // summarizes a bash call as "capability: <the command>" and a file call as
+  // "capability: <tool> <path>". Without this line the operator approves a
+  // capability without seeing the operation, which is the whole point of the
+  // surface. Empty means "no summary supplied" — a minimal request is not a
+  // blank line.
+  if (request.summary !== undefined && request.summary !== '') {
+    lines.push(`summary: ${request.summary}`);
+  }
   if (request.command !== undefined && request.command !== '') {
     lines.push(`command: ${request.command}`);
   }
@@ -229,6 +238,11 @@ export interface ApprovalOverlayTui {
     component: Component,
     options?: ApprovalOverlayOptions,
   ): ApprovalOverlayHandle;
+  // Issue #96: a lane-arrived ask is not caused by an input event, so the
+  // app must be able to request a frame itself. Optional because the overlay
+  // tests drive a fake host that only implements showOverlay; the live
+  // TuiAltScreen always provides it.
+  requestRender?: (force?: boolean) => void;
 }
 
 export function showApprovalOverlay(

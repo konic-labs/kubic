@@ -18,6 +18,10 @@ import { join } from 'node:path';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import {
+  beginReconciliation,
+  type RunReconciliation,
+} from '../../../packages/exec/src/journal-reconcile.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   mapCaughtErrorToTerminus,
@@ -66,6 +70,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  type MutableModels,
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
 
@@ -105,6 +110,10 @@ export interface TuiRunDeps {
 export interface TuiRunOptions {
   sessionsRoot?: string;
   env?: NodeExecutionEnv;
+  // Model registry injection (issue #87): the same seam `runHeadlessPrompt`
+  // takes as `models`, so the reconciliation tests can boot the REAL path
+  // hermetically with faux models. Absent means the assembled prod catalog.
+  models?: MutableModels;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -131,7 +140,17 @@ export async function bootTuiLane(
       ? await createSession(store, process.cwd(), context)
       : await attachSession(store, sessionId, context);
   const id = session.metadata.id;
+  // §42.5 baseline + end-of-run sweep (issue #87): the TUI's run end is its
+  // close — quit, SIGINT, EOF — so the sweep rides the same single-shot
+  // `close` the boot hands the loop. Assigned inside the try below.
+  let reconciliation: RunReconciliation | undefined;
   const close = async (): Promise<void> => {
+    try {
+      reconciliation?.sweep();
+    } catch {
+      // A sweep failure never masks the clean quit (same posture as the
+      // headless runner: reconciliation observes, it does not gate).
+    }
     try {
       await session.close(context);
     } catch {
@@ -140,17 +159,32 @@ export async function bootTuiLane(
   };
   try {
     bridge.createDir(join(id, 'journal'));
+    const journal = new FileJournalStore(join(root, id, 'journal'));
+    // A capture failure is not a boot failure (same posture as the headless
+    // runner): the sweep then simply has no baseline to compare against.
+    try {
+      reconciliation = beginReconciliation({
+        store: journal,
+        root: options.env?.cwd ?? process.cwd(),
+        runId: id,
+        sessionId: id,
+        agentId: 'root',
+      });
+    } catch {
+      // Reported below by the loop's own surfaces; the boot stands.
+    }
     const assembled = assembleModels(process.cwd());
-    const model = selectModel(assembled.models);
+    const models = options.models ?? assembled.models;
+    const model = selectModel(models);
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     const solo = await bootSoloLane({
       session,
-      models: assembled.models,
+      models,
       model,
       env,
       sessionId: id,
       agentId: 'root',
-      journal: new FileJournalStore(join(root, id, 'journal')),
+      journal,
     });
     return {
       sessionId: id,

@@ -55,6 +55,13 @@ export const APPROVAL_CANCELLED_REASON = 'the approval was never answered';
 
 export interface ApprovalSurfaceOptions {
   readonly keyOverrides?: ApprovalKeyOverrides;
+  // Called whenever the shown request changes: an ask arrived, a decision
+  // settled one, or cancelPending cleared the queue. The app uses it to
+  // re-sync its overlay AND to request a render — an ask arrives from the
+  // lane's own async turn, not from the input loop, so without this the
+  // request would sit invisible until the operator happened to press a key
+  // (the bug the end-to-end test caught: the frame never showed the overlay).
+  onChange?: (() => void) | undefined;
 }
 
 // Structural request: approval-view.ts's own request type plus nothing. The
@@ -79,9 +86,25 @@ export interface ApprovalSurface {
   // The body an overlay composites at this width.
   renderOverlayBody(width: number): string[];
   usesInlineFallback(width: number): boolean;
+  // Settable change hooks (see ApprovalSurfaceOptions.onChange): the surface
+  // is created by the composition root before the lane boots, so the app
+  // attaches its overlay sync and render request after creation.
+  onChange: (() => void) | undefined;
+  // The live screen's own render request (Pi's requestRender): the app sets
+  // this when it attaches the overlay, and every surface change calls it so a
+  // lane-arrived ask paints a frame instead of waiting for a keypress.
+  renderRequest: (() => void) | undefined;
   // Verifies the resolved key map; throws naming the conflicting key.
   checkKeys(): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
+  // The answer seat itself (issue #96): field-for-field the host's
+  // `SoloPolicyInput.answer` shape (packages/host/src/approvals.ts), typed
+  // structurally because the TUI package must not import host implementation
+  // — the composition root's own typecheck pins the compatibility. Asking
+  // through `seat` is the ONLY way in: it delegates to ask(), so the ingress
+  // sanitiser above cannot be bypassed by a caller that reaches for the seat
+  // directly.
+  seat(request: SurfaceRequest): Promise<ApprovalDecision>;
 }
 
 interface PendingAsk {
@@ -127,16 +150,32 @@ export function createApprovalSurface(
   options: ApprovalSurfaceOptions = {},
 ): ApprovalSurface {
   const overrides = options.keyOverrides;
+  // The hooks are mutable after construction: the surface is created by the
+  // composition root before the lane boots, so the app attaches its overlay
+  // sync and its render request later.
+  const hooks: {
+    onChange: (() => void) | undefined;
+    renderRequest: (() => void) | undefined;
+  } = {
+    onChange: options.onChange,
+    renderRequest: undefined,
+  };
   const queue: PendingAsk[] = [];
   let shown: PendingAsk | undefined;
+  const notify = (): void => {
+    hooks.onChange?.();
+    hooks.renderRequest?.();
+  };
   const showNext = (): void => {
     if (shown !== undefined) return;
     shown = queue.shift();
+    if (shown !== undefined) notify();
   };
   const settle = (ask: PendingAsk, decision: ApprovalDecision): void => {
     if (shown === ask) {
       shown = undefined;
       showNext();
+      if (shown === undefined) notify();
     }
     ask.resolve(decision);
   };
@@ -154,6 +193,20 @@ export function createApprovalSurface(
         queue.push({ request: clean, resolve });
         showNext();
       });
+    },
+    get onChange(): (() => void) | undefined {
+      return hooks.onChange;
+    },
+    set onChange(next: (() => void) | undefined) {
+      hooks.onChange = next;
+    },
+    // The app sets this after it attaches the overlay: a lane-arrived ask
+    // must paint a frame, and only the live screen can request one.
+    get renderRequest(): (() => void) | undefined {
+      return hooks.renderRequest;
+    },
+    set renderRequest(next: (() => void) | undefined) {
+      hooks.renderRequest = next;
     },
     decide: (data: string): boolean => {
       const current = shown;
@@ -176,6 +229,7 @@ export function createApprovalSurface(
       shown = undefined;
       if (current !== undefined) current.resolve(decision);
       for (const ask of waiting) ask.resolve(decision);
+      if (current !== undefined || waiting.length > 0) notify();
     },
     renderInline: (width: number): string[] => {
       const current = shown;
@@ -207,6 +261,10 @@ export function createApprovalSurface(
       ],
       deny: [...(overrides?.deny ?? APPROVAL_DEFAULT_KEYS.deny)],
     }),
+    // Delegates to ask() so the sanitiser and the queue are always in the
+    // path. `seat` is also the value runTuiCommand hands the boot.
+    seat: (request: SurfaceRequest): Promise<ApprovalDecision> =>
+      surface.ask(request),
   };
   return surface;
 }

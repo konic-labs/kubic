@@ -35,7 +35,7 @@
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 
 import type { KubicPresentationState } from '../../core/src/presentation.js';
-import { createApprovalSurface } from './approval-surface.js';
+import { createApprovalSurface, type ApprovalSurface } from './approval-surface.js';
 import type {
   ApprovalDecision,
   ApprovalOverlayHandle,
@@ -79,6 +79,13 @@ export interface TuiAppSeed {
   readonly model: string;
   readonly thinking?: string;
   readonly label?: string;
+  // Issue #96: the approval surface to collect verdicts with. The composition
+  // root creates it BEFORE the lane boots (the boot installs the policy that
+  // consults it as the seat) and passes the same object here, so the surface
+  // the operator sees IS the surface the lane asks. Absent means a private
+  // one — the viewer shell (`kubic tui` with an injected boot) still renders
+  // an ask inline instead of hanging.
+  readonly approvalSurface?: ApprovalSurface;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -210,13 +217,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const editorRow = new EditorRow(editor);
   // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
   // overlay cannot be composited (Pi's visible() gate refuses), so the
-  // request renders here, in the transcript's own row: the layout engine owns
-  // the sizing, so the body is never spliced into a frame by guessing row
-  // offsets. While `inlineBody` is empty the slot is the transcript.
-  let inlineBody: string[] = [];
+  // request renders here, in the transcript's own row. The slot decides for
+  // ITSELF at render time rather than reading a field the caller sets: the
+  // live alt-screen renders `root` (not the app's own render()), so a body
+  // computed outside the slot would never appear on the real path — the bug
+  // the end-to-end narrow test caught.
   const transcriptSlot: Component = {
     render: (width: number): string[] =>
-      inlineBody.length > 0 ? inlineBody : transcript.render(width),
+      approvalSurface.pending() !== undefined &&
+      approvalSurface.usesInlineFallback(width)
+        ? approvalSurface.renderInline(width)
+        : transcript.render(width),
     invalidate: (): void => {
       transcript.component.invalidate();
     },
@@ -259,7 +270,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // inline body below APPROVAL_MIN_WIDTH). pi-tui's hide() is permanent
   // ("cannot be shown again"), so each request gets a fresh ApprovalView and
   // the old one is dismissed first.
-  const approvalSurface = createApprovalSurface();
+  const approvalSurface = seed.approvalSurface ?? createApprovalSurface();
+  // Issue #96: the surface is created by the composition root (it must exist
+  // before the lane boots — the boot installs the policy that consults the
+  // seat), so the app cannot pass its own onChange at construction. It
+  // attaches one here instead: every change re-syncs the overlay and asks the
+  // live screen for a frame. Without the render request an ask that arrives
+  // from the lane's async turn would stay invisible until the operator
+  // happened to press a key.
+  const onSurfaceChange = (): void => {
+    syncOverlay();
+  };
+  approvalSurface.onChange = onSurfaceChange;
   // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
   // name here rather than binding one action to two keys silently.
   approvalSurface.checkKeys();
@@ -303,7 +325,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   const settleApproval = (): void => {
     syncOverlay();
-    inlineBody = [];
   };
   return {
     root,
@@ -311,18 +332,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     transcript,
     status,
     editor,
-    render: (width: number): string[] => {
-      const pendingRequest = approvalSurface.pending();
-      // Below the minimum the overlay must not be the surface (Pi's visible()
-      // gate refuses to composite it there), so the request renders in the
-      // transcript's slot instead — one of the two is always the surface.
-      inlineBody =
-        pendingRequest !== undefined &&
-        approvalSurface.usesInlineFallback(width)
-          ? approvalSurface.renderInline(width)
-          : [];
-      return root.render(width);
-    },
+    render: (width: number): string[] => root.render(width),
     handleInput: (data: string): TuiInputResult => {
       // Classified by pi-tui's parseKey so both encodings are honoured:
       // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
@@ -434,6 +444,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     attachApprovalOverlay: (host: ApprovalOverlayTui): void => {
       overlayHost = host;
+      // Issue #96: the live screen's render request, so an ask that arrives
+      // from the lane's async turn paints a frame immediately. Optional on
+      // the seam (see ApprovalOverlayTui) — a host that lacks it still gets
+      // the overlay, just drawn on the next frame the loop already renders.
+      approvalSurface.renderRequest = (): void => {
+        host.requestRender?.();
+      };
       // A request that arrived before boot finished is shown now.
       syncOverlay();
     },

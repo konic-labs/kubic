@@ -24,6 +24,8 @@ import {
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
 import {
+  type ApprovalRequest,
+  type ApprovalVerdict,
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
@@ -43,6 +45,7 @@ import {
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
+import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
@@ -83,6 +86,12 @@ import {
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
 
+// The interaction surface the root shares with the app (issue #96): the seat
+// the installed policy consults and the surface the loop renders are the SAME
+// object, so a verdict collected on screen is the verdict the lane receives.
+export interface TuiApprovalSeat {
+  (request: ApprovalRequest): Promise<ApprovalVerdict | undefined>;
+}
 // The lane surface the loop drives. Narrow on purpose: the loop accepts a
 // prompt, drives to settlement, can abort, and reads committed entries to
 // refresh the transcript — nothing else. Every member is a real lane
@@ -113,7 +122,17 @@ export interface TuiLaneBoot {
 export interface TuiRunDeps {
   out: (line: string) => void;
   createTerminal: () => Terminal;
-  bootLane: (sessionId?: string) => Promise<TuiLaneBoot>;
+  // `answer` is the seat the boot's installed policy must consult (issue
+  // #96). It is an ARGUMENT rather than a deps field because the seat and the
+  // rendered surface are one object created by runTuiCommand: a boot that
+  // closed over the deps would never see it, which is exactly the bug the
+  // end-to-end test caught (the overlay never appeared, the call was refused
+  // with NO_ANSWER_SURFACE_REASON). The prod boot forwards it to
+  // installSoloPolicy; a boot may ignore it (the viewer shell does).
+  bootLane: (
+    sessionId?: string,
+    answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>,
+  ) => Promise<TuiLaneBoot>;
 }
 
 export interface TuiRunOptions {
@@ -135,6 +154,12 @@ export interface TuiRunOptions {
   // takes as `models`, so the reconciliation tests can boot the REAL path
   // hermetically with faux models. Absent means the assembled prod catalog.
   models?: MutableModels;
+  // The answer seat (issue #96): the interactive path's approval surface.
+  // Attached by runTuiCommand; absent means the no-surface refusal, which is
+  // what `kubic tui` had before the overlay landed.
+  answer?: (
+    request: ApprovalRequest,
+  ) => Promise<ApprovalVerdict | undefined>;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -210,6 +235,11 @@ export async function bootTuiLane(
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
         sessionDir: join(root, id),
+        // The answer seat (issue #96): with the overlay's surface attached,
+        // `kubic tui` is the command that can actually collect a verdict on a
+        // challenged call instead of refusing it unseen. Injected policies
+        // (tests, and any caller that supplies its own) keep their own seat.
+        ...(options.answer === undefined ? {} : { answer: options.answer }),
       });
     const solo = await bootSoloLane({
       session,
@@ -262,13 +292,15 @@ export function tuiDepsWithDefaults(provided: {
 }): TuiRunDeps {
   const { classes, policySource, policy } = provided;
   return {
-    ...provided,
+    out: provided.out,
     createTerminal: () => new ProcessTerminal(),
-    bootLane: (sessionId?: string) =>
+    // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
+    bootLane: (sessionId?: string, answer?: TuiApprovalSeat) =>
       bootTuiLane(sessionId, {
         ...(classes === undefined ? {} : { classes }),
         ...(policySource === undefined ? {} : { policySource }),
         ...(policy === undefined ? {} : { policy }),
+        ...(answer === undefined ? {} : { answer }),
       }),
   };
 }
@@ -468,9 +500,15 @@ export async function runTuiCommand(
     );
     return RUN_EXIT_USAGE;
   }
+  // Issue #96: the approval surface must exist BEFORE the lane boots, because
+  // the boot installs the policy that consults the seat. The root therefore
+  // creates the surface, hands its ask to the boot AS the seat, and attaches
+  // the same surface to the app it builds for this boot — one object, so the
+  // verdict collected on screen is the verdict the lane receives.
+  const surface = createApprovalSurface();
   let boot: TuiLaneBoot;
   try {
-    boot = await deps.bootLane(sessionId);
+    boot = await deps.bootLane(sessionId, surface.seat);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     deps.out(`error: ${message}`);
@@ -480,7 +518,11 @@ export async function runTuiCommand(
       ? RUN_EXIT_WORKSPACE_UNAVAILABLE
       : RUN_EXIT_FAILED;
   }
-  const app = createTuiApp({ sessionId: boot.sessionId, model: boot.model });
+  const app = createTuiApp({
+    sessionId: boot.sessionId,
+    model: boot.model,
+    approvalSurface: surface,
+  });
   const terminal = deps.createTerminal();
   // Solo no-isolation notice (issue #89): the trust statement is carried in
   // the editor footer — the loop's always-visible status surface — from the
@@ -513,6 +555,11 @@ export async function runTuiCommand(
   const shutdown = (): void => {
     if (stopped) return;
     stopped = true;
+    // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
+    // settle a pending approval as a deny — the turn that is waiting on it
+    // would otherwise sit until the lane's timeout, and the operator gets no
+    // second chance to answer a screen they have left.
+    surface.cancelPending('the session quit before the approval was answered');
     process.removeListener('SIGINT', onSigint);
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
@@ -533,6 +580,10 @@ export async function runTuiCommand(
     // target is the prompt. T/t no longer toggle (they type); Ctrl-T does.
     booted.tui.setFocus(app.editor);
     app.editor.bind(booted.tui);
+    // Issue #96: the overlay seat. The app renders the approval through the
+    // live alt-screen from here on; on a terminal too narrow for the overlay
+    // (its own visible() gate) the inline body is the surface instead.
+    app.attachApprovalOverlay(booted.tui);
     // The trust statement is on screen before the operator types anything
     // (issue #89): the footer is set before the first render, so the very
     // first frame carries it. Empty when suppressed.

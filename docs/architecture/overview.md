@@ -7,8 +7,11 @@
 Kubic is a terminal coding agent with one architecture and two modes.
 **Solo** is the default and the architecture itself: a single agent
 working directly in the user's directory. **Orchestrator** is an
-opt-in mode for delegation: the manager stops executing and farms work
-out to subagents. Both modes share the same safety controls — the
+opt-in mode for delegation: the `kubic orchestrate` CLI process plays
+the manager — it fans one worker process plus one git worktree per
+subagent out and merges what they produce. The design's manager *agent*
+lane (§9.2) is not wired yet; the CLI is the manager in the shipped
+mode. Both modes share the same safety controls — the
 VCS-independent change journal and user-decided approvals.
 
 ## Topology
@@ -16,12 +19,20 @@ VCS-independent change journal and user-decided approvals.
 ```text
 solo (default)                      orchestrator (opt-in, git repos only)
 ─────────────────────────────       ─────────────────────────────────────
-one agent, in-process,              manager (delegates only, never executes)
-in the user's directory             ├── worker process + git worktree (subagent A)
-single trust zone, no isolation     ├── worker process + git worktree (subagent B)
+one agent, in-process,              `kubic orchestrate` process (the manager
+in the user's directory             in the shipped mode; it delegates and
+single trust zone, no isolation     merges, never authors)
+                                    ├── worker process + git worktree (subagent A)
+                                    ├── worker process + git worktree (subagent B)
 controls: approvals + journal       └── … merge what they produce
                                     controls: approvals + journal (unchanged)
 ```
+
+The shipped manager lane is the CLI, not an agent: every worker is a
+child `kubic run` that receives the same `-p` prompt, and the
+plan-delegating agent lane is issue
+[#103](https://github.com/konic-labs/kubic/issues/103). See
+[orchestrator](orchestrator.md) for the delegation model as shipped.
 
 Solo is the whole story for trust: there is exactly one trust zone —
 the user's own authority. Orchestrator adds scheduling (processes and
@@ -39,7 +50,7 @@ composition root:
 | `packages/core` | Shared contracts both runtimes build on |
 | `packages/exec` | Execution environment and change journal; the only package that touches `node:fs` / `node:child_process` |
 | `packages/worker` | Solo lane and worker lifecycle (the executing side) |
-| `packages/host` | Host wiring: approvals, manager, worktrees, merge (the delegating side) |
+| `packages/host` | Host wiring: approvals, orchestrator/manager contracts, worktrees, merge (the delegating side) |
 | `packages/agents` | Agent task, roles, budgets, skills |
 | `packages/trajectory` | Versioned run records for replay and eval |
 | `packages/eval` | Benchmark suites and RL dataset export |

@@ -119,6 +119,11 @@ export interface RunCommandDeps {
       sessionId?: string;
       timeoutMs?: number;
       maxTurns?: number;
+      // §29.3 skills surface (issue #99): the parsed flags travel to the
+      // runner, which owns discovery. `--no-skills` is a boolean request
+      // (never a value); `--skill` is repeatable and additive.
+      noSkills?: boolean;
+      skills?: string[];
       // §50 debug channel (issue #98): a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
@@ -145,7 +150,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 const RUN_USAGE =
-  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]';
+  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--skill <path>] [--no-skills] [--debug] [--json]';
 
 function usage(out: (line: string) => void): number {
   out(RUN_USAGE);
@@ -231,6 +236,8 @@ export async function runRunCommand(
   let sessionId: string | undefined;
   let timeoutMs: number | undefined;
   let maxTurns: number | undefined;
+  let noSkills = false;
+  const skills: string[] = [];
   let debug = false;
   let json = false;
   for (let i = 0; i < args.length; i += 1) {
@@ -266,6 +273,16 @@ export async function runRunCommand(
       }
       sessionId = value;
       i += 1;
+    } else if (arg === '--no-skills') {
+      noSkills = true;
+    } else if (arg === '--skill') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        deps.out('error: --skill needs a value');
+        return RUN_EXIT_USAGE;
+      }
+      skills.push(value);
+      i += 1;
     } else if (arg === '--debug') {
       debug = true;
     } else if (arg === '--json') {
@@ -291,6 +308,8 @@ export async function runRunCommand(
       sessionId,
       timeoutMs,
       maxTurns,
+      ...(noSkills ? { noSkills: true } : {}),
+      ...(skills.length === 0 ? {} : { skills: [...skills] }),
       ...(debug ? { debug: true } : {}),
     });
     await deps.persist?.(result);

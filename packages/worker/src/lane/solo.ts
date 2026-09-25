@@ -166,6 +166,13 @@ export interface SoloBootOptions {
   // Session journal for interception (issue #17): when set, every
   // write/edit through the lane is recorded with its toolCallId.
   journal?: FileJournalStore;
+  // Appended prompt sections (issue #99; §29.3 skills first): the caller
+  // composes context blocks (skill listings, role prompt) and the lane
+  // appends them to the assembled system prompt. Ordered, so the
+  // cache-stable prefix (role/cwd/tools/meta) is never rewritten — the
+  // blocks land as suffix sections only. Ignored when `systemPrompt` is
+  // given: an explicit prompt is byte-authoritative.
+  promptSections?: string[];
 }
 
 export interface SoloLane {
@@ -344,6 +351,13 @@ export async function bootSoloLane(
             lane: SOLO_LANE_NAME,
             model: defaultSoloModelId(options.model),
           },
+          // Context blocks appended as suffix sections (issue #99): the
+          // role/cwd/tools/meta prefix stays byte-stable for the prompt
+          // cache, and a caller with no blocks assembles the same bytes
+          // it always did.
+          ...((options.promptSections ?? []).length === 0
+            ? {}
+            : { extraSections: [...(options.promptSections ?? [])] }),
         }),
       compaction: {
         enabled: options.compaction?.enabled ?? true,

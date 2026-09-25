@@ -25,7 +25,7 @@ budgets by default: `createBudget` never injects limits (issue #9; §71).
 | `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `validateClasses`, `PolicyValidationError` |
 | `graph.ts` | `EdgeKind`, `EDGE_KINDS`, `AgentEdge`, `EDGE_FIELDS`, `GraphError`, `GraphStore`, `createGraph`, `addNode`, `addEdge`, `consumers`, `producers`, `topoOrder`, `subgraph`, `renderDag`, `CostRollup`, `rollupCost`, `serializeGraph`, `attachGraph`, `estimateEdgeTokens` |
 | `artifacts.ts` | `ArtifactTest`, `TaskArtifact`, `ARTIFACT_FIELDS`, `ArtifactValidation`, `validateArtifact`, `sanitizeArtifact`, `SPAWN_DENY_FIELDS`, `SpawnIsolation`, `checkSpawnIsolation`, `ChildPromptInput`, `buildChildPrompt`, `assertPromptCarriesNoTranscript`, `ArtifactTranscriptEntry`, `renderArtifactTranscript`, `toTranscriptEntry`, `ArtifactTrajectoryRecord`, `toTrajectoryRecord`, `DebuggerHandoffInput`, `DebuggerHandoff`, `DebuggerHandoffBuild`, `buildDebuggerHandoff`, `freshDebuggerPrompt`, `estimateHandoffTokens`, `TOKEN_ECONOMICS_NOTE`, `containsCredential`, `redactArtifactText` |
-| `skills/skills.ts`, `skills/templates.ts` | Skill + prompt-template registries |
+| `skills/skills.ts` | Skill registry (discovery, gating, prompt injection — wired at solo boot, issue #99) |
 | `memory.ts` | Agent memory surface |
 | `roles.ts` | Pointer | Role presets live in `@kubic/host` `roles/roles-data.ts` over `.kubic/roles/*.md` (#44, closed) |
 | `lifecycle.ts` | Pointer | Lifecycle owner is `@kubic/worker` `lifecycle/` (#42) |

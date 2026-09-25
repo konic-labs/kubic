@@ -8,6 +8,7 @@
 // parent-linked to the last existing entry under a random id (E4).
 
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
@@ -50,6 +51,7 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import {
   attachSession,
@@ -81,6 +83,11 @@ export interface HeadlessRunOptions {
   sessionId?: string;
   timeoutMs?: number;
   maxTurns?: number;
+  // §29.3 skills surface (issue #99): `--no-skills` disables layered
+  // discovery and `--skill <path>` adds one explicitly (repeatable —
+  // explicit intent applies even under --no-skills).
+  noSkills?: boolean;
+  skills?: string[];
   // §50 debug channel (issue #98): when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
@@ -124,6 +131,15 @@ export interface HeadlessRunDeps {
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
+  // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
+  // real home directory, this process's cwd, and the documented trust
+  // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
+  // Tests inject a home/cwd/trust triple to drive discovery over a fixture.
+  skills?: {
+    homeDir?: string;
+    cwd?: string;
+    trusted?: boolean;
+  };
 }
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
@@ -534,6 +550,31 @@ export async function runHeadlessPrompt(
       ...installed.contributions,
       ...(extensions === undefined ? [] : [budgetToolGate(extensions)]),
     ];
+    // §29.3 skills on the live path (issue #99): discovery runs at boot
+    // through the real FileBridge, the project roots stay gated behind the
+    // documented trust opt-in, and the model-visible blocks are appended to
+    // the assembled system prompt as a suffix section. A refusal here is
+    // not fatal by design (skills are context, never a gate) — the loader
+    // reports unreadable skills on the debug channel and continues.
+    const skills = bootSkills({
+      bridge,
+      cwd: deps.skills?.cwd ?? process.cwd(),
+      homeDir: deps.skills?.homeDir ?? homedir(),
+      trusted:
+        deps.skills?.trusted ??
+        (process.env.KUBIC_TRUST_PROJECT === '1' ||
+          process.env.KUBIC_TRUST_PROJECT === 'true'),
+      ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
+      ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
+      log: (line) => deps.debug?.(`skills: ${line}`),
+    });
+    if (skills.skills.length > 0) {
+      deps.debug?.(
+        `skills: ${skills.skills.length} loaded (${skills.skills
+          .map((skill) => `${skill.name}@${skill.source}`)
+          .join(', ')})`,
+      );
+    }
     const { harness, lane } = await bootSoloLane({
       session,
       models,
@@ -542,6 +583,7 @@ export async function runHeadlessPrompt(
       sessionId: id,
       agentId: 'root',
       journal,
+      ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
       // One policy object carrying all three mechanisms (#86 + #90 + #93):
       // the classes come from the config layer when it supplies them and
       // from the documented safe default otherwise, the interceptors are

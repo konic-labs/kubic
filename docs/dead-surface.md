@@ -43,6 +43,14 @@ file that no longer exists, or when a row's file has become reachable
   `secrets.ts`) stay dead: the loading path this issue adds does not consume
   them, and they keep their existing owner rather than being claimed wired.
   its whole `ops/cost/*` + `ops/perf/*` cluster — see below.
+- Issue #99 executed the skills half of its scope: **wired**
+  `packages/agents/src/skills/skills.ts` (`discoverSkills` +
+  `formatSkillsForSystemPrompt` run at solo boot through
+  `packages/host/src/skills-boot.ts`, honouring `--no-skills` and the
+  untrusted-cwd exclusion — its row is gone) and gave the inert contracts
+  **deletions** where no honest consumer exists (`skills/templates.ts`,
+  `artifacts.ts`, `memory.ts`, `spec.ts`, `transfer.ts`,
+  `host/src/handoff.ts`). Roles wire on the live path; see the rows below.
 - Issue #89 executed its row: `packages/host/src/limits/solo-warning.ts` is
   reachable now that the composition root emits the no-isolation notice on
   `run` (stderr before the first turn) and `tui` (editor footer), so the row
@@ -55,8 +63,6 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 533 | `packages/agents/src/memory.ts` | #99 | wire: context contracts (#99) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 485 | `packages/agents/src/skills/skills.ts` | #99 | wire: context contracts (#99) |
-| 338 | `packages/agents/src/skills/templates.ts` | #99 | wire: context contracts (#99) |
 | 501 | `packages/agents/src/spec.ts` | #99 | wire: context contracts (#99) |
 | 133 | `packages/agents/src/task.ts` | #99 | wire: context contracts (#99) |
 | 142 | `packages/agents/src/transfer.ts` | #99 | wire: context contracts (#99) |

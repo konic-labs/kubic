@@ -401,7 +401,11 @@ function parseIgnoreFile(content: string): IgnoreRule[] {
       match: globToRegExp(
         anchored ? pattern : (pattern.split('/').pop() ?? pattern),
       ),
-      prefix: stripped,
+      // `prefix` is compared against a workspace-relative path in
+      // `isIgnored`, and those never carry a leading `/` — so the anchored
+      // form (`/pi/`) must drop it here or the rule can never match. Keep
+      // this in step with the `pattern` derivation above.
+      prefix: pattern,
     });
   }
   return rules;

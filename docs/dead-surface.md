@@ -19,7 +19,9 @@ file that no longer exists, or when a row's file has become reachable
 - The counts below were computed on `main@1e41191`; rows for files that later
   became reachable are removed as the owning issue lands (issue #92 wired
   `clean.ts`, `confinement.ts`, `list.ts` and `remove.ts`; its row for
-  `worktree/index.ts` stands — that barrel is still dead). `#102` itself owns
+  `worktree/index.ts` stands — that barrel is still dead). Issue #97 deleted
+  `packages/exec/src/{effects,checkpoint-store}.ts` (its rows are gone; the
+  surface is a documented deletion, not a wired seam). `#102` itself owns
   the 22 reserved `export {};` stubs (delete) and the dead barrels; the wiring
   clusters belong to the sibling issues named in each row.
 
@@ -44,8 +46,6 @@ file that no longer exists, or when a row's file has become reachable
 | 49 | `packages/eval/src/index.ts` | #101 | delete: dead barrel over the live eval CLI |
 | 84 | `packages/eval/src/rl/fixtures.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
 | 58 | `packages/eval/src/rl/index.ts` | #99 | wire: RL dataset export (phase 4, design §53) — keep behind the eval CLI |
-| 97 | `packages/exec/src/checkpoint-store.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
-| 89 | `packages/exec/src/effects.ts` | #87 | wire: journal reconciliation / effects decision (#87, #97) |
 | 4 | `packages/exec/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/paths.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/exec/src/workspace.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

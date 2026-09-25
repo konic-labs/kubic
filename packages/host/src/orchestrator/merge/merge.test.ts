@@ -521,9 +521,9 @@ describe('manager lane plumbing on the merge path (issue #103)', () => {
       ).toThrow(new RegExp(tool));
     }
     // The forbidden set is unchanged: lane plumbing never becomes a write.
-    expect(() => assertManagerZeroWrites(['send_to_agent', 'git_stage'])).toThrow(
-      /policy block/,
-    );
+    expect(() =>
+      assertManagerZeroWrites(['send_to_agent', 'git_stage']),
+    ).toThrow(/policy block/);
   });
 });
 

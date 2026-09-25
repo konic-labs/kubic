@@ -19,12 +19,12 @@ import {
   runOrchestrateCommand,
   workerSessionFor,
 } from './orchestrate-cli.js';
-import type { MergedHunk } from './orchestrator/merge/attribution.js';
-import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import {
   MANAGER_ALLOWLIST,
   registerManagerLane,
 } from './orchestrator/manager.js';
+import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 
@@ -1075,7 +1075,15 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', MANAGER_PROMPT, '--agents', 'alpha', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     expect(code).toBe(0);
@@ -1096,7 +1104,15 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
     });
     const code = await runOrchestrateCommand(
-      ['-p', MANAGER_PROMPT, '--agents', 'alpha', '--session', 'sess-1', '--yes'],
+      [
+        '-p',
+        MANAGER_PROMPT,
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-1',
+        '--yes',
+      ],
       world.deps,
     );
     expect(code).toBe(1);

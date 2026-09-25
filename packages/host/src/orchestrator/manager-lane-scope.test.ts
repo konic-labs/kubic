@@ -68,9 +68,7 @@ const NOW_REACHABLE = [
 // lane registers through the §40 allowlist and authors the plan whose steps
 // become the per-worker prompts. manager.ts is reachable from the binary, so
 // keeping a ledger row for it would fail the reachability gate.
-const MANAGER_LANE_REACHABLE = [
-  'packages/host/src/orchestrator/manager.ts',
-];
+const MANAGER_LANE_REACHABLE = ['packages/host/src/orchestrator/manager.ts'];
 
 function section(page: string, heading: string): string {
   const start = page.indexOf(heading);
@@ -181,10 +179,9 @@ describe('orchestrator scope is honest (issue #95)', () => {
       expect(body, `${where} must not call the lane unwired`).not.toMatch(
         /manager \*?agent\*? lane (is|are) not wired|not wired yet/i,
       );
-      expect(
-        body,
-        `${where} must not claim one shared prompt`,
-      ).not.toMatch(/same `?-p`? prompt|every worker runs the same prompt/i);
+      expect(body, `${where} must not claim one shared prompt`).not.toMatch(
+        /same `?-p`? prompt|every worker runs the same prompt/i,
+      );
     }
   });
 

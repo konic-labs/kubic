@@ -23,17 +23,7 @@ import {
   renderDag,
 } from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
-import type {
-  AttributedHunk,
-  MergedHunk,
-} from './orchestrator/merge/attribution.js';
-import { attributeMergedHunks } from './orchestrator/merge/attribution.js';
-import { createMergeQueue } from './orchestrator/merge/queue.js';
-import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
-import type {
-  ManagerLane,
-  ManagerPlanStep,
-} from './orchestrator/manager.js';
+import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,
   createManagerCallSpy,
@@ -41,6 +31,13 @@ import {
   recordManagerLaneCall,
   registerManagerLane,
 } from './orchestrator/manager.js';
+import type {
+  AttributedHunk,
+  MergedHunk,
+} from './orchestrator/merge/attribution.js';
+import { attributeMergedHunks } from './orchestrator/merge/attribution.js';
+import { createMergeQueue } from './orchestrator/merge/queue.js';
+import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import {

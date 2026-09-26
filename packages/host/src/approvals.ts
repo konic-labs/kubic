@@ -46,6 +46,7 @@ export const CAPABILITIES = [
   'outside-write',
   'budget-overrun',
   'spawn-agents',
+  'privilege-escalation',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number] | string;
@@ -132,7 +133,15 @@ export class MemoryApprovalStore implements ApprovalStore {
 
 // Trigger detection (§41.1). Predicates are injected so this module stays
 // free of shell parsing: the worker owns the classifiers (issue #15) and
-// the host owns the decision. Detector ownership for the rest:
+// the host owns the decision. The bash detectors are a literal-pattern
+// heuristic, not a sandbox (issue #131): redirect/tee/cp-mv-install
+// outside-writes, `sudo` privilege escalation, and destructive/network
+// verbs behind `$(…)`, backticks, or `eval`. What still bypasses them —
+// stated, not silent: python/node/npm exfiltration under network:none,
+// quoted or backslash-obfuscated verbs the literal patterns cannot see,
+// whitespace tricks around redirection targets, and flag-reordered copy
+// targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
+// ownership for the rest:
 //   credentials overreach, spawn-agents — no detector: fire only via an
 //     explicit `requires` entry, or via their owners (credentials with
 //     issue #19 git/credential tools, spawn-agents with the orchestrator).
@@ -178,6 +187,35 @@ const TEE_TARGET = /\btee\b([^|;&]*)/gi;
 // limit is stated here and in docs/cli/configuration.md, not silently
 // implied to be exact.
 const COPY_TARGET = /\b(cp|mv|install)\b([^|;&]*)/gi;
+// Privilege escalation is a capability event on its own (issue #131):
+// `sudo systemctl restart …` is dangerous-shaped whatever verb follows.
+// Word-boundary, anywhere in the raw command — quoted context included,
+// because a literal scan cannot see into quotes — and over-triggering is
+// the documented, safe direction: a raised capability becomes an ask,
+// never a silent grant.
+const SUDO = /\bsudo\b/;
+// Command indirection (issue #131): a destructive/network verb inside
+// `$(…)`, backticks, or after `eval` raises the UNDERLYING capability
+// instead of staying silent. The matcher layer documents indirection as
+// unenforceable for its guards — detection is cheaper than enforcement
+// and the ask is the safety net.
+const INDIRECT = /\$\([^)]*\)|`[^`]*`|\beval\s+[^\n|;&]*/g;
+
+// The classifiers anchor on command text (`rm` at a command start), so the
+// wrapper must come off before they see the payload: `$(rm -rf /)` and
+// backtick-wrapped `rm -rf /` classify as `rm -rf /`, and `eval "rm -rf /"`
+// likewise.
+function unwrapIndirection(nested: string): string {
+  let inner = nested;
+  if (inner.startsWith('$(') && inner.endsWith(')')) {
+    inner = inner.slice(2, -1);
+  } else if (inner.startsWith('`') && inner.endsWith('`')) {
+    inner = inner.slice(1, -1);
+  } else {
+    inner = inner.replace(/^eval\s+/i, '');
+  }
+  return stripQuotes(inner.trim());
+}
 
 // Targets arrive raw from the command string: strip surrounding quotes and
 // trailing delimiters so `> "/etc/cron.d/x"` or `tee '/etc/cron.d/x'` cannot
@@ -238,6 +276,23 @@ export function detectTriggers(
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
         break;
+      }
+    }
+    // Privilege escalation and command indirection (issue #131): sudo is a
+    // capability event wherever it sits, and a destructive/network verb
+    // behind $(…), backticks, or eval raises the underlying capability
+    // instead of hiding behind the matcher layer's stated indirection gap.
+    if (SUDO.test(command)) {
+      found.push('privilege-escalation');
+    }
+    for (const nested of command.match(INDIRECT) ?? []) {
+      const payload = unwrapIndirection(nested);
+      if (payload === '') continue;
+      if (ctx.isDestructive(payload, ctx.workspace)) {
+        found.push('destructive-shell');
+      }
+      if (ctx.network === 'none' && ctx.isNetworkCommand(payload)) {
+        found.push('network');
       }
     }
   }

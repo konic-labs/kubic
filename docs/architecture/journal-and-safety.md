@@ -24,9 +24,9 @@ pruning.
 
 ## Approvals (§41)
 
-Dangerous capabilities — network, credentials, destructive shell,
-installs, deploys, pushes, writes outside the workspace, agent
-spawning, budget overruns — route to the user first (ask-user by
+Dangerous capabilities — network, credentials, privilege escalation,
+destructive shell, installs, deploys, pushes, writes outside the workspace,
+agent spawning, budget overruns — route to the user first (ask-user by
 default) or to deny. The rules are fail-closed:
 
 - The decider is the user. There is no manager-approval path and no

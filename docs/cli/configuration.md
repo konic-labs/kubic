@@ -125,15 +125,16 @@ Every one of those keys has a runtime effect or says so plainly:
 
 | Capability | Raised by |
 | --- | --- |
-| `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …). |
+| `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)`, backticks, or after `eval`. |
 | `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
 | `git-push` | `git push`, `git remote add/set-url/remove/rename`. |
-| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …). |
+| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …), including a destructive verb inside `$(…)`, backticks, or after `eval`. |
 | `install` | Package installs (`npm install`, `pip install`, `brew install`, `apt install`, `cargo install`, `go install`). |
 | `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
 | `outside-write` | A write outside the workspace: the `write`/`edit` tools, a `>`/`>>` redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. |
 | `budget-overrun` | The budget/concurrency overrun flag. |
 | `spawn-agents` | Agent spawning (the orchestrator). |
+| `privilege-escalation` | `sudo` anywhere in the command. |
 
 `requires:<tool>` is accepted alongside them (the per-tool trigger). A name
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
@@ -149,6 +150,15 @@ heuristics:
   `install -m 644 a /usr/local/b` → `/usr/local/b`). A flag that reorders
   arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
   only the final named target of a multi-file `tee` is checked.
+- **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
+  anywhere in the raw command, quoted text included
+  (`echo "needs sudo"` raises it). A raised capability becomes an ask,
+  never a silent grant, so the false positive costs a confirmation.
+
+What remains out of scope — documented gaps, not silently handled:
+network exfiltration via `python -c`/`node -e`/`npm`, quoted or
+backslash-obfuscated verbs the literal patterns cannot see, and whitespace
+tricks around redirection targets.
 
 Two keys are forbidden outright, not defaulted: **`[budgets]`**
 (`BudgetKeyError` — budgets are never defaulted by config) and

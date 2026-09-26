@@ -49,6 +49,29 @@ describe('approval render (issue #26; §41)', () => {
     expect(doc).toContain('deny');
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(100);
   });
+
+  it('renders the privilege-escalation capability name with no special cases (issue #131)', () => {
+    // Pinned line-for-line: the dialog prints the capability string as-is,
+    // so a new capability name renders with zero view changes.
+    const lines = renderApprovalLines(
+      {
+        key: 'k-pe',
+        capability: 'privilege-escalation',
+        toolName: 'bash',
+        command: 'sudo systemctl restart foo',
+        summary: 'privilege-escalation: sudo systemctl restart foo',
+      },
+      100,
+    );
+    expect(lines).toEqual([
+      'Approval required: privilege-escalation',
+      'tool: bash',
+      'summary: privilege-escalation: sudo systemctl restart foo',
+      'command: sudo systemctl restart foo',
+      'justification: (none)',
+      '[a] allow once   [s] allow session   [d] deny',
+    ]);
+  });
 });
 
 describe('approval overlay geometry (issue #26; §16.4)', () => {

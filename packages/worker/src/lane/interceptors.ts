@@ -22,8 +22,13 @@
 //     silently dropped.
 // The destructive matcher is a literal-pattern heuristic, not a sandbox:
 // it sees the command string only, so $CMD indirection, backslash escapes,
-// and eval-obfuscation bypass it. Those bypasses are out of scope for this
-// layer (stated, not silent); approvals own the unknown.
+// and eval-obfuscation bypass THIS guard (stated, not silent). Since issue
+// #131 the trigger layer raises on the cheap shapes this guard misses — a
+// destructive/network verb inside $(…)/backticks/eval and `sudo` anywhere
+// become approval asks instead of slipping through silently — but the
+// detection is still literal-pattern: python/node/npm exfiltration, quoted
+// or backslash-obfuscated verbs, and whitespace tricks around redirect
+// targets stay unenforceable, documented as such in host/approvals.ts.
 import { isAbsolute, join, resolve } from 'node:path';
 import type { NetworkLevel, ShellLevel } from '../../../agents/src/policy.js';
 import type { Hooks, JsonValue } from '../pi-boundary.js';

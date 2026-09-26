@@ -16,6 +16,7 @@
 // provenance — never an emitted record).
 
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
@@ -81,47 +82,42 @@ function isDatasetType(value: string): value is ExportDatasetType {
   return (DATASET_TYPES as readonly string[]).includes(value);
 }
 
+// Issue #127: the shared parser's spec for this command's flags.
+const EXPORT_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--trajectory', takes: 'value' },
+  { name: '--type', takes: 'value' },
+  { name: '--against', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
+
 function parseArgs(args: string[]): ExportOptions | null {
-  let trajectory: string | undefined;
-  let type: ExportDatasetType | undefined;
-  let against: string | undefined;
-  let json = false;
-  const takeValue = (index: number): string | null => {
-    const value = args[index + 1];
-    if (value === undefined || value.startsWith('--')) return null;
-    return value;
-  };
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    if (arg === '--trajectory') {
-      const value = takeValue(i);
-      if (value === null) return null;
-      trajectory = value;
-      i += 1;
-    } else if (arg === '--type') {
-      const value = takeValue(i);
-      if (value === null || !isDatasetType(value)) return null;
-      type = value;
-      i += 1;
-    } else if (arg === '--against') {
-      const value = takeValue(i);
-      if (value === null) return null;
-      against = value;
-      i += 1;
-    } else if (arg === '--json') {
-      json = true;
-    } else {
-      return null;
-    }
+  // Issue #127: the shared parser replaces the hand-rolled loop. Every
+  // syntax problem keeps the pre-migration posture — null, which the
+  // caller turns into the usage line and exit 2.
+  const flags = parseFlagArgs(args, EXPORT_FLAG_SPEC);
+  if (
+    flags.missing.length > 0 ||
+    flags.unknown.length > 0 ||
+    flags.positional.length > 0
+  ) {
+    return null;
   }
+  const trajectory = flags.values['--trajectory'] as string | undefined;
   if (trajectory === undefined) return null;
+  const typeRaw = flags.values['--type'] as string | undefined;
+  let type: ExportDatasetType | undefined;
+  if (typeRaw !== undefined) {
+    if (!isDatasetType(typeRaw)) return null;
+    type = typeRaw;
+  }
+  const against = flags.values['--against'] as string | undefined;
   if (type !== undefined && NEEDS_AGAINST.has(type) && against === undefined) {
     return null;
   }
   if (type !== undefined && !NEEDS_AGAINST.has(type) && against !== undefined) {
     return null;
   }
-  return { trajectory, type, against, json };
+  return { trajectory, type, against, json: flags.values['--json'] === true };
 }
 
 function loadExport(

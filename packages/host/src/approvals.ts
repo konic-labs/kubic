@@ -138,10 +138,11 @@ export class MemoryApprovalStore implements ApprovalStore {
 // heuristic, not a sandbox (issue #131): redirect/tee/cp-mv-install
 // outside-writes, `sudo` privilege escalation, and destructive/network
 // verbs behind command indirection. Indirection coverage, exactly:
-// `$(…)` spans (balanced-paren scan, nested substitutions included; the
+// `$(…)` spans (a literal `$(…)`/`)` pairing scan — a bare `(` is ordinary
+// text, so closers of other constructs can shift the pairing; the
 // scan tracks at most MAX_UNWRAP_DEPTH real openers and its unmatched
 // markers still consume closers, so the effective nesting threshold is
-// ~2x the cap), backtick spans, and `eval` segments are unwrapped to
+// 2x the cap — 31 levels raise, 32 do not), backtick spans, and `eval` segments are unwrapped to
 // a fixpoint, so `eval $(rm -rf /)` and `echo $(echo $(rm -rf /))` raise
 // too, not only the single-level `$(rm -rf /)`. What still bypasses them —
 // stated, not silent: interpreter-based verbs handed over as data
@@ -209,11 +210,11 @@ const SUDO = /\bsudo\b/;
 // instead of staying silent. The matcher layer documents indirection as
 // unenforceable for its guards — detection is cheaper than enforcement
 // and the ask is the safety net. `$(…)` is collected with a bounded
-// balanced-paren scan (nested substitutions included), and every wrapper
+// literal `$(…)`/`)` pairing scan (nested substitutions included), and every wrapper
 // form unwraps to a fixpoint: `eval $(rm -rf /)`, `echo $(echo $(rm -rf
 // /))`, and backtick-wrapped `$(rm -rf /)` all raise, not only the
 // single-level `$(rm -rf /)` the first cut handled. Stated bound: nesting
-// deeper than ~2x MAX_UNWRAP_DEPTH stays unraised — the unmatched-opener
+// at 2x MAX_UNWRAP_DEPTH stays unraised — the unmatched-opener
 // markers the scan pushes past the cap still consume closers, which
 // doubles the effective threshold (31 nesting levels raise, 32 stay
 // silent; pinned in the detector tests). A depth cap, never a fabricated
@@ -259,7 +260,7 @@ function substitutionSpans(command: string): SubstitutionSpan[] {
   return spans;
 }
 
-// Every wrapper cue in the raw command: balanced `$(…)` spans (nested ones
+// Every wrapper cue in the raw command: literal `$(…)` spans (nested ones
 // included), `eval` segments, and backtick spans.
 function indirectCues(command: string, spans: SubstitutionSpan[]): string[] {
   return [

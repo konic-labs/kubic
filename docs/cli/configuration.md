@@ -151,7 +151,9 @@ heuristics:
   arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
   only the final named target of a multi-file `tee` is checked
   (`tee /etc/x a.txt` writes `/etc/x` and is a documented silent miss —
-  apart from that stated case, target-heuristic errors are over-triggers).
+  apart from stated cases the heuristic errs toward over-triggering, not
+  uniformly so: a destination that is not the segment's last token can
+  still be missed, e.g. `echo $(cp a /etc/b )`).
   A target lifted out of `$(…)` has that span's closing `)` trimmed
   (`$(cp a /etc/b)` → `/etc/b`) — scoped to lifted tokens: a plain target
   is never trimmed, so `tee '/work)'` names the literal sibling path
@@ -165,9 +167,9 @@ heuristics:
   backticks, or `eval` raises the underlying capability, and unwrapping
   runs to a fixpoint: single-level (`$(rm -rf /)`), eval-of-substitution
   (`eval $(rm -rf /)`), and nested (`echo $(echo $(rm -rf /))`) forms all
-  raise. `$(…)` is collected with a bounded balanced-paren scan (depth cap
-  16; the cap's unmatched-opener markers still consume closers, so the
-  effective nesting threshold is ~2× the cap — 31 nesting levels still
+  raise. `$(…)` is collected with a bounded literal `$(…)`/`)` pairing scan
+  (depth cap 16; the cap's unmatched-opener markers still consume closers,
+  so the effective nesting threshold is 2× the cap — 31 nesting levels
   raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
   never a fabricated unwrap.
 

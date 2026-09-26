@@ -84,11 +84,13 @@ Journal durability (issue #117): index appends go through the bridge's
 before `append` returns — one fsync per tool write is the price of
 "reversible", and it is the default (`JournalRetention.durable`; `false`
 trades it for a crash window of one truncated last line, and a bridge
-without `appendDurably` always falls back to a plain append). Blob
-writes and undo restores are tmp+rename in the target's own directory,
-so a partial file is never visible under its real name; directory-entry
-fsync is deliberately out of scope — rename atomicity is the guarantee,
-stated in
+without `appendDurably` always falls back to a plain append). The fsync
+covers the appended index line only — blob payloads and the retention
+compaction rewrite are renamed without one, so a crash right after a
+compaction can lose more than the last line. Blob writes and undo
+restores are tmp+rename in the target's own directory, so a partial file
+is never visible under its real name; directory-entry fsync is
+deliberately out of scope — rename atomicity is the guarantee, stated in
 [the journal and safety page](../architecture/journal-and-safety.md).
 
 Undo records (issue #117): every successful restore appends its inverse
@@ -97,7 +99,15 @@ entry — pre-undo content as `before`, restored content as `after`,
 describes the world after an undo, and a second `undo --step` is the
 redo. It is an attributed entry (no `unattributed` flag, no
 `reconciled` marker); `applyUndo` appends it in the non-dry-run path
-only, and only for a step that actually restored.
+only, and only for a step that actually restored. Plain plans
+(`planUndo` without `step`) filter these records out — they are the
+walk's own bookkeeping — so repeated plain undo is idempotent
+(`already undone`, nothing appended); `--step` targets them. A restore
+also preserves the target's existing mode across its tmp+rename (a
+0600 secret stays 0600, a 755 script keeps its exec bit), creates the
+tmp 0600 so crash residue is never world-readable, and sweeps stale
+`<target>.kubic-restore-*.tmp` siblings best-effort after a successful
+restore.
 
 ### Effects / replay (issue #97 — deleted, not wired)
 

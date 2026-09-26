@@ -5,6 +5,7 @@
 
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   fsyncSync,
   lstatSync,
@@ -36,6 +37,14 @@ export interface BridgeFileInfo {
    * regular file", which is what a synthetic entry intends.
    */
   isFile?: boolean;
+  /**
+   * Permission bits of the path itself (lstat: never the link target's),
+   * setuid/setgid/sticky included (issue #117 review). Optional so existing
+   * fake bridges stay valid; `undefined` means "mode unknown", and the
+   * restore falls back to its restrictive creation mode rather than
+   * guessing.
+   */
+  mode?: number;
   size: number;
   mtimeMs: number;
 }
@@ -60,7 +69,11 @@ export interface FileBridge {
   readFileRange?(path: string, start: number, end: number): Uint8Array;
   readTextLines(path: string, maxLines?: number): string[];
   openTextLineReader(path: string): BridgeLineReader;
-  writeFile(path: string, content: string | Uint8Array): void;
+  writeFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: { mode?: number },
+  ): void;
   appendFile(path: string, content: string | Uint8Array): void;
   /**
    * Append with fsync (issue #117): the change journal's crash-safety seam.
@@ -72,6 +85,14 @@ export interface FileBridge {
    */
   appendDurably?(path: string, content: string | Uint8Array): void;
   renameFile(source: string, destination: string): void;
+  /**
+   * Set a path's permission bits (issue #117 review): the seam that lets a
+   * tmp+rename restore keep the target's own mode (a 0600 secret stays 0600,
+   * a 755 script keeps its exec bit) instead of inheriting the tmp's.
+   * Optional so existing test doubles stay valid; a bridge without it leaves
+   * the restore's restrictive creation mode in place — never a wider one.
+   */
+  chmod?(path: string, mode: number): void;
   fileInfo(path: string): BridgeFileInfo;
   listDir(path: string): BridgeFileInfo[];
   exists(path: string): boolean;
@@ -90,6 +111,10 @@ function infoOf(abs: string): BridgeFileInfo {
     isDirectory: stat.isDirectory(),
     isSymbolicLink: stat.isSymbolicLink(),
     isFile: stat.isFile(),
+    // Permission bits only (issue #117 review): the file-type bits are not
+    // a mode, and a symlink's own bits (0777 on every platform) must stay
+    // distinguishable from a real file's.
+    mode: stat.mode & 0o7777,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
   };
@@ -145,10 +170,23 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         close: (): void => undefined,
       };
     },
-    writeFile: (path: string, content: string | Uint8Array): void => {
+    writeFile: (
+      path: string,
+      content: string | Uint8Array,
+      options?: { mode?: number },
+    ): void => {
       const abs = absolutePath(path);
       ensureParent(abs);
-      writeFileSync(abs, content);
+      // Creation mode (issue #117 review): `writeFileSync`'s mode only
+      // applies when the file is created, which is exactly what the restore
+      // tmp needs (0600 so crash residue is never world-readable). Omitted
+      // entirely when no mode is asked for, so every pre-existing caller
+      // keeps the platform default.
+      if (options?.mode === undefined) {
+        writeFileSync(abs, content);
+        return;
+      }
+      writeFileSync(abs, content, { mode: options.mode });
     },
     appendFile: (path: string, content: string | Uint8Array): void => {
       const abs = absolutePath(path);
@@ -179,6 +217,9 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     },
     renameFile: (source: string, destination: string): void => {
       renameSync(absolutePath(source), absolutePath(destination));
+    },
+    chmod: (path: string, mode: number): void => {
+      chmodSync(absolutePath(path), mode);
     },
     fileInfo: (path: string): BridgeFileInfo => infoOf(absolutePath(path)),
     listDir: (path: string): BridgeFileInfo[] =>

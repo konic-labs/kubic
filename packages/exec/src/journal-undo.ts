@@ -3,6 +3,13 @@
 // unwind in order (v1→v2→v3 restores v2, then v1). Steps without
 // before-content are skipped and reported — never guessed.
 //
+// Issue #117: a successful restore appends its inverse entry under
+// `agentId: kubic-undo`. Plain plans exclude those records — they are the
+// walk's own bookkeeping, so repeated plain undo stays idempotent (the disk
+// sits at a journaled before-state → already-undone, nothing appended).
+// `--step` targets the newest entry including a bookkeeping record: that is
+// the redo.
+//
 // Issue #108: a step may only restore when the file's CURRENT state is one
 // the journal accounts for. Three verdicts, evaluated walk-aware (the walk
 // itself changes the file, so each step is judged against the state the
@@ -34,6 +41,11 @@ export interface UndoScope {
   path?: string;
   step?: boolean;
 }
+
+// The agent id the journal's own undo bookkeeping carries (issue #117):
+// every successful restore appends its inverse entry under this id. Plain
+// undo plans exclude it — see planUndo.
+const UNDO_AGENT_ID = 'kubic-undo';
 
 export interface UndoPlan {
   steps: JournalEntry[];
@@ -100,7 +112,25 @@ export function planUndo(
     const path = scope.path;
     steps = steps.filter((e) => e.path === path);
   }
-  if (scope.step === true) steps = steps.slice(0, 1);
+  if (scope.step === true) {
+    // One step: the newest entry for the scope, undo records included. That
+    // is the redo path — undoing the undo record re-applies the pre-undo
+    // content — so --step must never skip bookkeeping.
+    steps = steps.slice(0, 1);
+  } else {
+    // Plain undo restores real agent work only (issue #117 review fix): the
+    // journal's own `kubic-undo` records are bookkeeping, not work. Without
+    // this filter, a second plain undo walks the first undo's records too,
+    // restores every pre-undo state again and appends one new record per
+    // step — the walk doubles on every run (an exponential append/fsync
+    // amplifier bounded only by retention pruning). With it, the second
+    // plain undo finds the disk sitting at a journaled before-state, reports
+    // `already undone` and appends nothing — the pre-#117 idempotent
+    // behavior. Mixed logs still unwind in reverse-chronological order:
+    // bookkeeping records are skipped over, and an agent step an earlier
+    // undo already unwound reads as already-undone.
+    steps = steps.filter((e) => e.agentId !== UNDO_AGENT_ID);
+  }
   let reversible = 0;
   const nonReversible: string[] = [];
   const planBeforeHashes = new Map<string, Set<string>>();
@@ -206,7 +236,8 @@ export function applyUndo(
       skipped.push(step.path);
       skippedDetails.push({
         path: step.path,
-        reason: 'no before-content: unattributed entry is not reversible',
+        reason:
+          'no before-content: no retrievable pre-image for this entry — nothing to restore',
       });
       continue;
     }
@@ -263,8 +294,8 @@ export function applyUndo(
           bytesDelta:
             Buffer.byteLength(restoredContent, 'utf8') -
             (preUndo === null ? 0 : Buffer.byteLength(preUndo, 'utf8')),
-          sessionId: 'kubic-undo',
-          agentId: 'kubic-undo',
+          sessionId: UNDO_AGENT_ID,
+          agentId: UNDO_AGENT_ID,
           toolCallId: null,
           timestamp: now(),
         });

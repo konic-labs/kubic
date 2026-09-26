@@ -541,4 +541,24 @@ describe('journal CLI undo record + redo (issue #117)', () => {
     expect(new FileJournalStore(journalDir).entries()).toHaveLength(1);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
   });
+
+  it('plain undo twice is idempotent: the second run reports already-undone and appends nothing', async () => {
+    const { journalDir, root } = setup();
+    expect(
+      await runJournalCommand(['undo'], { journalDir, root, out: () => {} }),
+    ).toBe(0);
+    const second: string[] = [];
+    // Already-undone skips exit 2 (main's semantics) — and write nothing.
+    expect(
+      await runJournalCommand(['undo'], {
+        journalDir,
+        root,
+        out: (l) => second.push(l),
+      }),
+    ).toBe(2);
+    expect(second.join('\n')).toContain('already undone (skipped): a.txt');
+    expect(second.join('\n')).not.toContain('restored a.txt');
+    expect(new FileJournalStore(journalDir).entries()).toHaveLength(2);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+  });
 });

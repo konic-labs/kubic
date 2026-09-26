@@ -6,7 +6,15 @@
 // adds an entry without checking the bounds first.
 
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -985,6 +993,35 @@ export function probeFileState(root: string, path: string): FileCurrentState {
   }
 }
 
+// Best-effort sweep of stale restore residue (issue #117 review): a crash
+// mid-restore can leave a `<target>.kubic-restore-<pid>.tmp` sibling behind
+// when the best-effort cleanup itself never ran. A successful restore of
+// that target removes any such siblings — they are this tool's own
+// predictable residue, never user files. Errors are ignored (a leftover is
+// litter, not corruption) and only the exact `<target>.kubic-restore-*.tmp`
+// name shape matches, so nothing else in the directory is ever touched.
+function sweepStaleRestoreTmps(
+  bridge: ReturnType<typeof createNodeFileBridge>,
+  target: string,
+): void {
+  const dir = dirname(target);
+  const prefix = `${basename(target)}.kubic-restore-`;
+  try {
+    for (const info of bridge.listDir(dir)) {
+      if (info.isDirectory || info.isSymbolicLink) continue;
+      if (!info.name.startsWith(prefix) || !info.name.endsWith('.tmp'))
+        continue;
+      try {
+        bridge.remove(join(dir, info.name), false, true);
+      } catch {
+        // Best-effort: residue that cannot be removed is litter.
+      }
+    }
+  } catch {
+    // Unreadable directory: nothing to sweep.
+  }
+}
+
 export function restoreEntry(
   store: FileJournalStore,
   entry: JournalEntry,
@@ -995,7 +1032,8 @@ export function restoreEntry(
   if (before === null) {
     return {
       restored: false,
-      reason: 'no before-content: unattributed entry is not reversible',
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
     };
   }
   const target = resolve(root, entry.path);
@@ -1046,10 +1084,40 @@ export function restoreEntry(
   // directory (same filesystem), so the rename is atomic; a failed
   // write/rename cleans the tmp up best-effort and reports the failure
   // without touching the target.
+  //
+  // Review fix: the rename replaces the target's inode, so the tmp must
+  // carry the target's own mode — a plain writeFile would hand a 0600 secret
+  // the umask default (0644) and strip a script's exec bit. The tmp is
+  // created 0600 first, so crash residue is never world-readable, then the
+  // existing target's mode is copied onto it before the rename; a missing
+  // target (the recreate path) keeps the restrictive default.
   const bridge = createNodeFileBridge('/');
   const tmp = `${target}.kubic-restore-${process.pid}.tmp`;
+  let targetMode: number | undefined;
   try {
-    bridge.writeFile(tmp, before);
+    const info = bridge.fileInfo(target);
+    // A symlink's lstat mode is 0777 on every platform, and the rename would
+    // replace the link itself: copying those bits onto the replacement would
+    // hand the workspace a world-writable file. The mode is preserved for a
+    // regular file only (an unclassified double counts as regular).
+    if (info.isSymbolicLink === false && info.isFile !== false) {
+      targetMode = info.mode;
+    }
+  } catch {
+    // Target absent (recreate path): no mode to preserve.
+  }
+  try {
+    // `writeFileSync` applies the creation mode only to a fresh file, and a
+    // same-pid stale tmp (pid reuse) could otherwise keep its old mode:
+    // clearing it first makes the 0600 creation unconditional. Best-effort —
+    // the write below reports real failures.
+    if (bridge.exists(tmp)) bridge.remove(tmp, false, true);
+  } catch {
+    // Best-effort; the restore write is what must succeed.
+  }
+  try {
+    bridge.writeFile(tmp, before, { mode: 0o600 });
+    if (targetMode !== undefined) bridge.chmod?.(tmp, targetMode);
     bridge.renameFile(tmp, target);
   } catch (error) {
     try {
@@ -1062,6 +1130,7 @@ export function restoreEntry(
       reason: `restore write failed: ${(error as Error).message}`,
     };
   }
+  sweepStaleRestoreTmps(bridge, target);
   return { restored: true };
 }
 

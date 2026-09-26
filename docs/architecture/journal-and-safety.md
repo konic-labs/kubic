@@ -15,20 +15,28 @@ what dangerous operations may proceed. Both hold identically in
 The journal records every file edit the agent makes, whether or not
 the directory is a git repository — `kubic diff` and `kubic undo`
 work anywhere. Entries are append-only and persist across sessions,
-so undo works after the terminal closes. The record is written
-durably: each index append is fsynced before it returns (one fsync
-per tool write — the price of "reversible"; the store's `durable`
-knob, default `true`, trades that for a crash window of one
-truncated last line), and blobs and undo restores are written
-tmp+rename in the target's own directory, so a crash never leaves a
-half-written file visible under its real name. Directory-entry
-durability of the rename itself is out of scope — rename atomicity
-is the guarantee we rely on. Undo is part of the record, not an exit
-from it: every successful `kubic undo` appends its own inverse entry
-(attributed `kubic-undo`, the pre-undo content as its before, the
+so undo works after the terminal closes. Durability is claimed exactly
+where it is implemented: the appended index line is fsynced before
+`append` returns (one fsync per tool write — the price of "reversible";
+the store's `durable` knob, default `true`, trades that for a crash
+window of one truncated last line). Everything else is atomicity, not
+fsync: blobs and undo restores are written tmp+rename in the target's
+own directory, so a crash never leaves a half-written file visible
+under its real name, but their bytes are not fsynced before the rename,
+and the retention compaction rewrite is a tmp+rename with no fsync at
+all — a crash right after it can lose more than one truncated last
+line. Directory-entry durability of any rename is out of scope — rename
+atomicity is the guarantee we rely on. Undo is part of the record, not
+an exit from it: every successful `kubic undo` appends its own inverse
+entry (attributed `kubic-undo`, the pre-undo content as its before, the
 restored content as its after), so `diff` and `log` describe the world
-after the undo and undoing the undo record is the redo. Review the
-record, revert a step or a path, check status and history; entries the
+after the undo. `kubic undo --step` is the redo of an edit-shaped undo;
+plain `kubic undo` ignores the `kubic-undo` records entirely, so
+repeating it restores real work once, then reports `already undone` and
+writes nothing. A delete-shaped undo — the file was absent before it —
+records no before-content, so it is reported non-reversible and cannot
+itself be undone. Review the record, revert a step or a path, check
+status and history; entries the
 journal cannot reconstruct (recorded hash, no retrievable pre-image)
 are reported as non-reversible rather than guessed at. Retention
 bounds keep growth finite: a size cap is enforced on every append,

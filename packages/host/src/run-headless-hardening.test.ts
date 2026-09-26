@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
+import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
 import { createSession } from '../../worker/src/lane/session-store.js';
 import {
   bootSoloLane,
@@ -19,6 +20,7 @@ import {
 import {
   type AgentLane,
   createModels,
+  type DeferredHandle,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
@@ -26,6 +28,25 @@ import {
 import { mapTerminusToExitCode } from './run-cli.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
+
+// Issue #109: the guard-drain order tests need to see the sweep fire, so
+// beginReconciliation is wrapped (sweep still logs; the real module is
+// untouched for every other suite — file-local mock).
+const guardEvents = vi.hoisted(() => ({ events: [] as string[] }));
+vi.mock('../../exec/src/journal-reconcile.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../exec/src/journal-reconcile.js')
+    >();
+  return {
+    ...actual,
+    beginReconciliation: vi.fn(() => ({
+      sweep: () => {
+        guardEvents.events.push('sweep');
+      },
+    })),
+  };
+});
 
 vi.mock('../../worker/src/lane/session-store.js', async (importOriginal) => {
   const actual =
@@ -302,5 +323,128 @@ describe('headless composition root (issue #68; mutation hardening)', () => {
     expect(result.terminus).toBe('failed');
     expect(result.sessionId).toBe('unassigned');
     expect(result.summary).toBe('string store boom');
+  });
+});
+
+// Issue #109: guard exhaustion must not abandon in-flight tools. On every
+// exit path where a drive is (or was) in flight, the headless runner first
+// requests a durable abort, then drains the kill registry — and only then
+// sweeps: the reconciliation must observe the tree AFTER the orphaned work
+// is dead, or late writes escape both the journal and the sweep.
+describe('guard drain on exit paths (issue #109)', () => {
+  function drainLane(
+    events: string[],
+    abortThrows = false,
+  ): {
+    lane: AgentLane;
+    kills: OperationKillRegistry;
+  } {
+    const kills = new OperationKillRegistry();
+    kills.track('op-1', () => {
+      events.push('kill');
+    });
+    const lane = {
+      ...fakeLane(),
+      requestAbort: async (operationId: string) => {
+        events.push(`abort:${operationId}`);
+        if (abortThrows) throw new Error('lane refuses');
+        return {
+          ok: true as const,
+          value: { operationId, newlyRequested: true },
+        };
+      },
+    };
+    return { lane: lane as unknown as AgentLane, kills };
+  }
+
+  beforeEach(() => {
+    guardEvents.events.length = 0;
+  });
+
+  it('aborts and drains before the sweep on wall-clock exhaustion', async () => {
+    const events: string[] = [];
+    const { lane, kills } = drainLane(events);
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane,
+      kills,
+    } as unknown as SoloLane);
+    vi.mocked(driveToSettled).mockImplementation(
+      () => new Promise<never>(() => {}),
+    );
+    const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
+    expect(result.terminus).toBe('budget_exhausted');
+    expect(events).toEqual(['abort:op-1', 'kill']);
+    expect(guardEvents.events).toEqual(['sweep']);
+    // Order across the two logs: the drain ran before the sweep started.
+    expect(events.length).toBe(2);
+  });
+
+  it('still drains the kill registry when the lane refuses the abort', async () => {
+    const events: string[] = [];
+    const { lane, kills } = drainLane(events, true);
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane,
+      kills,
+    } as unknown as SoloLane);
+    vi.mocked(driveToSettled).mockImplementation(
+      () => new Promise<never>(() => {}),
+    );
+    const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
+    expect(result.terminus).toBe('budget_exhausted');
+    // abort attempt (threw) → kill drained anyway → then sweep.
+    expect(events).toEqual(['abort:op-1', 'kill']);
+    expect(guardEvents.events).toEqual(['sweep']);
+  });
+
+  it('drains on the outer catch-all when the drive throws', async () => {
+    const events: string[] = [];
+    const { lane, kills } = drainLane(events);
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane,
+      kills,
+    } as unknown as SoloLane);
+    vi.mocked(driveToSettled).mockRejectedValue(new Error('drive blew up'));
+    const result = await runHeadlessPrompt('boom', {}, deps());
+    expect(result.terminus).toBe('failed');
+    expect(events).toEqual(['abort:op-1', 'kill']);
+    expect(guardEvents.events).toEqual(['sweep']);
+  });
+
+  it('drains on the waiting-deferred approval path', async () => {
+    const events: string[] = [];
+    const { lane, kills } = drainLane(events);
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane,
+      kills,
+    } as unknown as SoloLane);
+    vi.mocked(driveToSettled).mockResolvedValue({
+      kind: 'waiting-deferred' as const,
+      operationId: 'op-1',
+      deferred: {} as unknown as DeferredHandle,
+    });
+    const result = await runHeadlessPrompt('wait', {}, deps());
+    expect(result.terminus).toBe('approval_timed_out');
+    expect(events).toEqual(['abort:op-1', 'kill']);
+    expect(guardEvents.events).toEqual(['sweep']);
+  });
+
+  it('does not touch a lane when admission was refused', async () => {
+    const events: string[] = [];
+    const { lane, kills } = drainLane(events);
+    vi.mocked(bootSoloLane).mockResolvedValue({
+      lane: {
+        ...lane,
+        accept: async () => ({
+          ok: false as const,
+          error: { message: 'no' },
+        }),
+      },
+      kills,
+    } as unknown as SoloLane);
+    const result = await runHeadlessPrompt('refused', {}, deps());
+    expect(result.terminus).toBe('failed');
+    // No operation was admitted: no abort, no kill — but the sweep ran.
+    expect(events).toEqual([]);
+    expect(guardEvents.events).toEqual(['sweep']);
   });
 });

@@ -40,7 +40,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
-| `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. |
+| `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel). Off by default; stdout stays consumable. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. |

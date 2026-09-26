@@ -74,6 +74,7 @@ import {
   driveToSettled,
   type LaneDriver,
   type SettledDrive,
+  type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
 import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
@@ -466,6 +467,34 @@ export async function runHeadlessPrompt(
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #109: the booted lane and the admitted operation are hoisted the
+  // same way, so every exit path can drain in-flight work — a guard
+  // firing mid-drive must not abandon the tool processes it interrupted.
+  // solo stays undefined until boot succeeds; activeOperationId until an
+  // admission succeeded (a refused admission has nothing to abort).
+  let solo: SoloLane | undefined;
+  let activeOperationId: string | undefined;
+  // Abort request first (durable: the harness records operation_abort
+  // in-session, §20.4), then the kill drain (detached process groups, so
+  // grandchildren die with them), each failure swallowed to the debug
+  // channel — the backstop is the drain, and a refusal must not skip it.
+  const drainInFlight = async (): Promise<void> => {
+    if (solo === undefined || activeOperationId === undefined) return;
+    try {
+      await solo.lane.requestAbort(activeOperationId, context);
+    } catch (error) {
+      deps.debug?.(
+        `guard: requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    for (const kill of solo.kills.drain(activeOperationId)) {
+      try {
+        kill();
+      } catch {
+        // Already exited — the kill registry drains every entry regardless.
+      }
+    }
+  };
   // The span artifact is the durable half of criterion 1: written on every
   // exit path (success or mapped failure) next to the session journal.
   const flushSpans = (): void => {
@@ -673,7 +702,7 @@ export async function runHeadlessPrompt(
       );
       role = { resolved: selected.resolved, prompt: promptText };
     }
-    const { harness, lane } = await bootSoloLane({
+    solo = await bootSoloLane({
       session,
       models,
       model,
@@ -702,6 +731,7 @@ export async function runHeadlessPrompt(
         ...(contributions.length === 0 ? {} : { contributions }),
       },
     });
+    const { harness, lane } = solo;
     // Tool spans come from the harness's own hook registry, so they cover
     // every tool the lane actually executes (issue #98). Detached in the
     // finally below. A lane booted without a harness (unit stubs, future
@@ -717,6 +747,10 @@ export async function runHeadlessPrompt(
         return finished(id, 'failed', message, message);
       }
       spans.endLane(acceptSpan);
+      // Issue #109: record the admitted operation for the finally drain — a
+      // guard firing mid-drive (or any later exit path) aborts and kills
+      // exactly this operation's in-flight work before the sweep.
+      activeOperationId = admission.value.operationId;
       let driven: SettledDrive;
       const driveSpan = spans.startLane('drive');
       try {
@@ -784,6 +818,24 @@ export async function runHeadlessPrompt(
   } catch (error) {
     return storeFailure(id, error);
   } finally {
+    // Issue #109: drain in-flight work FIRST — the sweep must observe the
+    // tree after orphaned tool processes are dead, or their late writes
+    // land outside both the journal and the reconciliation. Runs on every
+    // exit path (guard exhaustion, deferred wait, malformed outcome, an
+    // unexpected throw, plain completion); no-ops when nothing was
+    // admitted. Failures only reach the debug channel: the mapped result
+    // and the sweep both stand.
+    try {
+      await drainInFlight();
+    } catch (error) {
+      try {
+        deps.debug?.(
+          `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } catch {
+        // A throwing debug sink must not mask the mapped result either.
+      }
+    }
     // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close

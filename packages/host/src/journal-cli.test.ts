@@ -459,3 +459,86 @@ describe('journal CLI default store fallback (issue #125)', () => {
     ]);
   });
 });
+
+// Issue #117: a successful undo is journaled as a `kubic-undo` entry, so
+// `diff`/`log` describe the world after the undo instead of the pre-undo
+// world, and a second `undo --step` is the redo (undo the undo). A dry run
+// appends nothing.
+describe('journal CLI undo record + redo (issue #117)', () => {
+  it('diff shows the undo as the latest change, attributed to kubic-undo', async () => {
+    const { journalDir, root } = setup();
+    expect(
+      await runJournalCommand(['undo'], { journalDir, root, out: () => {} }),
+    ).toBe(0);
+    const lines: string[] = [];
+    expect(
+      await runJournalCommand(['diff'], {
+        journalDir,
+        root,
+        out: (l) => lines.push(l),
+      }),
+    ).toBe(0);
+    // The undo is the newest entry for the path, so its attribution is the
+    // one the diff reports.
+    expect(lines.join('\n')).toContain('agent=kubic-undo toolCall=none');
+  });
+
+  it('log prints the undo record with the kubic-undo attribution and no reconciled marker', async () => {
+    const { journalDir, root } = setup();
+    expect(
+      await runJournalCommand(['undo'], { journalDir, root, out: () => {} }),
+    ).toBe(0);
+    const lines: string[] = [];
+    expect(
+      await runJournalCommand(['log'], {
+        journalDir,
+        root,
+        out: (l) => lines.push(l),
+      }),
+    ).toBe(0);
+    const undoLine = lines.find((l) => l.includes('kubic-undo'));
+    expect(undoLine).toBeDefined();
+    expect(undoLine ?? '').toContain('none write a.txt');
+    // The undo is attributed — not an unattributed reconciliation find.
+    expect(undoLine ?? '').not.toContain('reconciled');
+  });
+
+  it('redo: undo --step immediately after an undo restores the pre-undo content', async () => {
+    const { journalDir, root } = setup();
+    expect(
+      await runJournalCommand(['undo'], { journalDir, root, out: () => {} }),
+    ).toBe(0);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo', '--step'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('restored a.txt');
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('undo --dry-run appends no record', async () => {
+    const { journalDir, root } = setup();
+    expect(
+      await runJournalCommand(['undo', '--dry-run'], {
+        journalDir,
+        root,
+        out: () => {},
+      }),
+    ).toBe(0);
+    const lines: string[] = [];
+    expect(
+      await runJournalCommand(['log'], {
+        journalDir,
+        root,
+        out: (l) => lines.push(l),
+      }),
+    ).toBe(0);
+    expect(lines.join('\n')).not.toContain('kubic-undo');
+    expect(new FileJournalStore(journalDir).entries()).toHaveLength(1);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
+  });
+});

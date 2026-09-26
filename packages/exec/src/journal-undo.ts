@@ -20,6 +20,8 @@
 //                   Restoring would destroy it; refuse with a reason and
 //                   let --force override.
 
+import { resolve } from 'node:path';
+import { createNodeFileBridge } from './file-bridge.js';
 import {
   type FileCurrentState,
   type FileJournalStore,
@@ -164,16 +166,28 @@ export interface UndoResult {
   skippedDetails: SkipDetail[];
 }
 
+export interface UndoOptions {
+  dryRun?: boolean;
+  force?: boolean;
+  /**
+   * Clock for the undo record's timestamp (issue #117). Production passes
+   * nothing (`Date.now()`); tests pin it. Only the appended record reads it —
+   * the restore itself is unaffected.
+   */
+  now?: () => number;
+}
+
 export function applyUndo(
   store: FileJournalStore,
   plan: UndoPlan,
   root: string,
-  options: { dryRun?: boolean; force?: boolean },
+  options: UndoOptions,
 ): UndoResult {
   const restored: string[] = [];
   const skipped: string[] = [];
   const skippedDetails: SkipDetail[] = [];
   const force = options.force === true;
+  const now = options.now ?? ((): number => Date.now());
   const planBeforeHashes = new Map<string, Set<string>>();
   for (const step of plan.steps) {
     if (store.readBefore(step) === null) continue;
@@ -218,9 +232,43 @@ export function applyUndo(
     }
     // The verdict already verified the walk-aware state; restoreEntry keeps
     // the containment/symlink guards and its own write-error reporting.
+    // Pre-undo state for the record: read before the restore overwrites it.
+    // A missing file (null) is recorded as such — no content is invented.
+    let preUndo: string | null = null;
+    try {
+      preUndo = createNodeFileBridge(root).readTextFile(
+        resolve(root, step.path),
+      );
+    } catch {
+      preUndo = null;
+    }
+    const restoredContent = store.readBefore(step);
     const result = restoreEntry(store, step, root, { allowStale: true });
     if (result.restored) {
       restored.push(step.path);
+      // The undo is itself a change (issue #117): journal the inverse so
+      // `kubic diff`/`log` describe the world after the undo — and so a
+      // second `undo --step` re-applies the pre-undo content (the redo).
+      // `before` is the pre-undo content, null when the file did not exist
+      // pre-undo; `after` is the content just restored. Attributed to
+      // `kubic-undo`: it is not an unattributed reconciliation find, so no
+      // `reconciled` marker and no hash-only pre-image.
+      if (restoredContent !== null) {
+        store.append({
+          path: step.path,
+          // Restores write content — delete entries restore as writes too.
+          op: 'write',
+          before: preUndo,
+          after: restoredContent,
+          bytesDelta:
+            Buffer.byteLength(restoredContent, 'utf8') -
+            (preUndo === null ? 0 : Buffer.byteLength(preUndo, 'utf8')),
+          sessionId: 'kubic-undo',
+          agentId: 'kubic-undo',
+          toolCallId: null,
+          timestamp: now(),
+        });
+      }
     } else {
       skipped.push(step.path);
       skippedDetails.push({

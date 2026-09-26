@@ -180,7 +180,11 @@ describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
       sessionsRoot,
       models: fauxModels(['done']),
       env: new FakeExecutionEnv({}),
-      journalRetention: { maxAgeMs: 1 },
+      // The window must be wider than an append's own latency: index
+      // appends are fsynced (issue #117), so the enforcement pass inside
+      // `append` can run a millisecond or more after the caller read
+      // Date.now() — a 1ms window dropped the just-written fresh entry.
+      journalRetention: { maxAgeMs: 60_000 },
     });
     const journal = boot.journal;
     expect(journal).toBeDefined();
@@ -196,7 +200,7 @@ describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
       sessionId: 's1',
       agentId: 'root',
       toolCallId: null,
-      timestamp: 1,
+      timestamp: Date.now() - 3_600_000,
     });
     journal.append({
       path: 'fresh.txt',

@@ -23,12 +23,16 @@ truncated last line), and blobs and undo restores are written
 tmp+rename in the target's own directory, so a crash never leaves a
 half-written file visible under its real name. Directory-entry
 durability of the rename itself is out of scope — rename atomicity
-is the guarantee we rely on. Review the record, revert a
-step or a path, check status and history; entries the journal cannot
-reconstruct (recorded hash, no retrievable pre-image) are reported as
-non-reversible rather than guessed at. Retention bounds keep growth
-finite: a size cap is enforced on every append, with opt-in age
-pruning.
+is the guarantee we rely on. Undo is part of the record, not an exit
+from it: every successful `kubic undo` appends its own inverse entry
+(attributed `kubic-undo`, the pre-undo content as its before, the
+restored content as its after), so `diff` and `log` describe the world
+after the undo and undoing the undo record is the redo. Review the
+record, revert a step or a path, check status and history; entries the
+journal cannot reconstruct (recorded hash, no retrievable pre-image)
+are reported as non-reversible rather than guessed at. Retention
+bounds keep growth finite: a size cap is enforced on every append,
+with opt-in age pruning.
 
 ## Approvals (§41)
 

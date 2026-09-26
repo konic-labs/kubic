@@ -21,7 +21,7 @@ escapes, not a sandbox boundary.
 | `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
-| `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoResult`, `planUndo`, `applyUndo` |
+| `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
@@ -90,6 +90,14 @@ so a partial file is never visible under its real name; directory-entry
 fsync is deliberately out of scope — rename atomicity is the guarantee,
 stated in
 [the journal and safety page](../architecture/journal-and-safety.md).
+
+Undo records (issue #117): every successful restore appends its inverse
+entry — pre-undo content as `before`, restored content as `after`,
+`sessionId`/`agentId` `kubic-undo`, `toolCallId` null — so the journal
+describes the world after an undo, and a second `undo --step` is the
+redo. It is an attributed entry (no `unattributed` flag, no
+`reconciled` marker); `applyUndo` appends it in the non-dry-run path
+only, and only for a step that actually restored.
 
 ### Effects / replay (issue #97 — deleted, not wired)
 

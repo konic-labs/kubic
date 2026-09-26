@@ -467,7 +467,18 @@ would write), so layered edits unwind in order. The matrix:
 `--force` overrides the stale refusals per-invocation (nothing persists it;
 the next `undo` re-checks by default). `--force` does not override
 non-reversible skips — no pre-image exists to write. Already-undone skips are
-informational: there is nothing to force. |
+informational: there is nothing to force.
+
+**The undo record and redo (issue #117).** Every successful restore is
+itself journaled: the store appends the inverse entry for the step — the
+pre-undo content as `before`, the restored content as `after`, attributed
+`agent=kubic-undo toolCall=none` and never marked `reconciled` (it is an
+attributed change, not a reconciliation find). `kubic diff` and `kubic log`
+therefore describe the world *after* the undo, and `kubic undo --step`
+immediately after an undo is the **redo**: it restores the undo record's
+`before` — the content the undo replaced. Undo records are ordinary
+reversible entries, so an undone undo can be undone again. `--dry-run`
+appends nothing; a skipped step appends nothing. |
 | `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
 | `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
 

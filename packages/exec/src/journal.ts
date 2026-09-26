@@ -1038,9 +1038,25 @@ export function restoreEntry(
       };
     }
   }
+  // Issue #117: the restore writes through a tmp+rename sibling — the same
+  // care the write/edit ops have always taken. A crash mid-undo can
+  // therefore never leave a half-written file (the worst failure mode for a
+  // recovery tool): the target either keeps its old content or receives the
+  // restored content wholesale. The tmp lives beside the target in the same
+  // directory (same filesystem), so the rename is atomic; a failed
+  // write/rename cleans the tmp up best-effort and reports the failure
+  // without touching the target.
+  const bridge = createNodeFileBridge('/');
+  const tmp = `${target}.kubic-restore-${process.pid}.tmp`;
   try {
-    createNodeFileBridge('/').writeFile(target, before);
+    bridge.writeFile(tmp, before);
+    bridge.renameFile(tmp, target);
   } catch (error) {
+    try {
+      bridge.remove(tmp, false, true);
+    } catch {
+      // Best-effort tmp cleanup; the untouched target is what matters.
+    }
     return {
       restored: false,
       reason: `restore write failed: ${(error as Error).message}`,

@@ -1,0 +1,453 @@
+// Dispatch wiring suite (issue #135): the composition root's front door —
+// which command routes to which runner, the config-refusal matrix, the §78
+// exit-code remap, and the front-door special cases — over injected
+// runners. Faux everything: no real lanes, no network, and no fs beyond the
+// one fixture dir this file creates.
+//
+// The `prod wiring deps shapes` block drives the REAL production runners
+// (./prod-runners.js) over hermetic argv and fixtures on purpose: it pins
+// the documented deps shapes the root wires (clean {env,out}, cost
+// {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
+// and the eval runSuite refusal message, verbatim.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
+import { type CliConfigResult, loadCliConfig } from './config-runtime.js';
+import {
+  type CommandRunner,
+  type DispatchDeps,
+  type DispatchRunners,
+  dispatchCommand,
+  ROOT_USAGE,
+} from './dispatch.js';
+import { createProdRunners } from './prod-runners.js';
+
+type RunnerKey = keyof DispatchRunners;
+
+// The runner roster: one entry per command seam the root wires inline
+// (22 command names, 19 runners — the four journal commands share one).
+const RUNNER_KEYS: readonly RunnerKey[] = [
+  'sessions',
+  'git',
+  'journal',
+  'models',
+  'run',
+  'tui',
+  'doctor',
+  'orchestrate',
+  'clean',
+  'cost',
+  'perf',
+  'policy',
+  'config',
+  'audit',
+  'workers',
+  'eval',
+  'benchmark',
+  'replay',
+  'export',
+];
+
+// Every command in the if-chain, the argv it is dispatched with, and the
+// runner it must reach. Journal commands receive `[command, ...rest]` —
+// the argv the root passed before the extraction.
+const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
+  ['sessions', ['list'], 'sessions'],
+  ['git', ['status'], 'git'],
+  ['diff', ['--json'], 'journal'],
+  ['undo', ['--step'], 'journal'],
+  ['log', [], 'journal'],
+  ['status', [], 'journal'],
+  ['models', ['--json'], 'models'],
+  ['run', ['-p', 'hi'], 'run'],
+  ['tui', [], 'tui'],
+  ['doctor', [], 'doctor'],
+  ['orchestrate', [], 'orchestrate'],
+  ['clean', ['--dry-run'], 'clean'],
+  ['cost', ['--json'], 'cost'],
+  ['perf', [], 'perf'],
+  ['policy', ['--tool', 'shell'], 'policy'],
+  ['config', ['--json'], 'config'],
+  ['audit', [], 'audit'],
+  ['workers', ['--json'], 'workers'],
+  ['eval', ['--task', 'p'], 'eval'],
+  ['benchmark', [], 'benchmark'],
+  ['replay', ['--tier', 'recorded'], 'replay'],
+  ['export', ['trajectory.json'], 'export'],
+];
+
+const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
+
+interface RunnerCall {
+  readonly key: RunnerKey;
+  readonly rest: readonly string[];
+  readonly config: CliConfigResult;
+}
+
+interface Harness {
+  readonly deps: DispatchDeps;
+  readonly calls: RunnerCall[];
+  readonly lines: string[];
+  readonly state: { excludeCalls: number };
+}
+
+// A dispatch over fully faux runners: every runner records its call and
+// answers 0 unless overridden. `out`/`ensureRuntimeExclude` are captured,
+// `version` is a constant, `loadConfig` answers the given result.
+function harness(
+  options: {
+    runners?: Partial<Record<RunnerKey, CommandRunner>>;
+    config?: CliConfigResult;
+    version?: string;
+  } = {},
+): Harness {
+  const calls: RunnerCall[] = [];
+  const lines: string[] = [];
+  const state = { excludeCalls: 0 };
+  const runners = {} as Record<RunnerKey, CommandRunner>;
+  for (const key of RUNNER_KEYS) {
+    const override = options.runners?.[key];
+    runners[key] = (rest, config) => {
+      calls.push({ key, rest: [...rest], config });
+      return override === undefined ? 0 : override(rest, config);
+    };
+  }
+  const deps: DispatchDeps = {
+    out: (line) => {
+      lines.push(line);
+    },
+    loadConfig: () => options.config ?? loadedConfig(),
+    version: () => options.version ?? '9.9.9',
+    ensureRuntimeExclude: () => {
+      state.excludeCalls += 1;
+    },
+    runners,
+  };
+  return { deps, calls, lines, state };
+}
+
+// Fixture home/cwd for the real config load and the prod cost store: an
+// empty dir has no config files, so the documented defaults load.
+const FIXTURE = mkdtempSync(join(tmpdir(), 'kubic-dispatch-'));
+afterAll(() => {
+  rmSync(FIXTURE, { recursive: true, force: true });
+});
+
+// The refused load's shape (what loadCliConfig returns for a broken
+// config): runtime absent, named reason present.
+function refusedConfig(error = 'unknown key [nope]'): CliConfigResult {
+  return {
+    runtime: undefined,
+    error,
+    ignoreSplit: { missing: [], checked: [], applicable: false },
+  };
+}
+
+// The defensive no-reason shape (the `config refused` fallback path).
+function refusedConfigWithoutReason(): CliConfigResult {
+  return {
+    runtime: undefined,
+    error: undefined,
+    ignoreSplit: { missing: [], checked: [], applicable: false },
+  };
+}
+
+let loadedOnce: CliConfigResult | undefined;
+
+// A real loaded result over the fixture (no files → defaults). The
+// dispatch only distinguishes present-vs-absent; runner fakes ignore it.
+function loadedConfig(): CliConfigResult {
+  loadedOnce ??= loadCliConfig({ cwd: FIXTURE, home: FIXTURE, env: {} });
+  if (loadedOnce.runtime === undefined) {
+    throw new Error(
+      `fixture config load refused: ${loadedOnce.error ?? 'unknown reason'}`,
+    );
+  }
+  return loadedOnce;
+}
+
+describe('dispatch routing (issue #135)', () => {
+  it('pins the roster: 22 commands, 19 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(22);
+    expect(RUNNER_KEYS).toHaveLength(19);
+    const routed = new Set(ROUTES.map(([, , key]) => key));
+    expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
+  });
+
+  it('routes every command in the if-chain to its injected runner', async () => {
+    for (const [command, rest, key] of ROUTES) {
+      const h = harness();
+      const code = await dispatchCommand(command, rest, h.deps);
+      const label = `\`${command}\` must route to the ${key} runner`;
+      expect(
+        h.calls.map((call) => call.key),
+        label,
+      ).toEqual([key]);
+      expect(h.calls[0]?.rest, label).toEqual(
+        JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest,
+      );
+      expect(code, `${label} — exit code must flow back`).toBe(0);
+    }
+  });
+
+  it('returns the runner exit code verbatim', async () => {
+    const h = harness({ runners: { sessions: () => 42 } });
+    expect(await dispatchCommand('sessions', [], h.deps)).toBe(42);
+  });
+
+  it('hands the runner the process-wide config load', async () => {
+    const config = loadedConfig();
+    const h = harness({ config });
+    await dispatchCommand('models', [], h.deps);
+    expect(h.calls[0]?.config).toBe(config);
+  });
+
+  it('falls through to the usage line for a command outside the table', async () => {
+    const h = harness();
+    expect(await dispatchCommand('definitely-not-a-command', [], h.deps)).toBe(
+      1,
+    );
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe('front door (issue #128 behavior, moved)', () => {
+  it('--version prints the version line from the injected version', async () => {
+    const h = harness({ version: '9.9.9' });
+    expect(await dispatchCommand('--version', [], h.deps)).toBe(0);
+    expect(h.lines).toEqual(['kubic 9.9.9 (license: MIT)']);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('-V is the same version path', async () => {
+    const h = harness({ version: '1.2.3' });
+    expect(await dispatchCommand('-V', [], h.deps)).toBe(0);
+    expect(h.lines).toEqual(['kubic 1.2.3 (license: MIT)']);
+  });
+
+  it('--help and -h answer the root usage with exit 0', async () => {
+    for (const flag of ['--help', '-h']) {
+      const h = harness();
+      expect(await dispatchCommand(flag, [], h.deps), flag).toBe(0);
+      expect(h.lines, flag).toEqual([ROOT_USAGE]);
+      expect(h.calls, flag).toEqual([]);
+    }
+  });
+
+  it('the bare invocation prints the usage and exits 1 (POSIX posture)', async () => {
+    const h = harness();
+    expect(await dispatchCommand(undefined, [], h.deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('throws from the gated crash probe (contract seam, issue #128)', async () => {
+    process.env.__KUBIC_CONTRACT_CRASH_PROBE = '1';
+    try {
+      await expect(
+        dispatchCommand('__crash-probe', [], harness().deps),
+      ).rejects.toThrow('injected probe failure');
+    } finally {
+      delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
+    }
+  });
+
+  it('an ungated crash probe is just an unknown command', async () => {
+    delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
+    const h = harness();
+    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe('config refusal (issue #90 policy, moved)', () => {
+  const CONSUMING = ['run', 'orchestrate', 'tui', 'replay'];
+  const REPORTING = ['config', 'doctor'];
+
+  it('refuses the agent-executing modes with exit 1 and the named reason', async () => {
+    for (const command of CONSUMING) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const code = await dispatchCommand(command, [], h.deps);
+      expect(code, command).toBe(1);
+      expect(h.lines, command).toEqual(['error: unknown key [nope]']);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
+  it('still runs the reporting commands so the reason can surface', async () => {
+    for (const command of REPORTING) {
+      const h = harness({ config: refusedConfig() });
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      expect(
+        h.calls.map((call) => call.key),
+        command,
+      ).toEqual([command]);
+      expect(h.lines, command).toEqual([]);
+    }
+  });
+
+  it('lets every other command proceed', async () => {
+    const others = ROUTES.map(([command]) => command).filter(
+      (command) => !CONSUMING.includes(command) && !REPORTING.includes(command),
+    );
+    expect(others).toHaveLength(16);
+    for (const command of others) {
+      const h = harness({ config: refusedConfig() });
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
+      expect(h.lines, `${command} must not print a refusal`).toEqual([]);
+    }
+  });
+
+  it('a refused config short-circuits before the runtime-exclude step', async () => {
+    const h = harness({ config: refusedConfig() });
+    expect(await dispatchCommand('run', [], h.deps)).toBe(1);
+    expect(h.state.excludeCalls).toBe(0);
+  });
+
+  it('reports `config refused` when the load names no reason', async () => {
+    const h = harness({ config: refusedConfigWithoutReason() });
+    expect(await dispatchCommand('run', [], h.deps)).toBe(1);
+    expect(h.lines).toEqual(['error: config refused']);
+  });
+});
+
+describe('runtime exclude (issue #91, moved order)', () => {
+  it('ships the exclude rules for the state-creating modes', async () => {
+    for (const command of ['run', 'orchestrate', 'tui']) {
+      const h = harness();
+      await dispatchCommand(command, [], h.deps);
+      expect(h.state.excludeCalls, command).toBe(1);
+    }
+  });
+
+  it('leaves other commands alone', async () => {
+    for (const command of ['sessions', 'doctor', 'config', 'eval']) {
+      const h = harness();
+      await dispatchCommand(command, [], h.deps);
+      expect(h.state.excludeCalls, command).toBe(0);
+    }
+  });
+
+  it('runs the exclude step before the runner, even for a --help argv', async () => {
+    // `kubic run --help` is the RUNNER's help (its own usage line), not the
+    // root's: the root's help check is argv[0]-only, and the moved order
+    // ships the exclude rules before the runner is reached.
+    const h = harness();
+    expect(await dispatchCommand('run', ['--help'], h.deps)).toBe(0);
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.calls.map((call) => call.key)).toEqual(['run']);
+    expect(h.calls[0]?.rest).toEqual(['--help']);
+  });
+});
+
+describe('workers usage remap (issue #77, §78)', () => {
+  it('remaps the usage exit 1 → 2', async () => {
+    const h = harness({ runners: { workers: async () => 1 } });
+    expect(await dispatchCommand('workers', ['--json'], h.deps)).toBe(2);
+    expect(h.calls.map((call) => call.key)).toEqual(['workers']);
+  });
+
+  it('passes every other code through unchanged', async () => {
+    for (const code of [0, 3, 6]) {
+      const h = harness({ runners: { workers: async () => code } });
+      expect(await dispatchCommand('workers', [], h.deps), `code ${code}`).toBe(
+        code,
+      );
+    }
+  });
+});
+
+describe('prod wiring deps shapes (moved from main.ts)', () => {
+  function capture() {
+    const lines: string[] = [];
+    const errs: string[] = [];
+    return {
+      lines,
+      errs,
+      io: {
+        out: (line: string) => {
+          lines.push(line);
+        },
+        debug: (line: string) => {
+          errs.push(line);
+        },
+      },
+    };
+  }
+
+  it('eval --task surfaces the runSuite refusal verbatim', async () => {
+    const cap = capture();
+    const runners = createProdRunners(cap.io);
+    const code = await runners.eval(
+      [
+        '--task',
+        'do it',
+        '--suite',
+        'swe-bench-mini',
+        '--worktree',
+        '/tmp/w',
+        '--generation',
+        '1',
+        '--tier',
+        'smoke',
+      ],
+      loadedConfig(),
+    );
+    expect(code).toBe(1);
+    expect(cap.lines).toEqual([
+      'eval error: live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
+    ]);
+  });
+
+  it('clean receives { env, out } (answers --help from the injected out)', async () => {
+    const cap = capture();
+    const code = await createProdRunners(cap.io).clean(
+      ['--help'],
+      loadedConfig(),
+    );
+    expect(code).toBe(0);
+    expect(cap.lines).toEqual([CLEAN_USAGE]);
+  });
+
+  it('cost receives { loadRows, out } (an unknown session fails by name)', async () => {
+    const cap = capture();
+    const previousHome = process.env.HOME;
+    process.env.HOME = FIXTURE;
+    try {
+      const code = await createProdRunners(cap.io).cost(
+        ['--session', 'no-such-session'],
+        loadedConfig(),
+      );
+      expect(code).toBe(1);
+      expect(cap.lines).toEqual(['error: unknown session: no-such-session']);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
+  it('audit receives { loadRecords, loadSecrets, out } (zero rows is a clean report)', async () => {
+    const cap = capture();
+    const code = await createProdRunners(cap.io).audit([], loadedConfig());
+    expect(code).toBe(0);
+    expect(cap.lines).toEqual(['no audit records']);
+  });
+
+  it('export receives { readFile, out } (a missing trajectory is a named failure)', async () => {
+    const cap = capture();
+    const code = await createProdRunners(cap.io).export(
+      ['--trajectory', '/definitely/missing.json', '--type', 'sft'],
+      loadedConfig(),
+    );
+    expect(code).toBe(2);
+    expect(cap.lines).toHaveLength(1);
+    expect(cap.lines[0]).toMatch(
+      /^export error \[trajectory-unreadable\]: cannot read trajectory "\/definitely\/missing\.json"/,
+    );
+  });
+});

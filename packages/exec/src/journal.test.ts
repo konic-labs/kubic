@@ -1,6 +1,6 @@
 // Slice A: content-addressed journal store (issue #17; §42.4).
 // RED: FileJournalStore does not exist yet.
-import { appendFileSync, mkdtempSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import {
   encodeDelta,
   FileJournalStore,
   type JournalEntryInput,
+  restoreEntry,
 } from './journal.js';
 
 function tmpRoot(): string {
@@ -127,5 +128,46 @@ describe('journal store (issue #17, slice A)', () => {
     expect(small.entries).toBe(1);
     expect(store.entries()).toEqual([]);
     expect(store.blobCount()).toBe(0);
+  });
+});
+
+// Blob integrity (issue #111): blobs are content-addressed, so a blob whose
+// content does not hash to its name must read as missing — never as truth.
+describe('blob hash verification (issue #111)', () => {
+  it('a blob whose content does not hash to its name reads as missing', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
+    expect(store.readAfter(recorded)).toBe(null);
+  });
+
+  it('corrupt blobs are reported through the onCorrupt hook', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({ path: 'a.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
+    );
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
+    const details: string[] = [];
+    expect(
+      store.readBefore(recorded, (detail) => details.push(detail)),
+    ).toBe(null);
+    expect(details.join('\n')).toContain(recorded.beforeHash ?? 'missing');
+  });
+
+  it('undo never restores content from a hash-corrupt before-blob', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({ path: 'f.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
+    );
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    writeFileSync(join(root, 'f.txt'), 'v2\n');
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'evil\n');
+    const result = restoreEntry(store, recorded, root);
+    expect(result.restored).toBe(false);
+    // Wrong content must never be written over the real file.
+    expect(readFileSync(join(root, 'f.txt'), 'utf8')).toBe('v2\n');
   });
 });

@@ -285,22 +285,22 @@ export class FileJournalStore {
       .filter((info) => !info.isDirectory && !info.isSymbolicLink).length;
   }
 
-  readBefore(entry: JournalEntry): string | null {
+  readBefore(entry: JournalEntry, onCorrupt?: (detail: string) => void): string | null {
     if (entry.beforeHash === null) return null;
-    return this.readBlob(entry.beforeHash);
+    return this.readBlob(entry.beforeHash, onCorrupt);
   }
 
   // After-content: direct blob, or before-blob plus delta for large files.
   // Null for deletes (no after-content exists).
-  readAfter(entry: JournalEntry): string | null {
+  readAfter(entry: JournalEntry, onCorrupt?: (detail: string) => void): string | null {
     if (entry.afterHash === null) return null;
     if (entry.deltaHash !== null) {
-      const before = this.readBefore(entry) ?? '';
-      const delta = this.readBlob(entry.deltaHash);
+      const before = this.readBefore(entry, onCorrupt) ?? '';
+      const delta = this.readBlob(entry.deltaHash, onCorrupt);
       if (delta === null) return null;
       return applyDelta(before, delta);
     }
-    return this.readBlob(entry.afterHash);
+    return this.readBlob(entry.afterHash, onCorrupt);
   }
 
   enforceRetention(policy: RetentionPolicy): {
@@ -376,12 +376,24 @@ export class FileJournalStore {
     bridge.writeFile(path, content);
   }
 
-  private readBlob(hash: string): string | null {
+  // Content-addressed read (issue #111): the blob's own name is the
+  // contract. Content that does not hash to `hash` (torn write, tampering,
+  // bit rot) fails closed to null — a wrong blob must never be served as
+  // truth, especially to `undo` restore.
+  private readBlob(
+    hash: string,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     const bridge = this.bridge();
     const path = join(this.blobsDir, hash);
     if (!bridge.exists(path)) return null;
     try {
-      return bridge.readTextFile(path);
+      const content = bridge.readTextFile(path);
+      if (sha256Hex(content) !== hash) {
+        onCorrupt?.(`blob ${hash} fails its own hash — treating as missing`);
+        return null;
+      }
+      return content;
     } catch {
       return null;
     }

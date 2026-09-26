@@ -145,4 +145,23 @@ describe('corrupt journal content (issue #111)', () => {
     for (const c of changes) expect(c.corrupt).toBe(false);
     expect(renderDiff(changes)).not.toContain('# [corrupt journal content]');
   });
+
+  it('a hash-corrupt before-blob marks the change corrupt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const store = new FileJournalStore(dir);
+    const recorded = store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
+    const changes = diffEntries(store, {});
+    expect(changes[0]?.corrupt).toBe(true);
+  });
 });

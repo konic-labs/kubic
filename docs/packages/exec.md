@@ -18,7 +18,7 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS` |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
@@ -64,14 +64,15 @@ escapes but not symlinks) — acceptable because solo has no isolation.
 ### Journal (`journal.ts`, `journal-diff.ts`)
 
 `JournalOp` is `'write' \| 'edit' \| 'create' \| 'delete' \| 'rename'`.
-`LARGE_FILE_BYTES` is 64 KiB; `DEFAULT_JOURNAL_MAX_BYTES` is 100 MiB.
+`LARGE_FILE_BYTES` is 64 KiB; `HASH_CHUNK_BYTES` and
+`MAX_SWEEP_CONTENT_BYTES` are 4 MiB; `DEFAULT_JOURNAL_MAX_BYTES` is 100 MiB.
 
 | Interface | Fields |
 | --- | --- |
-| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
-| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
+| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
+| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `afterOmitted?: boolean`, `afterBytes?: number` |
 | `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
-| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null` |
+| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `afterOmitted: boolean`, `afterBytes?: number` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
 One `FileChange` per path (earliest before, latest after, latest
@@ -109,6 +110,18 @@ also preserves the target's existing mode across its tmp+rename (a
 tmp 0600 so crash residue is never world-readable, and sweeps stale
 `<target>.kubic-restore-*.tmp` siblings best-effort after a successful
 restore.
+
+Sweep after-content bound (issue #120): `reconcile`'s record path reads a
+changed file once, bounded by `MAX_SWEEP_CONTENT_BYTES` (4 MiB). Above the
+bound — or when the utf-8 decode is lossy — the entry is hash-only:
+`after: null` with `afterHash` keeping the walk hash (so dedupe and undo
+staleness compare the same digest the walk produced), `afterOmitted: true`,
+and `afterBytes` the observed size; `diff` renders
+`[content not captured — N bytes changed]`. The lossy check hashes the bytes
+the decode came from and the decode's re-encoding: they agree only for a
+faithful round-trip (the walk hash itself cannot make this call — at or
+under `HASH_CHUNK_BYTES` it IS the hash of the decode). A hash-only
+after-side is a designed absence, never `corrupt`.
 
 ### Effects / replay (issue #97 — deleted, not wired)
 

@@ -36,6 +36,14 @@ export const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
 // ~4 GiB of zeros in 8475ms, memory bounded). Naming it is what turns
 // unbounded work into a visible cost instead of a silent one.
 export const HASH_NOTICE_BYTES = 256 * 1024 * 1024;
+// Sweep after-content bound (issue #120): a changed file above this is
+// recorded hash-only — `after: null`, the walk hash intact, rendered as a
+// size-only change — instead of being read whole. The sweep runs on the
+// run's exit path, where reading a changed build artifact whole costs its
+// size in memory at the worst possible moment; hash-only keeps the change
+// visible with a bounded cost, and undo stays non-reversible for it exactly
+// as for any other unattributed find.
+export const MAX_SWEEP_CONTENT_BYTES = 4 * 1024 * 1024;
 // Default size bound: the journal can never grow past this without an
 // explicit override. No default age bound — age pruning is opt-in via
 // retention config / `kubic clean` (issue #18's CLI).
@@ -66,6 +74,18 @@ export interface JournalEntryInput {
   // readBefore returns null and undo reports non-reversible.
   beforeHash?: string | null;
   after: string | null;
+  // Explicit after-state hash when after-content is deliberately not
+  // captured (issue #120): the sweep records the walk hash for entries above
+  // MAX_SWEEP_CONTENT_BYTES or whose utf-8 decode was lossy, so dedupe and
+  // undo staleness keep comparing against the digest the baseline walk
+  // produced. No blob is written for it.
+  afterHash?: string | null;
+  // True when the after-side was deliberately not captured (issue #120):
+  // above the sweep content bound, or a lossy decode. `diff` renders it as a
+  // size-only change; it is never corruption.
+  afterOmitted?: boolean;
+  // The observed after-side size in bytes, recorded alongside afterOmitted.
+  afterBytes?: number;
   bytesDelta: number;
   sessionId: string;
   agentId: string;
@@ -89,6 +109,13 @@ export interface JournalEntry {
   /** True when the delta was encoded against '' (reconciliation entries with
    *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
   deltaBaseEmpty?: boolean;
+  /** Hash-only after-side (issue #120): content deliberately not captured —
+   *  above MAX_SWEEP_CONTENT_BYTES, or a lossy utf-8 decode. readAfter
+   *  returns null; `afterHash` keeps the walk hash, so dedupe and undo
+   *  staleness behave exactly as for a content-captured entry. */
+  afterOmitted?: boolean;
+  /** The observed size in bytes of an afterOmitted entry's file. */
+  afterBytes?: number;
 }
 
 export interface RetentionPolicy {
@@ -99,6 +126,10 @@ export interface RetentionPolicy {
 
 export function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function sha256HexOfBytes(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 /**
@@ -287,7 +318,8 @@ export class FileJournalStore {
       input.before === null
         ? (input.beforeHash ?? null)
         : sha256Hex(input.before);
-    const afterHash = input.after === null ? null : sha256Hex(input.after);
+    const afterHash =
+      input.after === null ? (input.afterHash ?? null) : sha256Hex(input.after);
     if (input.before !== null && beforeHash !== null) {
       this.putBlob(bridge, beforeHash, input.before);
     } else if (beforeHash !== null) {
@@ -309,6 +341,13 @@ export class FileJournalStore {
       } else {
         this.putBlob(bridge, afterHash, input.after);
       }
+    } else if (afterHash !== null) {
+      // Hash-only after ref (issue #120): the same accounting as the
+      // hash-only before ref above — a blob may already exist at this hash
+      // (shared content, crash residue), and the fast path's no-I/O proof
+      // requires trackedBytes to never under-count the index's referenced
+      // bytes (one stat per hash not yet accounted).
+      this.trackRef(bridge, afterHash);
     }
     const entry: JournalEntry = {
       path: input.path,
@@ -328,6 +367,12 @@ export class FileJournalStore {
       ...(deltaHash !== null && input.before === null
         ? { deltaBaseEmpty: true }
         : {}),
+      // Issue #120: the hash-only after-side shape, carried on the entry so
+      // `diff` can say why there is no content to show.
+      ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
+      ...(input.afterBytes === undefined
+        ? {}
+        : { afterBytes: input.afterBytes }),
     };
     // Durable append (issue #117): the crash-safety seam. Production takes
     // `appendDurably` (fsync before this returns); a bridge double without
@@ -1134,6 +1179,25 @@ export function restoreEntry(
   return { restored: true };
 }
 
+// The sweep's lossless-decode check (issue #120), in hash space: the decoded
+// string is trustworthy exactly when the bytes it came from are its utf-8
+// re-encoding — i.e. when hashing the bytes and hashing the string agree.
+//
+// The walk hash cannot make this call: for a file at or under
+// HASH_CHUNK_BYTES it IS `sha256Hex(readTextFile)` — a hash of the utf-8
+// decode — so comparing it against a hash of that same decode is vacuous by
+// construction (measured equal for binary fixtures too, chunked decode
+// included; the walk hash must also stay digest-identical for files already
+// journaled, so it cannot be redefined to hash bytes). The raw bytes are
+// what diverge: a binary file's decode collapses invalid sequences to
+// U+FFFD, its re-encoding no longer matches the file, and the caller records
+// hash-only instead of a mangled blob. Returns null when the decode was
+// lossy.
+function decodeLossless(bytes: Uint8Array): string | null {
+  const raw = Buffer.from(bytes).toString('utf8');
+  return sha256Hex(raw) === sha256HexOfBytes(bytes) ? raw : null;
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
 // Before-content is unknowable for these (the baseline holds hashes, not
@@ -1163,6 +1227,9 @@ export function reconcile(
     op: JournalEntryInput['op'];
     beforeHash: string | null;
     after: string | null;
+    afterHash?: string;
+    afterOmitted?: boolean;
+    afterBytes?: number;
   }): void => {
     store.append({
       path: input.path,
@@ -1170,6 +1237,11 @@ export function reconcile(
       before: null,
       beforeHash: input.beforeHash,
       after: input.after,
+      ...(input.afterHash === undefined ? {} : { afterHash: input.afterHash }),
+      ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
+      ...(input.afterBytes === undefined
+        ? {}
+        : { afterBytes: input.afterBytes }),
       bytesDelta: 0,
       sessionId: ctx.sessionId,
       agentId: ctx.agentId,
@@ -1182,17 +1254,49 @@ export function reconcile(
   for (const [relPath, hash] of Object.entries(current)) {
     if (baseline[relPath] === hash) continue;
     if (latest.get(relPath)?.afterHash === hash) continue;
-    let after: string | null = null;
+    const abs = join(root, relPath);
+    let size: number | null = null;
     try {
-      after = bridge.readTextFile(join(root, relPath));
+      size = bridge.fileInfo(abs).size;
     } catch {
-      after = null;
+      // Vanished since the walk: no size to bound a read by, so the entry
+      // records no after-side — exactly the pre-#120 shape for this race.
+    }
+    let after: string | null = null;
+    let omitted = false;
+    if (size !== null && size > MAX_SWEEP_CONTENT_BYTES) {
+      // Above the bound (issue #120): never read whole. Hash-only, with the
+      // walk hash intact, rendered as a size-only change.
+      omitted = true;
+    } else if (size !== null) {
+      try {
+        // At or under the bound: one read, bytes first — the lossless check
+        // needs the bytes the decode came from, and the range read is
+        // bounded by the size just observed.
+        const bytes =
+          bridge.readFileRange === undefined
+            ? bridge.readBinaryFile(abs)
+            : bridge.readFileRange(abs, 0, size);
+        after = decodeLossless(bytes);
+        // decodeLossless returns null only for a lossy decode (binary
+        // content): record hash-only instead of a mangled blob.
+        omitted = after === null;
+      } catch {
+        after = null;
+      }
     }
     record({
       path: relPath,
       op: baseline[relPath] === undefined ? 'create' : 'write',
       beforeHash: baseline[relPath] ?? null,
       after,
+      // The hash-only shape: the walk hash keeps dedupe and undo staleness
+      // comparing the same digest the baseline walk produced, and the
+      // observed size is what `diff` renders (`[content not captured — N
+      // bytes changed]`). `omitted` is only ever set when size is known.
+      ...(omitted && size !== null
+        ? { afterHash: hash, afterOmitted: true, afterBytes: size }
+        : {}),
     });
   }
   for (const relPath of Object.keys(baseline)) {

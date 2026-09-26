@@ -615,9 +615,15 @@ composition paths therefore capture a **baseline** when the lane boots and
   than 4 MiB is hashed in chunks, so its boot and sweep cost is one chunk of
   memory rather than the file size (a 256MB artifact measured below 1MB of heap
   growth, where it previously cost 256MB). A sweep that finds nothing appends
-  nothing; a file that *did* change is read whole to store its after-content,
-  because that content is what `diff` and `undo` serve — that read costs twice
-  the file size in heap while it runs (measured: 128MB for a 64MiB file).
+  nothing; a file that *did* change is read once to store its after-content,
+  because that content is what `diff` and `undo` serve — and that read is
+  bounded too (issue #120): above `MAX_SWEEP_CONTENT_BYTES` (4 MiB) the entry is
+  recorded **hash-only** (`after: null`, the walk hash intact) and `diff` shows
+  `[content not captured — N bytes changed]` instead of paying the file's size
+  in memory on the run's exit path. The lossy-decode guard records the same
+  hash-only shape for a file whose utf-8 decode is not a faithful round-trip
+  (binary content): it is never stored as U+FFFD-mangled text. At or under the
+  bound a genuine text file still gets full after-content, exactly as before.
 - Chunking bounds *memory*, not *time*: the walk still reads a file's full
   apparent size, so a sparse or genuinely huge file costs its size in I/O at
   boot. A file above 256 MiB is named on the debug channel

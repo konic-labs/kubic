@@ -20,8 +20,15 @@ export interface FileChange {
   // is recorded (corrupt or torn blob, or a delta that cannot be
   // reconstructed) — surfaced so the operator can tell "content is what I
   // think it is" from "the journal lost it". Designed absences (unattributed
-  // entries' hash-only pre-images, deletes' null after-side) are not corrupt.
+  // entries' hash-only pre-images, deletes' null after-side, and the sweep's
+  // hash-only after-sides, issue #120) are not corrupt.
   corrupt: boolean;
+  // Issue #120: the after-side was deliberately not captured — the sweep
+  // found a changed file above MAX_SWEEP_CONTENT_BYTES, or whose utf-8
+  // decode was lossy (binary content). A designed absence, never corruption;
+  // `afterBytes` carries the observed size for the size-only render.
+  afterOmitted: boolean;
+  afterBytes?: number;
 }
 
 export interface DiffFilter {
@@ -56,7 +63,10 @@ export function diffEntries(
       first.beforeHash !== null &&
       before === null &&
       first.unattributed !== true;
-    const afterLost = last.afterHash !== null && after === null;
+    // A hash-only sweep after-side (issue #120) is a designed absence: the
+    // entry records the walk hash but deliberately no content.
+    const afterLost =
+      last.afterHash !== null && after === null && last.afterOmitted !== true;
     out.push({
       path,
       op: last.op,
@@ -69,6 +79,8 @@ export function diffEntries(
       before,
       after,
       corrupt: beforeLost || afterLost,
+      afterOmitted: last.afterOmitted === true,
+      ...(last.afterBytes === undefined ? {} : { afterBytes: last.afterBytes }),
     });
   }
   return out;
@@ -121,6 +133,17 @@ export function renderDiff(changes: FileChange[]): string {
     // Corruption is named, never silent (issue #111): the marker tells the
     // operator the hunk below may be incomplete rather than faithful.
     if (c.corrupt) out.push('# [corrupt journal content]');
+    // A designed absence is named too (issue #120): the sweep recorded the
+    // walk hash and the size but declined to capture content (above the
+    // bound, or a lossy decode). Say so instead of rendering the change as
+    // if the file became empty.
+    if (c.afterOmitted && c.after === null) {
+      out.push(
+        c.afterBytes === undefined
+          ? '# [content not captured]'
+          : `# [content not captured — ${c.afterBytes} bytes changed]`,
+      );
+    }
     out.push(...unifiedHunks(c.before ?? '', c.after ?? ''));
   }
   return out.join('\n');

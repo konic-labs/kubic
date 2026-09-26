@@ -90,10 +90,14 @@ export function journalStatus(
     if (e.unattributed === true) unattributed++;
     // Same corruption predicate as diffEntries (issue #111): content
     // unexpectedly null while its hash is recorded. An unattributed entry's
-    // hash-only pre-image is a designed absence, never corruption.
+    // hash-only pre-image is a designed absence, never corruption — nor is
+    // the sweep's hash-only after-side (issue #120).
     const beforeLost =
       e.beforeHash !== null && before === null && e.unattributed !== true;
-    const afterLost = e.afterHash !== null && store.readAfter(e) === null;
+    const afterLost =
+      e.afterHash !== null &&
+      store.readAfter(e) === null &&
+      e.afterOmitted !== true;
     if (beforeLost || afterLost) corrupt++;
   }
   return {

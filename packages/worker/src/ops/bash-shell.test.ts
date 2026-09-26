@@ -78,6 +78,24 @@ const BASH_MISSING: FakeScript = {
   stderr: 'bash: not found',
 };
 
+// env.ts's spawn-ENOENT hardening (issue #85) settles wait() with Node's
+// `spawn <path> ENOENT` message — the real shape when the bash BINARY
+// is missing.
+const SPAWN_ENOENT: FakeScript = {
+  exitCode: 127,
+  stdout: '',
+  stderr: 'spawn bash ENOENT\n',
+};
+
+// A user typo INSIDE a running bash: the command settles 127 with bash's
+// ordinary "command not found". This is not a missing bash binary and
+// must never trigger the sh-retry.
+const INNER_COMMAND_NOT_FOUND: FakeScript = {
+  exitCode: 127,
+  stdout: '',
+  stderr: 'bash: nonexistentcmd123: command not found',
+};
+
 const OK_HI: FakeScript = { exitCode: 0, stdout: 'hi\n', stderr: '' };
 
 // Scripted handles where 'hang' never settles until kill() — the only way
@@ -161,6 +179,66 @@ describe('bash shell resolution (issue #123)', () => {
     expect(out.result.exitCode).toBe(0);
     expect(out.result.stdout).toBe('hi\n');
     expect(out.result.shell).toBe('sh');
+  });
+
+  it.each<[string, FakeScript]>([
+    ['bash: not found', BASH_MISSING],
+    ['spawn bash ENOENT', SPAWN_ENOENT],
+  ])(
+    'falls back to sh and succeeds on the spawn-failure shape (%s)',
+    async (_label, missing) => {
+      const { env, calls } = recordingEnv({
+        'bash -c echo hi': missing,
+        'sh -c echo hi': OK_HI,
+      });
+      const out = await callOperation(
+        'bash',
+        { command: 'echo hi' },
+        inv('inv-sh-miss'),
+        ctxFor(env),
+      );
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.result.exitCode).toBe(0);
+      expect(out.result.stdout).toBe('hi\n');
+      expect(out.result.shell).toBe('sh');
+      expect(calls).toEqual(['bash -c echo hi', 'sh -c echo hi']);
+    },
+  );
+
+  it('does not retry (or poison the cache) on bash inner "command not found"', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c nonexistentcmd123': INNER_COMMAND_NOT_FOUND,
+      'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
+    });
+    const c = ctxFor(env);
+    const first = await callOperation(
+      'bash',
+      { command: 'nonexistentcmd123' },
+      inv('inv-typo1'),
+      c,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    // The 127 is the command's, not the spawn's: no sh retry, no
+    // resolvedShell cache write, and BashResult.shell stays truthful.
+    expect(first.result.exitCode).toBe(127);
+    expect(first.result.stderr).toBe(
+      'bash: nonexistentcmd123: command not found',
+    );
+    expect(first.result.shell).toBe('bash');
+    // Second invocation still spawns bash — the resolution cache was not
+    // poisoned to 'sh' by the typo (asserted via the fake-env call log).
+    const second = await callOperation(
+      'bash',
+      { command: 'echo two' },
+      inv('inv-typo2'),
+      c,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.result.shell).toBe('bash');
+    expect(calls).toEqual(['bash -c nonexistentcmd123', 'bash -c echo two']);
   });
 
   it.skipIf(!HAS_BASH)(

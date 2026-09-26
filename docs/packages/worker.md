@@ -75,8 +75,8 @@ retried command memoizes exactly once. Detection and execution both go
 through `ctx.env.shell` — no `child_process` in ops, `FakeExecutionEnv`
 scripts the answer. The Windows `cmd /d /s /c` path is unchanged.
 
-`BashResult.shell: string` names what actually ran: `'bash' | 'sh' |
-'cmd'`. The retry handle is re-registered via `ctx.trackHandle` so
+`BashResult.shell: 'bash' | 'sh' | 'cmd'` names what actually ran. The
+retry handle is re-registered via `ctx.trackHandle` so
 timeout/abort kill whichever handle is live. The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.

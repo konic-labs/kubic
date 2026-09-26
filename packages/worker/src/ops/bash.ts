@@ -29,10 +29,10 @@ export interface BashResult {
    */
   truncated: boolean;
   /**
-   * Which shell actually executed the command ('bash' | 'sh' | 'cmd') —
-   * bash is preferred, sh is the recorded fallback (issue #123).
+   * Which shell actually executed the command — bash is preferred, sh is
+   * the recorded fallback (issue #123).
    */
-  shell: string;
+  shell: 'bash' | 'sh' | 'cmd';
   aborted: boolean;
   timedOut: boolean;
   provenance: Provenance;
@@ -98,16 +98,26 @@ function clip(text: string): { text: string; truncated: boolean } {
 // execute() (below) records 'sh' when bash is missing. Detection goes
 // through the SAME seam the command runs through (ctx.env.shell) — a fake
 // env scripts its answer; no op touches child_process.
-let resolvedShell: string | undefined;
 
-function shellFor(): string {
+// Spawn-ENOENT signature only: Node's `spawn <path> ENOENT` message (what
+// env.ts's issue #85 hardening writes to stderr when the bash BINARY
+// cannot start), plus the bare `bash: not found` shape the tests script
+// for the same failure. bash's inner `bash: <cmd>: command not found` is
+// a user typo inside a working bash and must never match.
+const SPAWN_ENOENT_MISSING = /spawn .*ENOENT|^bash: not found$/im;
+
+let resolvedShell: BashResult['shell'] | undefined;
+
+function shellFor(): BashResult['shell'] {
   if (process.platform === 'win32') return 'cmd';
   if (resolvedShell === undefined) resolvedShell = 'bash';
   return resolvedShell;
 }
 
 /** Test seam (never re-exported): pin or reset the per-process resolution. */
-export function __setResolvedShellForTests(shell: string | undefined): void {
+export function __setResolvedShellForTests(
+  shell: BashResult['shell'] | undefined,
+): void {
   resolvedShell = shell;
 }
 
@@ -156,9 +166,12 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       else ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
     let result: ShellResult = await live.wait();
-    // Issue #123: one-shot detect-and-retry. A 127 settled with bash's own
-    // "not found" means this box has no bash — env.ts's ENOENT hardening
-    // (issue #85) is what puts that message in stderr. Degrade once to sh,
+    // Issue #123: one-shot detect-and-retry. A 127 settled with the
+    // SPAWN-ENOENT signature means this box has no bash binary — env.ts's
+    // ENOENT hardening (issue #85) writes Node's `spawn <path> ENOENT`
+    // message to stderr (tests script the `bash: not found` shape). bash's
+    // own inner `bash: <cmd>: command not found` is a user typo inside a
+    // working bash and must NOT trigger the retry. Degrade once to sh,
     // remember the answer for the process, and never loop. This runs
     // inside execute — before the registry memoizes the result under
     // `op-result-bash` — so a retried command memoizes exactly once.
@@ -167,10 +180,12 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       shellName === 'bash' &&
       !timedOut &&
       ctx.signal?.aborted !== true &&
-      /bash.*(not found|ENOENT)/i.test(result.stderr)
+      SPAWN_ENOENT_MISSING.test(result.stderr)
     ) {
       resolvedShell = 'sh';
       shellName = 'sh';
+      // The retry reuses the original timeout window (the timer is not
+      // reset) — its effective budget is whatever remains of args.timeout.
       live = spawnShell(shellName);
       result = await live.wait();
     }

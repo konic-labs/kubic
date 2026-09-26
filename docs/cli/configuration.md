@@ -58,12 +58,13 @@ A refusal also stops the modes that execute an agent: `kubic run`,
 proceeding on built-in defaults while you believe your config file is in
 force. `kubic config` and `kubic doctor` still run, so you can see what is
 wrong (doctor reports the load as `dep:config-load (deps-missing)`).
-Commands that consume no config projection (`git`, `diff`, `journal`,
-`clean`, …) are unaffected. `kubic sessions` reads exactly one projection —
+Commands that consume no config projection (`git`, `diff`, `clean`, …) are
+unaffected. `kubic sessions` reads exactly one projection —
 `session.retentionDays`, the default keep-window for `kubic sessions prune`
-— and a refused config simply leaves prune without a default window: it
-then demands an explicit `--keep-days` rather than falling back to a
-default (deletion stays explicit either way).
+— and `kubic log` reads the same key to self-heal session journals at read
+time; a refused config simply leaves both without a window: prune then
+demands an explicit `--keep-days` rather than falling back to a default
+(deletion stays explicit either way), and `log` writes nothing.
 
 A minimal `.kubic/config.toml` that actually changes behaviour — this exact
 block is parsed and loaded by `config-docs.test.ts`, so the page can never
@@ -120,7 +121,7 @@ Every one of those keys has a runtime effect or says so plainly:
 | `ui.*` | Parsed and reported; TUI selection lands with #88/#96. |
 | `session.store` | `jsonl` only today; `sqlite`/`memory` remain a separate decision. |
 | `session.dir` | Parsed and reported; the sessions root is host-owned today. |
-| `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it; unset — or `0` — means retention is off, and prune refuses without an explicit `--keep-days` rather than inventing a window. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned. |
+| `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it; unset — or `0` — means retention is off, and prune refuses without an explicit `--keep-days` rather than inventing a window. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
 
 Two keys are forbidden outright, not defaulted: **`[budgets]`**
 (`BudgetKeyError` — budgets are never defaulted by config) and

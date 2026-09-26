@@ -161,8 +161,14 @@ async function main(argv: string[]): Promise<number> {
     command === 'log' ||
     command === 'status'
   ) {
+    // Issue #119: the same `session.retentionDays` projection `sessions
+    // prune` reads — `log` self-heals aged entries of a session journal at
+    // read time under it. Unset (or a refused config) leaves the read path
+    // without a window: it then writes nothing.
+    const retentionDays = sessionRetentionDays(cliConfig);
     return runJournalCommand([command, ...rest], {
       out: (line) => console.log(line),
+      ...(retentionDays === undefined ? {} : { retentionDays }),
     });
   }
   if (command === 'models') {

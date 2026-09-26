@@ -512,6 +512,14 @@ always resolve against the caller's cwd, not the session's original cwd —
 `--session` combined with a programmatically configured journal dir is
 refused (one store per invocation).
 
+**Read-time self-heal (issue #119).** With `session.retentionDays` set in
+config, `kubic log` drops entries older than that window from a **session**
+journal as it reads it — via `--session <id>` or the latest-session
+fallback — the same age bound `kubic sessions prune` applies to whole
+session dirs, one entry at a time. The workspace journal is not affected
+(its own `[journal] retentionDays` bounds it on append). With retention
+unset — or `0` — the log path writes nothing: reads never mutate the store.
+
 ```
 usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>
 ```

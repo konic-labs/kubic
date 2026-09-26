@@ -146,6 +146,18 @@ export function sha256HexOfFile(
 
 type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
 
+// The unique blobs an entry references: its before pre-image plus either its
+// delta or its after-blob (a delta entry has no after-blob — issue #111).
+// Collapsed per entry: a no-op write with before === after references the
+// same blob once, and the retention refcounts are per entry.
+function blobHashesOf(entry: JournalEntry): string[] {
+  const hashes: string[] = [];
+  if (entry.beforeHash !== null) hashes.push(entry.beforeHash);
+  if (entry.deltaHash !== null) hashes.push(entry.deltaHash);
+  else if (entry.afterHash !== null) hashes.push(entry.afterHash);
+  return [...new Set(hashes)];
+}
+
 // Single-hunk prefix/suffix delta: exact reconstruction, tiny encoding
 // for the common case (a few lines changed in a large file). Not a
 // minimal diff — storage only, never shown to users.
@@ -210,6 +222,16 @@ export class FileJournalStore {
   // this, every append stat'd every referenced blob just to conclude
   // "under the bound".
   private readonly blobSizes = new Map<string, number>();
+  // The hashes included in `trackedBytes`. Reset to the live referenced set
+  // by every full retention pass, so a blob freed by a prune is re-accounted
+  // if it is ever written again.
+  private readonly accounted = new Set<string>();
+  // Upper bound on the unique blob bytes the current index references —
+  // never under-counts, so `trackedBytes <= maxBytes * 0.9` proves no entry
+  // can be dropped. null until the first full pass seeds it from truth: a
+  // fresh store must run one pass, or a journal left near the bound by a
+  // previous session would never be pruned again.
+  private trackedBytes: number | null = null;
 
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
@@ -385,29 +407,61 @@ export class FileJournalStore {
     bytes: number;
   } {
     const bridge = this.bridge();
+    // Fast path (issue #124): with no age policy and the tracked byte
+    // total comfortably under the bound, no entry can be dropped — skip the
+    // whole pass, index reads included. A session far from the bound pays
+    // zero retention I/O per append.
+    if (
+      policy.maxAgeMs === undefined &&
+      policy.maxBytes !== undefined &&
+      this.trackedBytes !== null &&
+      this.trackedBytes <= policy.maxBytes * 0.9
+    ) {
+      return { entries: 0, bytes: 0 };
+    }
     const now = policy.now ?? Date.now();
     let kept = this.entries();
     if (policy.maxAgeMs !== undefined) {
       const maxAgeMs = policy.maxAgeMs;
       kept = kept.filter((e) => now - e.timestamp <= maxAgeMs);
     }
+    // Reference-counted drop arithmetic (issue #124): count the blobs each
+    // kept entry references once, then each dropped entry subtracts only
+    // the blobs it uniquely referenced. The old loop re-scanned (and
+    // re-stat'd) every unique blob once per dropped entry.
+    const refs = new Map<string, number>();
+    for (const e of kept) {
+      for (const hash of blobHashesOf(e)) {
+        refs.set(hash, (refs.get(hash) ?? 0) + 1);
+      }
+    }
+    let total = 0;
+    let totalDerived = false;
     if (policy.maxBytes !== undefined) {
+      for (const hash of refs.keys()) total += this.sizeOf(bridge, hash);
+      totalDerived = true;
       const maxBytes = policy.maxBytes;
-      let total = this.blobBytes(bridge, kept);
       while (kept.length > 0 && total > maxBytes) {
-        kept.shift();
-        total = this.blobBytes(bridge, kept);
+        const dropped = kept.shift();
+        if (dropped === undefined) break;
+        for (const hash of blobHashesOf(dropped)) {
+          const count = refs.get(hash) ?? 0;
+          if (count === 1) {
+            total -= this.sizeOf(bridge, hash);
+            refs.delete(hash);
+          } else if (count > 1) {
+            refs.set(hash, count - 1);
+          }
+        }
       }
     }
     const removed = this.entries().length - kept.length;
-    if (removed === 0) return { entries: 0, bytes: 0 };
-    const before = this.blobBytes(bridge, this.entries());
-    const referenced = new Set<string>();
-    for (const e of kept) {
-      if (e.beforeHash !== null) referenced.add(e.beforeHash);
-      if (e.deltaHash !== null) referenced.add(e.deltaHash);
-      else if (e.afterHash !== null) referenced.add(e.afterHash);
+    if (removed === 0) {
+      if (totalDerived) this.syncTracking(refs.keys(), total);
+      return { entries: 0, bytes: 0 };
     }
+    const before = this.blobBytes(bridge, this.entries());
+    const referenced = new Set(refs.keys());
     const tmp = `${this.indexPath}.${process.pid}.tmp`;
     bridge.writeFile(
       tmp,
@@ -440,6 +494,9 @@ export class FileJournalStore {
       }
     }
     const after = this.blobBytes(bridge, kept);
+    // The rewrite moved the index onto `kept`: re-base the tracked total on
+    // its truth so the fast path resumes proving "nothing can drop".
+    this.syncTracking(referenced, after);
     return { entries: removed, bytes: before - after };
   }
 
@@ -449,11 +506,34 @@ export class FileJournalStore {
     content: string,
   ): void {
     const path = join(this.blobsDir, hash);
-    if (bridge.exists(path)) return;
-    bridge.writeFile(path, content);
-    // Write-time size: the content is in hand, so no stat is needed — this
-    // is what makes retention stat-free for everything this store writes.
-    this.blobSizes.set(hash, Buffer.byteLength(content, 'utf8'));
+    if (!bridge.exists(path)) {
+      bridge.writeFile(path, content);
+      // Write-time size: the content is in hand, so no stat is needed —
+      // this is what makes retention stat-free for what this store writes.
+      const size = Buffer.byteLength(content, 'utf8');
+      const previous = this.blobSizes.get(hash);
+      this.blobSizes.set(hash, size);
+      // A re-written blob (freed by an earlier prune, or deleted
+      // externally) shifts the tracked total by its new size minus
+      // whatever was counted for it before.
+      if (this.trackedBytes !== null && this.accounted.has(hash)) {
+        this.trackedBytes += size - (previous ?? 0);
+        return;
+      }
+    }
+    if (this.trackedBytes !== null && !this.accounted.has(hash)) {
+      this.accounted.add(hash);
+      this.trackedBytes += this.sizeOf(bridge, hash);
+    }
+  }
+
+  // Re-base the tracked total on derived truth (issue #124). The fast
+  // path's single compare is only sound while trackedBytes never
+  // under-counts, so every full pass re-derives both numbers together.
+  private syncTracking(hashes: Iterable<string>, total: number): void {
+    this.accounted.clear();
+    for (const hash of hashes) this.accounted.add(hash);
+    this.trackedBytes = total;
   }
 
   // Cached blob size (issue #124). A cache miss stats once and remembers;

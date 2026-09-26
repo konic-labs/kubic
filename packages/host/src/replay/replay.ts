@@ -37,6 +37,7 @@
 
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import { answerHelp } from '../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../exec/src/journal.js';
 import {
@@ -121,7 +122,7 @@ export interface ReplayEnvelope {
 }
 
 export const USAGE_MESSAGE =
-  'usage: kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]';
+  'usage: kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]';
 
 interface ReplayOptions {
   trajectory: string;
@@ -142,14 +143,27 @@ function parseTier(raw: string): ReplayTier | null {
   return null;
 }
 
+// Issue #127: the shared parser (core/src/flags.ts) replaces the
+// hand-rolled loop. Replay keeps its own error vocabulary
+// (missing-flag-value / unknown-flag / unexpected-argument /
+// missing-trajectory) and its tiered envelopes.
+const REPLAY_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--tier', takes: 'value' },
+  { name: '--model', takes: 'value' },
+  { name: '--lockfile', takes: 'value' },
+  { name: '--role-config', takes: 'value' },
+  { name: '--worktree', takes: 'value' },
+  { name: '--diff-against', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
+
 // Parse errors also publish a tier (§72): the declared --tier when one
 // was given (unknown when it names no known tier), else the recorded
 // default — so --json failures share the envelope shape.
 function sniffParseTier(args: string[]): ReplayTier | 'unknown' {
-  const at = args.indexOf('--tier');
-  if (at === -1) return 'recorded';
-  const raw = args[at + 1];
-  if (raw === undefined || raw.startsWith('--')) return 'recorded';
+  const flags = parseFlagArgs(args, REPLAY_FLAG_SPEC);
+  const raw = flags.values['--tier'] as string | undefined;
+  if (raw === undefined) return 'recorded';
   return parseTier(raw) ?? 'unknown';
 }
 
@@ -164,7 +178,8 @@ interface ReplayParseError {
 function parseArgs(
   args: string[],
 ): { options: ReplayOptions } | { error: ReplayParseError } {
-  const json = args.includes('--json');
+  const flags = parseFlagArgs(args, REPLAY_FLAG_SPEC);
+  const json = flags.values['--json'] === true;
   const tier = sniffParseTier(args);
   const failParse = (
     code: string,
@@ -173,100 +188,50 @@ function parseArgs(
   ): { error: ReplayParseError } => ({
     error: { code, message, trajectory, tier, json },
   });
-  let trajectory: string | undefined;
-  let resolvedTier: ReplayTier | 'unknown' = 'recorded';
-  let tierRaw: string | undefined;
-  let model: string | undefined;
-  let lockfile: string | undefined;
-  let roleConfig: string | undefined;
-  let worktree: string | undefined;
-  let diffAgainst: string | undefined;
-  // --json is consumed by the pre-scan above; drop it before the loop so
-  // the unknown-flag branch never sees it.
-  const rest = args.filter((arg) => arg !== '--json');
-  const takeValue = (
-    flag: string,
-    index: number,
-  ): { value: string; next: number } | { error: ReplayParseError } => {
-    const value = rest[index + 1];
-    if (value === undefined || value.startsWith('--')) {
-      return failParse(
-        'missing-flag-value',
-        `error: ${flag} needs a value`,
-        trajectory ?? null,
-      );
-    }
-    return { value, next: index + 1 };
-  };
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i] as string;
-    if (arg === '--tier') {
-      const taken = takeValue('--tier', i);
-      if ('error' in taken) return taken;
-      tierRaw = taken.value;
-      i = taken.next;
-    } else if (arg === '--model') {
-      const taken = takeValue('--model', i);
-      if ('error' in taken) return taken;
-      model = taken.value;
-      i = taken.next;
-    } else if (arg === '--lockfile') {
-      const taken = takeValue('--lockfile', i);
-      if ('error' in taken) return taken;
-      lockfile = taken.value;
-      i = taken.next;
-    } else if (arg === '--role-config') {
-      const taken = takeValue('--role-config', i);
-      if ('error' in taken) return taken;
-      roleConfig = taken.value;
-      i = taken.next;
-    } else if (arg === '--worktree') {
-      const taken = takeValue('--worktree', i);
-      if ('error' in taken) return taken;
-      worktree = taken.value;
-      i = taken.next;
-    } else if (arg === '--diff-against') {
-      const taken = takeValue('--diff-against', i);
-      if ('error' in taken) return taken;
-      diffAgainst = taken.value;
-      i = taken.next;
-    } else if (arg.startsWith('--')) {
-      return failParse(
-        'unknown-flag',
-        `error: unknown flag ${arg}`,
-        trajectory ?? null,
-      );
-    } else if (trajectory === undefined) {
-      trajectory = arg;
-    } else {
-      return failParse(
-        'unexpected-argument',
-        `error: unexpected argument ${arg}`,
-        trajectory,
-      );
-    }
+  // `--json` is part of the spec, so the unknown-flag branch never sees it.
+  const positional = flags.positional;
+  const trajectory = positional[0];
+  // Missing values first (today's inline order), then unknown flags, then
+  // a second operand — each with its pre-migration code and line.
+  for (const flag of flags.missing) {
+    return failParse(
+      'missing-flag-value',
+      `error: ${flag} needs a value`,
+      trajectory ?? null,
+    );
+  }
+  if (flags.unknown.length > 0) {
+    return failParse(
+      'unknown-flag',
+      `error: unknown flag ${flags.unknown[0]}`,
+      trajectory ?? null,
+    );
+  }
+  if (positional.length > 1) {
+    return failParse(
+      'unexpected-argument',
+      `error: unexpected argument ${positional[1]}`,
+      trajectory ?? null,
+    );
   }
   if (trajectory === undefined) {
     return failParse('missing-trajectory', USAGE_MESSAGE, null);
   }
+  const tierRaw = flags.values['--tier'] as string | undefined;
+  let resolvedTier: ReplayTier | 'unknown' = 'recorded';
   if (tierRaw !== undefined) {
-    const parsed = parseTier(tierRaw);
-    if (parsed === null) {
-      resolvedTier = 'unknown';
-    } else {
-      resolvedTier = parsed;
-    }
+    resolvedTier = parseTier(tierRaw) ?? 'unknown';
   }
   return {
     options: {
       trajectory,
       tier: resolvedTier,
       tierRaw,
-      model,
-      lockfile,
-      roleConfig,
-      worktree,
-      diffAgainst,
+      model: flags.values['--model'] as string | undefined,
+      lockfile: flags.values['--lockfile'] as string | undefined,
+      roleConfig: flags.values['--role-config'] as string | undefined,
+      worktree: flags.values['--worktree'] as string | undefined,
+      diffAgainst: flags.values['--diff-against'] as string | undefined,
       json,
     },
   };

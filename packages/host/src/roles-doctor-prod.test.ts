@@ -1,9 +1,10 @@
 // §40.3 role posture on the PRODUCTION doctor path (issue #99's named gap).
 //
 // The child implementing #99 built `rolesDoctorProbe` and its seam but could
-// not inject it: the only injection site is apps/kubic/src/main.ts, which was
-// fenced to a sibling. So the probe was complete and the binary's `kubic
-// doctor` had no role section. This pins the wire.
+// not inject it: the only injection site was apps/kubic/src/main.ts, which
+// was fenced to a sibling. So the probe was complete and the binary's
+// `kubic doctor` had no role section. This pins the wire — since #135 the
+// production wiring lives in apps/kubic/src/prod-runners.ts.
 //
 // Driven through the real doctor command with the real probe, over a real
 // `.kubic/roles/` tree — not a stub — because the gap this closes was exactly
@@ -99,9 +100,10 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     expect(roles.filter((c) => c.status === 'fail')).toEqual([]);
   });
 
-  it('the wiring itself: main.ts injects the probe', async () => {
+  it('the wiring itself: the production runners inject the probe', async () => {
     // The gap being closed is "nothing calls it". Import-level is not enough —
-    // assert the injection exists in the production composition root.
+    // assert the injection exists in the production wiring (the composition
+    // root's runner module since issue #135).
     const source = await import('node:fs').then((fs) =>
       fs.readFileSync(
         join(
@@ -112,7 +114,7 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
           'apps',
           'kubic',
           'src',
-          'main.ts',
+          'prod-runners.ts',
         ),
         'utf8',
       ),

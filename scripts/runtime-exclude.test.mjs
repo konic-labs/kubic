@@ -165,23 +165,37 @@ describe('this repo ships the split (issue #91)', () => {
     // the CLI: `kubic run`, `kubic orchestrate` and `kubic tui` (issue #113:
     // a TUI session creates in-repo state the moment config relocates it)
     // must all ship the rules before they create state. Pin the dispatch,
-    // not a helper.
-    const main = readFileSync(
-      join(ROOT, 'apps', 'kubic', 'src', 'main.ts'),
+    // not a helper. Issue #135: the dispatch moved to apps/kubic/src/dispatch.ts
+    // (main.ts is the thin entry); the seam it calls is deps.ensureRuntimeExclude.
+    const dispatch = readFileSync(
+      join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts'),
       'utf8',
     );
-    const call = main.match(
-      /if \(command === 'run' \|\| command === 'orchestrate' \|\| command === 'tui'\) \{\n\s*ensureRuntimeExcludeRules\(/,
+    const call = dispatch.match(
+      /if \(command === 'run' \|\| command === 'orchestrate' \|\| command === 'tui'\) \{\n\s*deps\.ensureRuntimeExclude\(/,
     );
     assert.ok(
       call !== null,
-      'apps/kubic/src/main.ts must call ensureRuntimeExcludeRules for run + orchestrate + tui',
+      'apps/kubic/src/dispatch.ts must call the runtime-exclude seam for run + orchestrate + tui',
     );
     // No mode that writes state may be added without it: the dispatch
     // names exactly the state-creating commands.
     for (const mode of ['run', 'orchestrate', 'tui']) {
-      assert.match(main, new RegExp(`command === '${mode}'`));
+      assert.match(dispatch, new RegExp(`command === '${mode}'`));
     }
+    // The dispatch delegates to the injected seam, so CLI-reachability needs
+    // the production wiring too (the pre-#135 pin asserted exactly this,
+    // against main.ts): the entry point must wire the real rules into the
+    // seam it hands the dispatch — a no-op seam must not pass this test.
+    const main = readFileSync(
+      join(ROOT, 'apps', 'kubic', 'src', 'main.ts'),
+      'utf8',
+    );
+    assert.match(
+      main,
+      /ensureRuntimeExclude:\s*\(\)\s*=>\s*ensureRuntimeExcludeRules\(/,
+      'apps/kubic/src/main.ts must wire ensureRuntimeExcludeRules into the dispatch seam',
+    );
   });
   // Issue #90 criterion 5: `checkGitignoreSplit` is the rule checker, and it
   // is invoked by a real gate — `loadCliConfig` runs it on every

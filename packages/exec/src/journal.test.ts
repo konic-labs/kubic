@@ -222,6 +222,69 @@ describe('readAfter delta bases (issue #111)', () => {
     expect(store.readAfter(entry0 ?? legacy)).toBe(big);
   });
 
+  it('a pre-flag unattributed entry with a shared before-hash reconstructs from the empty base', () => {
+    // The legacy heuristic must outrank the before-blob branch: unattributed
+    // entries carry a hash-only beforeHash, and when that hash resolves to a
+    // SHARED blob (another entry journaled the same bytes), applying the
+    // base-'' delta against the shared content silently serves wrong
+    // after-content with no corruption reported.
+    const dir = tmpRoot();
+    const shared = 'shared\ncontent\n';
+    const after = 'real\nafter\n';
+    const delta = encodeDelta('', after);
+    const deltaHash = sha256Hex(delta);
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    writeFileSync(join(dir, 'blobs', deltaHash), delta);
+    const legacy: JournalEntry = {
+      path: 'legacy.txt',
+      op: 'write',
+      beforeHash: sha256Hex(shared),
+      afterHash: sha256Hex(after),
+      deltaHash,
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1,
+      unattributed: true,
+    };
+    writeFileSync(join(dir, 'index.jsonl'), `${JSON.stringify(legacy)}\n`);
+    const store = new FileJournalStore(dir);
+    // Another entry journaled the same bytes as after-content, so the blob
+    // now exists at the legacy entry's beforeHash.
+    store.append(entry({ path: 'other.txt', after: shared }));
+    expect(store.hasBlob(sha256Hex(shared))).toBe(true);
+    const entry0 = store.entries()[0];
+    expect(entry0?.deltaBaseEmpty).toBe(undefined);
+    expect(store.readAfter(entry0 ?? legacy)).toBe(after);
+  });
+
+  it('a deltaBaseEmpty reconstruction never reads its before-blob (no corrupt report for an unused torn blob)', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({
+        path: 'big.txt',
+        op: 'write',
+        before: null,
+        beforeHash: sha256Hex('gone\n'),
+        after: big,
+        bytesDelta: 0,
+        unattributed: true,
+      }),
+    );
+    expect(recorded.deltaBaseEmpty).toBe(true);
+    // A torn blob at the hash-only beforeHash must not be read at all when
+    // reconstruction uses '' — reading it wastes I/O and fires onCorrupt
+    // for content that never affected the result.
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'torn\n');
+    const details: string[] = [];
+    expect(store.readAfter(recorded, (detail) => details.push(detail))).toBe(
+      big,
+    );
+    expect(details).toEqual([]);
+  });
+
   it('a tool-authored delta entry with a missing before-blob refuses to reconstruct', () => {
     // Reconstructing from '' here silently fabricates after-content that
     // never existed on disk — refuse instead.
@@ -262,6 +325,41 @@ describe('blob hash verification (issue #111)', () => {
       null,
     );
     expect(details.join('\n')).toContain(recorded.beforeHash ?? 'missing');
+  });
+
+  it('a delta reconstruction that fails the recorded after-hash reads as corrupt, never as content', () => {
+    // Defense in depth (issue #111): if a base is ever mis-guessed again,
+    // the reconstruction will not hash to entry.afterHash — fail closed to
+    // null with a named report instead of serving wrong after-content.
+    const dir = tmpRoot();
+    const after = 'real\nafter\n';
+    const foreign = 'foreign\nbase\n';
+    // The delta is encoded against '' but the entry claims a before-blob
+    // base — the exact shape of the shared-blob mis-guess.
+    const delta = encodeDelta('', after);
+    const deltaHash = sha256Hex(delta);
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    writeFileSync(join(dir, 'blobs', deltaHash), delta);
+    writeFileSync(join(dir, 'blobs', sha256Hex(foreign)), foreign);
+    const forged: JournalEntry = {
+      path: 'forged.txt',
+      op: 'write',
+      beforeHash: sha256Hex(foreign),
+      afterHash: sha256Hex(after),
+      deltaHash,
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1,
+    };
+    writeFileSync(join(dir, 'index.jsonl'), `${JSON.stringify(forged)}\n`);
+    const store = new FileJournalStore(dir);
+    const details: string[] = [];
+    expect(store.readAfter(forged, (detail) => details.push(detail))).toBe(
+      null,
+    );
+    expect(details.join('\n')).toContain(forged.afterHash);
   });
 
   it('undo never restores content from a hash-corrupt before-blob', () => {

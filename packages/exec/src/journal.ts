@@ -312,19 +312,66 @@ export class FileJournalStore {
     if (entry.deltaHash !== null) {
       const delta = this.readBlob(entry.deltaHash, onCorrupt);
       if (delta === null) return null;
-      const before = this.readBefore(entry, onCorrupt);
-      if (entry.deltaBaseEmpty === true) return applyDelta('', delta);
-      if (before !== null) return applyDelta(before, delta);
+      // Branch order is the correctness contract (issue #111 review): the
+      // recorded base wins, then the legacy heuristic for pre-flag
+      // unattributed entries (reconcile always encoded those against ''),
+      // and only then the before-blob. The unattributed check must outrank
+      // the before-blob: unattributed entries carry a hash-only beforeHash,
+      // and when it resolves to a SHARED blob in the content-addressed
+      // store, applying the base-'' delta against that foreign content
+      // silently serves wrong after-content. The ''-base paths read no
+      // before-blob at all — reconstruction needs none, and reading one
+      // would waste I/O and could fire onCorrupt for a torn shared blob
+      // even though reconstruction succeeds.
+      if (entry.deltaBaseEmpty === true) {
+        return this.verifyReconstruction(
+          entry,
+          applyDelta('', delta),
+          onCorrupt,
+        );
+      }
       // Legacy heuristic: pre-flag unattributed entries encoded their delta
       // against '' (reconcile is the only writer of that shape).
       if (entry.deltaBaseEmpty === undefined && entry.unattributed === true) {
-        return applyDelta('', delta);
+        return this.verifyReconstruction(
+          entry,
+          applyDelta('', delta),
+          onCorrupt,
+        );
+      }
+      const before = this.readBefore(entry, onCorrupt);
+      if (before !== null) {
+        return this.verifyReconstruction(
+          entry,
+          applyDelta(before, delta),
+          onCorrupt,
+        );
       }
       // Before-blob missing on a tool-authored entry: refuse to guess —
       // reconstructing from '' fabricates after-content that never existed.
       return null;
     }
     return this.readBlob(entry.afterHash, onCorrupt);
+  }
+
+  // Defense in depth (issue #111): a delta reconstruction must hash to the
+  // entry's recorded after-content — the same contract readBlob enforces on
+  // direct blobs. A mismatch means the base was mis-guessed or the entry is
+  // inconsistent: fail closed to null and report through onCorrupt, never
+  // serve after-content the journal cannot vouch for.
+  private verifyReconstruction(
+    entry: JournalEntry,
+    reconstructed: string | null,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
+    if (reconstructed === null) return null;
+    if (sha256Hex(reconstructed) !== entry.afterHash) {
+      onCorrupt?.(
+        `delta reconstruction for ${entry.path} does not match its recorded after-hash ${entry.afterHash ?? 'none'} — treating as corrupt`,
+      );
+      return null;
+    }
+    return reconstructed;
   }
 
   enforceRetention(policy: RetentionPolicy): {

@@ -174,6 +174,26 @@ describe('orchestrator toggle, indicator, session, audit (issue #40)', () => {
     );
   });
 
+  it('names malformed JSON as ManagerToolsetError, folding in the parse message (issue #132)', () => {
+    // Invalid JSON (a bare string, truncated model output) is the equally
+    // likely sibling of a wrong shape: it must classify as the SAME named
+    // error, with the parse message folded in — a raw SyntaxError escaping
+    // here surfaces as an unclassified harness fault instead.
+    let caught: unknown;
+    try {
+      parseOrchestratorToggle('{"on": ');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ManagerToolsetError);
+    expect((caught as Error).name).toBe('ManagerToolsetError');
+    expect((caught as Error).message).toMatch(/not JSON/);
+    // A valid-JSON-wrong-shape payload keeps the message it always had.
+    expect(() => parseOrchestratorToggle('{"on": "yes"}')).toThrow(
+      'invalid orchestrator toggle payload',
+    );
+  });
+
   it('renders the mode indicator vocabulary', () => {
     expect(formatModeIndicator('orchestrator')).toBe('orchestrator');
     expect(formatModeIndicator('solo')).toBe('solo');

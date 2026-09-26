@@ -544,7 +544,18 @@ export class FileApprovalStore implements ApprovalStore {
     const bridge = createNodeFileBridge('/');
     const tmp = `${this.postureFile}.${process.pid}.tmp`;
     bridge.writeFile(tmp, JSON.stringify(posture));
-    bridge.renameFile(tmp, this.postureFile);
+    try {
+      bridge.renameFile(tmp, this.postureFile);
+    } catch (error) {
+      // The same cleanup save() has (issue #132): a failed rename must not
+      // strand `posture.json.<pid>.tmp` beside the session.
+      try {
+        bridge.remove(tmp, false, true);
+      } catch {
+        // Best-effort tmp cleanup; the original error is what matters.
+      }
+      throw error;
+    }
   }
 }
 

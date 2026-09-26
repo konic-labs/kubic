@@ -9,9 +9,10 @@
 // the documented deps shapes the root wires (clean {env,out}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
 import { type CliConfigResult, loadCliConfig } from './config-runtime.js';
@@ -449,5 +450,38 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     expect(cap.lines[0]).toMatch(
       /^export error \[trajectory-unreadable\]: cannot read trajectory "\/definitely\/missing\.json"/,
     );
+  });
+});
+
+describe('workers runner reads the durable record (issue #132)', () => {
+  it('constructs no WorkerRegistry: the CLI lists workersListFromRepo directly', () => {
+    // Issue #94's finding, finished: a fresh CLI process's WorkerRegistry is
+    // always empty, so a registry branch in the workers runner is
+    // structurally dead — every invocation paid the fallthrough. The rows
+    // come from the durable record (<repo>/.kubic/orchestrator/workers.json);
+    // the registry stays the orchestrator run's own in-process view
+    // (packages/worker/src/lifecycle/registry.ts). Structural pin, per the
+    // issue's acceptance: main.ts no longer constructs a WorkerRegistry and
+    // the seam lists from the record directly.
+    const srcDir = dirname(fileURLToPath(import.meta.url));
+    const seam = readFileSync(join(srcDir, 'prod-runners.ts'), 'utf8');
+    const main = readFileSync(join(srcDir, 'main.ts'), 'utf8');
+    // Non-vacuity: both reads found the real sources, not empty files.
+    expect(seam.length).toBeGreaterThan(1_000);
+    expect(main.length).toBeGreaterThan(1_000);
+    for (const [name, source] of [
+      ['prod-runners.ts', seam],
+      ['main.ts', main],
+    ] as const) {
+      expect(source, `${name} must not construct a WorkerRegistry`).not.toMatch(
+        /new WorkerRegistry\b/,
+      );
+      expect(
+        source,
+        `${name} must not import the lifecycle registry`,
+      ).not.toMatch(/lifecycle\/registry\.js/);
+    }
+    // The one list source the runner reads: the durable record, directly.
+    expect(seam).toMatch(/workersListFromRepo\(process\.cwd\(\)\)/);
   });
 });

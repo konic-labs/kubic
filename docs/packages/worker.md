@@ -25,7 +25,7 @@ diff touching the boundary for maintainer review.
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `SessionAttachError`, `listSessions` |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionsTouchingWorkspace`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
@@ -116,6 +116,46 @@ nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the
 whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
+
+### Session locking (issue #118)
+
+One live attachment per session, fail-closed. `createSession` (after the
+session dir exists) and `attachSession` (before the transcript is read)
+acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
+record of the attaching process — through the exec-owned lock-file
+primitive (`exec/lock-file.ts`; I/O confinement, §9): an O_EXCL
+(`writeFileSync(…, {flag: 'wx'})`) create is the atomic test-and-set, and
+the primitive makes the session dir eagerly as the lock's parent.
+`session.close(…)` releases the lock (best-effort remove), so the file
+exists only while a session is actually attached.
+
+- **Refusal** is `SessionLockError`; its message names the session and
+  the holder's pid + start time. Host maps it to `workspace_unavailable`
+  (exit 5) on `kubic run`; `kubic sessions attach` prints it and exits 1
+  without reading the transcript.
+- **Stale steal** (never a steal of a live lock): a holder whose process
+  is gone (`process.kill(pid, 0)` fails) is stale immediately — crash
+  recovery works same-day; a lock file older than a day is stale
+  regardless (pid reuse); an unparseable/torn `lock.json` is a stale
+  candidate. A steal that loses its re-create race surfaces as
+  `SessionLockError`, never a crash.
+- **Local filesystem only.** O_EXCL atomicity is claimed on local
+  filesystems only — no network/shared-disk (NFS/SMB) locking semantics
+  are provided or tested.
+- **Repo-level overlap — warning only** (issue #118; §42.5 blind spot). A
+  session lock is per session; **different** sessions on one workspace are
+  legal. `sessionsTouchingWorkspace` lists the sessions recorded against a
+  workspace (local-store view; it cannot prove one is *running*), and that
+  probe feeds two warning surfaces: the run path emits one
+  `reconcile: another run may be live in this workspace …` line on its
+  debug channel, and `kubic doctor` reports `session:overlap` (warn when
+  two or more sessions are recorded). The reason it warns: each run's
+  end-of-run sweep compares against its own boot baseline, so a sibling
+  session's in-flight changes land in this run's journal as unattributed,
+  non-reversible entries. Never a block.
+
+The lock covers the session's journal too (it lives under the session
+dir) — the journal store is not locked separately.
 
 ## Contracts
 

@@ -68,6 +68,7 @@ import {
   attachSession,
   createSession,
   openSessionStore,
+  sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
@@ -621,6 +622,27 @@ export async function runHeadlessPrompt(
     } catch (error) {
       deps.debug?.(
         `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    // Repo-level overlap warning (issue #118; §42.5 blind spot): two
+    // DIFFERENT sessions in one workspace are legal — this is a warning on
+    // the debug channel, never a block. But each run sweeps against its own
+    // boot baseline, so a live sibling's in-progress changes land in this
+    // run's journal as unattributed, non-reversible entries. The store can
+    // show a session, not its liveness, so the line says "may be live" and
+    // names the sibling ids. A probe failure is a receipt, not a run
+    // failure — the same posture as the baseline capture above.
+    try {
+      const touching = await sessionsTouchingWorkspace(store, env.cwd, context);
+      const others = touching.filter((sessionId) => sessionId !== id);
+      if (others.length > 0) {
+        deps.debug?.(
+          `reconcile: another run may be live in this workspace — its in-progress changes will be recorded as unattributed (sessions: ${others.join(', ')})`,
+        );
+      }
+    } catch (error) {
+      deps.debug?.(
+        `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     // Live facet consumption (issue #93): the loaded worker facet becomes a

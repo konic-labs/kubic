@@ -192,6 +192,10 @@ function parsePositiveInt(
 function isWorkspaceFailure(error: unknown): boolean {
   const record = error as { name?: unknown; code?: unknown };
   if (record.name === 'SessionAttachError') return true;
+  // A live second attachment (issue #118) is the same class of failure as a
+  // missing session: the workspace cannot host this run right now — the
+  // named SessionLockError message carries the holder pid.
+  if (record.name === 'SessionLockError') return true;
   const haystack = [
     record.code,
     record.name,

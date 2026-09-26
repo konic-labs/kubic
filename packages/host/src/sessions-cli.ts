@@ -13,6 +13,7 @@ import {
   listSessions,
   openSessionStore,
   SessionAttachError,
+  SessionLockError,
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableFullAccess, FileApprovalStore } from './approvals.js';
@@ -126,6 +127,13 @@ export async function runSessionsCommand(
         await session.close(BACKGROUND_CONTEXT);
       }
     } catch (error) {
+      // A live second attachment (issue #118): the refusal is the answer —
+      // printed as-is (it names the holder pid + start time), exit 1, and
+      // no transcript was ever read (attach acquires before it opens).
+      if (error instanceof SessionLockError) {
+        deps.out(`error: ${error.message}`);
+        return 1;
+      }
       if (error instanceof SessionAttachError) {
         deps.out(`error: ${error.message}`);
         return 1;

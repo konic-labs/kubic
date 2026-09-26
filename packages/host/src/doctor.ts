@@ -97,6 +97,11 @@ export interface DoctorDeps {
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
+  // Repo-level session overlap (issue #118; §42.5): the local session
+  // store's view of sessions recorded against one workspace — two or more
+  // reports a warn note (concurrent different-session runs are legal; the
+  // note states the sweep blind spot). Absent: no overlap check.
+  probeSessionOverlap?: () => SessionOverlapProbe;
 }
 
 // The installed posture, described once in host/approvals.ts. Host owns the
@@ -182,6 +187,43 @@ export interface ExtensionPostureInput {
   loaded: string[];
   refusedCount: number;
   detail: string;
+}
+
+// Repo-level session overlap input (issue #118; §42.5): the workspace and
+// the ids of every session recorded against it in the local session store.
+// The store lists sessions — it cannot prove one is RUNNING — so the check
+// warns about a possible overlap, never about a verified one.
+export interface SessionOverlapProbe {
+  workspace: string;
+  sessionIds: string[];
+}
+
+function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
+  const base = { id: 'session:overlap', label: 'session overlap' };
+  // Warn, never fail (issue #118): concurrent different-session runs in one
+  // repo are LEGAL — warn is informational and never exit-flipping. The
+  // note states the sweep's blind spot: each run's end-of-run sweep
+  // compares against its own boot baseline, so a sibling's in-flight
+  // changes are recorded as unattributed, non-reversible entries.
+  if (probe.sessionIds.length > 1) {
+    return {
+      ...base,
+      status: 'warn',
+      reason: 'ok',
+      detail:
+        `${probe.sessionIds.length} sessions recorded against ${probe.workspace} (${probe.sessionIds.join(', ')}) — ` +
+        "if two are live at once, each run records the other's in-flight changes as unattributed, non-reversible journal entries",
+    };
+  }
+  return {
+    ...base,
+    status: 'pass',
+    reason: 'ok',
+    detail:
+      probe.sessionIds.length === 1
+        ? `1 session recorded against ${probe.workspace} — no sweep overlap`
+        : `no sessions recorded against ${probe.workspace} — no sweep overlap`,
+  };
 }
 
 function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
@@ -417,6 +459,24 @@ export function collectDoctorChecks(
         status: 'fail',
         reason: 'policy-mismatch',
         detail: probeMessage(error),
+      });
+    }
+  }
+  // Repo-level session overlap (issue #118): opt-in via the injected probe —
+  // absent means no check (legacy matrices are unchanged). A throwing probe
+  // reports warn with the named reason, never fail: the note is
+  // informational by design (overlap is legal), so a store hiccup must not
+  // flip doctor's exit code.
+  if (deps.probeSessionOverlap !== undefined) {
+    try {
+      checks.push(sessionOverlapCheck(deps.probeSessionOverlap()));
+    } catch (error) {
+      checks.push({
+        id: 'session:overlap',
+        label: 'session overlap',
+        status: 'warn',
+        reason: 'ok',
+        detail: `overlap unverified (session store not listable): ${probeMessage(error)}`,
       });
     }
   }

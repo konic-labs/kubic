@@ -67,6 +67,9 @@ export interface JournalEntry {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /** True when the delta was encoded against '' (reconciliation entries with
+   *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
+  deltaBaseEmpty?: boolean;
 }
 
 export interface RetentionPolicy {
@@ -171,22 +174,29 @@ export function encodeDelta(before: string, after: string): string {
   return JSON.stringify(ops);
 }
 
-export function applyDelta(before: string, delta: string): string {
-  const lines = before.split('\n');
-  const ops = JSON.parse(delta) as DeltaOp[];
-  const out: string[] = [];
-  let at = 0;
-  for (const op of ops) {
-    if ('eq' in op) {
-      out.push(...lines.slice(at, at + op.eq));
-      at += op.eq;
-    } else if ('del' in op) {
-      at += op.del;
-    } else {
-      out.push(...op.ins);
+export function applyDelta(before: string, delta: string): string | null {
+  try {
+    const lines = before.split('\n');
+    const ops = JSON.parse(delta) as DeltaOp[];
+    const out: string[] = [];
+    let at = 0;
+    for (const op of ops) {
+      if ('eq' in op) {
+        out.push(...lines.slice(at, at + op.eq));
+        at += op.eq;
+      } else if ('del' in op) {
+        at += op.del;
+      } else {
+        out.push(...op.ins);
+      }
     }
+    return out.join('\n');
+  } catch {
+    // Defensive depth (issue #111): hash verification on blob reads should
+    // already catch torn deltas, but a hash-valid yet malformed delta must
+    // never crash a caller — fail closed to null, callers treat as missing.
+    return null;
   }
-  return out.join('\n');
 }
 
 export class FileJournalStore {
@@ -242,6 +252,12 @@ export class FileJournalStore {
       toolCallId: input.toolCallId,
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
+      // Issue #111: record the base the delta was actually encoded against
+      // (append computed it as `input.before ?? ''`), so readAfter never has
+      // to guess. Exactly the reconcile/create shape: no before-content.
+      ...(deltaHash !== null && input.before === null
+        ? { deltaBaseEmpty: true }
+        : {}),
     };
     bridge.appendFile(this.indexPath, `${JSON.stringify(entry)}\n`);
     // Bounded by construction: every append enforces the store's limits,
@@ -278,22 +294,84 @@ export class FileJournalStore {
       .filter((info) => !info.isDirectory && !info.isSymbolicLink).length;
   }
 
-  readBefore(entry: JournalEntry): string | null {
+  readBefore(
+    entry: JournalEntry,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     if (entry.beforeHash === null) return null;
-    return this.readBlob(entry.beforeHash);
+    return this.readBlob(entry.beforeHash, onCorrupt);
   }
 
   // After-content: direct blob, or before-blob plus delta for large files.
   // Null for deletes (no after-content exists).
-  readAfter(entry: JournalEntry): string | null {
+  readAfter(
+    entry: JournalEntry,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     if (entry.afterHash === null) return null;
     if (entry.deltaHash !== null) {
-      const before = this.readBefore(entry) ?? '';
-      const delta = this.readBlob(entry.deltaHash);
+      const delta = this.readBlob(entry.deltaHash, onCorrupt);
       if (delta === null) return null;
-      return applyDelta(before, delta);
+      // Branch order is the correctness contract (issue #111 review): the
+      // recorded base wins, then the legacy heuristic for pre-flag
+      // unattributed entries (reconcile always encoded those against ''),
+      // and only then the before-blob. The unattributed check must outrank
+      // the before-blob: unattributed entries carry a hash-only beforeHash,
+      // and when it resolves to a SHARED blob in the content-addressed
+      // store, applying the base-'' delta against that foreign content
+      // silently serves wrong after-content. The ''-base paths read no
+      // before-blob at all — reconstruction needs none, and reading one
+      // would waste I/O and could fire onCorrupt for a torn shared blob
+      // even though reconstruction succeeds.
+      if (entry.deltaBaseEmpty === true) {
+        return this.verifyReconstruction(
+          entry,
+          applyDelta('', delta),
+          onCorrupt,
+        );
+      }
+      // Legacy heuristic: pre-flag unattributed entries encoded their delta
+      // against '' (reconcile is the only writer of that shape).
+      if (entry.deltaBaseEmpty === undefined && entry.unattributed === true) {
+        return this.verifyReconstruction(
+          entry,
+          applyDelta('', delta),
+          onCorrupt,
+        );
+      }
+      const before = this.readBefore(entry, onCorrupt);
+      if (before !== null) {
+        return this.verifyReconstruction(
+          entry,
+          applyDelta(before, delta),
+          onCorrupt,
+        );
+      }
+      // Before-blob missing on a tool-authored entry: refuse to guess —
+      // reconstructing from '' fabricates after-content that never existed.
+      return null;
     }
-    return this.readBlob(entry.afterHash);
+    return this.readBlob(entry.afterHash, onCorrupt);
+  }
+
+  // Defense in depth (issue #111): a delta reconstruction must hash to the
+  // entry's recorded after-content — the same contract readBlob enforces on
+  // direct blobs. A mismatch means the base was mis-guessed or the entry is
+  // inconsistent: fail closed to null and report through onCorrupt, never
+  // serve after-content the journal cannot vouch for.
+  private verifyReconstruction(
+    entry: JournalEntry,
+    reconstructed: string | null,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
+    if (reconstructed === null) return null;
+    if (sha256Hex(reconstructed) !== entry.afterHash) {
+      onCorrupt?.(
+        `delta reconstruction for ${entry.path} does not match its recorded after-hash ${entry.afterHash ?? 'none'} — treating as corrupt`,
+      );
+      return null;
+    }
+    return reconstructed;
   }
 
   enforceRetention(policy: RetentionPolicy): {
@@ -369,12 +447,24 @@ export class FileJournalStore {
     bridge.writeFile(path, content);
   }
 
-  private readBlob(hash: string): string | null {
+  // Content-addressed read (issue #111): the blob's own name is the
+  // contract. Content that does not hash to `hash` (torn write, tampering,
+  // bit rot) fails closed to null — a wrong blob must never be served as
+  // truth, especially to `undo` restore.
+  private readBlob(
+    hash: string,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     const bridge = this.bridge();
     const path = join(this.blobsDir, hash);
     if (!bridge.exists(path)) return null;
     try {
-      return bridge.readTextFile(path);
+      const content = bridge.readTextFile(path);
+      if (sha256Hex(content) !== hash) {
+        onCorrupt?.(`blob ${hash} fails its own hash — treating as missing`);
+        return null;
+      }
+      return content;
     } catch {
       return null;
     }

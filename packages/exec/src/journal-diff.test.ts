@@ -1,11 +1,11 @@
 // Slice A: journal diff core — attributed hunks from entries (issue #18; §42.2).
 // RED: diffEntries/renderDiff do not exist yet.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
-import { diffEntries, renderDiff } from './journal-diff.js';
+import { diffEntries, type FileChange, renderDiff } from './journal-diff.js';
 
 function seed(): FileJournalStore {
   const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
@@ -85,5 +85,83 @@ describe('journal diff core (issue #18, slice A)', () => {
     const parsed = JSON.parse(JSON.stringify(diffEntries(seed(), {})));
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].path).toBe('a.txt');
+  });
+});
+
+// Blob integrity (issue #111): corrupt journal content must surface as a
+// named flag/marker, never crash the read path.
+describe('corrupt journal content (issue #111)', () => {
+  function tornDeltaStore(): {
+    store: FileJournalStore;
+    dir: string;
+  } {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const store = new FileJournalStore(dir);
+    const before = 'b\n'.repeat(40_000);
+    const after = 'c\n'.repeat(40_000);
+    const recorded = store.append({
+      path: 'big.txt',
+      op: 'write',
+      before,
+      after,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    // Torn write: the delta blob survives only partially on disk.
+    writeFileSync(join(dir, 'blobs', recorded.deltaHash ?? ''), '{torn');
+    return { store, dir };
+  }
+
+  it('a torn delta blob marks the change corrupt instead of crashing diffEntries', () => {
+    // Today this throws an uncaught SyntaxError out of applyDelta.
+    const changes = diffEntries(tornDeltaStore().store, {});
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.corrupt).toBe(true);
+  });
+
+  it('renderDiff prints the corrupt-content marker for a corrupt change', () => {
+    const change: FileChange = {
+      path: 'big.txt',
+      op: 'write',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      sessionId: 's1',
+      timestamp: 100,
+      unattributed: false,
+      reversible: true,
+      before: 'b\n',
+      after: null,
+      corrupt: true,
+    };
+    expect(renderDiff([change])).toContain('# [corrupt journal content]');
+  });
+
+  it('a healthy entry is not marked corrupt', () => {
+    const changes = diffEntries(seed(), {});
+    for (const c of changes) expect(c.corrupt).toBe(false);
+    expect(renderDiff(changes)).not.toContain('# [corrupt journal content]');
+  });
+
+  it('a hash-corrupt before-blob marks the change corrupt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const store = new FileJournalStore(dir);
+    const recorded = store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
+    const changes = diffEntries(store, {});
+    expect(changes[0]?.corrupt).toBe(true);
   });
 });

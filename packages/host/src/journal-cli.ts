@@ -228,6 +228,9 @@ export async function runJournalCommand(
     deps.out(
       `unattributed: ${status.unattributed} of ${status.entries} (reconciled at run end)`,
     );
+    // Issue #111: lost journal content is named on its own line ("0 is the
+    // honest answer") so a corrupt store is visible at a glance.
+    deps.out(`corrupt: ${status.corrupt}`);
     if (status.repo === null) {
       deps.out('repo: non-repo directory (journal works without git)');
     } else {

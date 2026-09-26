@@ -1,6 +1,13 @@
 // Slice A: content-addressed journal store (issue #17; §42.4).
 // RED: FileJournalStore does not exist yet.
-import { appendFileSync, mkdtempSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +15,10 @@ import {
   applyDelta,
   encodeDelta,
   FileJournalStore,
+  type JournalEntry,
   type JournalEntryInput,
+  restoreEntry,
+  sha256Hex,
 } from './journal.js';
 
 function tmpRoot(): string {
@@ -98,6 +108,13 @@ describe('journal store (issue #17, slice A)', () => {
     expect(store.readBefore(recorded)).toBe(before);
   });
 
+  it('applyDelta returns null on malformed delta JSON instead of throwing', () => {
+    // Hash-valid but malformed deltas must never crash a caller
+    // (issue #111): torn content that happens to parse-check fails
+    // closed to null, and callers treat it as missing.
+    expect(applyDelta('a\n', '{torn')).toBe(null);
+  });
+
   it('bounds growth by default: appends enforce the store limits', () => {
     const store = new FileJournalStore(tmpRoot(), { maxBytes: 12 });
     store.append(entry({ path: 'a.txt', after: 'aaaaaa\n' }));
@@ -120,5 +137,243 @@ describe('journal store (issue #17, slice A)', () => {
     expect(small.entries).toBe(1);
     expect(store.entries()).toEqual([]);
     expect(store.blobCount()).toBe(0);
+  });
+});
+
+// Blob integrity (issue #111): the delta base is recorded, never guessed.
+describe('deltaBaseEmpty schema (issue #111)', () => {
+  const big = `${'line\n'.repeat(20_000)}tail\n`;
+
+  it('append records deltaBaseEmpty when the delta is encoded against an empty before', () => {
+    const store = new FileJournalStore(tmpRoot());
+    const recorded = store.append(
+      entry({ path: 'big.txt', before: null, after: big, bytesDelta: 0 }),
+    );
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(recorded.deltaBaseEmpty).toBe(true);
+    expect(store.entries()[0]?.deltaBaseEmpty).toBe(true);
+  });
+
+  it('append leaves deltaBaseEmpty absent on tool-authored deltas with real before-content', () => {
+    const store = new FileJournalStore(tmpRoot());
+    const recorded = store.append(
+      entry({
+        path: 'big.txt',
+        before: `head\n${big}`,
+        after: big,
+        bytesDelta: 0,
+      }),
+    );
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(recorded.deltaBaseEmpty).toBe(undefined);
+    expect(store.entries()[0]?.deltaBaseEmpty).toBe(undefined);
+  });
+});
+
+// Blob integrity (issue #111): readAfter reconstructs from the recorded
+// base, never from a guess.
+describe('readAfter delta bases (issue #111)', () => {
+  const big = `${'r\n'.repeat(40_000)}tail\n`;
+
+  it('a reconcile-authored large-file entry reconstructs from its recorded empty base', () => {
+    // reconcile's record() shape: no before-content, hash-only pre-image.
+    const store = new FileJournalStore(tmpRoot());
+    const recorded = store.append(
+      entry({
+        path: 'big.txt',
+        op: 'write',
+        before: null,
+        beforeHash: sha256Hex('gone\n'),
+        after: big,
+        bytesDelta: 0,
+        unattributed: true,
+      }),
+    );
+    expect(recorded.deltaBaseEmpty).toBe(true);
+    expect(store.readAfter(recorded)).toBe(big);
+  });
+
+  it('legacy unattributed entries without the flag keep reconstructing from the empty base', () => {
+    // A pre-schema entry: same data as a reconcile large-file find, but
+    // written before deltaBaseEmpty existed. Correct-by-construction today
+    // (reconcile is the only writer of that shape) and must stay so.
+    const dir = tmpRoot();
+    const delta = encodeDelta('', big);
+    const deltaHash = sha256Hex(delta);
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    writeFileSync(join(dir, 'blobs', deltaHash), delta);
+    const legacy: JournalEntry = {
+      path: 'legacy.txt',
+      op: 'write',
+      beforeHash: sha256Hex('gone\n'),
+      afterHash: sha256Hex(big),
+      deltaHash,
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1,
+      unattributed: true,
+    };
+    writeFileSync(join(dir, 'index.jsonl'), `${JSON.stringify(legacy)}\n`);
+    const store = new FileJournalStore(dir);
+    const entry0 = store.entries()[0];
+    expect(entry0?.deltaBaseEmpty).toBe(undefined);
+    expect(store.readAfter(entry0 ?? legacy)).toBe(big);
+  });
+
+  it('a pre-flag unattributed entry with a shared before-hash reconstructs from the empty base', () => {
+    // The legacy heuristic must outrank the before-blob branch: unattributed
+    // entries carry a hash-only beforeHash, and when that hash resolves to a
+    // SHARED blob (another entry journaled the same bytes), applying the
+    // base-'' delta against the shared content silently serves wrong
+    // after-content with no corruption reported.
+    const dir = tmpRoot();
+    const shared = 'shared\ncontent\n';
+    const after = 'real\nafter\n';
+    const delta = encodeDelta('', after);
+    const deltaHash = sha256Hex(delta);
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    writeFileSync(join(dir, 'blobs', deltaHash), delta);
+    const legacy: JournalEntry = {
+      path: 'legacy.txt',
+      op: 'write',
+      beforeHash: sha256Hex(shared),
+      afterHash: sha256Hex(after),
+      deltaHash,
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1,
+      unattributed: true,
+    };
+    writeFileSync(join(dir, 'index.jsonl'), `${JSON.stringify(legacy)}\n`);
+    const store = new FileJournalStore(dir);
+    // Another entry journaled the same bytes as after-content, so the blob
+    // now exists at the legacy entry's beforeHash.
+    store.append(entry({ path: 'other.txt', after: shared }));
+    expect(store.hasBlob(sha256Hex(shared))).toBe(true);
+    const entry0 = store.entries()[0];
+    expect(entry0?.deltaBaseEmpty).toBe(undefined);
+    expect(store.readAfter(entry0 ?? legacy)).toBe(after);
+  });
+
+  it('a deltaBaseEmpty reconstruction never reads its before-blob (no corrupt report for an unused torn blob)', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({
+        path: 'big.txt',
+        op: 'write',
+        before: null,
+        beforeHash: sha256Hex('gone\n'),
+        after: big,
+        bytesDelta: 0,
+        unattributed: true,
+      }),
+    );
+    expect(recorded.deltaBaseEmpty).toBe(true);
+    // A torn blob at the hash-only beforeHash must not be read at all when
+    // reconstruction uses '' — reading it wastes I/O and fires onCorrupt
+    // for content that never affected the result.
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'torn\n');
+    const details: string[] = [];
+    expect(store.readAfter(recorded, (detail) => details.push(detail))).toBe(
+      big,
+    );
+    expect(details).toEqual([]);
+  });
+
+  it('a tool-authored delta entry with a missing before-blob refuses to reconstruct', () => {
+    // Reconstructing from '' here silently fabricates after-content that
+    // never existed on disk — refuse instead.
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const before = 'b\n'.repeat(40_000);
+    const after = 'c\n'.repeat(40_000);
+    const recorded = store.append(
+      entry({ path: 'big.txt', before, after, bytesDelta: 0 }),
+    );
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(recorded.deltaBaseEmpty).toBe(undefined);
+    rmSync(join(dir, 'blobs', recorded.beforeHash ?? ''));
+    expect(store.readAfter(recorded)).toBe(null);
+  });
+});
+
+// Blob integrity (issue #111): blobs are content-addressed, so a blob whose
+// content does not hash to its name must read as missing — never as truth.
+describe('blob hash verification (issue #111)', () => {
+  it('a blob whose content does not hash to its name reads as missing', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
+    expect(store.readAfter(recorded)).toBe(null);
+  });
+
+  it('corrupt blobs are reported through the onCorrupt hook', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({ path: 'a.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
+    );
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
+    const details: string[] = [];
+    expect(store.readBefore(recorded, (detail) => details.push(detail))).toBe(
+      null,
+    );
+    expect(details.join('\n')).toContain(recorded.beforeHash ?? 'missing');
+  });
+
+  it('a delta reconstruction that fails the recorded after-hash reads as corrupt, never as content', () => {
+    // Defense in depth (issue #111): if a base is ever mis-guessed again,
+    // the reconstruction will not hash to entry.afterHash — fail closed to
+    // null with a named report instead of serving wrong after-content.
+    const dir = tmpRoot();
+    const after = 'real\nafter\n';
+    const foreign = 'foreign\nbase\n';
+    // The delta is encoded against '' but the entry claims a before-blob
+    // base — the exact shape of the shared-blob mis-guess.
+    const delta = encodeDelta('', after);
+    const deltaHash = sha256Hex(delta);
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    writeFileSync(join(dir, 'blobs', deltaHash), delta);
+    writeFileSync(join(dir, 'blobs', sha256Hex(foreign)), foreign);
+    const forged: JournalEntry = {
+      path: 'forged.txt',
+      op: 'write',
+      beforeHash: sha256Hex(foreign),
+      afterHash: sha256Hex(after),
+      deltaHash,
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 1,
+    };
+    writeFileSync(join(dir, 'index.jsonl'), `${JSON.stringify(forged)}\n`);
+    const store = new FileJournalStore(dir);
+    const details: string[] = [];
+    expect(store.readAfter(forged, (detail) => details.push(detail))).toBe(
+      null,
+    );
+    expect(details.join('\n')).toContain(forged.afterHash);
+  });
+
+  it('undo never restores content from a hash-corrupt before-blob', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(
+      entry({ path: 'f.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
+    );
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    writeFileSync(join(root, 'f.txt'), 'v2\n');
+    writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'evil\n');
+    const result = restoreEntry(store, recorded, root);
+    expect(result.restored).toBe(false);
+    // Wrong content must never be written over the real file.
+    expect(readFileSync(join(root, 'f.txt'), 'utf8')).toBe('v2\n');
   });
 });

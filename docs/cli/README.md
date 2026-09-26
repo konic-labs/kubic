@@ -14,12 +14,15 @@ one convention, applied before any argv validation
 `kubic` prints the identical listing and exits 1 — usage-on-no-args is the
 deliberate POSIX posture. Usage errors keep their own exit codes.
 
-**Unexpected failures are one named line.** An error Kubic did not shape
-prints `error: <message>` on stderr and exits 1; the full stack is opt-in
-with `KUBIC_DEBUG=1`. The launcher also refuses runtimes below Node 22.19 by
-name — `kubic: node >= 22.19 required (running <version>) — see the README
-install section` — before it loads anything. See
-[doctor and debug](doctor-and-debug.md).
+**Unexpected command failures are one named line.** An error Kubic did not
+shape while a command runs (inside the dispatcher's `main()`) prints
+`error: <message>` on stderr and exits 1; the full stack is opt-in with
+`KUBIC_DEBUG=1`. That catch-all covers command failures only — a build-output
+module that fails while it evaluates at launch is not caught: it prints a raw
+stack and exits 1, because the launcher names only a missing build output. The
+launcher also refuses runtimes below Node 22.19 by name — `kubic: node >=
+22.19 required (running <version>) — see the README install section` — before
+it loads anything. See [doctor and debug](doctor-and-debug.md).
 
 ## Install and build
 

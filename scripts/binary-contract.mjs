@@ -10,8 +10,8 @@
 // `--help`/`-h` print the listing and exit 0 while the bare invocation
 // keeps exit 1 (same line), a stubbed old runtime hits the launcher's
 // named Node guard before any dist import, and an injected command
-// failure surfaces as one `error: <message>` line (full stack only under
-// KUBIC_DEBUG=1).
+// failure (reached only through its contract-only env gate) surfaces as
+// one `error: <message>` line (full stack only under KUBIC_DEBUG=1).
 //
 // Hermetic by construction: probes run with HOME pointing at a temp dir
 // and a cwd holding no models.json, so no provider is ever configured
@@ -64,6 +64,12 @@ export function nodeGuardLine(runningVersion) {
 // (apps/kubic/src/main.ts, issue #128): a plain Error so the top-level
 // catch-all's operator-facing shape is asserted against the real binary.
 export const CRASH_PROBE_MESSAGE = 'injected probe failure';
+
+// Env gate for the failure seam (issue #128): main.ts only throws when this
+// is '1', so the seam is internal-only — a bare `kubic __crash-probe` is an
+// unknown command. Named like NODE_STUB_ENV: contract-only, never
+// user-facing.
+export const CRASH_PROBE_ENV = '__KUBIC_CONTRACT_CRASH_PROBE';
 
 // Env var the `--import` preload reads to stub process.versions.node: an
 // old runtime cannot run in CI, so the launcher's guard is exercised by
@@ -234,8 +240,10 @@ export function binaryContract({ distPresent, expectedLine, run }) {
 
   // Issue #128: an unexpected command failure is one `error: <message>`
   // line on stderr, exit 1, no stack. The full stack is opt-in via
-  // KUBIC_DEBUG=1 — and even then the named line stays.
-  const crash = run(['__crash-probe']);
+  // KUBIC_DEBUG=1 — and even then the named line stays. The seam is gated
+  // on CRASH_PROBE_ENV; the ungated probe below proves a bare
+  // `kubic __crash-probe` cannot reach it.
+  const crash = run(['__crash-probe'], { env: { [CRASH_PROBE_ENV]: '1' } });
   const crashFailed = probeProblems('kubic __crash-probe', crash);
   if (crashFailed.length > 0) {
     problems.push(...crashFailed);
@@ -259,7 +267,9 @@ export function binaryContract({ distPresent, expectedLine, run }) {
     }
   }
 
-  const debugCrash = run(['__crash-probe'], { env: { KUBIC_DEBUG: '1' } });
+  const debugCrash = run(['__crash-probe'], {
+    env: { [CRASH_PROBE_ENV]: '1', KUBIC_DEBUG: '1' },
+  });
   const debugCrashFailed = probeProblems(
     'kubic __crash-probe (KUBIC_DEBUG=1)',
     debugCrash,
@@ -281,6 +291,31 @@ export function binaryContract({ distPresent, expectedLine, run }) {
     if (!/\n\s+at /.test(stderr)) {
       problems.push(
         `\`kubic __crash-probe\` with KUBIC_DEBUG=1 must include the full stack — no \` at \` frame seen in ${JSON.stringify(stderr)}`,
+      );
+    }
+  }
+
+  // The seam is internal-only (issue #128): without the contract's own env
+  // gate, `kubic __crash-probe` is just an unknown command — the root usage
+  // line, exit 1, nothing on stderr — never an injected crash.
+  const ungated = run(['__crash-probe']);
+  const ungatedFailed = probeProblems('kubic __crash-probe (ungated)', ungated);
+  if (ungatedFailed.length > 0) {
+    problems.push(...ungatedFailed);
+  } else {
+    if (ungated.code !== 1) {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate exited ${ungated.code} (expected 1 — unknown command)`,
+      );
+    }
+    if (ungated.stdout.trimEnd() !== ROOT_USAGE_LINE) {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout.trimEnd())} — expected the root usage line (the seam must stay internal-only)`,
+      );
+    }
+    if (ungated.stderr !== '') {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected silence`,
       );
     }
   }

@@ -152,8 +152,14 @@ async function main(argv: string[]): Promise<number> {
   // `kubic __crash-probe` throws a plain Error so the top-level catch-all's
   // `error: <message>` / KUBIC_DEBUG behavior is asserted end to end against
   // the real binary by scripts/binary-contract.mjs. Internal — not a
-  // supported command and deliberately absent from ROOT_USAGE.
-  if (command === '__crash-probe') {
+  // supported command, deliberately absent from ROOT_USAGE, and gated on the
+  // contract's own env var (named like __KUBIC_CONTRACT_NODE_STUB) so
+  // arbitrary user argv cannot reach it: without the gate the command falls
+  // through to the unknown-command path below.
+  if (
+    command === '__crash-probe' &&
+    process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1'
+  ) {
     throw new Error('injected probe failure');
   }
   if (command === 'sessions') {

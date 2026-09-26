@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { nodeVersionSupported } from '../bin/node-guard.mjs';
 import {
   binaryContract,
+  CRASH_PROBE_ENV,
   CRASH_PROBE_MESSAGE,
   expectedVersionLine,
   nodeGuardLine,
@@ -129,6 +130,12 @@ function fakeRun(overrides = {}) {
     }
     if (args.length === 0) return overrides.bare ?? bareOut();
     if (args[0] === '__crash-probe') {
+      // Without the contract's env gate the seam is unreachable (issue
+      // #128): the command falls through to the unknown-command path —
+      // the same shape as the bare invocation.
+      if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
+        return overrides.ungatedCrash ?? bareOut();
+      }
       return opts.env?.KUBIC_DEBUG === '1'
         ? (overrides.debugCrash ?? debugCrashOut())
         : (overrides.crash ?? crashOut());
@@ -369,6 +376,14 @@ describe('binary contract failure probes (issue #128)', () => {
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /lost the `error: <message>` line/);
   });
+
+  it('fails when the seam fires without the env gate (internal-only breach)', () => {
+    const result = contractWith({ ungatedCrash: crashOut() });
+    assert.equal(result.problems.length, 2);
+    assert.match(result.problems[0], /without the env gate/);
+    assert.match(result.problems[0], /internal-only/);
+    assert.match(result.problems[1], /without the env gate/);
+  });
 });
 
 describe('kubic launcher source contract (issue #128)', () => {
@@ -423,6 +438,26 @@ describe('kubic launcher source contract (issue #128)', () => {
       code.slice(0, guardAt),
       /\bawait\b/,
       'no top-level await may precede the guard',
+    );
+  });
+
+  it('keeps the guard module import-free with no top-level await', () => {
+    const src = readFileSync(join(ROOT, 'bin', 'node-guard.mjs'), 'utf8');
+    // Executable tokens only, the same stripping as the wrapper-order
+    // assertion above: the module header may (and should) explain the
+    // hazard without tripping the assertion.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    assert.doesNotMatch(
+      code,
+      /\bimport\b/,
+      'bin/node-guard.mjs must not import anything — bin/kubic.js imports it statically, so any dependency would have to parse on the very runtimes the guard exists to refuse',
+    );
+    assert.doesNotMatch(
+      code,
+      /\bawait\b/,
+      'bin/node-guard.mjs must not contain `await` — a top-level await makes the static import from bin/kubic.js a parse error before the guard can print the named requirement',
     );
   });
 

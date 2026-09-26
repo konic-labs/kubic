@@ -122,6 +122,28 @@ tmp 0600 so crash residue is never world-readable, and sweeps stale
 `<target>.kubic-restore-*.tmp` siblings best-effort after a successful
 restore.
 
+Baseline walk ignores (issue #116): `captureBaseline` honors every
+`.gitignore` on the way down, not just the root's. Rules accumulate per
+directory as the recursion descends — child rules are appended AFTER the
+parent's, so `isIgnored`'s last-match-wins lets a nested negation override a
+parent ignore (the ordering git uses) — and the stack is dropped on recursion
+exit, so a sibling subtree never inherits another's rules. An unreadable
+nested ignore (chmod 000, a permission-denied mount) leaves the parent rules
+in force and the walk continues: the documented widening, never a throw.
+`reconcile` re-walks through the same `captureBaseline`, so boot and sweep can
+never disagree about what is in scope. The matcher stays the documented
+common subset (`*`, `?`, `**` at the edges, `dir/`, `!`) — character classes
+and mid-pattern `**` are not modeled — and nested rules are matched against
+the workspace-relative path rather than re-rooted at their own directory, so
+a nested ANCHORED pattern must be written repo-relative (`packages/foo/build/`);
+a git-style directory-relative one (`sub/build/` inside
+`packages/foo/.gitignore`) matches nothing and merely widens the baseline.
+Per-directory negation subtleties beyond last-match-wins, and
+`.git/info/exclude` / `core.excludesFile`, remain unsupported (the latter is a
+follow-up, not a behavior change here). Cost: one `exists('.gitignore')` per
+directory entered — the same order as the `listDir` already paid, with no read
+at all for a directory without an ignore file.
+
 Sweep after-content bound (issue #120): `reconcile`'s record path reads a
 changed file once, bounded by `MAX_SWEEP_CONTENT_BYTES` (4 MiB). Above the
 bound — or when the utf-8 decode is lossy — the entry is hash-only:

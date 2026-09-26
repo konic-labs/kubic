@@ -95,10 +95,41 @@ describe('unattributed count (issue #87)', () => {
       reversible: 0,
       nonReversible: 0,
       unattributed: 0,
+      corrupt: 0,
       repo: null,
     });
     expect(reconciliationSummary(empty)).toBe(
       'unattributed: 0 of 0 entr(ies) reconciled at run end',
     );
+  });
+});
+
+// Blob integrity (issue #111): status names lost content instead of
+// letting it hide behind reversibility counts.
+describe('corrupt count (issue #111)', () => {
+  it('counts entries whose content is unexpectedly missing under a recorded hash', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const store = new FileJournalStore(dir);
+    const recorded = store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+    writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
+    const status = journalStatus(store, mkdtempSync(join(tmpdir(), 'ws-')));
+    expect(status.corrupt).toBe(1);
+  });
+
+  it('does not count designed absences as corrupt', () => {
+    // seed()'s unattributed entry records a hash-only pre-image — no
+    // before-blob exists by design, and that is not corruption.
+    const status = journalStatus(seed(), mkdtempSync(join(tmpdir(), 'ws-')));
+    expect(status.corrupt).toBe(0);
   });
 });

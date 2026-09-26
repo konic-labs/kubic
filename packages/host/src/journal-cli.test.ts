@@ -227,4 +227,16 @@ describe('journal CLI corrupt content (issue #111)', () => {
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('# [corrupt journal content]');
   });
+
+  it('status counts a corrupt: line', async () => {
+    const { journalDir, root } = seedTornDelta();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['status'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('corrupt: 1');
+  });
 });

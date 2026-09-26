@@ -43,6 +43,11 @@ export interface JournalStatus {
   // because it is the only evidence of work that bypassed every Kubic
   // operation.
   unattributed: number;
+  // Issue #111: entries whose content is unexpectedly missing under a
+  // recorded hash (corrupt/torn blob, or a delta that refuses to
+  // reconstruct) — designed absences (unattributed hash-only pre-images,
+  // deletes) are not counted.
+  corrupt: number;
   repo: RepoState | null;
 }
 
@@ -78,15 +83,25 @@ export function journalStatus(
   const entries = store.entries();
   let reversible = 0;
   let unattributed = 0;
+  let corrupt = 0;
   for (const e of entries) {
-    if (store.readBefore(e) !== null) reversible++;
+    const before = store.readBefore(e);
+    if (before !== null) reversible++;
     if (e.unattributed === true) unattributed++;
+    // Same corruption predicate as diffEntries (issue #111): content
+    // unexpectedly null while its hash is recorded. An unattributed entry's
+    // hash-only pre-image is a designed absence, never corruption.
+    const beforeLost =
+      e.beforeHash !== null && before === null && e.unattributed !== true;
+    const afterLost = e.afterHash !== null && store.readAfter(e) === null;
+    if (beforeLost || afterLost) corrupt++;
   }
   return {
     entries: entries.length,
     reversible,
     nonReversible: entries.length - reversible,
     unattributed,
+    corrupt,
     repo: readRepo(root),
   };
 }

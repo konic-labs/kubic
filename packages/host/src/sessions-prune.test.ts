@@ -25,6 +25,10 @@ import { runSessionsCommand } from './sessions-cli.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAKE_PID = 424243;
+// The plan→delete window test's two holders: one flips dead→live between
+// the passes, one stays dead throughout.
+const FLIP_PID = 424251;
+const DEAD_PID = 424252;
 
 function tmpRoot(prefix = 'prune-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -57,11 +61,18 @@ function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
   }) as never);
 }
 
-function lockFile(root: string, id: string, pid: number, ageMs: number): void {
+function lockFile(
+  root: string,
+  id: string,
+  pid: number,
+  ageMs: number,
+): number {
+  const startedAt = Date.now() - ageMs;
   writeFileSync(
     join(root, id, 'lock.json'),
-    JSON.stringify({ pid, startedAt: Date.now() - ageMs }),
+    JSON.stringify({ pid, startedAt }),
   );
+  return startedAt;
 }
 
 function prune(
@@ -292,6 +303,63 @@ describe('sessions prune, protection rails (issue #119)', () => {
     expect(existsSync(join(root, 'not a session'))).toBe(true);
     expect(existsSync(transcript)).toBe(true);
     expect(o.lines.join('\n')).toContain('nothing to prune');
+  });
+});
+
+describe('sessions prune, the plan→delete window (issue #119)', () => {
+  // Per-pid call counting drives the window deterministically: a holder
+  // reads dead on the planning pass (its first liveness call) and live on
+  // the delete re-check (its second). No timing, no real process.
+  function stubKillAliveFromCall(
+    aliveFromCall: Map<number, number>,
+  ): ReturnType<typeof vi.spyOn> {
+    const calls = new Map<number, number>();
+    return vi.spyOn(process, 'kill').mockImplementation(((pid: number) => {
+      const call = (calls.get(pid) ?? 0) + 1;
+      calls.set(pid, call);
+      const threshold = aliveFromCall.get(pid);
+      if (threshold !== undefined && call >= threshold) return 0;
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+    }) as never);
+  }
+
+  it('a lock acquired between planning and the delete stops that delete and is reported', async () => {
+    const root = tmpRoot();
+    const flipDir = sessionDir(root, 'flip-live', 90 * DAY_MS);
+    const deadDir = sessionDir(root, 'stays-dead', 90 * DAY_MS);
+    const flippedAt = lockFile(root, 'flip-live', FLIP_PID, 90 * DAY_MS);
+    const deadAt = lockFile(root, 'stays-dead', DEAD_PID, 90 * DAY_MS);
+    // lock.json writes bump the dir mtime: re-age both dirs afterwards.
+    const secs = (Date.now() - 90 * DAY_MS) / 1000;
+    utimesSync(flipDir, secs, secs);
+    utimesSync(deadDir, secs, secs);
+    // lock.json rides inside the state dir, so it counts toward its bytes.
+    const deadBytes =
+      15 + JSON.stringify({ pid: DEAD_PID, startedAt: deadAt }).length;
+    const kill = stubKillAliveFromCall(new Map([[FLIP_PID, 2]]));
+    try {
+      const o = out();
+      const code = await runSessionsCommand(
+        ['prune', '--keep-days', '30', '--yes'],
+        { sessionsRoot: root, out: o.write },
+      );
+      expect(code).toBe(0);
+      const text = o.lines.join('\n');
+      // The candidate whose lock went live is not removed...
+      expect(existsSync(flipDir)).toBe(true);
+      // ...and is reported exactly like a planning-time lock.
+      expect(text).toContain(
+        `locked: flip-live (held by pid ${FLIP_PID} since ${new Date(flippedAt).toISOString()}) — skipped`,
+      );
+      expect(text).not.toContain('pruned flip-live');
+      // A candidate still dead at its own delete is removed and counted.
+      expect(existsSync(deadDir)).toBe(false);
+      expect(text).toContain(`pruned stays-dead (${deadBytes}B)`);
+      // Honest accounting: the skipped candidate is not counted as pruned.
+      expect(text).toContain(`pruned 1 session(s), ${deadBytes}B reclaimed`);
+    } finally {
+      kill.mockRestore();
+    }
   });
 });
 

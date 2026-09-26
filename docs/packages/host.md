@@ -31,7 +31,7 @@ docs and code must never imply otherwise (design §59.1).
 | `replay/` | Replay surfaces over trajectory exports |
 | `limits/` | Honest-claims/skip-record guards, solo-warning + orchestrator notices |
 | `run-cli.ts`, `sessions-cli.ts`, `workers-cli.ts`, `journal-cli.ts`, `models-cli.ts`, `git-cli.ts` | Headless/CLI command implementations |
-| `sessions-prune.ts` | `SessionsRootError`, `planSessionPrune`, `SessionPrunePlan`, `SessionPrunePlanArgs`, `SessionPruneCandidate`, `SessionPruneLocked` — session-state retention core (#119): the age/lock/keep rails and the byte count over a session dir tree |
+| `sessions-prune.ts` | `SessionsRootError`, `planSessionPrune`, `deleteSessionPruneCandidates`, `SessionPrunePlan`, `SessionPrunePlanArgs`, `SessionPruneCandidate`, `SessionPruneLocked`, `SessionPruneDeleteArgs`, `SessionPruneDeleteOutcome` — session-state retention core (#119): the age/lock/keep rails, the byte count over a session dir tree, and the guarded delete pass (liveness re-checked immediately before each remove) |
 | `credentials.ts` | Pointer | Request-time refs in `config/secrets.ts` (#38); model-layer store in `@kubic/worker` `pi-boundary.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
@@ -111,21 +111,28 @@ exit-flipping.
 
 ### Session retention (`sessions-cli.ts` + `sessions-prune.ts`, #119)
 
-`kubic sessions prune` is the only thing that deletes session state, and
-it is opt-in twice over: dry-run is the default (deletion needs `--yes`),
-and the keep window must come from `--keep-days` or config
+`kubic sessions prune` is the only thing that deletes whole session state
+dirs, and it is opt-in twice over: dry-run is the default (deletion needs
+`--yes`), and the keep window must come from `--keep-days` or config
 `session.retentionDays` — with neither, the command exits 1 naming both
 rather than inventing a window (`--keep-days 0` / `retentionDays = 0`
-means retention is off). `planSessionPrune` owns the rails: a session
-holding a live lock is never a candidate (worker `sessionLockIsLive`, a
-read-only view deliberately stronger than the steal rule), a session whose
-state dir mtime is at or before the cutoff is a candidate (a recently
-attached session survives even with old inner files), `--keep-session`
-names are protected, and non-session-shaped entries (plain files, a stray
-`lock.json`, names outside `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript
-dirs) are never touched. A session that cannot be inspected is skipped,
-never guessed at. Scope is `<sessions-root>/<id>/` state dirs only — the
-workspace journal and orchestrator worktrees belong to other commands.
+means retention is off: nothing is pruned, exit 0). `planSessionPrune`
+owns the planning rails: a session holding a live lock is never a
+candidate (worker `sessionLockIsLive`, a read-only view deliberately
+stronger than the steal rule), a session whose state dir mtime is at or
+before the cutoff is a candidate (a recently attached session survives
+even with old inner files), `--keep-session` names are protected, and
+non-session-shaped entries (plain files, a stray `lock.json`, names
+outside `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript dirs) are never
+touched. A session that cannot be inspected is skipped, never guessed at.
+`deleteSessionPruneCandidates` owns the delete pass: it re-checks
+`sessionLockIsLive` immediately before each `bridge.remove`, so a lock
+acquired between plan and delete is skipped and reported exactly like a
+planning-time lock — never counted as pruned. Scope is
+`<sessions-root>/<id>/` state dirs only — the workspace journal and
+orchestrator worktrees belong to other commands, and the same retention
+window also self-heals session journal entries at read time via
+`kubic log --session`.
 
 ## Dep-direction neighbours
 

@@ -48,12 +48,16 @@ describe('a refused config fails closed on the agent-executing modes', () => {
     expect(configRefusalExit(refused('bad key'), command)).toBeUndefined();
   });
 
-  it.each(['sessions', 'git', 'diff', 'journal', 'clean'])(
+  it.each(['git', 'diff', 'journal', 'clean'])(
     'leaves `kubic %s` alone: it consumes no config projection',
     (command) => {
       expect(configRefusalExit(refused('bad key'), command)).toBeUndefined();
     },
   );
+
+  it('leaves `kubic sessions` alone: its one projection (the retention window) is optional', () => {
+    expect(configRefusalExit(refused('bad key'), 'sessions')).toBeUndefined();
+  });
 
   it('stops `kubic replay`: re-execution tiers consume the effective config', () => {
     const exit = configRefusalExit(

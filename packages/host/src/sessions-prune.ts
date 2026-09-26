@@ -1,5 +1,5 @@
-// Session-state retention core (issue #119; §21, §42.4): plan the prune of
-// per-session state dirs under the sessions root.
+// Session-state retention core (issue #119; §21, §42.4): plan and execute
+// the prune of per-session state dirs under the sessions root.
 //
 // Scope: `<root>/<session-id>/` state dirs only — the journal store, spans,
 // approvals posture, and the session lock live there. pi's transcripts live
@@ -10,7 +10,8 @@
 // Rails (each pinned behaviourally by sessions-prune.test.ts):
 // - a session holding a LIVE lock is never a candidate (read-only view:
 //   worker `sessionLockIsLive`; a dead holder — a stale lock — never
-//   protects);
+//   protects), and the lock is re-checked immediately before each delete —
+//   a lock acquired between the plan and the delete pass still stops it;
 // - `--keep-session` names are never candidates;
 // - age: the session dir's own mtime is the last-touch signal. Create,
 //   attach, and close all bump it; appends inside the dir only ever happen
@@ -178,4 +179,51 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     0,
   );
   return plan;
+}
+
+// One candidate's fate in the delete pass (issue #119). `deleted` was
+// removed and accounted; `locked` had a lock go live between planning and
+// this candidate's delete — skipped and reported exactly like a
+// planning-time lock, never removed, never counted as deleted; `failed`
+// was refused by the bridge (the caller reports it and exits non-zero).
+export type SessionPruneDeleteOutcome =
+  | { status: 'deleted'; candidate: SessionPruneCandidate }
+  | {
+      status: 'locked';
+      candidate: SessionPruneCandidate;
+      pid: number;
+      startedAt?: number;
+    }
+  | { status: 'failed'; candidate: SessionPruneCandidate; message: string };
+
+export interface SessionPruneDeleteArgs {
+  root: string;
+  bridge: FileBridge;
+  candidates: readonly SessionPruneCandidate[];
+}
+
+// Delete the planned candidates (issue #119). Planning and deletion are two
+// passes, so a lock acquired in between must still stop the delete: the
+// liveness re-check sits immediately before each remove by construction —
+// a candidate that went live is skipped, reported, and never counted as
+// deleted.
+export function deleteSessionPruneCandidates(
+  args: SessionPruneDeleteArgs,
+): SessionPruneDeleteOutcome[] {
+  const outcomes: SessionPruneDeleteOutcome[] = [];
+  for (const candidate of args.candidates) {
+    const posture = sessionLockIsLive(join(args.root, candidate.id));
+    if (posture !== undefined) {
+      outcomes.push({ status: 'locked', candidate, ...posture });
+      continue;
+    }
+    try {
+      args.bridge.remove(candidate.id, true, true);
+    } catch (error) {
+      outcomes.push({ status: 'failed', candidate, message: detail(error) });
+      continue;
+    }
+    outcomes.push({ status: 'deleted', candidate });
+  }
+  return outcomes;
 }

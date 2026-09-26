@@ -419,17 +419,20 @@ Everything a run persists stays under `~/.kubic/sessions` until you say
 otherwise: per-session state dirs (`<root>/<id>/` — the journal store,
 `spans.jsonl`, approvals posture, and the session lock) grow for the
 lifetime of the machine, so retention is explicit and opt-in. `prune` is
-the only thing that deletes, and it never deletes what it cannot account
-for:
+the only thing that deletes whole session state dirs, and it never deletes
+what it cannot account for — the same window also self-heals aged session
+journal entries at read time (see the read-time self-heal note under
+[`kubic log`](#kubic-diff--undo--log--status)):
 
 - **Dry-run is the default.** Without `--yes`, `prune` lists every
   candidate as `would prune <id> (<bytes>B)` plus the summary
   `dry run: N session(s) would be pruned (NB) — pass --yes to delete`, and
   removes nothing. `--dry-run` is the explicit synonym of that default;
-  `--yes` deletes exactly the listed set (`pruned <id> (<bytes>B)` per
-  session, then `pruned N session(s), NB reclaimed`). `--yes` with
-  `--dry-run` contradicts and is refused by name. `nothing to prune`
-  exits 0.
+  `--yes` deletes the listed set (`pruned <id> (<bytes>B)` per session,
+  then `pruned N session(s), NB reclaimed`; a candidate whose lock goes
+  live in between is skipped and never counted — see the lock bullet
+  below). `--yes` with `--dry-run` contradicts and is refused by name.
+  `nothing to prune` exits 0.
 - **The keep window is never invented.** `--keep-days <n>` (a
   non-negative integer of days) wins; without it, `session.retentionDays`
   from config supplies the window; with neither, `prune` exits 1 naming
@@ -442,14 +445,23 @@ for:
 - **A live lock is a hard stop.** A session holding a `lock.json` whose
   holder pid is alive is never a candidate, even when old and even with
   `--yes`: it is reported `locked: <id> (held by pid <pid> since <iso>) —
-  skipped`. A **stale** lock (dead holder, or a torn file) never protects.
-  Lock liveness is **process-local**: it reads this machine's process
-  table, so a session held by a run on another machine or in another
-  container is not seen as held (the same local-filesystem-only caveat the
-  lock itself carries — see [worker](../packages/worker.md#session-locking-issue-118)).
+  skipped`. The lock is re-checked immediately before each delete, so a
+  session locked between planning and the delete pass is skipped and
+  reported the same way — never counted as pruned. A **stale** lock (dead
+  holder, or a torn file) never protects. Lock liveness is
+  **process-local**: it reads this machine's process table, so a session
+  held by a run on another machine or in another container is not seen as
+  held (the same local-filesystem-only caveat the lock itself carries —
+  see [worker](../packages/worker.md#session-locking-issue-118)). The
+  probe is `process.kill(pid, 0)`: any result other than success —
+  including `EPERM` for a pid this user cannot signal — reads as dead;
+  same-user holders always signal, so a per-user sessions root never
+  mis-reads one.
 - **`--keep-session <id>`** (repeatable, ids `[A-Za-z0-9_-]`) protects a
-  session by name even when aged; it is reported
-  `kept: <id> (--keep-session)`.
+  session by name even when aged; the name is reported
+  `kept: <id> (--keep-session)` when it is what spared an aged session — a
+  recent session is never a candidate anyway, and a live-locked one is
+  reported `locked:` instead.
 - **Only session-shaped entries are touched.** Plain files, a stray
   `lock.json`, names outside `[A-Za-z0-9_-]`, and pi's `--<cwd>--`
   transcript directories (which hold the `.jsonl` transcripts of every

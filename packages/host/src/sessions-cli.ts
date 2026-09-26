@@ -19,6 +19,7 @@ import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableFullAccess, FileApprovalStore } from './approvals.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
+  deleteSessionPruneCandidates,
   planSessionPrune,
   type SessionPrunePlan,
   SessionsRootError,
@@ -51,8 +52,9 @@ function usage(out: (line: string) => void): number {
 // is the DEFAULT — deletion needs --yes — and the keep window must come
 // from --keep-days or config `session.retentionDays`: no window is ever
 // invented. Live-locked sessions, --keep-session names, and non-session
-// entries are never candidates (sessions-prune.ts owns those rails; this
-// is presentation: one line per fact).
+// entries are never candidates, and the lock is re-checked immediately
+// before each delete (sessions-prune.ts owns both rails; this is
+// presentation: one line per fact, honest counts).
 interface PruneOptions {
   keepDays?: number;
   keep: string[];
@@ -175,26 +177,36 @@ function runPruneCommand(
     );
     return 0;
   }
+  const outcomes = deleteSessionPruneCandidates({
+    root,
+    bridge,
+    candidates: plan.candidates,
+  });
   let failed = 0;
+  let deleted = 0;
   let reclaimed = 0;
-  for (const candidate of plan.candidates) {
-    try {
-      bridge.remove(candidate.id, true, true);
-    } catch (error) {
+  for (const outcome of outcomes) {
+    if (outcome.status === 'locked') {
+      // A lock went live between planning and this delete (issue #119):
+      // reported exactly like a planning-time lock, and never counted as
+      // deleted.
       deps.out(
-        `error: could not prune ${candidate.id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `locked: ${outcome.candidate.id} (held by pid ${outcome.pid} since ${lockSince(outcome.startedAt)}) — skipped`,
+      );
+      continue;
+    }
+    if (outcome.status === 'failed') {
+      deps.out(
+        `error: could not prune ${outcome.candidate.id}: ${outcome.message}`,
       );
       failed += 1;
       continue;
     }
-    reclaimed += candidate.bytes;
-    deps.out(`pruned ${candidate.id} (${candidate.bytes}B)`);
+    deleted += 1;
+    reclaimed += outcome.candidate.bytes;
+    deps.out(`pruned ${outcome.candidate.id} (${outcome.candidate.bytes}B)`);
   }
-  deps.out(
-    `pruned ${plan.candidates.length - failed} session(s), ${reclaimed}B reclaimed`,
-  );
+  deps.out(`pruned ${deleted} session(s), ${reclaimed}B reclaimed`);
   return failed === 0 ? 0 : 1;
 }
 

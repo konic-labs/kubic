@@ -377,10 +377,16 @@ async function main(argv: string[]): Promise<number> {
     // Replay at a declared tier (issue #78): recorded/compare are
     // log-only; deterministic/live re-execute the recorded objective
     // through the real solo lane at the declared model pin.
-    return runReplayCommand(rest, {
-      out: (line: string) => console.log(line),
-      run: (request) => runProdReplay(request),
-    });
+    return runReplayCommand(
+      rest,
+      {
+        out: (line: string) => console.log(line),
+        run: (request, runtime) => runProdReplay(request, runtime),
+      },
+      // Issue #114: the re-execution tiers consume the effective config
+      // like `kubic run` — same runtime projections, same lane policy.
+      runtimeRunDeps(cliConfig),
+    );
   }
   if (command === 'export') {
     // Trajectory inspection + RL dataset export (issue #78): reads

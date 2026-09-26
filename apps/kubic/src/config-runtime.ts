@@ -102,7 +102,12 @@ const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor']);
 // `replay` joins them (issue #114): its re-execution tiers run the agent
 // under the effective config exactly like `kubic run`, so a refused config
 // must stop them the same way.
-const CONFIG_CONSUMING_COMMANDS = new Set(['run', 'orchestrate', 'tui', 'replay']);
+const CONFIG_CONSUMING_COMMANDS = new Set([
+  'run',
+  'orchestrate',
+  'tui',
+  'replay',
+]);
 
 // Exit code for a refused config on the given command, or undefined when the
 // command may proceed. Kept beside the load so the policy lives in one place:

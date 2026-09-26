@@ -35,8 +35,10 @@
 // tests); this module never touches the network or a model. File reads
 // go through the exec FileBridge (I/O confinement).
 
+import type { PermissionClasses } from '../../../agents/src/policy.js';
 import { answerHelp } from '../../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import type { JournalRetention } from '../../../exec/src/journal.js';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
@@ -79,9 +81,25 @@ export interface ReplayRunResult {
   summary: string;
 }
 
+// Runtime config projections (issue #114): the SAME surface `kubic run`
+// threads into its lane (runtimeRunDeps) — the permission classes plus
+// their source record (issue #86) and the journal retention bound (§42.4).
+// Absent fields mean the documented defaults, exactly as on the run path;
+// the composition root passes the effective config's projections so a
+// replay re-execution is governed by the config, not by the binary's
+// defaults.
+export interface ReplayRuntimeDeps {
+  policyClasses?: PermissionClasses;
+  policySource: 'config' | 'default';
+  journalRetention?: JournalRetention;
+}
+
 export interface ReplayCommandDeps {
   out: (line: string) => void;
-  run: (request: ReplayRunRequest) => Promise<ReplayRunResult>;
+  run: (
+    request: ReplayRunRequest,
+    runtime: ReplayRuntimeDeps,
+  ) => Promise<ReplayRunResult>;
 }
 
 export interface ReplayError {
@@ -408,6 +426,7 @@ function replayTerminusToExitCode(terminus: unknown): number {
 
 async function executeTierRun(
   deps: ReplayCommandDeps,
+  runtime: ReplayRuntimeDeps,
   options: ReplayOptions,
   params: {
     tier: 'deterministic' | 'live';
@@ -420,14 +439,17 @@ async function executeTierRun(
     experimental: string[];
   },
 ): Promise<number> {
-  const rerun = await deps.run({
-    tier: params.tier,
-    trajectory: options.trajectory,
-    model: params.model,
-    worktree: params.worktree,
-    lockfile: params.lockfile,
-    roleConfig: params.roleConfig,
-  });
+  const rerun = await deps.run(
+    {
+      tier: params.tier,
+      trajectory: options.trajectory,
+      model: params.model,
+      worktree: params.worktree,
+      lockfile: params.lockfile,
+      roleConfig: params.roleConfig,
+    },
+    runtime,
+  );
   const terminus: unknown = (rerun as { terminus: unknown }).terminus;
   const status = typeof terminus === 'string' ? terminus : 'unknown';
   const exitCode = replayTerminusToExitCode(terminus);
@@ -587,6 +609,11 @@ function describeRecorded(trajectory: TrajectoryExport): string[] {
 export async function runReplayCommand(
   args: string[],
   deps: ReplayCommandDeps,
+  // The effective config's projections (issue #114): handed straight to
+  // the run seam so re-execution consumes the config like `kubic run`.
+  // Absent means the documented defaults (runtimeRunDeps' own empty
+  // answer) — never an invented policy.
+  runtime: ReplayRuntimeDeps = { policySource: 'default' },
 ): Promise<number> {
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, USAGE_MESSAGE);
@@ -745,7 +772,7 @@ export async function runReplayCommand(
     }
     const invocation: ReplayInvocation =
       options.worktree !== undefined ? 'different-worktree' : 'different-model';
-    return executeTierRun(deps, options, {
+    return executeTierRun(deps, runtime, options, {
       tier: 'deterministic',
       invocation,
       model: options.model,
@@ -805,7 +832,7 @@ export async function runReplayCommand(
       trajectory.worktree.path,
     );
     if ('exit' in resolved) return resolved.exit;
-    return executeTierRun(deps, options, {
+    return executeTierRun(deps, runtime, options, {
       tier: 'live',
       invocation:
         options.worktree !== undefined ? 'different-worktree' : 'live-exact',

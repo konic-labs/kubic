@@ -18,7 +18,12 @@ const ROOT = join(
   '..',
 );
 const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
-const MAIN = join(ROOT, 'apps', 'kubic', 'src', 'main.ts');
+// Issue #135: the binary's front door moved out of main.ts — the routing
+// and the root usage line live in dispatch.ts, the production wiring (the
+// runCleanCommand deps) in prod-runners.ts. The pins below follow the
+// wiring; main.ts is the thin entry now.
+const DISPATCH = join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts');
+const PROD_RUNNERS = join(ROOT, 'apps', 'kubic', 'src', 'prod-runners.ts');
 const CLEAN = join(
   ROOT,
   'packages',
@@ -53,14 +58,14 @@ describe('clean is documented and dispatched (issue #92)', () => {
 
   it('lists clean in the page usage line and in the binary usage line', () => {
     const page = readFileSync(COMMANDS_PAGE, 'utf8');
-    const main = readFileSync(MAIN, 'utf8');
+    const dispatch = readFileSync(DISPATCH, 'utf8');
     const pageUsage = page.match(/usage: kubic <([^>]*)>/)?.[1] ?? '';
-    const mainUsage = main.match(/usage: kubic <([^>]*)>/)?.[1] ?? '';
+    const dispatchUsage = dispatch.match(/usage: kubic <([^>]*)>/)?.[1] ?? '';
     const words = (listing: string): string[] =>
       listing.split('|').map((word) => word.trim());
     expect(words(pageUsage)).toContain('clean');
-    expect(words(mainUsage)).toContain('clean');
-    expect(words(pageUsage)).toEqual(words(mainUsage));
+    expect(words(dispatchUsage)).toContain('clean');
+    expect(words(pageUsage)).toEqual(words(dispatchUsage));
   });
 
   it('documents every shipped clean flag on the commands page', () => {
@@ -82,9 +87,12 @@ describe('clean is documented and dispatched (issue #92)', () => {
     // -D` on a spawned branch may only be issued from the clean/remove path.
     const clean = readFileSync(CLEAN, 'utf8');
     expect(clean).toContain('deleteSpawnedBranch');
-    const main = readFileSync(MAIN, 'utf8');
-    expect(main).toContain("command === 'clean'");
-    expect(main).toContain('runCleanCommand');
+    // The route is pinned in the dispatch (issue #135), the runCleanCommand
+    // wiring in the production runners.
+    const dispatch = readFileSync(DISPATCH, 'utf8');
+    expect(dispatch).toContain("command === 'clean'");
+    const wiring = readFileSync(PROD_RUNNERS, 'utf8');
+    expect(wiring).toContain('runCleanCommand');
   });
 
   it('shows every accepted flag in the clean usage line', async () => {

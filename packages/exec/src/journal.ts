@@ -304,10 +304,19 @@ export class FileJournalStore {
   readAfter(entry: JournalEntry, onCorrupt?: (detail: string) => void): string | null {
     if (entry.afterHash === null) return null;
     if (entry.deltaHash !== null) {
-      const before = this.readBefore(entry, onCorrupt) ?? '';
       const delta = this.readBlob(entry.deltaHash, onCorrupt);
       if (delta === null) return null;
-      return applyDelta(before, delta);
+      const before = this.readBefore(entry, onCorrupt);
+      if (entry.deltaBaseEmpty === true) return applyDelta('', delta);
+      if (before !== null) return applyDelta(before, delta);
+      // Legacy heuristic: pre-flag unattributed entries encoded their delta
+      // against '' (reconcile is the only writer of that shape).
+      if (entry.deltaBaseEmpty === undefined && entry.unattributed === true) {
+        return applyDelta('', delta);
+      }
+      // Before-blob missing on a tool-authored entry: refuse to guess —
+      // reconstructing from '' fabricates after-content that never existed.
+      return null;
     }
     return this.readBlob(entry.afterHash, onCorrupt);
   }

@@ -131,6 +131,36 @@ describe('journal store (issue #17, slice A)', () => {
   });
 });
 
+// Blob integrity (issue #111): the delta base is recorded, never guessed.
+describe('deltaBaseEmpty schema (issue #111)', () => {
+  const big = `${'line\n'.repeat(20_000)}tail\n`;
+
+  it('append records deltaBaseEmpty when the delta is encoded against an empty before', () => {
+    const store = new FileJournalStore(tmpRoot());
+    const recorded = store.append(
+      entry({ path: 'big.txt', before: null, after: big, bytesDelta: 0 }),
+    );
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(recorded.deltaBaseEmpty).toBe(true);
+    expect(store.entries()[0]?.deltaBaseEmpty).toBe(true);
+  });
+
+  it('append leaves deltaBaseEmpty absent on tool-authored deltas with real before-content', () => {
+    const store = new FileJournalStore(tmpRoot());
+    const recorded = store.append(
+      entry({
+        path: 'big.txt',
+        before: `head\n${big}`,
+        after: big,
+        bytesDelta: 0,
+      }),
+    );
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(recorded.deltaBaseEmpty).toBe(undefined);
+    expect(store.entries()[0]?.deltaBaseEmpty).toBe(undefined);
+  });
+});
+
 // Blob integrity (issue #111): blobs are content-addressed, so a blob whose
 // content does not hash to its name must read as missing — never as truth.
 describe('blob hash verification (issue #111)', () => {

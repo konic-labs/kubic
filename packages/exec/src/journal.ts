@@ -67,6 +67,9 @@ export interface JournalEntry {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /** True when the delta was encoded against '' (reconciliation entries with
+   *  no before-blob). Absent on pre-schema entries — see readAfter fallback. */
+  deltaBaseEmpty?: boolean;
 }
 
 export interface RetentionPolicy {
@@ -249,6 +252,12 @@ export class FileJournalStore {
       toolCallId: input.toolCallId,
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
+      // Issue #111: record the base the delta was actually encoded against
+      // (append computed it as `input.before ?? ''`), so readAfter never has
+      // to guess. Exactly the reconcile/create shape: no before-content.
+      ...(deltaHash !== null && input.before === null
+        ? { deltaBaseEmpty: true }
+        : {}),
     };
     bridge.appendFile(this.indexPath, `${JSON.stringify(entry)}\n`);
     // Bounded by construction: every append enforces the store's limits,

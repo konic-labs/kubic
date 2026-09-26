@@ -1,4 +1,4 @@
-// Shipped-artifact contract for the `kubic` binary (issue #101).
+// Shipped-artifact contract for the `kubic` binary (issues #101, #128).
 //
 // scripts/build-contract.test.mjs asserts the *tree* (manifest, bin
 // wrapper, tsconfig) — this script asserts the *built artifact*: after
@@ -6,7 +6,12 @@
 // fails provider-down with the §78 code 6 and the pinned reason, and a
 // provider-less `run -p` exits 6 while still printing the four refs
 // (session:/journal:/usage:/trajectory:), so the documented failure path
-// is pinned end to end.
+// is pinned end to end. Issue #128 adds the front-door contract: root
+// `--help`/`-h` print the listing and exit 0 while the bare invocation
+// keeps exit 1 (same line), a stubbed old runtime hits the launcher's
+// named Node guard before any dist import, and an injected command
+// failure surfaces as one `error: <message>` line (full stack only under
+// KUBIC_DEBUG=1).
 //
 // Hermetic by construction: probes run with HOME pointing at a temp dir
 // and a cwd holding no models.json, so no provider is ever configured
@@ -39,6 +44,20 @@ export const RUN_PROVIDER_MESSAGE =
   'no models available: register a provider first';
 export const RUN_PROVIDER_EXIT = 6;
 export const DOCTOR_PROVIDER_EXIT = 6;
+
+// The root dispatcher's usage line (issue #128): one string serves
+// `kubic --help` / `kubic -h` (exit 0 — help is success, §78) and the
+// bare invocation (exit 1 — POSIX usage-on-no-args). Pinned literally so
+// a command-list drift fails here instead of shipping stale help.
+export const ROOT_USAGE_LINE =
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+
+// The launcher's named Node-requirement line (issue #128), printed to
+// stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
+// is process.versions.node as the launcher saw it.
+export function nodeGuardLine(runningVersion) {
+  return `kubic: node >= 22.19 required (running ${runningVersion}) — see the README install section`;
+}
 
 // The ref triple a headless run prints; every value must resolve to the
 // run's own session id.
@@ -73,8 +92,11 @@ function probeProblems(label, probe) {
   return [`\`${label}\` could not run: ${detail}`];
 }
 
-// Runs the three probes through the injected runner and returns every
-// contract violation. An empty `problems` array is the pass condition.
+// Runs the probes through the injected runner and returns every contract
+// violation. An empty `problems` array is the pass condition. The runner
+// takes `(args, opts?)`; `opts` carries the hermetic overrides the real
+// spawn supports (a stubbed `process.versions.node`, extra child env) and
+// is ignored by direct probes.
 export function binaryContract({ distPresent, expectedLine, run }) {
   const problems = [];
   if (!distPresent) {
@@ -97,6 +119,49 @@ export function binaryContract({ distPresent, expectedLine, run }) {
     if (printed !== expectedLine) {
       problems.push(
         `\`kubic --version\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(expectedLine)}`,
+      );
+    }
+  }
+
+  // Issue #128: help at the root is success, and the bare invocation keeps
+  // the POSIX usage-on-no-args posture — one line, two exit codes.
+  for (const [label, probe] of [
+    ['kubic --help', run(['--help'])],
+    ['kubic -h', run(['-h'])],
+  ]) {
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 0) {
+      problems.push(
+        `\`${label}\` exited ${probe.code} (expected 0 — help is success, §78)`,
+      );
+      continue;
+    }
+    const printed = probe.stdout.trimEnd();
+    if (printed !== ROOT_USAGE_LINE) {
+      problems.push(
+        `\`${label}\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(ROOT_USAGE_LINE)}`,
+      );
+    }
+  }
+
+  const bare = run([]);
+  const bareFailed = probeProblems('kubic (no command)', bare);
+  if (bareFailed.length > 0) {
+    problems.push(...bareFailed);
+  } else {
+    if (bare.code !== 1) {
+      problems.push(
+        `\`kubic\` with no command exited ${bare.code} (expected 1 — usage-on-no-args is the documented POSIX posture)`,
+      );
+    }
+    const printed = bare.stdout.trimEnd();
+    if (printed !== ROOT_USAGE_LINE) {
+      problems.push(
+        `\`kubic\` with no command printed ${JSON.stringify(printed)} — expected the identical \`kubic --help\` line ${JSON.stringify(ROOT_USAGE_LINE)}`,
       );
     }
   }
@@ -226,7 +291,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

@@ -44,6 +44,11 @@
 - **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.
+- **`kubic --help` / `-h`**: always 0 — prints the top-level command
+  listing (the same usage line an unknown command gets).
+- **Bare `kubic`** (no command): 1, with the identical listing —
+  usage-on-no-args is the deliberate POSIX posture, so `--help` and the
+  bare invocation differ only in their exit code.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
 - **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,
   spawn, worker, merge, or reap failure, or resume with no state

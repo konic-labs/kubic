@@ -16,7 +16,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { binaryContract, expectedVersionLine } from './binary-contract.mjs';
+import {
+  binaryContract,
+  expectedVersionLine,
+  ROOT_USAGE_LINE,
+} from './binary-contract.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -32,6 +36,16 @@ function ok(stdout) {
 
 function versionOut(text = VERSION_LINE) {
   return ok(`${text}\n`);
+}
+
+// `kubic --help` / `kubic -h`: the root usage line, exit 0 (issue #128).
+function helpOut(line = ROOT_USAGE_LINE) {
+  return ok(`${line}\n`);
+}
+
+// Bare `kubic`: the identical line, exit 1 — POSIX usage-on-no-args.
+function bareOut(line = ROOT_USAGE_LINE) {
+  return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
 }
 
 function doctorOut(code = 6, fails = [PROVIDER_FAIL]) {
@@ -55,10 +69,14 @@ function runOut(code = 6) {
   return { code, stdout: `${lines.join('\n')}\n`, stderr: '', error: null };
 }
 
-// Replays the three probes with the given per-command overrides.
+// Replays the probes with the given per-command overrides.
 function fakeRun(overrides = {}) {
   return (args) => {
+    if (args.length === 0) return overrides.bare ?? bareOut();
     if (args[0] === '--version') return overrides.version ?? versionOut();
+    if (args[0] === '--help') return overrides.help ?? helpOut();
+    if (args[0] === '-h')
+      return overrides.shortHelp ?? overrides.help ?? helpOut();
     if (args[0] === 'doctor') return overrides.doctor ?? doctorOut();
     if (args[0] === 'run') return overrides.run ?? runOut();
     throw new Error(`unexpected probe: ${args.join(' ')}`);
@@ -122,6 +140,71 @@ describe('binary contract --version probe', () => {
     });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /exited 1 \(expected 0\)/);
+  });
+});
+
+describe('binary contract root help probes (issue #128)', () => {
+  it('fails when both help flags exit 1 (the pre-#128 defect)', () => {
+    const exit1 = {
+      code: 1,
+      stdout: `${ROOT_USAGE_LINE}\n`,
+      stderr: '',
+      error: null,
+    };
+    const result = contractWith({ help: exit1 });
+    assert.equal(result.problems.length, 2);
+    for (const problem of result.problems) {
+      assert.match(problem, /exited 1 \(expected 0 — help is success/);
+    }
+  });
+
+  it('fails when -h alone drifts (exit 2 from an old unknown-flag path)', () => {
+    const result = contractWith({
+      shortHelp: { code: 2, stdout: '', stderr: '', error: null },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic -h` exited 2 \(expected 0/);
+  });
+
+  it('fails when --help prints a drifted usage line', () => {
+    const result = contractWith({
+      help: helpOut('usage: kubic <run>'),
+      shortHelp: helpOut(),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic --help` printed/);
+    assert.match(result.problems[0], /expected exactly/);
+  });
+
+  it('fails when the bare invocation exits 0', () => {
+    const result = contractWith({ bare: { ...bareOut(), code: 0 } });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /kubic` with no command exited 0 \(expected 1/,
+    );
+  });
+
+  it('fails when the bare invocation prints a different line than --help', () => {
+    const result = contractWith({ bare: bareOut('usage: kubic <run>') });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /expected the identical `kubic --help` line/,
+    );
+  });
+
+  it('fails when a probe could not run at all', () => {
+    const result = contractWith({
+      bare: {
+        code: null,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawn E2BIG'),
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /could not run: spawn E2BIG/);
   });
 });
 

@@ -9,7 +9,10 @@ otherwise.
 
 **Every command answers `--help`** (or `-h`) with its own usage line and exit 0 —
 one convention, applied before any argv validation
-(`packages/core/src/cli-help.ts`). Usage errors keep their own exit codes.
+(`packages/core/src/cli-help.ts`), and the root dispatcher follows it too:
+`kubic --help` prints the top-level command listing (exit 0) while a bare
+`kubic` prints the identical listing and exits 1 — usage-on-no-args is the
+deliberate POSIX posture. Usage errors keep their own exit codes.
 
 ## Install and build
 

@@ -4,6 +4,10 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  HELP_EXIT_OK,
+  HELP_FLAGS,
+} from '../../../packages/core/src/cli-help.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import {
   runBenchmarkCommand,
@@ -100,6 +104,14 @@ function cliVersion(): string {
   return '0.0.0';
 }
 
+// The root dispatcher's usage line (issue #128): one string, printed by
+// `--help`/`-h` (exit 0 — a help request is a successful invocation) and by
+// the bare/unknown-command fallthrough (exit 1 — usage-on-no-args is the
+// deliberate POSIX posture). Both exits are pinned by
+// scripts/binary-contract.mjs; the two paths must never drift apart.
+const ROOT_USAGE =
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   // Issue #90 (design §35.1): one config load for the whole process — paths
@@ -124,6 +136,13 @@ async function main(argv: string[]): Promise<number> {
   // and `config.toml` stay trackable. Skipped outside a git repo.
   if (command === 'run' || command === 'orchestrate' || command === 'tui') {
     ensureRuntimeExcludeRules({ cwd: process.cwd() });
+  }
+  // Root-level help (issue #128): the #100 convention — one implementation in
+  // core/cli-help.ts, applied before argv validation — reaches the dispatcher
+  // too. Same line as the bare fallthrough below; only the exit code differs.
+  if (HELP_FLAGS.includes(command ?? '')) {
+    console.log(ROOT_USAGE);
+    return HELP_EXIT_OK;
   }
   if (command === '--version' || command === '-V') {
     console.log(formatVersionLine(cliVersion()));
@@ -396,9 +415,7 @@ async function main(argv: string[]): Promise<number> {
       out: (line: string) => console.log(line),
     });
   }
-  console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
-  );
+  console.log(ROOT_USAGE);
   return 1;
 }
 

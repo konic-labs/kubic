@@ -460,7 +460,9 @@ export interface InstalledSoloPolicy {
   posture: InstalledPolicyPosture;
   // Approvals this policy refused, in order. The composition root reads this
   // after a drive: a headless run that hit an unanswerable approval must end
-  // as approval_timed_out (exit 4), never as a silent success.
+  // as an approval terminus — approval_denied for an explicit refusal,
+  // approval_timed_out when the reason carries the timeout marker (both exit
+  // 4) — never as a silent success.
   denials: () => RecordedApprovalDeny[];
   // The decider, exposed so a caller (or a test) can drive it directly.
   ask: ApprovalAsk;
@@ -589,8 +591,9 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       // Waiting maxPendingMs for an answer that cannot arrive would be a
       // silent hang and a 60s stall per dangerous call; the honest default is
       // to refuse immediately and RECORD the refusal, so the composition root
-      // ends the run as approval_timed_out (exit 4, §78) instead of reporting
-      // a success the user never approved. The refusal is deliberately NOT
+      // ends the run as approval_denied (exit 4, §78 — this refusal carries no
+      // timeout marker) instead of reporting a success the user never
+      // approved. The refusal is deliberately NOT
       // persisted: it is a missing surface, not a user decision, and a later
       // overlay must still be able to ask about the same operation.
       const reason = `${NO_ANSWER_SURFACE_REASON} (capability: ${capability})`;

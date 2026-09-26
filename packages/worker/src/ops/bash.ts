@@ -18,6 +18,12 @@ export interface BashResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  /**
+   * True when either stream was clipped to the model-facing cap — the
+   * result names the dropped leading chars in a header, and the model
+   * knows it saw a slice (issue #121).
+   */
+  truncated: boolean;
   aborted: boolean;
   timedOut: boolean;
   provenance: Provenance;
@@ -63,6 +69,20 @@ function turnNumber(turnId: string): number {
   return match ? Number.parseInt(match[1] as string, 10) : 0;
 }
 
+// Model-facing cap per stream (issue #121): chars, not bytes — this is a
+// context-window bound. One grep over a big file must not dump megabytes
+// into the model's window; the harness has compaction, but the tool
+// result itself should never be the thing that blows it.
+export const BASH_RESULT_MAX_CHARS = 64 * 1024;
+
+function clip(text: string): { text: string; truncated: boolean } {
+  if (text.length <= BASH_RESULT_MAX_CHARS) return { text, truncated: false };
+  return {
+    text: `[kubic: ${text.length - BASH_RESULT_MAX_CHARS} leading chars dropped]\n${text.slice(-BASH_RESULT_MAX_CHARS)}`,
+    truncated: true,
+  };
+}
+
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
   description: 'Execute a shell command with streaming, timeout, and abort',
@@ -106,11 +126,18 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     ctx.signal?.removeEventListener('abort', onAbort);
     const aborted =
       result.exitCode !== 0 && (timedOut || ctx.signal?.aborted === true);
+    // Clip AFTER abort/timeout handling: the seam already bounded memory;
+    // this bound is the model's context window. The registry's
+    // never-replay memoization stores the clipped result — consistent
+    // across retries.
+    const out = clip(result.stdout);
+    const err = clip(result.stderr);
     return {
       command: args.command,
       exitCode: aborted ? null : result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: out.text,
+      stderr: err.text,
+      truncated: out.truncated || err.truncated,
       aborted,
       timedOut,
       provenance,

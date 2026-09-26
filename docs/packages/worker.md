@@ -41,6 +41,25 @@ diff touching the boundary for maintainer review.
 | `compaction.ts` | `CompactionThreshold`, `compactionThreshold`, `shouldCompact`, `DEFAULT_RESERVE_TOKENS`, `CompactionCheckpoint`, `COMPACTION_CHECKPOINTS`, `CheckpointContext`, `shouldCheckAt`, `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `BranchSummaryEntry`, `BranchSummaryStore`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState`, `buildCompactedState` |
 | `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` (#16) + `lane/interceptors.ts`; sessions in `lane/session-store.ts` (#14); tools in `lane/tools-adapter.ts` (#11) |
 | `ops/` | Implemented | Operation implementations (read/write/edit/bash/git/…) + registry |
+
+### Output bounds (issue #121)
+
+Child output is capped at two independent layers, both keeping the **tail**
+(endings usually carry the error) and naming exactly what was dropped:
+
+- **Seam (memory):** `NodeShell` accumulates at most `MAX_CHILD_OUTPUT_BYTES`
+  (10 MiB) per stream — `env.ts`, overridable per spawn via
+  `SpawnOptions.maxOutputBytes` so the orchestrator can size worker-child
+  capture independently. A chatty child (`yes`, a verbose build) can no
+  longer OOM the run; the settled stream gains a
+  `[kubic: output truncated — dropped N leading bytes, kept the last M]`
+  header.
+- **Op (context window):** `bash` clips each stream to
+  `BASH_RESULT_MAX_CHARS` (64 K chars) in the result the model sees, with a
+  `[kubic: N leading chars dropped]` header and `truncated: true` on
+  `BashResult` — the model knows it saw a slice. The registry's
+  never-replay memoization stores the clipped result, so retries are
+  consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ExecutionEnv, ProcessSnapshot, Provenance } from './env.js';
 import {
   FakeExecutionEnv,
+  MAX_CHILD_OUTPUT_BYTES,
   MemoryCheckpointStore,
   NodeExecutionEnv,
   ROOT_PROVENANCE,
@@ -266,5 +267,88 @@ describe('execution env spawn failures (issue #85)', () => {
     });
     await handle.wait();
     expect(seen.join('\n')).toMatch(/ENOENT/);
+  });
+});
+
+// Issue #121: child output is capped per stream at the shell seam. A
+// chatty child (`yes`, a verbose build, a giant cat) must not OOM the
+// run: accumulation keeps the TAIL (endings carry the error) and names
+// the dropped leading bytes in a header on the final result.
+describe('child output caps (issue #121)', () => {
+  it('caps stdout at the default bound, keeps the tail, and names the drop', async () => {
+    const { env } = makeNodeEnv();
+    const total = MAX_CHILD_OUTPUT_BYTES + 2 * 1024 * 1024;
+    const handle = env.shell.spawn(
+      'node',
+      [
+        '-e',
+        `process.stdout.write('a'.repeat(${total})); process.stdout.write('TAIL-END')`,
+      ],
+      { provenance: PROV },
+    );
+    const result = await handle.wait();
+    expect(result.exitCode).toBe(0);
+    // Header line + kept tail: never more than the cap plus the header.
+    expect(result.stdout.length).toBeLessThanOrEqual(
+      MAX_CHILD_OUTPUT_BYTES + 200,
+    );
+    expect(result.stdout).toMatch(
+      new RegExp(
+        `^\\[kubic: output truncated — dropped ${total + 'TAIL-END'.length - MAX_CHILD_OUTPUT_BYTES} leading bytes, kept the last`,
+      ),
+    );
+    // The tail is the whole point: the sentinel survives.
+    expect(result.stdout.endsWith('TAIL-END')).toBe(true);
+  });
+
+  it('honours a per-spawn maxOutputBytes override on both streams independently', async () => {
+    const { env } = makeNodeEnv();
+    const snapshotLengths: number[] = [];
+    const handle = env.shell.spawn(
+      'node',
+      [
+        '-e',
+        `process.stdout.write('o'.repeat(3000)); process.stdout.write('OUT-TAIL'); ` +
+          `process.stderr.write('e'.repeat(4000)); process.stderr.write('ERR-TAIL')`,
+      ],
+      {
+        provenance: PROV,
+        maxOutputBytes: 500,
+        onUpdate: (snapshot) => {
+          // The final close-path update announces the SETTLED result (header
+          // + tail) — the interim snapshots (exitCode null) are the live
+          // accumulator, and THAT is what the cap must bound.
+          if (snapshot.exitCode === null) {
+            snapshotLengths.push(
+              snapshot.stdout.length,
+              snapshot.stderr.length,
+            );
+          }
+        },
+      },
+    );
+    const result = await handle.wait();
+    // Final results: header + tail, capped.
+    expect(result.stdout).toMatch(
+      /^\[kubic: output truncated — dropped 2508 leading bytes, kept the last 500\]/,
+    );
+    expect(result.stdout.endsWith('OUT-TAIL')).toBe(true);
+    expect(result.stderr).toMatch(
+      /^\[kubic: output truncated — dropped 3508 leading bytes, kept the last 500\]/,
+    );
+    expect(result.stderr.endsWith('ERR-TAIL')).toBe(true);
+    // Even the live accumulation never exceeded the cap (the accumulator
+    // is the thing the cap exists to bound — progress snapshots included).
+    for (const length of snapshotLengths) {
+      expect(length).toBeLessThanOrEqual(500);
+    }
+  });
+
+  it('leaves under-cap output byte-identical with no header', async () => {
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn('echo', ['tiny'], { provenance: PROV });
+    const result = await handle.wait();
+    expect(result.stdout).toBe('tiny\n');
+    expect(result.stdout).not.toMatch(/\[kubic: output truncated/);
   });
 });

@@ -84,6 +84,13 @@ export interface SpawnOptions {
   onUpdate?: UpdateCallback;
   checkpointKey?: string;
   checkpointStore?: CheckpointStore;
+  /**
+   * Per-stream output accumulation cap in bytes (issue #121). The tail is
+   * kept (endings usually carry the error) and the final result gains a
+   * header naming the dropped leading bytes. Default: 10 MiB per stream —
+   * a chatty child (`yes`, a verbose build) must not OOM the run.
+   */
+  maxOutputBytes?: number;
 }
 
 export interface ProcessHandle {
@@ -206,6 +213,12 @@ export class MemoryCheckpointStore implements CheckpointStore {
   }
 }
 
+// Default per-stream child-output accumulation cap (issue #121). Chosen
+// far above any legitimate tool result (the model-facing cap is smaller
+// still) but far below OOM territory: the accumulator is the thing the
+// cap bounds, so the run can never hold a child's whole output in memory.
+export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -220,12 +233,39 @@ class NodeShell implements Shell {
       cwd: this.cwd,
       detached: process.platform !== 'win32',
     });
-    let stdout = '';
-    let stderr = '';
+    // Issue #121: capped accumulation. The tail is kept — endings carry
+    // the error — and the final result names exactly what was dropped.
+    // `peek` feeds progress snapshots (bounded by the same cap), `final`
+    // produces the settled stream with the truncation header.
+    const cap = options.maxOutputBytes ?? MAX_CHILD_OUTPUT_BYTES;
+    const makeAccumulator = () => {
+      let text = '';
+      let dropped = 0;
+      return {
+        push(chunk: string): void {
+          if (text.length + chunk.length <= cap) {
+            text += chunk;
+            return;
+          }
+          const combined = text + chunk;
+          dropped += combined.length - cap;
+          text = combined.slice(-cap);
+        },
+        peek(): string {
+          return text;
+        },
+        final(): string {
+          if (dropped === 0) return text;
+          return `[kubic: output truncated — dropped ${dropped} leading bytes, kept the last ${text.length}]\n${text}`;
+        },
+      };
+    };
+    const stdoutAcc = makeAccumulator();
+    const stderrAcc = makeAccumulator();
     let settled = false;
     const snapshot = (): ProcessSnapshot => ({
-      stdout,
-      stderr,
+      stdout: stdoutAcc.peek(),
+      stderr: stderrAcc.peek(),
       exitCode: null,
     });
     const emit = (checkpoint: boolean) => {
@@ -244,11 +284,11 @@ class NodeShell implements Shell {
       options.checkpointKey !== undefined &&
       options.checkpointStore !== undefined;
     child.stdout?.on('data', (d: Buffer) => {
-      stdout += d.toString();
+      stdoutAcc.push(d.toString());
       emit(wantCheckpoint);
     });
     child.stderr?.on('data', (d: Buffer) => {
-      stderr += d.toString();
+      stderrAcc.push(d.toString());
       emit(wantCheckpoint);
     });
     const done = new Promise<ShellResult>((resolveDone) => {
@@ -261,11 +301,11 @@ class NodeShell implements Shell {
         if (settled) return;
         settled = true;
         const message = `${error.message}\n`;
-        stderr += message;
+        stderrAcc.push(message);
         const result: ShellResult = {
           exitCode: 127,
-          stdout,
-          stderr,
+          stdout: stdoutAcc.final(),
+          stderr: stderrAcc.final(),
           provenance: options.provenance,
         };
         if (options.checkpointKey && options.checkpointStore) {
@@ -281,8 +321,8 @@ class NodeShell implements Shell {
         settled = true;
         const result: ShellResult = {
           exitCode: code ?? 1,
-          stdout,
-          stderr,
+          stdout: stdoutAcc.final(),
+          stderr: stderrAcc.final(),
           provenance: options.provenance,
         };
         if (options.checkpointKey && options.checkpointStore) {

@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   type ApprovalRequest,
   ApprovalService,
-  approvalKey,
   type ApprovalVerdict,
+  approvalKey,
   createApprovalAsk,
   detectTriggers,
   enableFullAccess,
@@ -118,10 +118,9 @@ describe('approval service (issue #16, slice A)', () => {
     expect(second).toEqual({ approved: true, by: 'user', justified: false });
     // First-wins on REAL answers: a third ask is answered from the latch,
     // without reaching the seat again.
-    let seatCalls = calls;
     const again = await service.request(request());
     expect(again).toEqual({ approved: true, by: 'user', justified: false });
-    expect(calls).toBe(seatCalls);
+    expect(calls).toBe(2);
   });
 
   it('settles racing submits once: first answer wins', async () => {

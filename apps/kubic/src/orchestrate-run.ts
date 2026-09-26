@@ -21,6 +21,7 @@ import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-ex
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
+  MergeApprovalVerdict,
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
@@ -359,14 +360,16 @@ function openStdioAskLine(): AskLine {
 // The interactive merge ask, BOUNDED (§41.2 — nothing waits silently). An
 // answer inside the bound decides it under the shipped rule (an explicit yes
 // only — a mistyped Enter never grants); the bound elapsing closes the
-// interface, leaves the dead prompt line cleanly (stderr newline) and DENIES,
-// naming the bound and the candidate. An interface that closes with no answer
-// (EOF) denies too: a closed terminal is not consent. Settles exactly once,
+// interface, leaves the dead prompt line cleanly (stderr newline) and settles
+// the TIMEOUT verdict — never a bare deny, because the run must label a
+// walked-away user as a timeout, not as a refusal nobody made. An interface
+// that closes with no answer (EOF) denies too — and cleans its dead prompt
+// line the same way: a closed terminal is not consent. Settles exactly once,
 // either way — never hangs, never double-resolves.
 export function boundedAskUser(
   question: string,
   options: BoundedAskOptions,
-): Promise<boolean> {
+): Promise<MergeApprovalVerdict> {
   const open = options.open ?? openStdioAskLine;
   const notice =
     options.notice ??
@@ -382,7 +385,7 @@ export function boundedAskUser(
     ((timer: ReturnType<typeof setTimeout>): void => {
       clearTimeout(timer);
     });
-  return new Promise<boolean>((resolve) => {
+  return new Promise<MergeApprovalVerdict>((resolve) => {
     let settled = false;
     const line = open();
     const timer = setTimer(() => {
@@ -394,20 +397,27 @@ export function boundedAskUser(
       notice(
         `${mergeApprovalTimeoutReason(options.maxPendingMs, options.candidate)}\n`,
       );
-      resolve(false);
+      resolve({ verdict: 'timeout', maxPendingMs: options.maxPendingMs });
     }, options.maxPendingMs);
     line.onClose(() => {
       if (settled) return;
       settled = true;
       clearTimer(timer);
-      resolve(false);
+      // The dead prompt line is left cleanly on this path too (review: a
+      // real pty glued the next output to the open prompt otherwise).
+      notice('\n');
+      resolve({ verdict: 'deny' });
     });
     line.question(question, (answer: string) => {
       if (settled) return;
       settled = true;
       clearTimer(timer);
       line.close();
-      resolve(/^y(es)?\s*$/i.test(answer.trim()));
+      resolve(
+        /^y(es)?\s*$/i.test(answer.trim())
+          ? { verdict: 'approve' }
+          : { verdict: 'deny' },
+      );
     });
   });
 }
@@ -1246,17 +1256,18 @@ export async function orchestrateDepsWithDefaults(
     },
     // The interactive merge seat (issue #130, §41.2/§45.2): bounded by the
     // same `approvalPolicy.maxPendingMs` snapshot the resolver path carries
-    // (issue #106) — the bound every other ask already uses. An elapse denies
-    // closed, naming the bound and the candidate, so a walked-away user never
-    // holds sessions, worktrees and the terminal open. A run that holds no
-    // snapshot has no bound to enforce: no seat is attached and the shipped
-    // deny-closed path (exit 4, "rerun with --yes") is what runs.
+    // (issue #106) — the bound every other ask already uses. An elapse settles
+    // the TIMEOUT verdict (not a refusal), so a walked-away user never holds
+    // sessions, worktrees and the terminal open — and is never mislabelled as
+    // a decided no. A run that holds no snapshot has no bound to enforce: no
+    // seat is attached and the shipped deny-closed path (exit 4, "rerun with
+    // --yes") is what runs.
     requestApproval:
       process.stdin.isTTY === true && approvalSnapshot !== undefined
         ? async (input: {
             agentId: string;
             branch: string;
-          }): Promise<boolean> =>
+          }): Promise<MergeApprovalVerdict> =>
             boundedAskUser(
               `approve merge of '${input.agentId}' (${input.branch})? [y/N] `,
               {

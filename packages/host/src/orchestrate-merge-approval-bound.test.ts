@@ -12,6 +12,14 @@
 // elapse denial names the bound and the candidate, interpolating the shared
 // TIMEOUT_REASON_MARKER (issue #129), so its wording cannot drift from the
 // worker-ask convention.
+//
+// The elapse is a TIMEOUT, never a refusal: the seat settles a verdict (not a
+// bare boolean), the merge loop branches on it, and the run's envelope
+// reports `approval_timeout` in `status`, `error.kind` and `error.code` —
+// exit 4, the same exit as a refusal, so the LABEL is what tells a consumer
+// "operator said no" from "nobody answered in time" (issue #129's rule,
+// applied to this seat). A plain `true`/`false` seam keeps its shipped
+// meaning: `true` approves, `false` is an explicit deny.
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +32,7 @@ import {
   orchestrateDepsWithDefaults,
 } from '../../../apps/kubic/src/orchestrate-run.js';
 import {
+  type MergeApprovalVerdict,
   type OrchestrateCommandDeps,
   runOrchestrateCommand,
 } from './orchestrate-cli.js';
@@ -78,6 +87,18 @@ function captureStderr(): { text: () => string; restore: () => void } {
   };
 }
 
+// The envelope a `--json` run emitted last (the same accessor shape the
+// orchestrate-cli suites use).
+function lastEnvelope(lines: string[]): {
+  status: string;
+  error?: { kind: string; message: string; code: string };
+} {
+  return JSON.parse(lines[lines.length - 1] as string) as {
+    status: string;
+    error?: { kind: string; message: string; code: string };
+  };
+}
+
 describe('the interactive merge seat is bounded by the run snapshot (issue #130)', () => {
   const restores: Array<() => void> = [];
   afterEach(() => {
@@ -95,7 +116,8 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     });
     expect(deps.requestApproval).toBeDefined();
     // The racing timeout is the pin: today the ask never settles (this race
-    // resolves 'unbounded'); under the bound it resolves deny in ~25ms.
+    // resolves 'unbounded'); under the bound it settles the TIMEOUT verdict in
+    // ~25ms — carrying the bound that elapsed, so the run can name it.
     const settled = await Promise.race([
       Promise.resolve(
         deps.requestApproval?.({ agentId: 'alpha', branch: 'kubic/alpha' }),
@@ -104,7 +126,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
         setTimeout(() => resolve('unbounded'), 1_000);
       }),
     ]);
-    expect(settled).toBe(false);
+    expect(settled).toEqual({ verdict: 'timeout', maxPendingMs: 25 });
     // The readline interface was closed: its stdin listener is released, so
     // nothing keeps the process from settling after the bound elapsed.
     expect(tty.stdin.listenerCount('end')).toBe(0);
@@ -127,9 +149,9 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
         setTimeout(() => resolve('unbounded'), 1_000);
       }),
     ]);
-    expect(settled).toBe(false);
+    expect(settled).toEqual({ verdict: 'timeout', maxPendingMs: 25 });
     const written = stderr.text();
-    expect(written).toContain('timed out');
+    expect(written).toContain(TIMEOUT_REASON_MARKER);
     expect(written).toContain('25ms');
     expect(written).toContain('alpha');
   });
@@ -153,7 +175,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     expect(deps.requestApproval).toBeUndefined();
   });
 
-  it('settles the whole run with the refusal named when a merge approval elapses', async () => {
+  it('settles the whole run as a TIMEOUT when a merge approval elapses — status, kind, code and message', async () => {
     restores.push(stubStdin(true).restore);
     const stderr = captureStderr();
     restores.push(stderr.restore);
@@ -166,19 +188,91 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     // faked — a run that reaches the merge gate, then gets no answer).
     const world = mergeWorld(deps.requestApproval);
     const code = await runOrchestrateCommand(
-      ['-p', 'do the work', '--agents', 'alpha', '--session', 'sess-130'],
+      [
+        '-p',
+        'do the work',
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-130',
+        '--json',
+      ],
       world.deps,
     );
-    // The elapse denied the merge; the run settled on the shipped exit 4 with
-    // the refusal naming the candidate — never a queue waiting on a question
-    // nobody will answer.
+    // The elapse denied the merge; the run settled on the shipped exit 4 —
+    // but the envelope names the TIMEOUT, never a refusal nobody made. All
+    // three labels agree: a consumer reading status, kind or code learns the
+    // same true thing (issue #129's rule, applied to this seat).
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
-    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
-    expect(world.lines.join('\n')).toContain(
-      "approval denied for worker 'alpha'",
+    const envelope = lastEnvelope(world.lines);
+    expect(envelope.status).toBe('approval_timeout');
+    expect(envelope.error?.kind).toBe('approval_timeout');
+    expect(envelope.error?.code).toBe('approval_timeout');
+    expect(envelope.error?.message).toBe(
+      "approval timed out after 25ms for worker 'alpha': nobody answered the merge gate — rerun with --yes to auto-approve merges",
     );
+    // The seat still names the elapse on its own channel, with the shared
+    // marker and the candidate.
     expect(stderr.text()).toContain(mergeApprovalTimeoutReason(25, 'alpha'));
+  });
+
+  it('carries the timeout verdict through the deps seam — the bound travels with it', async () => {
+    // An embedder's own seat may settle the timeout verdict directly; the
+    // run must label it exactly as the real seat's elapse is labelled, and
+    // name the bound the verdict carries.
+    const world = mergeWorld(
+      (): MergeApprovalVerdict => ({ verdict: 'timeout', maxPendingMs: 40 }),
+    );
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        'do the work',
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-130',
+        '--json',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(4);
+    expect(world.calls.merge).toEqual([]);
+    const envelope = lastEnvelope(world.lines);
+    expect(envelope.status).toBe('approval_timeout');
+    expect(envelope.error?.kind).toBe('approval_timeout');
+    expect(envelope.error?.code).toBe('approval_timeout');
+    expect(envelope.error?.message).toBe(
+      "approval timed out after 40ms for worker 'alpha': nobody answered the merge gate — rerun with --yes to auto-approve merges",
+    );
+  });
+
+  it('keeps the refusal label and the shipped message when the decider says no', async () => {
+    // The control: a plain `false` from an existing seam still means an
+    // explicit deny — approval_denied, the same message as before, exit 4.
+    // The timeout label above must never leak onto a decided no.
+    const world = mergeWorld(() => false);
+    const code = await runOrchestrateCommand(
+      [
+        '-p',
+        'do the work',
+        '--agents',
+        'alpha',
+        '--session',
+        'sess-130',
+        '--json',
+      ],
+      world.deps,
+    );
+    expect(code).toBe(4);
+    expect(world.calls.merge).toEqual([]);
+    const envelope = lastEnvelope(world.lines);
+    expect(envelope.status).toBe('approval_denied');
+    expect(envelope.error?.kind).toBe('approval_denied');
+    expect(envelope.error?.code).toBe('approval_denied');
+    expect(envelope.error?.message).toBe(
+      "approval denied for worker 'alpha': the decider is the user — rerun with --yes to auto-approve merges",
+    );
   });
 });
 
@@ -228,7 +322,7 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
     try {
       const double = askDouble();
       const notices: string[] = [];
-      let resolved: boolean | undefined;
+      let resolved: MergeApprovalVerdict | undefined;
       const pending = boundedAskUser(
         "approve merge of 'alpha' (kubic/alpha)? [y/N] ",
         {
@@ -247,7 +341,9 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
       await vi.advanceTimersByTimeAsync(24);
       expect(resolved).toBeUndefined(); // inside the bound: still waiting
       await vi.advanceTimersByTimeAsync(1);
-      expect(await pending).toBe(false); // at the bound: denied closed
+      // At the bound: the TIMEOUT verdict settles — not a refusal, and the
+      // bound that elapsed travels with it so the run can name it.
+      expect(await pending).toEqual({ verdict: 'timeout', maxPendingMs: 25 });
       expect(double.closeCount()).toBe(1); // the interface is released
       expect(notices).toContain('\n'); // the dead prompt line is cleaned
       expect(notices.join('')).toContain(
@@ -261,19 +357,21 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
   it('approves only an explicit yes; every other answer denies', async () => {
     vi.useFakeTimers();
     try {
-      const cases: Array<[string, boolean]> = [
-        ['y', true],
-        ['yes', true],
-        ['Y', true],
-        ['YES', true],
-        [' y ', true],
-        ['Yes', true],
-        ['n', false],
-        ['no', false],
-        ['', false],
-        ['yep', false],
-        [' maybe', false],
-        ['YES!', false],
+      const cases: Array<[string, 'approve' | 'deny']> = [
+        ['y', 'approve'],
+        ['yes', 'approve'],
+        ['Y', 'approve'],
+        ['YES', 'approve'],
+        [' y ', 'approve'],
+        ['Yes', 'approve'],
+        ['n', 'deny'],
+        ['no', 'deny'],
+        ['', 'deny'],
+        ['yep', 'deny'],
+        [' maybe', 'deny'],
+        ['YES!', 'deny'],
+        ['yesno', 'deny'],
+        ['yesss', 'deny'],
       ];
       for (const [answer, expected] of cases) {
         const double = askDouble();
@@ -285,7 +383,8 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
           notice: (text) => notices.push(text),
         });
         double.answer(answer);
-        expect(await pending, `answer ${JSON.stringify(answer)}`).toBe(
+        const settled = await pending;
+        expect(settled.verdict, `answer ${JSON.stringify(answer)}`).toBe(
           expected,
         );
         expect(double.closeCount()).toBe(1);
@@ -315,10 +414,12 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
       },
     });
     double.eof();
-    expect(await pending).toBe(false);
+    expect(await pending).toEqual({ verdict: 'deny' });
     // The bound is released, not left to fire after the interface closed.
     expect(cleared).toEqual([7]);
-    expect(notices).toEqual([]);
+    // The dead prompt line is cleaned on this path too — a real pty showed
+    // the next output glued to the open prompt otherwise.
+    expect(notices).toEqual(['\n']);
   });
 
   it('clears the bound when an answer arrives — the elapse cannot fire later', async () => {
@@ -340,7 +441,7 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
     });
     expect(bounds).toEqual([42]); // the run's bound, exactly
     double.answer('yes');
-    expect(await pending).toBe(true);
+    expect(await pending).toEqual({ verdict: 'approve' });
     expect(cleared).toEqual([1]);
   });
 
@@ -359,7 +460,7 @@ describe('boundedAskUser — the bounded ask contract (issue #130)', () => {
         resolutions += 1;
       });
       await vi.advanceTimersByTimeAsync(10);
-      expect(await pending).toBe(false);
+      expect(await pending).toEqual({ verdict: 'timeout', maxPendingMs: 10 });
       double.answer('y'); // the user walks back and types yes, too late
       await vi.advanceTimersByTimeAsync(10);
       await Promise.resolve();

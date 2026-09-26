@@ -71,9 +71,15 @@
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
   `spawn_denied`, `merge_failed`, `merge_conflict`,
   `no_orchestrator_state`, `reap_failed`); 2 usage errors and the non-git
-  refusal (never silently solo); 4 approval denied (the decider is the
-  user — rerun with `--yes` to auto-approve). `--json` reports the same
-  code in its `exitCode` field.
+  refusal (never silently solo); 4 approval denied **or** approval timeout
+  — both map to exit 4, and the envelope's `status`, `error.kind` and
+  `error.code` all name which: `approval_denied` when the decider is the
+  user (a decided no — rerun with `--yes` to auto-approve merges), and
+  `approval_timeout` when the interactive merge gate's bound
+  (`approvals.maxPendingMs`) elapsed with nobody answering (a walked-away
+  user — rerun with `--yes` to auto-approve merges). The exit code alone
+  cannot tell them apart; read the label. `--json` reports the same code
+  in its `exitCode` field.
 - **`kubic clean`**: 0 success — including `--dry-run` (which mutates
   nothing) and a second run over an already-clean repo
   (`clean: nothing to prune`); 1 a hard failure (a dirty worktree without

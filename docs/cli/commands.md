@@ -197,9 +197,11 @@ runs under, never a second policy), and an answer that does not arrive within
 that bound **denies closed**: the seat closes, the prompt line is left clean,
 and the denial names the bound and the candidate (`approval timed out after
 <ms>ms — denied (merge of '<agent>')`, exit 4) — the same wording convention
-the worker-ask bound uses. A run that holds no policy snapshot attaches no
-seat at all and takes the shipped deny-closed path, so nothing waits silently
-for a user who walked away.
+the worker-ask bound uses. A walked-away user is reported as what happened:
+the run's `status`, `error.kind` and `error.code` all read `approval_timeout`
+— a timeout, never `approval_denied`, the label an explicit no keeps. A run
+that holds no policy snapshot attaches no seat at all and takes the shipped
+deny-closed path, so nothing waits silently for a user who walked away.
 
 The lane registration is a gate, not a label: the run asks for exactly the §40
 toolset and a lane carrying anything else — an exec tool above all — refuses to

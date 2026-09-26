@@ -178,6 +178,23 @@ export async function runJournalCommand(
     }
     if (changes.length === 0) {
       deps.out('no changes');
+      // Issue #125: with no journal anywhere, name both places that were
+      // looked at — the empty result is otherwise indistinguishable from
+      // "ran and nothing changed". Only the bare default path hints (a
+      // configured store or --session is a deliberate choice), and never
+      // on the --json branch above. "Nothing anywhere" means the resolved
+      // store has no entries AND no session journal exists to fall back to.
+      if (
+        session === undefined &&
+        deps.journalDir === undefined &&
+        store.entries().length === 0 &&
+        latestSessionJournal(deps.sessionsRoot ?? defaultSessionsRoot()) ===
+          undefined
+      ) {
+        deps.out(
+          `hint: no journal under ${journalDir.dir} and none under the sessions root (${deps.sessionsRoot ?? defaultSessionsRoot()}) — start a run or pass --session`,
+        );
+      }
       return 0;
     }
     for (const line of renderDiff(changes).split('\n')) deps.out(line);

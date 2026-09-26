@@ -411,20 +411,32 @@ usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> |
 ## `kubic diff | undo | log | status`
 
 VCS-independent change journal — works without git. Each command reads
-one store: `<root>/.kubic/journal` by default (the interactive solo
-journal for the current directory), or — with `--session <id>` — the
-headless-run session journal at `<sessions-root>/<id>/journal`
-(`~/.kubic/sessions` by default). `kubic run` prints the session's ref
-as `journal:<id>`; pass it verbatim (`--session journal:<id>` or
-`--session <id>`) to diff/undo that run's file effects from any cwd
-with no path lookup. `undo --dry-run` plans against the same store
-`diff` reads. Session ids accept only `[A-Za-z0-9_-]` — anything else
-(including `../` or absolute paths) exits 1 before any path is touched.
-File restores and the `status` repo line always resolve against the
-caller's cwd, not the session's original cwd — `--session` selects the
-journal store, never the working directory. `--session` combined with a
-programmatically configured journal dir is refused (one store per
-invocation).
+one store, resolved in this order (issues #18, #125):
+
+1. `--session <id>` names the store explicitly: the headless-run session
+   journal at `<sessions-root>/<id>/journal` (`~/.kubic/sessions` by
+   default). `kubic run` prints the session's ref as `journal:<id>`; pass
+   it verbatim (`--session journal:<id>` or `--session <id>`) to
+   diff/undo that run's file effects from any cwd with no path lookup.
+2. Without `--session`, the workspace store `<root>/.kubic/journal` (the
+   interactive solo journal for the current directory) when it is
+   non-empty.
+3. Otherwise the **latest session journal** under the sessions root — the
+   most recently written run journal. The chosen store is named on the
+   first output line (`session: <id>`) so the fallback is never silent;
+   `--json` output keeps its parseable envelope and gains no extra line.
+
+When no journal exists anywhere, `diff` prints `no changes` plus a hint
+naming both places that were looked at —
+`hint: no journal under <dir> and none under the sessions root (<root>) —
+start a run or pass --session` — and exits 0. `undo --dry-run` plans
+against the same store `diff` reads. Session ids accept only
+`[A-Za-z0-9_-]` — anything else (including `../` or absolute paths) exits
+1 before any path is touched. File restores and the `status` repo line
+always resolve against the caller's cwd, not the session's original cwd —
+`--session` selects the journal store, never the working directory.
+`--session` combined with a programmatically configured journal dir is
+refused (one store per invocation).
 
 ```
 usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>

@@ -338,4 +338,124 @@ describe('journal CLI default store fallback (issue #125)', () => {
     expect(parsed.map((c) => c.path)).toEqual(['new.txt']);
     expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
   });
+
+  it('a non-empty workspace store wins over newer session journals, with no session line', async () => {
+    const { root, sessionsRoot } = seedSessions();
+    new FileJournalStore(join(root, '.kubic', 'journal')).append({
+      path: 'ws.txt',
+      op: 'write',
+      before: 'w1\n',
+      after: 'w2\n',
+      bytesDelta: 0,
+      sessionId: 'ws1',
+      agentId: 'root',
+      toolCallId: 'call-9',
+      timestamp: 1700000000000,
+    });
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
+    const text = lines.join('\n');
+    expect(text).toContain('ws.txt');
+    expect(text).not.toContain('new.txt');
+  });
+
+  it('explicit --session (id or journal:<id> ref) always wins over every default', async () => {
+    const { root, sessionsRoot, oldId, newId } = seedSessions();
+    // A workspace store too: --session must beat it and the fallback alike.
+    new FileJournalStore(join(root, '.kubic', 'journal')).append({
+      path: 'ws.txt',
+      op: 'write',
+      before: 'w1\n',
+      after: 'w2\n',
+      bytesDelta: 0,
+      sessionId: 'ws1',
+      agentId: 'root',
+      toolCallId: 'call-9',
+      timestamp: 1700000000000,
+    });
+    for (const [ref, want, other] of [
+      [oldId, 'old.txt', 'new.txt'],
+      [`journal:${oldId}`, 'old.txt', 'new.txt'],
+      [newId, 'new.txt', 'old.txt'],
+    ] as const) {
+      const lines: string[] = [];
+      expect(
+        await runJournalCommand(['diff', '--session', ref], {
+          root,
+          sessionsRoot,
+          out: (l) => lines.push(l),
+        }),
+      ).toBe(0);
+      expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
+      const text = lines.join('\n');
+      expect(text).toContain(want);
+      expect(text).not.toContain(other);
+      expect(text).not.toContain('ws.txt');
+    }
+  });
+
+  it('undo --dry-run plans against the fallback store relative to the workspace root', async () => {
+    const { root, sessionsRoot, newId } = seedSessions();
+    // The journaled after-state is what sits in the workspace: the plan
+    // must resolve the path against root, not the session's own cwd.
+    writeFileSync(join(root, 'new.txt'), 'n2\n');
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo', '--dry-run'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines[0]).toBe(`session: ${newId}`);
+    expect(lines.join('\n')).toContain('would restore 1 step(s)');
+    expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('n2\n');
+  });
+
+  it('empty everywhere prints the nothing-anywhere hint and exits 0', async () => {
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'sr-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines).toEqual([
+      'no changes',
+      `hint: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+    ]);
+    // --json stays one parseable envelope, hint included nowhere.
+    const json: string[] = [];
+    expect(
+      await runJournalCommand(['diff', '--json'], {
+        root,
+        sessionsRoot,
+        out: (l) => json.push(l),
+      }),
+    ).toBe(0);
+    expect(json).toEqual(['[]']);
+  });
+
+  it('a missing sessions root is the same empty path, no throw', async () => {
+    const sessionsRoot = join(mkdtempSync(join(tmpdir(), 'sr-')), 'absent');
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines).toEqual([
+      'no changes',
+      `hint: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+    ]);
+  });
 });

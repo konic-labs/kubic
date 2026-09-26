@@ -16,7 +16,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { binaryContract, expectedVersionLine } from './binary-contract.mjs';
+import { nodeVersionSupported } from '../bin/node-guard.mjs';
+import {
+  binaryContract,
+  CRASH_PROBE_ENV,
+  CRASH_PROBE_MESSAGE,
+  expectedVersionLine,
+  nodeGuardLine,
+  ROOT_USAGE_LINE,
+} from './binary-contract.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -32,6 +40,49 @@ function ok(stdout) {
 
 function versionOut(text = VERSION_LINE) {
   return ok(`${text}\n`);
+}
+
+// `kubic --help` / `kubic -h`: the root usage line, exit 0 (issue #128).
+function helpOut(line = ROOT_USAGE_LINE) {
+  return ok(`${line}\n`);
+}
+
+// Bare `kubic`: the identical line, exit 1 — POSIX usage-on-no-args.
+function bareOut(line = ROOT_USAGE_LINE) {
+  return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
+}
+
+// The launcher's guard refusal for a stubbed runtime: one named line on
+// stderr, exit 1, nothing on stdout (issue #128).
+function guardRefusal(stub) {
+  return {
+    code: 1,
+    stdout: '',
+    stderr: `${nodeGuardLine(stub)}\n`,
+    error: null,
+  };
+}
+
+// `kubic __crash-probe`: the top-level catch-all's operator-facing shape —
+// one `error: <message>` line, exit 1, no stack (issue #128).
+function crashOut() {
+  return {
+    code: 1,
+    stdout: '',
+    stderr: `error: ${CRASH_PROBE_MESSAGE}\n`,
+    error: null,
+  };
+}
+
+// The same failure with KUBIC_DEBUG=1: full stack first, named line last.
+function debugCrashOut() {
+  const stack = `Error: ${CRASH_PROBE_MESSAGE}\n    at main (file:///probe/main.js:1:1)\n    at async file:///probe/main.js:2:1`;
+  return {
+    code: 1,
+    stdout: '',
+    stderr: `${stack}\nerror: ${CRASH_PROBE_MESSAGE}\n`,
+    error: null,
+  };
 }
 
 function doctorOut(code = 6, fails = [PROVIDER_FAIL]) {
@@ -55,10 +106,44 @@ function runOut(code = 6) {
   return { code, stdout: `${lines.join('\n')}\n`, stderr: '', error: null };
 }
 
-// Replays the three probes with the given per-command overrides.
+// An override may be a probe object or a `(stub) => probe` function when
+// the faked output has to name the stubbed version.
+function applyOverride(override, stub) {
+  return typeof override === 'function' ? override(stub) : override;
+}
+
+// Replays the probes with the given per-command overrides. The stubbed-node
+// probes (issue #128) key on `opts.nodeStub`: the contract only stubs
+// below-the-floor values and the exact floor, so the fake mirrors a working
+// guard for those while each override can force the drift under test.
 function fakeRun(overrides = {}) {
-  return (args) => {
+  return (args, opts = {}) => {
+    const stub = opts.nodeStub;
+    if (stub === '21.9.0' || stub === '22.18.0') {
+      return applyOverride(overrides.guardRefused, stub) ?? guardRefusal(stub);
+    }
+    if (stub === '22.19.0') {
+      return overrides.guardBoundary ?? versionOut();
+    }
+    if (stub !== undefined) {
+      throw new Error(`unexpected node stub: ${stub}`);
+    }
+    if (args.length === 0) return overrides.bare ?? bareOut();
+    if (args[0] === '__crash-probe') {
+      // Without the contract's env gate the seam is unreachable (issue
+      // #128): the command falls through to the unknown-command path —
+      // the same shape as the bare invocation.
+      if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
+        return overrides.ungatedCrash ?? bareOut();
+      }
+      return opts.env?.KUBIC_DEBUG === '1'
+        ? (overrides.debugCrash ?? debugCrashOut())
+        : (overrides.crash ?? crashOut());
+    }
     if (args[0] === '--version') return overrides.version ?? versionOut();
+    if (args[0] === '--help') return overrides.help ?? helpOut();
+    if (args[0] === '-h')
+      return overrides.shortHelp ?? overrides.help ?? helpOut();
     if (args[0] === 'doctor') return overrides.doctor ?? doctorOut();
     if (args[0] === 'run') return overrides.run ?? runOut();
     throw new Error(`unexpected probe: ${args.join(' ')}`);
@@ -122,6 +207,270 @@ describe('binary contract --version probe', () => {
     });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /exited 1 \(expected 0\)/);
+  });
+});
+
+describe('binary contract root help probes (issue #128)', () => {
+  it('fails when both help flags exit 1 (the pre-#128 defect)', () => {
+    const exit1 = {
+      code: 1,
+      stdout: `${ROOT_USAGE_LINE}\n`,
+      stderr: '',
+      error: null,
+    };
+    const result = contractWith({ help: exit1 });
+    assert.equal(result.problems.length, 2);
+    for (const problem of result.problems) {
+      assert.match(problem, /exited 1 \(expected 0 — help is success/);
+    }
+  });
+
+  it('fails when -h alone drifts (exit 2 from an old unknown-flag path)', () => {
+    const result = contractWith({
+      shortHelp: { code: 2, stdout: '', stderr: '', error: null },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic -h` exited 2 \(expected 0/);
+  });
+
+  it('fails when --help prints a drifted usage line', () => {
+    const result = contractWith({
+      help: helpOut('usage: kubic <run>'),
+      shortHelp: helpOut(),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic --help` printed/);
+    assert.match(result.problems[0], /expected exactly/);
+  });
+
+  it('fails when the bare invocation exits 0', () => {
+    const result = contractWith({ bare: { ...bareOut(), code: 0 } });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /kubic` with no command exited 0 \(expected 1/,
+    );
+  });
+
+  it('fails when the bare invocation prints a different line than --help', () => {
+    const result = contractWith({ bare: bareOut('usage: kubic <run>') });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /expected the identical `kubic --help` line/,
+    );
+  });
+
+  it('fails when a probe could not run at all', () => {
+    const result = contractWith({
+      bare: {
+        code: null,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawn E2BIG'),
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /could not run: spawn E2BIG/);
+  });
+});
+
+describe('binary contract launcher guard probes (issue #128)', () => {
+  it('fails when an old runtime is ignored (guard absent — version still printed)', () => {
+    const result = contractWith({ guardRefused: versionOut() });
+    assert.equal(result.problems.length, 2);
+    for (const problem of result.problems) {
+      assert.match(problem, /exited 0 \(expected 1 — named Node guard/);
+    }
+  });
+
+  it('fails when the refusal line drifts', () => {
+    const result = contractWith({
+      guardRefused: {
+        code: 1,
+        stdout: '',
+        stderr: 'kubic: node 22+ required\n',
+        error: null,
+      },
+    });
+    assert.equal(result.problems.length, 2);
+    for (const problem of result.problems) {
+      assert.match(problem, /expected exactly/);
+    }
+  });
+
+  it('fails when the refusal leaks to stdout (stderr must carry it alone)', () => {
+    const result = contractWith({
+      guardRefused: (stub) => ({
+        code: 1,
+        stdout: `${nodeGuardLine(stub)}\n`,
+        stderr: '',
+        error: null,
+      }),
+    });
+    const leaks = result.problems.filter((p) => /stderr-only/.test(p));
+    assert.equal(leaks.length, 2);
+  });
+
+  it('fails when the guard fires at the exact floor (22.19.0)', () => {
+    const result = contractWith({
+      guardBoundary: {
+        code: 1,
+        stdout: '',
+        stderr: `${nodeGuardLine('22.19.0')}\n`,
+        error: null,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /must not fire at >= 22\.19/);
+  });
+
+  it('fails when the passing guard still writes to stderr', () => {
+    const result = contractWith({
+      guardBoundary: {
+        ...versionOut(),
+        stderr: `${nodeGuardLine('22.19.0')}\n`,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /must stay silent when it passes/);
+  });
+});
+
+describe('binary contract failure probes (issue #128)', () => {
+  it('fails when the injected failure exits 0', () => {
+    const result = contractWith({ crash: { ...crashOut(), code: 0 } });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exited 0 \(expected 1/);
+  });
+
+  it('fails when a raw stack leaks without KUBIC_DEBUG (the pre-fix behaviour)', () => {
+    const result = contractWith({ crash: debugCrashOut() });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /one named line, no stack/);
+  });
+
+  it('fails when the failure output leaks to stdout', () => {
+    const result = contractWith({
+      crash: { ...crashOut(), stdout: 'noise\n' },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /failures are stderr-only/);
+  });
+
+  it('fails when KUBIC_DEBUG=1 hides the stack', () => {
+    const result = contractWith({ debugCrash: crashOut() });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /must include the full stack/);
+  });
+
+  it('fails when KUBIC_DEBUG=1 loses the named error line', () => {
+    const result = contractWith({
+      debugCrash: {
+        code: 1,
+        stdout: '',
+        stderr: `Error: ${CRASH_PROBE_MESSAGE}\n    at main (file:///probe/main.js:1:1)\n`,
+        error: null,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /lost the `error: <message>` line/);
+  });
+
+  it('fails when the seam fires without the env gate (internal-only breach)', () => {
+    const result = contractWith({ ungatedCrash: crashOut() });
+    assert.equal(result.problems.length, 2);
+    assert.match(result.problems[0], /without the env gate/);
+    assert.match(result.problems[0], /internal-only/);
+    assert.match(result.problems[1], /without the env gate/);
+  });
+});
+
+describe('kubic launcher source contract (issue #128)', () => {
+  it('decides the 22.19 floor table-style (no old runtime needed)', () => {
+    const cases = [
+      ['20.11.1', false],
+      ['21.9.0', false],
+      ['22.0.0', false],
+      ['22.18.0', false],
+      ['22.18.99', false],
+      ['22.19.0', true],
+      ['22.19.1', true],
+      ['22.20.0', true],
+      ['23.0.0', true],
+      ['24.13.0', true],
+      ['22', false],
+      ['garbage', false],
+    ];
+    for (const [version, expected] of cases) {
+      assert.equal(
+        nodeVersionSupported(version),
+        expected,
+        `node ${version} should ${expected ? 'pass' : 'refuse'}`,
+      );
+    }
+  });
+
+  it('keeps the guard ahead of the dist import with no top-level await before it', () => {
+    const src = readFileSync(join(ROOT, 'bin', 'kubic.js'), 'utf8');
+    // Executable order only: comments above the guard may (and should)
+    // explain the hazard without tripping the assertion.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    const guardAt = code.indexOf('nodeVersionSupported(process.versions.node)');
+    const importAt = code.indexOf(
+      "await import('../dist/apps/kubic/src/main.js')",
+    );
+    assert.ok(
+      guardAt !== -1,
+      'bin/kubic.js must call nodeVersionSupported(process.versions.node)',
+    );
+    assert.ok(
+      importAt !== -1,
+      'bin/kubic.js must keep the built-entry dynamic import',
+    );
+    assert.ok(
+      guardAt < importAt,
+      'the guard must precede the dynamic import (issue #128) — a top-level await before it re-introduces the raw SyntaxError on old runtimes',
+    );
+    assert.doesNotMatch(
+      code.slice(0, guardAt),
+      /\bawait\b/,
+      'no top-level await may precede the guard',
+    );
+  });
+
+  it('keeps the guard module import-free with no top-level await', () => {
+    const src = readFileSync(join(ROOT, 'bin', 'node-guard.mjs'), 'utf8');
+    // Executable tokens only, the same stripping as the wrapper-order
+    // assertion above: the module header may (and should) explain the
+    // hazard without tripping the assertion.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    assert.doesNotMatch(
+      code,
+      /\bimport\b/,
+      'bin/node-guard.mjs must not import anything — bin/kubic.js imports it statically, so any dependency would have to parse on the very runtimes the guard exists to refuse',
+    );
+    assert.doesNotMatch(
+      code,
+      /\bawait\b/,
+      'bin/node-guard.mjs must not contain `await` — a top-level await makes the static import from bin/kubic.js a parse error before the guard can print the named requirement',
+    );
+  });
+
+  it('prints the named refusal the shipped contract pins', () => {
+    const src = readFileSync(join(ROOT, 'bin', 'kubic.js'), 'utf8');
+    // The refusal is a template literal in the wrapper (the version is
+    // interpolated at runtime); matched as a regex so the literal text,
+    // `${...}` and all, is pinned without tripping
+    // lint/suspicious/noTemplateCurlyInString.
+    assert.match(
+      src,
+      /kubic: node >= 22\.19 required \(running \$\{process\.versions\.node\}\) — see the README install section/,
+    );
   });
 });
 

@@ -4,6 +4,10 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  HELP_EXIT_OK,
+  HELP_FLAGS,
+} from '../../../packages/core/src/cli-help.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import {
   runBenchmarkCommand,
@@ -109,6 +113,14 @@ function cliVersion(): string {
   return '0.0.0';
 }
 
+// The root dispatcher's usage line (issue #128): one string, printed by
+// `--help`/`-h` (exit 0 — a help request is a successful invocation) and by
+// the bare/unknown-command fallthrough (exit 1 — usage-on-no-args is the
+// deliberate POSIX posture). Both exits are pinned by
+// scripts/binary-contract.mjs; the two paths must never drift apart.
+const ROOT_USAGE =
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   // Issue #90 (design §35.1): one config load for the whole process — paths
@@ -134,9 +146,30 @@ async function main(argv: string[]): Promise<number> {
   if (command === 'run' || command === 'orchestrate' || command === 'tui') {
     ensureRuntimeExcludeRules({ cwd: process.cwd() });
   }
+  // Root-level help (issue #128): the #100 convention — one implementation in
+  // core/cli-help.ts, applied before argv validation — reaches the dispatcher
+  // too. Same line as the bare fallthrough below; only the exit code differs.
+  if (HELP_FLAGS.includes(command ?? '')) {
+    console.log(ROOT_USAGE);
+    return HELP_EXIT_OK;
+  }
   if (command === '--version' || command === '-V') {
     console.log(formatVersionLine(cliVersion()));
     return 0;
+  }
+  // Deliberate failure seam for the shipped-artifact contract (issue #128):
+  // `kubic __crash-probe` throws a plain Error so the top-level catch-all's
+  // `error: <message>` / KUBIC_DEBUG behavior is asserted end to end against
+  // the real binary by scripts/binary-contract.mjs. Internal — not a
+  // supported command, deliberately absent from ROOT_USAGE, and gated on the
+  // contract's own env var (named like __KUBIC_CONTRACT_NODE_STUB) so
+  // arbitrary user argv cannot reach it: without the gate the command falls
+  // through to the unknown-command path below.
+  if (
+    command === '__crash-probe' &&
+    process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1'
+  ) {
+    throw new Error('injected probe failure');
   }
   if (command === 'sessions') {
     return runSessionsCommand(rest, { out: (line) => console.log(line) });
@@ -428,21 +461,32 @@ async function main(argv: string[]): Promise<number> {
       out: (line: string) => console.log(line),
     });
   }
-  console.log(
-    'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>',
-  );
+  console.log(ROOT_USAGE);
   return 1;
 }
 
 // Extension startup failures are named one-liners, not stack traces (issue
 // #93): the lane boots above refuse to run bare, and the CLI reports that
-// refusal as `error: …` with the failure exit code. Every other error keeps
-// its existing path (no behavior change for unrelated failures).
+// refusal as `error: …` with the failure exit code. That named path is
+// unchanged.
+//
+// Every other unexpected failure (issue #128) gets the same operator-facing
+// shape — one `error: <message>` line, exit 1 — instead of a raw stack dump;
+// the full stack stays behind the KUBIC_DEBUG=1 opt-in. Both modes are
+// pinned end to end by scripts/binary-contract.mjs (the `__crash-probe`
+// seam above).
 try {
   const code = await main(process.argv.slice(2));
   process.exit(code);
 } catch (error) {
-  if (!(error instanceof ExtensionStartupError)) throw error;
-  console.error(`error: ${error.message}`);
+  if (error instanceof ExtensionStartupError) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (process.env.KUBIC_DEBUG === '1') {
+    console.error(error);
+  }
+  console.error(`error: ${message}`);
   process.exit(1);
 }

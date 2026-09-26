@@ -18,15 +18,17 @@ before any argv validation. Usage *errors* keep their own exit codes (a bad flag
 is still an error; a help request is not); each command's usage line lists
 exactly the flags its parser accepts.
 
-One documented exception, above this list: the **bare dispatcher** `kubic --help`
-is not a command's help path — it prints the top-level usage line and exits 1,
-because the dispatcher treats `--help` as an unknown command. `kubic --version`
-exits 0. Folding the dispatcher into the same convention means editing
-`apps/kubic/src/main.ts`, which is held by the TUI and prompt-loop work
-(issues #88, #93); until then this page describes the dispatcher as it behaves.
+The **root dispatcher** follows the same convention (issue #128):
+`kubic --help` / `kubic -h` prints the top-level command listing — the
+full `usage` line below — and exits 0. A **bare `kubic`** (no command)
+prints the *identical* listing and exits 1: usage-on-no-args is the deliberate
+POSIX posture, so only the exit code differs between the two paths.
+`scripts/binary-contract.mjs` pins both exits and the line itself, so the
+dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
-`npm run kubic -- …`); anything else dispatches below; an unknown command prints
+`npm run kubic -- …`); anything else dispatches below; an unknown command (or
+the bare invocation) prints
 `usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.

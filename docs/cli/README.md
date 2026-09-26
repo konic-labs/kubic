@@ -9,12 +9,26 @@ otherwise.
 
 **Every command answers `--help`** (or `-h`) with its own usage line and exit 0 —
 one convention, applied before any argv validation
-(`packages/core/src/cli-help.ts`). Usage errors keep their own exit codes.
+(`packages/core/src/cli-help.ts`), and the root dispatcher follows it too:
+`kubic --help` prints the top-level command listing (exit 0) while a bare
+`kubic` prints the identical listing and exits 1 — usage-on-no-args is the
+deliberate POSIX posture. Usage errors keep their own exit codes.
+
+**Unexpected command failures are one named line.** An error Kubic did not
+shape while a command runs (inside the dispatcher's `main()`) prints
+`error: <message>` on stderr and exits 1; the full stack is opt-in with
+`KUBIC_DEBUG=1`. That catch-all covers command failures only — a build-output
+module that fails while it evaluates at launch is not caught: it prints a raw
+stack and exits 1, because the launcher names only a missing build output. The
+launcher also refuses runtimes below Node 22.19 by name — `kubic: node >=
+22.19 required (running <version>) — see the README install section` — before
+it loads anything. See [doctor and debug](doctor-and-debug.md).
 
 ## Install and build
 
-A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary —
-the exact commands live in the
+A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary
+(the launcher enforces that floor and names it when refused) — the exact
+commands live in the
 [README install section](../../README.md#install). `npm run build` emits
 runnable JS to gitignored `dist/` (tsc via `tsconfig.build.json`, no
 hand-rolled flags); `./bin/kubic.js` is the committed executable over that

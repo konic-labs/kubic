@@ -44,6 +44,19 @@
 - **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.
+- **`kubic --help` / `-h`**: always 0 — prints the top-level command
+  listing (the same usage line an unknown command gets).
+- **Bare `kubic`** (no command): 1, with the identical listing —
+  usage-on-no-args is the deliberate POSIX posture, so `--help` and the
+  bare invocation differ only in their exit code.
+- **Unexpected top-level failures** (a bug in a command's wiring, an
+  unshaped IO error): one `error: <message>` line on stderr, 1 — the full
+  stack only with `KUBIC_DEBUG=1` (see
+  [doctor and debug](doctor-and-debug.md#when-a-command-dies-unexpectedly-kubic_debug)).
+- **Below Node 22.19**: the launcher (`bin/kubic.js`) refuses by name
+  before loading anything —
+  `kubic: node >= 22.19 required (running <version>) — see the README
+  install section`, exit 1.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
 - **`kubic run` approvals (exit 4)**: the code is 4 for the whole approval
   terminus; the `status` string is the honest half — `approval_denied` for a

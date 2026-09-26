@@ -4,7 +4,11 @@
 // snapshots. replay:"never" — execution is an effect; the registry memo
 // gate additionally refuses re-invocation under the same invocation id.
 
-import type { Provenance } from '../../../exec/src/env.js';
+import type {
+  ProcessHandle,
+  Provenance,
+  ShellResult,
+} from '../../../exec/src/env.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 
@@ -24,6 +28,11 @@ export interface BashResult {
    * knows it saw a slice (issue #121).
    */
   truncated: boolean;
+  /**
+   * Which shell actually executed the command — bash is preferred, sh is
+   * the recorded fallback (issue #123).
+   */
+  shell: 'bash' | 'sh' | 'cmd';
   aborted: boolean;
   timedOut: boolean;
   provenance: Provenance;
@@ -83,6 +92,37 @@ function clip(text: string): { text: string; truncated: boolean } {
   };
 }
 
+// Issue #123: the tool is named bash and the prompts say bash — run bash
+// when the system has it. Resolution is lazy and cached per process: the
+// first command attempts bash, and the exit-127 detect-and-retry inside
+// execute() (below) records 'sh' when bash is missing. Detection goes
+// through the SAME seam the command runs through (ctx.env.shell) — a fake
+// env scripts its answer; no op touches child_process.
+
+// Spawn-ENOENT signature only: Node's `spawn <path> ENOENT` message (what
+// env.ts's issue #85 hardening writes to stderr when the bash BINARY
+// cannot start) as its own anchored line — a bare substring like
+// `respawn ENOENT` in user output must not match, and no user-printable
+// text (e.g. `bash: not found`) is part of the signature. bash's inner
+// `bash: <cmd>: command not found` is a user typo inside a working bash
+// and must never match.
+const SPAWN_ENOENT_MISSING = /^spawn \S+ ENOENT$/m;
+
+let resolvedShell: BashResult['shell'] | undefined;
+
+function shellFor(): BashResult['shell'] {
+  if (process.platform === 'win32') return 'cmd';
+  if (resolvedShell === undefined) resolvedShell = 'bash';
+  return resolvedShell;
+}
+
+/** Test seam (never re-exported): pin or reset the per-process resolution. */
+export function __setResolvedShellForTests(
+  shell: BashResult['shell'] | undefined,
+): void {
+  resolvedShell = shell;
+}
+
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
   description: 'Execute a shell command with streaming, timeout, and abort',
@@ -96,32 +136,61 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       turnId: turnNumber(inv.turnId),
       operation: 'bash',
     };
-    const shell = process.platform === 'win32' ? 'cmd' : 'sh';
-    const shellArgs =
-      process.platform === 'win32'
-        ? ['/d', '/s', '/c', args.command]
-        : ['-c', args.command];
-    const handle = ctx.env.shell.spawn(shell, shellArgs, {
-      provenance,
-      onUpdate: ctx.onUpdate,
-      checkpointKey: inv.invocationId,
-      checkpointStore: ctx.checkpointStore,
-    });
-    ctx.trackHandle?.(() => handle.kill(), inv);
+    const spawnShell = (shellName: string): ProcessHandle => {
+      const shellArgs =
+        process.platform === 'win32'
+          ? ['/d', '/s', '/c', args.command]
+          : ['-c', args.command];
+      const handle = ctx.env.shell.spawn(shellName, shellArgs, {
+        provenance,
+        onUpdate: ctx.onUpdate,
+        checkpointKey: inv.invocationId,
+        checkpointStore: ctx.checkpointStore,
+      });
+      // First attempt and any retry both land in the lane's kill registry
+      // (issue #11) so timeout/abort kill whichever handle is live.
+      ctx.trackHandle?.(() => handle.kill(), inv);
+      return handle;
+    };
+    let shellName = shellFor();
+    let live = spawnShell(shellName);
     let timedOut = false;
     const timer =
       args.timeout === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
-            handle.kill();
+            live.kill();
           }, args.timeout * 1000);
-    const onAbort = () => handle.kill();
+    const onAbort = () => live.kill();
     if (ctx.signal) {
-      if (ctx.signal.aborted) handle.kill();
+      if (ctx.signal.aborted) live.kill();
       else ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
-    const result = await handle.wait();
+    let result: ShellResult = await live.wait();
+    // Issue #123: one-shot detect-and-retry. A 127 settled with the
+    // SPAWN-ENOENT signature means this box has no bash binary — env.ts's
+    // ENOENT hardening (issue #85) writes Node's `spawn <path> ENOENT`
+    // message line to stderr. bash's own inner
+    // `bash: <cmd>: command not found` is a user typo inside a working
+    // bash and must NOT trigger the retry. Degrade once to sh,
+    // remember the answer for the process, and never loop. This runs
+    // inside execute — before the registry memoizes the result under
+    // `op-result-bash` — so a retried command memoizes exactly once.
+    if (
+      result.exitCode === 127 &&
+      shellName === 'bash' &&
+      !timedOut &&
+      ctx.signal?.aborted !== true &&
+      SPAWN_ENOENT_MISSING.test(result.stderr)
+    ) {
+      resolvedShell = 'sh';
+      shellName = 'sh';
+      // The retry reuses the original timeout window (the timer is not
+      // reset) — its effective budget is whatever remains of args.timeout.
+      live = spawnShell(shellName);
+      result = await live.wait();
+    }
     if (timer !== undefined) clearTimeout(timer);
     ctx.signal?.removeEventListener('abort', onAbort);
     const aborted =
@@ -138,6 +207,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       stdout: out.text,
       stderr: err.text,
       truncated: out.truncated || err.truncated,
+      shell: shellName,
       aborted,
       timedOut,
       provenance,

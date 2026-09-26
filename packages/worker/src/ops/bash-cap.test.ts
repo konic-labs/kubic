@@ -92,6 +92,7 @@ describe('bash result caps (issue #121)', () => {
       stdout: 'tiny',
       stderr: '',
       truncated: false,
+      shell: expect.stringMatching(/^(bash|sh|cmd)$/),
       aborted: false,
       timedOut: false,
       provenance: out.result.provenance,

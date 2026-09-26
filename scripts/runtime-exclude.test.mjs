@@ -162,22 +162,24 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
 describe('this repo ships the split (issue #91)', () => {
   it('wires the rules into every mode that creates state', () => {
     // Criterion 1 is only met if the mechanism is actually reachable from
-    // the CLI: `kubic run` and `kubic orchestrate` must both ship the
-    // rules before they create state. Pin the dispatch, not a helper.
+    // the CLI: `kubic run`, `kubic orchestrate` and `kubic tui` (issue #113:
+    // a TUI session creates in-repo state the moment config relocates it)
+    // must all ship the rules before they create state. Pin the dispatch,
+    // not a helper.
     const main = readFileSync(
       join(ROOT, 'apps', 'kubic', 'src', 'main.ts'),
       'utf8',
     );
     const call = main.match(
-      /if \(command === 'run' \|\| command === 'orchestrate'\) \{\n\s*ensureRuntimeExcludeRules\(/,
+      /if \(command === 'run' \|\| command === 'orchestrate' \|\| command === 'tui'\) \{\n\s*ensureRuntimeExcludeRules\(/,
     );
     assert.ok(
       call !== null,
-      'apps/kubic/src/main.ts must call ensureRuntimeExcludeRules for run + orchestrate',
+      'apps/kubic/src/main.ts must call ensureRuntimeExcludeRules for run + orchestrate + tui',
     );
     // No mode that writes state may be added without it: the dispatch
     // names exactly the state-creating commands.
-    for (const mode of ['run', 'orchestrate']) {
+    for (const mode of ['run', 'orchestrate', 'tui']) {
       assert.match(main, new RegExp(`command === '${mode}'`));
     }
   });

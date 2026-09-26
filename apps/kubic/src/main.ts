@@ -122,7 +122,7 @@ async function main(argv: string[]): Promise<number> {
   // (idempotent, fail-open, never dirties a committed .gitignore) — so the
   // first run/orchestrate leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
-  if (command === 'run' || command === 'orchestrate') {
+  if (command === 'run' || command === 'orchestrate' || command === 'tui') {
     ensureRuntimeExcludeRules({ cwd: process.cwd() });
   }
   if (command === '--version' || command === '-V') {
@@ -186,6 +186,9 @@ async function main(argv: string[]): Promise<number> {
         // must reach it here too.
         ...installedPolicyClasses(cliConfig),
         policySource: installedPolicyDeps(cliConfig).source,
+        // Issue #113 (§42.4): the same journal retention projection `kubic
+        // run` threads — a TUI session's journal age-prunes under config.
+        journalRetention: runtimeRunDeps(cliConfig).journalRetention,
       }),
     );
   }

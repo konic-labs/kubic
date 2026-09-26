@@ -14,11 +14,15 @@
 // first Ctrl-C quits. Esc and Ctrl-D-on-an-empty-draft quit too, so no
 // honoured key is a silent no-op.
 
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import {
+  FileJournalStore,
+  type JournalRetention,
+} from '../../../packages/exec/src/journal.js';
 import {
   beginReconciliation,
   type RunReconciliation,
@@ -35,6 +39,11 @@ import {
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
+  roleDocPath,
+  rolePromptFor,
+  selectRole,
+} from '../../../packages/host/src/roles/roles-boot.js';
+import {
   mapCaughtErrorToTerminus,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -44,6 +53,7 @@ import {
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
@@ -113,6 +123,10 @@ export interface TuiLaneBoot {
   sessionId: string;
   model: string;
   close?: () => Promise<void> | void;
+  // Issue #113: the session's journal store, exposed so callers (and
+  // tests) can observe the retention policy the boot installed. The loop
+  // itself uses the lane's own recording; this is the same store.
+  journal?: FileJournalStore;
   // Issue #88: the boot hands the loop its drive surface. Injected boots in
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
@@ -132,7 +146,18 @@ export interface TuiRunDeps {
   bootLane: (
     sessionId?: string,
     answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>,
+    // Issue #113: the parsed parity flags travel with the boot call —
+    // the command shell owns parsing, the boot owner owns the defaults.
+    options?: TuiBootFlags,
   ) => Promise<TuiLaneBoot>;
+}
+
+// The `kubic tui` parity flags (issue #113): same names and semantics as
+// the `kubic run` counterparts.
+export interface TuiBootFlags {
+  role?: string;
+  noSkills?: boolean;
+  skillsList?: string[];
 }
 
 export interface TuiRunOptions {
@@ -158,6 +183,15 @@ export interface TuiRunOptions {
   // Attached by runTuiCommand; absent means the no-surface refusal, which is
   // what `kubic tui` had before the overlay landed.
   answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  // Issue #113 (TUI parity with `kubic run`): skills discovery, `--role`
+  // documents, and journal retention reach the interactive lane exactly
+  // as they reach the headless one — same options, same semantics.
+  skills?: { homeDir?: string; cwd?: string; trusted?: boolean };
+  noSkills?: boolean;
+  skillsList?: string[];
+  role?: string;
+  roles?: { cwd?: string };
+  journalRetention?: JournalRetention;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -206,7 +240,13 @@ export async function bootTuiLane(
   };
   try {
     bridge.createDir(join(id, 'journal'));
-    const journal = new FileJournalStore(join(root, id, 'journal'));
+    // Issue #113 (§42.4): the store takes the same retention policy the
+    // headless runner threads from config — a TUI session's journal age-
+    // prunes when the operator configured it, like any run.
+    const journal = new FileJournalStore(
+      join(root, id, 'journal'),
+      options.journalRetention ?? {},
+    );
     // A capture failure is not a boot failure (same posture as the headless
     // runner): the sweep then simply has no baseline to compare against.
     try {
@@ -250,6 +290,60 @@ export async function bootTuiLane(
       sessionId: id,
       agentId: 'root',
       journal,
+      // Issue #113 (§29.3): skills discovery at boot, same as the headless
+      // runner — the <skills> block lands on the interactive lane too. A
+      // loader refusal is never fatal (skills are context, never a gate);
+      // it is logged to the boot's debug channel.
+      ...((): { promptSections?: string[] } => {
+        const skills = bootSkills({
+          bridge: createNodeFileBridge(options.skills?.cwd ?? process.cwd()),
+          cwd: options.skills?.cwd ?? process.cwd(),
+          homeDir: options.skills?.homeDir ?? homedir(),
+          trusted:
+            options.skills?.trusted ??
+            (process.env.KUBIC_TRUST_PROJECT === '1' ||
+              process.env.KUBIC_TRUST_PROJECT === 'true'),
+          ...(options.noSkills === undefined
+            ? {}
+            : { noSkills: options.noSkills }),
+          ...(options.skillsList === undefined
+            ? {}
+            : { cliSkills: options.skillsList }),
+          log: () => {
+            // TUI: no debug footer on the alt-screen; loader lines are
+            // intentionally dropped (the block itself is observable).
+          },
+        });
+        return skills.block === undefined
+          ? {}
+          : { promptSections: [skills.block] };
+      })(),
+      // Issue #113 (§12.1): `--role` derives both halves of the boot from
+      // the role document — prompt text and tool allowlist — with the same
+      // fail-closed refusals as `kubic run`. An unknown role refuses the
+      // boot (the catch below closes the session and rethrows for the
+      // command shell to print) rather than silently booting a roleless
+      // lane.
+      ...(() => {
+        if (options.role === undefined) return {};
+        const rolesCwd = options.roles?.cwd ?? process.cwd();
+        const rolesBridge = createNodeFileBridge(rolesCwd);
+        const selected = selectRole({
+          bridge: rolesBridge,
+          cwd: rolesCwd,
+          role: options.role,
+        });
+        const promptText = rolePromptFor(
+          selected.doc,
+          rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
+        );
+        return {
+          rolePrompt: promptText,
+          ...(selected.resolved.tools.length === 0
+            ? {}
+            : { toolAllowlist: selected.resolved.tools }),
+        };
+      })(),
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
       policy: {
@@ -263,6 +357,7 @@ export async function bootTuiLane(
     return {
       sessionId: id,
       model: `${model.provider}/${model.id}`,
+      journal,
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -290,18 +385,31 @@ export function tuiDepsWithDefaults(provided: {
   classes?: PermissionClasses;
   policySource?: 'config' | 'default';
   policy?: InstalledSoloPolicy;
+  // Issue #113 (§42.4): config journal retention, threaded from the same
+  // runtimeRunDeps projection `kubic run` uses.
+  journalRetention?: JournalRetention;
 }): TuiRunDeps {
-  const { classes, policySource, policy } = provided;
+  const { classes, policySource, policy, journalRetention } = provided;
   return {
     out: provided.out,
     createTerminal: () => new ProcessTerminal(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
-    bootLane: (sessionId?: string, answer?: TuiApprovalSeat) =>
+    bootLane: (
+      sessionId?: string,
+      answer?: TuiApprovalSeat,
+      flags?: TuiBootFlags,
+    ) =>
       bootTuiLane(sessionId, {
         ...(classes === undefined ? {} : { classes }),
         ...(policySource === undefined ? {} : { policySource }),
         ...(policy === undefined ? {} : { policy }),
         ...(answer === undefined ? {} : { answer }),
+        ...(journalRetention === undefined ? {} : { journalRetention }),
+        ...(flags?.role === undefined ? {} : { role: flags.role }),
+        ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
+        ...(flags?.skillsList === undefined || flags.skillsList.length === 0
+          ? {}
+          : { skillsList: flags.skillsList }),
       }),
   };
 }
@@ -410,8 +518,12 @@ export class TuiTurnRunner {
       if (driven.kind === 'waiting-deferred') {
         return {
           status: 'failed',
+          // Issue #113: the TUI HAS a TTY — the old message blamed a
+          // missing one. The deferral is the fact: the lane suspended this
+          // operation (an unanswerable approval or a background wait) and
+          // the operator can try again.
           detail:
-            'turn suspended waiting on an approval that cannot arrive without a TTY',
+            'turn suspended: the lane deferred this operation (an unanswerable approval or background wait) — try re-submitting',
         };
       }
       const record = driven.outcome as { status?: unknown; error?: unknown };
@@ -476,10 +588,17 @@ export async function runTuiCommand(
   deps: TuiRunDeps,
 ): Promise<number> {
   let sessionId: string | undefined;
+  // Issue #113: the parity flags, parsed with the same discipline as
+  // `kubic run` — a value flag without a value is a usage error, an unknown
+  // flag is refused by name.
+  const flags: TuiBootFlags = {};
+  const skillsList: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] as string;
     if (arg === '--help' || arg === '-h') {
-      deps.out('usage: kubic tui [--session <id>]');
+      deps.out(
+        'usage: kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]',
+      );
       return RUN_EXIT_OK;
     }
     if (arg === '--session') {
@@ -490,11 +609,30 @@ export async function runTuiCommand(
       }
       sessionId = value;
       i += 1;
+    } else if (arg === '--role') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        deps.out('error: --role needs a value');
+        return RUN_EXIT_USAGE;
+      }
+      flags.role = value;
+      i += 1;
+    } else if (arg === '--no-skills') {
+      flags.noSkills = true;
+    } else if (arg === '--skill') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        deps.out('error: --skill needs a value');
+        return RUN_EXIT_USAGE;
+      }
+      skillsList.push(value);
+      i += 1;
     } else {
       deps.out(`error: unknown flag ${arg}`);
       return RUN_EXIT_USAGE;
     }
   }
+  if (skillsList.length > 0) flags.skillsList = skillsList;
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
     deps.out(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
@@ -509,7 +647,7 @@ export async function runTuiCommand(
   const surface = createApprovalSurface();
   let boot: TuiLaneBoot;
   try {
-    boot = await deps.bootLane(sessionId, surface.seat);
+    boot = await deps.bootLane(sessionId, surface.seat, flags);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     deps.out(`error: ${message}`);

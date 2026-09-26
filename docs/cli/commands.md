@@ -293,9 +293,29 @@ provider available, 1 otherwise.
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
 the derived allowlist, and the destructive/network/confine guards with the
-approval ask. The approval overlay is its own interaction surface and has
-not landed yet, so a challenged call is refused the same way it is
-headless.
+approval ask. A challenged call surfaces the approval overlay — the
+interactive path can actually collect a verdict on it — and an unanswered
+ask denies on the same bounded wait.
+
+**Parity with `kubic run` (issue #113).** The interactive lane carries the
+same context the headless one does:
+
+- **Skills (§29.3):** discovery runs at boot with the same trust gate
+  (`KUBIC_TRUST_PROJECT`), so discovered `<skills>` blocks land on the
+  interactive system prompt. `--skill <path>` adds an explicit skill
+  (repeatable), `--no-skills` turns layered discovery off — and explicit
+  `--skill` paths still apply under `--no-skills`, exactly as `run`.
+- **Roles (§12.1):** `--role <name>` loads `.kubic/roles/<name>.md` — the
+  document's prompt text replaces the solo constant and its tool set
+  narrows the lane (absence, not approval). Every refusal is fail-closed
+  with the named reason (unknown role, contradictory document, missing
+  `## Prompt`, parse failure); the boot exits before the alt-screen.
+- **Journal retention (§42.4):** the session journal takes the same
+  `[journal] retentionDays` projection `run` threads — a TUI session's
+  journal age-prunes under config.
+- **Runtime exclude rules (§35):** `kubic tui` ships the same `.kubic/`
+  exclude rules before creating state, so a session whose config ever
+  relocates state in-repo leaves `git status` clean.
 
 The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in

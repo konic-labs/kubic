@@ -136,6 +136,7 @@ describe('corrupt journal content (issue #111)', () => {
       before: 'b\n',
       after: null,
       corrupt: true,
+      afterOmitted: false,
     };
     expect(renderDiff([change])).toContain('# [corrupt journal content]');
   });

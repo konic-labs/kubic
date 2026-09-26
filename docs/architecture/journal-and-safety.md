@@ -38,7 +38,11 @@ records no before-content, so it is reported non-reversible and cannot
 itself be undone. Review the record, revert a step or a path, check
 status and history; entries the
 journal cannot reconstruct (recorded hash, no retrievable pre-image)
-are reported as non-reversible rather than guessed at. Retention
+are reported as non-reversible rather than guessed at. Changes the sweep
+captures are bounded the same way: a changed file above 4 MiB — or one whose
+utf-8 decode would be lossy (binary content) — is recorded hash-only
+(`changed, N bytes`; `diff` shows a size-only line), never as a mangled or
+unbounded blob. Retention
 bounds keep growth finite: a size cap is enforced on every append,
 with opt-in age pruning.
 

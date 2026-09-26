@@ -16,6 +16,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  loadCliConfig,
+  sessionRetentionDays,
+} from '../../../apps/kubic/src/config-runtime.js';
+import { effectiveConfigView } from './config/runtime.js';
 import { runSessionsCommand } from './sessions-cli.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -391,5 +396,98 @@ describe('sessions prune, keep-window resolution (issue #119)', () => {
     expect(usage).toContain('prune');
     expect(usage).toContain('--keep-days');
     expect(usage).toContain('--yes');
+  });
+});
+
+describe('sessions prune, config flow (issue #119)', () => {
+  // A real config load (global layer under a tmp home), the composition
+  // root's seam, then the CLI — the same chain `kubic sessions prune` runs.
+  function loadedHome(retention?: string): string {
+    const home = tmpRoot('home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    if (retention !== undefined) {
+      writeFileSync(
+        join(home, '.kubic', 'config.toml'),
+        `[session]\nretentionDays = ${retention}\n`,
+      );
+    }
+    return home;
+  }
+
+  it('session.retentionDays becomes the default window', async () => {
+    const root = tmpRoot();
+    sessionDir(root, 'aged-31d', 31 * DAY_MS);
+    sessionDir(root, 'aged-29d', 29 * DAY_MS);
+    const loaded = loadCliConfig({
+      home: loadedHome('30'),
+      cwd: tmpRoot('cwd-'),
+      env: {},
+    });
+    expect(loaded.error).toBeUndefined();
+    const o = out();
+    const code = await runSessionsCommand(['prune', '--yes'], {
+      sessionsRoot: root,
+      out: o.write,
+      retentionDays: sessionRetentionDays(loaded),
+    });
+    expect(code).toBe(0);
+    expect(existsSync(join(root, 'aged-31d'))).toBe(false);
+    expect(existsSync(join(root, 'aged-29d'))).toBe(true);
+  });
+
+  it('reports the key through the effective-config view (kubic config)', () => {
+    const loaded = loadCliConfig({
+      home: loadedHome('30'),
+      cwd: tmpRoot('cwd-'),
+      env: {},
+    });
+    const runtime = loaded.runtime;
+    if (runtime === undefined) throw new Error(loaded.error ?? 'refused');
+    const view = effectiveConfigView(runtime);
+    const value = view.values.find(
+      (entry) => entry.key === 'session.retentionDays',
+    );
+    expect(value?.value).toBe('30');
+    expect(value?.layer).toBe('global');
+  });
+
+  it('unset config means no window: prune refuses, deletes nothing', async () => {
+    const loaded = loadCliConfig({
+      home: loadedHome(),
+      cwd: tmpRoot('cwd-'),
+      env: {},
+    });
+    expect(sessionRetentionDays(loaded)).toBeUndefined();
+    const root = tmpRoot();
+    sessionDir(root, 'aged-a', 90 * DAY_MS);
+    const o = out();
+    const code = await runSessionsCommand(['prune', '--yes'], {
+      sessionsRoot: root,
+      out: o.write,
+      retentionDays: sessionRetentionDays(loaded),
+    });
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toContain('--keep-days');
+    expect(existsSync(join(root, 'aged-a'))).toBe(true);
+  });
+
+  it('retentionDays = 0 flows through as retention off', async () => {
+    const loaded = loadCliConfig({
+      home: loadedHome('0'),
+      cwd: tmpRoot('cwd-'),
+      env: {},
+    });
+    expect(sessionRetentionDays(loaded)).toBe(0);
+    const root = tmpRoot();
+    sessionDir(root, 'aged-a', 90 * DAY_MS);
+    const o = out();
+    const code = await runSessionsCommand(['prune', '--yes'], {
+      sessionsRoot: root,
+      out: o.write,
+      retentionDays: sessionRetentionDays(loaded),
+    });
+    expect(code).toBe(0);
+    expect(existsSync(join(root, 'aged-a'))).toBe(true);
+    expect(o.lines.join('\n')).toContain('off');
   });
 });

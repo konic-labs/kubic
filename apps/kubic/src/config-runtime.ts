@@ -177,6 +177,17 @@ export function runtimeRunDeps(result: CliConfigResult): {
   };
 }
 
+// `kubic sessions prune`'s default keep-window (issue #119): the parsed
+// `session.retentionDays` leaf — undefined when config sets none (or the
+// load was refused), so prune demands an explicit --keep-days instead of
+// inventing a window (§35.1 fail-closed; deletion stays explicit). 0 is a
+// real value here: it means retention off, and prune reports it as such.
+export function sessionRetentionDays(
+  result: CliConfigResult,
+): number | undefined {
+  return result.runtime?.config.session?.retentionDays;
+}
+
 // The manager lane's approval snapshot for the orchestrator path (issue #106,
 // §45.2), over the SAME config load every other consumer uses: a delegated
 // conflict resolver is spawned under exactly this policy, so the `route`,

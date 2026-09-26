@@ -150,6 +150,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     notYetImplemented:
       'the sessions root is host-owned today (~/.kubic/sessions); relocation lands with the session store work',
   },
+  'session.retentionDays': {
+    effect:
+      'default keep-window for `kubic sessions prune` (deletion stays explicit)',
+  },
 };
 
 export interface RuntimeModelSelection {

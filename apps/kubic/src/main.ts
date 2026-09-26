@@ -67,6 +67,7 @@ import {
   loadCliConfig,
   runtimeModelPin,
   runtimeRunDeps,
+  sessionRetentionDays,
 } from './config-runtime.js';
 import {
   extensionPostureForDoctor,
@@ -139,7 +140,14 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === 'sessions') {
-    return runSessionsCommand(rest, { out: (line) => console.log(line) });
+    // Issue #119: `sessions prune`'s default keep-window comes from config
+    // when it sets one; with none, prune demands an explicit --keep-days
+    // rather than inventing a window.
+    const retentionDays = sessionRetentionDays(cliConfig);
+    return runSessionsCommand(rest, {
+      out: (line) => console.log(line),
+      ...(retentionDays === undefined ? {} : { retentionDays }),
+    });
   }
   if (command === 'git') {
     return runGitCommand(rest, {

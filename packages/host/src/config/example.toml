@@ -50,3 +50,4 @@ statusBar = true
 [session]
 store = "jsonl"
 dir = ".kubic/sessions"
+retentionDays = 30

@@ -15,6 +15,7 @@
 
 import { join } from 'node:path';
 import { answerHelp } from '../../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
@@ -102,67 +103,51 @@ function usage(out: (line: string) => void): number {
   return CLEAN_EXIT_USAGE;
 }
 
-function flagValue(
-  args: string[],
-  flag: string,
-): string | undefined | 'missing' {
-  const at = args.indexOf(flag);
-  if (at === -1) return undefined;
-  const value = args[at + 1];
-  if (value === undefined || value.startsWith('--')) return 'missing';
-  return value;
-}
-
 function positiveInt(raw: string): number | null {
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) return null;
   return parsed;
 }
 
-const CLEAN_FLAGS = [
-  '--all',
-  '--dry-run',
-  '--force',
-  '--journal',
-  '--json',
-  '--max-age-ms',
-  '--max-bytes',
-  '--session',
+// Issue #127: the shared parser replaces the known-set scan + flagValue
+// helper. The parser also never swallows a flag-like token as a value, so
+// `--max-age-ms --nuke` now refuses `--nuke` by name instead of reporting
+// only the starved bound (both exit 2).
+const CLEAN_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--all', takes: 'boolean' },
+  { name: '--dry-run', takes: 'boolean' },
+  { name: '--force', takes: 'boolean' },
+  { name: '--journal', takes: 'boolean' },
+  { name: '--json', takes: 'boolean' },
+  { name: '--max-age-ms', takes: 'value' },
+  { name: '--max-bytes', takes: 'value' },
+  { name: '--session', takes: 'value' },
 ];
 
 export function parseCleanArgs(
   args: string[],
 ): { valid: true; options: CleanOptions } | { valid: false; error: string } {
-  const known = new Set(CLEAN_FLAGS);
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] ?? '';
-    if (!known.has(arg)) {
-      return {
-        valid: false,
-        error: arg.startsWith('--')
-          ? `unknown flag ${arg}`
-          : `unexpected argument ${JSON.stringify(arg)}`,
-      };
-    }
-    // Value-taking flags consume the next token, so it is never re-read as a
-    // flag or reported as a stray positional.
-    if (
-      arg === '--max-age-ms' ||
-      arg === '--max-bytes' ||
-      arg === '--session'
-    ) {
-      i += 1;
-    }
-  }
-  const maxAgeRaw = flagValue(args, '--max-age-ms');
-  const maxBytesRaw = flagValue(args, '--max-bytes');
-  const sessionRaw = flagValue(args, '--session');
-  if (maxAgeRaw === 'missing' || maxBytesRaw === 'missing') {
+  const parsed = parseFlagArgs(args, CLEAN_FLAG_SPEC);
+  const missing = parsed.missing;
+  if (missing.includes('--max-age-ms') || missing.includes('--max-bytes')) {
     return { valid: false, error: '--max-age-ms/--max-bytes need a value' };
   }
-  if (sessionRaw === 'missing') {
+  if (missing.includes('--session')) {
     return { valid: false, error: '--session needs a value' };
   }
+  if (parsed.unknown.length > 0) {
+    return { valid: false, error: `unknown flag ${parsed.unknown[0]}` };
+  }
+  if (parsed.positional.length > 0) {
+    return {
+      valid: false,
+      error: `unexpected argument ${JSON.stringify(parsed.positional[0])}`,
+    };
+  }
+  const values = parsed.values;
+  const maxAgeRaw = values['--max-age-ms'] as string | undefined;
+  const maxBytesRaw = values['--max-bytes'] as string | undefined;
+  const sessionRaw = values['--session'] as string | undefined;
   let sessionId: string | undefined;
   if (sessionRaw !== undefined) {
     if (!SESSION_ID_PATTERN.test(sessionRaw)) {
@@ -176,21 +161,21 @@ export function parseCleanArgs(
   let maxAgeMs: number | undefined;
   let maxBytes: number | undefined;
   if (maxAgeRaw !== undefined) {
-    const parsed = positiveInt(maxAgeRaw);
-    if (parsed === null) {
+    const parsedBound = positiveInt(maxAgeRaw);
+    if (parsedBound === null) {
       return { valid: false, error: '--max-age-ms needs a positive integer' };
     }
-    maxAgeMs = parsed;
+    maxAgeMs = parsedBound;
   }
   if (maxBytesRaw !== undefined) {
-    const parsed = positiveInt(maxBytesRaw);
-    if (parsed === null) {
+    const parsedBound = positiveInt(maxBytesRaw);
+    if (parsedBound === null) {
       return { valid: false, error: '--max-bytes needs a positive integer' };
     }
-    maxBytes = parsed;
+    maxBytes = parsedBound;
   }
   // Two contradictory scopes at once: refuse before either is resolved.
-  if (args.includes('--all') && sessionId !== undefined) {
+  if (values['--all'] === true && sessionId !== undefined) {
     return {
       valid: false,
       error: '--all and --session are mutually exclusive',
@@ -199,11 +184,11 @@ export function parseCleanArgs(
   return {
     valid: true,
     options: {
-      ...(args.includes('--dry-run') ? { dryRun: true } : {}),
-      ...(args.includes('--json') ? { json: true } : {}),
-      ...(args.includes('--all') ? { all: true } : {}),
-      ...(args.includes('--force') ? { force: true } : {}),
-      ...(args.includes('--journal') ? { journal: true } : {}),
+      ...(values['--dry-run'] === true ? { dryRun: true } : {}),
+      ...(values['--json'] === true ? { json: true } : {}),
+      ...(values['--all'] === true ? { all: true } : {}),
+      ...(values['--force'] === true ? { force: true } : {}),
+      ...(values['--journal'] === true ? { journal: true } : {}),
       ...(maxAgeMs === undefined ? {} : { maxAgeMs }),
       ...(maxBytes === undefined ? {} : { maxBytes }),
       ...(sessionId === undefined ? {} : { sessionId }),

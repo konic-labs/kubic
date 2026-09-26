@@ -190,6 +190,17 @@ you, and your verdict travels back to the worker:
 approve a worker's dangerous call — the ask is still presented to the decider
 that exists).
 
+The interactive merge gate is **bounded like every other ask** (issue #130,
+§41.2). A TTY run asks each merge under the run's approval policy
+(`approvals.maxPendingMs` — the same snapshot a delegated conflict resolver
+runs under, never a second policy), and an answer that does not arrive within
+that bound **denies closed**: the seat closes, the prompt line is left clean,
+and the denial names the bound and the candidate (`approval timed out after
+<ms>ms — denied (merge of '<agent>')`, exit 4) — the same wording convention
+the worker-ask bound uses. A run that holds no policy snapshot attaches no
+seat at all and takes the shipped deny-closed path, so nothing waits silently
+for a user who walked away.
+
 The lane registration is a gate, not a label: the run asks for exactly the §40
 toolset and a lane carrying anything else — an exec tool above all — refuses to
 start, exiting 1 with `code=manager_toolset_refused` and the offending tool
@@ -236,7 +247,7 @@ recreating it, so a killed run keeps one chain per worker.
 | `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, spawned one after another). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
-| `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge; headless without a decider denies closed with exit 4. |
+| `--yes` | Auto-approve merges (non-interactive). Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
 | `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`. Absent means **no limit is applied**; a worker exceeding it ends `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own budget. |
 | `--full-access` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated and recorded. A fresh session starts enforced again. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. |

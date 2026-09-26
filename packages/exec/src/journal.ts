@@ -6,7 +6,15 @@
 // adds an entry without checking the bounds first.
 
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -36,6 +44,17 @@ export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
 export interface JournalRetention {
   maxBytes?: number;
   maxAgeMs?: number;
+  /**
+   * fsync every index append before it returns (issue #117), default true.
+   * One fsync per tool write is the price of "reversible": the entry is on
+   * platter before the append returns, so a crash cannot take back a change
+   * the journal already promised to undo. The window it closes is small but
+   * real — a lost last line reads as "the run did nothing". Set `false` to
+   * trade that durability for throughput (a crash may then truncate the
+   * last line, which `entries()` skips); a bridge without `appendDurably`
+   * always falls back to a plain append.
+   */
+  durable?: boolean;
 }
 
 export interface JournalEntryInput {
@@ -214,6 +233,7 @@ export function applyDelta(before: string, delta: string): string | null {
 export class FileJournalStore {
   readonly indexPath: string;
   private readonly blobsDir: string;
+  private readonly durable: boolean;
   private readonly limits: Required<Pick<JournalRetention, 'maxBytes'>> &
     Pick<JournalRetention, 'maxAgeMs'>;
   // Issue #124: blob sizes are immutable (content-addressed), so a hash's
@@ -245,6 +265,10 @@ export class FileJournalStore {
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
     this.blobsDir = join(dir, 'blobs');
+    // Durable appends default on (issue #117): the journal's whole promise
+    // is "this change can be undone", which is false if the record of the
+    // change can be lost to a crash. Opting out is explicit.
+    this.durable = retention.durable ?? true;
     this.limits = {
       maxBytes: retention.maxBytes ?? DEFAULT_JOURNAL_MAX_BYTES,
       ...(retention.maxAgeMs === undefined
@@ -305,7 +329,15 @@ export class FileJournalStore {
         ? { deltaBaseEmpty: true }
         : {}),
     };
-    bridge.appendFile(this.indexPath, `${JSON.stringify(entry)}\n`);
+    // Durable append (issue #117): the crash-safety seam. Production takes
+    // `appendDurably` (fsync before this returns); a bridge double without
+    // it keeps the plain append, and `durable: false` opts out explicitly.
+    const line = `${JSON.stringify(entry)}\n`;
+    if (this.durable && bridge.appendDurably !== undefined) {
+      bridge.appendDurably(this.indexPath, line);
+    } else {
+      bridge.appendFile(this.indexPath, line);
+    }
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
     this.enforceRetention({ ...this.limits });
@@ -544,20 +576,39 @@ export class FileJournalStore {
     content: string,
   ): void {
     const path = join(this.blobsDir, hash);
-    if (!bridge.exists(path)) {
-      bridge.writeFile(path, content);
-      // Write-time size: the content is in hand, so no stat is needed —
-      // this is what makes retention stat-free for what this store writes.
-      const size = Buffer.byteLength(content, 'utf8');
-      const previous = this.blobSizes.get(hash);
-      this.blobSizes.set(hash, size);
-      // A re-written blob (freed by an earlier prune, or deleted
-      // externally) shifts the tracked total by its new size minus
-      // whatever was counted for it before.
-      if (this.trackedBytes !== null && this.accounted.has(hash)) {
-        this.trackedBytes += size - (previous ?? 0);
-        return;
+    if (bridge.exists(path)) {
+      this.trackRef(bridge, hash);
+      return;
+    }
+    // tmp+rename (issue #117): a blob becomes visible under its real name
+    // only when complete — a crash can never expose half a blob to
+    // `readBlob`, and the tmp lives in the same directory (same filesystem),
+    // so the rename is atomic. A failed write/rename cleans the tmp up,
+    // best-effort, and fails the append: a silently appended entry whose
+    // blob was never written would read as corrupt content.
+    const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
+    try {
+      bridge.writeFile(tmp, content);
+      bridge.renameFile(tmp, path);
+    } catch (error) {
+      try {
+        bridge.remove(tmp, false, true);
+      } catch {
+        // Best-effort tmp cleanup; the failed write is what matters.
       }
+      throw error;
+    }
+    // Write-time size: the content is in hand, so no stat is needed —
+    // this is what makes retention stat-free for what this store writes.
+    const size = Buffer.byteLength(content, 'utf8');
+    const previous = this.blobSizes.get(hash);
+    this.blobSizes.set(hash, size);
+    // A re-written blob (freed by an earlier prune, or deleted
+    // externally) shifts the tracked total by its new size minus
+    // whatever was counted for it before.
+    if (this.trackedBytes !== null && this.accounted.has(hash)) {
+      this.trackedBytes += size - (previous ?? 0);
+      return;
     }
     this.trackRef(bridge, hash);
   }
@@ -942,6 +993,35 @@ export function probeFileState(root: string, path: string): FileCurrentState {
   }
 }
 
+// Best-effort sweep of stale restore residue (issue #117 review): a crash
+// mid-restore can leave a `<target>.kubic-restore-<pid>.tmp` sibling behind
+// when the best-effort cleanup itself never ran. A successful restore of
+// that target removes any such siblings — they are this tool's own
+// predictable residue, never user files. Errors are ignored (a leftover is
+// litter, not corruption) and only the exact `<target>.kubic-restore-*.tmp`
+// name shape matches, so nothing else in the directory is ever touched.
+function sweepStaleRestoreTmps(
+  bridge: ReturnType<typeof createNodeFileBridge>,
+  target: string,
+): void {
+  const dir = dirname(target);
+  const prefix = `${basename(target)}.kubic-restore-`;
+  try {
+    for (const info of bridge.listDir(dir)) {
+      if (info.isDirectory || info.isSymbolicLink) continue;
+      if (!info.name.startsWith(prefix) || !info.name.endsWith('.tmp'))
+        continue;
+      try {
+        bridge.remove(join(dir, info.name), false, true);
+      } catch {
+        // Best-effort: residue that cannot be removed is litter.
+      }
+    }
+  } catch {
+    // Unreadable directory: nothing to sweep.
+  }
+}
+
 export function restoreEntry(
   store: FileJournalStore,
   entry: JournalEntry,
@@ -952,7 +1032,8 @@ export function restoreEntry(
   if (before === null) {
     return {
       restored: false,
-      reason: 'no before-content: unattributed entry is not reversible',
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
     };
   }
   const target = resolve(root, entry.path);
@@ -995,14 +1076,61 @@ export function restoreEntry(
       };
     }
   }
+  // Issue #117: the restore writes through a tmp+rename sibling — the same
+  // care the write/edit ops have always taken. A crash mid-undo can
+  // therefore never leave a half-written file (the worst failure mode for a
+  // recovery tool): the target either keeps its old content or receives the
+  // restored content wholesale. The tmp lives beside the target in the same
+  // directory (same filesystem), so the rename is atomic; a failed
+  // write/rename cleans the tmp up best-effort and reports the failure
+  // without touching the target.
+  //
+  // Review fix: the rename replaces the target's inode, so the tmp must
+  // carry the target's own mode — a plain writeFile would hand a 0600 secret
+  // the umask default (0644) and strip a script's exec bit. The tmp is
+  // created 0600 first, so crash residue is never world-readable, then the
+  // existing target's mode is copied onto it before the rename; a missing
+  // target (the recreate path) keeps the restrictive default.
+  const bridge = createNodeFileBridge('/');
+  const tmp = `${target}.kubic-restore-${process.pid}.tmp`;
+  let targetMode: number | undefined;
   try {
-    createNodeFileBridge('/').writeFile(target, before);
+    const info = bridge.fileInfo(target);
+    // A symlink's lstat mode is 0777 on every platform, and the rename would
+    // replace the link itself: copying those bits onto the replacement would
+    // hand the workspace a world-writable file. The mode is preserved for a
+    // regular file only (an unclassified double counts as regular).
+    if (info.isSymbolicLink === false && info.isFile !== false) {
+      targetMode = info.mode;
+    }
+  } catch {
+    // Target absent (recreate path): no mode to preserve.
+  }
+  try {
+    // `writeFileSync` applies the creation mode only to a fresh file, and a
+    // same-pid stale tmp (pid reuse) could otherwise keep its old mode:
+    // clearing it first makes the 0600 creation unconditional. Best-effort —
+    // the write below reports real failures.
+    if (bridge.exists(tmp)) bridge.remove(tmp, false, true);
+  } catch {
+    // Best-effort; the restore write is what must succeed.
+  }
+  try {
+    bridge.writeFile(tmp, before, { mode: 0o600 });
+    if (targetMode !== undefined) bridge.chmod?.(tmp, targetMode);
+    bridge.renameFile(tmp, target);
   } catch (error) {
+    try {
+      bridge.remove(tmp, false, true);
+    } catch {
+      // Best-effort tmp cleanup; the untouched target is what matters.
+    }
     return {
       restored: false,
       reason: `restore write failed: ${(error as Error).message}`,
     };
   }
+  sweepStaleRestoreTmps(bridge, target);
   return { restored: true };
 }
 

@@ -21,7 +21,7 @@ escapes, not a sandbox boundary.
 | `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
-| `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoResult`, `planUndo`, `applyUndo` |
+| `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock (#118) |
@@ -70,7 +70,7 @@ escapes but not symlinks) — acceptable because solo has no isolation.
 | --- | --- |
 | `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
-| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number` |
+| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
 | `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
@@ -79,6 +79,36 @@ attribution); unified-hunk rendering is shared by the CLI and future
 views. Status (`JournalStatus`, `RepoState`) and undo (`UndoScope`,
 `UndoPlan`, `UndoResult`) build on the same entry store — see the module
 for their exact fields.
+
+Journal durability (issue #117): index appends go through the bridge's
+`appendDurably` (open/write/fsync/close) so the entry is on platter
+before `append` returns — one fsync per tool write is the price of
+"reversible", and it is the default (`JournalRetention.durable`; `false`
+trades it for a crash window of one truncated last line, and a bridge
+without `appendDurably` always falls back to a plain append). The fsync
+covers the appended index line only — blob payloads and the retention
+compaction rewrite are renamed without one, so a crash right after a
+compaction can lose more than the last line. Blob writes and undo
+restores are tmp+rename in the target's own directory, so a partial file
+is never visible under its real name; directory-entry fsync is
+deliberately out of scope — rename atomicity is the guarantee, stated in
+[the journal and safety page](../architecture/journal-and-safety.md).
+
+Undo records (issue #117): every successful restore appends its inverse
+entry — pre-undo content as `before`, restored content as `after`,
+`sessionId`/`agentId` `kubic-undo`, `toolCallId` null — so the journal
+describes the world after an undo, and a second `undo --step` is the
+redo. It is an attributed entry (no `unattributed` flag, no
+`reconciled` marker); `applyUndo` appends it in the non-dry-run path
+only, and only for a step that actually restored. Plain plans
+(`planUndo` without `step`) filter these records out — they are the
+walk's own bookkeeping — so repeated plain undo is idempotent
+(`already undone`, nothing appended); `--step` targets them. A restore
+also preserves the target's existing mode across its tmp+rename (a
+0600 secret stays 0600, a 755 script keeps its exec bit), creates the
+tmp 0600 so crash residue is never world-readable, and sweeps stale
+`<target>.kubic-restore-*.tmp` siblings best-effort after a successful
+restore.
 
 ### Effects / replay (issue #97 — deleted, not wired)
 

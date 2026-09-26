@@ -473,7 +473,7 @@ usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo 
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent`/`--session` without a value exits 1. |
-| `undo [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (unattributed entry, no pre-image), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `undo [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
@@ -495,7 +495,23 @@ would write), so layered edits unwind in order. The matrix:
 `--force` overrides the stale refusals per-invocation (nothing persists it;
 the next `undo` re-checks by default). `--force` does not override
 non-reversible skips — no pre-image exists to write. Already-undone skips are
-informational: there is nothing to force. |
+informational: there is nothing to force.
+
+**The undo record and redo (issue #117).** Every successful restore is
+itself journaled: the store appends the inverse entry for the step — the
+pre-undo content as `before`, the restored content as `after`, attributed
+`agent=kubic-undo toolCall=none` and never marked `reconciled` (it is an
+attributed change, not a reconciliation find). `kubic diff` and `kubic log`
+therefore describe the world *after* the undo, and `kubic undo --step`
+immediately after an undo is the **redo**: it restores the undo record's
+`before` — the content the undo replaced. An edit-shaped undo (the file
+existed before it) carries that `before`, so undoing it is the redo and can
+be repeated; a delete-shaped undo (the file was absent pre-undo) has no
+before-content, so `--step` on it reports it non-reversible instead — the
+undo of a delete cannot itself be undone. Plain `undo` (no `--step`) never
+targets `kubic-undo` records: it restores real agent work once and then
+reports `already undone` without appending, so repeating it never re-undoes
+the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
 | `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
 | `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
 

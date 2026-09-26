@@ -165,7 +165,16 @@ not. The split, exactly as shipped:
   registered on top of built-ins; a `loaded models.json:` /
   `models.json ignored:` note is printed on `models`/`doctor`/`run`).
 - **Sessions store**: `~/.kubic/sessions` by default.
-- **Journal**: `<root>/.kubic/journal` by default.
+- **Journal**: `<root>/.kubic/journal` by default. Every index append is
+  fsynced before it returns — one fsync per tool write is the price of
+  "reversible" (store-level `JournalRetention.durable`, default `true`,
+  trades it for a crash window of one truncated last line). That fsync
+  covers the appended index line only: blob payloads and the retention
+  compaction rewrite are renamed without one, so a crash right after a
+  compaction can lose more than the last line (stated in
+  [the journal and safety page](../architecture/journal-and-safety.md)).
+  Growth is bounded by `[journal] retentionDays` and the 100 MiB default
+  size cap.
 
 Honest limits, stated plainly (§59.1): solo runs in-process with your
 user authority — no isolation, no containment; approval policy is an

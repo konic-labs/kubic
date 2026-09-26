@@ -128,12 +128,13 @@ describe('end-of-run reconciliation, prod path (issue #87)', () => {
     // and the exit code says the run could not be fully reversed.
     expect(undoOut).toContain('non-reversible (skipped): mutated.txt');
     expect(undoOut.join('\n')).toContain('undo: 0 restored, 1 non-reversible');
-    // The reason behind the skip is the unattributed class itself: hashes
+    // The reason behind the skip is the missing pre-image itself: hashes
     // were recorded, no pre-image exists, so undo refuses rather than
     // guessing (exec restoreEntry reports exactly this).
     expect(restoreEntry(store, found, workspace)).toEqual({
       restored: false,
-      reason: 'no before-content: unattributed entry is not reversible',
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
     });
     expect(readFileSync(join(workspace, 'mutated.txt'), 'utf8')).toBe(
       'bash wrote this\n',

@@ -112,7 +112,8 @@ describe('durable next-day undo (issue #17, slice D)', () => {
     });
     expect(restoreEntry(store, recorded, root)).toEqual({
       restored: false,
-      reason: 'no before-content: unattributed entry is not reversible',
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
     });
   });
 

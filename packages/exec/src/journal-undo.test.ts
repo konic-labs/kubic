@@ -72,21 +72,37 @@ describe('journal undo core (issue #18, slice B)', () => {
     const path = planUndo(store, { path: 'a.txt' });
     expect(path.steps).toHaveLength(2);
     const before = planUndo(store, {});
+    const entriesBefore = store.entries().length;
     const result = applyUndo(store, before, root, { dryRun: true });
     expect(result.restored).toEqual(['a.txt', 'a.txt']);
     expect(result.skipped).toEqual(['ghost.txt']);
+    // A dry run is a pure simulation: no restore happens and — issue #117 —
+    // no undo record is appended either.
+    expect(store.entries()).toHaveLength(entriesBefore);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v3\n');
   });
 
-  it('restores pre-run content and reports non-reversible instead of corrupting', () => {
+  it('restores pre-run content, and each restore is itself journaled', () => {
     const { store, root } = seed();
     const scoped = planUndo(store, { path: 'a.txt' });
     const result = applyUndo(store, scoped, root, {});
     expect(result.restored).toEqual(['a.txt', 'a.txt']);
     expect(result.skipped).toEqual([]);
-    // Issue #108 changed the second pass: undoing an already-undone walk no
-    // longer silently re-writes (and mislabels) the same content — the
-    // disk sits at a journaled before-state, so both a.txt steps are
-    // reported already-undone and nothing is written.
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+    // Issue #117: the undo is a change too. The journal's last two entries
+    // are the undo records for the two steps the walk restored, attributed
+    // to kubic-undo and carrying the pre-undo content as `before`.
+    const tail = store.entries().slice(-2);
+    expect(tail.map((e) => [e.sessionId, e.agentId, e.toolCallId])).toEqual([
+      ['kubic-undo', 'kubic-undo', null],
+      ['kubic-undo', 'kubic-undo', null],
+    ]);
+    expect(tail.map((e) => store.readBefore(e))).toEqual(['v3\n', 'v2\n']);
+    expect(tail.map((e) => store.readAfter(e))).toEqual(['v2\n', 'v1\n']);
+    // The plain walk still reads as idempotent (main's semantics): the
+    // undo's own kubic-undo records are bookkeeping, not steps, so the
+    // full re-planned undo reports the a.txt steps already-undone, writes
+    // nothing and appends nothing.
     const full = applyUndo(store, planUndo(store, {}), root, {});
     expect(full.restored).toEqual([]);
     expect(full.skipped).toEqual(['ghost.txt', 'a.txt', 'a.txt']);
@@ -95,7 +111,222 @@ describe('journal undo core (issue #18, slice B)', () => {
         .filter((d) => d.path === 'a.txt')
         .every((d) => d.reason.startsWith('already undone:')),
     ).toBe(true);
+    expect(store.entries()).toHaveLength(5); // 3 seed + the 2 undo records
+  });
+
+  it('reports already-undone instead of rewriting when disk sits at a journaled before-state', () => {
+    const { store, root } = seed();
+    // Issue #117 changed what a re-planned walk sees (the walk now contains
+    // undo records, so a second undo redid the first), so this pins the
+    // already-undone verdict through a hand-built plan: the first a.txt
+    // entry judged against a disk that already sits at its before-state.
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    const [first] = store.entries();
+    if (first === undefined) throw new Error('seed produced no entries');
+    const result = applyUndo(
+      store,
+      {
+        steps: [first],
+        reversible: 1,
+        nonReversible: [],
+        stale: 0,
+        stalePaths: [],
+      },
+      root,
+      {},
+    );
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['a.txt']);
+    expect(result.skippedDetails[0]?.reason.startsWith('already undone:')).toBe(
+      true,
+    );
+    // Nothing rewritten, and no undo record appended for a skip.
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+    expect(store.entries()).toHaveLength(3);
+  });
+});
+
+// Issue #117: a successful undo appends the inverse entry — before is the
+// pre-undo content, after is the content just restored, attributed to
+// `kubic-undo`. That makes the undo reviewable (`kubic diff`/`log` describe
+// the world after it) and reversible: a second `undo --step` is the redo.
+describe('undo record + redo (issue #117)', () => {
+  function seedOne(): { store: FileJournalStore; root: string } {
+    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1-longer\n',
+      after: 'v2\n',
+      ...ENTRY_BASE,
+    });
+    return { store, root };
+  }
+
+  it('journals the undo with pre-undo before, restored after, kubic-undo attribution', () => {
+    const { store, root } = seedOne();
+    const result = applyUndo(store, planUndo(store, { step: true }), root, {
+      now: () => 4242,
+    });
+    expect(result.restored).toEqual(['a.txt']);
+    const entries = store.entries();
+    const record = entries[entries.length - 1];
+    expect(record?.path).toBe('a.txt');
+    expect(record?.op).toBe('write');
+    expect(record?.sessionId).toBe('kubic-undo');
+    expect(record?.agentId).toBe('kubic-undo');
+    expect(record?.toolCallId).toBe(null);
+    expect(record?.timestamp).toBe(4242);
+    // Not an unattributed reconciliation find: it is attributed, to the undo.
+    expect(record?.unattributed).toBe(undefined);
+    expect(store.readBefore(record)).toBe('v2\n'); // pre-undo content
+    expect(store.readAfter(record)).toBe('v1-longer\n'); // restored content
+    expect(record?.bytesDelta).toBe(7); // 10 restored − 3 pre-undo
+  });
+
+  it('defaults the undo record timestamp to now when no clock is injected', () => {
+    const { store, root } = seedOne();
+    const before = Date.now();
+    applyUndo(store, planUndo(store, { step: true }), root, {});
+    const entries = store.entries();
+    const record = entries[entries.length - 1];
+    expect(record?.timestamp).toBeGreaterThanOrEqual(before);
+  });
+
+  it('redo: a second undo --step immediately after restores the pre-undo content', () => {
+    const { store, root } = seedOne();
+    const undo = applyUndo(store, planUndo(store, { step: true }), root, {});
+    expect(undo.restored).toEqual(['a.txt']);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1-longer\n');
+    // The journal now ends with the undo record; undoing that record is the
+    // redo — the same --step path, no special case.
+    const redo = applyUndo(store, planUndo(store, { step: true }), root, {});
+    expect(redo.restored).toEqual(['a.txt']);
+    expect(redo.skipped).toEqual([]);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('plain undo is idempotent: a second run restores nothing and appends nothing', () => {
+    const { store, root } = seedOne();
+    const first = applyUndo(store, planUndo(store, {}), root, {});
+    expect(first.restored).toEqual(['a.txt']);
+    expect(store.entries()).toHaveLength(2); // the agent write + its undo record
+    // RED (issue #117 review fix): the plain plan walks the first undo's own
+    // record too, so this run restores twice and appends two more records —
+    // every repeat doubles the walk (an exponential append/fsync amplifier).
+    // The plain plan must exclude the journal's own kubic-undo bookkeeping,
+    // leaving the disk at the entry's before-state: already-undone, nothing
+    // appended — the pre-#117 idempotent behavior.
+    const second = applyUndo(store, planUndo(store, {}), root, {});
+    expect(second.restored).toEqual([]);
+    expect(second.skipped).toEqual(['a.txt']);
+    expect(second.skippedDetails[0]?.reason.startsWith('already undone:')).toBe(
+      true,
+    );
+    expect(store.entries()).toHaveLength(2);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1-longer\n');
+    // The exclusion lives in the plan, so a dry-run reports the same skip and
+    // appends nothing either.
+    const dry = applyUndo(store, planUndo(store, {}), root, { dryRun: true });
+    expect(dry.restored).toEqual([]);
+    expect(dry.skipped).toEqual(['a.txt']);
+    expect(store.entries()).toHaveLength(2);
+  });
+
+  it('plain undo skips interleaved bookkeeping; --step still targets the newest entry (the redo)', () => {
+    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const undoRecord = (
+      path: string,
+      before: string,
+      after: string,
+      timestamp: number,
+    ): void => {
+      store.append({
+        path,
+        op: 'write',
+        before,
+        after,
+        bytesDelta: 0,
+        sessionId: 'kubic-undo',
+        agentId: 'kubic-undo',
+        toolCallId: null,
+        timestamp,
+      });
+    };
+    // A mixed log: real agent work interleaved with two kubic-undo records
+    // (a.txt was undone once, b.txt is sitting undone right now).
+    writeFileSync(join(root, 'a.txt'), 'v2\n');
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      ...ENTRY_BASE,
+      timestamp: 100,
+    });
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    undoRecord('a.txt', 'v2\n', 'v1\n', 200);
+    writeFileSync(join(root, 'a.txt'), 'v3\n');
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v3\n',
+      ...ENTRY_BASE,
+      timestamp: 300,
+    });
+    writeFileSync(join(root, 'b.txt'), 'b2\n');
+    store.append({
+      path: 'b.txt',
+      op: 'write',
+      before: 'b1\n',
+      after: 'b2\n',
+      ...ENTRY_BASE,
+      timestamp: 400,
+    });
+    writeFileSync(join(root, 'b.txt'), 'b1\n');
+    undoRecord('b.txt', 'b2\n', 'b1\n', 500);
+
+    // Reverse-chronological agent work only: the bookkeeping records are
+    // skipped over, not walked as steps.
+    const plain = planUndo(store, {});
+    expect(plain.steps.map((s) => [s.path, s.timestamp])).toEqual([
+      ['b.txt', 400],
+      ['a.txt', 300],
+      ['a.txt', 100],
+    ]);
+    // --step keeps the redo: the newest entry is a kubic-undo record and
+    // stays targetable.
+    const step = planUndo(store, { step: true });
+    expect(step.steps.map((s) => [s.path, s.agentId, s.timestamp])).toEqual([
+      ['b.txt', 'kubic-undo', 500],
+    ]);
+    const result = applyUndo(store, plain, root, {});
+    // The work still un-undone unwinds (a.txt v3→v1); the step an earlier
+    // undo already unwound (b.txt) reads as already-undone. One append.
+    expect(result.restored).toEqual(['a.txt']);
+    expect(result.skipped).toEqual(['b.txt', 'a.txt']);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
+    expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('b1\n');
+    expect(store.entries()).toHaveLength(6); // 5 seeded + 1 undo record
+    // The record the walk just appended is the newest entry now, and --step
+    // targets it — undoing it is the redo of the undo that just ran.
+    expect(
+      planUndo(store, { step: true }).steps.map((s) => [s.path, s.agentId]),
+    ).toEqual([['a.txt', 'kubic-undo']]);
+  });
+
+  it('dry-run appends nothing; the real run appends exactly one record per restore', () => {
+    const { store, root } = seedOne();
+    const dry = applyUndo(store, planUndo(store, {}), root, { dryRun: true });
+    expect(dry.restored).toEqual(['a.txt']);
+    expect(store.entries()).toHaveLength(1);
+    const real = applyUndo(store, planUndo(store, {}), root, {});
+    expect(real.restored).toEqual(['a.txt']);
+    expect(store.entries()).toHaveLength(2);
   });
 });
 

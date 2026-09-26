@@ -24,6 +24,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 export interface Provenance {
   sessionId: string;
@@ -262,6 +263,13 @@ class NodeShell implements Shell {
     };
     const stdoutAcc = makeAccumulator();
     const stderrAcc = makeAccumulator();
+    // Issue #112: pipe chunks are arbitrary byte slices — Buffer.toString()
+    // per chunk corrupts any multi-byte UTF-8 codepoint split across a
+    // chunk boundary (U+FFFD on both sides). One StringDecoder per stream
+    // carries split codepoints across writes; decoder.end() on settle
+    // flushes a trailing incomplete sequence instead of dropping it.
+    const outDec = new StringDecoder('utf8');
+    const errDec = new StringDecoder('utf8');
     let settled = false;
     const snapshot = (): ProcessSnapshot => ({
       stdout: stdoutAcc.peek(),
@@ -284,11 +292,11 @@ class NodeShell implements Shell {
       options.checkpointKey !== undefined &&
       options.checkpointStore !== undefined;
     child.stdout?.on('data', (d: Buffer) => {
-      stdoutAcc.push(d.toString());
+      stdoutAcc.push(outDec.write(d));
       emit(wantCheckpoint);
     });
     child.stderr?.on('data', (d: Buffer) => {
-      stderrAcc.push(d.toString());
+      stderrAcc.push(errDec.write(d));
       emit(wantCheckpoint);
     });
     const done = new Promise<ShellResult>((resolveDone) => {
@@ -300,6 +308,10 @@ class NodeShell implements Shell {
       child.on('error', (error: Error) => {
         if (settled) return;
         settled = true;
+        // Flush any buffered partial byte sequence before the result is
+        // built — 'error' can fire with decoded-pending output too.
+        stdoutAcc.push(outDec.end());
+        stderrAcc.push(errDec.end());
         const message = `${error.message}\n`;
         stderrAcc.push(message);
         const result: ShellResult = {
@@ -319,6 +331,10 @@ class NodeShell implements Shell {
       child.on('close', (code) => {
         if (settled) return;
         settled = true;
+        // Flush any trailing incomplete byte sequence (decoder.end() emits
+        // it as U+FFFD, never throws) before the result is built.
+        stdoutAcc.push(outDec.end());
+        stderrAcc.push(errDec.end());
         const result: ShellResult = {
           exitCode: code ?? 1,
           stdout: stdoutAcc.final(),

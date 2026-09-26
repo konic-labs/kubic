@@ -352,3 +352,68 @@ describe('child output caps (issue #121)', () => {
     expect(result.stdout).not.toMatch(/\[kubic: output truncated/);
   });
 });
+
+// Issue #112: pipe chunks are arbitrary byte slices. Decoding each chunk
+// with Buffer.toString() independently corrupts any multi-byte UTF-8
+// codepoint split across a chunk boundary (U+FFFD on both sides of the
+// split). The seam must decode through one StringDecoder per stream — the
+// decoder carries split codepoints across writes — and flush a trailing
+// incomplete sequence via decoder.end() on settle.
+describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
+  // One emoji as two explicit Buffer halves. The halves are written with a
+  // gap so the pipe delivers each write as its own `data` event — back-to-
+  // back writes can coalesce into a single chunk and never exercise the
+  // boundary at all.
+  const EMOJI = '\u{1F600}';
+  const emojiBytes = [...Buffer.from(EMOJI, 'utf8')]; // f0 9f 98 80
+  const firstHalf = emojiBytes.slice(0, 2);
+  const secondHalf = emojiBytes.slice(2);
+  const splitWrite = (stream: 'stdout' | 'stderr'): string =>
+    `process.${stream}.write(Buffer.from([${firstHalf.join(',')}]));` +
+    `setTimeout(()=>process.${stream}.write(Buffer.from([${secondHalf.join(',')}])),100)`;
+
+  it('reassembles a stdout codepoint split across two data events', async () => {
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', splitWrite('stdout')],
+      { provenance: PROV },
+    );
+    const result = await handle.wait();
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(EMOJI);
+    expect(result.stdout).not.toContain('\uFFFD');
+  });
+
+  it('reassembles a stderr codepoint split across two data events', async () => {
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', splitWrite('stderr')],
+      { provenance: PROV },
+    );
+    const result = await handle.wait();
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe(EMOJI);
+    expect(result.stderr).not.toContain('\uFFFD');
+  });
+
+  it('flushes a trailing incomplete byte sequence at exit without throwing', async () => {
+    // The child ends mid-codepoint (the exit-time case of a mid-write kill):
+    // the decoder still holds the two partial bytes at 'close' and must
+    // flush them via decoder.end() — as U+FFFD — instead of dropping them
+    // or throwing.
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write("ok");process.stdout.write(Buffer.from([${firstHalf.join(',')}]))`,
+      ],
+      { provenance: PROV },
+    );
+    const result = await handle.wait();
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('ok\uFFFD');
+  });
+});

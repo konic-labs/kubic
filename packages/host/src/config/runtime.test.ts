@@ -128,6 +128,59 @@ describe('runtime config load (issue #90)', () => {
     expect(keep.entries().length).toBe(1);
   });
 
+  it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {
+    const runtime = load(
+      { [PROJECT]: '[journal]\noutOfScope = ["build", "coverage"]\n' },
+      { projectTrusted: true },
+    );
+    expect(runtime.journal.outOfScope).toEqual(['build', 'coverage']);
+    expect(runtime.sources['journal.outOfScope']).toBe('project');
+    // `kubic config --json` reports the value with the layer that owns it,
+    // both in the flat value list and in the journal projection.
+    const view = effectiveConfigView(runtime);
+    expect(view.journal.outOfScope).toEqual(['build', 'coverage']);
+    expect(view.values).toContainEqual({
+      key: 'journal.outOfScope',
+      value: '["build", "coverage"]',
+      layer: 'project',
+    });
+    // The key has an observable effect row (docs/cli/configuration.md
+    // mirrors it), so it can never quietly stop doing anything.
+    const row = RUNTIME_KEY_EFFECTS['journal.outOfScope'];
+    expect(row !== undefined && 'effect' in row).toBe(true);
+    expect(row !== undefined && 'effect' in row ? row.effect : '').toContain(
+      '§42.5',
+    );
+
+    // Unset stays undefined — no empty list is invented (§35 opt-in).
+    const bare = load(
+      { [PROJECT]: '[approvals]\nroute = "ask-user"\n' },
+      { projectTrusted: true },
+    );
+    expect(bare.journal.outOfScope).toBeUndefined();
+    expect(effectiveConfigView(bare).journal.outOfScope).toBeUndefined();
+
+    // A file layer refuses the same shapes by name...
+    expect(() =>
+      load(
+        { [PROJECT]: '[journal]\noutOfScope = [""]\n' },
+        {
+          projectTrusted: true,
+        },
+      ),
+    ).toThrow(/'journal': 'outOfScope' entry 1 is empty/);
+    // ...and a programmatic layer bypasses the TOML parser, so the
+    // projection re-checks the rule: fail-closed, never half-applied.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        session: { journal: { outOfScope: ['build', ''] } },
+      }),
+    ).toThrow(/'journal': 'outOfScope' entry 2 is empty/);
+  });
+
   it('feeds permission classes from [permissions], refusing invalid levels', () => {
     const runtime = load(
       {

@@ -143,10 +143,10 @@ export interface HeadlessRunDeps {
   // installSoloPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
   policy?: InstalledSoloPolicy;
-  // Declared out-of-scope paths for the §42.5 baseline (issue #87). Nothing
-  // in the shipped config populates this yet, so it stays absent by default —
-  // the mechanism already excludes `.git/`, `.kubic/` and `.gitignore` hits
-  // on its own.
+  // Declared out-of-scope paths for the §42.5 baseline (issue #87; §35).
+  // Populated by `[journal] outOfScope` through runtimeRunDeps (issue #115);
+  // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
+  // `.gitignore` hits.
   reconcileOutOfScope?: string[];
   // Debug sink for the §50 lines (issue #98). Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;

@@ -5,7 +5,13 @@
 //
 // Lives in host (vitest includes only packages/*): it reaches the real
 // composition-root boot as a black-box caller, faux provider only.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -108,5 +114,58 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
         join(sessionsRoot, boot.sessionId, 'journal'),
       ).entries(),
     ).toEqual([]);
+  });
+
+  it('excludes a configured out-of-scope directory from boot and sweep (issue #115)', async () => {
+    // §35/§42.5 on the interactive path: `[journal] outOfScope` reaches
+    // bootTuiLane through the same runtimeRunDeps projection `kubic run`
+    // uses, so a declared directory is never baselined and never swept here
+    // either.
+    const sessionsRoot = tmpRoot('reconcile-tui-oos-');
+    const workspace = tmpRoot('ws-tui-oos-');
+    mkdirSync(join(workspace, 'vendor'));
+    writeFileSync(join(workspace, 'vendor', 'out.js'), 'gen\n');
+    writeFileSync(join(workspace, 'in-scope.txt'), 'v1\n');
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot,
+      env: new NodeExecutionEnv(workspace),
+      models: fauxModels(),
+      reconcileOutOfScope: ['vendor'],
+    });
+    const journalDir = join(sessionsRoot, boot.sessionId, 'journal');
+    const baseline = JSON.parse(
+      readFileSync(join(journalDir, `baseline-${boot.sessionId}.json`), 'utf8'),
+    ) as Record<string, string>;
+    expect(Object.keys(baseline).sort()).toEqual(['in-scope.txt']);
+
+    // A build/formatter moves both: only the in-scope change is journaled.
+    writeFileSync(join(workspace, 'vendor', 'out.js'), 'rebuilt\n');
+    writeFileSync(join(workspace, 'in-scope.txt'), 'v2\n');
+    await boot.close?.();
+    expect(
+      new FileJournalStore(journalDir).entries().map((e) => e.path),
+    ).toEqual(['in-scope.txt']);
+  });
+
+  it('the wiring itself: the production runners thread the projection', async () => {
+    // Import-level is not enough — the defect this issue closes is exactly
+    // "the mechanism exists and nothing populates it", so the composition
+    // root's own line is pinned (same pattern as roles-doctor-prod.test.ts).
+    const source = readFileSync(
+      join(
+        import.meta.dirname,
+        '..',
+        '..',
+        '..',
+        'apps',
+        'kubic',
+        'src',
+        'prod-runners.ts',
+      ),
+      'utf8',
+    );
+    expect(source).toMatch(
+      /reconcileOutOfScope:\s*runtimeRunDeps\(cliConfig\)\.reconcileOutOfScope/,
+    );
   });
 });

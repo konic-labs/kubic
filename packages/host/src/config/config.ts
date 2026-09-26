@@ -85,6 +85,14 @@ export interface PermissionsConfig {
 
 export interface JournalConfig {
   retentionDays?: number;
+  /**
+   * §35 out-of-scope paths (issue #115): workspace-relative paths excluded
+   * from the §42.5 baseline and the end-of-run sweep. An entry excludes the
+   * path itself and everything under it — `dist` ⇒ `dist`, `dist/a.js`,
+   * `dist/sub/b.js`. Plain paths only (patterns belong in `.gitignore`);
+   * `.git/` and `.kubic/` stay hard-skipped before any config.
+   */
+  outOfScope?: string[];
 }
 
 export interface RoleConfig {
@@ -503,6 +511,31 @@ function optStringArray(
   return [...(value as string[])];
 }
 
+// §35 out-of-scope paths (issue #115): a string array of plain relative
+// paths. The shape check is the same one every other string-array key gets
+// (`optStringArray`) and the extra rule is that an empty entry is refused by
+// name: a workspace-relative path never starts with `/`, so an empty entry
+// matches nothing and would be dead config that silently configures nothing.
+// The runtime projection re-checks this rule because programmatic
+// session/agent layers never pass through this parser.
+export function checkOutOfScopeEntries(
+  value: unknown,
+  keyPath: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new ConfigError(`'${keyPath}': 'outOfScope' must be a string array`);
+  }
+  const entries = [...(value as string[])];
+  const empty = entries.findIndex((entry) => entry.trim() === '');
+  if (empty >= 0) {
+    throw new ConfigError(
+      `'${keyPath}': 'outOfScope' entry ${empty + 1} is empty — declare a relative path, or drop the entry`,
+    );
+  }
+  return entries;
+}
+
 function checkNoUnknown(
   record: Record<string, unknown>,
   known: Set<string>,
@@ -635,10 +668,16 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     if (!isRecord(journal)) {
       throw new ConfigError("'[journal]' must be a table");
     }
-    checkNoUnknown(journal, new Set(['retentionDays']), 'journal');
+    checkNoUnknown(
+      journal,
+      new Set(['retentionDays', 'outOfScope']),
+      'journal',
+    );
     const retentionDays = optNumber(journal, 'retentionDays', 'journal');
+    const outOfScope = checkOutOfScopeEntries(journal.outOfScope, 'journal');
     config.journal = {
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      ...(outOfScope === undefined ? {} : { outOfScope }),
     };
   }
   const roles = raw.roles;

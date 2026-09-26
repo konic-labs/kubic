@@ -874,15 +874,31 @@ function isIgnored(
   return ignored;
 }
 
+// §35 out-of-scope paths (issue #115): an entry excludes the path itself and
+// everything under it. Operators declare directories (`dist`), so the match is
+// path-boundary aware — `dist` excludes `dist` and `dist/a.js`, never `dist-x`
+// — and it is one shared rule for both §42.5 walks and the sweep's
+// after-content loop, so a path can never be in scope in one and out in the
+// other.
+export function isOutOfScope(
+  relPath: string,
+  entries: readonly string[],
+): boolean {
+  return entries.some(
+    (entry) => relPath === entry || relPath.startsWith(`${entry}/`),
+  );
+}
+
 // Metadata walk, not a content copy: hashes only, no blobs. Always skips
 // .git/ and .kubic/ (journal state is never journaled), honors the root
-// .gitignore, and excludes caller-declared out-of-scope paths.
+// .gitignore, and excludes caller-declared out-of-scope paths (§35: an entry
+// excludes the path itself and everything under it).
 export function captureBaseline(
   root: string,
   options: BaselineOptions = {},
 ): Baseline {
   const bridge = options.bridge ?? createNodeFileBridge('/');
-  const outOfScope = new Set(options.outOfScope ?? []);
+  const outOfScope = options.outOfScope ?? [];
   let rules: IgnoreRule[] = [];
   if (bridge.exists(join(root, '.gitignore'))) {
     try {
@@ -904,7 +920,7 @@ export function captureBaseline(
       const relPath = rel === '' ? info.name : `${rel}/${info.name}`;
       if (relPath === '.git' || relPath.startsWith('.git/')) continue;
       if (relPath === '.kubic' || relPath.startsWith('.kubic/')) continue;
-      if (outOfScope.has(relPath)) continue;
+      if (isOutOfScope(relPath, outOfScope)) continue;
       if (isIgnored(rules, relPath, info.isDirectory)) continue;
       if (info.isDirectory) {
         walk(join(dir, info.name), relPath);
@@ -1216,6 +1232,7 @@ export function reconcile(
   // proved a bound production did not fully have. One bridge for the whole
   // reconcile now.
   const bridge = options.bridge ?? createNodeFileBridge('/');
+  const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, options);
   const latest = new Map<string, { afterHash: string | null }>();
   for (const e of store.entries()) {
@@ -1252,6 +1269,10 @@ export function reconcile(
     added++;
   };
   for (const [relPath, hash] of Object.entries(current)) {
+    // Declared out of scope (§35, issue #115): never read, never journaled.
+    // The walk above already prunes an excluded directory, so this states the
+    // rule for a path that reaches the sweep any other way.
+    if (isOutOfScope(relPath, outOfScope)) continue;
     if (baseline[relPath] === hash) continue;
     if (latest.get(relPath)?.afterHash === hash) continue;
     const abs = join(root, relPath);
@@ -1300,6 +1321,11 @@ export function reconcile(
     });
   }
   for (const relPath of Object.keys(baseline)) {
+    // The same rule in the delete direction (issue #115): a baseline captured
+    // before the entry was declared — or supplied by a caller — can name
+    // out-of-scope paths, and their disappearance is not a journal event
+    // either.
+    if (isOutOfScope(relPath, outOfScope)) continue;
     if (current[relPath] !== undefined) continue;
     if (latest.get(relPath)?.afterHash === null) continue;
     record({

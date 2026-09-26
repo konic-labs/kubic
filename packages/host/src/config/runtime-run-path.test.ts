@@ -5,21 +5,24 @@
 // the journal the run wrote and the lane allowlist it installed.
 //
 // Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runtimeRunDeps } from '../../../../apps/kubic/src/config-runtime.js';
 import { runHeadlessPrompt } from '../../../../apps/kubic/src/headless-run.js';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { FakeExecutionEnv, NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
   type MutableModels,
 } from '../../../worker/src/pi-boundary.js';
+import { runJournalCommand } from '../journal-cli.js';
 import { loadRuntimeConfig } from './runtime.js';
 
 function fauxModels(text: string): MutableModels {
@@ -30,8 +33,8 @@ function fauxModels(text: string): MutableModels {
   return models;
 }
 
-function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-90-run-'));
+function tmpRoot(prefix = 'kubic-90-run-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 describe('config feeds the live run path (issue #90)', () => {
@@ -125,6 +128,80 @@ describe('config feeds the live run path (issue #90)', () => {
     const ref = result.sessionId;
     const journalDir = join(root, ref, 'journal');
     expect(createNodeFileBridge(root).exists(journalDir)).toBe(true);
+  });
+
+  it('excludes a configured out-of-scope directory from the run’s baseline and sweep', async () => {
+    // §35/§42.5 end to end (issue #115): the config key must reach the
+    // headless lane's reconciliation, not merely parse. `vendor/` is declared
+    // out of scope; a change under it during the run is never baselined,
+    // never swept, and never shown by `kubic diff`.
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot('kubic-115-ws-');
+    mkdirSync(join(workspace, 'vendor'));
+    writeFileSync(join(workspace, 'vendor', 'out.js'), 'gen\n');
+    writeFileSync(join(workspace, 'in-scope.txt'), 'v1\n');
+    const runtime = loadRuntimeConfig({
+      bridge: {
+        exists: (path: string): boolean =>
+          path === `${sessionsRoot}/.kubic/config.toml`,
+        readTextFile: (): string =>
+          '[journal]\noutOfScope = ["vendor"]\n[approvals]\nroute = "ask-user"\n',
+      },
+      home: '/nonexistent-home',
+      cwd: sessionsRoot,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: true,
+      env: {},
+    });
+    const deps = runtimeRunDeps({
+      runtime,
+      error: undefined,
+      ignoreSplit: { missing: [], checked: [], applicable: false },
+    });
+    // The projection the composition root spreads into the runner deps.
+    expect(deps.reconcileOutOfScope).toEqual(['vendor']);
+
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('bash', {
+          command:
+            'printf "rebuilt\\n" > vendor/out.js; printf "v2\\n" > in-scope.txt',
+        }),
+      ]),
+      fauxAssistantMessage('mutated'),
+    ]);
+    const result = await runHeadlessPrompt(
+      'mutate a file through bash',
+      {},
+      {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        ...deps,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const store = new FileJournalStore(
+      join(sessionsRoot, result.sessionId, 'journal'),
+    );
+    const paths = store.entries().map((e) => e.path);
+    expect(paths).toContain('in-scope.txt');
+    expect(paths).not.toContain('vendor/out.js');
+
+    // `kubic diff --session <id>` on the run shows only in-scope changes.
+    const diffOut: string[] = [];
+    expect(
+      await runJournalCommand(['diff', '--session', result.sessionId], {
+        root: workspace,
+        sessionsRoot,
+        out: (line) => diffOut.push(line),
+      }),
+    ).toBe(0);
+    expect(diffOut.join('\n')).toContain('in-scope.txt');
+    expect(diffOut.join('\n')).not.toContain('vendor');
   });
 
   it('leaves the lane on its own defaults when no config value is set', async () => {

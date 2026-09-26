@@ -21,6 +21,7 @@ import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-ex
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
+  MergeApprovalVerdict,
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
@@ -32,6 +33,10 @@ import {
   parseOrchestratorRunState,
   workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
+// The shared timeout-reason marker (issue #129): the elapse denial below
+// interpolates THIS constant — never a copied literal — so the merge seat's
+// wording cannot drift from the worker-ask convention.
+import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/orchestrator/approvals/timeout-reason.js';
 import {
   createOrchestratorApprovalsRun,
   type WorkerApprovalsRun,
@@ -300,16 +305,121 @@ function ensureStateIgnored(root: string, debug: (line: string) => void): void {
   }
 }
 
-async function askUser(question: string): Promise<boolean> {
+// The readline-shaped seam `boundedAskUser` drives: `question` asks,
+// `close` releases the interface, `onClose` fires when the interface closes
+// with no answer (EOF — Ctrl-D, a closed stdin). Prod builds the real one
+// over stdio; tests inject a double, so the contract is exercised without a
+// terminal and without a real process.stdin.
+export interface AskLine {
+  question: (question: string, answer: (answer: string) => void) => void;
+  close: () => void;
+  onClose: (handler: () => void) => void;
+}
+
+export interface BoundedAskOptions {
+  /** The bound in force — the run's approvalPolicy.maxPendingMs snapshot. */
+  maxPendingMs: number;
+  /** Who the ask is about; named in the elapse denial beside the bound. */
+  candidate: string;
+  /** Injectable seams; prod uses readline over stdio and the real clock. */
+  open?: () => AskLine;
+  notice?: (text: string) => void;
+  setTimer?: (
+    callback: () => void,
+    ms: number,
+  ) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+}
+
+// The bounded-wait denial names itself in the reason, matching the worker-ask
+// convention (worker-asks.ts interpolates the same shared marker): the BOUND
+// (`after <ms>ms`) and the CANDIDATE (which merge was refused), so the
+// operator can tell a walked-away user from a decided "no".
+export function mergeApprovalTimeoutReason(
+  maxPendingMs: number,
+  candidate: string,
+): string {
+  return `approval ${TIMEOUT_REASON_MARKER} after ${maxPendingMs}ms — denied (merge of '${candidate}')`;
+}
+
+function openStdioAskLine(): AskLine {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const answer = await new Promise<string>((resolveAnswer) => {
-      rl.question(question, resolveAnswer);
+  return {
+    question: (question, answer) => {
+      rl.question(question, answer);
+    },
+    close: () => {
+      rl.close();
+    },
+    onClose: (handler) => {
+      rl.on('close', handler);
+    },
+  };
+}
+
+// The interactive merge ask, BOUNDED (§41.2 — nothing waits silently). An
+// answer inside the bound decides it under the shipped rule (an explicit yes
+// only — a mistyped Enter never grants); the bound elapsing closes the
+// interface, leaves the dead prompt line cleanly (stderr newline) and settles
+// the TIMEOUT verdict — never a bare deny, because the run must label a
+// walked-away user as a timeout, not as a refusal nobody made. An interface
+// that closes with no answer (EOF) denies too — and cleans its dead prompt
+// line the same way: a closed terminal is not consent. Settles exactly once,
+// either way — never hangs, never double-resolves.
+export function boundedAskUser(
+  question: string,
+  options: BoundedAskOptions,
+): Promise<MergeApprovalVerdict> {
+  const open = options.open ?? openStdioAskLine;
+  const notice =
+    options.notice ??
+    ((text: string): void => {
+      process.stderr.write(text);
     });
-    return /^y(es)?\s*$/i.test(answer.trim());
-  } finally {
-    rl.close();
-  }
+  const setTimer =
+    options.setTimer ??
+    ((callback: () => void, ms: number): ReturnType<typeof setTimeout> =>
+      setTimeout(callback, ms));
+  const clearTimer =
+    options.clearTimer ??
+    ((timer: ReturnType<typeof setTimeout>): void => {
+      clearTimeout(timer);
+    });
+  return new Promise<MergeApprovalVerdict>((resolve) => {
+    let settled = false;
+    const line = open();
+    const timer = setTimer(() => {
+      if (settled) return;
+      settled = true;
+      line.close();
+      // Leave the dead prompt line cleanly, then name the denial.
+      notice('\n');
+      notice(
+        `${mergeApprovalTimeoutReason(options.maxPendingMs, options.candidate)}\n`,
+      );
+      resolve({ verdict: 'timeout', maxPendingMs: options.maxPendingMs });
+    }, options.maxPendingMs);
+    line.onClose(() => {
+      if (settled) return;
+      settled = true;
+      clearTimer(timer);
+      // The dead prompt line is left cleanly on this path too (review: a
+      // real pty glued the next output to the open prompt otherwise).
+      notice('\n');
+      resolve({ verdict: 'deny' });
+    });
+    line.question(question, (answer: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimer(timer);
+      line.close();
+      resolve(
+        /^y(es)?\s*$/i.test(answer.trim())
+          ? { verdict: 'approve' }
+          : { verdict: 'deny' },
+      );
+    });
+  });
 }
 
 export async function orchestrateDepsWithDefaults(
@@ -1144,14 +1254,26 @@ export async function orchestrateDepsWithDefaults(
       }
       debug(`reaped: ${agentId} (worktree + branch retained)`);
     },
+    // The interactive merge seat (issue #130, §41.2/§45.2): bounded by the
+    // same `approvalPolicy.maxPendingMs` snapshot the resolver path carries
+    // (issue #106) — the bound every other ask already uses. An elapse settles
+    // the TIMEOUT verdict (not a refusal), so a walked-away user never holds
+    // sessions, worktrees and the terminal open — and is never mislabelled as
+    // a decided no. A run that holds no snapshot has no bound to enforce: no
+    // seat is attached and the shipped deny-closed path (exit 4, "rerun with
+    // --yes") is what runs.
     requestApproval:
-      process.stdin.isTTY === true
+      process.stdin.isTTY === true && approvalSnapshot !== undefined
         ? async (input: {
             agentId: string;
             branch: string;
-          }): Promise<boolean> =>
-            askUser(
+          }): Promise<MergeApprovalVerdict> =>
+            boundedAskUser(
               `approve merge of '${input.agentId}' (${input.branch})? [y/N] `,
+              {
+                maxPendingMs: approvalSnapshot.maxPendingMs,
+                candidate: input.agentId,
+              },
             )
         : undefined,
     loadState: (sessionId: string): OrchestratorRunState | undefined => {

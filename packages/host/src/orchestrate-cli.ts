@@ -23,9 +23,10 @@ import {
   renderDag,
 } from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
-import type {
-  WorkerApprovalScope,
-  WorkerApprovalsRun,
+import {
+  APPROVAL_TIMEOUT_CODE,
+  type WorkerApprovalScope,
+  type WorkerApprovalsRun,
 } from './orchestrator/approvals/worker-asks.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
@@ -300,6 +301,18 @@ export interface ApprovalInput {
   branch: string;
 }
 
+// The verdict a merge approval settles on (issue #130, §41.2/§45.2). A
+// decider's answer is `approve` or `deny`; `timeout` is the run's bound
+// elapsing with nobody answering — a walked-away user, NOT a refusal — and
+// the bound that elapsed travels with the verdict, so the run's message
+// names the bound that was actually in force rather than re-deriving one.
+// The seam stays backward-compatible: a plain `true` approves and a plain
+// `false` is an explicit deny, the pre-#130 contract.
+export type MergeApprovalVerdict =
+  | { verdict: 'approve' }
+  | { verdict: 'deny' }
+  | { verdict: 'timeout'; maxPendingMs: number };
+
 // One retained worktree, as reported after the run (issue #106, §44.1).
 // `clean` is `undefined` when the status could not be read — a distinct state
 // from `false`, because "unreadable" must never render as "dirty" OR "clean".
@@ -495,7 +508,13 @@ export interface OrchestrateCommandDeps {
   runResolver?: (
     request: ResolverRequest,
   ) => Promise<ResolverOutcome> | ResolverOutcome;
-  requestApproval?: (input: ApprovalInput) => boolean | Promise<boolean>;
+  // The merge gate's decider (issue #130). Settles a MergeApprovalVerdict:
+  // the bounded seat's elapse is a `timeout` — labelled as such end to end —
+  // while plain booleans keep their shipped meaning (`true` approves, `false`
+  // denies). Absent means no decider: the run denies closed, exit 4.
+  requestApproval?: (
+    input: ApprovalInput,
+  ) => MergeApprovalVerdict | boolean | Promise<MergeApprovalVerdict | boolean>;
   // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
   // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
   // composition root owns construction (its dir, its TTY seat, its debug
@@ -552,6 +571,7 @@ export type OrchestrateStatus =
   | 'failed'
   | 'usage'
   | 'approval_denied'
+  | 'approval_timeout'
   | 'merge_conflict';
 
 export interface OrchestrateEnvelope {
@@ -778,7 +798,15 @@ function parseArgs(args: string[]): ParsedArgs | undefined {
 function statusForExit(exitCode: number, code: string): OrchestrateStatus {
   if (exitCode === RUN_EXIT_OK) return 'completed';
   if (exitCode === RUN_EXIT_USAGE) return 'usage';
-  if (exitCode === RUN_EXIT_APPROVAL_DENIED) return 'approval_denied';
+  // Exit 4 is one code, two termini (issues #129/#130): a refusal is
+  // `approval_denied`; a bounded wait running out is `approval_timeout`.
+  // The exit alone cannot tell them apart — the failure CODE names which,
+  // and the envelope's status/kind follow it so all three agree.
+  if (exitCode === RUN_EXIT_APPROVAL_DENIED) {
+    return code === APPROVAL_TIMEOUT_CODE
+      ? 'approval_timeout'
+      : 'approval_denied';
+  }
   if (code === 'merge_conflict') return 'merge_conflict';
   return 'failed';
 }
@@ -1525,16 +1553,37 @@ export async function runOrchestrateCommand(
   while (candidate !== undefined) {
     const { agentId } = candidate;
     const worktree = worktrees.get(agentId) as OrchestrateWorktree;
-    const approved = parsed.autoApprove
+    // The gate's verdict (issue #130). A plain boolean from an older seam
+    // keeps its shipped meaning (`true` approves, `false` denies — as does
+    // no seam at all); the bounded seat's timeout verdict keeps its own
+    // label, so a walked-away user is never reported as a refusal.
+    const settled = parsed.autoApprove
       ? true
       : await deps.requestApproval?.({ agentId, branch: worktree.branch });
-    if (approved !== true) {
+    const verdict: MergeApprovalVerdict =
+      settled === true
+        ? { verdict: 'approve' }
+        : settled === false || settled === undefined
+          ? { verdict: 'deny' }
+          : settled;
+    if (verdict.verdict !== 'approve') {
       const saveFailure = await saveOrFail(state);
       if (saveFailure !== undefined) {
         await reapSpawned(spawned);
         return saveFailure;
       }
       await reapSpawned(spawned);
+      if (verdict.verdict === 'timeout') {
+        // The bound elapsed with nobody answering — a TIMEOUT, not a
+        // refusal (issue #129's rule applied to this gate). Exit 4 either
+        // way; the code names which, and status/kind follow it.
+        return fail(
+          RUN_EXIT_APPROVAL_DENIED,
+          APPROVAL_TIMEOUT_CODE,
+          `approval timed out after ${verdict.maxPendingMs}ms for worker '${agentId}': nobody answered the merge gate — rerun with --yes to auto-approve merges`,
+          partial(),
+        );
+      }
       return fail(
         RUN_EXIT_APPROVAL_DENIED,
         'approval_denied',

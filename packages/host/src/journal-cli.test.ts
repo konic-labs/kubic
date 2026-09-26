@@ -1,6 +1,6 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -238,5 +238,224 @@ describe('journal CLI corrupt content (issue #111)', () => {
     });
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('corrupt: 1');
+  });
+});
+
+// Issue #125: the bare journal CLI resolves `<root>/.kubic/journal` — a
+// store no runtime path writes (runs journal under
+// `<sessions-root>/<id>/journal`), so `kubic diff` after `kubic run` printed
+// `no changes` from a dead store. With no workspace store, bare commands
+// fall back to the latest session journal and name it first (`session: <id>`)
+// so the fallback is never silent; `--json` keeps its parseable envelope.
+describe('journal CLI default store fallback (issue #125)', () => {
+  function seedSessions(): {
+    root: string;
+    sessionsRoot: string;
+    oldId: string;
+    newId: string;
+  } {
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'sr-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const oldId = 'sess-old';
+    const newId = 'sess-new';
+    const seed = (
+      id: string,
+      path: string,
+      before: string,
+      after: string,
+      mtime: Date,
+    ): void => {
+      const dir = join(sessionsRoot, id, 'journal');
+      new FileJournalStore(dir).append({
+        path,
+        op: 'write',
+        before,
+        after,
+        bytesDelta: 0,
+        sessionId: id,
+        agentId: 'root',
+        toolCallId: 'call-1',
+        timestamp: 1700000000000,
+      });
+      // Pin newest-journal ordering explicitly — append order can tie at
+      // wall-clock resolution, and "latest" is defined by index mtime.
+      utimesSync(join(dir, 'index.jsonl'), mtime, mtime);
+    };
+    seed(oldId, 'old.txt', 'o1\n', 'o2\n', new Date('2026-01-01T00:00:00Z'));
+    seed(newId, 'new.txt', 'n1\n', 'n2\n', new Date('2026-01-02T00:00:00Z'));
+    return { root, sessionsRoot, oldId, newId };
+  }
+
+  it('bare diff falls back to the latest session journal and names it first', async () => {
+    const { root, sessionsRoot, newId } = seedSessions();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines[0]).toBe(`session: ${newId}`);
+    const text = lines.join('\n');
+    expect(text).toContain('new.txt');
+    expect(text).not.toContain('old.txt');
+  });
+
+  it('bare log and status read the fallback store too', async () => {
+    const { root, sessionsRoot, newId } = seedSessions();
+    const log: string[] = [];
+    expect(
+      await runJournalCommand(['log'], {
+        root,
+        sessionsRoot,
+        out: (l) => log.push(l),
+      }),
+    ).toBe(0);
+    expect(log[0]).toBe(`session: ${newId}`);
+    expect(log.join('\n')).toContain('new.txt');
+    const status: string[] = [];
+    expect(
+      await runJournalCommand(['status'], {
+        root,
+        sessionsRoot,
+        out: (l) => status.push(l),
+      }),
+    ).toBe(0);
+    expect(status[0]).toBe(`session: ${newId}`);
+    expect(status.join('\n')).toContain('entries: 1');
+  });
+
+  it('--json keeps the parseable envelope and prints no session line', async () => {
+    const { root, sessionsRoot } = seedSessions();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff', '--json'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(lines.join('\n')) as Array<{ path: string }>;
+    expect(parsed.map((c) => c.path)).toEqual(['new.txt']);
+    expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
+  });
+
+  it('a non-empty workspace store wins over newer session journals, with no session line', async () => {
+    const { root, sessionsRoot } = seedSessions();
+    new FileJournalStore(join(root, '.kubic', 'journal')).append({
+      path: 'ws.txt',
+      op: 'write',
+      before: 'w1\n',
+      after: 'w2\n',
+      bytesDelta: 0,
+      sessionId: 'ws1',
+      agentId: 'root',
+      toolCallId: 'call-9',
+      timestamp: 1700000000000,
+    });
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
+    const text = lines.join('\n');
+    expect(text).toContain('ws.txt');
+    expect(text).not.toContain('new.txt');
+  });
+
+  it('explicit --session (id or journal:<id> ref) always wins over every default', async () => {
+    const { root, sessionsRoot, oldId, newId } = seedSessions();
+    // A workspace store too: --session must beat it and the fallback alike.
+    new FileJournalStore(join(root, '.kubic', 'journal')).append({
+      path: 'ws.txt',
+      op: 'write',
+      before: 'w1\n',
+      after: 'w2\n',
+      bytesDelta: 0,
+      sessionId: 'ws1',
+      agentId: 'root',
+      toolCallId: 'call-9',
+      timestamp: 1700000000000,
+    });
+    for (const [ref, want, other] of [
+      [oldId, 'old.txt', 'new.txt'],
+      [`journal:${oldId}`, 'old.txt', 'new.txt'],
+      [newId, 'new.txt', 'old.txt'],
+    ] as const) {
+      const lines: string[] = [];
+      expect(
+        await runJournalCommand(['diff', '--session', ref], {
+          root,
+          sessionsRoot,
+          out: (l) => lines.push(l),
+        }),
+      ).toBe(0);
+      expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
+      const text = lines.join('\n');
+      expect(text).toContain(want);
+      expect(text).not.toContain(other);
+      expect(text).not.toContain('ws.txt');
+    }
+  });
+
+  it('undo --dry-run plans against the fallback store relative to the workspace root', async () => {
+    const { root, sessionsRoot, newId } = seedSessions();
+    // The journaled after-state is what sits in the workspace: the plan
+    // must resolve the path against root, not the session's own cwd.
+    writeFileSync(join(root, 'new.txt'), 'n2\n');
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo', '--dry-run'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines[0]).toBe(`session: ${newId}`);
+    expect(lines.join('\n')).toContain('would restore 1 step(s)');
+    expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('n2\n');
+  });
+
+  it('empty everywhere prints the nothing-anywhere hint and exits 0', async () => {
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'sr-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines).toEqual([
+      'no changes',
+      `hint: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+    ]);
+    // --json stays one parseable envelope, hint included nowhere.
+    const json: string[] = [];
+    expect(
+      await runJournalCommand(['diff', '--json'], {
+        root,
+        sessionsRoot,
+        out: (l) => json.push(l),
+      }),
+    ).toBe(0);
+    expect(json).toEqual(['[]']);
+  });
+
+  it('a missing sessions root is the same empty path, no throw', async () => {
+    const sessionsRoot = join(mkdtempSync(join(tmpdir(), 'sr-')), 'absent');
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      root,
+      sessionsRoot,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines).toEqual([
+      'no changes',
+      `hint: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+    ]);
   });
 });

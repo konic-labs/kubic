@@ -3,8 +3,9 @@
 // Exit codes: 0 success (including empty diff and clean dry-run),
 // 1 usage/IO errors, 2 undo completed with non-reversible skips.
 
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
 import {
@@ -55,13 +56,64 @@ function flagValue(
 // --session value so the printed token needs no extra lookup.
 const JOURNAL_REF_PREFIX = 'journal:';
 
+// A store "has a journal" once its index exists — an absent index means
+// nothing has ever been appended there (the dead default this fallback
+// exists for).
+function hasJournalIndex(dir: string): boolean {
+  return createNodeFileBridge(dir).exists('index.jsonl');
+}
+
+// The most recent run journal under the sessions root (issue #125): one
+// level of session ids (the shared SESSION_ID_PATTERN, checked before any
+// path join — contained by construction, same rule as --session), newest
+// `journal/index.jsonl` mtime wins. A session whose journal index cannot
+// be statted is skipped (no journal there); a missing sessions root is
+// simply "nothing here" (fresh machine), never a throw.
+function latestSessionJournal(sessionsRoot: string): string | undefined {
+  const bridge = createNodeFileBridge(sessionsRoot);
+  let best: { dir: string; mtime: number } | undefined;
+  try {
+    for (const info of bridge.listDir('.')) {
+      if (!info.isDirectory || !SESSION_ID_PATTERN.test(info.name)) continue;
+      const idx = join(info.name, 'journal', 'index.jsonl');
+      try {
+        const mtime = bridge.fileInfo(idx).mtimeMs;
+        if (best === undefined || mtime > best.mtime) {
+          best = { dir: join(sessionsRoot, info.name, 'journal'), mtime };
+        }
+      } catch {
+        // Session without a journal — skip it.
+      }
+    }
+  } catch {
+    // No sessions root yet — nothing to fall back to.
+  }
+  return best?.dir;
+}
+
 function resolveJournalDir(
   deps: JournalCommandDeps,
   root: string,
   session: string | undefined,
-): { dir: string } | string {
+): { dir: string; latestSessionId?: string } | string {
   if (session === undefined) {
-    return { dir: deps.journalDir ?? defaultJournalDir(root) };
+    const dir = deps.journalDir ?? defaultJournalDir(root);
+    // Issue #125: the bare default is a store nothing writes (runs journal
+    // under `<sessionsRoot>/<id>/journal`), so with no index here fall back
+    // to the latest session journal. Only the CLI's bare default falls
+    // back: a configured journal dir pins the store (one store per
+    // invocation, fail-closed — the same rule as the --session conflict
+    // below), and keeping the scan off that path keeps pinned-store tests
+    // hermetic (no walk of the real sessions root).
+    if (deps.journalDir === undefined && !hasJournalIndex(dir)) {
+      const fallback = latestSessionJournal(
+        deps.sessionsRoot ?? defaultSessionsRoot(),
+      );
+      if (fallback !== undefined) {
+        return { dir: fallback, latestSessionId: basename(dirname(fallback)) };
+      }
+    }
+    return { dir };
   }
   const id = session.startsWith(JOURNAL_REF_PREFIX)
     ? session.slice(JOURNAL_REF_PREFIX.length)
@@ -101,6 +153,12 @@ export async function runJournalCommand(
     deps.out(journalDir);
     return 1;
   }
+  // Issue #125: a fallback store is named before any subcommand output so
+  // the resolution is never silent. `--json` keeps its parseable envelope —
+  // the refs there are self-describing, so no line is added.
+  if (journalDir.latestSessionId !== undefined && !rest.includes('--json')) {
+    deps.out(`session: ${journalDir.latestSessionId}`);
+  }
   const store = new FileJournalStore(journalDir.dir);
 
   if (sub === 'diff') {
@@ -120,6 +178,23 @@ export async function runJournalCommand(
     }
     if (changes.length === 0) {
       deps.out('no changes');
+      // Issue #125: with no journal anywhere, name both places that were
+      // looked at — the empty result is otherwise indistinguishable from
+      // "ran and nothing changed". Only the bare default path hints (a
+      // configured store or --session is a deliberate choice), and never
+      // on the --json branch above. "Nothing anywhere" means the resolved
+      // store has no entries AND no session journal exists to fall back to.
+      if (
+        session === undefined &&
+        deps.journalDir === undefined &&
+        store.entries().length === 0 &&
+        latestSessionJournal(deps.sessionsRoot ?? defaultSessionsRoot()) ===
+          undefined
+      ) {
+        deps.out(
+          `hint: no journal under ${journalDir.dir} and none under the sessions root (${deps.sessionsRoot ?? defaultSessionsRoot()}) — start a run or pass --session`,
+        );
+      }
       return 0;
     }
     for (const line of renderDiff(changes).split('\n')) deps.out(line);

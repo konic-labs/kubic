@@ -204,6 +204,12 @@ export class FileJournalStore {
   private readonly blobsDir: string;
   private readonly limits: Required<Pick<JournalRetention, 'maxBytes'>> &
     Pick<JournalRetention, 'maxAgeMs'>;
+  // Issue #124: blob sizes are immutable (content-addressed), so a hash's
+  // size is cached for the store's lifetime — recorded at write time from
+  // the content in hand, or stat'd exactly once on a cache miss. Before
+  // this, every append stat'd every referenced blob just to conclude
+  // "under the bound".
+  private readonly blobSizes = new Map<string, number>();
 
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
@@ -445,6 +451,28 @@ export class FileJournalStore {
     const path = join(this.blobsDir, hash);
     if (bridge.exists(path)) return;
     bridge.writeFile(path, content);
+    // Write-time size: the content is in hand, so no stat is needed — this
+    // is what makes retention stat-free for everything this store writes.
+    this.blobSizes.set(hash, Buffer.byteLength(content, 'utf8'));
+  }
+
+  // Cached blob size (issue #124). A cache miss stats once and remembers;
+  // a missing blob counts zero, exactly as the old per-call scan did — read
+  // paths handle the absence.
+  private sizeOf(
+    bridge: ReturnType<typeof createNodeFileBridge>,
+    hash: string,
+  ): number {
+    let size = this.blobSizes.get(hash);
+    if (size === undefined) {
+      try {
+        size = bridge.fileInfo(join(this.blobsDir, hash)).size;
+      } catch {
+        size = 0;
+      }
+      this.blobSizes.set(hash, size);
+    }
+    return size;
   }
 
   // Content-addressed read (issue #111): the blob's own name is the
@@ -479,12 +507,7 @@ export class FileJournalStore {
     const add = (hash: string | null): void => {
       if (hash === null || seen.has(hash)) return;
       seen.add(hash);
-      const path = join(this.blobsDir, hash);
-      try {
-        total += bridge.fileInfo(path).size;
-      } catch {
-        // Missing blob: counts as zero, read paths handle the absence.
-      }
+      total += this.sizeOf(bridge, hash);
     };
     for (const e of entries) {
       add(e.beforeHash);

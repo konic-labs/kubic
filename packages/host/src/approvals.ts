@@ -136,8 +136,14 @@ export class MemoryApprovalStore implements ApprovalStore {
 // the host owns the decision. The bash detectors are a literal-pattern
 // heuristic, not a sandbox (issue #131): redirect/tee/cp-mv-install
 // outside-writes, `sudo` privilege escalation, and destructive/network
-// verbs behind `$(…)`, backticks, or `eval`. What still bypasses them —
-// stated, not silent: python/node/npm exfiltration under network:none,
+// verbs behind command indirection. Indirection coverage, exactly:
+// `$(…)` spans (balanced-paren scan, nested substitutions included up to
+// MAX_UNWRAP_DEPTH), backtick spans, and `eval` segments are unwrapped to
+// a fixpoint, so `eval $(rm -rf /)` and `echo $(echo $(rm -rf /))` raise
+// too, not only the single-level `$(rm -rf /)`. What still bypasses them —
+// stated, not silent: interpreter-based verbs handed over as data
+// (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
+// MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
 // quoted or backslash-obfuscated verbs the literal patterns cannot see,
 // whitespace tricks around redirection targets, and flag-reordered copy
 // targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
@@ -177,9 +183,10 @@ const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
 // no redirect fires. Every command segment is scanned (a `|;&` cannot be
 // crossed), so `cp a /etc/b && echo done` cannot hide the write just
 // because it is not the tail segment. Only the FINAL named target of the
-// segment is checked — `tee /etc/x a.txt` is a documented miss, and the
-// direction of every heuristic error is over-triggering (an ask, never a
-// silent grant).
+// segment is checked — `tee /etc/x a.txt` writes `/etc/x` and is a
+// documented SILENT miss: the heuristic's errors are mostly over-triggers
+// (a raise becomes an ask, never a silent grant), but NOT uniformly so —
+// the target rules above are the stated exceptions.
 const TEE_TARGET = /\btee\b([^|;&]*)/gi;
 // cp/mv/install: the FINAL positional argument is the destination — the
 // last-argument heuristic (flags and sources come first). It can point at
@@ -198,31 +205,86 @@ const SUDO = /\bsudo\b/;
 // `$(…)`, backticks, or after `eval` raises the UNDERLYING capability
 // instead of staying silent. The matcher layer documents indirection as
 // unenforceable for its guards — detection is cheaper than enforcement
-// and the ask is the safety net.
-const INDIRECT = /\$\([^)]*\)|`[^`]*`|\beval\s+[^\n|;&]*/g;
+// and the ask is the safety net. `$(…)` is collected with a bounded
+// balanced-paren scan (nested substitutions included), and every wrapper
+// form unwraps to a fixpoint: `eval $(rm -rf /)`, `echo $(echo $(rm -rf
+// /))`, and backtick-wrapped `$(rm -rf /)` all raise, not only the
+// single-level `$(rm -rf /)` the first cut handled. Stated bound: nesting
+// past MAX_UNWRAP_DEPTH stays unraised — a depth cap, never a fabricated
+// unwrap.
+const MAX_UNWRAP_DEPTH = 16;
+const EVAL_SEGMENT = /\beval\s+[^\n|;&]*/g;
+const BACKTICK_INDIRECT = /`[^`]*`/g;
 
-// The classifiers anchor on command text (`rm` at a command start), so the
-// wrapper must come off before they see the payload: `$(rm -rf /)` and
-// backtick-wrapped `rm -rf /` classify as `rm -rf /`, and `eval "rm -rf /"`
-// likewise.
-function unwrapIndirection(nested: string): string {
-  let inner = nested;
-  if (inner.startsWith('$(') && inner.endsWith(')')) {
-    inner = inner.slice(2, -1);
-  } else if (inner.startsWith('`') && inner.endsWith('`')) {
-    inner = inner.slice(1, -1);
-  } else {
-    inner = inner.replace(/^eval\s+/i, '');
+// All balanced `$(…)` spans in one linear pass — inner spans included, so
+// `echo $(echo $(rm -rf /))` yields both `$(rm -rf /)` and the outer span.
+// A `$(` that never closes is skipped; openers past MAX_UNWRAP_DEPTH are
+// marked unmatched instead of pairing with some inner `)` — the scan stays
+// depth-bounded and never fabricates a span.
+function substitutionSpans(command: string): string[] {
+  const spans: string[] = [];
+  const openers: number[] = [];
+  for (let index = 0; index < command.length; index += 1) {
+    if (command[index] === '$' && command[index + 1] === '(') {
+      openers.push(openers.length < MAX_UNWRAP_DEPTH ? index : -1);
+      index += 1;
+    } else if (command[index] === ')' && openers.length > 0) {
+      const start = openers.pop() ?? -1;
+      if (start >= 0) spans.push(command.slice(start, index + 1));
+    }
   }
-  return stripQuotes(inner.trim());
+  return spans;
+}
+
+// Every wrapper cue in the raw command: balanced `$(…)` spans (nested ones
+// included), `eval` segments, and backtick spans.
+function indirectCues(command: string): string[] {
+  return [
+    ...substitutionSpans(command),
+    ...(command.match(EVAL_SEGMENT) ?? []),
+    ...(command.match(BACKTICK_INDIRECT) ?? []),
+  ];
+}
+
+// The classifiers anchor on command text (`rm` at a command start), so
+// every wrapper must come off before they see the payload: `$(rm -rf /)`
+// and backtick-wrapped `rm -rf /` classify as `rm -rf /`, and
+// `eval "rm -rf /"` likewise. Unwrapping repeats to a fixpoint — each step
+// strictly shortens the payload, and MAX_UNWRAP_DEPTH bounds the walk — so
+// `eval $(rm -rf /)` and backtick-wrapped `$(rm -rf /)` come off through
+// every layer.
+function unwrapIndirection(nested: string): string {
+  let inner = nested.trim();
+  for (let step = 0; step < MAX_UNWRAP_DEPTH; step += 1) {
+    const before = inner;
+    if (inner.startsWith('$(') && inner.endsWith(')')) {
+      inner = inner.slice(2, -1).trim();
+    } else if (inner.startsWith('`') && inner.endsWith('`')) {
+      inner = inner.slice(1, -1).trim();
+    } else if (/^eval\s+/i.test(inner)) {
+      inner = inner.replace(/^eval\s+/i, '').trim();
+    } else {
+      // Quote wrappers only (`eval "rm -rf /"`, `eval "$(rm -rf /)"`).
+      // Deliberately quote-only: the full stripQuotes runs AFTER the loop,
+      // so a lifted trailing `)` can never be mistaken for a wrapper
+      // delimiter mid-unwrap.
+      inner = inner.replace(/^['"]+|['"]+$/g, '');
+    }
+    if (inner === before) break;
+  }
+  return stripQuotes(inner);
 }
 
 // Targets arrive raw from the command string: strip surrounding quotes and
-// trailing delimiters so `> "/etc/cron.d/x"` or `tee '/etc/cron.d/x'` cannot
-// dodge the outside check. Shared by every target-shaped detector
-// (redirect, tee, copy).
+// trailing delimiters — including the `)`/`]` a substitution glues onto a
+// lifted token (`$(cp a /etc/b)` → `/etc/b)`) — so `> "/etc/cron.d/x"`,
+// `tee '/etc/cron.d/x'`, or `echo $(cp a /etc/b)` cannot dodge the outside
+// check. Shared by every target-shaped detector (redirect, tee, copy). The
+// check itself stays path-boundary aware (`/work-evil` is not `/work`):
+// trimming delimiters narrows a token to the path it names, it never
+// widens what counts as inside.
 function stripQuotes(target: string): string {
-  return target.replace(/^['"]+|['";,]+$/g, '');
+  return target.replace(/^['"]+|['";,)\]]+$/g, '');
 }
 
 // The target token of a detector segment (last-argument heuristic).
@@ -280,12 +342,13 @@ export function detectTriggers(
     }
     // Privilege escalation and command indirection (issue #131): sudo is a
     // capability event wherever it sits, and a destructive/network verb
-    // behind $(…), backticks, or eval raises the underlying capability
-    // instead of hiding behind the matcher layer's stated indirection gap.
+    // behind $(…) (nested spans included), backticks, or eval raises the
+    // UNDERLYING capability — never a new one — instead of hiding behind
+    // the matcher layer's stated indirection gap.
     if (SUDO.test(command)) {
       found.push('privilege-escalation');
     }
-    for (const nested of command.match(INDIRECT) ?? []) {
+    for (const nested of indirectCues(command)) {
       const payload = unwrapIndirection(nested);
       if (payload === '') continue;
       if (ctx.isDestructive(payload, ctx.workspace)) {

@@ -5,7 +5,13 @@
 // ordering, removed/bytes shape) is deliberately identical to pre-change
 // behavior — the retention semantics do not move; only their I/O cost does.
 
-import { mkdtempSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -62,6 +68,25 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 // arithmetic in these tests is plain multiples of 10.
 function uniqueContent(i: number): string {
   return `content-${String(i % 30).padStart(2, '0')}`;
+}
+
+// Live-stat truth: the unique blob bytes the index references right now.
+// A missing blob counts zero — exactly what the pre-#124 `blobBytes` saw.
+function referencedBytes(dir: string, store: FileJournalStore): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const e of store.entries()) {
+    for (const hash of [e.beforeHash, e.deltaHash ?? e.afterHash]) {
+      if (hash === null || seen.has(hash)) continue;
+      seen.add(hash);
+      try {
+        total += statSync(join(dir, 'blobs', hash)).size;
+      } catch {
+        // Missing blob: zero bytes on disk.
+      }
+    }
+  }
+  return total;
 }
 
 describe('blob size cache (issue #124, slice 1)', () => {
@@ -191,5 +216,89 @@ describe('prune stats bound (issue #124, slice 2)', () => {
       Array.from({ length: 15 }, (_, k) => `f${k + 35}.txt`),
     );
     expect(cold.blobCount()).toBe(15);
+  });
+});
+
+// Review finding 1: `append` with the reconcile shape (before: null plus a
+// hash-only beforeHash) never accounted that hash's bytes, so an existing
+// but unaccounted blob (crash-residue orphan from a putBlob-then-failed
+// appendFile, or a sweep's best-effort remove leak) made trackedBytes
+// under-count — and the fast path then skipped pruning passes while the
+// journal grew past its bound. The pre-change code stayed bounded after
+// every append; this must too.
+describe('hash-only before refs are tracked (issue #124, review finding 1)', () => {
+  it('reconcile-shaped appends over unaccounted orphan blobs stay within maxBytes after every append', () => {
+    const dir = tmpRoot();
+    mkdirSync(join(dir, 'blobs'), { recursive: true });
+    // Orphans: blobs on disk no pass ever accounted — 50 bytes each.
+    const orphanHashes: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const content = `orphan-${String(i).padStart(2, '0')}`.padEnd(50, '.');
+      orphanHashes.push(sha256Hex(content));
+      writeFileSync(join(dir, 'blobs', sha256Hex(content)), content);
+    }
+    const maxBytes = 300;
+    const store = new FileJournalStore(dir, { maxBytes });
+    // Seeding append: does not reference any orphan.
+    store.append(entry({ path: 'seed.txt', after: uniqueContent(29) }));
+    for (let i = 0; i < 10; i++) {
+      // Reconcile record() shape: no before-content, hash-only pre-image
+      // naming an orphan that IS real referenced storage on disk.
+      store.append(
+        entry({
+          path: `r${i}.txt`,
+          before: null,
+          beforeHash: orphanHashes[i],
+          after: uniqueContent(i + 10),
+          unattributed: true,
+        }),
+      );
+      // Bounded by construction: the pre-change code kept the journal
+      // within its bound after EVERY append, and so must this one.
+      expect(referencedBytes(dir, store)).toBeLessThanOrEqual(maxBytes);
+    }
+    // Pruning passes must have run — 11 entries of 60 referenced bytes
+    // cannot all survive a 300-byte bound.
+    expect(store.entries().length).toBeLessThan(11);
+  });
+});
+
+// Review finding 2: the blob size cache is write-once per hash and never
+// revalidated, so external mutation of a blob file (replacement with
+// different-length content, or deletion) leaves stale/phantom sizes that
+// corrupt the drop set — a phantom size drops entries the old live-stat
+// loop kept (a missing blob counted zero) — and inflate the returned bytes.
+// The pre-change code live-statted every pass; a slow pass must re-derive
+// its truth the same way.
+describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', () => {
+  it('external blob mutation never corrupts the drop set or the reported freed bytes', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const c0 = 'c0'.padEnd(100, '0'); // exactly 100 bytes
+    const c1 = 'c1'.padEnd(100, '1');
+    const c2 = 'c2'.padEnd(100, '2');
+    const e0 = store.append(entry({ path: 'f0.txt', after: c0 }));
+    const e1 = store.append(entry({ path: 'f1.txt', after: c1 }));
+    store.append(entry({ path: 'f2.txt', after: c2 }));
+    // External mutation between passes: f0's blob vanishes, f1's blob is
+    // replaced with different-length content. Live truth is now
+    // 0 + 6 + 100 = 106 — exactly at the bound below, so the old live-stat
+    // code drops nothing. Cached (phantom) sizes of 100 each would inflate
+    // the derived total to 300 and corrupt the drop set.
+    rmSync(join(dir, 'blobs', e0.afterHash ?? ''));
+    writeFileSync(join(dir, 'blobs', e1.afterHash ?? ''), 'short\n');
+    const pruned = store.enforceRetention({ maxBytes: 106 });
+    expect(pruned).toEqual({ entries: 0, bytes: 0 });
+    expect(store.entries().map((e) => e.path)).toEqual([
+      'f0.txt',
+      'f1.txt',
+      'f2.txt',
+    ]);
+    // The tighter bound forces exactly the live-truth drop set: f0 first
+    // (its blob is gone — dropping it frees nothing), then f1 (frees its
+    // live 6 bytes), never f2. The freed bytes are live truth, not phantoms.
+    const prunedMore = store.enforceRetention({ maxBytes: 100 });
+    expect(prunedMore).toEqual({ entries: 2, bytes: 6 });
+    expect(store.entries().map((e) => e.path)).toEqual(['f2.txt']);
   });
 });

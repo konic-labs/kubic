@@ -34,6 +34,7 @@ describe('orchestrator request envelope (issue #48)', () => {
         'install',
         'network',
         'outside-write',
+        'privilege-escalation',
         'spawn-agents',
       ].sort(),
     );

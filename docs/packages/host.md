@@ -65,9 +65,9 @@ is additive by construction.
 
 ### Approvals (`approvals.ts`, #48)
 
-`CAPABILITIES` (9): `network`, `credentials`, `git-push`,
+`CAPABILITIES` (10): `network`, `credentials`, `git-push`,
 `destructive-shell`, `install`, `deploy`, `outside-write`,
-`budget-overrun`, `spawn-agents`.
+`budget-overrun`, `spawn-agents`, `privilege-escalation`.
 
 | Interface | Fields |
 | --- | --- |
@@ -78,7 +78,13 @@ is additive by construction.
 `ApprovalStore` (`load`/`save`) has memory and file backings;
 `ApprovalService` + `createApprovalAsk` serve the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
-`TriggerContext`.
+`TriggerContext`. The bash detectors are literal-pattern heuristics with
+two documented shapes: a `tee`/`cp`/`mv`/`install` write target is the
+last argument of the command segment (last-argument heuristic), and
+`sudo` matches by word anywhere in the raw command — deliberately
+over-triggering, since a raised capability becomes an ask, never a silent
+grant. Both heuristics and the remaining bypasses are documented on the
+[configuration](../cli/configuration.md) page.
 
 ### Config (`config/`, #38)
 

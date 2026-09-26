@@ -22,6 +22,11 @@ export const ORCHESTRATOR_TRIGGERS = [
   'outside-write',
   'budget-overrun',
   'spawn-agents',
+  // Vocabulary sync with CAPABILITIES (host/approvals.ts): the envelope
+  // must carry every capability detectTriggers can raise, or a worker ask
+  // for a new capability would be refused as an unknown trigger before any
+  // surface could render it (issue #131).
+  'privilege-escalation',
 ] as const;
 
 export type OrchestratorTrigger = (typeof ORCHESTRATOR_TRIGGERS)[number];

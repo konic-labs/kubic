@@ -4,8 +4,12 @@
 // identically outside git by design, §43.2).
 
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
-import { createNodeFileBridge } from './file-bridge.js';
+import { isAbsolute, join } from 'node:path';
+import {
+  type BridgeFileInfo,
+  createNodeFileBridge,
+  type FileBridge,
+} from './file-bridge.js';
 import type { FileJournalStore } from './journal.js';
 
 export function renderLog(store: FileJournalStore): string[] {
@@ -51,17 +55,65 @@ export interface JournalStatus {
   repo: RepoState | null;
 }
 
-function readRepo(root: string): RepoState | null {
-  const bridge = createNodeFileBridge('/');
-  let head: string;
+// Issue #126: resolve the repository's HEAD with pure file reads. In a
+// linked worktree — exactly the trees `kubic orchestrate` creates and
+// retains — `.git` is a pointer FILE (`gitdir: <path>`) whose target holds
+// the real HEAD; reading `.git/HEAD` there would call a live branch
+// `(detached)`. The pointer is followed (absolute, or relative to the
+// worktree root), and an unreadable or malformed pointer is named
+// `(unknown)` — never a throw, never a guessed branch. `null` still means
+// "no repository here at all" (the journal works anywhere by design).
+type HeadRead = { kind: 'head'; text: string } | { kind: 'unknown' } | null;
+
+function readHead(root: string, bridge: FileBridge): HeadRead {
+  const dotGit = join(root, '.git');
+  let info: BridgeFileInfo;
   try {
-    head = bridge.readTextFile(join(root, '.git', 'HEAD')).trim();
+    info = bridge.fileInfo(dotGit);
   } catch {
     return null;
   }
-  const branch = head.startsWith('ref: ')
-    ? head.slice(5).replace(/^refs\/heads\//, '') || '(unknown)'
-    : '(detached)';
+  if (!info.isFile) {
+    // The classic layout: .git is a directory (or a symlink to one).
+    try {
+      return {
+        kind: 'head',
+        text: bridge.readTextFile(join(dotGit, 'HEAD')).trim(),
+      };
+    } catch {
+      return null;
+    }
+  }
+  let raw: string;
+  try {
+    raw = bridge.readTextFile(dotGit);
+  } catch {
+    return { kind: 'unknown' };
+  }
+  const target = /^gitdir:\s*(.+)$/.exec(raw.trim())?.[1]?.trim();
+  if (target === undefined || target === '') return { kind: 'unknown' };
+  const headPath = isAbsolute(target) ? target : join(root, target);
+  try {
+    return {
+      kind: 'head',
+      text: bridge.readTextFile(join(headPath, 'HEAD')).trim(),
+    };
+  } catch {
+    // Dangling pointer (the worktree's git dir is gone): named, no throw.
+    return { kind: 'unknown' };
+  }
+}
+
+function readRepo(root: string): RepoState | null {
+  const bridge = createNodeFileBridge('/');
+  const head = readHead(root, bridge);
+  if (head === null) return null;
+  const branch =
+    head.kind === 'unknown'
+      ? '(unknown)'
+      : head.text.startsWith('ref: ')
+        ? head.text.slice(5).replace(/^refs\/heads\//, '') || '(unknown)'
+        : '(detached)';
   let dirty: boolean | null = null;
   try {
     const porcelain = execFileSync('git', ['status', '--porcelain'], {

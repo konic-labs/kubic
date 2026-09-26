@@ -29,6 +29,11 @@ export interface FileChange {
   // `afterBytes` carries the observed size for the size-only render.
   afterOmitted: boolean;
   afterBytes?: number;
+  // Issue #126: set on the `diff --json` projection when `before`/`after`
+  // were clipped to the `--max-content-bytes` bound (the clipped text ends
+  // with a marker line naming the bound). Absent — never true — on the full
+  // core read, which `undo` and `renderDiff` rely on.
+  contentTruncated?: boolean;
 }
 
 export interface DiffFilter {
@@ -88,6 +93,9 @@ export function diffEntries(
 
 // Minimal unified hunks: changed region plus context lines, with real
 // @@ -a,b +c,d @@ headers. Display only — never parsed back.
+// The header counts accumulate while emitting (issue #126): they describe
+// exactly the lines the hunk prints for each side, so a consumer (the TUI
+// view, a future patch applier) can trust them.
 export function unifiedHunks(
   before: string,
   after: string,
@@ -109,14 +117,77 @@ export function unifiedHunks(
   const from = Math.max(0, start - context);
   const toA = Math.min(a.length, endA + context);
   const toB = Math.min(b.length, endB + context);
-  const lines = [`@@ -${from + 1},${toA - from} +${from + 1},${toB - from} @@`];
-  for (let i = from; i < start; i++) lines.push(` ${a[i]}`);
-  for (let i = start; i < endA; i++) lines.push(`-${a[i]}`);
-  for (let i = start; i < endB; i++) lines.push(`+${b[i]}`);
+  const body: string[] = [];
+  let aCount = 0;
+  let bCount = 0;
+  const pushCtx = (line: string): void => {
+    body.push(` ${line}`);
+    aCount++;
+    bCount++;
+  };
+  const pushDel = (line: string): void => {
+    body.push(`-${line}`);
+    aCount++;
+  };
+  const pushIns = (line: string): void => {
+    body.push(`+${line}`);
+    bCount++;
+  };
+  for (let i = from; i < start; i++) pushCtx(a[i]);
+  for (let i = start; i < endA; i++) pushDel(a[i]);
+  for (let i = start; i < endB; i++) pushIns(b[i]);
+  // The trailing-context min() stays — it is what keeps the hunk honest
+  // visually; only the header stops claiming more than was printed.
   for (let i = 0; i < toA - endA && i < toB - endB; i++) {
-    lines.push(` ${a[endA + i]}`);
+    pushCtx(a[endA + i]);
   }
-  return lines;
+  return [`@@ -${from + 1},${aCount} +${from + 1},${bCount} @@`, ...body];
+}
+
+// `kubic diff --json` content bound (issue #126): one change's before/after
+// can be a whole file, so the JSON surface clips each side at this many
+// bytes by default — the envelope stays readable, and the clipped text
+// names the bound. `--max-content-bytes 0` opts out (unlimited).
+export const DEFAULT_MAX_CONTENT_BYTES = 64 * 1024;
+
+// Clip one side of a change to `maxBytes` UTF-8 bytes (0 = unlimited). The
+// clipped text ends with a named marker line so a consumer never mistakes
+// the bound for the whole file.
+export function clipContent(
+  text: string | null,
+  maxBytes: number,
+): { text: string | null; truncated: boolean } {
+  if (
+    text === null ||
+    maxBytes === 0 ||
+    Buffer.byteLength(text, 'utf8') <= maxBytes
+  ) {
+    return { text, truncated: false };
+  }
+  const clipped = Buffer.from(text, 'utf8')
+    .subarray(0, maxBytes)
+    .toString('utf8');
+  return {
+    text: `${clipped}\n[kubic: content truncated at ${maxBytes} bytes]`,
+    truncated: true,
+  };
+}
+
+// The `--json` projection of one change: clip both sides and record whether
+// either was clipped (`contentTruncated`). The human renderDiff path never
+// goes through here — it renders hunks, not whole files.
+export function clipChangeContent(
+  change: FileChange,
+  maxBytes: number,
+): FileChange {
+  const before = clipContent(change.before, maxBytes);
+  const after = clipContent(change.after, maxBytes);
+  return {
+    ...change,
+    before: before.text,
+    after: after.text,
+    contentTruncated: before.truncated || after.truncated,
+  };
 }
 
 export function renderDiff(changes: FileChange[]): string {

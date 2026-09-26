@@ -72,7 +72,7 @@ escapes but not symlinks) — acceptable because solo has no isolation.
 | `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `afterOmitted?: boolean`, `afterBytes?: number` |
 | `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
-| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `afterOmitted: boolean`, `afterBytes?: number` |
+| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
 One `FileChange` per path (earliest before, latest after, latest
@@ -80,6 +80,17 @@ attribution); unified-hunk rendering is shared by the CLI and future
 views. Status (`JournalStatus`, `RepoState`) and undo (`UndoScope`,
 `UndoPlan`, `UndoResult`) build on the same entry store — see the module
 for their exact fields.
+
+Display surfaces (issue #126): `journalStatus` resolves the branch of a
+linked worktree by following `.git`'s `gitdir:` pointer to the real `HEAD`
+(pure file reads; a dangling or malformed pointer is `(unknown)`, never a
+throw); `unifiedHunks` accumulates its `@@` header counts while emitting,
+so the counts always equal the lines printed; and the `diff --json`
+projection (`clipContent` / `clipChangeContent` with
+`DEFAULT_MAX_CONTENT_BYTES` = 64 KiB, `0` = unlimited) clips each side to
+the bound, appending the marker line `[kubic: content truncated at <n>
+bytes]` and setting `contentTruncated`. The human `renderDiff` path never
+clips — it renders hunks, not whole files.
 
 Journal durability (issue #117): index appends go through the bridge's
 `appendDurably` (open/write/fsync/close) so the entry is on platter

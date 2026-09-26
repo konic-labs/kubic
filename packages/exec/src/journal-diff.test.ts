@@ -5,7 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
-import { diffEntries, type FileChange, renderDiff } from './journal-diff.js';
+import {
+  clipChangeContent,
+  clipContent,
+  DEFAULT_MAX_CONTENT_BYTES,
+  diffEntries,
+  type FileChange,
+  renderDiff,
+  unifiedHunks,
+} from './journal-diff.js';
 
 function seed(): FileJournalStore {
   const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
@@ -85,6 +93,139 @@ describe('journal diff core (issue #18, slice A)', () => {
     const parsed = JSON.parse(JSON.stringify(diffEntries(seed(), {})));
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].path).toBe('a.txt');
+  });
+});
+
+// Issue #126: every emitted `@@` header must count exactly the lines the
+// hunk prints for its side (`-`/context for A, `+`/context for B) — a
+// consumer (the TUI view, a future patch applier) reads the counts. The
+// counts are accumulated while emitting, never derived from pre-loop
+// window arithmetic, so the two can never disagree.
+function hunkCountMismatches(
+  lines: string[],
+): Array<{ header: string; a: number; b: number }> {
+  const out: Array<{ header: string; a: number; b: number }> = [];
+  let header: RegExpExecArray | null = null;
+  let a = 0;
+  let b = 0;
+  const flush = (): void => {
+    if (header === null) return;
+    if (Number(header[2]) !== a || Number(header[4]) !== b) {
+      out.push({ header: header[0], a, b });
+    }
+  };
+  for (const line of lines) {
+    const m = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$/.exec(line);
+    if (m !== null) {
+      flush();
+      header = m;
+      a = 0;
+      b = 0;
+      continue;
+    }
+    if (header === null) continue;
+    // File headers (--- a/…, +++ b/…) and # comments are not hunk lines.
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+    if (line.startsWith('#')) continue;
+    if (line.startsWith(' ') || line.startsWith('-')) a++;
+    if (line.startsWith(' ') || line.startsWith('+')) b++;
+  }
+  flush();
+  return out;
+}
+
+describe('truthful hunk header counts (issue #126)', () => {
+  it('counts the lines emitted, not the pre-loop window (issue example)', () => {
+    const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
+    expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
+    expect(hunkCountMismatches(lines)).toEqual([]);
+  });
+
+  it('every edit shape keeps counts equal to the emitted lines', () => {
+    const shapes: ReadonlyArray<readonly [string, string]> = [
+      ['1\n2\n3', '1\n2\n3'], // identical: no hunk at all
+      ['', 'x\n'], // create from nothing
+      ['x\n', ''], // empty-after
+      ['a\nb\nc\nd\ne\nf\ng\nh', 'a\nb\nc\nd\ne\nf\ng\nh\nINSERT'], // at EOF
+      ['INSERT\na\nb\nc\nd\ne\nf\n', 'a\nb\nc\nd\ne\nf\n'], // at start
+      ['1\n2\n3\n4\n5\n6\n7\n8\n9', '1\n2\n3\nX\n5\n6\n7\n8\n9'], // replace
+      ['1\n2\n3\n4\n5', '1\n5'], // delete shortens B
+      ['1\n5', '1\n2\n3\n4\n5'], // insert lengthens B
+      ['a\nb\nc\nd\ne\nf', 'a\nb\nc\nd\ne'], // delete at EOF
+      ['a\nb\nc', 'a\nX\nY\nc'], // replace near the end
+    ];
+    for (const [before, after] of shapes) {
+      for (const context of [0, 1, 3, 10]) {
+        expect(
+          hunkCountMismatches(unifiedHunks(before, after, context)),
+        ).toEqual([]);
+      }
+    }
+  });
+
+  it('renderDiff keeps every header truthful across the existing fixtures', () => {
+    const text = renderDiff(diffEntries(seed(), {}));
+    expect(hunkCountMismatches(text.split('\n'))).toEqual([]);
+  });
+});
+
+// Issue #126: the `diff --json` content bound — byte-exact clipping with a
+// named marker, `0` meaning unlimited, null sides untouched.
+describe('diff --json content clipping (issue #126)', () => {
+  it('clips at the byte bound and names it in a marker line', () => {
+    const text = 'x'.repeat(100);
+    const clipped = clipContent(text, 10);
+    expect(clipped.truncated).toBe(true);
+    expect(clipped.text).toBe(
+      'xxxxxxxxxx\n[kubic: content truncated at 10 bytes]',
+    );
+  });
+
+  it('0 is unlimited; short content and null sides are untouched', () => {
+    const text = 'x'.repeat(100);
+    expect(clipContent(text, 0)).toEqual({ text, truncated: false });
+    expect(clipContent('short', DEFAULT_MAX_CONTENT_BYTES)).toEqual({
+      text: 'short',
+      truncated: false,
+    });
+    expect(clipContent(null, 10)).toEqual({ text: null, truncated: false });
+  });
+
+  it('a cut inside a multibyte character stays valid UTF-8', () => {
+    const clipped = clipContent('é'.repeat(10), 5);
+    expect(clipped.truncated).toBe(true);
+    // 4 bytes of é plus half of the next one decode to a replacement char.
+    expect(clipped.text?.startsWith('éé')).toBe(true);
+    expect(
+      clipped.text?.endsWith('\n[kubic: content truncated at 5 bytes]'),
+    ).toBe(true);
+  });
+
+  it('the projection clips both sides and flags the change', () => {
+    const change: FileChange = {
+      path: 'a.txt',
+      op: 'write',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      sessionId: 's1',
+      timestamp: 100,
+      unattributed: false,
+      reversible: true,
+      before: 'small\n',
+      after: 'y'.repeat(50),
+      corrupt: false,
+      afterOmitted: false,
+    };
+    const big = clipChangeContent(change, 10);
+    expect(big.contentTruncated).toBe(true);
+    expect(big.before).toBe('small\n');
+    expect(big.after).toBe(
+      'yyyyyyyyyy\n[kubic: content truncated at 10 bytes]',
+    );
+    const small = clipChangeContent(change, DEFAULT_MAX_CONTENT_BYTES);
+    expect(small.contentTruncated).toBe(false);
+    expect(small.before).toBe('small\n');
+    expect(small.after).toBe(change.after);
   });
 });
 

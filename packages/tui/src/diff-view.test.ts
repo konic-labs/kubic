@@ -47,6 +47,71 @@ describe('diff hunks (issue #25; §42.2 mirror)', () => {
   });
 });
 
+// Issue #126: every emitted @@ header counts exactly the lines the hunk
+// prints for its side — same invariant as the exec test, checked on the
+// mirror so TUI hunks stay byte-equal to `kubic diff` hunks.
+function hunkCountMismatches(
+  lines: string[],
+): Array<{ header: string; a: number; b: number }> {
+  const out: Array<{ header: string; a: number; b: number }> = [];
+  let header: RegExpExecArray | null = null;
+  let a = 0;
+  let b = 0;
+  const flush = (): void => {
+    if (header === null) return;
+    if (Number(header[2]) !== a || Number(header[4]) !== b) {
+      out.push({ header: header[0], a, b });
+    }
+  };
+  for (const line of lines) {
+    const m = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$/.exec(line);
+    if (m !== null) {
+      flush();
+      header = m;
+      a = 0;
+      b = 0;
+      continue;
+    }
+    if (header === null) continue;
+    if (line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+    if (line.startsWith('#')) continue;
+    if (line.startsWith(' ') || line.startsWith('-')) a++;
+    if (line.startsWith(' ') || line.startsWith('+')) b++;
+  }
+  flush();
+  return out;
+}
+
+describe('truthful hunk header counts (issue #126)', () => {
+  it('counts the lines emitted, not the pre-loop window (issue example)', () => {
+    const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
+    expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
+    expect(hunkCountMismatches(lines)).toEqual([]);
+  });
+
+  it('every edit shape keeps counts equal to the emitted lines', () => {
+    const shapes: ReadonlyArray<readonly [string, string]> = [
+      ['1\n2\n3', '1\n2\n3'],
+      ['', 'x\n'],
+      ['x\n', ''],
+      ['a\nb\nc\nd\ne\nf\ng\nh', 'a\nb\nc\nd\ne\nf\ng\nh\nINSERT'],
+      ['INSERT\na\nb\nc\nd\ne\nf\n', 'a\nb\nc\nd\ne\nf\n'],
+      ['1\n2\n3\n4\n5\n6\n7\n8\n9', '1\n2\n3\nX\n5\n6\n7\n8\n9'],
+      ['1\n2\n3\n4\n5', '1\n5'],
+      ['1\n5', '1\n2\n3\n4\n5'],
+      ['a\nb\nc\nd\ne\nf', 'a\nb\nc\nd\ne'],
+      ['a\nb\nc', 'a\nX\nY\nc'],
+    ];
+    for (const [before, after] of shapes) {
+      for (const context of [0, 1, 3, 10]) {
+        expect(
+          hunkCountMismatches(unifiedHunks(before, after, context)),
+        ).toEqual([]);
+      }
+    }
+  });
+});
+
 describe('diff view header + hunks (issue #25)', () => {
   it('write+edit renders path header, op label, attribution, hunks', () => {
     const header = renderDiffHeader(WRITE_EDIT);

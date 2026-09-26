@@ -43,7 +43,9 @@ export function isBinaryText(content: string): boolean {
 }
 
 // Changed region plus context lines with real @@ -a,b +c,d @@ headers.
-// Mirror of exec unifiedHunks (display only — never parsed back).
+// Mirror of exec unifiedHunks (display only — never parsed back); the
+// header counts accumulate while emitting (issue #126) so they can never
+// disagree with the lines printed.
 export function unifiedHunks(
   before: string,
   after: string,
@@ -65,14 +67,31 @@ export function unifiedHunks(
   const from = Math.max(0, start - context);
   const toA = Math.min(a.length, endA + context);
   const toB = Math.min(b.length, endB + context);
-  const lines = [`@@ -${from + 1},${toA - from} +${from + 1},${toB - from} @@`];
-  for (let i = from; i < start; i++) lines.push(` ${a[i]}`);
-  for (let i = start; i < endA; i++) lines.push(`-${a[i]}`);
-  for (let i = start; i < endB; i++) lines.push(`+${b[i]}`);
+  const body: string[] = [];
+  let aCount = 0;
+  let bCount = 0;
+  const pushCtx = (line: string): void => {
+    body.push(` ${line}`);
+    aCount++;
+    bCount++;
+  };
+  const pushDel = (line: string): void => {
+    body.push(`-${line}`);
+    aCount++;
+  };
+  const pushIns = (line: string): void => {
+    body.push(`+${line}`);
+    bCount++;
+  };
+  for (let i = from; i < start; i++) pushCtx(a[i]);
+  for (let i = start; i < endA; i++) pushDel(a[i]);
+  for (let i = start; i < endB; i++) pushIns(b[i]);
+  // The trailing-context min() stays — it is what keeps the hunk honest
+  // visually; only the header stops claiming more than was printed.
   for (let i = 0; i < toA - endA && i < toB - endB; i++) {
-    lines.push(` ${a[endA + i]}`);
+    pushCtx(a[endA + i]);
   }
-  return lines;
+  return [`@@ -${from + 1},${aCount} +${from + 1},${bCount} @@`, ...body];
 }
 
 // Path header with the op label (write/edit/create/delete/rename) plus

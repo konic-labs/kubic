@@ -1,5 +1,6 @@
 // Slice A: JSONL session store — create, attach restores, jq-inspectable.
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -255,5 +256,89 @@ describe('session lock primitive (issue #118)', () => {
       kill.mockRestore();
     }
     expect(readLock(dir).pid).toBe(process.pid);
+  });
+});
+
+// Lock wiring (issue #118): create/attach acquire, close releases.
+describe('session locking wiring (issue #118)', () => {
+  const FAKE_PID = 424242;
+
+  function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(process, 'kill').mockImplementation((() => {
+      if (!alive) {
+        throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+      }
+      return 0;
+    }) as never);
+  }
+
+  it('acquires the lock on create and releases it on close', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    const lockPath = join(root, session.metadata.id, 'lock.json');
+    expect(existsSync(lockPath)).toBe(true);
+    await session.close(BACKGROUND_CONTEXT);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('acquires the lock on attach and releases it on close', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    const id = session.metadata.id;
+    await session.close(BACKGROUND_CONTEXT);
+    const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
+    const lockPath = join(root, id, 'lock.json');
+    expect(existsSync(lockPath)).toBe(true);
+    await attached.close(BACKGROUND_CONTEXT);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('refuses a second attach while a live holder exists, naming the pid', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    const id = session.metadata.id;
+    await session.close(BACKGROUND_CONTEXT);
+    // A live-looking lock fixture: fake pid, stubbed liveness — no real
+    // process is ever signalled.
+    writeFileSync(
+      join(root, id, 'lock.json'),
+      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() }),
+    );
+    const kill = stubKill(true);
+    try {
+      let caught: unknown;
+      try {
+        await attachSession(store, id, BACKGROUND_CONTEXT);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionLockError);
+      expect((caught as Error).message).toContain(String(FAKE_PID));
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it('steals a crashed holder lock on attach (same-day dead pid)', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+    const id = session.metadata.id;
+    await session.close(BACKGROUND_CONTEXT);
+    writeFileSync(
+      join(root, id, 'lock.json'),
+      JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() }),
+    );
+    const kill = stubKill(false);
+    try {
+      const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
+      await attached.close(BACKGROUND_CONTEXT);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(existsSync(join(root, id, 'lock.json'))).toBe(false);
   });
 });

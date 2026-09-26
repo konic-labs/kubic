@@ -1,8 +1,8 @@
 // Slice B: kill mid-run -> attach -> lane resumes the pending op (#14).
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import {
@@ -61,9 +61,24 @@ describe('session resume (issue #14, slice B)', () => {
       pendingOp = admission.value.operationId;
     }
 
-    // Second "process": attach and resume the same operation.
+    // Second "process": attach and resume the same operation. The first
+    // "process" died holding its session lock (it never closed), so the
+    // fixture rewrites lock.json as that crashed holder: a fake pid with
+    // liveness stubbed dead (hermetic — no real process is ever signalled;
+    // issue #118). A live holder would refuse this attach, correctly.
+    writeFileSync(
+      join(root, id, 'lock.json'),
+      JSON.stringify({ pid: 424242, startedAt: Date.now() }),
+    );
     const store2 = openSessionStore(root, createNodeFileBridge(root));
-    const attached = await attachSession(store2, id, BACKGROUND_CONTEXT);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((() => {
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+    }) as never);
+    const attached = await attachSession(
+      store2,
+      id,
+      BACKGROUND_CONTEXT,
+    ).finally(() => kill.mockRestore());
     openSessions.push(attached);
     const faux2 = fauxProvider();
     const models2 = createModels();

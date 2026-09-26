@@ -17,6 +17,7 @@ import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-ex
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
+import type { SessionOverlapProbe } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
@@ -43,10 +44,18 @@ import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.j
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
-import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
+import {
+  defaultSessionsRoot,
+  runSessionsCommand,
+} from '../../../packages/host/src/sessions-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
+import {
+  openSessionStore,
+  sessionsTouchingWorkspace,
+} from '../../../packages/worker/src/lane/session-store.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   approvalSnapshotFrom,
   configRefusalExit,
@@ -205,6 +214,23 @@ async function main(argv: string[]): Promise<number> {
     // every lane also loads, taken as data so the checks below can print a
     // named failure instead of the process dying before it reports.
     const extensionPosture = await extensionPostureForDoctor();
+    // Repo-level session overlap (issue #118; §42.5): the local session
+    // store's view of the sessions recorded against this cwd. Best-effort:
+    // an unlistable store makes NO claim (the probe stays un-injected)
+    // rather than crashing doctor — the note is informational, so an
+    // unreadable store must not turn into a failure of its own.
+    let sessionOverlapProbe: (() => SessionOverlapProbe) | undefined;
+    try {
+      const overlapRoot = defaultSessionsRoot();
+      const sessionIds = await sessionsTouchingWorkspace(
+        openSessionStore(overlapRoot, createNodeFileBridge(overlapRoot)),
+        process.cwd(),
+        BACKGROUND_CONTEXT,
+      );
+      sessionOverlapProbe = () => ({ workspace: process.cwd(), sessionIds });
+    } catch {
+      sessionOverlapProbe = undefined;
+    }
     return runDoctorCommand(rest, {
       out: (line: string) => console.log(line),
       probeProviders: () =>
@@ -258,6 +284,12 @@ async function main(argv: string[]): Promise<number> {
           cwd: process.cwd(),
           bridge: createNodeFileBridge(process.cwd()),
         }),
+      // Repo-level session overlap (issue #118): warning only — the check
+      // reports warn (never exit-flipping) when 2+ sessions are recorded
+      // against this cwd, stating the end-of-run sweep's blind spot.
+      ...(sessionOverlapProbe === undefined
+        ? {}
+        : { probeSessionOverlap: sessionOverlapProbe }),
     });
   }
   if (command === 'orchestrate') {

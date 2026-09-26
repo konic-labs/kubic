@@ -20,7 +20,7 @@ docs and code must never imply otherwise (design §59.1).
 | `config/config-cli.ts` | `runConfigCommand`, `ConfigCommandDeps`, `CONFIG_EXIT_OK/FAIL` — `kubic config [--json]` (#90) |
 | `config/config-doctor.ts` | `configDoctorProbe`, `buildConfigDoctorInput`, `CONFIG_DOCTOR_ID` — doctor's config check (#90) |
 | `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
-| `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `DoctorDeps`, `collectDoctorChecks` |
+| `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `SessionOverlapProbe`, `DoctorDeps`, `collectDoctorChecks` |
 | `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
 | `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool spans on the run path, #98) |
 | `ops/cost/` | `cost-cli.ts` (`kubic cost`), `per-agent-cost.ts` (rows + Σ(per-agent) task total), `cache.ts` (§62 lever 2 prefix hit-rate, live since #98) |
@@ -103,6 +103,10 @@ and gated repo-wide by `scripts/runtime-exclude.test.mjs`.
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
 `pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps`
 (provider + dep probes) into a `DoctorReport` of `DoctorCheck`s.
+`probeSessionOverlap` (issue #118) adds the repo-level `session:overlap`
+note: warn when two or more sessions are recorded against the workspace —
+a disclosure of the end-of-run sweep's blind spot, never a block and never
+exit-flipping.
 
 ## Dep-direction neighbours
 

@@ -24,6 +24,7 @@ escapes, not a sandbox boundary.
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
+| `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock (#118) |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
 | `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts` (#12); path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |

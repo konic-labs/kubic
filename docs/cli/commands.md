@@ -70,6 +70,25 @@ operation deliberately, record session-scoped full access first
 (`kubic sessions create --dangerously-skip-approvals`, or a prior
 `kubic sessions attach` decision) — it is never implied.
 
+**Concurrent runs in one workspace** (issue #118). A run drives one
+session, and a session takes one live attachment. `kubic run --session X`
+while X is held ends `workspace_unavailable` (exit 5) with the holder's pid
+named on the `error:` line; `kubic sessions attach X` prints the same
+refusal and exits 1 without reading the transcript. The lock lives at
+`<sessions-root>/<id>/lock.json`, is acquired on create/attach and released
+on close, and only a provably-stale holder is stolen (its process gone, or
+the file a day old) — so crash recovery works same-day. **Different**
+sessions in one repo stay legal — nothing blocks them — but each run's
+end-of-run sweep compares against its own boot baseline, so a run
+overlapping another session records that session's in-flight changes as
+**unattributed, non-reversible** journal entries. When the local session
+store shows another session on the workspace, the run's debug channel
+emits one `reconcile: another run may be live in this workspace …` line
+naming the sibling ids, and `kubic doctor` reports the same overlap as the
+`session:overlap` warn note ([doctor and debug](doctor-and-debug.md)).
+Locking is local-filesystem only: no network/shared-disk (NFS/SMB) locking
+semantics are provided or tested.
+
 ### Where the spans go
 
 Lane and tool spans have two destinations, both documented:
@@ -389,7 +408,9 @@ usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | li
 
 Missing subcommand exits 1 with the usage line; `attach` without an id
 or with an id outside `[A-Za-z0-9_-]` exits 1; attaching a missing
-session exits 1.
+session exits 1; attaching a session another process holds live prints
+the lock refusal (issue #118 — the holder's pid and start time are named)
+and exits 1 without reading the transcript.
 
 ## `kubic git`
 

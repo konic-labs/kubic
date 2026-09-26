@@ -6,6 +6,7 @@
 import {
   appendFileSync,
   closeSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import {
   renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -60,6 +62,15 @@ export interface FileBridge {
   openTextLineReader(path: string): BridgeLineReader;
   writeFile(path: string, content: string | Uint8Array): void;
   appendFile(path: string, content: string | Uint8Array): void;
+  /**
+   * Append with fsync (issue #117): the change journal's crash-safety seam.
+   * The content is on platter before the call returns — an index append a
+   * crash can lose or truncate is exactly the failure the journal exists to
+   * prevent. Optional so existing test doubles stay valid; the journal falls
+   * back to `appendFile` when a bridge does not implement it, and its
+   * `durable` retention knob can opt out of the fsync cost explicitly.
+   */
+  appendDurably?(path: string, content: string | Uint8Array): void;
   renameFile(source: string, destination: string): void;
   fileInfo(path: string): BridgeFileInfo;
   listDir(path: string): BridgeFileInfo[];
@@ -143,6 +154,28 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       const abs = absolutePath(path);
       ensureParent(abs);
       appendFileSync(abs, content);
+    },
+    // Durable append (issue #117): one fd, one write, one fsync — the line
+    // is on platter before the call returns. `writeSync` may write short on
+    // some platforms, so the loop keeps writing until every byte is out;
+    // fsync then covers the whole append. Directory-entry durability of the
+    // file's own creation is deliberately out of scope (rename atomicity is
+    // the journal's write guarantee — see docs/architecture).
+    appendDurably: (path: string, content: string | Uint8Array): void => {
+      const abs = absolutePath(path);
+      ensureParent(abs);
+      const fd = openSync(abs, 'a');
+      try {
+        const buffer =
+          typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+        let offset = 0;
+        while (offset < buffer.length) {
+          offset += writeSync(fd, buffer, offset);
+        }
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
     },
     renameFile: (source: string, destination: string): void => {
       renameSync(absolutePath(source), absolutePath(destination));

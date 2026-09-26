@@ -15,7 +15,15 @@ what dangerous operations may proceed. Both hold identically in
 The journal records every file edit the agent makes, whether or not
 the directory is a git repository — `kubic diff` and `kubic undo`
 work anywhere. Entries are append-only and persist across sessions,
-so undo works after the terminal closes. Review the record, revert a
+so undo works after the terminal closes. The record is written
+durably: each index append is fsynced before it returns (one fsync
+per tool write — the price of "reversible"; the store's `durable`
+knob, default `true`, trades that for a crash window of one
+truncated last line), and blobs and undo restores are written
+tmp+rename in the target's own directory, so a crash never leaves a
+half-written file visible under its real name. Directory-entry
+durability of the rename itself is out of scope — rename atomicity
+is the guarantee we rely on. Review the record, revert a
 step or a path, check status and history; entries the journal cannot
 reconstruct (recorded hash, no retrievable pre-image) are reported as
 non-reversible rather than guessed at. Retention bounds keep growth

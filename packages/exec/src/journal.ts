@@ -36,6 +36,17 @@ export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
 export interface JournalRetention {
   maxBytes?: number;
   maxAgeMs?: number;
+  /**
+   * fsync every index append before it returns (issue #117), default true.
+   * One fsync per tool write is the price of "reversible": the entry is on
+   * platter before the append returns, so a crash cannot take back a change
+   * the journal already promised to undo. The window it closes is small but
+   * real — a lost last line reads as "the run did nothing". Set `false` to
+   * trade that durability for throughput (a crash may then truncate the
+   * last line, which `entries()` skips); a bridge without `appendDurably`
+   * always falls back to a plain append.
+   */
+  durable?: boolean;
 }
 
 export interface JournalEntryInput {
@@ -214,6 +225,7 @@ export function applyDelta(before: string, delta: string): string | null {
 export class FileJournalStore {
   readonly indexPath: string;
   private readonly blobsDir: string;
+  private readonly durable: boolean;
   private readonly limits: Required<Pick<JournalRetention, 'maxBytes'>> &
     Pick<JournalRetention, 'maxAgeMs'>;
   // Issue #124: blob sizes are immutable (content-addressed), so a hash's
@@ -245,6 +257,10 @@ export class FileJournalStore {
   constructor(dir: string, retention: JournalRetention = {}) {
     this.indexPath = join(dir, 'index.jsonl');
     this.blobsDir = join(dir, 'blobs');
+    // Durable appends default on (issue #117): the journal's whole promise
+    // is "this change can be undone", which is false if the record of the
+    // change can be lost to a crash. Opting out is explicit.
+    this.durable = retention.durable ?? true;
     this.limits = {
       maxBytes: retention.maxBytes ?? DEFAULT_JOURNAL_MAX_BYTES,
       ...(retention.maxAgeMs === undefined
@@ -305,7 +321,15 @@ export class FileJournalStore {
         ? { deltaBaseEmpty: true }
         : {}),
     };
-    bridge.appendFile(this.indexPath, `${JSON.stringify(entry)}\n`);
+    // Durable append (issue #117): the crash-safety seam. Production takes
+    // `appendDurably` (fsync before this returns); a bridge double without
+    // it keeps the plain append, and `durable: false` opts out explicitly.
+    const line = `${JSON.stringify(entry)}\n`;
+    if (this.durable && bridge.appendDurably !== undefined) {
+      bridge.appendDurably(this.indexPath, line);
+    } else {
+      bridge.appendFile(this.indexPath, line);
+    }
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
     this.enforceRetention({ ...this.limits });
@@ -544,20 +568,39 @@ export class FileJournalStore {
     content: string,
   ): void {
     const path = join(this.blobsDir, hash);
-    if (!bridge.exists(path)) {
-      bridge.writeFile(path, content);
-      // Write-time size: the content is in hand, so no stat is needed —
-      // this is what makes retention stat-free for what this store writes.
-      const size = Buffer.byteLength(content, 'utf8');
-      const previous = this.blobSizes.get(hash);
-      this.blobSizes.set(hash, size);
-      // A re-written blob (freed by an earlier prune, or deleted
-      // externally) shifts the tracked total by its new size minus
-      // whatever was counted for it before.
-      if (this.trackedBytes !== null && this.accounted.has(hash)) {
-        this.trackedBytes += size - (previous ?? 0);
-        return;
+    if (bridge.exists(path)) {
+      this.trackRef(bridge, hash);
+      return;
+    }
+    // tmp+rename (issue #117): a blob becomes visible under its real name
+    // only when complete — a crash can never expose half a blob to
+    // `readBlob`, and the tmp lives in the same directory (same filesystem),
+    // so the rename is atomic. A failed write/rename cleans the tmp up,
+    // best-effort, and fails the append: a silently appended entry whose
+    // blob was never written would read as corrupt content.
+    const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
+    try {
+      bridge.writeFile(tmp, content);
+      bridge.renameFile(tmp, path);
+    } catch (error) {
+      try {
+        bridge.remove(tmp, false, true);
+      } catch {
+        // Best-effort tmp cleanup; the failed write is what matters.
       }
+      throw error;
+    }
+    // Write-time size: the content is in hand, so no stat is needed —
+    // this is what makes retention stat-free for what this store writes.
+    const size = Buffer.byteLength(content, 'utf8');
+    const previous = this.blobSizes.get(hash);
+    this.blobSizes.set(hash, size);
+    // A re-written blob (freed by an earlier prune, or deleted
+    // externally) shifts the tracked total by its new size minus
+    // whatever was counted for it before.
+    if (this.trackedBytes !== null && this.accounted.has(hash)) {
+      this.trackedBytes += size - (previous ?? 0);
+      return;
     }
     this.trackRef(bridge, hash);
   }

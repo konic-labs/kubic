@@ -69,7 +69,7 @@ escapes but not symlinks) — acceptable because solo has no isolation.
 | --- | --- |
 | `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
-| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number` |
+| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
 | `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
@@ -78,6 +78,18 @@ attribution); unified-hunk rendering is shared by the CLI and future
 views. Status (`JournalStatus`, `RepoState`) and undo (`UndoScope`,
 `UndoPlan`, `UndoResult`) build on the same entry store — see the module
 for their exact fields.
+
+Journal durability (issue #117): index appends go through the bridge's
+`appendDurably` (open/write/fsync/close) so the entry is on platter
+before `append` returns — one fsync per tool write is the price of
+"reversible", and it is the default (`JournalRetention.durable`; `false`
+trades it for a crash window of one truncated last line, and a bridge
+without `appendDurably` always falls back to a plain append). Blob
+writes and undo restores are tmp+rename in the target's own directory,
+so a partial file is never visible under its real name; directory-entry
+fsync is deliberately out of scope — rename atomicity is the guarantee,
+stated in
+[the journal and safety page](../architecture/journal-and-safety.md).
 
 ### Effects / replay (issue #97 — deleted, not wired)
 

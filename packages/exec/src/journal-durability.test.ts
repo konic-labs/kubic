@@ -1,0 +1,174 @@
+// Journal durability, slice 1 (issue #117): the journal is the product's
+// reversibility promise, so its own writes are the least forgiving place to
+// cut corners.
+//
+//   - Index appends fsync before `append()` returns: a crash/power loss can
+//     no longer truncate the last index line in the window the journal
+//     itself declared safe. The bridge grows an opt-in `appendDurably`;
+//     production takes it, test doubles without it keep the old seam.
+//   - Blob writes are tmp+rename: content-addressed blobs are never exposed
+//     half-written under their real name (readBlob would serve the torn
+//     bytes as content before #111's hash check rejects them).
+//
+// RED: `appendDurably` does not exist yet and putBlob writes in place.
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import type { FileBridge } from './file-bridge.js';
+import {
+  FileJournalStore,
+  type JournalEntryInput,
+  sha256Hex,
+} from './journal.js';
+
+// Controllable failure/hook surface shared by the two module mocks below.
+// vi.hoisted keeps it reachable from the hoisted factories.
+const hooks = vi.hoisted(() => ({
+  fsyncs: 0,
+  durableAppends: [] as string[],
+  // Force renameFile to throw for matching destinations (crash-before-rename).
+  failRename: null as null | ((destination: string) => boolean),
+  // Force writeFile to land a torn prefix and throw (crash-mid-write).
+  tornWrite: null as null | ((path: string) => boolean),
+  // Simulate a bridge double that predates appendDurably.
+  withoutAppendDurably: false,
+}));
+
+// Count every fsync through the real node bridge: the durability claim is
+// only proven if the production implementation actually calls it.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    fsyncSync: (fd: number): void => {
+      hooks.fsyncs += 1;
+      actual.fsyncSync(fd);
+    },
+  };
+});
+
+vi.mock('./file-bridge.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./file-bridge.js')>();
+  return {
+    ...actual,
+    createNodeFileBridge: (cwd: string): FileBridge => {
+      const bridge = actual.createNodeFileBridge(cwd);
+      return {
+        ...bridge,
+        appendDurably: hooks.withoutAppendDurably
+          ? undefined
+          : (path: string, content: string | Uint8Array): void => {
+              hooks.durableAppends.push(path);
+              bridge.appendDurably?.(path, content);
+            },
+        renameFile: (source: string, destination: string): void => {
+          if (hooks.failRename?.(destination) === true) {
+            throw new Error('simulated crash before rename');
+          }
+          bridge.renameFile(source, destination);
+        },
+        writeFile: (path: string, content: string | Uint8Array): void => {
+          if (hooks.tornWrite?.(path) === true) {
+            // A real torn write leaves a prefix on disk, then the process
+            // (or the syscall) dies.
+            bridge.writeFile(path, String(content).slice(0, 4));
+            throw new Error('simulated crash mid-write');
+          }
+          bridge.writeFile(path, content);
+        },
+      };
+    },
+  };
+});
+
+function tmpRoot(): string {
+  return mkdtempSync(join(tmpdir(), 'journal-durable-'));
+}
+
+function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
+  return {
+    path: 'src/a.ts',
+    op: 'write',
+    before: null,
+    after: 'hello\n',
+    bytesDelta: 6,
+    sessionId: 's1',
+    agentId: 'root',
+    toolCallId: 'call-1',
+    timestamp: 1700000000000,
+    ...overrides,
+  };
+}
+
+describe('journal durability (issue #117, slice 1)', () => {
+  it('fsyncs the index on every append, through the durable bridge seam', () => {
+    const store = new FileJournalStore(tmpRoot());
+    hooks.fsyncs = 0;
+    hooks.durableAppends = [];
+    store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    expect(hooks.fsyncs).toBe(1);
+    store.append(entry({ path: 'b.txt', after: 'world\n' }));
+    expect(hooks.fsyncs).toBe(2);
+    // The durable path is the bridge method, never plain appendFile.
+    expect(
+      hooks.durableAppends.filter((path) => path.endsWith('index.jsonl')),
+    ).toHaveLength(2);
+    expect(store.entries()).toHaveLength(2);
+  });
+
+  it('durable: false keeps the plain append seam and fsyncs nothing', () => {
+    const store = new FileJournalStore(tmpRoot(), { durable: false });
+    hooks.fsyncs = 0;
+    store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    expect(hooks.fsyncs).toBe(0);
+    // The line still lands — the knob trades the fsync, not the append.
+    expect(store.entries()).toHaveLength(1);
+  });
+
+  it('a bridge double without appendDurably keeps appending (old seam)', () => {
+    hooks.withoutAppendDurably = true;
+    try {
+      const store = new FileJournalStore(tmpRoot());
+      hooks.fsyncs = 0;
+      store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+      expect(store.entries()).toHaveLength(1);
+      expect(hooks.fsyncs).toBe(0);
+    } finally {
+      hooks.withoutAppendDurably = false;
+    }
+  });
+
+  it('never exposes a partial blob: a failed rename leaves no blob and no tmp litter', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    hooks.failRename = (destination) =>
+      destination.includes(`${'/'}blobs${'/'}`);
+    try {
+      expect(() =>
+        store.append(entry({ path: 'a.txt', after: 'hello\n' })),
+      ).toThrow();
+    } finally {
+      hooks.failRename = null;
+    }
+    // No partial blob under the real name, and the tmp is cleaned up.
+    expect(readdirSync(join(dir, 'blobs'))).toEqual([]);
+    expect(store.blobCount()).toBe(0);
+    // And no entry references a blob that was never written: a failed blob
+    // write fails the append (a silent entry would read as corrupt).
+    expect(store.entries()).toEqual([]);
+  });
+
+  it('blob content is intact through the rename when the write succeeds', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    const blob = join(dir, 'blobs', recorded.afterHash ?? 'missing');
+    expect(readFileSync(blob, 'utf8')).toBe('hello\n');
+    expect(sha256Hex(readFileSync(blob, 'utf8'))).toBe(recorded.afterHash);
+    // No tmp survives a successful putBlob.
+    expect(
+      readdirSync(join(dir, 'blobs')).filter((name) => name.endsWith('.tmp')),
+    ).toEqual([]);
+  });
+});

@@ -667,10 +667,12 @@ Unknown flags exit 2. Full exit-code contract is on the
 
 ## `kubic workers [--json] [--debug]`
 
-Live worker list over the process registry: one line per worker with
+Worker list read from the repo's persisted record
+(`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
+fresh empty registry): one line per worker with
 the §13 status verbatim, age, owner, pid, startup span ms, and
-resources (`skills=… templates=…`, `-` when none). A one-shot CLI
-carries no orchestrator, so the registry is empty — no text output (`--json` prints `[]`), exit 0.
+resources (`skills=… templates=…`, `-` when none). A repo that never ran
+an orchestrator has no record — no text output (`--json` prints `[]`), exit 0.
 
 | Flag | Meaning |
 | --- | --- |

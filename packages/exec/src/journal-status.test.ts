@@ -73,6 +73,64 @@ describe('journal log + status (issue #18, slice C)', () => {
   });
 });
 
+// Issue #126: inside a linked worktree `.git` is a FILE holding a
+// `gitdir: <path>` pointer, so reading `.git/HEAD` says nothing about the
+// branch — the real HEAD lives in the pointed-at git dir. Pure file reads
+// (no git invocation): a dangling or malformed pointer is named
+// `(unknown)`, never a throw, and a genuinely detached HEAD stays
+// `(detached)`.
+describe('worktree HEAD resolution (issue #126)', () => {
+  function linkedWorktree(head: string): { root: string; gitdir: string } {
+    const gitdir = mkdtempSync(join(tmpdir(), 'gd-'));
+    writeFileSync(join(gitdir, 'HEAD'), head);
+    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
+    return { root, gitdir };
+  }
+
+  it('follows the gitdir pointer to the worktree branch, not (detached)', () => {
+    const { root } = linkedWorktree('ref: refs/heads/wt-feature\n');
+    expect(journalStatus(seed(), root).repo?.branch).toBe('wt-feature');
+  });
+
+  it('resolves a relative gitdir pointer against the worktree root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const gitdir = join(root, '.git-worktrees', 'wt');
+    mkdirSync(gitdir, { recursive: true });
+    writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/relative-branch\n');
+    writeFileSync(join(root, '.git'), 'gitdir: .git-worktrees/wt\n');
+    expect(journalStatus(seed(), root).repo?.branch).toBe('relative-branch');
+  });
+
+  it('a genuinely detached worktree HEAD still reports (detached)', () => {
+    const { root } = linkedWorktree(`${'a'.repeat(40)}\n`);
+    expect(journalStatus(seed(), root).repo?.branch).toBe('(detached)');
+  });
+
+  it('a dangling pointer degrades to (unknown), no throw', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    writeFileSync(
+      join(root, '.git'),
+      `gitdir: ${join(root, 'absent-gitdir')}\n`,
+    );
+    const status = journalStatus(seed(), root);
+    expect(status.repo?.branch).toBe('(unknown)');
+  });
+
+  it('a malformed pointer degrades to (unknown), no throw', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    writeFileSync(join(root, '.git'), 'not a gitdir pointer\n');
+    expect(journalStatus(seed(), root).repo?.branch).toBe('(unknown)');
+  });
+
+  it('the classic .git-directory layout stays byte-for-byte behavior', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    mkdirSync(join(root, '.git'));
+    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/classic\n');
+    expect(journalStatus(seed(), root).repo?.branch).toBe('classic');
+  });
+});
+
 describe('unattributed count (issue #87)', () => {
   it('counts reconciliation finds separately in status', () => {
     const status = journalStatus(seed(), mkdtempSync(join(tmpdir(), 'ws-')));

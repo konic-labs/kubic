@@ -7,7 +7,12 @@ import { basename, dirname, join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
-import { diffEntries, renderDiff } from '../../exec/src/journal-diff.js';
+import {
+  clipChangeContent,
+  DEFAULT_MAX_CONTENT_BYTES,
+  diffEntries,
+  renderDiff,
+} from '../../exec/src/journal-diff.js';
 import {
   journalStatus,
   reconciliationSummary,
@@ -35,7 +40,7 @@ export function defaultJournalDir(root: string): string {
 }
 
 const JOURNAL_USAGE =
-  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>';
+  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>';
 
 function usage(out: (line: string) => void): number {
   out(JOURNAL_USAGE);
@@ -175,8 +180,22 @@ export async function runJournalCommand(
   if (sub === 'diff') {
     const path = flagValue(rest, '--path');
     const agent = flagValue(rest, '--agent');
+    // Issue #126: the `--json` content bound. Validated on every diff
+    // invocation (fail-closed like --path/--agent), applied to `--json`
+    // only — the human path renders hunks, not whole files.
+    const maxContent = flagValue(rest, '--max-content-bytes');
     if (path === 'missing' || agent === 'missing') {
       deps.out('error: --path/--agent need a value');
+      return 1;
+    }
+    if (maxContent === 'missing') {
+      deps.out('error: --max-content-bytes needs a value');
+      return 1;
+    }
+    if (maxContent !== undefined && !/^\d+$/.test(maxContent)) {
+      deps.out(
+        'error: --max-content-bytes needs a non-negative integer (0 = unlimited)',
+      );
       return 1;
     }
     const changes = diffEntries(store, {
@@ -184,7 +203,21 @@ export async function runJournalCommand(
       ...(agent === undefined ? {} : { agent }),
     });
     if (rest.includes('--json')) {
-      deps.out(JSON.stringify(changes, null, 2));
+      // One change's before/after can be a whole file: the envelope clips
+      // each side at 64 KiB by default (marker line + `contentTruncated`),
+      // and `--max-content-bytes 0` restores the unbounded form for
+      // scripting.
+      const maxBytes =
+        maxContent === undefined
+          ? DEFAULT_MAX_CONTENT_BYTES
+          : Number(maxContent);
+      deps.out(
+        JSON.stringify(
+          changes.map((c) => clipChangeContent(c, maxBytes)),
+          null,
+          2,
+        ),
+      );
       return 0;
     }
     if (changes.length === 0) {

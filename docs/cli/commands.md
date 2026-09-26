@@ -540,12 +540,12 @@ session dirs, one entry at a time. The workspace journal is not affected
 unset — or `0` — the log path writes nothing: reads never mutate the store.
 
 ```
-usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>
+usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
-| `diff [--path <p>] [--agent <id>] [--json] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent`/`--session` without a value exits 1. |
+| `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, exits 1. |
 | `undo [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
@@ -586,7 +586,31 @@ targets `kubic-undo` records: it restores real agent work once and then
 reports `already undone` without appending, so repeating it never re-undoes
 the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
 | `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
-| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
+| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
+
+**Display truthfulness (issue #126).** Three display-level guarantees on the
+read side:
+
+- **Worktree branches resolve.** A linked worktree's `.git` is a pointer
+  file (`gitdir: <path>`), not a directory — exactly the trees
+  `kubic orchestrate` creates and retains. The `status` repo line follows
+  the pointer to the real `HEAD` (pure file reads; no `git` invocation) so
+  a live branch is named instead of `(detached)`. A dangling or malformed
+  pointer reports `branch (unknown)` — named, never a throw — and a
+  genuinely detached `HEAD` still reports `(detached)`. The `dirty` probe
+  is unchanged (`git status --porcelain`).
+- **Hunk counts are truthful.** Every `@@ -a,b +c,d @@` header in `diff`
+  output counts exactly the lines the hunk prints for its side (`-` and
+  context for `a`, `+` and context for `b`); the counts accumulate while
+  emitting, so a consumer (the TUI view, a future patch applier) can trust
+  them.
+- **`--json` is bounded.** `diff --json` clips each side of every change at
+  **64 KiB** (UTF-8 bytes) by default; a clipped side ends with the marker
+  line `[kubic: content truncated at 65536 bytes]` and that change carries
+  `contentTruncated: true`. `--max-content-bytes <n>` sets the bound and
+  `--max-content-bytes 0` means **unlimited** (the unbounded pre-#126
+  behavior, for scripting). The bound applies to `--json` only — the human
+  diff renders hunks, never whole files, and is never clipped.
 
 ### End-of-run reconciliation (issue #87)
 

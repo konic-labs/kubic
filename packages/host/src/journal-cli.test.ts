@@ -562,3 +562,166 @@ describe('journal CLI undo record + redo (issue #117)', () => {
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
   });
 });
+
+// Issue #126: the status repo line follows a linked worktree's `gitdir:`
+// pointer — the trees `kubic orchestrate` creates and retains must not
+// report `(detached)` (or a non-repo) for a live branch.
+describe('journal CLI worktree status (issue #126)', () => {
+  it('status names the worktree branch from the gitdir pointer', async () => {
+    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const gitdir = mkdtempSync(join(tmpdir(), 'gd-'));
+    writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/wt-feature\n');
+    writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
+    const lines: string[] = [];
+    const code = await runJournalCommand(['status'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('repo: branch wt-feature');
+  });
+});
+
+// Issue #126: `diff --json` carries full before/after strings, so a session
+// that edited a few large files is a multi-megabyte single line with no
+// bound and no truncation marker. Default: clip each side at 64 KiB with
+// `contentTruncated: true` and a named marker line; `--max-content-bytes 0`
+// is the explicit-unlimited escape hatch for scripting. The human diff
+// renders hunks, not whole files, and is never clipped.
+describe('journal CLI diff --json content bounds (issue #126)', () => {
+  const LIMIT = 64 * 1024;
+  const MARKER = (bytes: number): string =>
+    `\n[kubic: content truncated at ${bytes} bytes]`;
+
+  function seedBig(bytes = 70 * 1024): {
+    journalDir: string;
+    root: string;
+    before: string;
+    after: string;
+  } {
+    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const before = `${'a'.repeat(bytes)}\n`;
+    const after = `${'b'.repeat(bytes)}\n`;
+    new FileJournalStore(journalDir).append({
+      path: 'big.txt',
+      op: 'write',
+      before,
+      after,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+    return { journalDir, root, before, after };
+  }
+
+  interface JsonChange {
+    path: string;
+    before: string | null;
+    after: string | null;
+    contentTruncated?: boolean;
+  }
+
+  async function jsonDiff(
+    args: string[],
+    deps: { journalDir: string; root: string },
+  ): Promise<JsonChange[]> {
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff', '--json', ...args], {
+      ...deps,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    return JSON.parse(lines.join('\n')) as JsonChange[];
+  }
+
+  it('clips both sides at exactly 64 KiB by default, with marker and flag', async () => {
+    const { journalDir, root, before, after } = seedBig();
+    const parsed = await jsonDiff([], { journalDir, root });
+    const change = parsed[0];
+    expect(change?.contentTruncated).toBe(true);
+    const marker = MARKER(LIMIT);
+    expect(change?.before?.endsWith(marker)).toBe(true);
+    expect(change?.after?.endsWith(marker)).toBe(true);
+    const beforePayload = (change?.before ?? '').slice(0, -marker.length);
+    const afterPayload = (change?.after ?? '').slice(0, -marker.length);
+    expect(Buffer.byteLength(beforePayload, 'utf8')).toBe(LIMIT);
+    expect(Buffer.byteLength(afterPayload, 'utf8')).toBe(LIMIT);
+    expect(before.startsWith(beforePayload)).toBe(true);
+    expect(after.startsWith(afterPayload)).toBe(true);
+  });
+
+  it('--max-content-bytes 0 returns the full content byte-identically', async () => {
+    const { journalDir, root, before, after } = seedBig();
+    const parsed = await jsonDiff(['--max-content-bytes', '0'], {
+      journalDir,
+      root,
+    });
+    expect(parsed[0]?.before).toBe(before);
+    expect(parsed[0]?.after).toBe(after);
+    expect(parsed[0]?.contentTruncated).toBe(false);
+  });
+
+  it('--max-content-bytes <n> honors a custom bound', async () => {
+    const { journalDir, root } = seedBig();
+    const parsed = await jsonDiff(['--max-content-bytes', '100'], {
+      journalDir,
+      root,
+    });
+    const marker = MARKER(100);
+    expect(parsed[0]?.contentTruncated).toBe(true);
+    expect(parsed[0]?.before?.endsWith(marker)).toBe(true);
+    expect(
+      Buffer.byteLength(
+        (parsed[0]?.before ?? '').slice(0, -marker.length),
+        'utf8',
+      ),
+    ).toBe(100);
+  });
+
+  it('small content is untouched and contentTruncated is false', async () => {
+    const { journalDir, root } = setup();
+    const parsed = await jsonDiff([], { journalDir, root });
+    expect(parsed[0]?.before).toBe('v1\n');
+    expect(parsed[0]?.after).toBe('v2\n');
+    expect(parsed[0]?.contentTruncated).toBe(false);
+  });
+
+  it('the human diff is never clipped', async () => {
+    const { journalDir, root, before, after } = seedBig();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain(`-${before.split('\n')[0] ?? ''}`);
+    expect(text).toContain(`+${after.split('\n')[0] ?? ''}`);
+    expect(text).not.toContain('[kubic: content truncated');
+  });
+
+  it('a missing or malformed bound exits 1 with a named error', async () => {
+    const { journalDir, root } = setup();
+    for (const args of [
+      ['--max-content-bytes'],
+      ['--max-content-bytes', 'nope'],
+      ['--max-content-bytes', '-1'],
+    ]) {
+      const lines: string[] = [];
+      expect(
+        await runJournalCommand(['diff', '--json', ...args], {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        }),
+      ).toBe(1);
+      expect(lines.join('\n')).toContain('--max-content-bytes');
+    }
+  });
+});

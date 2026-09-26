@@ -222,15 +222,30 @@ export function serializeOrchestratorToggle(
 }
 
 export function parseOrchestratorToggle(raw: string): OrchestratorToggleState {
-  const parsed = JSON.parse(raw) as OrchestratorToggleState;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    // Invalid JSON (a bare string, truncated model output) is the equally
+    // likely sibling of a wrong shape: the same named toolset error, with
+    // the parse message folded in — never a raw SyntaxError escaping as an
+    // unclassified harness fault (issue #132).
+    throw new ManagerToolsetError(
+      `invalid orchestrator toggle payload: not JSON (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    typeof parsed.on !== 'boolean'
+    typeof (parsed as { on?: unknown }).on !== 'boolean'
   ) {
     throw new ManagerToolsetError('invalid orchestrator toggle payload');
   }
-  return { on: parsed.on, scope: 'session', persisted: true };
+  return {
+    on: (parsed as { on: boolean }).on,
+    scope: 'session',
+    persisted: true,
+  };
 }
 
 export function formatModeIndicator(mode: OrchestratorMode): string {

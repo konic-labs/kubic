@@ -1,5 +1,5 @@
 // Slice A: approval policy + durable service (issue #16).
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -389,6 +389,30 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     const store = new FileApprovalStore(dir);
     expect(store.load()).toEqual({});
     expect(store.loadPosture()).toEqual({ fullAccess: false });
+  });
+
+  it('cleans its tmp file when a posture rename fails, and rethrows (issue #132)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    // A rename failure reachable without mocks: the destination exists as
+    // a DIRECTORY, so the tmp write succeeds and rename(tmp, posture.json)
+    // fails (EISDIR) — the disk-full/permission shape the cleanup exists
+    // for. save() already cleaned up on this path; savePosture must mirror
+    // it instead of stranding `posture.json.<pid>.tmp` beside the session.
+    mkdirSync(join(dir, 'posture.json'));
+    const store = new FileApprovalStore(dir);
+    let caught: unknown;
+    try {
+      store.savePosture({ fullAccess: true });
+    } catch (error) {
+      caught = error;
+    }
+    // Both halves: the original failure surfaces…
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as NodeJS.ErrnoException).code).toBe('EISDIR');
+    // …and no tmp file is stranded beside the posture file.
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual(
+      [],
+    );
   });
 
   it('detects shell-redirection outside-writes and redacts summaries', () => {

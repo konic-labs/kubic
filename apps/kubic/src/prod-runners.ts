@@ -56,7 +56,6 @@ import {
   openSessionStore,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
-import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
@@ -334,18 +333,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       }),
     workers: async (rest) => {
       // Issue #94: the rows come from the SHARED durable record the
-      // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`),
-      // not from a fresh empty `WorkerRegistry()` — that could only ever
-      // list zero rows while a run was live, which is the defect. The
-      // registry still backs the orchestrator's own in-process view.
-      // The §78 usage remap (1 → 2) lives in the dispatch, after this
-      // runner returns.
-      const registry = new WorkerRegistry();
+      // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`).
+      // The in-process WorkerRegistry is the orchestrator run's own view —
+      // a fresh CLI process's registry is always empty, so a registry
+      // branch here could only ever be dead (issue #94's finding, finished
+      // in #132): the CLI reads the durable record directly. The §78 usage
+      // remap (1 → 2) lives in the dispatch, after this runner returns.
       return runWorkersCommand([...rest], {
-        list: () => {
-          const live = registry.list();
-          return live.length > 0 ? live : workersListFromRepo(process.cwd());
-        },
+        list: () => workersListFromRepo(process.cwd()),
         out,
         debug,
       });

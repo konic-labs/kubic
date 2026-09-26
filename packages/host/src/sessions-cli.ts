@@ -6,6 +6,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -41,7 +42,7 @@ export function defaultSessionsRoot(): string {
 }
 
 const SESSIONS_USAGE =
-  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
+  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
 
 function usage(out: (line: string) => void): number {
   out(SESSIONS_USAGE);
@@ -65,51 +66,65 @@ interface PruneOptions {
 const PRUNE_WINDOW_ERROR =
   'error: sessions prune needs a keep window: pass --keep-days <n> or set [session] retentionDays in config (no default — deletion stays explicit)';
 
+// Issue #127: shared parser specs. `create`/`attach` keep their historical
+// leniency for unknown flags (only their own flags are read); `prune`
+// keeps its fail-closed refusal of unknown flags and stray operands.
+const PRUNE_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--keep-days', takes: 'value' },
+  { name: '--keep-session', takes: 'value', repeat: true },
+  { name: '--yes', takes: 'boolean' },
+  { name: '--dry-run', takes: 'boolean' },
+];
+
+const CREATE_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--cwd', takes: 'value' },
+  { name: '--dangerously-skip-approvals', takes: 'boolean' },
+];
+
+const ATTACH_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--tail', takes: 'value' },
+];
+
 function parsePruneArgs(
   rest: string[],
   out: (line: string) => void,
 ): PruneOptions | undefined {
-  const parsed: PruneOptions = { keep: [], yes: false, dryRun: false };
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i] as string;
-    if (arg === '--yes') {
-      parsed.yes = true;
-      continue;
-    }
-    if (arg === '--dry-run') {
-      parsed.dryRun = true;
-      continue;
-    }
-    if (arg === '--keep-days' || arg === '--keep-session') {
-      const value = rest[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        out(`error: ${arg} needs a value`);
-        return undefined;
-      }
-      i += 1;
-      if (arg === '--keep-days') {
-        if (!/^\d+$/.test(value)) {
-          out('error: --keep-days needs a non-negative integer of days');
-          return undefined;
-        }
-        parsed.keepDays = Number(value);
-      } else {
-        if (!SESSION_ID_PATTERN.test(value)) {
-          out(`error: invalid --keep-session id ${JSON.stringify(value)}`);
-          return undefined;
-        }
-        parsed.keep.push(value);
-      }
-      continue;
-    }
-    if (arg.startsWith('--')) {
-      out(`error: unknown flag ${arg}`);
-      return undefined;
-    }
-    out(`error: unexpected argument ${JSON.stringify(arg)}`);
+  const parsed = parseFlagArgs(rest, PRUNE_FLAG_SPEC);
+  for (const flag of parsed.missing) {
+    out(`error: ${flag} needs a value`);
     return undefined;
   }
-  return parsed;
+  if (parsed.unknown.length > 0) {
+    out(`error: unknown flag ${parsed.unknown[0]}`);
+    return undefined;
+  }
+  if (parsed.positional.length > 0) {
+    out(`error: unexpected argument ${JSON.stringify(parsed.positional[0])}`);
+    return undefined;
+  }
+  const parsedOptions: PruneOptions = {
+    keep: [],
+    yes: parsed.values['--yes'] === true,
+    dryRun: parsed.values['--dry-run'] === true,
+  };
+  const keepDaysRaw = parsed.values['--keep-days'] as string | undefined;
+  if (keepDaysRaw !== undefined) {
+    if (!/^\d+$/.test(keepDaysRaw)) {
+      out('error: --keep-days needs a non-negative integer of days');
+      return undefined;
+    }
+    parsedOptions.keepDays = Number(keepDaysRaw);
+  }
+  const keepSessions =
+    (parsed.values['--keep-session'] as string[] | undefined) ?? [];
+  for (const value of keepSessions) {
+    if (!SESSION_ID_PATTERN.test(value)) {
+      out(`error: invalid --keep-session id ${JSON.stringify(value)}`);
+      return undefined;
+    }
+  }
+  parsedOptions.keep = [...keepSessions];
+  return parsedOptions;
 }
 
 function lockSince(startedAt: number | undefined): string {
@@ -225,16 +240,12 @@ export async function runSessionsCommand(
   if (sub === 'prune') return runPruneCommand(rest, deps, root);
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (sub === 'create') {
-    let cwd = process.cwd();
-    const flag = rest.indexOf('--cwd');
-    if (flag !== -1) {
-      const value = rest[flag + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --cwd needs a value');
-        return 1;
-      }
-      cwd = value;
+    const parsed = parseFlagArgs(rest, CREATE_FLAG_SPEC);
+    if (parsed.missing.includes('--cwd')) {
+      deps.out('error: --cwd needs a value');
+      return 1;
     }
+    const cwd = (parsed.values['--cwd'] as string | undefined) ?? process.cwd();
     const session = await createSession(store, cwd, BACKGROUND_CONTEXT);
     const id = session.metadata.id;
     await session.close(BACKGROUND_CONTEXT);
@@ -242,7 +253,7 @@ export async function runSessionsCommand(
     // Session-scoped full-access: recorded in the session dir (posture.json)
     // and indicated on stdout. Fresh sessions start safe — the flag must be
     // passed explicitly every time.
-    if (rest.includes('--dangerously-skip-approvals')) {
+    if (parsed.values['--dangerously-skip-approvals'] === true) {
       const approvalStore = new FileApprovalStore(join(root, id));
       const posture = enableFullAccess(
         approvalStore,
@@ -262,7 +273,8 @@ export async function runSessionsCommand(
     return 0;
   }
   if (sub === 'attach') {
-    const id = rest[0];
+    const parsed = parseFlagArgs(rest, ATTACH_FLAG_SPEC);
+    const id = parsed.positional[0];
     if (id === undefined) {
       deps.out('error: attach needs a session id');
       return 1;
@@ -272,14 +284,16 @@ export async function runSessionsCommand(
       return 1;
     }
     let tail = 10;
-    const flag = rest.indexOf('--tail');
-    if (flag !== -1) {
-      const parsed = Number(rest[flag + 1]);
-      if (!Number.isInteger(parsed) || parsed < 0) {
+    const tailRaw = parsed.values['--tail'] as string | undefined;
+    if (tailRaw !== undefined || parsed.missing.includes('--tail')) {
+      // A starved --tail reports the same line as a malformed one (the
+      // pre-migration Number(undefined) path printed exactly this).
+      const parsedTail = Number(tailRaw);
+      if (!Number.isInteger(parsedTail) || parsedTail < 0) {
         deps.out('error: --tail needs a non-negative integer');
         return 1;
       }
-      tail = parsed;
+      tail = parsedTail;
     }
     try {
       const session = await attachSession(store, id, BACKGROUND_CONTEXT);

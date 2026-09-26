@@ -62,6 +62,25 @@ Child output is capped at two independent layers, both keeping the **tail**
   consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
+### Bash op: bash-preferred, sh fallback (issue #123)
+
+The `bash` op runs **bash when the system has it** — not `sh`, so
+bashisms (`[[ ]]`, `local`, arrays) work wherever bash exists. Resolution
+is lazy and cached per process: the first command attempts `bash`, and a
+spawn that settles exit 127 with bash's own "not found" (the `env.ts`
+ENOENT hardening from issue #85 is what puts that message in stderr)
+degrades once to `sh` and remembers — a single detect-and-retry inside
+`execute()`, before the registry memoizes under `op-result-bash`, so a
+retried command memoizes exactly once. Detection and execution both go
+through `ctx.env.shell` — no `child_process` in ops, `FakeExecutionEnv`
+scripts the answer. The Windows `cmd /d /s /c` path is unchanged.
+
+`BashResult.shell: string` names what actually ran: `'bash' | 'sh' |
+'cmd'`. The retry handle is re-registered via `ctx.trackHandle` so
+timeout/abort kill whichever handle is live. The test seam
+`__setResolvedShellForTests` (exported from `ops/bash.ts`, never
+re-exported) pins or resets the per-process resolution.
+
 ## Contracts
 
 ### `AgentResult` (`result.ts`, §68)

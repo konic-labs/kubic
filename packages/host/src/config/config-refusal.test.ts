@@ -55,6 +55,20 @@ describe('a refused config fails closed on the agent-executing modes', () => {
     },
   );
 
+  it('stops `kubic replay`: re-execution tiers consume the effective config', () => {
+    const exit = configRefusalExit(
+      refused("layer 'project': unknown section '[bogus]'"),
+      'replay',
+    );
+    expect(exit).toBe(1);
+  });
+
+  it('names the replay refusal so the operator can fix the key', () => {
+    const result = refused("layer 'project': unknown section '[bogus]'");
+    expect(configRefusalExit(result, 'replay')).toBe(1);
+    expect(result.error).toContain("unknown section '[bogus]'");
+  });
+
   it('does not interfere when the config loaded', () => {
     expect(configRefusalExit(loaded(), 'run')).toBeUndefined();
   });

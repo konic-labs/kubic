@@ -5,6 +5,7 @@
 
 import { basename, dirname, join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import {
@@ -40,23 +41,36 @@ export function defaultJournalDir(root: string): string {
 }
 
 const JOURNAL_USAGE =
-  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>';
+  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--session <id>] [--] [<path>] | log [--session <id>] | status [--session <id>]>';
 
 function usage(out: (line: string) => void): number {
   out(JOURNAL_USAGE);
   return 1;
 }
 
-function flagValue(
-  args: string[],
-  flag: string,
-): string | undefined | 'missing' {
-  const at = args.indexOf(flag);
-  if (at === -1) return undefined;
-  const value = args[at + 1];
-  if (value === undefined || value.startsWith('--')) return 'missing';
-  return value;
-}
+// Issue #127: the shared parser (core/src/flags.ts) replaces the
+// indexOf-based flagValue helper. Per-subcommand specs keep each
+// subcommand's surface exact: `undo` never consumes a --path value (its
+// bare operand is the undo scope, as before), while `diff` owns the
+// diff-only value flags.
+const JOURNAL_GLOBAL_SPEC: readonly FlagSpec[] = [
+  { name: '--session', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
+
+const JOURNAL_DIFF_SPEC: readonly FlagSpec[] = [
+  ...JOURNAL_GLOBAL_SPEC,
+  { name: '--path', takes: 'value' },
+  { name: '--agent', takes: 'value' },
+  { name: '--max-content-bytes', takes: 'value' },
+];
+
+const JOURNAL_UNDO_SPEC: readonly FlagSpec[] = [
+  ...JOURNAL_GLOBAL_SPEC,
+  { name: '--step', takes: 'boolean' },
+  { name: '--dry-run', takes: 'boolean' },
+  { name: '--force', takes: 'boolean' },
+];
 
 // Session ids are path segments under the sessions root: the shared
 // run-cli SESSION_ID_PATTERN ([A-Za-z0-9_-]) is checked before any path
@@ -159,11 +173,15 @@ export async function runJournalCommand(
   const [sub, ...rest] = args;
   if (sub === undefined) return usage(deps.out);
   const root = deps.root ?? process.cwd();
-  const session = flagValue(rest, '--session');
-  if (session === 'missing') {
+  // The session store selector is shared by all four subcommands; the
+  // global spec keeps `--json` so the hint line below can read it.
+  const global = parseFlagArgs(rest, JOURNAL_GLOBAL_SPEC);
+  if (global.missing.includes('--session')) {
     deps.out('error: --session needs a value');
     return 1;
   }
+  const session = global.values['--session'] as string | undefined;
+  const json = global.values['--json'] === true;
   const journalDir = resolveJournalDir(deps, root, session);
   if (typeof journalDir === 'string') {
     deps.out(journalDir);
@@ -172,23 +190,29 @@ export async function runJournalCommand(
   // Issue #125: a fallback store is named before any subcommand output so
   // the resolution is never silent. `--json` keeps its parseable envelope —
   // the refs there are self-describing, so no line is added.
-  if (journalDir.latestSessionId !== undefined && !rest.includes('--json')) {
+  if (journalDir.latestSessionId !== undefined && !json) {
     deps.out(`session: ${journalDir.latestSessionId}`);
   }
   const store = new FileJournalStore(journalDir.dir);
 
   if (sub === 'diff') {
-    const path = flagValue(rest, '--path');
-    const agent = flagValue(rest, '--agent');
+    const parsed = parseFlagArgs(rest, JOURNAL_DIFF_SPEC);
+    const path = parsed.values['--path'] as string | undefined;
+    const agent = parsed.values['--agent'] as string | undefined;
     // Issue #126: the `--json` content bound. Validated on every diff
     // invocation (fail-closed like --path/--agent), applied to `--json`
     // only — the human path renders hunks, not whole files.
-    const maxContent = flagValue(rest, '--max-content-bytes');
-    if (path === 'missing' || agent === 'missing') {
+    const maxContent = parsed.values['--max-content-bytes'] as
+      | string
+      | undefined;
+    if (
+      parsed.missing.includes('--path') ||
+      parsed.missing.includes('--agent')
+    ) {
       deps.out('error: --path/--agent need a value');
       return 1;
     }
-    if (maxContent === 'missing') {
+    if (parsed.missing.includes('--max-content-bytes')) {
       deps.out('error: --max-content-bytes needs a value');
       return 1;
     }
@@ -202,7 +226,7 @@ export async function runJournalCommand(
       ...(path === undefined ? {} : { path }),
       ...(agent === undefined ? {} : { agent }),
     });
-    if (rest.includes('--json')) {
+    if (json) {
       // One change's before/after can be a whole file: the envelope clips
       // each side at 64 KiB by default (marker line + `contentTruncated`),
       // and `--max-content-bytes 0` restores the unbounded form for
@@ -246,17 +270,18 @@ export async function runJournalCommand(
   }
 
   if (sub === 'undo') {
-    const dryRun = rest.includes('--dry-run');
-    const step = rest.includes('--step');
+    // The undo spec owns the undo flags only: a `--path`-style token stays
+    // unknown here and its bare operand remains the positional undo scope
+    // (today's rule, preserved).
+    const parsed = parseFlagArgs(rest, JOURNAL_UNDO_SPEC);
+    const dryRun = parsed.values['--dry-run'] === true;
+    const step = parsed.values['--step'] === true;
     // Issue #108: --force overrides the staleness refusal per-invocation;
     // nothing persists it — the next undo re-checks by default.
-    const force = rest.includes('--force');
-    // The --session value is a store selector, not a path scope: skip the
-    // flag and its value before looking for the positional <path>.
-    const scopeArgs = rest.filter(
-      (a, i) => a !== '--session' && rest[i - 1] !== '--session',
-    );
-    const positional = scopeArgs.find((a) => !a.startsWith('--'));
+    const force = parsed.values['--force'] === true;
+    // The --session value is a store selector, not a path scope: the parser
+    // consumes it, so the first operand is the <path> scope.
+    const positional = parsed.positional[0];
     const plan = planUndo(
       store,
       {
@@ -333,7 +358,7 @@ export async function runJournalCommand(
     const lines = renderLog(store);
     // `--json` stays the raw entries array (the count is derivable from the
     // `unattributed` flags there); the human path gains the summary line.
-    if (rest.includes('--json')) {
+    if (json) {
       deps.out(JSON.stringify(store.entries(), null, 2));
       return 0;
     }

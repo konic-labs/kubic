@@ -5,8 +5,8 @@
 // gate additionally refuses re-invocation under the same invocation id.
 
 import type {
-  Provenance,
   ProcessHandle,
+  Provenance,
   ShellResult,
 } from '../../../exec/src/env.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';

@@ -42,7 +42,10 @@ import {
   serializeSpanArtifact,
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
-import { createWorkerMailboxSeat } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import {
+  createWorkerMailboxSeat,
+  TIMEOUT_REASON_MARKER,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import type {
   ResolvedRole,
   RoleLayerInput,
@@ -786,13 +789,26 @@ export async function runHeadlessPrompt(
       // reporting exit 0 would be the dishonest half of this issue. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
       // to the §78 approval terminus (exit 4) with the refusal named.
+      //
+      // Issue #129: exit 4 covers the whole approval terminus; the STATUS is
+      // the honest half. A denial whose reason carries the timeout marker is
+      // a bound that elapsed, everything else is a refusal — a script can
+      // tell "the operator said no" from "nobody answered in time". The
+      // timeout latch (#110) has not yet put a structured `code` on
+      // RecordedApprovalDeny, so classification keys off the orchestrator's
+      // one TIMEOUT_REASON_MARKER string (the same one classifyVerdict uses)
+      // rather than a private regex that could drift from the producers.
       const denials = installed.denials();
       if (denials.length > 0) {
         const named = denials
           .map((denial) => `${denial.capability} (${denial.toolName})`)
           .join(', ');
-        const message = `approval refused: ${named} — ${denials[0]?.reason ?? ''}`;
-        return finished(id, 'approval_timed_out', message, message);
+        const first = denials[0]?.reason ?? '';
+        const message = `approval refused: ${named} — ${first}`;
+        const terminus = first.includes(TIMEOUT_REASON_MARKER)
+          ? 'approval_timed_out'
+          : 'approval_denied';
+        return finished(id, terminus, message, message);
       }
       const record = asResultRecord(driven.outcome);
       if (record === null) {

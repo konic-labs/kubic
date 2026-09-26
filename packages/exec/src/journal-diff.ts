@@ -16,6 +16,12 @@ export interface FileChange {
   reversible: boolean;
   before: string | null;
   after: string | null;
+  // Issue #111: before/after content is unexpectedly missing while its hash
+  // is recorded (corrupt or torn blob, or a delta that cannot be
+  // reconstructed) — surfaced so the operator can tell "content is what I
+  // think it is" from "the journal lost it". Designed absences (unattributed
+  // entries' hash-only pre-images, deletes' null after-side) are not corrupt.
+  corrupt: boolean;
 }
 
 export interface DiffFilter {
@@ -42,6 +48,13 @@ export function diffEntries(
     if (first === undefined || last === undefined) continue;
     const before = store.readBefore(first);
     const after = store.readAfter(last);
+    // "Unexpectedly null while hashes exist" (issue #111): unattributed
+    // entries legitimately carry a hash-only pre-image (no before-blob by
+    // design), so that absence is not corruption; everything else missing
+    // under a recorded hash is.
+    const beforeLost =
+      first.beforeHash !== null && before === null && first.unattributed !== true;
+    const afterLost = last.afterHash !== null && after === null;
     out.push({
       path,
       op: last.op,
@@ -53,6 +66,7 @@ export function diffEntries(
       reversible: before !== null,
       before,
       after,
+      corrupt: beforeLost || afterLost,
     });
   }
   return out;
@@ -102,6 +116,9 @@ export function renderDiff(changes: FileChange[]): string {
     out.push(`--- a/${c.path}`);
     out.push(`+++ b/${c.path}`);
     out.push(`# ${who}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`);
+    // Corruption is named, never silent (issue #111): the marker tells the
+    // operator the hunk below may be incomplete rather than faithful.
+    if (c.corrupt) out.push('# [corrupt journal content]');
     out.push(...unifiedHunks(c.before ?? '', c.after ?? ''));
   }
   return out.join('\n');

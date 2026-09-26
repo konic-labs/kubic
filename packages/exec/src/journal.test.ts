@@ -98,6 +98,13 @@ describe('journal store (issue #17, slice A)', () => {
     expect(store.readBefore(recorded)).toBe(before);
   });
 
+  it('applyDelta returns null on malformed delta JSON instead of throwing', () => {
+    // Hash-valid but malformed deltas must never crash a caller
+    // (issue #111): torn content that happens to parse-check fails
+    // closed to null, and callers treat it as missing.
+    expect(applyDelta('a\n', '{torn')).toBe(null);
+  });
+
   it('bounds growth by default: appends enforce the store limits', () => {
     const store = new FileJournalStore(tmpRoot(), { maxBytes: 12 });
     store.append(entry({ path: 'a.txt', after: 'aaaaaa\n' }));

@@ -171,22 +171,29 @@ export function encodeDelta(before: string, after: string): string {
   return JSON.stringify(ops);
 }
 
-export function applyDelta(before: string, delta: string): string {
-  const lines = before.split('\n');
-  const ops = JSON.parse(delta) as DeltaOp[];
-  const out: string[] = [];
-  let at = 0;
-  for (const op of ops) {
-    if ('eq' in op) {
-      out.push(...lines.slice(at, at + op.eq));
-      at += op.eq;
-    } else if ('del' in op) {
-      at += op.del;
-    } else {
-      out.push(...op.ins);
+export function applyDelta(before: string, delta: string): string | null {
+  try {
+    const lines = before.split('\n');
+    const ops = JSON.parse(delta) as DeltaOp[];
+    const out: string[] = [];
+    let at = 0;
+    for (const op of ops) {
+      if ('eq' in op) {
+        out.push(...lines.slice(at, at + op.eq));
+        at += op.eq;
+      } else if ('del' in op) {
+        at += op.del;
+      } else {
+        out.push(...op.ins);
+      }
     }
+    return out.join('\n');
+  } catch {
+    // Defensive depth (issue #111): hash verification on blob reads should
+    // already catch torn deltas, but a hash-valid yet malformed delta must
+    // never crash a caller — fail closed to null, callers treat as missing.
+    return null;
   }
-  return out.join('\n');
 }
 
 export class FileJournalStore {

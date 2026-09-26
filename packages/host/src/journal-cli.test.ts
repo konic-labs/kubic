@@ -190,3 +190,41 @@ describe('journal CLI undo staleness (issue #108)', () => {
     expect(usageLines.join('\n')).toContain('--force');
   });
 });
+
+// Blob integrity (issue #111): a torn delta blob must print the corrupt
+// marker and exit 0 — a readable journal is worth more than a crash.
+describe('journal CLI corrupt content (issue #111)', () => {
+  function seedTornDelta(): { journalDir: string; root: string } {
+    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const store = new FileJournalStore(journalDir);
+    const before = 'b\n'.repeat(40_000);
+    const after = 'c\n'.repeat(40_000);
+    const recorded = store.append({
+      path: 'big.txt',
+      op: 'write',
+      before,
+      after,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    writeFileSync(join(journalDir, 'blobs', recorded.deltaHash ?? ''), '{torn');
+    return { journalDir, root };
+  }
+
+  it('diff prints the corrupt marker and exits 0 over a torn delta blob', async () => {
+    // Today: uncaught SyntaxError kills `kubic diff` with a raw stack.
+    const { journalDir, root } = seedTornDelta();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['diff'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('# [corrupt journal content]');
+  });
+});

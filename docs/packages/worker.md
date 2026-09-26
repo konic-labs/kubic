@@ -82,6 +82,41 @@ timeout/abort kill whichever handle is live. The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.
 
+### Read/edit bounds (issue #122)
+
+Two hard bounds keep one tool call from costing the whole file in memory
+(the journal has hashed bounded since #107; the ops now match):
+
+- **`read` — `READ_MAX_BYTES` (8 MiB) of I/O, `READ_CHUNK_BYTES` (512 KiB)
+  per buffer:** with a ranged-read seam (`FileSystem.readFileRange` — #107's
+  file-bridge seam extended to `ExecutionEnv`), `readWindowed` seeks to the
+  `offset` line by counting newlines chunk by chunk and collects the window
+  with one `StringDecoder` across chunks — the window costs the window, not
+  the file. Seams without `readFileRange` fall back to a whole read
+  (correct but unbounded) and the result shape never changes. The result's
+  honesty contract: `truncated: false` guarantees `totalLines` is exact
+  AND `content` is complete for the requested region. `truncated: true`
+  whenever the scan stopped before EOF — byte budget, line cap, or
+  limit-stopped region collection — and `totalLines` is then only a lower
+  bound ("lines confirmed so far"): a line that starts within the scanned
+  bytes but extends beyond the stop still counts (a 9 MiB single line cut
+  off by the budget reports `totalLines: 1`), while a line that never
+  started does not. That is distinct from an offset whose line lies beyond
+  the budget — the empty-region case, which returns empty content with
+  `truncated: true`. When the scan did reach EOF, `truncated` reflects
+  only output cutting (the line window and `READ_MAX_LINES`) — an explicit
+  `limit` is the requested region, not truncation.
+- **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
+  bound with a named `file_too_large` OpError (op failure-code vocabulary,
+  `ops/types.ts`) naming the size — before any content allocation, journal
+  untouched. The boundary is exact: 8 MiB edits fine, 8 MiB + 1 refuses.
+
+The reason for both: `read` capped only its output and `edit` capped
+nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the
+whole file in memory (plus its UTF-8 decode) on a path the model triggers
+with a single tool call. Text ops stay text; for oversized files the
+refusal names targeted shell tooling as the actionable alternative.
+
 ## Contracts
 
 ### `AgentResult` (`result.ts`, §68)

@@ -70,14 +70,31 @@ export interface OpErrorDetails {
   message: string;
 }
 
+// The named failure-code vocabulary `OpError.code` draws from (§52).
+// Model-readable and stable: the model routes on these names, so each is a
+// distinct, actionable refusal — never a generic catch-all. `file_too_large`
+// (issue #122) is the pre-allocation size refusal for edit.
+export const OP_FAILURE_CODES = [
+  'invalid_args',
+  'not_found',
+  'no_match',
+  'ambiguous_match',
+  'file_too_large',
+  'journal_failed',
+  'not_a_repo',
+  'tool_failed',
+] as const;
+
+export type OpFailureCode = (typeof OP_FAILURE_CODES)[number];
+
 export type OpResult<TResult> =
   | { ok: true; invocation: InvocationRef; result: TResult }
   | { ok: false; invocation: InvocationRef; error: OpErrorDetails };
 
 export class OpError extends Error {
-  readonly code: string;
+  readonly code: OpFailureCode;
 
-  constructor(code: string, message: string) {
+  constructor(code: OpFailureCode, message: string) {
     super(message);
     this.name = 'OpError';
     this.code = code;

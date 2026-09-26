@@ -16,9 +16,12 @@
 
 import { spawn } from 'node:child_process';
 import {
+  closeSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -54,6 +57,13 @@ export interface FileSystem {
   rename(from: string, to: string): void;
   listDir(path: string): string[];
   stat(path: string): StatInfo;
+  /**
+   * Read `[start, end)` bytes (issue #122; mirrors #107's FileBridge seam).
+   * Optional so existing seams stay valid; absent = whole-file reads only
+   * (test doubles). The node seam implements it, so every production read
+   * windowing is bounded.
+   */
+  readFileRange?(path: string, start: number, end: number): Uint8Array;
 }
 
 export interface ShellResult {
@@ -156,6 +166,20 @@ class NodeFileSystem implements FileSystem {
       isDirectory: st.isDirectory(),
       size: st.size,
     };
+  }
+
+  // Range read (issue #122): same openSync/readSync/closeSync + confine()
+  // technique as #107's file bridge — one chunk of memory, not the file.
+  readFileRange(path: string, start: number, end: number): Uint8Array {
+    const handle = openSync(confine(this.cwd, path), 'r');
+    try {
+      const length = Math.max(0, end - start);
+      const buffer = Buffer.allocUnsafe(length);
+      const read = readSync(handle, buffer, 0, length, start);
+      return buffer.subarray(0, read);
+    } finally {
+      closeSync(handle);
+    }
   }
 }
 

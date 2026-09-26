@@ -82,12 +82,35 @@ function countOccurrences(text: string, needle: string): number {
   }
 }
 
+// Above this size the edit op refuses before allocating anything (issue
+// #122): split/join over a huge file is an unbounded allocation the model
+// can trigger with one tool call. 8 MiB matches the read bound.
+export const EDIT_MAX_BYTES = 8 * 1024 * 1024;
+
 export const editOperation: Operation<EditArgs, EditResult> = {
   name: 'edit',
   description: 'Replace exact text matches atomically (tmp + rename)',
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {
+    // Size guard first (issue #122): stat, refuse non-files as not_found
+    // (today's behavior), and refuse oversized files with a named
+    // `file_too_large` OpError naming the size — BEFORE any content
+    // allocation. The journal stays untouched on refusal.
+    let size = 0;
+    try {
+      const info = ctx.env.fs.stat(args.path);
+      if (!info.isFile) throw new Error('not a file');
+      size = info.size;
+    } catch {
+      throw new OpError('not_found', `edit: no such file: ${args.path}`);
+    }
+    if (size > EDIT_MAX_BYTES) {
+      throw new OpError(
+        'file_too_large',
+        `edit: ${args.path} is ${size}B — above the ${EDIT_MAX_BYTES}B edit bound; use targeted shell tooling instead`,
+      );
+    }
     let current: string;
     try {
       current = ctx.env.fs.readFile(args.path);

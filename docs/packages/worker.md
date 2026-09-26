@@ -25,7 +25,7 @@ diff touching the boundary for maintainer review.
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionsTouchingWorkspace`, `listSessions` |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
@@ -142,6 +142,14 @@ exists only while a session is actually attached.
 - **Local filesystem only.** O_EXCL atomicity is claimed on local
   filesystems only — no network/shared-disk (NFS/SMB) locking semantics
   are provided or tested.
+- **Read-only liveness view** (issue #119): `sessionLockIsLive(sessionDir)`
+  reports `{pid, startedAt}` while the holder pid is alive — the rail
+  `kubic sessions prune` reads before it would ever delete a session. It is
+  deliberately stronger than the steal rule above (any live holder pid
+  protects, regardless of the lock's age): deletion is unrecoverable, so a
+  reused pid costs at most a skipped prune. A dead holder — or a
+  torn/absent payload — never protects. Liveness is this machine's process
+  table, local filesystem only, like every lock read here.
 - **Repo-level overlap — warning only** (issue #118; §42.5 blind spot). A
   session lock is per session; **different** sessions on one workspace are
   legal. `sessionsTouchingWorkspace` lists the sessions recorded against a

@@ -42,7 +42,11 @@
   undo already unwound the step, nothing is rewritten. In every skipped
   class the exit is 2 and nothing is written for that step.
 - **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
-  usage or op failure (`models --resolve` failure exits 1).
+  usage or op failure (`models --resolve` failure exits 1). `sessions
+  prune` keeps that shape: 0 for a dry run, `nothing to prune`, and a
+  completed prune; 1 for a missing keep window (no `--keep-days`, no
+  `session.retentionDays`), bad flags, a malformed sessions root, or a
+  session that could not be removed.
 - **`kubic --version`**: always 0.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
 - **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,

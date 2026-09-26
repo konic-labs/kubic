@@ -397,7 +397,7 @@ terminal. The renderer's own styling is unaffected.
 Sessions live under `~/.kubic/sessions` by default.
 
 ```
-usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>]>
+usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
 ```
 
 | Subcommand | Meaning |
@@ -405,12 +405,65 @@ usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | li
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a warning — fresh sessions start safe, the flag must be passed explicitly every time. |
 | `list` | One `<id>  <cwd>` line per session. |
 | `attach <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
+| `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`**. See [Session retention](#session-retention-prune) below. |
 
 Missing subcommand exits 1 with the usage line; `attach` without an id
 or with an id outside `[A-Za-z0-9_-]` exits 1; attaching a missing
 session exits 1; attaching a session another process holds live prints
 the lock refusal (issue #118 — the holder's pid and start time are named)
 and exits 1 without reading the transcript.
+
+### Session retention (`prune`)
+
+Everything a run persists stays under `~/.kubic/sessions` until you say
+otherwise: per-session state dirs (`<root>/<id>/` — the journal store,
+`spans.jsonl`, approvals posture, and the session lock) grow for the
+lifetime of the machine, so retention is explicit and opt-in. `prune` is
+the only thing that deletes, and it never deletes what it cannot account
+for:
+
+- **Dry-run is the default.** Without `--yes`, `prune` lists every
+  candidate as `would prune <id> (<bytes>B)` plus the summary
+  `dry run: N session(s) would be pruned (NB) — pass --yes to delete`, and
+  removes nothing. `--dry-run` is the explicit synonym of that default;
+  `--yes` deletes exactly the listed set (`pruned <id> (<bytes>B)` per
+  session, then `pruned N session(s), NB reclaimed`). `--yes` with
+  `--dry-run` contradicts and is refused by name. `nothing to prune`
+  exits 0.
+- **The keep window is never invented.** `--keep-days <n>` (a
+  non-negative integer of days) wins; without it, `session.retentionDays`
+  from config supplies the window; with neither, `prune` exits 1 naming
+  both ways to set one. `--keep-days 0` — or `retentionDays = 0` — means
+  retention is off: nothing is ever pruned.
+- **Age is the session dir's own mtime** (create, attach, and close all
+  bump it): a session is a candidate when that mtime is at or before
+  `now − keepDays`. A session attached recently survives even if the files
+  inside it are old.
+- **A live lock is a hard stop.** A session holding a `lock.json` whose
+  holder pid is alive is never a candidate, even when old and even with
+  `--yes`: it is reported `locked: <id> (held by pid <pid> since <iso>) —
+  skipped`. A **stale** lock (dead holder, or a torn file) never protects.
+  Lock liveness is **process-local**: it reads this machine's process
+  table, so a session held by a run on another machine or in another
+  container is not seen as held (the same local-filesystem-only caveat the
+  lock itself carries — see [worker](../packages/worker.md#session-locking-issue-118)).
+- **`--keep-session <id>`** (repeatable, ids `[A-Za-z0-9_-]`) protects a
+  session by name even when aged; it is reported
+  `kept: <id> (--keep-session)`.
+- **Only session-shaped entries are touched.** Plain files, a stray
+  `lock.json`, names outside `[A-Za-z0-9_-]`, and pi's `--<cwd>--`
+  transcript directories (which hold the `.jsonl` transcripts of every
+  session recorded against that cwd) are never touched. A session that
+  cannot be inspected is skipped and reported
+  (`unreadable: <id> — skipped`), never guessed at. A missing sessions
+  root is a fresh machine: `nothing to prune`, exit 0. A root that exists
+  but cannot be listed refuses by name, exit 1.
+- **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
+  never the workspace journal (`.kubic/journal`), never orchestrator
+  worktrees (`kubic clean` owns those), never anything outside the
+  sessions root. pi's transcript files live beside the state dirs
+  (`<root>/--<cwd>--/<ts>_<id>.jsonl`) and are not part of this command
+  today.
 
 ## `kubic git`
 

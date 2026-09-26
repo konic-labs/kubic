@@ -163,6 +163,34 @@ const DEPLOY =
 // Shell redirection into an absolute target is a write by another name —
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
 const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
+// tee writes its last argument verbatim — the same class as a `>` redirect,
+// so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
+// no redirect fires. Every command segment is scanned (a `|;&` cannot be
+// crossed), so `cp a /etc/b && echo done` cannot hide the write just
+// because it is not the tail segment. Only the FINAL named target of the
+// segment is checked — `tee /etc/x a.txt` is a documented miss, and the
+// direction of every heuristic error is over-triggering (an ask, never a
+// silent grant).
+const TEE_TARGET = /\btee\b([^|;&]*)/gi;
+// cp/mv/install: the FINAL positional argument is the destination — the
+// last-argument heuristic (flags and sources come first). It can point at
+// the wrong token when flags reorder arguments (`cp -t /etc a b`); that
+// limit is stated here and in docs/cli/configuration.md, not silently
+// implied to be exact.
+const COPY_TARGET = /\b(cp|mv|install)\b([^|;&]*)/gi;
+
+// Targets arrive raw from the command string: strip surrounding quotes and
+// trailing delimiters so `> "/etc/cron.d/x"` or `tee '/etc/cron.d/x'` cannot
+// dodge the outside check. Shared by every target-shaped detector
+// (redirect, tee, copy).
+function stripQuotes(target: string): string {
+  return target.replace(/^['"]+|['";,]+$/g, '');
+}
+
+// The target token of a detector segment (last-argument heuristic).
+function lastToken(text: string): string {
+  return text.trim().split(/\s+/).pop() ?? '';
+}
 
 export function detectTriggers(
   toolName: string,
@@ -190,9 +218,26 @@ export function detectTriggers(
     if (redirect !== null && redirect[2] !== undefined) {
       // Targets arrive raw: strip surrounding quotes and trailing
       // delimiters so `> "/etc/cron.d/x"` cannot dodge the outside check.
-      const target = redirect[2].replace(/^['"]+|['";,]+$/g, '');
+      const target = stripQuotes(redirect[2]);
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
+      }
+    }
+    // Shell-side writes by another name (issue #131): tee and trailing
+    // cp/mv/install targets reach files no `>` ever touches. Both use the
+    // same shared quote-stripping and last-argument target extraction.
+    for (const tee of command.matchAll(TEE_TARGET)) {
+      const target = stripQuotes(lastToken(tee[1] ?? ''));
+      if (target !== '' && ctx.isOutsideWorkspace(target)) {
+        found.push('outside-write');
+        break;
+      }
+    }
+    for (const copy of command.matchAll(COPY_TARGET)) {
+      const target = stripQuotes(lastToken(copy[2] ?? ''));
+      if (target !== '' && ctx.isOutsideWorkspace(target)) {
+        found.push('outside-write');
+        break;
       }
     }
   }

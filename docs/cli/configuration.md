@@ -117,6 +117,39 @@ Every one of those keys has a runtime effect or says so plainly:
 | `session.store` | `jsonl` only today; `sqlite`/`memory` remain a separate decision. |
 | `session.dir` | Parsed and reported; the sessions root is host-owned today. |
 
+### `autoApprove` capabilities
+
+`autoApprove` entries name capabilities — the strings `detectTriggers`
+(`packages/host/src/approvals.ts`) raises on tool calls. The known set
+(`CAPABILITIES`):
+
+| Capability | Raised by |
+| --- | --- |
+| `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …). |
+| `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
+| `git-push` | `git push`, `git remote add/set-url/remove/rename`. |
+| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …). |
+| `install` | Package installs (`npm install`, `pip install`, `brew install`, `apt install`, `cargo install`, `go install`). |
+| `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
+| `outside-write` | A write outside the workspace: the `write`/`edit` tools, a `>`/`>>` redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. |
+| `budget-overrun` | The budget/concurrency overrun flag. |
+| `spawn-agents` | Agent spawning (the orchestrator). |
+
+`requires:<tool>` is accepted alongside them (the per-tool trigger). A name
+outside this set is reported by `kubic doctor` (`policy:approvals`), never
+silently ignored.
+
+Detection is a literal-pattern heuristic over the command string, not
+sandbox-grade shell parsing — the posture is stated, not silent. Documented
+heuristics:
+
+- **Last-argument target** — for `tee`, `cp`, `mv`, and `install`, the
+  last whitespace-separated argument of the command segment is taken as
+  the write target (`cp a /etc/b` → `/etc/b`;
+  `install -m 644 a /usr/local/b` → `/usr/local/b`). A flag that reorders
+  arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
+  only the final named target of a multi-file `tee` is checked.
+
 Two keys are forbidden outright, not defaulted: **`[budgets]`**
 (`BudgetKeyError` — budgets are never defaulted by config) and
 **`[mcp]`** (unsupported in v1; third-party tools/MCP arrive in Phase 4

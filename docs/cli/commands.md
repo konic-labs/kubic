@@ -602,7 +602,10 @@ exits 2. Exit codes are the §78 subset 0/1/2/5/6 (see
 The re-execution tiers consume the effective config like `kubic run`
 (§35.1): the configured permission classes and journal retention govern
 the re-executed lane, and a refused config exits 1 with the config's
-named reason instead of proceeding on defaults.
+named reason instead of proceeding on defaults. The refusal gate is
+command-level: a refused config also blocks the log-only inspection
+tiers (`recorded`, `compare`) — the command exits 1 before any tier
+runs, so a broken config is fixed first rather than inspected around.
 
 ## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
 

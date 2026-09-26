@@ -12,6 +12,7 @@ import {
   readSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -204,5 +205,104 @@ describe('bounded read windowing (issue #122)', () => {
       totalLines: 2,
       truncated: false,
     });
+  });
+});
+
+// totalLines/truncated honesty (issue #122 contract): truncated:false
+// implies totalLines is exact AND content is complete for the requested
+// region. truncated:true whenever the scan stopped before EOF — budget,
+// line cap, or limit-stopped region collection — and totalLines is then a
+// lower bound ("lines confirmed so far").
+describe('totalLines/truncated honesty (issue #122 contract)', () => {
+  it('flags truncated when region collection stops at exactly READ_MAX_LINES newlines at a chunk boundary', async () => {
+    // 1999 × 262-byte lines + one 550-byte line = exactly 524288 bytes =
+    // one chunk: region collection stops with exactly 2000 newlines at the
+    // chunk boundary while 3000 lines follow unseen.
+    const head =
+      Array.from({ length: 1999 }, () => `${'a'.repeat(261)}\n`).join('') +
+      `${'a'.repeat(549)}\n`;
+    const tail = Array.from(
+      { length: 3000 },
+      () => `${'b'.repeat(261)}\n`,
+    ).join('');
+    writeFileSync(join(dir, 'boundary.txt'), head + tail);
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'boundary.txt' },
+      countingEnv(true),
+    );
+    // The count is only the lines the scan confirmed...
+    expect(out.totalLines).toBe(2000);
+    // ...and the flag must say the scan stopped before EOF, never compare
+    // that lower bound against READ_MAX_LINES.
+    expect(out.truncated).toBe(true);
+  });
+
+  it('flags truncated and labels a lower bound on a limit-stopped scan past one chunk', async () => {
+    // 10000 × 100-byte lines (~1 MiB): the first 512 KiB chunk holds 5242
+    // complete lines and starts line 5243.
+    const line = (n: number): string => {
+      const text = String(n).padStart(6, '0').padEnd(99, 'x');
+      return `${text}\n`;
+    };
+    writeFileSync(
+      join(dir, 'wide.txt'),
+      Array.from({ length: 10_000 }, (_, i) => line(i + 1)).join(''),
+    );
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'wide.txt', offset: 1, limit: 10 },
+      countingEnv(true),
+    );
+    // The requested region is delivered in full...
+    expect(out.content).toBe(
+      Array.from({ length: 10 }, (_, i) => line(i + 1)).join(''),
+    );
+    // ...but the scan stopped before EOF, so truncated must be true and the
+    // count is a lower bound of lines confirmed so far (5242 complete +
+    // line 5243 started in the scanned bytes).
+    expect(out.truncated).toBe(true);
+    expect(out.totalLines).toBe(5243);
+  });
+
+  it('counts a line that starts in the scan but extends beyond the budget', async () => {
+    // A 9 MiB single line followed by '\nb\nc\n'; the 8 MiB budget stops
+    // mid-line-1. No real 9 MiB content: the bytes before the tail are a
+    // sparse hole.
+    sparseFile('giant-line.txt', 9 * MIB);
+    const handle = openSync(join(dir, 'giant-line.txt'), 'r+');
+    try {
+      writeSync(handle, Buffer.from('\nb\nc\n'), 0, 5, 9 * MIB);
+    } finally {
+      closeSync(handle);
+    }
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'giant-line.txt', offset: 1 },
+      countingEnv(true),
+    );
+    // The partial line is never handed out...
+    expect(out.content).toBe('');
+    expect(out.truncated).toBe(true);
+    // ...but line 1 starts at byte 0 and extends beyond the budget, so it
+    // counts: at least one line is confirmed.
+    expect(out.totalLines).toBe(1);
+  });
+
+  it('does not count a line that never started when the budget ends on a newline', async () => {
+    // Exactly 8 MiB = 32768 × 256-byte lines: the budget is spent on a
+    // newline, so no 32769th line ever starts within the scanned bytes.
+    writeFileSync(
+      join(dir, 'exact-bound.txt'),
+      Array.from({ length: 32_768 }, () => `${'a'.repeat(255)}\n`).join(''),
+    );
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'exact-bound.txt', offset: 100_000 },
+      countingEnv(true),
+    );
+    expect(out.content).toBe('');
+    expect(out.truncated).toBe(true);
+    expect(out.totalLines).toBe(32_768);
   });
 });

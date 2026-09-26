@@ -13,7 +13,9 @@ export const READ_MAX_LINES = 2000;
 // in READ_CHUNK_BYTES chunks and never more than READ_MAX_BYTES total —
 // the window costs the window, not the file. The seek phase is I/O
 // proportional to the offset (honest, bounded); a byte-offset index is
-// declined. Above the bound the scan stops and `truncated` says so.
+// declined. Whenever the scan stops before EOF the flag says so —
+// `truncated` derives from scan completeness (did the scan see EOF?), not
+// from comparing the possibly-low totalLines against a cap.
 export const READ_CHUNK_BYTES = 512 * 1024;
 export const READ_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -27,7 +29,13 @@ export interface ReadResult {
   path: string;
   content: string;
   offset: number;
+  // Exact when `truncated` is false. When `truncated` is true because the
+  // scan stopped early, only a lower bound ("lines confirmed so far").
   totalLines: number;
+  // Honesty contract: false guarantees totalLines is exact AND content is
+  // complete for the requested region. True whenever the scan stopped
+  // before EOF (totalLines is then a lower bound) or the output window cut
+  // lines from the requested region.
   truncated: boolean;
 }
 
@@ -36,11 +44,14 @@ export interface ReadResult {
 // from a bounded scan.
 export interface ReadWindow {
   text: string;
-  // Exact when the scan reached EOF within bounds; a lower bound when the
-  // window limit or READ_MAX_BYTES stopped the scan early.
+  // Exact when the scan reached EOF; when the scan stopped early this is
+  // only a lower bound — a line whose start was scanned counts even if it
+  // extends past the stop ("lines confirmed so far").
   totalLines: number;
-  // True when the READ_MAX_BYTES budget stopped the scan before EOF.
-  scanCapped: boolean;
+  // True when the scan saw EOF (a short or empty range read). False means
+  // the scan stopped early — READ_MAX_BYTES budget, line cap, or
+  // limit-stopped region collection — and totalLines is then a lower bound.
+  sawEof: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,7 +131,7 @@ export function readWindowed(
         .slice(offset - 1)
         .join('\n'),
       totalLines: countLines(text),
-      scanCapped: false,
+      sawEof: true,
     };
   }
   const want = offset - 1; // newlines to consume before the region starts
@@ -132,11 +143,9 @@ export function readWindowed(
   let regionNewlines = 0;
   let endNewline = false; // did the decoded text end on '\n'?
   let sawEof = false;
-  let capped = false;
   for (;;) {
     if (region !== undefined && regionNewlines >= limit) break;
     if (scanned >= READ_MAX_BYTES) {
-      capped = true;
       break;
     }
     const request = Math.min(READ_CHUNK_BYTES, READ_MAX_BYTES - scanned);
@@ -176,24 +185,34 @@ export function readWindowed(
     return {
       text: '',
       totalLines: scanned === 0 ? 0 : seeked + (endNewline ? 0 : 1),
-      scanCapped: false,
+      sawEof: true,
     };
   }
   if (region === undefined) {
-    // Budget spent before the offset line: its window is unreachable.
-    return { text: '', totalLines: seeked + 1, scanCapped: true };
+    // Budget spent before the offset line: its window is unreachable. A
+    // line that started within the scanned bytes counts; one that never
+    // started (the scan ended on a newline) does not.
+    return {
+      text: '',
+      totalLines: seeked + (endNewline ? 0 : 1),
+      sawEof: false,
+    };
   }
   let text = region;
+  let startedPartial = 0;
   if (sawEof) {
     text += decoder.end();
   } else if (text.length > 0 && !text.endsWith('\n')) {
-    // Never hand the window a partial line outside the EOF case.
+    // Never hand the window a partial line outside the EOF case — but the
+    // line STARTED within the scanned bytes, so it counts toward
+    // totalLines even though it extends past the stop.
     text = text.slice(0, text.lastIndexOf('\n') + 1);
+    startedPartial = 1;
   }
   return {
     text,
-    totalLines: want + countLines(text),
-    scanCapped: capped,
+    totalLines: want + countLines(text) + startedPartial,
+    sawEof,
   };
 }
 
@@ -213,14 +232,23 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
     }
     const lines = view.text.split('\n');
     const window = lines.slice(0, span);
-    const capped = args.limit === undefined && view.totalLines > READ_MAX_LINES;
     const body = window.slice(0, READ_MAX_LINES).join('\n');
+    // truncated is honest (issue #122): true whenever the scan stopped
+    // before EOF — totalLines is then only a lower bound — or the output
+    // window cut lines from the requested region. The totalLines
+    // comparison only speaks when the scan reached EOF (the count is then
+    // exact), never against a lower bound.
+    const outputCut =
+      (view.sawEof &&
+        args.limit === undefined &&
+        view.totalLines > READ_MAX_LINES) ||
+      window.length > READ_MAX_LINES;
     return {
       path: args.path,
       content: body.length > 0 ? `${body}\n` : '',
       offset,
       totalLines: view.totalLines,
-      truncated: view.scanCapped || capped || window.length > READ_MAX_LINES,
+      truncated: !view.sawEof || outputCut,
     };
   },
 };

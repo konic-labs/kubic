@@ -73,11 +73,19 @@ Two hard bounds keep one tool call from costing the whole file in memory
   `offset` line by counting newlines chunk by chunk and collects the window
   with one `StringDecoder` across chunks — the window costs the window, not
   the file. Seams without `readFileRange` fall back to a whole read
-  (correct but unbounded) and the result shape never changes. When the byte
-  budget stops the scan before EOF, `truncated: true` says so and
-  `totalLines` is a lower bound (exact when the scan reached EOF); an
-  offset whose line lies beyond the budget returns empty content with
-  `truncated: true`.
+  (correct but unbounded) and the result shape never changes. The result's
+  honesty contract: `truncated: false` guarantees `totalLines` is exact
+  AND `content` is complete for the requested region. `truncated: true`
+  whenever the scan stopped before EOF — byte budget, line cap, or
+  limit-stopped region collection — and `totalLines` is then only a lower
+  bound ("lines confirmed so far"): a line that starts within the scanned
+  bytes but extends beyond the stop still counts (a 9 MiB single line cut
+  off by the budget reports `totalLines: 1`), while a line that never
+  started does not. That is distinct from an offset whose line lies beyond
+  the budget — the empty-region case, which returns empty content with
+  `truncated: true`. When the scan did reach EOF, `truncated` reflects
+  only output cutting (the line window and `READ_MAX_LINES`) — an explicit
+  `limit` is the requested region, not truncation.
 - **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal

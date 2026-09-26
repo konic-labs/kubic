@@ -14,6 +14,7 @@ import {
   renderLog,
 } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
+import { MS_PER_DAY } from './config/runtime.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
 
@@ -21,6 +22,11 @@ export interface JournalCommandDeps {
   journalDir?: string;
   sessionsRoot?: string;
   root?: string;
+  // `session.retentionDays` (issue #119): the read-time self-heal window for
+  // SESSION journals. Undefined — or 0 — means retention is off, and the
+  // read path writes nothing. The workspace journal is never governed by
+  // this key: `journal.retentionDays` bounds it on append.
+  retentionDays?: number;
   out: (line: string) => void;
 }
 
@@ -91,11 +97,15 @@ function latestSessionJournal(sessionsRoot: string): string | undefined {
   return best?.dir;
 }
 
+// `sessionId` is set exactly when the resolved store is a session journal
+// (explicit --session or the latest-session fallback) — the read-time
+// self-heal below keys off it, so a pinned/workspace store can never be
+// pruned by `session.retentionDays`.
 function resolveJournalDir(
   deps: JournalCommandDeps,
   root: string,
   session: string | undefined,
-): { dir: string; latestSessionId?: string } | string {
+): { dir: string; sessionId?: string; latestSessionId?: string } | string {
   if (session === undefined) {
     const dir = deps.journalDir ?? defaultJournalDir(root);
     // Issue #125: the bare default is a store nothing writes (runs journal
@@ -110,7 +120,8 @@ function resolveJournalDir(
         deps.sessionsRoot ?? defaultSessionsRoot(),
       );
       if (fallback !== undefined) {
-        return { dir: fallback, latestSessionId: basename(dirname(fallback)) };
+        const id = basename(dirname(fallback));
+        return { dir: fallback, sessionId: id, latestSessionId: id };
       }
     }
     return { dir };
@@ -128,7 +139,7 @@ function resolveJournalDir(
     return `error: --session ${JSON.stringify(session)} conflicts with a configured journal dir (use one store per invocation)`;
   }
   const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
-  return { dir: join(sessionsRoot, id, 'journal') };
+  return { dir: join(sessionsRoot, id, 'journal'), sessionId: id };
 }
 
 export async function runJournalCommand(
@@ -272,6 +283,20 @@ export async function runJournalCommand(
   }
 
   if (sub === 'log') {
+    // Issue #119 (read-time self-heal): with `session.retentionDays` set, a
+    // SESSION journal drops entries older than the window as it is read —
+    // the same age bound `kubic sessions prune` applies to whole session
+    // dirs, enforced entry-wise through the store's retention pass (which
+    // `append` already runs; the read path triggers it explicitly here).
+    // Session-scoped by construction (`sessionId` is set only for a session
+    // journal): the workspace journal keeps its own `journal.retentionDays`
+    // append-time bound, and prune remains the only deleter of session
+    // dirs. With retention unset — or 0 — no pass runs: the read path
+    // writes nothing.
+    const retentionDays = deps.retentionDays ?? 0;
+    if (journalDir.sessionId !== undefined && retentionDays > 0) {
+      store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
+    }
     const lines = renderLog(store);
     // `--json` stays the raw entries array (the count is derivable from the
     // `unattributed` flags there); the human path gains the summary line.

@@ -71,6 +71,7 @@ import {
   loadCliConfig,
   runtimeModelPin,
   runtimeRunDeps,
+  sessionRetentionDays,
 } from './config-runtime.js';
 import {
   extensionPostureForDoctor,
@@ -172,7 +173,14 @@ async function main(argv: string[]): Promise<number> {
     throw new Error('injected probe failure');
   }
   if (command === 'sessions') {
-    return runSessionsCommand(rest, { out: (line) => console.log(line) });
+    // Issue #119: `sessions prune`'s default keep-window comes from config
+    // when it sets one; with none, prune demands an explicit --keep-days
+    // rather than inventing a window.
+    const retentionDays = sessionRetentionDays(cliConfig);
+    return runSessionsCommand(rest, {
+      out: (line) => console.log(line),
+      ...(retentionDays === undefined ? {} : { retentionDays }),
+    });
   }
   if (command === 'git') {
     return runGitCommand(rest, {
@@ -186,8 +194,14 @@ async function main(argv: string[]): Promise<number> {
     command === 'log' ||
     command === 'status'
   ) {
+    // Issue #119: the same `session.retentionDays` projection `sessions
+    // prune` reads — `log` self-heals aged entries of a session journal at
+    // read time under it. Unset (or a refused config) leaves the read path
+    // without a window: it then writes nothing.
+    const retentionDays = sessionRetentionDays(cliConfig);
     return runJournalCommand([command, ...rest], {
       out: (line) => console.log(line),
+      ...(retentionDays === undefined ? {} : { retentionDays }),
     });
   }
   if (command === 'models') {

@@ -58,8 +58,13 @@ A refusal also stops the modes that execute an agent: `kubic run`,
 proceeding on built-in defaults while you believe your config file is in
 force. `kubic config` and `kubic doctor` still run, so you can see what is
 wrong (doctor reports the load as `dep:config-load (deps-missing)`).
-Commands that consume no config projection (`sessions`, `git`, `diff`,
-`journal`, `clean`, …) are unaffected.
+Commands that consume no config projection (`git`, `diff`, `clean`, …) are
+unaffected. `kubic sessions` reads exactly one projection —
+`session.retentionDays`, the default keep-window for `kubic sessions prune`
+— and `kubic log` reads the same key to self-heal session journals at read
+time; a refused config simply leaves both without a window: prune then
+demands an explicit `--keep-days` rather than falling back to a default
+(deletion stays explicit either way), and `log` writes nothing.
 
 A minimal `.kubic/config.toml` that actually changes behaviour — this exact
 block is parsed and loaded by `config-docs.test.ts`, so the page can never
@@ -95,7 +100,7 @@ sessionScoped, requireJustification · `[permissions]` filesystem
 (boolean, `workspace`, `full`), credentials (`none`, `allowlist`) ·
 `[journal]` retentionDays · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
-`[session]` store/dir. The canonical example is
+`[session]` store/dir/retentionDays. The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
 start). Unknown sections or keys are rejected (`ConfigError`).
 
@@ -116,6 +121,7 @@ Every one of those keys has a runtime effect or says so plainly:
 | `ui.*` | Parsed and reported; TUI selection lands with #88/#96. |
 | `session.store` | `jsonl` only today; `sqlite`/`memory` remain a separate decision. |
 | `session.dir` | Parsed and reported; the sessions root is host-owned today. |
+| `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
 
 ### `autoApprove` capabilities
 
@@ -227,7 +233,10 @@ not. The split, exactly as shipped:
 - **Models**: `./models.json` in the working directory (custom providers
   registered on top of built-ins; a `loaded models.json:` /
   `models.json ignored:` note is printed on `models`/`doctor`/`run`).
-- **Sessions store**: `~/.kubic/sessions` by default.
+- **Sessions store**: `~/.kubic/sessions` by default. Retention is opt-in
+  and manual: `kubic sessions prune` lists candidates by default and
+  deletes only with `--yes`, and `[session] retentionDays` (above) supplies
+  the default keep-window — a live-locked session is never pruned.
 - **Journal**: `<root>/.kubic/journal` by default. Every index append is
   fsynced before it returns — one fsync per tool write is the price of
   "reversible" (store-level `JournalRetention.durable`, default `true`,

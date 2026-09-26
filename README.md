@@ -70,6 +70,7 @@ flags); rebuilding is byte-equivalent. Nothing here publishes to npm.
 | [`docs/design/design-decisions.json`](docs/design/design-decisions.json) | Settled and open decisions, with alternatives and rationale. |
 | [`docs/design/design-explorer.html`](docs/design/design-explorer.html) | Generated, self-contained explorer for reading and annotating the design. |
 | [`docs/design/tools/`](docs/design/tools/) | Generator for the explorer. Vendored from the `ege-designer` skill. |
+| `~/.kubic/sessions/` | Session state — one state dir per session (`journal/`, `spans.jsonl`, approvals posture, the session lock) plus pi's transcript files. Nothing prunes the state dirs for you: `kubic sessions prune` lists candidates by default and deletes only with `--yes` (a live-locked session is never touched; `[session] retentionDays` supplies the default keep window); with `[session] retentionDays` set, `kubic log --session` also self-heals aged journal entries as it reads them. |
 | `pi/` | Read-only reference clone of the Pi agent harness. Gitignored; not part of Kubic. |
 
 There is no top-level `tools/` folder on purpose: the only tooling here serves the design, so it

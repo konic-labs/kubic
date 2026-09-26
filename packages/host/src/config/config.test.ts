@@ -179,6 +179,44 @@ describe('canonical TOML example (issue #38)', () => {
   });
 });
 
+describe('session.retentionDays (issue #119)', () => {
+  it('parses the key and refuses malformed values', () => {
+    expect(
+      parseTomlConfig('[session]\nretentionDays = 30\n').session?.retentionDays,
+    ).toBe(30);
+    // 0 is legal and means "retention off" — the value must survive parsing
+    // so prune can report that, rather than being dropped as falsy.
+    expect(
+      parseTomlConfig('[session]\nretentionDays = 0\n').session?.retentionDays,
+    ).toBe(0);
+    expect(() => parseTomlConfig('[session]\nretentionDays = -1\n')).toThrow(
+      /non-negative/,
+    );
+    expect(() => parseTomlConfig('[session]\nretentionDays = "30"\n')).toThrow(
+      /non-negative/,
+    );
+    expect(() => parseTomlConfig('[session]\nretention = 30\n')).toThrow(
+      /unknown key/,
+    );
+  });
+
+  it('is a leaf like any other: the first layer wins and lower attempts are reported', () => {
+    const merged = mergeLayered([
+      {
+        layer: 'global',
+        config: parseTomlConfig('[session]\nretentionDays = 14\n'),
+      },
+      {
+        layer: 'project',
+        config: parseTomlConfig('[session]\nretentionDays = 3\n'),
+        trusted: true,
+      },
+    ]);
+    expect(merged.config.session?.retentionDays).toBe(14);
+    expect(merged.overriddenAttempts).toContain('session.retentionDays');
+  });
+});
+
 describe('trust-gated project-local config (issue #38)', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>

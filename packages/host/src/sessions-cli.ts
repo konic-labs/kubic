@@ -17,10 +17,23 @@ import {
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableFullAccess, FileApprovalStore } from './approvals.js';
+import { SESSION_ID_PATTERN } from './run-cli.js';
+import {
+  deleteSessionPruneCandidates,
+  planSessionPrune,
+  type SessionPrunePlan,
+  SessionsRootError,
+} from './sessions-prune.js';
 
 export interface SessionsCommandDeps {
   sessionsRoot?: string;
   out: (line: string) => void;
+  // `session.retentionDays` (issue #119): the default keep-window for
+  // `prune`. Undefined means the config sets none — prune then demands an
+  // explicit --keep-days rather than inventing a window.
+  retentionDays?: number;
+  // Clock seam for boundary-exact age tests; real runs use Date.now().
+  now?: () => number;
 }
 
 export function defaultSessionsRoot(): string {
@@ -28,11 +41,173 @@ export function defaultSessionsRoot(): string {
 }
 
 const SESSIONS_USAGE =
-  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>]>';
+  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
 
 function usage(out: (line: string) => void): number {
   out(SESSIONS_USAGE);
   return 1;
+}
+
+// `prune` (issue #119): explicit, opt-in session-state retention. Dry-run
+// is the DEFAULT — deletion needs --yes — and the keep window must come
+// from --keep-days or config `session.retentionDays`: no window is ever
+// invented. Live-locked sessions, --keep-session names, and non-session
+// entries are never candidates, and the lock is re-checked immediately
+// before each delete (sessions-prune.ts owns both rails; this is
+// presentation: one line per fact, honest counts).
+interface PruneOptions {
+  keepDays?: number;
+  keep: string[];
+  yes: boolean;
+  dryRun: boolean;
+}
+
+const PRUNE_WINDOW_ERROR =
+  'error: sessions prune needs a keep window: pass --keep-days <n> or set [session] retentionDays in config (no default — deletion stays explicit)';
+
+function parsePruneArgs(
+  rest: string[],
+  out: (line: string) => void,
+): PruneOptions | undefined {
+  const parsed: PruneOptions = { keep: [], yes: false, dryRun: false };
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i] as string;
+    if (arg === '--yes') {
+      parsed.yes = true;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      parsed.dryRun = true;
+      continue;
+    }
+    if (arg === '--keep-days' || arg === '--keep-session') {
+      const value = rest[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        out(`error: ${arg} needs a value`);
+        return undefined;
+      }
+      i += 1;
+      if (arg === '--keep-days') {
+        if (!/^\d+$/.test(value)) {
+          out('error: --keep-days needs a non-negative integer of days');
+          return undefined;
+        }
+        parsed.keepDays = Number(value);
+      } else {
+        if (!SESSION_ID_PATTERN.test(value)) {
+          out(`error: invalid --keep-session id ${JSON.stringify(value)}`);
+          return undefined;
+        }
+        parsed.keep.push(value);
+      }
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      out(`error: unknown flag ${arg}`);
+      return undefined;
+    }
+    out(`error: unexpected argument ${JSON.stringify(arg)}`);
+    return undefined;
+  }
+  return parsed;
+}
+
+function lockSince(startedAt: number | undefined): string {
+  return typeof startedAt === 'number' && Number.isFinite(startedAt)
+    ? new Date(startedAt).toISOString()
+    : 'unknown start time';
+}
+
+function runPruneCommand(
+  rest: string[],
+  deps: SessionsCommandDeps,
+  root: string,
+): number {
+  const parsed = parsePruneArgs(rest, deps.out);
+  if (parsed === undefined) return 1;
+  if (parsed.yes && parsed.dryRun) {
+    deps.out(
+      'error: --yes and --dry-run contradict — deletion is explicit, pass one',
+    );
+    return 1;
+  }
+  const keepDays = parsed.keepDays ?? deps.retentionDays;
+  if (keepDays === undefined) {
+    deps.out(PRUNE_WINDOW_ERROR);
+    return 1;
+  }
+  if (keepDays === 0) {
+    deps.out('session retention is off (keep-days 0) — nothing is pruned');
+    return 0;
+  }
+  const bridge = createNodeFileBridge(root);
+  let plan: SessionPrunePlan;
+  try {
+    plan = planSessionPrune({
+      root,
+      bridge,
+      keepDays,
+      keep: parsed.keep,
+      ...(deps.now === undefined ? {} : { now: deps.now() }),
+    });
+  } catch (error) {
+    if (error instanceof SessionsRootError) {
+      deps.out(`error: ${error.message}`);
+      return 1;
+    }
+    throw error;
+  }
+  for (const locked of plan.locked) {
+    deps.out(
+      `locked: ${locked.id} (held by pid ${locked.pid} since ${lockSince(locked.startedAt)}) — skipped`,
+    );
+  }
+  for (const id of plan.kept) deps.out(`kept: ${id} (--keep-session)`);
+  for (const id of plan.unreadable) deps.out(`unreadable: ${id} — skipped`);
+  if (plan.candidates.length === 0) {
+    deps.out('nothing to prune');
+    return 0;
+  }
+  if (!parsed.yes) {
+    for (const candidate of plan.candidates) {
+      deps.out(`would prune ${candidate.id} (${candidate.bytes}B)`);
+    }
+    deps.out(
+      `dry run: ${plan.candidates.length} session(s) would be pruned (${plan.totalBytes}B) — pass --yes to delete`,
+    );
+    return 0;
+  }
+  const outcomes = deleteSessionPruneCandidates({
+    root,
+    bridge,
+    candidates: plan.candidates,
+  });
+  let failed = 0;
+  let deleted = 0;
+  let reclaimed = 0;
+  for (const outcome of outcomes) {
+    if (outcome.status === 'locked') {
+      // A lock went live between planning and this delete (issue #119):
+      // reported exactly like a planning-time lock, and never counted as
+      // deleted.
+      deps.out(
+        `locked: ${outcome.candidate.id} (held by pid ${outcome.pid} since ${lockSince(outcome.startedAt)}) — skipped`,
+      );
+      continue;
+    }
+    if (outcome.status === 'failed') {
+      deps.out(
+        `error: could not prune ${outcome.candidate.id}: ${outcome.message}`,
+      );
+      failed += 1;
+      continue;
+    }
+    deleted += 1;
+    reclaimed += outcome.candidate.bytes;
+    deps.out(`pruned ${outcome.candidate.id} (${outcome.candidate.bytes}B)`);
+  }
+  deps.out(`pruned ${deleted} session(s), ${reclaimed}B reclaimed`);
+  return failed === 0 ? 0 : 1;
 }
 
 export async function runSessionsCommand(
@@ -45,6 +220,9 @@ export async function runSessionsCommand(
   const [sub, ...rest] = args;
   if (sub === undefined) return usage(deps.out);
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
+  // prune never opens the session repo (it reads the root's dirs directly,
+  // reading no transcript at all).
+  if (sub === 'prune') return runPruneCommand(rest, deps, root);
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (sub === 'create') {
     let cwd = process.cwd();

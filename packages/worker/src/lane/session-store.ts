@@ -57,6 +57,43 @@ export class SessionLockError extends Error {
   }
 }
 
+// The lock file's holder, as far as it can be read: a torn write or a
+// non-object payload yields what is missing and nothing more (the caller's
+// stale-candidate case, never a crash).
+function readLockHolder(lockPath: string): {
+  pid?: number;
+  startedAt?: number;
+} {
+  const raw = readLockFile(lockPath);
+  if (raw === undefined) return {};
+  try {
+    const parsed = JSON.parse(raw) as { pid?: unknown; startedAt?: unknown };
+    if (parsed === null || typeof parsed !== 'object') return {};
+    return {
+      ...(typeof parsed.pid === 'number' ? { pid: parsed.pid } : {}),
+      ...(typeof parsed.startedAt === 'number'
+        ? { startedAt: parsed.startedAt }
+        : {}),
+    };
+  } catch {
+    // torn write: treat as stale candidate
+    return {};
+  }
+}
+
+// process.kill(pid, 0) is the liveness probe — signal 0 performs the
+// permission and existence checks without delivering a signal. There is no
+// `process.exists` and reading /proc is not portable; this is the standard
+// probe (and it is what tests stub to stay hermetic).
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
@@ -71,27 +108,10 @@ export function acquireSessionLock(
   // day. A gone holder alone is already stale (crash recovery must work
   // same-day); a day-old file is stale regardless (pid reuse). Torn
   // lock.json is a stale candidate either way.
-  let holder: { pid?: unknown; startedAt?: unknown } = {};
-  const raw = readLockFile(lockPath);
-  if (raw !== undefined) {
-    try {
-      holder = JSON.parse(raw) as { pid?: unknown; startedAt?: unknown };
-    } catch {
-      // torn write: treat as stale candidate
-    }
-  }
-  const holderAlive =
-    typeof holder.pid === 'number' &&
-    (() => {
-      try {
-        process.kill(holder.pid as number, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })();
+  const holder = readLockHolder(lockPath);
+  const holderAlive = holder.pid !== undefined && pidIsAlive(holder.pid);
   const staleByAge =
-    typeof holder.startedAt === 'number' &&
+    holder.startedAt !== undefined &&
     Date.now() - holder.startedAt > 24 * 60 * 60 * 1000;
   if (holderAlive && !staleByAge)
     throw new SessionLockError(sessionId, {
@@ -101,6 +121,25 @@ export function acquireSessionLock(
   removeLockFile(lockPath);
   if (createLockFile(lockPath, payload)) return;
   throw new SessionLockError(sessionId, { pid: -1, startedAt: 0 });
+}
+
+// Read-only liveness view for consumers that must never pull state out
+// from under a live attachment (issue #119: `kubic sessions prune`).
+// Stronger than the steal rule above on purpose: deletion is
+// unrecoverable, so ANY live holder pid protects the session regardless
+// of the lock's age (a reused pid can cost at most a skipped prune), while
+// a dead holder — or a torn/absent payload — never protects. LOCAL
+// FILESYSTEM ONLY, like every read here: pid liveness is this machine's
+// process table, never another host's.
+export function sessionLockIsLive(
+  sessionDir: string,
+): { pid: number; startedAt?: number } | undefined {
+  const holder = readLockHolder(join(sessionDir, 'lock.json'));
+  if (holder.pid === undefined || !pidIsAlive(holder.pid)) return undefined;
+  return {
+    pid: holder.pid,
+    ...(holder.startedAt === undefined ? {} : { startedAt: holder.startedAt }),
+  };
 }
 
 export function releaseSessionLock(sessionDir: string): void {

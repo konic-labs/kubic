@@ -5,8 +5,9 @@
 // keys are frozen against every override attempt).
 // Canonical shape: agent/model/thinking, mode flags, approvals
 // (ask-user + deny-on-timeout), journal retention, per-role model/tools,
-// orchestrator root, ui, session store. No budgets: budget keys are
-// rejected, never defaulted. Secrets never appear here (see secrets.ts).
+// orchestrator root, ui, session store + retention. No budgets: budget
+// keys are rejected, never defaulted. Secrets never appear here (see
+// secrets.ts).
 //
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
 // module never touches node:fs directly. Never imports worker impl.
@@ -104,6 +105,11 @@ export interface UiConfig {
 export interface SessionConfig {
   store?: string;
   dir?: string;
+  // Retention for session state (issue #119): the default keep-window for
+  // `kubic sessions prune`, in days. Unset means "off" — prune then
+  // demands an explicit --keep-days rather than inventing a window; 0 also
+  // means off (retention disabled, never "everything is old").
+  retentionDays?: number;
 }
 
 export interface KubicConfig {
@@ -201,6 +207,7 @@ statusBar = true
 [session]
 store = "jsonl"
 dir = ".kubic/sessions"
+retentionDays = 30
 `;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -685,12 +692,18 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     if (!isRecord(session)) {
       throw new ConfigError("'[session]' must be a table");
     }
-    checkNoUnknown(session, new Set(['store', 'dir']), 'session');
+    checkNoUnknown(
+      session,
+      new Set(['store', 'dir', 'retentionDays']),
+      'session',
+    );
     const store = reqString(session, 'store', 'session', true);
     const dir = reqString(session, 'dir', 'session', true);
+    const retentionDays = optNumber(session, 'retentionDays', 'session');
     config.session = {
       ...(store === undefined ? {} : { store }),
       ...(dir === undefined ? {} : { dir }),
+      ...(retentionDays === undefined ? {} : { retentionDays }),
     };
   }
   return config;

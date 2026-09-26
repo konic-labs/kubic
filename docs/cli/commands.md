@@ -34,7 +34,7 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]`
+## `kubic run -p <prompt> [--] [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -53,6 +53,19 @@ Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 [exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
 value, an invalid `--session` id, a non-positive or non-integer
 `--timeout`/`--max-turns`, or an unknown flag all exit 2.
+
+**Value syntax (issue #127).** Every command parses argv through the shared
+parser (`packages/core/src/flags.ts`): `--flag value`, `--flag=value` (the
+value is everything after `=` — verbatim, so it may itself start with `--`),
+and the POSIX end-of-flags `--`. In the positional form a next token
+starting with `--` still means "missing value" — that is the typo guard
+(`kubic run -p --json` exits 2 with `-p needs a value`), not a value. A
+value that begins with `--` is expressible two ways:
+
+```console
+$ kubic run --prompt="--help"   # equals form: value is everything after '='
+$ kubic run -p -- --help        # end-of-flags: the next raw token is the value
+```
 
 **Installed policy** (issue #86). A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
@@ -417,14 +430,14 @@ terminal. The renderer's own styling is unaffected.
 Sessions live under `~/.kubic/sessions` by default.
 
 ```
-usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
+usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a warning — fresh sessions start safe, the flag must be passed explicitly every time. |
 | `list` | One `<id>  <cwd>` line per session. |
-| `attach <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
+| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`**. See [Session retention](#session-retention-prune) below. |
 
 Missing subcommand exits 1 with the usage line; `attach` without an id
@@ -504,7 +517,7 @@ Thin over git ops. Outside a repo every subcommand exits 1 with
 journal path never needs git.
 
 ```
-usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> | commit -m <message>>
+usage: kubic git <status [--json] | log [--max <n>] [--json] | stage [--] <path...> | commit -m <message>>
 ```
 
 | Subcommand | Meaning |
@@ -553,13 +566,13 @@ session dirs, one entry at a time. The workspace journal is not affected
 unset — or `0` — the log path writes nothing: reads never mutate the store.
 
 ```
-usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>
+usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--session <id>] [--] [<path>] | log [--session <id>] | status [--session <id>]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, exits 1. |
-| `undo [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `undo [--] [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
@@ -753,7 +766,7 @@ worktree`, or a suite that needs the live runner the binary does not
 ship). Flags match `kubic eval` minus `--task`/`--trajectory` (each
 matrix row runs `benchmark:<suite-id>` as its task).
 
-## `kubic replay <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
+## `kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
 Replay a versioned trajectory at a declared determinism tier. The
 tier is printed and present in `--json` for every result — tiers

@@ -28,7 +28,10 @@ import { withTelemetry } from '../../worker/src/lane/wrap.js';
 // semantic — the harness primitive itself is not involved). Same-process
 // late attach discovers pending asks via pendingRequests(); across a
 // restart, pending asks time out to deny by design — only settled
-// decisions persist (approvals.json), never open questions.
+// decisions persist (approvals.json), never open questions. A timeout
+// denies the call but stores NOTHING (issue #110): it is an unanswered
+// question, so a later surface can still ask about the same operation —
+// only real answers (user, route, autoApprove) enter the latch.
 // sessionScoped is enforced by store placement, selected by the host:
 // a per-session FileApprovalStore scopes decisions to one session,
 // a shared store shares them. The flag documents the intent the host
@@ -735,10 +738,15 @@ export class ApprovalService {
     try {
       const answer = await this.waitForAnswer(request);
       if (answer === undefined) {
-        return this.submit(request, {
+        // Issue #110: a timeout is an unanswered question, not a decision.
+        // Deny THIS call (bounded, named) but persist nothing — a missed
+        // dialog must not latch a denial that no later surface can overturn.
+        // submit()'s first-wins latch is reserved for real answers (user,
+        // route, autoApprove); a repeated ask waits the full bound again.
+        return {
           approved: false,
           reason: `approval timed out after ${this.policy.maxPendingMs}ms`,
-        });
+        };
       }
       return this.submit(request, answer);
     } finally {

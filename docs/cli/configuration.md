@@ -107,7 +107,7 @@ Every one of those keys has a runtime effect or says so plainly:
 | `model.thinking` | Default thinking level for the selected model. |
 | `modes.solo`, `modes.orchestrator` | Selects the mode; both `true` is refused by name. |
 | `approvals.route` | Approval routing (`ask-user` \| `deny`). |
-| `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Effective policy; a pending ask denies on timeout, `autoApprove` is explicit-only. |
+| `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Effective policy; a pending ask denies on timeout, `autoApprove` is explicit-only. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. |
 | `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
 | `agent.name` | Reported by `kubic config`; the solo lane names the agent from the session. |

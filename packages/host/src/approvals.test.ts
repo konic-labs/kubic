@@ -7,6 +7,7 @@ import {
   type ApprovalRequest,
   ApprovalService,
   approvalKey,
+  type ApprovalVerdict,
   createApprovalAsk,
   detectTriggers,
   enableFullAccess,
@@ -65,6 +66,62 @@ describe('approval service (issue #16, slice A)', () => {
       reason: 'approval timed out after 20ms',
     });
     expect(service.pendingRequests()).toEqual([]);
+  });
+
+  // Issue #110: a timeout is an unanswered question, not a decision. The
+  // call denies (bounded, named) but nothing persists — a missed dialog
+  // must not latch a denial that no later surface can overturn.
+  it('keeps timeout verdicts transient: no store entry, and a re-ask waits again (issue #110)', async () => {
+    const store = new MemoryApprovalStore();
+    const service = new ApprovalService({
+      policy: validatePolicy({ maxPendingMs: 20 }),
+      store,
+    });
+    const first = await service.request(request());
+    expect(first).toMatchObject({
+      approved: false,
+      reason: 'approval timed out after 20ms',
+    });
+    // Not persisted: the decision store and the live map stay empty.
+    expect(service.decided(request().key)).toBeUndefined();
+    expect(store.load()[request().key]).toBeUndefined();
+    // And a second ask for the same key waits the full bound again instead
+    // of being short-circuited by a stored timeout denial.
+    const start = Date.now();
+    const second = await service.request(request());
+    const waited = Date.now() - start;
+    expect(second).toMatchObject({
+      approved: false,
+      reason: 'approval timed out after 20ms',
+    });
+    expect(waited).toBeGreaterThanOrEqual(15);
+  });
+
+  it('persists a real answer that arrives on a re-ask after a timeout (issue #110)', async () => {
+    let calls = 0;
+    const service = new ApprovalService({
+      policy: validatePolicy({ maxPendingMs: 20 }),
+      awaitAnswer: () => {
+        calls += 1;
+        return calls === 1
+          ? new Promise<undefined>(() => {})
+          : Promise.resolve({ approved: true, by: 'user' } as const);
+      },
+    });
+    const first = await service.request(request());
+    expect(first).toMatchObject({
+      approved: false,
+      reason: 'approval timed out after 20ms',
+    });
+    // The second ask presents the dialog again and this answer latches.
+    const second = await service.request(request());
+    expect(second).toEqual({ approved: true, by: 'user', justified: false });
+    // First-wins on REAL answers: a third ask is answered from the latch,
+    // without reaching the seat again.
+    let seatCalls = calls;
+    const again = await service.request(request());
+    expect(again).toEqual({ approved: true, by: 'user', justified: false });
+    expect(calls).toBe(seatCalls);
   });
 
   it('settles racing submits once: first answer wins', async () => {
@@ -266,14 +323,15 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     });
     expect(verdict.approved).toBe(false);
 
-    const answers = new Map<string, { approved: true; by: string }>();
     const approved = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 5_000 }),
       store,
-      awaitAnswer: (request) => {
-        const answer = answers.get(request.key);
-        return Promise.resolve(answer);
-      },
+      // The seat presents the dialog and waits; the answer arrives below
+      // via submit() exactly as a surface delivers it (the waiter path).
+      // (Previously this seat resolved undefined immediately and the ask
+      // was answered through the timeout-denial's latch — the backdoor
+      // issue #110 closed.)
+      awaitAnswer: () => new Promise<ApprovalVerdict | undefined>(() => {}),
     });
     const askApproved = createApprovalAsk(approved, triggerContext(), store);
     const pending = askApproved({
@@ -284,7 +342,6 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     const key = approvalKey('bash', 'git-push', {
       command: 'git push origin main',
     });
-    answers.set(key, { approved: true, by: 'user' });
     approved.submit(
       { key, capability: 'git-push', toolName: 'bash', summary: 'push' },
       { approved: true, by: 'user' },

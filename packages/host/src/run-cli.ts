@@ -9,6 +9,7 @@
 // --json output.
 
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import { settleTerminalStatus } from '../../worker/src/lane/settle.js';
 import type { TerminalStatus } from '../../worker/src/pi-boundary.js';
@@ -153,24 +154,47 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 const RUN_USAGE =
-  'usage: kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>] [--no-skills] [--debug] [--json]';
+  'usage: kubic run -p <prompt> [--] [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>] [--no-skills] [--debug] [--json]';
 
 function usage(out: (line: string) => void): number {
   out(RUN_USAGE);
   return RUN_EXIT_USAGE;
 }
 
+// Issue #127: the shared parser (core/src/flags.ts) replaces the hand-rolled
+// loop. The parser does syntax; this command keeps its semantics — the
+// positive-int bounds, the session-id pattern, and the exact error lines
+// below (output strings are part of the CLI contract).
+const RUN_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--prompt', takes: 'value', aliases: ['-p'] },
+  { name: '--session', takes: 'value' },
+  { name: '--timeout', takes: 'value' },
+  { name: '--max-turns', takes: 'value' },
+  { name: '--role', takes: 'value' },
+  { name: '--skill', takes: 'value', repeat: true },
+  { name: '--no-skills', takes: 'boolean' },
+  { name: '--debug', takes: 'boolean' },
+  { name: '--json', takes: 'boolean' },
+];
+
+// One line per value flag, verbatim from the loop this replaced (the
+// short-form spelling `-p` included: it is the documented flag name).
+const RUN_MISSING_VALUE_MESSAGES: Readonly<Record<string, string>> = {
+  '--prompt': 'error: -p needs a value',
+  '--session': 'error: --session needs a value',
+  '--timeout': 'error: --timeout needs a value',
+  '--max-turns': 'error: --max-turns needs a value',
+  '--role': 'error: --role needs a value',
+  '--skill': 'error: --skill needs a value',
+};
+
 function parsePositiveInt(
   flag: string,
-  value: string | undefined,
+  value: string,
   out: (line: string) => void,
   max?: number,
 ): number | null {
   // null = unusable (error already reported); the caller exits 2.
-  if (value === undefined || value.startsWith('--')) {
-    out(`error: ${flag} needs a value`);
-    return null;
-  }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     out(
@@ -239,76 +263,68 @@ export async function runRunCommand(
   // `--help` is answered before any argv validation (issue #100).
   const help = answerHelp(args, deps.out, RUN_USAGE);
   if (help !== null) return help;
-  let prompt: string | undefined;
-  let sessionId: string | undefined;
+  const parsed = parseFlagArgs(args, RUN_FLAG_SPEC);
+  const values = parsed.values;
+  // `-p -- <prompt>` (issue #127): the end-of-flags terminator is the
+  // escape hatch — the next raw token is the prompt, so a prompt that
+  // begins with `--` is expressible. The typo rule is never weakened:
+  // `kubic run -p --json` has no terminator, so `-p` is still missing.
+  const operands = [...parsed.positional];
+  let prompt = values['--prompt'] as string | undefined;
+  if (prompt === undefined && args.includes('--') && operands.length > 0) {
+    prompt = operands.shift();
+  }
+  // Missing values first, then unknown flags, then stray operands — each
+  // keeps the exact line the old inline loop printed. A `-p` starved by a
+  // flag-like token is the flagship typo (`kubic run -p --json`), so the
+  // missing-value class is reported before the unknown class.
+  for (const flag of parsed.missing) {
+    if (flag === '--prompt' && prompt !== undefined) continue;
+    deps.out(
+      RUN_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  if (parsed.unknown.length > 0) {
+    deps.out(`error: unknown flag ${parsed.unknown[0]}`);
+    return RUN_EXIT_USAGE;
+  }
+  if (operands.length > 0) {
+    // Operands are not part of this command's surface (the prompt is a
+    // flag), so an unconsumed one is refused exactly like an unknown flag.
+    deps.out(`error: unknown flag ${operands[0]}`);
+    return RUN_EXIT_USAGE;
+  }
   let timeoutMs: number | undefined;
   let maxTurns: number | undefined;
-  let role: string | undefined;
-  let noSkills = false;
-  const skills: string[] = [];
-  let debug = false;
-  let json = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    if (arg === '-p' || arg === '--prompt') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: -p needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      prompt = value;
-      i += 1;
-    } else if (arg === '--timeout') {
-      const parsed = parsePositiveInt(
-        '--timeout',
-        args[i + 1],
-        deps.out,
-        MAX_RUN_TIMEOUT_MS,
-      );
-      if (parsed === null) return RUN_EXIT_USAGE;
-      timeoutMs = parsed;
-      i += 1;
-    } else if (arg === '--max-turns') {
-      const parsed = parsePositiveInt('--max-turns', args[i + 1], deps.out);
-      if (parsed === null) return RUN_EXIT_USAGE;
-      maxTurns = parsed;
-      i += 1;
-    } else if (arg === '--session') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --session needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      sessionId = value;
-      i += 1;
-    } else if (arg === '--role') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --role needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      role = value;
-      i += 1;
-    } else if (arg === '--no-skills') {
-      noSkills = true;
-    } else if (arg === '--skill') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --skill needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      skills.push(value);
-      i += 1;
-    } else if (arg === '--debug') {
-      debug = true;
-    } else if (arg === '--json') {
-      json = true;
-    } else {
-      deps.out(`error: unknown flag ${arg}`);
-      return RUN_EXIT_USAGE;
-    }
+  const timeoutRaw = values['--timeout'] as string | undefined;
+  if (timeoutRaw !== undefined) {
+    const parsedTimeout = parsePositiveInt(
+      '--timeout',
+      timeoutRaw,
+      deps.out,
+      MAX_RUN_TIMEOUT_MS,
+    );
+    if (parsedTimeout === null) return RUN_EXIT_USAGE;
+    timeoutMs = parsedTimeout;
+  }
+  const maxTurnsRaw = values['--max-turns'] as string | undefined;
+  if (maxTurnsRaw !== undefined) {
+    const parsedMaxTurns = parsePositiveInt(
+      '--max-turns',
+      maxTurnsRaw,
+      deps.out,
+    );
+    if (parsedMaxTurns === null) return RUN_EXIT_USAGE;
+    maxTurns = parsedMaxTurns;
   }
   if (prompt === undefined) return usage(deps.out);
+  const sessionId = values['--session'] as string | undefined;
+  const role = values['--role'] as string | undefined;
+  const skills = (values['--skill'] as string[] | undefined) ?? [];
+  const noSkills = values['--no-skills'] === true;
+  const debug = values['--debug'] === true;
+  const json = values['--json'] === true;
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
     deps.out(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,

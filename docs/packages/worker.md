@@ -25,7 +25,7 @@ diff touching the boundary for maintainer review.
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `SessionAttachError`, `listSessions` |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
@@ -116,6 +116,33 @@ nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the
 whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
+
+### Session locking (issue #118)
+
+One live attachment per session, fail-closed. `createSession` (after the
+session dir exists) and `attachSession` (before the transcript is read)
+acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
+record of the attaching process — via `writeFileSync(…, {flag: 'wx'})`
+(O_EXCL, an atomic test-and-set). `session.close(…)` releases the lock
+(best-effort `rmSync`), so the file exists only while a session is
+actually attached.
+
+- **Refusal** is `SessionLockError`; its message names the session and
+  the holder's pid + start time. Host maps it to `workspace_unavailable`
+  (exit 5) on `kubic run`; `kubic sessions attach` prints it and exits 1
+  without reading the transcript.
+- **Stale steal** (never a steal of a live lock): a holder whose process
+  is gone (`process.kill(pid, 0)` fails) is stale immediately — crash
+  recovery works same-day; a lock file older than a day is stale
+  regardless (pid reuse); an unparseable/torn `lock.json` is a stale
+  candidate. A steal that loses its re-create race surfaces as
+  `SessionLockError`, never a crash.
+- **Local filesystem only.** O_EXCL atomicity is claimed on local
+  filesystems only — no network/shared-disk (NFS/SMB) locking semantics
+  are provided or tested.
+
+The lock covers the session's journal too (it lives under the session
+dir) — the journal store is not locked separately.
 
 ## Contracts
 

@@ -28,7 +28,7 @@ export function defaultJournalDir(root: string): string {
 }
 
 const JOURNAL_USAGE =
-  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>';
+  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>';
 
 function usage(out: (line: string) => void): number {
   out(JOURNAL_USAGE);
@@ -129,36 +129,69 @@ export async function runJournalCommand(
   if (sub === 'undo') {
     const dryRun = rest.includes('--dry-run');
     const step = rest.includes('--step');
+    // Issue #108: --force overrides the staleness refusal per-invocation;
+    // nothing persists it — the next undo re-checks by default.
+    const force = rest.includes('--force');
     // The --session value is a store selector, not a path scope: skip the
     // flag and its value before looking for the positional <path>.
     const scopeArgs = rest.filter(
       (a, i) => a !== '--session' && rest[i - 1] !== '--session',
     );
     const positional = scopeArgs.find((a) => !a.startsWith('--'));
-    const plan = planUndo(store, {
-      ...(positional === undefined ? {} : { path: positional }),
-      ...(step ? { step: true } : {}),
-    });
+    const plan = planUndo(
+      store,
+      {
+        ...(positional === undefined ? {} : { path: positional }),
+        ...(step ? { step: true } : {}),
+      },
+      root,
+    );
     if (plan.steps.length === 0) {
       deps.out('nothing to undo');
       return 0;
     }
-    const result = applyUndo(store, plan, root, { dryRun });
+    const result = applyUndo(store, plan, root, { dryRun, force });
+    // Stale refusals and already-undone skips get their own line shapes so
+    // scripts (and humans) can tell "cannot reverse" from "refused because
+    // the file changed since" from "a previous undo already unwound it".
+    const parts: string[] = [];
+    for (const detail of result.skippedDetails) {
+      if (detail.reason.startsWith('stale:')) parts.push('stale');
+      else if (detail.reason.startsWith('already undone:'))
+        parts.push('already undone');
+      else parts.push('non-reversible');
+    }
+    const staleCount = parts.filter((p) => p === 'stale').length;
+    const undoneCount = parts.filter((p) => p === 'already undone').length;
+    const skipLabel =
+      staleCount > 0 || undoneCount > 0
+        ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null].filter((s) => s !== null).join(', ')})`
+        : ' non-reversible';
     if (dryRun) {
       deps.out(
         `would restore ${result.restored.length} step(s)` +
           (result.skipped.length > 0
-            ? `, skip ${result.skipped.length} non-reversible: ${result.skipped.join(', ')}`
+            ? `, skip ${result.skipped.length}${skipLabel}: ${result.skipped.join(', ')}`
             : ''),
       );
       return 0;
     }
     for (const path of result.restored) deps.out(`restored ${path}`);
-    for (const path of result.skipped) {
-      deps.out(`non-reversible (skipped): ${path}`);
+    for (const [detail, kind] of result.skippedDetails.map(
+      (d, i) => [d, parts[i]] as const,
+    )) {
+      deps.out(
+        kind === 'stale'
+          ? `stale (skipped): ${detail.path} — ${detail.reason}`
+          : kind === 'already undone'
+            ? `already undone (skipped): ${detail.path}`
+            : `non-reversible (skipped): ${detail.path}`,
+      );
     }
     deps.out(
-      `undo: ${result.restored.length} restored, ${result.skipped.length} non-reversible`,
+      staleCount > 0 || undoneCount > 0
+        ? `undo: ${result.restored.length} restored, ${result.skipped.length} skipped${skipLabel}`
+        : `undo: ${result.restored.length} restored, ${result.skipped.length} non-reversible`,
     );
     return result.skipped.length > 0 ? 2 : 0;
   }

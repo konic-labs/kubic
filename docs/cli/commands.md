@@ -407,13 +407,35 @@ programmatically configured journal dir is refused (one store per
 invocation).
 
 ```
-usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--session <id>] | log [--session <id>] | status [--session <id>]>
+usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--session <id>] | undo [<path>] [--step] [--dry-run] [--force] [--session <id>] | log [--session <id>] | status [--session <id>]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the raw change array. A `--path`/`--agent`/`--session` without a value exits 1. |
-| `undo [<path>] [--step] [--dry-run] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus `undo: N restored, M non-reversible`. `nothing to undo` exits 0. **Exit 2 when any step was skipped as non-reversible** (`non-reversible (skipped): <p>`). The `--session` value selects the store, never the path scope. |
+| `undo [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (unattributed entry, no pre-image), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+
+**Undo staleness safety (issue #108).** Before any restore, the file's
+current content is verified against the entry's recorded after-hash — undo
+must never overwrite a file whose state the journal does not account for.
+Verdicts are walk-aware: a whole-run undo judges each step against the state
+the previous steps left (and `--dry-run` simulates exactly what a real run
+would write), so layered edits unwind in order. The matrix:
+
+| current file | entry after-state | verdict |
+| --- | --- | --- |
+| exists, hash == recorded after | content present | restore |
+| exists, hash != recorded after | content present | **stale: skip** (a change landed after the entry — restoring would discard it) |
+| missing | content present | restore (recreates the file; nothing on disk is destroyed) |
+| exists | delete entry (after is null) | **stale: skip** (recreated after the recorded delete) |
+| missing | delete entry (after is null) | restore (brings pre-delete content back) |
+| exists at a journaled *before*-state | any | **already undone: skip** (a prior undo reached this state — re-writing would be a no-op mislabeled as restored) |
+| exists but unreadable | any | **stale: skip** (cannot verify — refuse) |
+
+`--force` overrides the stale refusals per-invocation (nothing persists it;
+the next `undo` re-checks by default). `--force` does not override
+non-reversible skips — no pre-image exists to write. Already-undone skips are
+informational: there is nothing to force. |
 | `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
 | `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. |
 

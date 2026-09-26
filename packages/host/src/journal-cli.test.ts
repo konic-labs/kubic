@@ -1,6 +1,6 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -110,5 +110,83 @@ describe('journal CLI (issue #18, slice D)', () => {
     expect(await runJournalCommand(['frobnicate'], deps)).toBe(1);
     expect(await runJournalCommand(['diff', '--agent'], deps)).toBe(1);
     void out;
+  });
+});
+
+// Issue #108: `kubic undo` refuses to overwrite files that changed after
+// the journaled entry (staleness check on afterHash); `--force` overrides.
+describe('journal CLI undo staleness (issue #108)', () => {
+  function seedStale(): {
+    journalDir: string;
+    root: string;
+  } {
+    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
+    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    // Journaled v1→v2, then a manual edit landed v3 after the fact.
+    writeFileSync(join(root, 'stale.txt'), 'v3\n');
+    new FileJournalStore(journalDir).append({
+      path: 'stale.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+    return { journalDir, root };
+  }
+
+  it('skips stale steps with a named reason and exits 2, disk untouched', async () => {
+    const { journalDir, root } = seedStale();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(2);
+    const text = lines.join('\n');
+    expect(text).toContain('stale (skipped): stale.txt');
+    expect(text).toContain('undo: 0 restored, 1 skipped (1 stale)');
+    expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v3\n');
+  });
+
+  it('--force restores past the staleness refusal', async () => {
+    const { journalDir, root } = seedStale();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo', '--force'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain('restored stale.txt');
+    expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v1\n');
+  });
+
+  it('--dry-run reports the stale split without writing, and usage names --force', async () => {
+    const { journalDir, root } = seedStale();
+    const lines: string[] = [];
+    const code = await runJournalCommand(['undo', '--dry-run'], {
+      journalDir,
+      root,
+      out: (l) => lines.push(l),
+    });
+    expect(code).toBe(0);
+    const text = lines.join('\n');
+    expect(text).toContain('would restore 0 step(s)');
+    expect(text).toContain('skip 1 (1 stale): stale.txt');
+    expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v3\n');
+    const usageLines: string[] = [];
+    expect(
+      await runJournalCommand(['undo', '--help'], {
+        journalDir,
+        root,
+        out: (l) => usageLines.push(l),
+      }),
+    ).toBe(0);
+    expect(usageLines.join('\n')).toContain('--force');
   });
 });

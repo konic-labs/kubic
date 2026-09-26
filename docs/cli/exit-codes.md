@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
 | 1 | `failed` | Run failed without a more specific cause; doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
-| 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with non-reversible skips (see below). |
+| 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with skipped steps — non-reversible, stale, or already-undone (see below). |
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
 | 4 | `approval_denied` | Approval denied — or timed out waiting (`approval_timed_out` maps here too; headless runs suspend this way when an approval cannot arrive without a TTY). |
 | 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. |
@@ -30,13 +30,17 @@
   `exitCode` field.
 - **`kubic diff/undo/log/status`**: 0 success (including empty diff and
   clean dry-run), 1 usage/IO errors — except `undo`, which exits **2**
-  when it restored but skipped non-reversible steps. Entries an end-of-run
-  reconciliation sweep appended (`unattributed`) usually land in that
-  skipped class: the baseline holds hashes, not pre-images, so they are
-  reported `non-reversible (skipped)` and exit 2, writing nothing. The
-  exception is a path whose pre-image an earlier attributed entry in the
-  same run already stored — there the sweep entry is reversible, `undo`
-  restores it, and the exit code follows the normal rule.
+  when it restored but skipped steps. Three skip classes reach that code:
+  `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
+  appended (`unattributed`) whose baseline holds hashes, not pre-images
+  (the exception is a path whose pre-image an earlier attributed entry in
+  the same run already stored — there the sweep entry is reversible, `undo`
+  restores it, and the exit code follows the normal rule);
+  `stale (skipped)` — the file changed after the entry was journaled, so
+  restoring would destroy unjournaled changes (issue #108; `--force`
+  overrides per-invocation); and `already undone (skipped)` — a previous
+  undo already unwound the step, nothing is rewritten. In every skipped
+  class the exit is 2 and nothing is written for that step.
 - **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.

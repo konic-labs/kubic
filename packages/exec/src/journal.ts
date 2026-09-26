@@ -652,10 +652,52 @@ function hasSymlinkParent(target: string, root: string): boolean {
 // reconciliation finds) are reported non-reversible — never guessed.
 // Entry paths are contained to the workspace root: a path escaping via
 // ../ (or an absolute path) is refused, never written.
+//
+// Issue #108: before any write, the file's CURRENT state must match the
+// entry's recorded after-state — restoring over a file that changed after
+// the entry was journaled (manual edit, another run, another tool) would
+// silently destroy those changes. `allowStale` is the operator's explicit
+// --force override, per-invocation only, never persisted.
+export interface RestoreOptions {
+  /** Skip the staleness check (explicit operator override). */
+  allowStale?: boolean;
+}
+
+// Staleness probe shared by the undo planner/dry-run and restoreEntry
+// (issue #108), so every path compares the same state. Pure read.
+//
+//   { missing: true,  hash: null }     file absent
+//   { missing: false, hash: <sha256> } readable current content
+//   { missing: false, hash: null }     exists but unreadable — cannot
+//                                       verify, so callers refuse
+export interface FileCurrentState {
+  missing: boolean;
+  hash: string | null;
+}
+
+export function probeFileState(root: string, path: string): FileCurrentState {
+  const bridge = createNodeFileBridge('/');
+  const target = resolve(root, path);
+  try {
+    const info = bridge.fileInfo(target);
+    try {
+      return {
+        missing: false,
+        hash: sha256HexOfFile(bridge, target, info.size),
+      };
+    } catch {
+      return { missing: false, hash: null };
+    }
+  } catch {
+    return { missing: true, hash: null };
+  }
+}
+
 export function restoreEntry(
   store: FileJournalStore,
   entry: JournalEntry,
   root: string,
+  options?: RestoreOptions,
 ): RestoreResult {
   const before = store.readBefore(entry);
   if (before === null) {
@@ -681,6 +723,28 @@ export function restoreEntry(
       restored: false,
       reason: `entry path crosses a symlink: ${entry.path}`,
     };
+  }
+  if (options?.allowStale !== true) {
+    // Direct-caller safety net (issue #108): the walk-aware undo planner
+    // performs the same check with full plan context and then calls
+    // restoreEntry with allowStale; a bare caller still gets the matrix.
+    //
+    //   current file   entry.afterHash   action
+    //   exists, ==afterHash   set        safe: restore
+    //   exists, !=afterHash   set        STALE: refuse (clobber)
+    //   missing               set        restore (recreates; no data lost)
+    //   exists                null       STALE: refuse (recreated after delete)
+    //   missing               null       restore (pre-delete content back)
+    const state = probeFileState(root, entry.path);
+    if (!state.missing && state.hash !== entry.afterHash) {
+      return {
+        restored: false,
+        reason:
+          state.hash === null
+            ? `stale: '${entry.path}' exists but its current content could not be read to verify state — use --force`
+            : `stale: '${entry.path}' changed after this entry was journaled (current sha256 ${state.hash.slice(0, 12)}… ≠ recorded after ${entry.afterHash?.slice(0, 12) ?? 'none'}…) — restoring would discard those changes; use --force`,
+      };
+    }
   }
   try {
     createNodeFileBridge('/').writeFile(target, before);

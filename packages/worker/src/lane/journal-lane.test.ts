@@ -1,6 +1,6 @@
 // Slice D: lane journal wiring + durable next-day undo (issue #17; §42.4).
 // RED: SoloBootOptions has no journal; restoreEntry does not exist.
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -140,7 +140,10 @@ describe('durable next-day undo (issue #17, slice D)', () => {
   it('still restores dot-dot names that stay inside, and refuses symlink parents', () => {
     const dir = mkdtempSync(join(tmpdir(), 'j-'));
     const root = mkdtempSync(join(tmpdir(), 'ws-'));
-    writeFileSync(join(root, '..foo'), 'before\n');
+    // Issue #108: restoreEntry verifies the disk sits at the entry's
+    // recorded after-state before writing — seed the after-content so the
+    // restore path is exercised rather than the staleness refusal.
+    writeFileSync(join(root, '..foo'), 'after\n');
     const outside = mkdtempSync(join(tmpdir(), 'out-'));
     symlinkSync(outside, join(root, 'linked'));
     const store = new FileJournalStore(dir);
@@ -156,6 +159,7 @@ describe('durable next-day undo (issue #17, slice D)', () => {
       timestamp: 1,
     });
     expect(restoreEntry(store, inside, root)).toEqual({ restored: true });
+    expect(readFileSync(join(root, '..foo'), 'utf8')).toBe('before\n');
     const linked = store.append({
       path: 'linked/evil.txt',
       op: 'write',

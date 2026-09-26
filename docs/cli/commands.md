@@ -599,6 +599,11 @@ Recorded with any of `--model`/`--lockfile`/`--role-config`/`--worktree`
 exits 2. Exit codes are the §78 subset 0/1/2/5/6 (see
 [exit codes](exit-codes.md)).
 
+The re-execution tiers consume the effective config like `kubic run`
+(§35.1): the configured permission classes and journal retention govern
+the re-executed lane, and a refused config exits 1 with the config's
+named reason instead of proceeding on defaults.
+
 ## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
 
 Trajectory inspection plus RL dataset export over trajectory export

@@ -12,6 +12,7 @@ import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import type {
   ReplayRunRequest,
   ReplayRunResult,
+  ReplayRuntimeDeps,
 } from '../../../packages/host/src/replay/replay.js';
 import { createProdReplayRun } from '../../../packages/host/src/replay/run-prod.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
@@ -23,11 +24,19 @@ import { runHeadlessPrompt } from './headless-run.js';
 
 export async function runProdReplay(
   request: ReplayRunRequest,
+  // The effective config's projections (issue #114), threaded exactly
+  // like `kubic run` threads runtimeRunDeps: the re-execution installs
+  // the same policy the run path does.
+  runtime: ReplayRuntimeDeps = { policySource: 'default' },
 ): Promise<ReplayRunResult> {
   const run = createProdReplayRun({
     loadTrajectory: (path: string) =>
       parseTrajectoryExportJSON(createNodeFileBridge('/').readTextFile(path)),
-    runPrompt: async (prompt: string, model: string) => {
+    runPrompt: async (
+      prompt: string,
+      model: string,
+      runRuntime: ReplayRuntimeDeps,
+    ) => {
       const assembled = assembleModels(process.cwd());
       try {
         const selection = parseModelFlag(model);
@@ -46,6 +55,7 @@ export async function runProdReplay(
           {
             models: assembled.models,
             model: selection,
+            ...runRuntime,
           },
         );
       } catch (error) {
@@ -56,5 +66,5 @@ export async function runProdReplay(
       }
     },
   });
-  return run(request);
+  return run(request, runtime);
 }

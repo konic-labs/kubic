@@ -99,7 +99,15 @@ const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor']);
 // proceed on defaults once the load was refused: silently running on
 // built-in values while the user believes their .kubic/config.toml is in
 // force is precisely the defect issue #90 exists to fix (§35.1 fail-closed).
-const CONFIG_CONSUMING_COMMANDS = new Set(['run', 'orchestrate', 'tui']);
+// `replay` joins them (issue #114): its re-execution tiers run the agent
+// under the effective config exactly like `kubic run`, so a refused config
+// must stop them the same way.
+const CONFIG_CONSUMING_COMMANDS = new Set([
+  'run',
+  'orchestrate',
+  'tui',
+  'replay',
+]);
 
 // Exit code for a refused config on the given command, or undefined when the
 // command may proceed. Kept beside the load so the policy lives in one place:

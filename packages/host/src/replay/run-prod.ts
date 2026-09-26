@@ -13,6 +13,7 @@ import type {
   ReplayRunRequest,
   ReplayRunResult,
   ReplayRunTerminus,
+  ReplayRuntimeDeps,
 } from './replay.js';
 
 export interface LanePromptOutcome {
@@ -22,7 +23,11 @@ export interface LanePromptOutcome {
 
 export interface ProdReplayRunDeps {
   loadTrajectory: (path: string) => TrajectoryExport;
-  runPrompt: (prompt: string, model: string) => Promise<LanePromptOutcome>;
+  runPrompt: (
+    prompt: string,
+    model: string,
+    runtime: ReplayRuntimeDeps,
+  ) => Promise<LanePromptOutcome>;
 }
 
 function mapTerminus(terminus: string): ReplayRunTerminus {
@@ -39,8 +44,14 @@ function mapTerminus(terminus: string): ReplayRunTerminus {
 
 export function createProdReplayRun(
   deps: ProdReplayRunDeps,
-): (request: ReplayRunRequest) => Promise<ReplayRunResult> {
-  return async (request: ReplayRunRequest): Promise<ReplayRunResult> => {
+): (
+  request: ReplayRunRequest,
+  runtime?: ReplayRuntimeDeps,
+) => Promise<ReplayRunResult> {
+  return async (
+    request: ReplayRunRequest,
+    runtime: ReplayRuntimeDeps = { policySource: 'default' },
+  ): Promise<ReplayRunResult> => {
     const trajectory = deps.loadTrajectory(request.trajectory);
     const objective = trajectory.task.objective.trim();
     if (objective === '') {
@@ -52,7 +63,10 @@ export function createProdReplayRun(
     }
     let outcome: LanePromptOutcome;
     try {
-      outcome = await deps.runPrompt(objective, request.model);
+      // The runtime projections ride through to the lane seam unchanged
+      // (issue #114): the re-execution runs under the effective config's
+      // policy, never under defaults invented here.
+      outcome = await deps.runPrompt(objective, request.model, runtime);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { terminus: 'failed', summary: message };

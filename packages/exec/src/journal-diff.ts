@@ -53,7 +53,9 @@ export function diffEntries(
     // design), so that absence is not corruption; everything else missing
     // under a recorded hash is.
     const beforeLost =
-      first.beforeHash !== null && before === null && first.unattributed !== true;
+      first.beforeHash !== null &&
+      before === null &&
+      first.unattributed !== true;
     const afterLost = last.afterHash !== null && after === null;
     out.push({
       path,

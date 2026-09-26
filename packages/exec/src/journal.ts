@@ -294,14 +294,20 @@ export class FileJournalStore {
       .filter((info) => !info.isDirectory && !info.isSymbolicLink).length;
   }
 
-  readBefore(entry: JournalEntry, onCorrupt?: (detail: string) => void): string | null {
+  readBefore(
+    entry: JournalEntry,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     if (entry.beforeHash === null) return null;
     return this.readBlob(entry.beforeHash, onCorrupt);
   }
 
   // After-content: direct blob, or before-blob plus delta for large files.
   // Null for deletes (no after-content exists).
-  readAfter(entry: JournalEntry, onCorrupt?: (detail: string) => void): string | null {
+  readAfter(
+    entry: JournalEntry,
+    onCorrupt?: (detail: string) => void,
+  ): string | null {
     if (entry.afterHash === null) return null;
     if (entry.deltaHash !== null) {
       const delta = this.readBlob(entry.deltaHash, onCorrupt);

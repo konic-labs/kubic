@@ -173,7 +173,7 @@ describe('deltaBaseEmpty schema (issue #111)', () => {
 // Blob integrity (issue #111): readAfter reconstructs from the recorded
 // base, never from a guess.
 describe('readAfter delta bases (issue #111)', () => {
-  const big = 'r\n'.repeat(40_000) + 'tail\n';
+  const big = `${'r\n'.repeat(40_000)}tail\n`;
 
   it('a reconcile-authored large-file entry reconstructs from its recorded empty base', () => {
     // reconcile's record() shape: no before-content, hash-only pre-image.
@@ -258,9 +258,9 @@ describe('blob hash verification (issue #111)', () => {
     );
     writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'tampered\n');
     const details: string[] = [];
-    expect(
-      store.readBefore(recorded, (detail) => details.push(detail)),
-    ).toBe(null);
+    expect(store.readBefore(recorded, (detail) => details.push(detail))).toBe(
+      null,
+    );
     expect(details.join('\n')).toContain(recorded.beforeHash ?? 'missing');
   });
 

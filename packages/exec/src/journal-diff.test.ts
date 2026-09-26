@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
-import { type FileChange, diffEntries, renderDiff } from './journal-diff.js';
+import { diffEntries, type FileChange, renderDiff } from './journal-diff.js';
 
 function seed(): FileJournalStore {
   const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));

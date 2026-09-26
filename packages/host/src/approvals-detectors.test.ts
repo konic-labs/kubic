@@ -3,11 +3,16 @@
 // escalation, and destructive/network verbs behind command indirection.
 // RED first per detector — each block below was written and watched fail
 // before the detector it pins landed.
-// The fix cycle after that review widened the indirection unwrap to a
+// The fix cycles after that review widened the indirection unwrap to a
 // bounded fixpoint (eval-of-substitution, nested substitutions, mixed
-// backtick/`$()`) and trimmed lifted-token delimiters; those blocks carry
-// their own RED note, and the review's remaining shapes are PINNED as the
-// documented gaps they are, never silently assumed handled.
+// backtick/`$()`) and trimmed the substitution closer off LIFTED tokens
+// only: the first cut trimmed every target token, which turned a literal
+// trailing `)`/`]` on a plain path into a silent grant (a real sibling of
+// the workspace read as inside) — the second cycle scoped the trim to
+// tokens actually lifted out of a span and pinned the effective depth
+// threshold. Those blocks carry their own RED note, and the review's
+// remaining shapes are PINNED as the documented gaps they are, never
+// silently assumed handled.
 // The classifiers here are the PRODUCTION ones (defaultIsDestructive,
 // isNetworkCommand, confinePath) wired exactly like triggerContextFor, so a
 // green run proves the detectors work against what a real run classifies
@@ -122,8 +127,8 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
   it('trims the substitution-lifted delimiter off a write target (fix cycle)', () => {
     const ctx = triggerContext();
     // A target lifted out of `$(…)` arrives with the substitution's closing
-    // `)` (or `]`) glued on: `$(cp a /etc/b)` → `/etc/b)`. The boundary
-    // check must still fire on a genuinely outside destination…
+    // `)` glued on: `$(cp a /etc/b)` → `/etc/b)`. The boundary check must
+    // still fire on a genuinely outside destination…
     expect(
       detectTriggers('bash', { command: 'echo $(cp a /etc/b)' }, ctx),
     ).toEqual(['outside-write']);
@@ -131,14 +136,18 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
       detectTriggers('bash', { command: 'echo $(tee /etc/cron.d/y)' }, ctx),
     ).toEqual(['outside-write']);
     // …and must not false-positive on an inside one just because of the
-    // lifted delimiter. RED before the trim: `/work)` / `/work])` resolved
-    // outside and raised a spurious outside-write ask.
+    // lifted delimiter. RED before the trim: `/work)` resolved outside and
+    // raised a spurious outside-write ask.
     expect(
       detectTriggers('bash', { command: 'echo $(cp a /work)' }, ctx),
     ).toEqual([]);
+    // `]` is NOT a span closer: `$(tee /work])` names the literal path
+    // `/work]`, a real sibling of the workspace, so it must raise. The
+    // first cut trimmed it as glue; the scoping block below carries the
+    // security re-review that fixed that class.
     expect(
       detectTriggers('bash', { command: 'echo $(tee /work])' }, ctx),
-    ).toEqual([]);
+    ).toEqual(['outside-write']);
     // Trimming must not weaken the boundary check: `/work-evil` is still
     // outside `/work` (dist vs dist-x), and a plain inside path stays quiet.
     expect(
@@ -147,6 +156,50 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
     expect(
       detectTriggers('bash', { command: 'echo $(cp a /work/b)' }, ctx),
     ).toEqual([]);
+  });
+
+  it('scopes the delimiter trim to lifted tokens; plain targets are never trimmed (fix cycle 2)', () => {
+    const ctx = triggerContext();
+    // Security re-review of the fix cycle: the trim applied to EVERY target
+    // token, so a literal `)`/`]` at the end of a real path was silently
+    // trimmed and the path flipped from outside to inside — an ask became a
+    // silent grant (and there is no bash confine backstop for tee/cp to
+    // catch it downstream). A plain token keeps its trailing characters
+    // verbatim; only a token lifted out of `$(…)` loses the span's closer.
+    // RED before the scoping: every plain-target case below raised nothing.
+    expect(detectTriggers('bash', { command: 'tee /work)' }, ctx)).toEqual([
+      'outside-write',
+    ]);
+    expect(detectTriggers('bash', { command: "tee '/work)'" }, ctx)).toEqual([
+      'outside-write',
+    ]);
+    expect(detectTriggers('bash', { command: "cp a '/work)'" }, ctx)).toEqual([
+      'outside-write',
+    ]);
+    expect(
+      detectTriggers('bash', { command: "echo x > '/work)'" }, ctx),
+    ).toEqual(['outside-write']);
+    expect(detectTriggers('bash', { command: 'tee /work]' }, ctx)).toEqual([
+      'outside-write',
+    ]);
+    expect(
+      detectTriggers('bash', { command: 'cp a /work/../work)' }, ctx),
+    ).toEqual(['outside-write']);
+    // The rule is general — any literal trailing character is path text,
+    // not only the `)`/`]` the first cut trimmed: `tee /work,` names
+    // `/work,`, a sibling of the workspace (also RED pre-fix).
+    expect(detectTriggers('bash', { command: 'tee /work,' }, ctx)).toEqual([
+      'outside-write',
+    ]);
+    // The item-4 intent stays: a span-lifted token still loses exactly the
+    // span's closer, so an inside destination stays quiet…
+    expect(
+      detectTriggers('bash', { command: 'echo $(cp a /work)' }, ctx),
+    ).toEqual([]);
+    // …while a genuinely outside lifted one still raises.
+    expect(
+      detectTriggers('bash', { command: 'echo $(cp a /etc/b)' }, ctx),
+    ).toEqual(['outside-write']);
   });
 });
 
@@ -253,6 +306,24 @@ describe('privilege escalation + indirection (issue #131, slice 2)', () => {
     expect(
       detectTriggers('bash', { command: 'echo $(echo $(date))' }, ctx),
     ).toEqual([]);
+  });
+
+  it('pins the effective nesting threshold: 31 levels raise, 32 stay silent (fix cycle 2)', () => {
+    const ctx = triggerContext();
+    // The scan tracks at most MAX_UNWRAP_DEPTH (16) real openers; the
+    // unmatched markers it pushes past the cap still consume closers, so
+    // pairing shifts and the deepest RECORDED span carries (levels - 15)
+    // `$(` layers: 16 layers at 31 nesting levels (the 16-step fixpoint
+    // unwraps it fully, raising destructive-shell) and 17 at 32 (one layer
+    // survives the 16 steps, so nothing classifies). Measured on the
+    // production classifiers — the effective threshold is ~2x the cap,
+    // stated in the module header and docs/cli/configuration.md.
+    const nested = (levels: number) =>
+      `echo ${'$('.repeat(levels)}rm -rf /${')'.repeat(levels)}`;
+    expect(detectTriggers('bash', { command: nested(31) }, ctx)).toEqual([
+      'destructive-shell',
+    ]);
+    expect(detectTriggers('bash', { command: nested(32) }, ctx)).toEqual([]);
   });
 
   it('pins the stated gap: interpreter-based verbs stay unraised', () => {
@@ -365,5 +436,11 @@ describe('capability/trigger vocabulary parity (issue #131)', () => {
     // render it. A single-list addition must fail HERE (loudly, in the
     // suite) instead of being refused only at runtime by the envelope.
     expect([...CAPABILITIES].sort()).toEqual([...ORCHESTRATOR_TRIGGERS].sort());
+    // Sorted equality alone tolerates the SAME duplicate added to both
+    // lists — pin uniqueness per list so a repeated entry fails here too.
+    expect(new Set(CAPABILITIES).size).toBe(CAPABILITIES.length);
+    expect(new Set(ORCHESTRATOR_TRIGGERS).size).toBe(
+      ORCHESTRATOR_TRIGGERS.length,
+    );
   });
 });

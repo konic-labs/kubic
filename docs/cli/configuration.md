@@ -152,8 +152,10 @@ heuristics:
   only the final named target of a multi-file `tee` is checked
   (`tee /etc/x a.txt` writes `/etc/x` and is a documented silent miss —
   apart from that stated case, target-heuristic errors are over-triggers).
-  A target lifted out of `$(…)` has the substitution's closing delimiter
-  trimmed (`$(cp a /etc/b)` → `/etc/b`); the outside check itself stays
+  A target lifted out of `$(…)` has that span's closing `)` trimmed
+  (`$(cp a /etc/b)` → `/etc/b`) — scoped to lifted tokens: a plain target
+  is never trimmed, so `tee '/work)'` names the literal sibling path
+  `/work)` and still raises outside-write. The outside check itself stays
   path-boundary aware (`/work-evil` is not `/work`).
 - **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
   anywhere in the raw command, quoted text included
@@ -164,13 +166,15 @@ heuristics:
   runs to a fixpoint: single-level (`$(rm -rf /)`), eval-of-substitution
   (`eval $(rm -rf /)`), and nested (`echo $(echo $(rm -rf /))`) forms all
   raise. `$(…)` is collected with a bounded balanced-paren scan (depth cap
-  16) — nested forms past the cap stay unraised, a stated bound, never a
-  fabricated unwrap.
+  16; the cap's unmatched-opener markers still consume closers, so the
+  effective nesting threshold is ~2× the cap — 31 nesting levels still
+  raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
+  never a fabricated unwrap.
 
 What remains out of scope — documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
 the command is data to the literal patterns), network exfiltration via
-`python -c`/`node -e`/`npm`, substitution nesting past the depth cap,
+`python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
 quoted or backslash-obfuscated verbs the literal patterns cannot see, and
 whitespace tricks around redirection targets.
 

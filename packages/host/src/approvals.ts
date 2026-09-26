@@ -137,13 +137,15 @@ export class MemoryApprovalStore implements ApprovalStore {
 // heuristic, not a sandbox (issue #131): redirect/tee/cp-mv-install
 // outside-writes, `sudo` privilege escalation, and destructive/network
 // verbs behind command indirection. Indirection coverage, exactly:
-// `$(…)` spans (balanced-paren scan, nested substitutions included up to
-// MAX_UNWRAP_DEPTH), backtick spans, and `eval` segments are unwrapped to
+// `$(…)` spans (balanced-paren scan, nested substitutions included; the
+// scan tracks at most MAX_UNWRAP_DEPTH real openers and its unmatched
+// markers still consume closers, so the effective nesting threshold is
+// ~2x the cap), backtick spans, and `eval` segments are unwrapped to
 // a fixpoint, so `eval $(rm -rf /)` and `echo $(echo $(rm -rf /))` raise
 // too, not only the single-level `$(rm -rf /)`. What still bypasses them —
 // stated, not silent: interpreter-based verbs handed over as data
 // (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
-// MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
+// ~2x MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
 // quoted or backslash-obfuscated verbs the literal patterns cannot see,
 // whitespace tricks around redirection targets, and flag-reordered copy
 // targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
@@ -210,19 +212,37 @@ const SUDO = /\bsudo\b/;
 // form unwraps to a fixpoint: `eval $(rm -rf /)`, `echo $(echo $(rm -rf
 // /))`, and backtick-wrapped `$(rm -rf /)` all raise, not only the
 // single-level `$(rm -rf /)` the first cut handled. Stated bound: nesting
-// past MAX_UNWRAP_DEPTH stays unraised — a depth cap, never a fabricated
+// deeper than ~2x MAX_UNWRAP_DEPTH stays unraised — the unmatched-opener
+// markers the scan pushes past the cap still consume closers, which
+// doubles the effective threshold (31 nesting levels raise, 32 stay
+// silent; pinned in the detector tests). A depth cap, never a fabricated
 // unwrap.
 const MAX_UNWRAP_DEPTH = 16;
 const EVAL_SEGMENT = /\beval\s+[^\n|;&]*/g;
 const BACKTICK_INDIRECT = /`[^`]*`/g;
 
-// All balanced `$(…)` spans in one linear pass — inner spans included, so
-// `echo $(echo $(rm -rf /))` yields both `$(rm -rf /)` and the outer span.
-// A `$(` that never closes is skipped; openers past MAX_UNWRAP_DEPTH are
-// marked unmatched instead of pairing with some inner `)` — the scan stays
-// depth-bounded and never fabricates a span.
-function substitutionSpans(command: string): string[] {
-  const spans: string[] = [];
+// A recorded `$(…)` region: the raw text plus the index of the `)` that
+// closed it. The closer index is what lets target extraction trim exactly
+// the substitution glue off a LIFTED token — and never a plain one.
+interface SubstitutionSpan {
+  text: string;
+  closer: number;
+}
+
+// All `$(…)` regions the scan pairs, in one linear pass — inner regions
+// included, so `echo $(echo $(rm -rf /))` yields both `$(rm -rf /)` and
+// the outer region. The scan is literal, not a shell parser (a bare `(`
+// inside is ordinary text). A `$(` that never closes is skipped; openers
+// past MAX_UNWRAP_DEPTH are marked unmatched instead of pairing with some
+// inner `)`. Those markers still occupy stack slots and consume closers,
+// so past the cap pairing shifts (a recorded region can pair an opener
+// with a later `)`) and the effective nesting threshold is ~2x
+// MAX_UNWRAP_DEPTH — measured: 31 nesting levels still unwrap, 32 stay
+// silent, pinned in the detector tests. Every recorded region is a
+// `$(`…`)` substring of the command; the scan never invents text and never
+// loops.
+function substitutionSpans(command: string): SubstitutionSpan[] {
+  const spans: SubstitutionSpan[] = [];
   const openers: number[] = [];
   for (let index = 0; index < command.length; index += 1) {
     if (command[index] === '$' && command[index + 1] === '(') {
@@ -230,7 +250,9 @@ function substitutionSpans(command: string): string[] {
       index += 1;
     } else if (command[index] === ')' && openers.length > 0) {
       const start = openers.pop() ?? -1;
-      if (start >= 0) spans.push(command.slice(start, index + 1));
+      if (start >= 0) {
+        spans.push({ text: command.slice(start, index + 1), closer: index });
+      }
     }
   }
   return spans;
@@ -238,9 +260,9 @@ function substitutionSpans(command: string): string[] {
 
 // Every wrapper cue in the raw command: balanced `$(…)` spans (nested ones
 // included), `eval` segments, and backtick spans.
-function indirectCues(command: string): string[] {
+function indirectCues(command: string, spans: SubstitutionSpan[]): string[] {
   return [
-    ...substitutionSpans(command),
+    ...spans.map((span) => span.text),
     ...(command.match(EVAL_SEGMENT) ?? []),
     ...(command.match(BACKTICK_INDIRECT) ?? []),
   ];
@@ -275,21 +297,47 @@ function unwrapIndirection(nested: string): string {
   return stripQuotes(inner);
 }
 
-// Targets arrive raw from the command string: strip surrounding quotes and
-// trailing delimiters — including the `)`/`]` a substitution glues onto a
-// lifted token (`$(cp a /etc/b)` → `/etc/b)`) — so `> "/etc/cron.d/x"`,
-// `tee '/etc/cron.d/x'`, or `echo $(cp a /etc/b)` cannot dodge the outside
-// check. Shared by every target-shaped detector (redirect, tee, copy). The
-// check itself stays path-boundary aware (`/work-evil` is not `/work`):
-// trimming delimiters narrows a token to the path it names, it never
-// widens what counts as inside.
+// Shell quoting only: strip a run of surrounding quotes. Targets and
+// unwrapped payloads arrive raw from the command string, and quotes are
+// shell syntax — the path named is what is inside them (`> "/etc/cron.d/x"`
+// names `/etc/cron.d/x`, `tee '/etc/x'` names `/etc/x`).
+//
+// No delimiter trimming happens here. A trailing `)`/`]` on a PLAIN token
+// is path text: `tee '/work)'` names the literal sibling path `/work)`, and
+// trimming it would silently widen what counts as inside — the fix-cycle-2
+// security re-review measured exactly that (outside → inside flip, an ask
+// became a silent grant). The ONLY delimiter trim in this module is the
+// span-closer trim in targetToken, scoped to tokens actually lifted out of
+// a `$(…)` span.
 function stripQuotes(target: string): string {
-  return target.replace(/^['"]+|['";,)\]]+$/g, '');
+  return target.replace(/^['"]+/, '').replace(/['"]+$/, '');
 }
 
-// The target token of a detector segment (last-argument heuristic).
-function lastToken(text: string): string {
-  return text.trim().split(/\s+/).pop() ?? '';
+// The write target of a detector segment: the last whitespace-separated
+// token (last-argument heuristic; segmentEnd is the segment's absolute end
+// index in the raw command, so token characters tie back to command
+// positions). Quotes always come off (shell syntax). A trailing delimiter
+// comes off ONLY when it is the closing `)` of a `$(…)` span the token was
+// lifted from — `$(cp a /work)` names `/work`, because that `)` is
+// substitution syntax, not path text — and then exactly the recorded
+// closer comes off, never a character that merely looks like one. Plain
+// tokens are never trimmed: `tee /work]` names `/work]` and still raises.
+// The outside check itself stays path-boundary aware (`/work-evil` is not
+// `/work`): quote stripping narrows a token to the path it names, and the
+// closer trim removes substitution glue only.
+function targetToken(
+  segment: string,
+  segmentEnd: number,
+  spanClosers: ReadonlySet<number>,
+): string {
+  const trimmed = segment.replace(/\s+$/, '');
+  const raw = trimmed.split(/\s+/).pop() ?? '';
+  const end = segmentEnd - (segment.length - trimmed.length);
+  let cut = 0;
+  while (cut < raw.length && spanClosers.has(end - 1 - cut)) {
+    cut += 1;
+  }
+  return stripQuotes(raw.slice(0, raw.length - cut));
 }
 
 export function detectTriggers(
@@ -306,6 +354,11 @@ export function detectTriggers(
   }
   if (toolName === 'bash' && typeof args.command === 'string') {
     const command = args.command;
+    // One span scan per command: the target detectors trim a lifted token's
+    // substitution closer by span-closer index, and the indirection cues
+    // below reuse the same spans.
+    const spans = substitutionSpans(command);
+    const spanClosers = new Set(spans.map((span) => span.closer));
     if (ctx.isDestructive(command, ctx.workspace))
       found.push('destructive-shell');
     if (ctx.network === 'none' && ctx.isNetworkCommand(command))
@@ -316,25 +369,40 @@ export function detectTriggers(
     if (DEPLOY.test(command)) found.push('deploy');
     const redirect = REDIRECT.exec(command);
     if (redirect !== null && redirect[2] !== undefined) {
-      // Targets arrive raw: strip surrounding quotes and trailing
-      // delimiters so `> "/etc/cron.d/x"` cannot dodge the outside check.
-      const target = stripQuotes(redirect[2]);
+      // Targets arrive raw: quotes always come off, and a lifted token also
+      // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
+      // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
+      // plain literal `)`/`]` stays part of the path.
+      const target = targetToken(
+        redirect[2],
+        redirect.index + redirect[0].length,
+        spanClosers,
+      );
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
       }
     }
     // Shell-side writes by another name (issue #131): tee and trailing
     // cp/mv/install targets reach files no `>` ever touches. Both use the
-    // same shared quote-stripping and last-argument target extraction.
+    // same shared quote-stripping and last-argument target extraction,
+    // scoped so the closer trim fires only on lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
-      const target = stripQuotes(lastToken(tee[1] ?? ''));
+      const target = targetToken(
+        tee[1] ?? '',
+        tee.index + tee[0].length,
+        spanClosers,
+      );
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
         break;
       }
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
-      const target = stripQuotes(lastToken(copy[2] ?? ''));
+      const target = targetToken(
+        copy[2] ?? '',
+        copy.index + copy[0].length,
+        spanClosers,
+      );
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
         break;
@@ -348,7 +416,7 @@ export function detectTriggers(
     if (SUDO.test(command)) {
       found.push('privilege-escalation');
     }
-    for (const nested of indirectCues(command)) {
+    for (const nested of indirectCues(command, spans)) {
       const payload = unwrapIndirection(nested);
       if (payload === '') continue;
       if (ctx.isDestructive(payload, ctx.workspace)) {

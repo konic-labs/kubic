@@ -14,10 +14,18 @@ one convention, applied before any argv validation
 `kubic` prints the identical listing and exits 1 — usage-on-no-args is the
 deliberate POSIX posture. Usage errors keep their own exit codes.
 
+**Unexpected failures are one named line.** An error Kubic did not shape
+prints `error: <message>` on stderr and exits 1; the full stack is opt-in
+with `KUBIC_DEBUG=1`. The launcher also refuses runtimes below Node 22.19 by
+name — `kubic: node >= 22.19 required (running <version>) — see the README
+install section` — before it loads anything. See
+[doctor and debug](doctor-and-debug.md).
+
 ## Install and build
 
-A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary —
-the exact commands live in the
+A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary
+(the launcher enforces that floor and names it when refused) — the exact
+commands live in the
 [README install section](../../README.md#install). `npm run build` emits
 runnable JS to gitignored `dist/` (tsc via `tsconfig.build.json`, no
 hand-rolled flags); `./bin/kubic.js` is the committed executable over that

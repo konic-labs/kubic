@@ -148,6 +148,14 @@ async function main(argv: string[]): Promise<number> {
     console.log(formatVersionLine(cliVersion()));
     return 0;
   }
+  // Deliberate failure seam for the shipped-artifact contract (issue #128):
+  // `kubic __crash-probe` throws a plain Error so the top-level catch-all's
+  // `error: <message>` / KUBIC_DEBUG behavior is asserted end to end against
+  // the real binary by scripts/binary-contract.mjs. Internal — not a
+  // supported command and deliberately absent from ROOT_USAGE.
+  if (command === '__crash-probe') {
+    throw new Error('injected probe failure');
+  }
   if (command === 'sessions') {
     return runSessionsCommand(rest, { out: (line) => console.log(line) });
   }
@@ -421,13 +429,26 @@ async function main(argv: string[]): Promise<number> {
 
 // Extension startup failures are named one-liners, not stack traces (issue
 // #93): the lane boots above refuse to run bare, and the CLI reports that
-// refusal as `error: …` with the failure exit code. Every other error keeps
-// its existing path (no behavior change for unrelated failures).
+// refusal as `error: …` with the failure exit code. That named path is
+// unchanged.
+//
+// Every other unexpected failure (issue #128) gets the same operator-facing
+// shape — one `error: <message>` line, exit 1 — instead of a raw stack dump;
+// the full stack stays behind the KUBIC_DEBUG=1 opt-in. Both modes are
+// pinned end to end by scripts/binary-contract.mjs (the `__crash-probe`
+// seam above).
 try {
   const code = await main(process.argv.slice(2));
   process.exit(code);
 } catch (error) {
-  if (!(error instanceof ExtensionStartupError)) throw error;
-  console.error(`error: ${error.message}`);
+  if (error instanceof ExtensionStartupError) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (process.env.KUBIC_DEBUG === '1') {
+    console.error(error);
+  }
+  console.error(`error: ${message}`);
   process.exit(1);
 }

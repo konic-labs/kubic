@@ -65,6 +65,36 @@ a typo fails closed instead of silently passing.
 known-broken install, not a recovery — the bundle stays unloaded while
 skipped.
 
+## When a command dies unexpectedly (`KUBIC_DEBUG`)
+
+An unexpected failure — a bug in a command's wiring, an unshaped IO error —
+reports one `error: <message>` line on **stderr** and exits **1**. There is
+no stack dump and no stdout noise (`--json` consumers stay parseable); the
+named paths the commands own — `kubic run`'s per-run failures, an
+`ExtensionStartupError` from a lane boot — keep their own exit codes on the
+[exit-codes page](exit-codes.md).
+
+`KUBIC_DEBUG=1` opts into the full error (message and stack) printed above
+the named line; the exit code is unchanged:
+
+```
+$ kubic run -p 'hi'            # an unexpected wiring failure
+error: <message>
+
+$ KUBIC_DEBUG=1 kubic run -p 'hi'
+Error: <message>
+    at …            (full stack)
+error: <message>
+```
+
+The variable is the same one the worker spawn env forwards
+(`packages/worker/src/lifecycle/env.ts`), so a spawned worker child inherits
+it and its own failures print the same way. The launcher carries a first
+check of its own: below Node 22.19 `./bin/kubic.js` refuses before loading
+anything — `kubic: node >= 22.19 required (running <version>) — see the
+README install section`, exit 1 — because on an older runtime the entry
+import could only fail as a raw parser error.
+
 ## Where to look next when something is red
 
 1. **Provider red** → `kubic models` (is anything registered?) →

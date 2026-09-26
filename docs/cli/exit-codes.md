@@ -49,6 +49,14 @@
 - **Bare `kubic`** (no command): 1, with the identical listing —
   usage-on-no-args is the deliberate POSIX posture, so `--help` and the
   bare invocation differ only in their exit code.
+- **Unexpected top-level failures** (a bug in a command's wiring, an
+  unshaped IO error): one `error: <message>` line on stderr, 1 — the full
+  stack only with `KUBIC_DEBUG=1` (see
+  [doctor and debug](doctor-and-debug.md#when-a-command-dies-unexpectedly-kubic_debug)).
+- **Below Node 22.19**: the launcher (`bin/kubic.js`) refuses by name
+  before loading anything —
+  `kubic: node >= 22.19 required (running <version>) — see the README
+  install section`, exit 1.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
 - **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,
   spawn, worker, merge, or reap failure, or resume with no state

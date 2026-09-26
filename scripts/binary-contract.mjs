@@ -23,6 +23,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -58,6 +59,16 @@ export const ROOT_USAGE_LINE =
 export function nodeGuardLine(runningVersion) {
   return `kubic: node >= 22.19 required (running ${runningVersion}) — see the README install section`;
 }
+
+// The failure seam `kubic __crash-probe` throws inside main()
+// (apps/kubic/src/main.ts, issue #128): a plain Error so the top-level
+// catch-all's operator-facing shape is asserted against the real binary.
+export const CRASH_PROBE_MESSAGE = 'injected probe failure';
+
+// Env var the `--import` preload reads to stub process.versions.node: an
+// old runtime cannot run in CI, so the launcher's guard is exercised by
+// rewriting the version the wrapper sees, before its first statement.
+export const NODE_STUB_ENV = '__KUBIC_CONTRACT_NODE_STUB';
 
 // The ref triple a headless run prints; every value must resolve to the
 // run's own session id.
@@ -166,6 +177,114 @@ export function binaryContract({ distPresent, expectedLine, run }) {
     }
   }
 
+  // Issue #128: the launcher's Node guard, driven through a stubbed
+  // process.versions.node (the `--import` preload) so the real bin/kubic.js
+  // ordering is exercised without an old runtime. Below the floor: the
+  // refusal is the ONLY output, on stderr, exit 1 — and it happens before
+  // any dist import (a missing build must not mask it).
+  for (const stub of ['21.9.0', '22.18.0']) {
+    const probe = run(['--version'], { nodeStub: stub });
+    const failed = probeProblems(`kubic --version (node ${stub})`, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 1) {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} exited ${probe.code} (expected 1 — named Node guard, not a raw stack)`,
+      );
+      continue;
+    }
+    const printed = probe.stderr.trimEnd();
+    const expected = nodeGuardLine(stub);
+    if (printed !== expected) {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} printed ${JSON.stringify(printed)} to stderr — expected exactly ${JSON.stringify(expected)}`,
+      );
+    }
+    if (probe.stdout !== '') {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} wrote ${JSON.stringify(probe.stdout)} to stdout — the guard refusal is stderr-only`,
+      );
+    }
+  }
+
+  // At the exact floor the guard must not fire: the wrapper proceeds to the
+  // version path as usual (still zero stderr).
+  const boundary = run(['--version'], { nodeStub: '22.19.0' });
+  const boundaryFailed = probeProblems(
+    'kubic --version (node 22.19.0)',
+    boundary,
+  );
+  if (boundaryFailed.length > 0) {
+    problems.push(...boundaryFailed);
+  } else if (boundary.code !== 0) {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) exited ${boundary.code} (expected 0 — the guard must not fire at >= 22.19): ${boundary.stderr.trim()}`,
+    );
+  } else if (boundary.stdout.trimEnd() !== expectedLine) {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) printed ${JSON.stringify(boundary.stdout.trimEnd())} — expected the version line ${JSON.stringify(expectedLine)}, not the guard refusal`,
+    );
+  } else if (boundary.stderr !== '') {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) wrote ${JSON.stringify(boundary.stderr)} to stderr — the guard must stay silent when it passes`,
+    );
+  }
+
+  // Issue #128: an unexpected command failure is one `error: <message>`
+  // line on stderr, exit 1, no stack. The full stack is opt-in via
+  // KUBIC_DEBUG=1 — and even then the named line stays.
+  const crash = run(['__crash-probe']);
+  const crashFailed = probeProblems('kubic __crash-probe', crash);
+  if (crashFailed.length > 0) {
+    problems.push(...crashFailed);
+  } else {
+    if (crash.code !== 1) {
+      problems.push(
+        `\`kubic __crash-probe\` exited ${crash.code} (expected 1 — unexpected failures exit 1)`,
+      );
+    }
+    const printed = crash.stderr.trimEnd();
+    const expected = `error: ${CRASH_PROBE_MESSAGE}`;
+    if (printed !== expected) {
+      problems.push(
+        `\`kubic __crash-probe\` stderr was ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(expected)} (one named line, no stack)`,
+      );
+    }
+    if (crash.stdout.trimEnd() !== '') {
+      problems.push(
+        `\`kubic __crash-probe\` wrote ${JSON.stringify(crash.stdout)} to stdout — failures are stderr-only`,
+      );
+    }
+  }
+
+  const debugCrash = run(['__crash-probe'], { env: { KUBIC_DEBUG: '1' } });
+  const debugCrashFailed = probeProblems(
+    'kubic __crash-probe (KUBIC_DEBUG=1)',
+    debugCrash,
+  );
+  if (debugCrashFailed.length > 0) {
+    problems.push(...debugCrashFailed);
+  } else {
+    if (debugCrash.code !== 1) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 exited ${debugCrash.code} (expected 1 — the opt-in changes the output, never the exit)`,
+      );
+    }
+    const stderr = debugCrash.stderr.trimEnd();
+    if (!stderr.includes(`error: ${CRASH_PROBE_MESSAGE}`)) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 lost the \`error: <message>\` line (stderr was ${JSON.stringify(stderr)})`,
+      );
+    }
+    if (!/\n\s+at /.test(stderr)) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 must include the full stack — no \` at \` frame seen in ${JSON.stringify(stderr)}`,
+      );
+    }
+  }
+
   const doctor = run(['doctor']);
   const doctorFailed = probeProblems('kubic doctor', doctor);
   if (doctorFailed.length > 0) {
@@ -229,19 +348,30 @@ export function binaryContract({ distPresent, expectedLine, run }) {
 // and a cwd without models.json. spawnSync reports `status` (and leaves
 // it null when a signal or the timeout killed the child) — normalise to
 // the contract's `{code, stdout, stderr, error}` probe shape.
-function realRunner(root, { cwd, home, timeoutMs = 60_000 }) {
+//
+// `opts.nodeStub` (issue #128) prepends `--import <stubPath>` and hands the
+// version to the preload through NODE_STUB_ENV, so the launcher's guard
+// sees the stubbed runtime; `opts.env` adds probe-scoped child env
+// (e.g. KUBIC_DEBUG=1). Neither leaks into probes that did not ask.
+function realRunner(root, { cwd, home, timeoutMs = 60_000, stubPath }) {
   // Hermetic by construction, not by luck: the child gets a minimal env with
   // HOME pointing at the scratch dir, so nothing on the machine (provider
   // credentials, a models.json path, a KUBIC_* override) can reach the probes.
-  const env = {
-    PATH: process.env.PATH ?? '',
-    HOME: home,
-    TMPDIR: process.env.TMPDIR ?? '',
-  };
-  return (args) => {
+  return (args, opts = {}) => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: home,
+      TMPDIR: process.env.TMPDIR ?? '',
+      ...opts.env,
+    };
+    const nodeArgs = [];
+    if (opts.nodeStub !== undefined) {
+      env[NODE_STUB_ENV] = opts.nodeStub;
+      nodeArgs.push('--import', stubPath);
+    }
     const result = spawnSync(
       process.execPath,
-      [join(root, 'bin', 'kubic.js'), ...args],
+      [...nodeArgs, join(root, 'bin', 'kubic.js'), ...args],
       {
         cwd,
         env,
@@ -262,6 +392,21 @@ function realRunner(root, { cwd, home, timeoutMs = 60_000 }) {
   };
 }
 
+// The `--import` preload the stubbed guard probes run with (issue #128):
+// rewrites process.versions.node before the entry module evaluates, so an
+// old runtime is simulated on the current one. A value the contract never
+// sets is ignored, keeping direct probes byte-identical.
+function nodeStubPreload() {
+  return [
+    '// Generated by scripts/binary-contract.mjs (issue #128) — do not ship.',
+    `const stub = process.env[${JSON.stringify(NODE_STUB_ENV)}];`,
+    'if (stub !== undefined) {',
+    "  Object.defineProperty(process.versions, 'node', { value: stub });",
+    '}',
+    '',
+  ].join('\n');
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const scratch = mkdtempSync(join(tmpdir(), 'kubic-binary-contract-'));
@@ -270,6 +415,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const home = join(scratch, 'home');
     mkdirSync(cwd);
     mkdirSync(home);
+    const stubPath = join(scratch, 'node-version-stub.mjs');
+    writeFileSync(stubPath, nodeStubPreload());
     const manifest = JSON.parse(
       readFileSync(join(root, 'package.json'), 'utf8'),
     );
@@ -277,7 +424,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const result = binaryContract({
       distPresent: existsSync(join(root, DIST_ENTRY)),
       expectedLine,
-      run: realRunner(root, { cwd, home }),
+      run: realRunner(root, { cwd, home, stubPath }),
     });
     if (result.problems.length > 0) {
       for (const problem of result.problems) {
@@ -291,7 +438,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

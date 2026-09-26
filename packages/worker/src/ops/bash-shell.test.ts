@@ -1,26 +1,74 @@
 // Issue #123: the tool is named bash and the prompts say bash — the op
 // must run bash when the system has it, degrade once to sh when it does
-// not, and say which shell actually ran (BashResult.shell). Detection and
-// execution both go through ctx.env.shell so FakeExecutionEnv scripts the
-// answer — no child_process in ops.
-import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import type { FakeScript } from '../../../exec/src/env.js';
+// not, and say which shell actually ran (BashResult.shell). Resolution is
+// cached per process; detection and execution both go through
+// ctx.env.shell so FakeExecutionEnv scripts the answer — no
+// child_process in ops.
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type {
+  ExecutionEnv,
+  FakeScript,
+  ProcessHandle,
+  Shell,
+  ShellResult,
+  SpawnOptions,
+} from '../../../exec/src/env.js';
+import {
+  FakeExecutionEnv,
+  NodeExecutionEnv,
+  ROOT_PROVENANCE,
+} from '../../../exec/src/env.js';
+import { __setResolvedShellForTests } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
-import type { OpContext } from './types.js';
+import type {
+  JsonValue,
+  MemoStore,
+  OpContext,
+  ToolInvocation,
+} from './types.js';
 
-function fakeCtx(
-  env: FakeExecutionEnv,
-  extra?: Partial<OpContext>,
-): OpContext {
+function wrapShell(inner: FakeExecutionEnv, shell: Shell): ExecutionEnv {
+  return {
+    cwd: inner.cwd,
+    fs: inner.fs,
+    shell,
+    provenance: inner.provenance,
+    withProvenance: () => wrapShell(inner, shell),
+  };
+}
+
+// Fake-env call log: the fake scripts the answers, the wrapper records
+// every spawn the op makes (asserted as the key FakeExecutionEnv uses).
+function recordingEnv(scripts: Record<string, FakeScript>): {
+  env: ExecutionEnv;
+  calls: string[];
+} {
+  const inner = new FakeExecutionEnv(scripts);
+  const calls: string[] = [];
+  const shell: Shell = {
+    spawn: (cmd, args, options) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      return inner.shell.spawn(cmd, args, options);
+    },
+  };
+  return { env: wrapShell(inner, shell), calls };
+}
+
+function ctxFor(env: ExecutionEnv, extra?: Partial<OpContext>): OpContext {
   return { env, sessionId: 's1', agentId: 'a1', ...extra };
 }
 
-function inv(id: string) {
+function inv(
+  id: string,
+  store: MemoStore = new MemoryMemoStore(),
+): ToolInvocation {
   return createInvocation(
     { invocationId: id, operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
+    store,
   );
 }
 
@@ -30,7 +78,73 @@ const BASH_MISSING: FakeScript = {
   stderr: 'bash: not found',
 };
 
+const OK_HI: FakeScript = { exitCode: 0, stdout: 'hi\n', stderr: '' };
+
+// Scripted handles where 'hang' never settles until kill() — the only way
+// to exercise timeout/abort kill routing through the seam without a real
+// child (FakeExecutionEnv settles instantly).
+class HangShell implements Shell {
+  readonly calls: string[] = [];
+  readonly killed: string[] = [];
+  private readonly scripts: Record<string, FakeScript | 'hang'>;
+
+  constructor(scripts: Record<string, FakeScript | 'hang'>) {
+    this.scripts = scripts;
+  }
+
+  spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
+    const key = `${cmd} ${args.join(' ')}`;
+    this.calls.push(key);
+    const script = this.scripts[key];
+    if (script === undefined) {
+      throw new Error(`HangShell: unscripted spawn: ${key}`);
+    }
+    if (script !== 'hang') {
+      return {
+        pid: undefined,
+        wait: () =>
+          Promise.resolve({ ...script, provenance: options.provenance }),
+        kill: () => {
+          this.killed.push(key);
+        },
+      };
+    }
+    let settle: (result: ShellResult) => void = () => undefined;
+    const done = new Promise<ShellResult>((resolve) => {
+      settle = resolve;
+    });
+    return {
+      pid: undefined,
+      wait: () => done,
+      kill: () => {
+        this.killed.push(key);
+        settle({
+          exitCode: 137,
+          stdout: '',
+          stderr: '',
+          provenance: options.provenance,
+        });
+      },
+    };
+  }
+}
+
+// Real-child probes run through the same seam the op uses.
+async function bashPresent(): Promise<boolean> {
+  const env = new NodeExecutionEnv(mkdtempSync(join(tmpdir(), 'bash-probe-')));
+  const result = await env.shell
+    .spawn('bash', ['-c', 'true'], { provenance: ROOT_PROVENANCE })
+    .wait();
+  return result.exitCode === 0;
+}
+
+const HAS_BASH = await bashPresent();
+
 describe('bash shell resolution (issue #123)', () => {
+  beforeEach(() => {
+    __setResolvedShellForTests(undefined);
+  });
+
   it('falls back to sh when bash settles 127 "bash: not found"', async () => {
     const env = new FakeExecutionEnv({
       'bash -c echo hi': BASH_MISSING,
@@ -40,12 +154,190 @@ describe('bash shell resolution (issue #123)', () => {
       'bash',
       { command: 'echo hi' },
       inv('inv-sh1'),
-      fakeCtx(env),
+      ctxFor(env),
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.result.exitCode).toBe(0);
     expect(out.result.stdout).toBe('hi\n');
     expect(out.result.shell).toBe('sh');
+  });
+
+  it.skipIf(!HAS_BASH)(
+    'runs bashisms under bash and reports shell: bash (real child)',
+    async () => {
+      const env = new NodeExecutionEnv(
+        mkdtempSync(join(tmpdir(), 'bash-shell-')),
+      );
+      const out = await callOperation(
+        'bash',
+        { command: '[[ -n x ]] && echo ok' },
+        inv('inv-sh2'),
+        ctxFor(env),
+      );
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.result.exitCode).toBe(0);
+      expect(out.result.stdout).toBe('ok\n');
+      expect(out.result.shell).toBe('bash');
+    },
+  );
+
+  it('does not re-probe the shell on a second invocation', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c echo one': { exitCode: 0, stdout: 'one\n', stderr: '' },
+      'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
+    });
+    const c = ctxFor(env);
+    await callOperation('bash', { command: 'echo one' }, inv('inv-sh3a'), c);
+    await callOperation('bash', { command: 'echo two' }, inv('inv-sh3b'), c);
+    // Exactly one spawn per invocation — no `bash -c true` detection
+    // spawn, and nothing re-probed on the second call.
+    expect(calls).toEqual(['bash -c echo one', 'bash -c echo two']);
+  });
+
+  it('remembers the sh fallback on a second invocation', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c echo one': BASH_MISSING,
+      'sh -c echo one': { exitCode: 0, stdout: 'one\n', stderr: '' },
+      'sh -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
+    });
+    const c = ctxFor(env);
+    const first = await callOperation(
+      'bash',
+      { command: 'echo one' },
+      inv('inv-sh4a'),
+      c,
+    );
+    const second = await callOperation(
+      'bash',
+      { command: 'echo two' },
+      inv('inv-sh4b'),
+      c,
+    );
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(first.result.shell).toBe('sh');
+    expect(second.result.shell).toBe('sh');
+    expect(calls).toEqual([
+      'bash -c echo one',
+      'sh -c echo one',
+      'sh -c echo two',
+    ]);
+  });
+
+  it.skipIf(!HAS_BASH)(
+    'runs `local` in a function when bash is resolved (real child)',
+    async () => {
+      const env = new NodeExecutionEnv(
+        mkdtempSync(join(tmpdir(), 'bash-local-')),
+      );
+      const out = await callOperation(
+        'bash',
+        { command: 'f() { local v=1; echo "local $v"; }; f' },
+        inv('inv-sh5'),
+        ctxFor(env),
+      );
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.result.exitCode).toBe(0);
+      expect(out.result.stdout).toBe('local 1\n');
+      expect(out.result.shell).toBe('bash');
+    },
+  );
+
+  it('timeout kills the live handle under the retry shape', async () => {
+    const shell = new HangShell({
+      'bash -c sleep-forever': BASH_MISSING,
+      'sh -c sleep-forever': 'hang',
+    });
+    const out = await callOperation(
+      'bash',
+      { command: 'sleep-forever', timeout: 0.2 },
+      inv('inv-sh6'),
+      ctxFor(wrapShell(new FakeExecutionEnv({}), shell)),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.timedOut).toBe(true);
+    expect(out.result.aborted).toBe(true);
+    expect(out.result.exitCode).toBeNull();
+    expect(out.result.shell).toBe('sh');
+    expect(shell.killed).toContain('sh -c sleep-forever');
+    expect(shell.killed).not.toContain('bash -c sleep-forever');
+  }, 10000);
+
+  it('abort kills the live handle under the retry shape', async () => {
+    const shell = new HangShell({
+      'bash -c sleep-forever': BASH_MISSING,
+      'sh -c sleep-forever': 'hang',
+    });
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 100);
+    const out = await callOperation(
+      'bash',
+      { command: 'sleep-forever' },
+      inv('inv-sh7'),
+      ctxFor(wrapShell(new FakeExecutionEnv({}), shell), {
+        signal: ctl.signal,
+      }),
+    );
+    clearTimeout(timer);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.aborted).toBe(true);
+    expect(out.result.timedOut).toBe(false);
+    expect(out.result.exitCode).toBeNull();
+    expect(out.result.shell).toBe('sh');
+    expect(shell.killed).toContain('sh -c sleep-forever');
+    expect(shell.killed).not.toContain('bash -c sleep-forever');
+  }, 10000);
+
+  it('re-registers the retry handle with trackHandle', async () => {
+    const tracked: Array<() => void> = [];
+    const { env } = recordingEnv({
+      'bash -c echo hi': BASH_MISSING,
+      'sh -c echo hi': OK_HI,
+    });
+    const out = await callOperation(
+      'bash',
+      { command: 'echo hi' },
+      inv('inv-sh8'),
+      ctxFor(env, { trackHandle: (kill) => tracked.push(kill) }),
+    );
+    expect(out.ok).toBe(true);
+    // First attempt handle + retry handle — the lane's kill registry must
+    // see both so an abort kills whichever is live.
+    expect(tracked).toHaveLength(2);
+  });
+
+  it('memoizes a retried command exactly once under op-result-bash', async () => {
+    const base = inv('inv-sh9');
+    const getNames: string[] = [];
+    const setNames: string[] = [];
+    const counting: ToolInvocation = {
+      ...base,
+      getMemo: (name: string) => {
+        getNames.push(name);
+        return base.getMemo(name);
+      },
+      setMemo: (name: string, value: JsonValue | undefined) => {
+        setNames.push(name);
+        return base.setMemo(name, value);
+      },
+    };
+    const { env } = recordingEnv({
+      'bash -c echo hi': BASH_MISSING,
+      'sh -c echo hi': OK_HI,
+    });
+    const out = await callOperation(
+      'bash',
+      { command: 'echo hi' },
+      counting,
+      ctxFor(env),
+    );
+    expect(out.ok).toBe(true);
+    expect(getNames).toEqual(['op-result-bash']);
+    expect(setNames).toEqual(['op-result-bash']);
   });
 });

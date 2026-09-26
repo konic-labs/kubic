@@ -130,6 +130,8 @@ describe('journal store (issue #17, slice A)', () => {
     store.append(entry({ path: 'new.txt', after: 'new\n', timestamp: 2000 }));
     const pruned = store.enforceRetention({ maxAgeMs: 500, now: 2000 });
     expect(pruned.entries).toBe(1);
+    // Freed bytes are the dropped entry's unique blob ('old\n'), live truth.
+    expect(pruned.bytes).toBe(4);
     expect(store.entries()[0]?.path).toBe('new.txt');
     expect(store.blobCount()).toBe(1);
 

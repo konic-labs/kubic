@@ -7,6 +7,7 @@
 // stay sentinel-only.
 
 import { answerHelp } from '../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import {
   type AuditMode,
   type AuditResult,
@@ -68,6 +69,17 @@ export function redactAuditRecord(
   return JSON.parse(text) as OrgAuditRecord;
 }
 
+// Issue #127: the shared parser replaces the hand-rolled loop. Missing
+// values keep their `error: <flag> needs a value` line; unknown flags and
+// stray operands keep the bare usage exit; mode/result validation stays
+// this command's semantics (with the fail-closed secret-shaped echo).
+const AUDIT_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--mode', takes: 'value' },
+  { name: '--posture', takes: 'value' },
+  { name: '--result', takes: 'value' },
+];
+
 export async function runAuditCommand(
   args: string[],
   deps: AuditCommandDeps,
@@ -75,46 +87,40 @@ export async function runAuditCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, AUDIT_USAGE);
   if (help !== null) return help;
-  let json = false;
+  const flags = parseFlagArgs(args, AUDIT_FLAG_SPEC);
+  for (const flag of flags.missing) {
+    deps.out(`error: ${flag} needs a value`);
+    return usage(deps.out);
+  }
+  if (flags.unknown.length > 0 || flags.positional.length > 0) {
+    return usage(deps.out);
+  }
+  const json = flags.values['--json'] === true;
   let mode: AuditMode | undefined;
-  let posture: string | undefined;
   let result: AuditResult | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--json') {
-      json = true;
-    } else if (arg === '--mode' || arg === '--posture' || arg === '--result') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out(`error: ${arg} needs a value`);
-        return usage(deps.out);
-      }
-      if (arg === '--mode') {
-        if (!isAuditMode(value)) {
-          deps.out(
-            redactSecretShapes(`error: unknown mode ${JSON.stringify(value)}`),
-          );
-          return usage(deps.out);
-        }
-        mode = value;
-      } else if (arg === '--result') {
-        if (!isAuditResult(value)) {
-          deps.out(
-            redactSecretShapes(
-              `error: unknown result ${JSON.stringify(value)}`,
-            ),
-          );
-          return usage(deps.out);
-        }
-        result = value;
-      } else {
-        posture = value;
-      }
-      i++;
-    } else {
+  const modeRaw = flags.values['--mode'] as string | undefined;
+  if (modeRaw !== undefined) {
+    if (!isAuditMode(modeRaw)) {
+      deps.out(
+        redactSecretShapes(`error: unknown mode ${JSON.stringify(modeRaw)}`),
+      );
       return usage(deps.out);
     }
+    mode = modeRaw;
   }
+  const resultRaw = flags.values['--result'] as string | undefined;
+  if (resultRaw !== undefined) {
+    if (!isAuditResult(resultRaw)) {
+      deps.out(
+        redactSecretShapes(
+          `error: unknown result ${JSON.stringify(resultRaw)}`,
+        ),
+      );
+      return usage(deps.out);
+    }
+    result = resultRaw;
+  }
+  const posture = flags.values['--posture'] as string | undefined;
   const records = await deps.loadRecords();
   // Union of both inventory channels: an explicit list plus whatever the
   // injected loader returns — either source alone redacts.

@@ -12,6 +12,7 @@
 // per-row numbers are additive inside the existing `agents` entries.
 
 import { answerHelp } from '../../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -87,6 +88,14 @@ export async function loadSessionCostRows(
   return rows;
 }
 
+// Issue #127: the shared parser replaces the hand-rolled loop. Missing
+// values keep their line; unknown flags and stray operands keep the bare
+// usage exit; the id pattern stays this command's semantics.
+const COST_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--session', takes: 'value' },
+];
+
 export async function runCostCommand(
   args: string[],
   deps: CostCommandDeps,
@@ -94,31 +103,27 @@ export async function runCostCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, COST_USAGE);
   if (help !== null) return help;
-  let json = false;
+  const flags = parseFlagArgs(args, COST_FLAG_SPEC);
+  if (flags.missing.includes('--session')) {
+    deps.out('error: --session needs a value');
+    return usage(deps.out);
+  }
+  if (flags.unknown.length > 0 || flags.positional.length > 0) {
+    return usage(deps.out);
+  }
+  const json = flags.values['--json'] === true;
   let sessionId: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--json') {
-      json = true;
-    } else if (arg === '--session') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --session needs a value');
-        return usage(deps.out);
-      }
-      if (!SESSION_ID_PATTERN.test(value)) {
-        // Fail-closed echo: the rejected id is argv-controlled and may
-        // carry secret-shaped material (e.g. a bearer token with spaces).
-        deps.out(
-          `error: invalid --session id ${redactSecretShapes(JSON.stringify(value))} (use [A-Za-z0-9_-])`,
-        );
-        return usage(deps.out);
-      }
-      sessionId = value;
-      i++;
-    } else {
+  const sessionRaw = flags.values['--session'] as string | undefined;
+  if (sessionRaw !== undefined) {
+    if (!SESSION_ID_PATTERN.test(sessionRaw)) {
+      // Fail-closed echo: the rejected id is argv-controlled and may
+      // carry secret-shaped material (e.g. a bearer token with spaces).
+      deps.out(
+        `error: invalid --session id ${redactSecretShapes(JSON.stringify(sessionRaw))} (use [A-Za-z0-9_-])`,
+      );
       return usage(deps.out);
     }
+    sessionId = sessionRaw;
   }
   let rows: AgentCostInput[];
   try {

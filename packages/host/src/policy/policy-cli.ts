@@ -5,6 +5,7 @@
 // enterprise allow is denied.
 
 import { answerHelp } from '../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import { type EffectivePolicy, isToolAllowed } from './enterprise.js';
 import { redactSecretShapes } from './secret-shapes.js';
 
@@ -23,6 +24,15 @@ function usage(out: (line: string) => void): number {
   return POLICY_EXIT_USAGE;
 }
 
+// Issue #127: the shared parser replaces the hand-rolled loop. Missing
+// values keep their line; unknown flags and stray operands keep the bare
+// usage exit; the tool name's emptiness check stays this command's
+// semantics.
+const POLICY_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--tool', takes: 'value' },
+];
+
 export async function runPolicyCommand(
   args: string[],
   deps: PolicyCommandDeps,
@@ -30,29 +40,22 @@ export async function runPolicyCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, POLICY_USAGE);
   if (help !== null) return help;
-  let json = false;
-  let tool: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--json') {
-      json = true;
-    } else if (arg === '--tool') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --tool needs a value');
-        return usage(deps.out);
-      }
-      tool = value.trim();
-      if (tool === '') {
-        deps.out('error: --tool needs a non-empty value');
-        return usage(deps.out);
-      }
-      i++;
-    } else {
-      return usage(deps.out);
-    }
+  const flags = parseFlagArgs(args, POLICY_FLAG_SPEC);
+  if (flags.missing.includes('--tool')) {
+    deps.out('error: --tool needs a value');
+    return usage(deps.out);
   }
-  if (tool === undefined) return usage(deps.out);
+  if (flags.unknown.length > 0 || flags.positional.length > 0) {
+    return usage(deps.out);
+  }
+  const json = flags.values['--json'] === true;
+  const toolRaw = flags.values['--tool'] as string | undefined;
+  if (toolRaw === undefined) return usage(deps.out);
+  const tool = toolRaw.trim();
+  if (tool === '') {
+    deps.out('error: --tool needs a non-empty value');
+    return usage(deps.out);
+  }
   const policy = await deps.resolvePolicy();
   const decision = isToolAllowed(policy, tool) ? 'allow' : 'deny';
   // Fail-closed echo: the tool name is free-form argv and may carry

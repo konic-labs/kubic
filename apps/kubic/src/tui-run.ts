@@ -192,6 +192,10 @@ export interface TuiRunOptions {
   role?: string;
   roles?: { cwd?: string };
   journalRetention?: JournalRetention;
+  // §35 out-of-scope paths (issue #115): the same projection `kubic run`
+  // threads, so a declared directory is excluded from this lane's §42.5
+  // baseline and sweep too. Absent means the mechanism's own skips only.
+  reconcileOutOfScope?: string[];
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -256,6 +260,9 @@ export async function bootTuiLane(
         runId: id,
         sessionId: id,
         agentId: 'root',
+        ...(options.reconcileOutOfScope === undefined
+          ? {}
+          : { outOfScope: options.reconcileOutOfScope }),
       });
     } catch {
       // Reported below by the loop's own surfaces; the boot stands.
@@ -388,8 +395,17 @@ export function tuiDepsWithDefaults(provided: {
   // Issue #113 (§42.4): config journal retention, threaded from the same
   // runtimeRunDeps projection `kubic run` uses.
   journalRetention?: JournalRetention;
+  // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
+  // projection — the interactive lane's baseline and sweep honour them too.
+  reconcileOutOfScope?: string[];
 }): TuiRunDeps {
-  const { classes, policySource, policy, journalRetention } = provided;
+  const {
+    classes,
+    policySource,
+    policy,
+    journalRetention,
+    reconcileOutOfScope,
+  } = provided;
   return {
     out: provided.out,
     createTerminal: () => new ProcessTerminal(),
@@ -405,6 +421,7 @@ export function tuiDepsWithDefaults(provided: {
         ...(policy === undefined ? {} : { policy }),
         ...(answer === undefined ? {} : { answer }),
         ...(journalRetention === undefined ? {} : { journalRetention }),
+        ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
         ...(flags?.role === undefined ? {} : { role: flags.role }),
         ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0

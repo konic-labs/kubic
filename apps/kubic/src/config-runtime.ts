@@ -157,6 +157,10 @@ export function runtimeModelPin(
 export function runtimeRunDeps(result: CliConfigResult): {
   policyClasses?: PermissionClasses;
   journalRetention?: JournalRetention;
+  // Issue #115 (§35/§42.5): the declared out-of-scope paths, threaded to the
+  // run/TUI lane's reconciliation. Undefined when config declares none — the
+  // walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its own.
+  reconcileOutOfScope?: string[];
   // Issue #86: where the classes came from, per the config layer's own
   // record. Threaded to the run path so the posture the lane installs and
   // the posture `doctor` prints carry the SAME source (§40.3) — a config
@@ -174,6 +178,9 @@ export function runtimeRunDeps(result: CliConfigResult): {
       runtime.journal.maxAgeMs === undefined
         ? {}
         : { maxAgeMs: runtime.journal.maxAgeMs },
+    ...(runtime.journal.outOfScope === undefined
+      ? {}
+      : { reconcileOutOfScope: [...runtime.journal.outOfScope] }),
   };
 }
 

@@ -165,6 +165,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // Issue #113 (§42.4): the same journal retention projection `kubic
           // run` threads — a TUI session's journal age-prunes under config.
           journalRetention: runtimeRunDeps(cliConfig).journalRetention,
+          // Issue #115 (§35/§42.5): the same out-of-scope projection — the
+          // interactive lane's baseline and sweep exclude what `kubic run`
+          // excludes.
+          reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
         }),
       );
     },

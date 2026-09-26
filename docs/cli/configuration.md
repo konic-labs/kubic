@@ -47,7 +47,8 @@ falls back to a default.
 
 `kubic config` prints every value that is set, with the layer it came from,
 plus the projections the run consumes (selected model, approvals,
-permissions, journal retention, modes, budgets). `kubic config --json` emits
+permissions, journal retention and out-of-scope paths, modes, budgets).
+`kubic config --json` emits
 the same thing as one object — `values`: `{ key, value, layer }` per set
 key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
@@ -87,7 +88,18 @@ network = "none"
 
 [journal]
 retentionDays = 30
+outOfScope = ["dist", "coverage"]
 ```
+
+`outOfScope` entries are plain workspace-relative paths, not patterns, and an
+entry excludes the path itself **and everything under it**: `["dist"]`
+excludes `dist/`, `dist/a.js` and `dist/sub/b.js`, and never a sibling that
+merely shares the prefix (`dist-x`). Path-boundary aware, applied identically
+to the §42.5 boot baseline and the end-of-run sweep — a build or formatter
+that touches a declared path produces no unattributed journal entry. Patterns
+and negations belong in `.gitignore` (the walk honours it); `.git/` and
+`.kubic/` are hard-skipped before any config. An empty entry (`[""]`) is
+refused by name — it would match nothing.
 
 ## Shape (canonical sections)
 
@@ -98,7 +110,7 @@ sessionScoped, requireJustification · `[permissions]` filesystem
 (`none`, `read`, `workspace-write`, `full`), shell (boolean or
 `read-only-allowlist`), network (`none`, `allowlist`, `full`), git
 (boolean, `workspace`, `full`), credentials (`none`, `allowlist`) ·
-`[journal]` retentionDays · `[roles.<name>]` model/tools ·
+`[journal]` retentionDays/outOfScope · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
 `[session]` store/dir/retentionDays. The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
@@ -115,6 +127,7 @@ Every one of those keys has a runtime effect or says so plainly:
 | `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Effective policy; a pending ask denies on timeout, `autoApprove` is explicit-only. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. |
 | `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
+| `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
 | `agent.name` | Reported by `kubic config`; the solo lane names the agent from the session. |
 | `roles.*` | Parsed and reported; role documents land with #99. |
 | `orchestrator.*` | Parsed and reported; orchestrator wiring lands with #94/#95. |

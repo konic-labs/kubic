@@ -460,6 +460,33 @@ describe('config validation hardening (issue #69)', () => {
     );
   });
 
+  it('parses [journal] outOfScope as a path array, refusing empty entries by name', () => {
+    expect(
+      parseTomlConfig('[journal]\noutOfScope = ["build", "coverage"]\n').journal
+        ?.outOfScope,
+    ).toEqual(['build', 'coverage']);
+    // Unset stays unset: no empty list is invented (§35 opt-in).
+    expect(
+      parseTomlConfig('[journal]\nretentionDays = 7\n').journal?.outOfScope,
+    ).toBeUndefined();
+    // Same array-validation shape as every other string array key.
+    expect(() => parseTomlConfig('[journal]\noutOfScope = "build"\n')).toThrow(
+      /string array/,
+    );
+    expect(() => parseTomlConfig('[journal]\noutOfScope = [42]\n')).toThrow(
+      /string array/,
+    );
+    // An empty entry would match nothing (workspace-relative paths never
+    // start with '/'), so it is refused by name rather than carried as dead
+    // config — fail-closed like every other key.
+    expect(() => parseTomlConfig('[journal]\noutOfScope = [""]\n')).toThrow(
+      /'journal': 'outOfScope' entry 1 is empty/,
+    );
+    expect(() =>
+      parseTomlConfig('[journal]\noutOfScope = ["build", "  "]\n'),
+    ).toThrow(/'journal': 'outOfScope' entry 2 is empty/);
+  });
+
   it('rejects empty-string required values', () => {
     expect(() => parseTomlConfig('[agent]\nname = ""\n')).toThrow(
       /non-empty string/,

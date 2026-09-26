@@ -30,6 +30,7 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkOutOfScopeEntries,
   defaultLayerPaths,
   type KubicConfig,
   type LayerInput,
@@ -126,6 +127,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'journal.retentionDays': {
     effect: 'journal age bound (maxAgeMs) enforced on every append — §42.4',
   },
+  'journal.outOfScope': {
+    effect:
+      'paths excluded from the §42.5 baseline and the end-of-run sweep (self + children)',
+  },
   roles: {
     notYetImplemented:
       'per-role model/tools are parsed and reported; role documents land with #99',
@@ -176,6 +181,14 @@ export interface RuntimeJournal {
   // Undefined means "no age bound configured" — never an invented default.
   retentionDays?: number;
   maxAgeMs?: number;
+  /**
+   * §35 out-of-scope paths (issue #115): undefined means none declared — the
+   * §42.5 walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its
+   * own. Declared entries exclude the path itself and everything under it.
+   * The leaf's own layer lives in `sources['journal.outOfScope']`; `source`
+   * below is the retention bound's origin.
+   */
+  outOfScope?: string[];
   source: ConfigValueSource;
 }
 
@@ -255,6 +268,7 @@ export interface EffectiveConfigView {
   journal: {
     retentionDays?: number;
     maxAgeMs?: number;
+    outOfScope?: string[];
     source: ConfigValueSource;
   };
   model: RuntimeModelSelection | undefined;
@@ -597,11 +611,21 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         RUNTIME_ENV_OVERRIDES.journalRetentionDays,
       )
     : config.journal?.retentionDays;
+  // §35 out-of-scope paths (issue #115): validated here too, because the
+  // programmatic session/agent layers never pass through the TOML parser —
+  // an empty entry is refused by name, never half-applied.
+  const outOfScopeEntries = checkOutOfScopeEntries(
+    config.journal?.outOfScope,
+    'journal',
+  );
   const journal: RuntimeJournal = {
     ...(retentionDays === undefined ? {} : { retentionDays }),
     ...(retentionDays === undefined
       ? {}
       : { maxAgeMs: retentionDays * MS_PER_DAY }),
+    ...(outOfScopeEntries === undefined
+      ? {}
+      : { outOfScope: outOfScopeEntries }),
     source: retentionEnvApplies
       ? 'env'
       : (loaded.sources['journal.retentionDays'] ?? 'defaults'),
@@ -685,7 +709,12 @@ export function effectiveConfigView(
       classes: { ...runtime.permissions.classes },
       source: runtime.permissions.source,
     },
-    journal: runtime.journal,
+    journal: {
+      ...runtime.journal,
+      ...(runtime.journal.outOfScope === undefined
+        ? {}
+        : { outOfScope: [...runtime.journal.outOfScope] }),
+    },
     model: runtime.model === undefined ? undefined : { ...runtime.model },
     modelSource: runtime.modelSource,
     modes: { ...runtime.modes },
@@ -741,6 +770,11 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
     view.journal.retentionDays === undefined
       ? 'journal retention: none configured (no age bound)'
       : `journal retention: ${view.journal.retentionDays} day(s) = maxAgeMs ${view.journal.maxAgeMs} (${view.journal.source})`,
+  );
+  lines.push(
+    view.journal.outOfScope === undefined
+      ? 'journal out-of-scope: none declared — the walk still skips .git/, .kubic/ and .gitignore hits on its own'
+      : `journal out-of-scope: ${view.journal.outOfScope.length} path(s) excluded from the baseline and the sweep (self + children): ${view.journal.outOfScope.join(', ')}`,
   );
   lines.push(
     `modes: solo=${String(view.modes.solo)}, orchestrator=${String(view.modes.orchestrator)} (${view.modes.source})`,

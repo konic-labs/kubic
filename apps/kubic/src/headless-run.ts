@@ -318,8 +318,15 @@ function tipId(entries: readonly unknown[]): string | null {
   return best;
 }
 
-// Final assistant text of the settled run for the result summary;
-// falls back to the prompt when the lane left no assistant text.
+// The named non-answer a completed run with no assistant text reports
+// (issue #129): the summary is the model's own output or this sentence —
+// never the operator's prompt echoed back as if it were a result.
+export const NO_ASSISTANT_TEXT_SUMMARY =
+  '(no assistant text — the run settled without output)';
+
+// Final assistant text of the settled run for the result summary. A lane
+// that left no assistant text yields undefined; the caller reports the
+// named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
 function assistantSummary(entries: readonly unknown[]): string | undefined {
   let best: string | undefined;
   let bestSeq = -1;
@@ -821,7 +828,11 @@ export async function runHeadlessPrompt(
       const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
       if (terminus === 'completed') {
         const entries = await lane.findEntries(undefined, context);
-        return finished(id, terminus, assistantSummary(entries) ?? prompt);
+        return finished(
+          id,
+          terminus,
+          assistantSummary(entries) ?? NO_ASSISTANT_TEXT_SUMMARY,
+        );
       }
       const summary =
         record.error === undefined

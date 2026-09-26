@@ -95,4 +95,57 @@ describe('models.json custom providers (issue #20, slice A)', () => {
     expect(models.getProvider('local')?.id).toBe('local');
     expect(models.getModels('local').map((m) => m.id)).toContain('llama3');
   });
+
+  // Issue #113 smoke follow-up: gateways like opencode-go require a
+  // per-provider header (x-opencode-session) on every request — pi-ai's
+  // createProvider accepts static ProviderHeaders, so models.json passes
+  // them through instead of kubic hard-coding any gateway.
+  it('threads a per-provider headers map into the created provider', () => {
+    const models = createModels();
+    const specs = parseModelsJson({
+      providers: [
+        {
+          id: 'opencode-go',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          api: 'openai-completions',
+          headers: {
+            'x-opencode-session': 'kubic-session-1',
+            'x-opencode-client': 'kubic',
+          },
+          models: [{ id: 'deepseek-v4.1-flash' }],
+        },
+      ],
+    });
+    expect(specs[0]?.headers).toEqual({
+      'x-opencode-session': 'kubic-session-1',
+      'x-opencode-client': 'kubic',
+    });
+    registerCustomProviders(models, specs);
+    expect(models.getProvider('opencode-go')?.headers).toEqual({
+      'x-opencode-session': 'kubic-session-1',
+      'x-opencode-client': 'kubic',
+    });
+    // The stream path merges MODEL-level headers into requests, so the
+    // provider map must ride on each model too.
+    expect(models.getModels('opencode-go')[0]?.headers).toEqual({
+      'x-opencode-session': 'kubic-session-1',
+      'x-opencode-client': 'kubic',
+    });
+  });
+
+  it('rejects a non-string header value with a named reason', () => {
+    expect(() =>
+      parseModelsJson({
+        providers: [
+          {
+            id: 'x',
+            baseUrl: 'https://x.example/v1',
+            api: 'openai-completions',
+            headers: { 'x-bad': 42 },
+            models: [{ id: 'm' }],
+          },
+        ],
+      }),
+    ).toThrow(/headers/);
+  });
 });

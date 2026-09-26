@@ -32,6 +32,8 @@ export interface CustomProviderSpec {
   name?: string;
   baseUrl: string;
   apiKeyEnv?: string;
+  /** Static per-provider headers (e.g. opencode-go's x-opencode-session). */
+  headers?: Record<string, string>;
   api: CustomApi;
   models: CustomModelSpec[];
 }
@@ -168,6 +170,30 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       `provider '${id}': apiKeyEnv must be a non-empty string when set`,
     );
   }
+  // Static per-provider headers (gateways like opencode-go require one on
+  // every request). Keys and values must both be non-empty strings — a
+  // malformed map is a named refusal, never a silent drop.
+  let headers: Record<string, string> | undefined;
+  if (raw.headers !== undefined) {
+    if (!isRecord(raw.headers)) {
+      throw new ModelsJsonError(
+        `provider '${id}': headers must be an object of string to string`,
+      );
+    }
+    for (const [key, value] of Object.entries(raw.headers)) {
+      if (
+        typeof key !== 'string' ||
+        key === '' ||
+        typeof value !== 'string' ||
+        value === ''
+      ) {
+        throw new ModelsJsonError(
+          `provider '${id}': headers keys and values must be non-empty strings (got ${JSON.stringify(key)}: ${JSON.stringify(value)})`,
+        );
+      }
+    }
+    headers = { ...(raw.headers as Record<string, string>) };
+  }
   return {
     id,
     ...(typeof raw.name === 'string' && raw.name !== ''
@@ -175,6 +201,7 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       : {}),
     baseUrl,
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
+    ...(headers === undefined ? {} : { headers }),
     api,
     models: raw.models.map((m) => parseModel(m, id)),
   };
@@ -243,6 +270,7 @@ export function registerCustomProviders(
       id: spec.id,
       ...(spec.name === undefined ? {} : { name: spec.name }),
       baseUrl: spec.baseUrl,
+      ...(spec.headers === undefined ? {} : { headers: spec.headers }),
       auth: {
         apiKey: envApiKeyAuth(`${spec.id} API key`, [key]),
       },
@@ -254,6 +282,10 @@ export function registerCustomProviders(
         baseUrl: spec.baseUrl,
         reasoning: m.reasoning ?? false,
         input: ['text'] as ('text' | 'image')[],
+        // Static per-provider headers ride on each model too: pi-ai's stream
+        // path merges model.headers into every request (gateway routing
+        // headers like opencode-go's x-opencode-session must reach the wire).
+        ...(spec.headers === undefined ? {} : { headers: spec.headers }),
         cost: {
           input: m.inputCost ?? 0,
           output: m.outputCost ?? 0,

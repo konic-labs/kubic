@@ -62,6 +62,33 @@ Child output is capped at two independent layers, both keeping the **tail**
   consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
+### Read/edit bounds (issue #122)
+
+Two hard bounds keep one tool call from costing the whole file in memory
+(the journal has hashed bounded since #107; the ops now match):
+
+- **`read` — `READ_MAX_BYTES` (8 MiB) of I/O, `READ_CHUNK_BYTES` (512 KiB)
+  per buffer:** with a ranged-read seam (`FileSystem.readFileRange` — #107's
+  file-bridge seam extended to `ExecutionEnv`), `readWindowed` seeks to the
+  `offset` line by counting newlines chunk by chunk and collects the window
+  with one `StringDecoder` across chunks — the window costs the window, not
+  the file. Seams without `readFileRange` fall back to a whole read
+  (correct but unbounded) and the result shape never changes. When the byte
+  budget stops the scan before EOF, `truncated: true` says so and
+  `totalLines` is a lower bound (exact when the scan reached EOF); an
+  offset whose line lies beyond the budget returns empty content with
+  `truncated: true`.
+- **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
+  bound with a named `file_too_large` OpError (op failure-code vocabulary,
+  `ops/types.ts`) naming the size — before any content allocation, journal
+  untouched. The boundary is exact: 8 MiB edits fine, 8 MiB + 1 refuses.
+
+The reason for both: `read` capped only its output and `edit` capped
+nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the
+whole file in memory (plus its UTF-8 decode) on a path the model triggers
+with a single tool call. Text ops stay text; for oversized files the
+refusal names targeted shell tooling as the actionable alternative.
+
 ## Contracts
 
 ### `AgentResult` (`result.ts`, §68)

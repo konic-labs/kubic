@@ -101,10 +101,12 @@ function clip(text: string): { text: string; truncated: boolean } {
 
 // Spawn-ENOENT signature only: Node's `spawn <path> ENOENT` message (what
 // env.ts's issue #85 hardening writes to stderr when the bash BINARY
-// cannot start), plus the bare `bash: not found` shape the tests script
-// for the same failure. bash's inner `bash: <cmd>: command not found` is
-// a user typo inside a working bash and must never match.
-const SPAWN_ENOENT_MISSING = /spawn .*ENOENT|^bash: not found$/im;
+// cannot start) as its own anchored line — a bare substring like
+// `respawn ENOENT` in user output must not match, and no user-printable
+// text (e.g. `bash: not found`) is part of the signature. bash's inner
+// `bash: <cmd>: command not found` is a user typo inside a working bash
+// and must never match.
+const SPAWN_ENOENT_MISSING = /^spawn \S+ ENOENT$/m;
 
 let resolvedShell: BashResult['shell'] | undefined;
 
@@ -169,9 +171,9 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     // Issue #123: one-shot detect-and-retry. A 127 settled with the
     // SPAWN-ENOENT signature means this box has no bash binary — env.ts's
     // ENOENT hardening (issue #85) writes Node's `spawn <path> ENOENT`
-    // message to stderr (tests script the `bash: not found` shape). bash's
-    // own inner `bash: <cmd>: command not found` is a user typo inside a
-    // working bash and must NOT trigger the retry. Degrade once to sh,
+    // message line to stderr. bash's own inner
+    // `bash: <cmd>: command not found` is a user typo inside a working
+    // bash and must NOT trigger the retry. Degrade once to sh,
     // remember the answer for the process, and never loop. This runs
     // inside execute — before the registry memoizes the result under
     // `op-result-bash` — so a retried command memoizes exactly once.

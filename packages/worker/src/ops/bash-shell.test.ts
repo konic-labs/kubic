@@ -72,16 +72,10 @@ function inv(
   );
 }
 
-const BASH_MISSING: FakeScript = {
-  exitCode: 127,
-  stdout: '',
-  stderr: 'bash: not found',
-};
-
 // env.ts's spawn-ENOENT hardening (issue #85) settles wait() with Node's
-// `spawn <path> ENOENT` message — the real shape when the bash BINARY
-// is missing.
-const SPAWN_ENOENT: FakeScript = {
+// `spawn <path> ENOENT` message line — the production shape when the
+// bash BINARY is missing (the only shape the detector may match).
+const BASH_MISSING: FakeScript = {
   exitCode: 127,
   stdout: '',
   stderr: 'spawn bash ENOENT\n',
@@ -163,7 +157,7 @@ describe('bash shell resolution (issue #123)', () => {
     __setResolvedShellForTests(undefined);
   });
 
-  it('falls back to sh when bash settles 127 "bash: not found"', async () => {
+  it('falls back to sh when the bash spawn settles 127 with ENOENT', async () => {
     const env = new FakeExecutionEnv({
       'bash -c echo hi': BASH_MISSING,
       'sh -c echo hi': { exitCode: 0, stdout: 'hi\n', stderr: '' },
@@ -181,30 +175,24 @@ describe('bash shell resolution (issue #123)', () => {
     expect(out.result.shell).toBe('sh');
   });
 
-  it.each<[string, FakeScript]>([
-    ['bash: not found', BASH_MISSING],
-    ['spawn bash ENOENT', SPAWN_ENOENT],
-  ])(
-    'falls back to sh and succeeds on the spawn-failure shape (%s)',
-    async (_label, missing) => {
-      const { env, calls } = recordingEnv({
-        'bash -c echo hi': missing,
-        'sh -c echo hi': OK_HI,
-      });
-      const out = await callOperation(
-        'bash',
-        { command: 'echo hi' },
-        inv('inv-sh-miss'),
-        ctxFor(env),
-      );
-      expect(out.ok).toBe(true);
-      if (!out.ok) return;
-      expect(out.result.exitCode).toBe(0);
-      expect(out.result.stdout).toBe('hi\n');
-      expect(out.result.shell).toBe('sh');
-      expect(calls).toEqual(['bash -c echo hi', 'sh -c echo hi']);
-    },
-  );
+  it('falls back to sh and succeeds on the spawn-ENOENT shape', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c echo hi': BASH_MISSING,
+      'sh -c echo hi': OK_HI,
+    });
+    const out = await callOperation(
+      'bash',
+      { command: 'echo hi' },
+      inv('inv-sh-miss'),
+      ctxFor(env),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.exitCode).toBe(0);
+    expect(out.result.stdout).toBe('hi\n');
+    expect(out.result.shell).toBe('sh');
+    expect(calls).toEqual(['bash -c echo hi', 'sh -c echo hi']);
+  });
 
   it('does not retry (or poison the cache) on bash inner "command not found"', async () => {
     const { env, calls } = recordingEnv({
@@ -239,6 +227,90 @@ describe('bash shell resolution (issue #123)', () => {
     if (!second.ok) return;
     expect(second.result.shell).toBe('bash');
     expect(calls).toEqual(['bash -c nonexistentcmd123', 'bash -c echo two']);
+  });
+
+  // Regression (issue #123 review, fix cycle 2): user command output is
+  // NOT a spawn failure. A command that prints exactly the line
+  // 'bash: not found' to stderr and exits 127 must not fall back to sh
+  // (double side effects) or poison the per-process resolution cache —
+  // that text has no production emitter; only Node's `spawn <name> ENOENT`
+  // marks a missing bash binary.
+  it('does not fall back on user output "bash: not found" (exit 127)', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c echo-hostile': {
+        exitCode: 127,
+        stdout: '',
+        stderr: 'bash: not found\n',
+      },
+      'sh -c echo-hostile': {
+        exitCode: 0,
+        stdout: 'FALLBACK-RAN',
+        stderr: '',
+      },
+      'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
+      'sh -c echo two': { exitCode: 0, stdout: 'FALLBACK-RAN', stderr: '' },
+    });
+    const c = ctxFor(env);
+    const first = await callOperation(
+      'bash',
+      { command: 'echo-hostile' },
+      inv('inv-userout1'),
+      c,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    // The 127 and the stderr line are the command's own output.
+    expect(first.result.exitCode).toBe(127);
+    expect(first.result.stderr).toBe('bash: not found\n');
+    expect(first.result.shell).toBe('bash');
+    // No sh retry, and the resolution cache is not written: the second
+    // invocation still spawns bash (asserted via the fake-env call log).
+    const second = await callOperation(
+      'bash',
+      { command: 'echo two' },
+      inv('inv-userout2'),
+      c,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.result.shell).toBe('bash');
+    expect(calls).toEqual(['bash -c echo-hostile', 'bash -c echo two']);
+  });
+
+  // Regression (issue #123 review, fix cycle 2): the ENOENT signature must
+  // not substring-match spoofable user output — a line like
+  // 'respawn ENOENT' from a working bash is not Node's spawn error.
+  it('does not fall back on a spoofed "respawn ENOENT" line (exit 127)', async () => {
+    const { env, calls } = recordingEnv({
+      'bash -c echo-spoof': {
+        exitCode: 127,
+        stdout: '',
+        stderr: 'doing stuff\nrespawn ENOENT\ndone\n',
+      },
+      'sh -c echo-spoof': { exitCode: 0, stdout: 'FALLBACK-RAN', stderr: '' },
+      'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
+    });
+    const c = ctxFor(env);
+    const first = await callOperation(
+      'bash',
+      { command: 'echo-spoof' },
+      inv('inv-spoof1'),
+      c,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.result.exitCode).toBe(127);
+    expect(first.result.shell).toBe('bash');
+    const second = await callOperation(
+      'bash',
+      { command: 'echo two' },
+      inv('inv-spoof2'),
+      c,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.result.shell).toBe('bash');
+    expect(calls).toEqual(['bash -c echo-spoof', 'bash -c echo two']);
   });
 
   it.skipIf(!HAS_BASH)(

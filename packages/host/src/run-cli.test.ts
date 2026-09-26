@@ -102,6 +102,31 @@ describe('run -p exit-code contract (§78)', () => {
     }
   });
 
+  it('pins both approval labels to exit 4 while the status keeps them distinct (issue #129)', async () => {
+    for (const status of ['approval_denied', 'approval_timed_out'] as const) {
+      const o = out();
+      const exit = await runRunCommand(['-p', 'hello', '--json'], {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: status,
+            summary: `${status} summary`,
+            error: { kind: status, message: `${status} summary` },
+          }),
+        ),
+      });
+      expect(exit).toBe(4);
+      expect(o.lines.length).toBe(1);
+      const envelope = JSON.parse(o.lines[0] as string) as Record<
+        string,
+        unknown
+      >;
+      expect(envelope.status).toBe(status);
+      expect(envelope.exitCode).toBe(4);
+      expect(envelope.ok).toBe(false);
+    }
+  });
+
   it('exits 2 on usage errors (missing -p value)', async () => {
     const o = out();
     const exit = await runRunCommand([], {

@@ -18,7 +18,7 @@
 | 1 | `failed` | Run failed without a more specific cause; doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
 | 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with skipped steps — non-reversible, stale, or already-undone (see below). |
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
-| 4 | `approval_denied` | Approval denied — or timed out waiting (`approval_timed_out` maps here too; headless runs suspend this way when an approval cannot arrive without a TTY). |
+| 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. |
 | 6 | `provider_probe_failed` / provider-down | No reachable provider. Doctor exits 6 when any failing check has reason `provider-down`. |
 
@@ -45,6 +45,14 @@
   usage or op failure (`models --resolve` failure exits 1).
 - **`kubic --version`**: always 0.
 - **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
+- **`kubic run` approvals (exit 4)**: the code is 4 for the whole approval
+  terminus; the `status` string is the honest half — `approval_denied` for a
+  recorded refusal (no installed approval surface, a policy route, a
+  decider's no) and `approval_timed_out` for a denial whose recorded reason
+  carries the timeout marker (`timed out`) or a headless suspension on an
+  approval that cannot arrive without a TTY (issue #129). A consumer that
+  distinguishes "operator said no" from "nobody answered in time" must read
+  `status`, never infer it from the exit code.
 - **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,
   spawn, worker, merge, or reap failure, or resume with no state
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,

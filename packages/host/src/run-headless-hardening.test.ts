@@ -145,7 +145,11 @@ describe('headless hardening (issue #28, review cycle 2)', () => {
     mockState.closeShouldReject = true;
     const result = await runHeadlessPrompt('do it', {}, deps());
     expect(result.terminus).toBe('completed');
-    expect(result.summary).toBe('do it');
+    // The mocked lane yields no assistant text: the summary is the named
+    // non-answer (issue #129), never an echo of the prompt.
+    expect(result.summary).toBe(
+      '(no assistant text — the run settled without output)',
+    );
   });
 
   it('maps malformed lane outcomes to failed explicitly instead of throwing', async () => {
@@ -277,16 +281,23 @@ describe('headless composition root (issue #68; mutation hardening)', () => {
     expect(result.summary).toBe('z'.repeat(500));
   });
 
-  it('falls back to the prompt when only whitespace assistant text exists', async () => {
+  it('reports the named non-answer for whitespace-only assistant text (issue #129)', async () => {
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane: {
         accept: fakeLane().accept,
         findEntries: async () => [textEntry('e-ws', 0, 'assistant', '   ')],
       },
     } as unknown as SoloLane);
-    const result = await runHeadlessPrompt('do it', {}, deps());
+    const result = await runHeadlessPrompt(
+      'prompt-never-echoed-fixture',
+      {},
+      deps(),
+    );
     expect(result.terminus).toBe('completed');
-    expect(result.summary).toBe('do it');
+    expect(result.summary).toBe(
+      '(no assistant text — the run settled without output)',
+    );
+    expect(result.summary).not.toContain('prompt-never-echoed-fixture');
   });
 
   it('runs without an injected env by defaulting to the node env', async () => {
@@ -297,9 +308,12 @@ describe('headless composition root (issue #68; mutation hardening)', () => {
       { sessionsRoot: root, models: fauxModels(['env ok']) },
     );
     expect(result.terminus).toBe('completed');
-    // The mocked lane yields no assistant text, so the prompt fallback
-    // proves the run completed through the default-env branch.
-    expect(result.summary).toBe('hi env');
+    // The mocked lane yields no assistant text. The default-env branch is
+    // proven by the completed run; the summary is the named non-answer
+    // (issue #129), not the prompt.
+    expect(result.summary).toBe(
+      '(no assistant text — the run settled without output)',
+    );
   });
 
   it('maps a store-creation failure to unassigned refs', async () => {

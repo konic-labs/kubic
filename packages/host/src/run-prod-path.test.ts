@@ -21,6 +21,11 @@ import {
   fauxProvider,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
+import {
+  buildRunEnvelope,
+  mapTerminusToExitCode,
+  runRunCommand,
+} from './run-cli.js';
 
 function tmpRoot(): string {
   return mkdtempSync(join(tmpdir(), 'run-prod-path-'));
@@ -185,6 +190,99 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
     } finally {
       await reopened.close(BACKGROUND_CONTEXT);
     }
+  });
+});
+
+describe('prod run path, empty summary honesty (issue #129)', () => {
+  const NON_ANSWER = '(no assistant text — the run settled without output)';
+  const PROMPT_FIXTURE = 'PROMPT-FIXTURE-never-echoed-8f2c';
+
+  function out(): { lines: string[]; write: (line: string) => void } {
+    const lines: string[] = [];
+    return { lines, write: (line: string) => lines.push(line) };
+  }
+
+  function emptySummaryRun(root: string) {
+    // An empty assistant text block: the lane settles completed with no
+    // model-authored summary to report.
+    return (prompt: string) =>
+      runHeadlessPrompt(
+        prompt,
+        {},
+        {
+          sessionsRoot: root,
+          models: fauxModels(['']),
+          env: new FakeExecutionEnv({}),
+        },
+      );
+  }
+
+  it('prints the named non-answer instead of echoing the prompt (text)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const exit = await runRunCommand(['-p', PROMPT_FIXTURE], {
+      out: o.write,
+      run: emptySummaryRun(root),
+    });
+    expect(exit).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).toContain(`result: ${NON_ANSWER}`);
+    // The operator's own input never comes back as the result.
+    expect(text).not.toContain(PROMPT_FIXTURE);
+  });
+
+  it('carries the same named non-answer in the --json envelope', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const exit = await runRunCommand(['-p', PROMPT_FIXTURE, '--json'], {
+      out: o.write,
+      run: emptySummaryRun(root),
+    });
+    expect(exit).toBe(0);
+    expect(o.lines.length).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      status: string;
+      exitCode: number;
+      result: { summary: string };
+    };
+    expect(envelope.status).toBe('completed');
+    expect(envelope.exitCode).toBe(0);
+    expect(envelope.result.summary).toBe(NON_ANSWER);
+    expect(envelope.result.summary).not.toContain(PROMPT_FIXTURE);
+  });
+
+  it('still reports one empty-summary run as the envelope built from its result', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      PROMPT_FIXTURE,
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['']),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const envelope = buildRunEnvelope(
+      result,
+      mapTerminusToExitCode(result.terminus),
+    );
+    expect(envelope.result.summary).toBe(NON_ANSWER);
+  });
+
+  it('passes real assistant text through byte-identical (control)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'do it',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['all done']),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('all done');
   });
 });
 

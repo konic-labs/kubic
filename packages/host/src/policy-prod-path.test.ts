@@ -1,9 +1,10 @@
 // Prod `kubic run` policy path (issue #86): the shipped default installs
 // permission classes + interceptors on the lane, a destructive command is
-// refused and the run ends as approval_timed_out (exit 4) unless
-// session-scoped full access was explicitly recorded, and doctor reports the
-// INSTALLED policy object rather than a literal. Faux provider only: zero
-// network, zero paid tokens.
+// refused and the run ends as approval_denied (exit 4; issue #129 split the
+// label from approval_timed_out, which is reserved for denials whose reason
+// carries the timeout marker) unless session-scoped full access was
+// explicitly recorded, and doctor reports the INSTALLED policy object rather
+// than a literal. Faux provider only: zero network, zero paid tokens.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,9 +31,10 @@ import {
   FileApprovalStore,
   installedPolicyPosture,
   installSoloPolicy,
+  NO_ANSWER_SURFACE_REASON,
 } from './approvals.js';
 import { runDoctorCommand } from './doctor.js';
-import { mapTerminusToExitCode } from './run-cli.js';
+import { buildRunEnvelope, mapTerminusToExitCode } from './run-cli.js';
 
 function tmpRoot(): string {
   return mkdtempSync(join(tmpdir(), 'kubic-86-run-'));
@@ -68,7 +70,7 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
 }
 
 describe('prod run path: destructive call (issue #86, criterion 2)', () => {
-  it('suspends to approval_timed_out (exit 4) on the shipped default', async () => {
+  it('refuses with approval_denied (exit 4) — a refusal is not a timeout (issue #129)', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'clean the tmp dir',
@@ -79,9 +81,55 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
         env: new FakeExecutionEnv({}),
       },
     );
+    // The recorded reason names the missing surface and REFUSING — nothing
+    // timed out. The status (the machine-readable half of §78) must say denied.
+    expect(result.terminus).toBe('approval_denied');
+    expect(mapTerminusToExitCode(result.terminus)).toBe(4);
+    // The message is unchanged by the relabel: the same refusal sentence,
+    // now under an honest status.
+    expect(result.summary).toMatch(/^approval refused: /);
+    expect(result.summary).toContain(NO_ANSWER_SURFACE_REASON);
+    expect(result.summary).toContain('(bash)');
+    expect(result.error?.message).toBe(result.summary);
+    const envelope = buildRunEnvelope(
+      result,
+      mapTerminusToExitCode(result.terminus),
+    );
+    expect(envelope.status).toBe('approval_denied');
+    expect(envelope.exitCode).toBe(4);
+    expect(envelope.ok).toBe(false);
+  });
+
+  it('keeps approval_timed_out for a denial whose reason names the bound elapsing (issue #129)', async () => {
+    const root = tmpRoot();
+    // A seat is attached but cannot answer: the service's own bound is what
+    // elapses, and the recorded reason says so — the timeout label stays
+    // truthful, exit 4 unchanged (pinned in both directions).
+    const installed = installSoloPolicy({
+      workspace: '/fake',
+      maxPendingMs: 1,
+      answer: async () => undefined,
+    });
+    const result = await runHeadlessPrompt(
+      'clean the tmp dir',
+      {},
+      {
+        sessionsRoot: root,
+        models: destructiveThenDone(),
+        env: new FakeExecutionEnv({}),
+        policy: installed,
+      },
+    );
     expect(result.terminus).toBe('approval_timed_out');
     expect(mapTerminusToExitCode(result.terminus)).toBe(4);
-    expect(result.error?.message).toMatch(/approval/i);
+    expect(result.summary).toMatch(/timed out/);
+    const envelope = buildRunEnvelope(
+      result,
+      mapTerminusToExitCode(result.terminus),
+    );
+    expect(envelope.status).toBe('approval_timed_out');
+    expect(envelope.exitCode).toBe(4);
+    expect(envelope.ok).toBe(false);
   });
 
   it('runs it when session-scoped full access was explicitly recorded', async () => {

@@ -64,9 +64,14 @@ installed object as `policy:installed`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
 no TTY, and the TUI approval overlay has not landed, so a challenged call
-is **refused rather than executed**, and the run ends `approval_timed_out`
-(exit 4) with the refusal named on the `error:` line. To run such an
-operation deliberately, record session-scoped full access first
+is **refused rather than executed**, and the run ends `approval_denied`
+(exit 4) with the refusal named on the `error:` line. Both labels map to
+exit 4 — the `status` string is the honest half: `approval_denied` for a
+recorded refusal (no installed approval surface, a policy route, a
+decider's no), `approval_timed_out` for a denial whose recorded reason
+carries the timeout marker (`timed out`) or a headless suspension on an
+approval that cannot arrive without a TTY. To run such an operation
+deliberately, record session-scoped full access first
 (`kubic sessions create --dangerously-skip-approvals`, or a prior
 `kubic sessions attach` decision) — it is never implied.
 

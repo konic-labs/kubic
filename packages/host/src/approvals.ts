@@ -19,6 +19,7 @@ import {
 } from '../../worker/src/lane/interceptors.js';
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
+import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -745,7 +746,7 @@ export class ApprovalService {
         // route, autoApprove); a repeated ask waits the full bound again.
         return {
           approved: false,
-          reason: `approval timed out after ${this.policy.maxPendingMs}ms`,
+          reason: `approval ${TIMEOUT_REASON_MARKER} after ${this.policy.maxPendingMs}ms`,
         };
       }
       return this.submit(request, answer);

@@ -6,6 +6,7 @@
 // headless). memoOnce: first answer wins, persisted — restarts reuse the
 // settled decision and concurrent races share one pending prompt.
 import type { OrchestratorApprovalRequest } from './request.js';
+import { TIMEOUT_REASON_MARKER } from './timeout-reason.js';
 
 export type OrchestratorVerdict =
   | { approved: true; by: string }
@@ -252,14 +253,14 @@ export function createOrchestratorRouter(
         ? timeout.then(() =>
             settleUserPath({
               approved: false,
-              reason: `approval timed out after ${options.maxPendingMs}ms with no user presentation — denied`,
+              reason: `approval ${TIMEOUT_REASON_MARKER} after ${options.maxPendingMs}ms with no user presentation — denied`,
             }),
           )
         : Promise.race([answer, timeout]).then((value) =>
             value === undefined
               ? settleUserPath({
                   approved: false,
-                  reason: `approval timed out after ${options.maxPendingMs}ms with no user presentation — denied`,
+                  reason: `approval ${TIMEOUT_REASON_MARKER} after ${options.maxPendingMs}ms with no user presentation — denied`,
                 })
               : settleUserPath(value),
           );

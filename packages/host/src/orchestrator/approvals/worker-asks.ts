@@ -61,6 +61,7 @@ import {
   isSessionSkipEnabled,
   type SessionSkipRecord,
 } from './skip.js';
+import { TIMEOUT_REASON_MARKER } from './timeout-reason.js';
 
 // The named status a worker ask resolves to as DATA (the worker branch on
 // it; the run maps it to §78 exit 4). `approval_denied` is a decider's
@@ -76,8 +77,11 @@ export const APPROVAL_TIMEOUT_CODE: WorkerAskCode = 'approval_timeout';
 export const APPROVAL_DENIED_CODE: WorkerAskCode = 'approval_denied';
 
 // The bounded-wait denial names itself in the reason; classification keys off
-// THIS marker so it never parses arbitrary prose.
-export const TIMEOUT_REASON_MARKER = 'timed out';
+// THIS marker so it never parses arbitrary prose. The marker lives in the
+// shared timeout-reason module (issue #129) — producers interpolate it,
+// classifiers read it — and is re-exported here so existing importers keep
+// pointing at the single source.
+export { TIMEOUT_REASON_MARKER };
 
 export function classifyVerdict(
   key: string,
@@ -582,7 +586,7 @@ export async function awaitWorkerAskAnswer(
         approved: false,
         key,
         code: APPROVAL_TIMEOUT_CODE,
-        reason: `approval timed out after ${options.maxPendingMs}ms with no user presentation — denied`,
+        reason: `approval ${TIMEOUT_REASON_MARKER} after ${options.maxPendingMs}ms with no user presentation — denied`,
       };
     }
     // NOT unref'd on purpose: the wait IS live work. A child whose only

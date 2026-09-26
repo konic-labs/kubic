@@ -810,6 +810,8 @@ export async function runHeadlessPrompt(
         const named = denials
           .map((denial) => `${denial.capability} (${denial.toolName})`)
           .join(', ');
+        // Classification reads the first recorded denial's reason (the same
+        // first-denial convention as before).
         const first = denials[0]?.reason ?? '';
         const message = `approval refused: ${named} — ${first}`;
         const terminus = first.includes(TIMEOUT_REASON_MARKER)

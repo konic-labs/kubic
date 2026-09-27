@@ -27,8 +27,18 @@ describe('doctor config section (issue #90)', () => {
     const probe = configDoctorProbe(
       buildConfigDoctorInput({
         values: [
-          { key: 'model.provider', value: '"local"', layer: 'global' },
-          { key: 'journal.retentionDays', value: '30', layer: 'project' },
+          {
+            key: 'model.provider',
+            value: '"local"',
+            layer: 'global',
+            disposition: 'consumed',
+          },
+          {
+            key: 'journal.retentionDays',
+            value: '30',
+            layer: 'project',
+            disposition: 'consumed',
+          },
         ],
         projectTrusted: true,
         budgetsConfigured: false,
@@ -55,6 +65,36 @@ describe('doctor config section (issue #90)', () => {
     expect(probe.ok).toBe(false);
     expect(probe.detail).toMatch(/\.kubic\/journal\//);
     expect(probe.detail).toMatch(/\.kubic\/wt\//);
+  });
+
+  it('flags an accepted key with no effect row at all (issue #133)', () => {
+    const probe = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [
+          {
+            key: 'model.provider',
+            value: '"local"',
+            layer: 'global',
+            disposition: 'consumed',
+          },
+          {
+            key: 'telemetry.endpoint',
+            value: '"https://x"',
+            layer: 'project',
+            disposition: 'unknown',
+          },
+        ],
+        projectTrusted: true,
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(probe.ok).toBe(false);
+    expect(probe.detail).toMatch(/no effect row/);
+    expect(probe.detail).toMatch(/telemetry\.endpoint/);
+    // The row that explains its key is never named.
+    expect(probe.detail).not.toMatch(/model\.provider/);
   });
 
   it('reports an untrusted project layer without calling it a failure', () => {

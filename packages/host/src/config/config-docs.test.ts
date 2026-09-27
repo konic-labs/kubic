@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import { resolveMaxConcurrency } from '../orchestrator/parallel/limits.js';
+import { pathForAgent } from '../orchestrator/worktree/naming.js';
 import {
   CONFIG_LAYERS,
   KNOWN_CONFIG_SECTIONS,
@@ -162,6 +164,36 @@ describe('configuration docs parse against the implementation (issue #90)', () =
     const view = effectiveConfigView(runtime);
     expect(view.values.length).toBeGreaterThan(0);
     expect(view.values.every((entry) => entry.layer === 'project')).toBe(true);
+    // Issue #133: the repo's own keys are all explained by the table — and
+    // the orchestrator values this issue wired are consumed, not decoration.
+    expect(view.values.every((entry) => entry.disposition !== 'unknown')).toBe(
+      true,
+    );
+    expect(runtime.orchestrator).toEqual({
+      root: '.kubic/wt',
+      maxWorkers: 4,
+    });
+    expect(
+      view.values.find((entry) => entry.key === 'orchestrator.root'),
+    ).toEqual({
+      key: 'orchestrator.root',
+      value: '".kubic/wt"',
+      layer: 'project',
+      disposition: 'consumed',
+    });
+    expect(
+      view.values.find((entry) => entry.key === 'orchestrator.maxWorkers')
+        ?.disposition,
+    ).toBe('consumed');
+    // The configured values are load-bearing, not decoration: the root feeds
+    // the worktree path builder and the cap reaches the scheduler's resolver
+    // (issue #133 — this repo's own config, through the production code).
+    expect(pathForAgent(REPO_ROOT, 'worker-1', runtime.orchestrator.root)).toBe(
+      join(REPO_ROOT, '.kubic', 'wt', 'worker-1'),
+    );
+    expect(
+      resolveMaxConcurrency(undefined, undefined, runtime.orchestrator),
+    ).toBe(4);
   });
 
   it('loads the documented example through the real FileBridge from disk', () => {

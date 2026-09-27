@@ -20,12 +20,14 @@ import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import {
+  hasGitignoreMetacharacters,
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
+  checkCommittedConfigHalfRoot,
 } from '../../../packages/host/src/config/config.js';
 import {
   buildConfigDoctorInput,
@@ -90,6 +92,22 @@ export function runtimeExcludeEntriesFor(
       "'orchestrator': 'root' must not contain control characters — the value is shipped to git's exclude file verbatim",
     );
   }
+  // Same rule for the gitignore metacharacters (issue #133 re-review): git
+  // reads the entry as a pattern, so `*`/`?`/`[`/`]` would hide paths other
+  // than the named directory (from `git add -A` and the pre-merge
+  // clean-tree guard), a leading `#` would comment the line out, and a
+  // backslash would escape the next character. Refused, never escaped into
+  // a different rule.
+  if (hasGitignoreMetacharacters(entry)) {
+    throw new ConfigError(
+      "'orchestrator': 'root' must not contain gitignore metacharacters — the value is shipped to git's exclude file verbatim",
+    );
+  }
+  // D35 re-checked at the derivation too (issue #133 re-review): the entry
+  // must never ignore the committed half (`.kubic/config.toml`,
+  // `.kubic/roles/*.md`), even when a programmatic caller bypassed the
+  // config load. Same rule, same message as checkOrchestratorRoot's.
+  checkCommittedConfigHalfRoot(worktreeRoot, 'orchestrator');
   return [...RUNTIME_EXCLUDE_ENTRIES, entry];
 }
 

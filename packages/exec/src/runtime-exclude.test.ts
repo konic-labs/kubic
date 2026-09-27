@@ -265,6 +265,59 @@ describe('refusing hostile exclude entries (issue #133 review)', () => {
     }
   });
 
+  it('refuses to render an entry carrying gitignore metacharacters', () => {
+    // The entry is written verbatim as one gitignore pattern: `*`/`?`/`[`/
+    // `]` make it match paths other than the one it names, a leading `#`
+    // turns it into a comment, and a backslash escapes the next character
+    // (a trailing one leaves an entry that matches nothing). Refused, never
+    // escaped into a different rule.
+    for (const entry of [
+      '*/',
+      'wt?.log/',
+      'w[abc]/',
+      'w]x/',
+      '#comment/',
+      'x\\/',
+      'a\\b/',
+    ]) {
+      expect(
+        () => applyRuntimeExcludeBlock('', ['.kubic/wt/', entry]),
+        entry,
+      ).toThrow(RuntimeExcludeError);
+    }
+    // The message names the rule and never echoes the hostile entry.
+    try {
+      applyRuntimeExcludeBlock('', ['*/']);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain('*');
+      expect((error as Error).message).not.toContain('\\');
+    }
+  });
+
+  it('never writes a metacharacter entry into the exclude file', () => {
+    const dir = roleScratchRepo();
+    // First run: the shipped block lands.
+    ensureRuntimeExcludeRules({ cwd: dir });
+    const file = join(dir, '.git', 'info', 'exclude');
+    const before = readFileSync(file, 'utf8');
+
+    // Second run with a wildcard entry: refused, nothing written.
+    const result = ensureRuntimeExcludeRules({
+      cwd: dir,
+      entries: ['.kubic/wt/', '*/'],
+    });
+    expect(result.skipped).toBe('unavailable');
+    expect(result.changed).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    // Ground truth: no `*/` rule is in force — a new file stays visible
+    // and stageable.
+    writeFileSync(join(dir, 'src-new.txt'), 'x\n');
+    expect(isIgnored(dir, 'src-new.txt')).toBe(false);
+    expect(status(dir)).toEqual(['?? src-new.txt']);
+  });
+
   it('never writes a hostile entry into the exclude file', () => {
     const dir = roleScratchRepo();
     // First run: the shipped block lands.

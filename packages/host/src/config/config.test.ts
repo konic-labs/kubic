@@ -568,6 +568,35 @@ describe('orchestrator root hardening (issue #133 review)', () => {
       ).toBe(root);
     }
   });
+
+  it('refuses gitignore metacharacters by name (issue #133 re-review)', () => {
+    // The root is shipped verbatim as `<root>/` in `.git/info/exclude`, and
+    // git reads that line as a gitignore pattern: `*`/`?`/`[`/`]` make the
+    // entry match paths other than the named directory — hiding files from
+    // `git add -A` and the pre-merge clean-tree guard — a leading `#` turns
+    // it into a comment, and a backslash escapes the next character (a
+    // trailing one leaves an entry that matches nothing at all). Refused by
+    // name, never escaped into a different rule.
+    for (const root of [
+      '*',
+      '**',
+      '.kubic*',
+      '.kubi[c]',
+      '.kubi?',
+      '#x',
+      'x\\',
+      '\\',
+      'a\\b',
+    ]) {
+      expect(
+        () =>
+          parseTomlConfig(`[orchestrator]\nroot = ${JSON.stringify(root)}\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must be a workspace-relative path \(gitignore metacharacters are refused/,
+      );
+    }
+  });
 });
 
 describe('layer merge hardening (issue #69)', () => {

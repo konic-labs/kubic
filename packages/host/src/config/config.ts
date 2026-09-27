@@ -15,6 +15,7 @@
 import { join } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
+  hasGitignoreMetacharacters,
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../exec/src/runtime-exclude.js';
@@ -546,13 +547,20 @@ export function checkOutOfScopeEntries(
 // projection re-checks this rule because programmatic session/agent layers
 // never pass through this parser.
 //
-// Hardening (issue #133 review), both re-checked by the projection:
+// Hardening (issue #133 review; the metacharacter rule re-reviewed), all
+// re-checked by the projection:
 //   * control characters are refused by name — the value is shipped to
 //     `.git/info/exclude` verbatim, so a newline would inject arbitrary
 //     gitignore patterns (hiding files from `git add -A` and the pre-merge
 //     clean-tree guard), and an ESC or bidi override would reach
 //     operator-facing messages. The set is the shared one in
 //     @kubic/exec's runtime-exclude module; the value is never echoed.
+//   * gitignore metacharacters are refused by name (issue #133
+//     re-review) — git reads the entry as a pattern, so `*`/`?`/`[`/`]`
+//     would match paths other than the named directory (same hiding harm),
+//     a leading `#` would turn the line into a comment, and a backslash
+//     would escape the next character (a trailing one leaves an entry that
+//     matches nothing). Refused, never escaped into a different rule.
 //   * a root whose exclude entry (`<root>/`) would ignore the committed
 //     half (`.kubic/config.toml`, `.kubic/roles/*.md`) is refused — the
 //     worktree parent must never make D35's committed files invisible to
@@ -600,12 +608,30 @@ export function checkOrchestratorRoot(
       `'${keyPath}': 'root' must be a workspace-relative path (control characters are refused — the value is shipped to git's exclude file verbatim)`,
     );
   }
+  if (hasGitignoreMetacharacters(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path (gitignore metacharacters are refused — the value is shipped to git's exclude file verbatim)`,
+    );
+  }
+  checkCommittedConfigHalfRoot(value, keyPath);
+  return value;
+}
+
+// D35: the exclude entry `<root>/` must never ignore the committed half
+// (`.kubic/config.toml`, `.kubic/roles/*.md`). Exported for the runtime
+// projection (apps/kubic/src/config-runtime.ts), which re-checks the same
+// rule at the one exclude-entry derivation every consumer shares (issue
+// #133 re-review): a programmatic caller that bypassed the config load can
+// never hand the writer an entry that would hide the committed files.
+export function checkCommittedConfigHalfRoot(
+  value: string,
+  keyPath: string,
+): void {
   if (isCommittedConfigHalfRoot(value)) {
     throw new ConfigError(
       `'${keyPath}': 'root' must not cover the committed config half ('.kubic/config.toml', '.kubic/roles/*.md') — pick a runtime path like '.kubic/wt'`,
     );
   }
-  return value;
 }
 
 // §45 worker cap (issue #133): a positive integer or nothing. A value that

@@ -77,6 +77,22 @@ export function hasUnsafeCharacters(value: string): boolean {
   return UNSAFE_CHARACTERS.test(value);
 }
 
+// The gitignore metacharacters that may never appear in an exclude entry
+// (issue #133 re-review): an entry is written verbatim as one gitignore
+// pattern, and these make the line mean something other than the literal
+// path it names — `*`/`?`/`[`/`]` match other paths (hiding files from
+// `git add -A` and the pre-merge clean-tree guard), a leading `#` turns
+// the line into a comment, and a backslash escapes the following character
+// (a trailing one leaves an entry that matches nothing at all). The config
+// load refuses such a value at the door; render time refuses it again.
+// Never escaped on the write path: a hostile entry must not be silently
+// repaired into a different rule.
+const GITIGNORE_METACHARACTERS = /[*?[\]\\]/;
+
+export function hasGitignoreMetacharacters(value: string): boolean {
+  return value.startsWith('#') || GITIGNORE_METACHARACTERS.test(value);
+}
+
 // Display-only: strips the same set for a message that quotes a value back
 // (the scheduler's deny reasons). NEVER applied to a value that is written.
 export function stripUnsafeCharacters(value: string): string {
@@ -90,6 +106,14 @@ function renderBlock(entries: readonly string[]): string {
     if (hasUnsafeCharacters(entry)) {
       throw new RuntimeExcludeError(
         'refusing to write an exclude entry with control characters: the entry would inject gitignore lines into .git/info/exclude',
+      );
+    }
+    // Same rule for the gitignore metacharacters (issue #133 re-review):
+    // `*`/`?`/`[`/`]`, a leading `#` or a backslash would make the entry
+    // act as a different rule than the literal path it names.
+    if (hasGitignoreMetacharacters(entry)) {
+      throw new RuntimeExcludeError(
+        'refusing to write an exclude entry with gitignore metacharacters: the entry would match a different set of paths than the one it names',
       );
     }
   }

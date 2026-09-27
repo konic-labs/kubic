@@ -724,4 +724,49 @@ describe('orchestrator config projections (issue #133)', () => {
       }),
     ).toThrow(/committed config half/);
   });
+
+  it('refuses gitignore metacharacter roots at load, by name (issue #133 re-review)', () => {
+    // Same rule as the control characters: the value is shipped verbatim to
+    // git's exclude file, where `*`/`?`/`[`/`]` would match paths other
+    // than the named directory (hiding them from `git add -A` and the
+    // clean-tree guard), a leading `#` would comment the line out, and a
+    // backslash would escape the next character.
+    for (const root of [
+      '*',
+      '**',
+      '.kubic*',
+      '.kubi[c]',
+      '.kubi?',
+      '#x',
+      'x\\',
+    ]) {
+      expect(
+        () =>
+          load(
+            { [PROJECT]: `[orchestrator]\nroot = ${JSON.stringify(root)}\n` },
+            { projectTrusted: true },
+          ),
+        root,
+      ).toThrow(/gitignore metacharacters are refused/);
+    }
+    // Programmatic session/agent layers bypass the TOML parser: the
+    // projection re-checks the same rule, fail-closed.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        projectTrusted: true,
+        session: { orchestrator: { root: '.kubic*' } },
+      }),
+    ).toThrow(/gitignore metacharacters are refused/);
+    // §36 keeps its own refusal — and its own message — for a `!`-leading
+    // root: that shape is a models.json secret ref, not a gitignore pattern.
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nroot = "!x"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/secrets never appear in config/);
+  });
 });

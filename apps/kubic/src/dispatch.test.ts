@@ -408,6 +408,40 @@ describe('runtime exclude (issue #91, moved order)', () => {
       '.kubic-custom/wt/',
     ]);
   });
+
+  it('refuses metacharacter roots and committed-half collisions at the derivation (issue #133 re-review)', () => {
+    // Defense in depth over the one derivation every consumer shares: a
+    // root whose `<root>/` entry would act as a gitignore pattern other
+    // than the literal path it names is refused here too — never repaired
+    // into a different rule.
+    for (const root of [
+      '*',
+      '**',
+      '.kubic*',
+      '.kubi[c]',
+      '.kubi?',
+      '#x',
+      'x\\',
+    ]) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /gitignore metacharacters/,
+      );
+    }
+    // The committed-half collision is re-checked here as well: the config
+    // load refuses `.kubic` / `.kubic/roles` first, but the derivation must
+    // never hand the writer an entry that would ignore D35's committed
+    // files even when a programmatic caller bypassed the load.
+    for (const root of [
+      '.kubic',
+      '.kubic/roles',
+      '.kubic//roles',
+      '.kubic/./roles',
+    ]) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /committed config half/,
+      );
+    }
+  });
 });
 
 describe('workers usage remap (issue #77, §78)', () => {

@@ -178,6 +178,28 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
     writeFileSync(join(dir, 'secret.log'), 'token=abc\n');
     assert.equal(isIgnored(dir, 'secret.log'), false);
   });
+
+  it('refuses a metacharacter entry instead of writing a wildcard rule (issue #133 re-review)', () => {
+    // The entry is written verbatim as one gitignore pattern: `*/` would
+    // hide every new path from `git add -A` and the pre-merge clean-tree
+    // guard. Refused at render time — the file is untouched and the
+    // wildcard never takes effect.
+    const dir = scratchUserRepo();
+    ensureRuntimeExcludeRules({ cwd: dir });
+    const file = join(dir, '.git', 'info', 'exclude');
+    const before = readFileSync(file, 'utf8');
+
+    const result = ensureRuntimeExcludeRules({
+      cwd: dir,
+      entries: ['.kubic/wt/', '*/'],
+    });
+
+    assert.equal(result.skipped, 'unavailable');
+    assert.equal(result.changed, false);
+    assert.equal(readFileSync(file, 'utf8'), before);
+    writeFileSync(join(dir, 'src-new.txt'), 'x\n');
+    assert.equal(isIgnored(dir, 'src-new.txt'), false);
+  });
 });
 
 describe('this repo ships the split (issue #91)', () => {

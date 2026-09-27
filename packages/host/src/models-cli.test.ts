@@ -45,6 +45,23 @@ describe('kubic models (issue #20, slice C)', () => {
     expect(bad.join('\n')).toContain('unknown provider');
   });
 
+  // Issue #127 review: a starved duplicate --resolve used to be silently
+  // ignored (the first occurrence resolved, exit 0). The shared parser
+  // records the starved occurrence, so the command now refuses it —
+  // fail-closed, pinned here as deliberate.
+  it('refuses a starved duplicate --resolve (needs-value, exit 1)', async () => {
+    const models = createModels();
+    models.setProvider(fauxProvider().provider);
+    const lines: string[] = [];
+    expect(
+      await runModelsCommand(['--resolve', 'faux/faux', '--resolve'], {
+        models,
+        out: (l: string) => lines.push(l),
+      }),
+    ).toBe(1);
+    expect(lines.join('\n')).toContain('error: --resolve needs provider/id');
+  });
+
   it('--json parses', async () => {
     const models = createModels();
     models.setProvider(fauxProvider().provider);

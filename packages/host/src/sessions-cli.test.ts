@@ -95,6 +95,21 @@ describe('sessions CLI (issue #14, slice F)', () => {
       }),
     ).toBe(1);
   });
+
+  // Issue #127 review: a starved duplicate --cwd used to be silently
+  // ignored (the first occurrence won, exit 0). The shared parser records
+  // the starved occurrence, so create now refuses it — fail-closed,
+  // pinned here as deliberate.
+  it('refuses a starved duplicate --cwd on create (exit 1, no session)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const code = await runSessionsCommand(
+      ['create', '--cwd', '/work', '--cwd'],
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toContain('error: --cwd needs a value');
+  });
 });
 
 describe('sessions CLI approvals posture (issue #16, slice D)', () => {

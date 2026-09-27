@@ -47,6 +47,11 @@ export interface ParsedFlags {
   readonly unknown: readonly string[];
   // Value flags seen without a value (canonical names, encounter order).
   readonly missing: readonly string[];
+  // Token index in `args` of each `missing` entry (same order, same
+  // length). Callers that need flag-ness — not argv token text — read
+  // this: a token that merely reads `-p` may have been consumed as some
+  // other value flag's VALUE, which is not a flag occurrence at all.
+  readonly missingAt: readonly number[];
 }
 
 const TERMINATOR = '--';
@@ -73,6 +78,7 @@ export function parseFlagArgs(
   const positional: string[] = [];
   const unknown: string[] = [];
   const missing: string[] = [];
+  const missingAt: number[] = [];
   let i = 0;
   while (i < args.length) {
     const token = args[i] as string;
@@ -110,13 +116,14 @@ export function parseFlagArgs(
     const next = args[i + 1];
     if (next === undefined || next.startsWith(TERMINATOR)) {
       missing.push(canonical);
+      missingAt.push(i);
       i += 1;
       continue;
     }
     assignValue(values, entry, canonical, next);
     i += 2;
   }
-  return { values, positional, unknown, missing };
+  return { values, positional, unknown, missing, missingAt };
 }
 
 function assignValue(

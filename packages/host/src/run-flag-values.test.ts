@@ -355,3 +355,101 @@ describe('run missing values vs the -- escape (issue #127 review)', () => {
     expect(o.lines[0]).toMatch(/^result: /);
   });
 });
+
+// Fix cycle 3 (issue #127): the escape's precondition is flag-ness as the
+// parser saw it, never argv token text. `parseFlagArgs` records each
+// starved entry's own token index (`missingAt`); the escape fires only when
+// the LAST starved entry is `--prompt` AND that flag's own token sits
+// immediately before the `--`. A `-p` the parser consumed as another value
+// flag's VALUE (`--session -p`, `--role -p`) is not a flag occurrence at
+// all, so a later `--` cannot answer it:
+//   -p --session -p -- x        → exit 2, `error: -p needs a value`
+//   -p --role -p -- x           → exit 2, `error: -p needs a value`
+//   -p --json --session -p -- x → exit 2, `error: -p needs a value`
+//   s -p --session -p --        → exit 2, `error: -p needs a value`
+// The index clause itself is load-bearing: without it `--session -p -- x`
+// would boot with prompt `x` (the token before `--` is textually `-p`), so
+// that refusal is pinned here too.
+describe("run terminator escape needs the starved flag's own token (issue #127 fix cycle 3)", () => {
+  async function refusal(argv: string[]): Promise<{
+    exit: number;
+    text: string;
+    called: boolean;
+  }> {
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(argv, {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return fauxRun(tmpRoot())('x');
+      },
+    });
+    return { exit, text: o.lines.join('\n'), called };
+  }
+
+  it("refuses -p --session -p -- x: the second -p is --session's value (exit 2, no lane)", async () => {
+    const { exit, text, called } = await refusal([
+      '-p',
+      '--session',
+      '-p',
+      '--',
+      'x',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it("refuses -p --role -p -- x: the second -p is --role's value (exit 2, no lane)", async () => {
+    const { exit, text, called } = await refusal([
+      '-p',
+      '--role',
+      '-p',
+      '--',
+      'x',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses -p --json --session -p -- x (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal([
+      '-p',
+      '--json',
+      '--session',
+      '-p',
+      '--',
+      'x',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses s -p --session -p --: the starved -p is not the terminator-answered token (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal([
+      's',
+      '-p',
+      '--session',
+      '-p',
+      '--',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses --session -p -- x: no starved flag exists, x is a stray operand (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal([
+      '--session',
+      '-p',
+      '--',
+      'x',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/unknown flag x/);
+  });
+});

@@ -125,6 +125,29 @@ describe('parseFlagArgs (issue #127)', () => {
     expect(parsed.missing).toEqual(['--session', '--skill', '--prompt']);
   });
 
+  // Fix cycle 3 (issue #127): callers need flag-ness as the parser saw it,
+  // not argv token text — each starved entry's own token index. `missingAt`
+  // is the parallel array to `missing` (same order, same length).
+  it('exposes the token index of each missing entry (missingAt)', () => {
+    const parsed = parseFlagArgs(['-p', '--json', 'x'], SPEC);
+    expect(parsed.missing).toEqual(['--prompt']);
+    expect(parsed.missingAt).toEqual([0]);
+  });
+
+  it('keeps missingAt aligned with missing for a starved duplicate', () => {
+    const parsed = parseFlagArgs(['-p', '--json', '-p', '--', 'x'], SPEC);
+    expect(parsed.missing).toEqual(['--prompt', '--prompt']);
+    expect(parsed.missingAt).toEqual([0, 2]);
+  });
+
+  it('records the index of a trailing starved flag and of one before the --', () => {
+    expect(parseFlagArgs(['--prompt'], SPEC).missingAt).toEqual([0]);
+    expect(
+      parseFlagArgs(['--session', 's', '--prompt', '--', 'x'], SPEC).missingAt,
+    ).toEqual([2]);
+    expect(parseFlagArgs([], SPEC).missingAt).toEqual([]);
+  });
+
   it('records a trailing value flag with no next token as missing', () => {
     const parsed = parseFlagArgs(['--prompt'], SPEC);
     expect(parsed.missing).toEqual(['--prompt']);

@@ -270,12 +270,17 @@ export async function runRunCommand(
   // begins with `--` is expressible. Two guards keep it from weakening
   // the typo rule:
   //   * the operand is taken only when the terminator directly answers a
-  //     starved `-p`/`--prompt`: the flag itself stands immediately
-  //     before the `--`, and that starved entry is the last one `missing`
-  //     records (nothing flag-like parses after `--`). So a bare
+  //     starved `-p`/`--prompt`: that starved entry is the last one
+  //     `missing` records (nothing flag-like parses after `--`), and the
+  //     parser saw the flag's OWN token immediately before the `--`
+  //     (`missingAt` — flag-ness, not argv token text: a `-p` the parser
+  //     consumed as another value flag's VALUE, e.g. `--session -p`, is
+  //     no flag occurrence and never answers the terminator). So a bare
   //     `kubic run -- <x>` never silently becomes the prompt (exit 2),
-  //     and neither does an operand after a terminator that answered some
-  //     other flag (`kubic run -p --json -- x` → exit 2);
+  //     neither does an operand after a terminator that answered some
+  //     other flag (`kubic run -p --json -- x` → exit 2), and neither
+  //     does `kubic run -p --session -p -- x` (the second `-p` is
+  //     `--session`'s value → exit 2);
   //   * the skip below applies to that one entry alone — a `-p` starved
   //     after a prompt is already set, or a starved duplicate ahead of the
   //     terminator-answered one, is still reported
@@ -286,11 +291,11 @@ export async function runRunCommand(
   let prompt = values['--prompt'] as string | undefined;
   let promptFromTerminator = false;
   const terminatorAt = args.indexOf('--');
+  const lastMissingAt = parsed.missingAt[parsed.missingAt.length - 1];
   const terminatorAnswersPrompt =
     terminatorAt > 0 &&
-    (args[terminatorAt - 1] === '-p' ||
-      args[terminatorAt - 1] === '--prompt') &&
-    parsed.missing[parsed.missing.length - 1] === '--prompt';
+    parsed.missing[parsed.missing.length - 1] === '--prompt' &&
+    lastMissingAt === terminatorAt - 1;
   if (prompt === undefined && terminatorAnswersPrompt && operands.length > 0) {
     prompt = operands.shift();
     promptFromTerminator = true;

@@ -70,7 +70,10 @@ $ kubic run -p -- --json-experiment     # end-of-flags: the next raw token is th
 The end-of-flags form is the value escape for a `-p`/`--prompt` that was
 left without one: `kubic run -p -- <prompt>` takes the next raw token as
 the prompt — and only when the terminator directly answers the starved
-`-p`/`--prompt` (the flag itself stands immediately before the `--`).
+`-p`/`--prompt`: the parser recorded that flag's own token immediately
+before the `--` (flag-ness, not token text — a `-p` the parser consumed
+as another flag's value, as in `kubic run -p --session -p -- x`, is not a
+flag occurrence and never answers the terminator; exit 2).
 Anything else keeps the typo guard: no terminator means no promotion
 (`kubic run -p --json x` exits 2), a `-p` starved by another flag is not
 rescued by a later `--` (`kubic run -p --json -- x` exits 2), a `-p`

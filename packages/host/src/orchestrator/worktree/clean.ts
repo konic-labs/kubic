@@ -110,9 +110,11 @@ function positiveInt(raw: string): number | null {
 }
 
 // Issue #127: the shared parser replaces the known-set scan + flagValue
-// helper. The parser also never swallows a flag-like token as a value, so
-// `--max-age-ms --nuke` now refuses `--nuke` by name instead of reporting
-// only the starved bound (both exit 2).
+// helper. The old lines are preserved: a starved bound is still reported
+// first (`--max-age-ms --nuke` → '--max-age-ms/--max-bytes need a value',
+// not `--nuke`), and `--max-age-ms 5 --nuke` still refuses `--nuke` by
+// name once the bound is set (both exit 2). The parser adds `--flag=value`
+// and the `--` terminator.
 const CLEAN_FLAG_SPEC: readonly FlagSpec[] = [
   { name: '--all', takes: 'boolean' },
   { name: '--dry-run', takes: 'boolean' },

@@ -254,6 +254,33 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(text).toMatch(/usage: kubic clean/);
   });
 
+  // Issue #127 review: the starved bound is reported before the unknown
+  // flag (`--max-age-ms --nuke` names the bound, not `--nuke`), while a
+  // satisfied bound still refuses `--nuke` by name — the two behaviors the
+  // migration comment used to conflate.
+  it('reports a starved bound before an unknown flag, and names the unknown flag once the bound is set', async () => {
+    const env = new FakeExecutionEnv({});
+    const starved: string[] = [];
+    expect(
+      await runCleanCommand(['--max-age-ms', '--nuke'], {
+        env,
+        out: (line: string) => starved.push(line),
+      }),
+    ).toBe(2);
+    const starvedText = starved.join('\n');
+    expect(starvedText).toContain('--max-age-ms/--max-bytes need a value');
+    expect(starvedText).not.toContain('--nuke');
+
+    const named: string[] = [];
+    expect(
+      await runCleanCommand(['--max-age-ms', '5', '--nuke'], {
+        env,
+        out: (line: string) => named.push(line),
+      }),
+    ).toBe(2);
+    expect(named.join('\n')).toContain('unknown flag --nuke');
+  });
+
   it('rejects a stray positional argument with exit 2', async () => {
     const env = new FakeExecutionEnv({});
     const lines: string[] = [];

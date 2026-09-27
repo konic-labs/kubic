@@ -139,6 +139,18 @@ describe('kubic config (issue #90)', () => {
     expect(lines.join('\n')).toContain('usage: kubic config [--json]');
   });
 
+  it('names the unknown flag class first in a mixed argv (issue #127)', () => {
+    // The shared parser splits a mixed argv into the two classes; like the
+    // other migrated commands, the unknown-flag class is named before a
+    // stray operand even when the operand came first in argv.
+    const { lines, out } = collect();
+    expect(
+      runConfigCommand(['extra', '--layers'], { load: runtime, out }),
+    ).toBe(CONFIG_EXIT_FAIL);
+    expect(lines.join('\n')).toContain('error: unknown flag --layers');
+    expect(lines.join('\n')).toContain('usage: kubic config [--json]');
+  });
+
   it('accepts the -- end-of-flags terminator like every migrated command', () => {
     const { lines, out } = collect();
     expect(runConfigCommand(['--'], { load: runtime, out })).toBe(

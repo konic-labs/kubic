@@ -269,21 +269,29 @@ export async function runRunCommand(
   // escape hatch — the next raw token is the prompt, so a prompt that
   // begins with `--` is expressible. Two guards keep it from weakening
   // the typo rule:
-  //   * the operand is taken only when `-p`/`--prompt` was actually
-  //     starved by the terminator (`missing` records it), so a bare
-  //     `kubic run -- <x>` never silently becomes the prompt (exit 2);
-  //   * the skip below applies to that escape alone — a `-p` starved
-  //     after a prompt is already set is still reported
-  //     (`kubic run --prompt ok -p` → 'error: -p needs a value', exit 2).
+  //   * the operand is taken only when the terminator directly answers a
+  //     starved `-p`/`--prompt`: the flag itself stands immediately
+  //     before the `--`, and that starved entry is the last one `missing`
+  //     records (nothing flag-like parses after `--`). So a bare
+  //     `kubic run -- <x>` never silently becomes the prompt (exit 2),
+  //     and neither does an operand after a terminator that answered some
+  //     other flag (`kubic run -p --json -- x` → exit 2);
+  //   * the skip below applies to that one entry alone — a `-p` starved
+  //     after a prompt is already set, or a starved duplicate ahead of the
+  //     terminator-answered one, is still reported
+  //     (`kubic run --prompt ok -p`, `kubic run -p --json -p -- x` →
+  //     'error: -p needs a value', exit 2).
   // `kubic run -p --json` has no terminator, so `-p` is still missing.
   const operands = [...parsed.positional];
   let prompt = values['--prompt'] as string | undefined;
   let promptFromTerminator = false;
-  if (
-    prompt === undefined &&
-    parsed.missing.includes('--prompt') &&
-    operands.length > 0
-  ) {
+  const terminatorAt = args.indexOf('--');
+  const terminatorAnswersPrompt =
+    terminatorAt > 0 &&
+    (args[terminatorAt - 1] === '-p' ||
+      args[terminatorAt - 1] === '--prompt') &&
+    parsed.missing[parsed.missing.length - 1] === '--prompt';
+  if (prompt === undefined && terminatorAnswersPrompt && operands.length > 0) {
     prompt = operands.shift();
     promptFromTerminator = true;
   }
@@ -291,8 +299,17 @@ export async function runRunCommand(
   // keeps the exact line the old inline loop printed. A `-p` starved by a
   // flag-like token is the flagship typo (`kubic run -p --json`), so the
   // missing-value class is reported before the unknown class.
-  for (const flag of parsed.missing) {
-    if (flag === '--prompt' && promptFromTerminator) continue;
+  for (let index = 0; index < parsed.missing.length; index += 1) {
+    const flag = parsed.missing[index] as string;
+    // The escape above answered exactly one entry: the last one. Only it
+    // is skipped; a starved duplicate ahead of it keeps its report.
+    if (
+      flag === '--prompt' &&
+      promptFromTerminator &&
+      index === parsed.missing.length - 1
+    ) {
+      continue;
+    }
     deps.out(
       RUN_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
     );

@@ -69,12 +69,17 @@ $ kubic run -p -- --json-experiment     # end-of-flags: the next raw token is th
 
 The end-of-flags form is the value escape for a `-p`/`--prompt` that was
 left without one: `kubic run -p -- <prompt>` takes the next raw token as
-the prompt, and only then. A bare `kubic run -- <x>` is a stray operand
-(exit 2), never a prompt, and a `-p` starved *after* a prompt is already
-set is still `-p needs a value` (exit 2). An empty prompt (`--prompt=`,
-`-p ''`) is refused the same way. Note `--help`/`-h` anywhere in argv is
-answered by the help convention before parsing (issue #100) — a literal
-`--help` prompt needs the equals form.
+the prompt — and only when the terminator directly answers the starved
+`-p`/`--prompt` (the flag itself stands immediately before the `--`).
+Anything else keeps the typo guard: no terminator means no promotion
+(`kubic run -p --json x` exits 2), a `-p` starved by another flag is not
+rescued by a later `--` (`kubic run -p --json -- x` exits 2), a `-p`
+starved *after* a prompt is already set or a starved duplicate ahead of
+the terminator-answered one is still `-p needs a value` (exit 2), and a
+bare `kubic run -- <x>` is a stray operand (exit 2), never a prompt. An
+empty prompt (`--prompt=`, `-p ''`) is refused the same way. Note
+`--help`/`-h` anywhere in argv is answered by the help convention before
+parsing (issue #100) — a literal `--help` prompt needs the equals form.
 
 **Installed policy** (issue #86). A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission

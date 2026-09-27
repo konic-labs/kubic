@@ -267,4 +267,91 @@ describe('run missing values vs the -- escape (issue #127 review)', () => {
     expect(o.lines.join('\n')).toMatch(/^usage: kubic run/);
     expect(o.lines.join('\n')).not.toMatch(/needs a value/);
   });
+
+  // Fix cycle 2 (issue #127): the escape fires only when the terminator
+  // directly answers a starved -p/--prompt — the flag itself stands
+  // immediately before the `--`, and that starved entry is the last one
+  // `missing` records. A starved -p with no terminator is never promoted
+  // from a following operand; a terminator that answered some other flag
+  // does not rescue it; and the skip covers exactly the one entry the
+  // terminator answered, so a starved duplicate ahead of it still reports.
+  it('refuses -p --json x: no terminator, the operand is never promoted (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', '--json', 'x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses -p --json -x: a single-dash operand is not promoted either (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', '--json', '-x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses --prompt --json x: the long spelling has no promotion either (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['--prompt', '--json', 'x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses -p --session s x: a starved flag never starves the prompt (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', '--session', 's', 'x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses -p --json -- x: the terminator answers --json, not the starved -p (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', '--json', '--', 'x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('reports the first starved -p when the terminator answers only the last (-p --json -p -- x)', async () => {
+    const { exit, text, called } = await refusal([
+      '-p',
+      '--json',
+      '-p',
+      '--',
+      'x',
+    ]);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('boots -p -- x: the terminator directly answers the starved -p (prompt x)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const seen: { prompt?: string } = {};
+    const exit = await runRunCommand(['-p', '--', 'x'], {
+      out: o.write,
+      run: async (prompt: string) => {
+        seen.prompt = prompt;
+        return fauxRun(root)(prompt);
+      },
+    });
+    expect(exit).toBe(0);
+    expect(seen.prompt).toBe('x');
+  });
+
+  it('boots -p -- --json with the literal prompt and no JSON envelope', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const seen: { prompt?: string } = {};
+    const exit = await runRunCommand(['-p', '--', '--json'], {
+      out: o.write,
+      run: async (prompt: string) => {
+        seen.prompt = prompt;
+        return fauxRun(root)(prompt);
+      },
+    });
+    expect(exit).toBe(0);
+    expect(seen.prompt).toBe('--json');
+    // --json would collapse the output into one envelope line.
+    expect(o.lines[0]).toMatch(/^result: /);
+  });
 });

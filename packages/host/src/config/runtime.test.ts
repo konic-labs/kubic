@@ -15,11 +15,14 @@ import {
 } from './config.js';
 import {
   effectiveConfigView,
+  keyEffectFor,
   loadRuntimeConfig,
   RUNTIME_ENV_OVERRIDES,
   RUNTIME_KEY_EFFECTS,
   type RuntimeConfigInputs,
   renderEffectiveConfig,
+  runtimeKeyDisposition,
+  runtimeKeyEffectText,
 } from './runtime.js';
 
 type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
@@ -143,6 +146,7 @@ describe('runtime config load (issue #90)', () => {
       key: 'journal.outOfScope',
       value: '["build", "coverage"]',
       layer: 'project',
+      disposition: 'consumed',
     });
     // The key has an observable effect row (docs/cli/configuration.md
     // mirrors it), so it can never quietly stop doing anything.
@@ -455,8 +459,18 @@ describe('effective config view (issue #90)', () => {
     const view = effectiveConfigView(runtime);
     expect(view.values).toEqual(
       expect.arrayContaining([
-        { key: 'model.provider', value: '"local"', layer: 'global' },
-        { key: 'journal.retentionDays', value: '7', layer: 'project' },
+        {
+          key: 'model.provider',
+          value: '"local"',
+          layer: 'global',
+          disposition: 'consumed',
+        },
+        {
+          key: 'journal.retentionDays',
+          value: '7',
+          layer: 'project',
+          disposition: 'consumed',
+        },
       ]),
     );
     expect(view.budgets.configured).toBe(false);
@@ -476,10 +490,67 @@ describe('effective config view (issue #90)', () => {
     );
     const lines = renderEffectiveConfig(effectiveConfigView(runtime));
     expect(
-      lines.some((line) => line.includes('model.provider = "local" (global)')),
+      lines.some((line) => line.includes('model.provider = "local" (global,')),
     ).toBe(true);
     expect(lines.some((line) => line.includes('budgets'))).toBe(true);
     expect(lines.join('\n')).not.toMatch(/\$[A-Z]/);
+  });
+
+  it('distinguishes consumed, kept and pending keys (issue #133)', () => {
+    expect(runtimeKeyDisposition({ effect: 'x' })).toBe('consumed');
+    expect(runtimeKeyDisposition({ kept: 'x' })).toBe('kept');
+    expect(runtimeKeyDisposition({ notYetImplemented: 'x' })).toBe('pending');
+    // No effect row at all is its own state: config-doctor flags it by name.
+    expect(runtimeKeyDisposition(undefined)).toBe('unknown');
+    // The lookup is section-or-key, the same rule the docs test uses.
+    expect(keyEffectFor('roles.implementer.model')).toBe(
+      RUNTIME_KEY_EFFECTS.roles,
+    );
+    expect(keyEffectFor('agent.name')).toBe(RUNTIME_KEY_EFFECTS['agent.name']);
+    expect(keyEffectFor('telemetry.endpoint')).toBeUndefined();
+  });
+
+  it('renders the disposition on every effective value (issue #133)', () => {
+    const runtime = load(
+      {
+        [PROJECT]: '[agent]\nname = "kubic"\n[ui]\ntheme = "dark"\n',
+      },
+      { projectTrusted: true },
+    );
+    const view = effectiveConfigView(runtime);
+    expect(view.values.find((v) => v.key === 'agent.name')?.disposition).toBe(
+      'consumed',
+    );
+    expect(view.values.find((v) => v.key === 'ui.theme')?.disposition).toBe(
+      'kept',
+    );
+    const lines = renderEffectiveConfig(view);
+    expect(
+      lines.some((line) =>
+        line.includes('agent.name = "kubic" (project, consumed)'),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((line) => line.includes('ui.theme = "dark" (project, kept)')),
+    ).toBe(true);
+    // One summary line states the split, so a reader sees it before the list.
+    expect(
+      lines.some(
+        (line) =>
+          line.includes('effects:') &&
+          line.includes('consumed') &&
+          line.includes('kept'),
+      ),
+    ).toBe(true);
+  });
+
+  it('names no issue in any key-effect annotation (the #133 acceptance gate)', () => {
+    // The annotations are decisions or named follow-ups. A closed-issue
+    // pointer is exactly what this table must never carry again, so the pin
+    // is stronger than the gate: no issue number at all.
+    for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
+      expect(runtimeKeyEffectText(entry), key).not.toMatch(/#\d+/);
+    }
   });
 
   it('never renders a secret-shaped config value verbatim', () => {
@@ -546,5 +617,111 @@ describe('effective config view (issue #90)', () => {
     expect(active).not.toContain('bash');
     expect(active).not.toContain('write');
     await session.close(BACKGROUND_CONTEXT);
+  });
+});
+
+describe('orchestrator config projections (issue #133)', () => {
+  it('projects [orchestrator] root + maxWorkers, refusing escapes by name', () => {
+    const runtime = load(
+      {
+        [PROJECT]:
+          '[orchestrator]\nroot = ".kubic-custom/wt"\nmaxWorkers = 7\n',
+      },
+      { projectTrusted: true },
+    );
+    expect(runtime.orchestrator).toEqual({
+      root: '.kubic-custom/wt',
+      maxWorkers: 7,
+    });
+    expect(runtime.sources['orchestrator.root']).toBe('project');
+    expect(runtime.sources['orchestrator.maxWorkers']).toBe('project');
+
+    // Unset stays unset — no root and no cap are invented (§35 opt-in).
+    const bare = load(
+      { [PROJECT]: '[approvals]\nroute = "ask-user"\n' },
+      { projectTrusted: true },
+    );
+    expect(bare.orchestrator).toEqual({});
+
+    // An absolute root or a `..` segment is refused at load, by name: the
+    // value is a workspace-relative parent, never a path that escapes.
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nroot = "../escape"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nroot = "/abs/wt"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
+    // Programmatic session/agent layers bypass the TOML parser: the
+    // projection re-checks the same rule, fail-closed.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        projectTrusted: true,
+        session: { orchestrator: { root: 'a/../b' } },
+      }),
+    ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
+
+    // §45: the cap is a positive integer. A value that could never admit a
+    // worker is refused at load, by name — never clamped into one silently.
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nmaxWorkers = 0\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/'orchestrator': 'maxWorkers' must be a positive integer/);
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nmaxWorkers = 1.5\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/'orchestrator': 'maxWorkers' must be a positive integer/);
+  });
+
+  it('refuses control characters and committed-half roots at load, by name (issue #133 review)', () => {
+    // The root becomes a git exclude entry verbatim: a newline would inject
+    // arbitrary patterns, so it is refused before the value can travel.
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nroot = "x\\n*.log\\n!keep"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/control characters are refused/);
+    // Programmatic session/agent layers bypass the TOML parser: the
+    // projection re-checks the same rule, fail-closed.
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        projectTrusted: true,
+        session: { orchestrator: { root: 'wt\u001b[31m' } },
+      }),
+    ).toThrow(/control characters are refused/);
+    // D35: a root whose exclude entry would ignore `.kubic/config.toml` /
+    // `.kubic/roles/*.md` is refused, by name — including via the
+    // programmatic layers.
+    expect(() =>
+      load(
+        { [PROJECT]: '[orchestrator]\nroot = ".kubic"\n' },
+        { projectTrusted: true },
+      ),
+    ).toThrow(/committed config half/);
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: HOME,
+        cwd: CWD,
+        projectTrusted: true,
+        session: { orchestrator: { root: '.kubic/roles' } },
+      }),
+    ).toThrow(/committed config half/);
   });
 });

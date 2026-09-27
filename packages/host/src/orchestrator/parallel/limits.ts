@@ -5,6 +5,8 @@
 // config admits — §71 ships no defaults, so "unconfigured" never blocks.
 // No I/O, no clock, no network (faux-only); the scheduler owns time/queue.
 
+import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
+
 export const DEFAULT_MAX_CONCURRENCY = 4;
 
 export class ParallelConfigError extends Error {
@@ -17,15 +19,12 @@ export class ParallelConfigError extends Error {
 // Sanitize one value interpolated into a deny reason (agentId, worktree,
 // provider): strips C0 controls + DEL + C1 controls (U+0080-U+009F) +
 // bidi overrides, at reason-construction time so returned reasons are
-// already clean for any caller that prints them. Canonical home is here
-// (limits.js imports nothing from scheduler.js) with sanitizeLogLine in
-// scheduler.js delegating to it: one strip set, no import cycle.
+// already clean for any caller that prints them. The strip set is owned by
+// @kubic/exec's runtime-exclude module (the same characters an exclude
+// entry may never contain), with sanitizeLogLine in scheduler.js delegating
+// here: one strip set, no import cycle.
 export function sanitizeReasonField(value: unknown): string {
-  return String(value).replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
-    /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
-    '',
-  );
+  return stripUnsafeCharacters(String(value));
 }
 
 export interface AggregateCaps {

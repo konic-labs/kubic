@@ -21,6 +21,8 @@ import {
   effectiveConfigView,
   loadRuntimeConfig,
   RUNTIME_KEY_EFFECTS,
+  runtimeKeyDisposition,
+  runtimeKeyEffectText,
 } from './runtime.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -125,8 +127,10 @@ describe('configuration docs parse against the implementation (issue #90)', () =
   it('keeps every key-effect entry meaningful', () => {
     for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
       expect(key.length).toBeGreaterThan(0);
-      const text = 'effect' in entry ? entry.effect : entry.notYetImplemented;
-      expect(text.length).toBeGreaterThan(10);
+      // Every disposition carries words: an effect, a kept decision, or a
+      // named pending follow-up (issue #133).
+      expect(runtimeKeyEffectText(entry).length).toBeGreaterThan(10);
+      expect(runtimeKeyDisposition(entry)).not.toBe('unknown');
     }
   });
 

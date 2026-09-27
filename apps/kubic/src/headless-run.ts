@@ -119,6 +119,10 @@ export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
   model?: ModelSelection;
+  // The lane's agent id (issue #133): the configured `[agent].name`, threaded
+  // from runtimeLaneDeps. Absent means 'root' — the shipped behaviour, byte
+  // for byte (journal attribution and `kubic diff --agent` follow it).
+  agentId?: string;
   env?: ExecutionEnv;
   context?: Context;
   /** Preloaded extension startup object (tests); otherwise loaded here. */
@@ -544,14 +548,66 @@ export async function runHeadlessPrompt(
     if (workerId !== undefined && workerId !== '') {
       process.stdout.write(`${readyMarker(workerId)}\n`);
     }
+    // §12.1 role selection (issue #99; issue #133 adds the config layers):
+    // `--role` loads the role document and derives ALL THREE halves of the
+    // lane boot from it — the prompt text (the document's `## Prompt`), the
+    // tool allowlist (the resolved set), and the model default (a layer's
+    // `[roles.<name>].model` pin). It resolves BEFORE the model selection so
+    // the pin can act as the selection default. All four refusals are
+    // fail-closed with a named reason: an unknown role, a contradictory
+    // document (§40.3), a document with no instructions, and a parse failure.
+    // Nothing is invented, and an absent --role leaves the solo boot
+    // byte-identical.
+    let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    if (options.role !== undefined) {
+      const rolesBridge = createNodeFileBridge(
+        deps.roles?.cwd ?? process.cwd(),
+      );
+      const rolesCwd = deps.roles?.cwd ?? process.cwd();
+      let selected: SelectedRole;
+      try {
+        selected = selectRole({
+          bridge: rolesBridge,
+          cwd: rolesCwd,
+          role: options.role,
+          ...(deps.roles?.layers === undefined
+            ? {}
+            : { layers: deps.roles.layers }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      let promptText: string;
+      try {
+        const path = roleDocPath(rolesCwd, selected.doc.name);
+        promptText = rolePromptFor(
+          selected.doc,
+          rolesBridge.readTextFile(path),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return finished(id, 'failed', message, message);
+      }
+      deps.debug?.(
+        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
+      );
+      role = { resolved: selected.resolved, prompt: promptText };
+    }
     const assembled = assembleModels(process.cwd());
     const models = deps.models ?? assembled.models;
     let model: ReturnType<typeof selectModel>;
     try {
-      // An explicit pin (replay re-execution at the declared model) wins
-      // over default selection; `kubic run` passes none and keeps the
-      // default first-registered-provider pick.
-      model = selectModel(models, deps.model);
+      // An explicit pin (replay re-execution at the declared model, or the
+      // `[model]`/env pin runtimeModelPin projects) wins over default
+      // selection; the role layer's own `provider/id` pin (issue #133) is
+      // the next default, and `kubic run` with neither keeps the
+      // first-registered-provider pick.
+      model = selectModel(
+        models,
+        deps.model,
+        roleModelSelection(role?.resolved.model),
+      );
     } catch (error) {
       if (error instanceof ModelSelectError) {
         return finished(
@@ -620,7 +676,7 @@ export async function runHeadlessPrompt(
         root: env.cwd,
         runId: id,
         sessionId: id,
-        agentId: 'root',
+        agentId: deps.agentId ?? 'root',
         // #107 review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
@@ -691,56 +747,13 @@ export async function runHeadlessPrompt(
           .join(', ')})`,
       );
     }
-    // §12.1 role selection (issue #99): `--role` loads the role document
-    // and derives BOTH halves of the lane boot from it — the prompt text
-    // (the document's `## Prompt`) and the tool allowlist (the resolved
-    // set). All four refusals are fail-closed with a named reason: an
-    // unknown role, a contradictory document (§40.3), a document with no
-    // instructions, and a parse failure. Nothing is invented, and an
-    // absent --role leaves the solo boot byte-identical.
-    let role: { resolved: ResolvedRole; prompt: string } | undefined;
-    if (options.role !== undefined) {
-      const rolesBridge = createNodeFileBridge(
-        deps.roles?.cwd ?? process.cwd(),
-      );
-      const rolesCwd = deps.roles?.cwd ?? process.cwd();
-      let selected: SelectedRole;
-      try {
-        selected = selectRole({
-          bridge: rolesBridge,
-          cwd: rolesCwd,
-          role: options.role,
-          ...(deps.roles?.layers === undefined
-            ? {}
-            : { layers: deps.roles.layers }),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return finished(id, 'failed', message, message);
-      }
-      let promptText: string;
-      try {
-        const path = roleDocPath(rolesCwd, selected.doc.name);
-        promptText = rolePromptFor(
-          selected.doc,
-          rolesBridge.readTextFile(path),
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return finished(id, 'failed', message, message);
-      }
-      deps.debug?.(
-        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
-      );
-      role = { resolved: selected.resolved, prompt: promptText };
-    }
     solo = await bootSoloLane({
       session,
       models,
       model,
       env,
       sessionId: id,
-      agentId: 'root',
+      agentId: deps.agentId ?? 'root',
       journal,
       ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
       ...(role === undefined
@@ -927,3 +940,20 @@ function toolHooksOf(
 }
 
 const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };
+
+// The role layer's `provider/id` pin as a selection (issue #133). The config
+// load refuses a malformed ref by name (checkRoleModelRef) before it can
+// reach here; this stays fail-closed for a programmatic layer, and an absent
+// pin means "no default" — the caller's own selection stands.
+function roleModelSelection(
+  ref: string | undefined,
+): ModelSelection | undefined {
+  if (ref === undefined) return undefined;
+  const slash = ref.indexOf('/');
+  if (slash <= 0 || slash === ref.length - 1) {
+    throw new ModelSelectError(
+      `[roles.<name>].model must be 'provider/id' (got ${JSON.stringify(ref)})`,
+    );
+  }
+  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
+}

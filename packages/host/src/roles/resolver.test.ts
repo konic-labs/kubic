@@ -86,6 +86,18 @@ describe('mergeRoleLayers', () => {
       'roles.planner.tool_policy.network',
     );
   });
+
+  it('model pins merge first-wins; attempts are reported (issue #133)', () => {
+    const doc = parseRoleDocument(PLANNER_MD);
+    const merged = mergeRoleLayers(doc, [
+      { layer: 'agent', roles: { planner: { model: 'local/llama3' } } },
+      { layer: 'enterprise', roles: { planner: { model: 'acme/big' } } },
+    ]);
+    expect(merged.model).toBe('acme/big');
+    expect(merged.overriddenAttempts).toContain('roles.planner.model');
+    // No layer sets one: the merge invents nothing.
+    expect(mergeRoleLayers(doc, []).model).toBeUndefined();
+  });
 });
 
 describe('resolveRole', () => {

@@ -23,7 +23,10 @@ import {
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
-import { ConfigError } from '../../../packages/host/src/config/config.js';
+import {
+  CONFIG_LAYERS,
+  ConfigError,
+} from '../../../packages/host/src/config/config.js';
 import {
   buildConfigDoctorInput,
   configDoctorProbe,
@@ -37,6 +40,10 @@ import {
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import type {
+  RoleLayerInput,
+  RoleLayerSpec,
+} from '../../../packages/host/src/roles/resolver.js';
 import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
 
 export interface CliConfigResult {
@@ -215,6 +222,59 @@ export function runtimeRunDeps(result: CliConfigResult): {
       ? {}
       : { reconcileOutOfScope: [...runtime.journal.outOfScope] }),
   };
+}
+
+// The shared solo-lane projections (issue #133): the agent id the lane and
+// its journal attribution carry, and the config-sourced role layers the
+// `--role` resolution merges under the role document. ONE projection with
+// two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
+// (tui-run.ts) — so both entry points name the lane and layer the roles
+// identically. Absent means the shipped behaviour: agent id 'root', no
+// layers.
+export function runtimeLaneDeps(result: CliConfigResult): {
+  agentId?: string;
+  roles?: { layers: RoleLayerInput[] };
+} {
+  const runtime = result.runtime;
+  if (runtime === undefined) return {};
+  const agentId = runtime.config.agent?.name;
+  const layers = roleLayersFromConfig(runtime);
+  return {
+    ...(agentId === undefined ? {} : { agentId }),
+    ...(layers.length === 0 ? {} : { roles: { layers } }),
+  };
+}
+
+// The config `[roles.<name>]` table as resolver layer inputs (issue #133):
+// one input per config layer that actually set a leaf, so the resolver's
+// first-layer-wins merge sees exactly the provenance the config load
+// recorded — `roles.implementer.model` from the project layer never
+// masquerades as an enterprise value. The layer order is CONFIG_LAYERS'.
+export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
+  const roles = runtime.config.roles;
+  if (roles === undefined) return [];
+  const layers: RoleLayerInput[] = [];
+  for (const layer of CONFIG_LAYERS) {
+    const specs: Record<string, RoleLayerSpec> = {};
+    for (const [name, entry] of Object.entries(roles)) {
+      const spec: RoleLayerSpec = {};
+      if (
+        entry.tools !== undefined &&
+        runtime.sources[`roles.${name}.tools`] === layer
+      ) {
+        spec.tools = [...entry.tools];
+      }
+      if (
+        entry.model !== undefined &&
+        runtime.sources[`roles.${name}.model`] === layer
+      ) {
+        spec.model = entry.model;
+      }
+      if (Object.keys(spec).length > 0) specs[name] = spec;
+    }
+    if (Object.keys(specs).length > 0) layers.push({ layer, roles: specs });
+  }
+  return layers;
 }
 
 // `kubic sessions prune`'s default keep-window (issue #119): the parsed

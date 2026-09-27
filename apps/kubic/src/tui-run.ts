@@ -38,6 +38,7 @@ import {
   soloTuiLine,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
   rolePromptFor,
@@ -190,12 +191,16 @@ export interface TuiRunOptions {
   noSkills?: boolean;
   skillsList?: string[];
   role?: string;
-  roles?: { cwd?: string };
+  roles?: { cwd?: string; layers?: RoleLayerInput[] };
   journalRetention?: JournalRetention;
   // §35 out-of-scope paths (issue #115): the same projection `kubic run`
   // threads, so a declared directory is excluded from this lane's §42.5
   // baseline and sweep too. Absent means the mechanism's own skips only.
   reconcileOutOfScope?: string[];
+  // The lane's agent id (issue #133): the configured `[agent].name`, from
+  // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
+  // 'root' — the shipped attribution, unchanged.
+  agentId?: string;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -259,7 +264,7 @@ export async function bootTuiLane(
         root: options.env?.cwd ?? process.cwd(),
         runId: id,
         sessionId: id,
-        agentId: 'root',
+        agentId: options.agentId ?? 'root',
         ...(options.reconcileOutOfScope === undefined
           ? {}
           : { outOfScope: options.reconcileOutOfScope }),
@@ -295,7 +300,7 @@ export async function bootTuiLane(
       model,
       env,
       sessionId: id,
-      agentId: 'root',
+      agentId: options.agentId ?? 'root',
       journal,
       // Issue #113 (§29.3): skills discovery at boot, same as the headless
       // runner — the <skills> block lands on the interactive lane too. A
@@ -339,6 +344,9 @@ export async function bootTuiLane(
           bridge: rolesBridge,
           cwd: rolesCwd,
           role: options.role,
+          ...(options.roles?.layers === undefined
+            ? {}
+            : { layers: options.roles.layers }),
         });
         const promptText = rolePromptFor(
           selected.doc,

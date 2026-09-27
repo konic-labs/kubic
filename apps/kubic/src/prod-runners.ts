@@ -65,6 +65,7 @@ import {
   installedPolicyClasses,
   installedPolicyDeps,
   kubicConfigLoader,
+  runtimeLaneDeps,
   runtimeModelPin,
   runtimeRunDeps,
   sessionRetentionDays,
@@ -142,6 +143,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           runHeadlessPrompt(prompt, options, {
             model: runtimeModelPin(cliConfig),
             ...runtimeRunDeps(cliConfig),
+            // Issue #133: the shared lane projections — the configured agent
+            // id (journal attribution, `kubic diff --agent`) and the
+            // config-sourced role layers `--role` merges under the document.
+            ...runtimeLaneDeps(cliConfig),
           }),
       }),
     tui: async (rest, cliConfig) => {
@@ -168,6 +173,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // interactive lane's baseline and sweep exclude what `kubic run`
           // excludes.
           reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
+          // Issue #133: the SAME lane projections `kubic run` consumes — the
+          // interactive lane names itself and layers `--role` identically.
+          ...runtimeLaneDeps(cliConfig),
         }),
       );
     },

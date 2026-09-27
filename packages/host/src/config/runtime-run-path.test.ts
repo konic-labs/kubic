@@ -5,11 +5,14 @@
 // the journal the run wrote and the lane allowlist it installed.
 //
 // Faux provider only: zero network, zero paid tokens.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { runtimeRunDeps } from '../../../../apps/kubic/src/config-runtime.js';
+import {
+  runtimeLaneDeps,
+  runtimeRunDeps,
+} from '../../../../apps/kubic/src/config-runtime.js';
 import { runHeadlessPrompt } from '../../../../apps/kubic/src/headless-run.js';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv, NodeExecutionEnv } from '../../../exec/src/env.js';
@@ -23,7 +26,7 @@ import {
   type MutableModels,
 } from '../../../worker/src/pi-boundary.js';
 import { runJournalCommand } from '../journal-cli.js';
-import { loadRuntimeConfig } from './runtime.js';
+import { loadRuntimeConfig, type RuntimeConfig } from './runtime.js';
 
 function fauxModels(text: string): MutableModels {
   const faux = fauxProvider();
@@ -233,5 +236,207 @@ describe('config feeds the live run path (issue #90)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
+  });
+});
+
+describe('solo-lane projections reach the live path (issue #133)', () => {
+  const NO_SPLIT = { missing: [], checked: [], applicable: false };
+
+  function namedRuntime(workspace: string, toml: string): RuntimeConfig {
+    return loadRuntimeConfig({
+      bridge: {
+        exists: (path: string): boolean =>
+          path === `${workspace}/.kubic/config.toml`,
+        readTextFile: (): string => toml,
+      },
+      home: '/nonexistent-home',
+      cwd: workspace,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: true,
+      env: {},
+    });
+  }
+
+  it('names the lane from [agent].name in the journal and the diff filter', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot('kubic-133-agent-');
+    writeFileSync(join(workspace, 'note.txt'), 'v1\n');
+    const runtime = namedRuntime(
+      workspace,
+      '[agent]\nname = "kubic-solo"\n[approvals]\nroute = "ask-user"\n',
+    );
+    expect(runtime.config.agent?.name).toBe('kubic-solo');
+    const lane = runtimeLaneDeps({
+      runtime,
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+    });
+    // The composition-root projection `kubic run` spreads into the runner.
+    expect(lane.agentId).toBe('kubic-solo');
+
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'printf "v2\\n" > note.txt' }),
+      ]),
+      fauxAssistantMessage('mutated'),
+    ]);
+    const result = await runHeadlessPrompt(
+      'mutate note.txt',
+      {},
+      {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        ...lane,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    const store = new FileJournalStore(
+      join(sessionsRoot, result.sessionId, 'journal'),
+    );
+    const entries = store.entries();
+    expect(entries.length).toBeGreaterThan(0);
+    // Every entry the run wrote is attributed to the configured id.
+    expect([...new Set(entries.map((entry) => entry.agentId))]).toEqual([
+      'kubic-solo',
+    ]);
+
+    // `kubic diff --agent` filters by the configured id — and only by it.
+    const named: string[] = [];
+    expect(
+      await runJournalCommand(
+        ['diff', '--agent', 'kubic-solo', '--session', result.sessionId],
+        { root: workspace, sessionsRoot, out: (line) => named.push(line) },
+      ),
+    ).toBe(0);
+    expect(named.join('\n')).toContain('note.txt');
+    const asRoot: string[] = [];
+    await runJournalCommand(
+      ['diff', '--agent', 'root', '--session', result.sessionId],
+      { root: workspace, sessionsRoot, out: (line) => asRoot.push(line) },
+    );
+    expect(asRoot.join('\n')).not.toContain('note.txt');
+
+    // Unset: the lane is 'root' — byte-identical to today.
+    const bare = loadRuntimeConfig({
+      bridge: createNodeFileBridge(workspace),
+      home: '/nonexistent-home',
+      cwd: workspace,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: false,
+      env: {},
+    });
+    const bareLane = runtimeLaneDeps({
+      runtime: bare,
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+    });
+    expect(bareLane.agentId).toBeUndefined();
+    const bareFaux = fauxProvider();
+    const bareModels = createModels();
+    bareModels.setProvider(bareFaux.provider);
+    bareFaux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'printf "v3\\n" > note.txt' }),
+      ]),
+      fauxAssistantMessage('mutated'),
+    ]);
+    const bareRun = await runHeadlessPrompt(
+      'mutate again',
+      {},
+      {
+        sessionsRoot,
+        models: bareModels,
+        env: new NodeExecutionEnv(workspace),
+        ...bareLane,
+      },
+    );
+    expect(bareRun.terminus).toBe('completed');
+    const bareEntries = new FileJournalStore(
+      join(sessionsRoot, bareRun.sessionId, 'journal'),
+    ).entries();
+    expect([...new Set(bareEntries.map((entry) => entry.agentId))]).toEqual([
+      'root',
+    ]);
+  });
+
+  it('layers [roles.<name>] model + tools under the role document', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot('kubic-133-roles-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, write, bash]\n---\n## Prompt\n\nImplement the step.\n',
+    );
+    const runtime = namedRuntime(
+      workspace,
+      '[roles.implementer]\nmodel = "faux-b/faux-1"\ntools = ["read"]\n[approvals]\nroute = "ask-user"\n',
+    );
+    const lane = runtimeLaneDeps({
+      runtime,
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+    });
+    // The projection carries the config table as a layer input, attributed to
+    // the layer that set each leaf — the resolver's own merge consumes it.
+    expect(lane.roles?.layers).toEqual([
+      {
+        layer: 'project',
+        roles: { implementer: { model: 'faux-b/faux-1', tools: ['read'] } },
+      },
+    ]);
+
+    // Two providers: A is the first-available pick, B is the configured role
+    // model. Only B is scripted — a run that ignores the config fails here.
+    const fauxA = fauxProvider({ provider: 'faux-a' });
+    const fauxB = fauxProvider({ provider: 'faux-b' });
+    const models = createModels();
+    models.setProvider(fauxA.provider);
+    models.setProvider(fauxB.provider);
+    fauxB.setResponses([fauxAssistantMessage('from-b')]);
+    const debug: string[] = [];
+    const result = await runHeadlessPrompt(
+      'do the step',
+      { role: 'implementer' },
+      {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        debug: (line) => debug.push(line),
+        ...lane,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('from-b');
+    // The tool half of the same layer narrowed the resolved set: the config's
+    // `tools = ["read"]` wins over the document's broader list.
+    expect(debug.join('\n')).toContain('[policy] role=implementer tools=read');
+  });
+
+  it('the wiring itself: both production runners consume the projection', async () => {
+    // One projection, two one-line consumers (`kubic run` + `kubic tui`).
+    // The defect class this issue closes is "the mechanism exists and
+    // nothing populates it", so the composition root's own spreads are
+    // pinned: a dropped consumer would silently un-name a lane again.
+    const source = readFileSync(
+      join(
+        import.meta.dirname,
+        '..',
+        '..',
+        '..',
+        '..',
+        'apps',
+        'kubic',
+        'src',
+        'prod-runners.ts',
+      ),
+      'utf8',
+    );
+    expect(
+      source.match(/\.\.\.runtimeLaneDeps\(cliConfig\)/g) ?? [],
+    ).toHaveLength(2);
   });
 });

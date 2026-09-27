@@ -7,6 +7,7 @@
 
 import type { TaskResources } from '../../agents/src/task.js';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 
 export interface WorkerListRow {
   workerId: string;
@@ -53,6 +54,14 @@ function formatResources(resources: TaskResources | undefined): string {
 
 const WORKERS_USAGE = 'usage: kubic workers [--json] [--debug]';
 
+// Issue #127: the shared parser replaces the args.filter/includes pair.
+// Fail-closed posture kept: an unknown `--x`, a stray operand, or the
+// equals form on a boolean (`--json=1`) all keep the usage exit.
+const WORKERS_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--debug', takes: 'boolean' },
+];
+
 function usage(out: (line: string) => void): number {
   out(WORKERS_USAGE);
   return 1;
@@ -65,11 +74,14 @@ export async function runWorkersCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, WORKERS_USAGE);
   if (help !== null) return help;
-  const unknown = args.filter((a) => a !== '--json' && a !== '--debug');
-  if (unknown.length > 0) return usage(deps.out);
+  const parsed = parseFlagArgs(args, WORKERS_FLAG_SPEC);
+  const stray = parsed.unknown[0] ?? parsed.positional[0];
+  if (stray !== undefined) return usage(deps.out);
+  const json = parsed.values['--json'] === true;
+  const debug = parsed.values['--debug'] === true;
   const now = deps.now?.() ?? Date.now();
   const rows = await deps.list();
-  if (args.includes('--json')) {
+  if (json) {
     deps.out(
       JSON.stringify(
         rows.map((row) => ({
@@ -94,7 +106,7 @@ export async function runWorkersCommand(
       );
     }
   }
-  if (args.includes('--debug') && deps.debug !== undefined) {
+  if (debug && deps.debug !== undefined) {
     for (const row of rows) {
       const startup = row.startupMs === undefined ? '-' : `${row.startupMs}ms`;
       deps.debug(

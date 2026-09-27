@@ -128,4 +128,22 @@ describe('kubic config (issue #90)', () => {
     );
     expect(lines.join('\n')).toContain('usage: kubic config [--json]');
   });
+
+  // Issue #127: `config` parses through the shared flag parser now.
+  it('refuses a stray operand through the same unknown-flag line', () => {
+    const { lines, out } = collect();
+    expect(runConfigCommand(['extra'], { load: runtime, out })).toBe(
+      CONFIG_EXIT_FAIL,
+    );
+    expect(lines.join('\n')).toContain('error: unknown flag extra');
+    expect(lines.join('\n')).toContain('usage: kubic config [--json]');
+  });
+
+  it('accepts the -- end-of-flags terminator like every migrated command', () => {
+    const { lines, out } = collect();
+    expect(runConfigCommand(['--'], { load: runtime, out })).toBe(
+      CONFIG_EXIT_OK,
+    );
+    expect(lines.join('\n')).toContain('model.provider = "local" (global)');
+  });
 });

@@ -28,6 +28,8 @@ import {
   CONFIG_LAYERS,
   ConfigError,
   checkCommittedConfigHalfRoot,
+  checkOrchestratorRootNoOp,
+  checkOrchestratorRootShape,
 } from '../../../packages/host/src/config/config.js';
 import {
   buildConfigDoctorInput,
@@ -81,13 +83,29 @@ export function runtimeExcludeEntriesFor(
   if (worktreeRoot === undefined || worktreeRoot === DEFAULT_WORKTREE_ROOT) {
     return RUNTIME_EXCLUDE_ENTRIES;
   }
-  const entry = `${worktreeRoot}/`;
+  // Path shape re-checked at the derivation too (issue #133 fix-cycle-3): the
+  // config load refuses these first, but a programmatic caller that bypassed
+  // it must not hand the writer an empty or escaping value — same rule, same
+  // named refusal.
+  checkOrchestratorRootShape(worktreeRoot, 'orchestrator');
+  // The derived entry is anchored to the repository root (issue #133
+  // fix-cycle-3): a pattern whose only slash is trailing (`worktrees/`) is
+  // NOT anchored — git matches it at any depth, hiding `deep/worktrees/…`
+  // and `src/worktrees/…` from `git add -A` and the pre-merge clean-tree
+  // guard. The leading slash makes the entry relative to the repository
+  // root, so exactly the named directory (and everything under it) matches.
+  // The shipped five entries already carry a middle slash, so git anchors
+  // them as they are — they stay byte-identical.
+  const entry = `/${worktreeRoot}/`;
   // Defense in depth (issue #133 review): the config load refuses control
   // characters in the root by name (checkOrchestratorRoot). If a hostile
   // value ever reached this seam, the derivation refuses to hand the entry
   // to the writer — no entry with control characters can be written to
   // `.git/info/exclude`, where a newline would inject gitignore lines.
-  if (hasUnsafeCharacters(entry)) {
+  // The ROOT is what ships (the entry only wraps it in slashes), so the rule
+  // reads the root: a `#`-leading root stays refused here even though the
+  // anchored entry no longer sits at the start of the gitignore line.
+  if (hasUnsafeCharacters(worktreeRoot)) {
     throw new ConfigError(
       "'orchestrator': 'root' must not contain control characters — the value is shipped to git's exclude file verbatim",
     );
@@ -98,7 +116,7 @@ export function runtimeExcludeEntriesFor(
   // clean-tree guard), a leading `#` would comment the line out, and a
   // backslash would escape the next character. Refused, never escaped into
   // a different rule.
-  if (hasGitignoreMetacharacters(entry)) {
+  if (hasGitignoreMetacharacters(worktreeRoot)) {
     throw new ConfigError(
       "'orchestrator': 'root' must not contain gitignore metacharacters — the value is shipped to git's exclude file verbatim",
     );
@@ -106,8 +124,14 @@ export function runtimeExcludeEntriesFor(
   // D35 re-checked at the derivation too (issue #133 re-review): the entry
   // must never ignore the committed half (`.kubic/config.toml`,
   // `.kubic/roles/*.md`), even when a programmatic caller bypassed the
-  // config load. Same rule, same message as checkOrchestratorRoot's.
+  // config load. Same rule, same message as checkOrchestratorRoot's — the
+  // compare is case-insensitive, like git's own pattern folding on a
+  // case-insensitive filesystem (issue #133 fix-cycle-3).
   checkCommittedConfigHalfRoot(worktreeRoot, 'orchestrator');
+  // No-op roots re-checked here as well (issue #133 fix-cycle-3): a `.`
+  // segment means the derived entry would match nothing, leaving the
+  // worktree set unignored. Same rule, same message as the load's.
+  checkOrchestratorRootNoOp(worktreeRoot, 'orchestrator');
   return [...RUNTIME_EXCLUDE_ENTRIES, entry];
 }
 

@@ -723,6 +723,39 @@ describe('orchestrator config projections (issue #133)', () => {
         session: { orchestrator: { root: '.kubic/roles' } },
       }),
     ).toThrow(/committed config half/);
+    // Case variants of the committed half (issue #133 fix-cycle-3): git
+    // folds ignore patterns on a case-insensitive filesystem, so `.KUBIC/`
+    // hides exactly the same files — refused through the programmatic
+    // layers too, by the same name.
+    for (const root of ['.KUBIC', '.Kubic', '.KUBIC/roles', '.kubic/ROLES']) {
+      expect(
+        () =>
+          loadRuntimeConfig({
+            bridge: fakeBridge({}),
+            home: HOME,
+            cwd: CWD,
+            projectTrusted: true,
+            session: { orchestrator: { root } },
+          }),
+        root,
+      ).toThrow(/committed config half/);
+    }
+    // No-op roots (issue #133 fix-cycle-3): a '.' segment means the derived
+    // entry would match nothing and the worktree set would stay unignored —
+    // refused through the programmatic layers too.
+    for (const root of ['.', './wt', 'foo/.']) {
+      expect(
+        () =>
+          loadRuntimeConfig({
+            bridge: fakeBridge({}),
+            home: HOME,
+            cwd: CWD,
+            projectTrusted: true,
+            session: { orchestrator: { root } },
+          }),
+        root,
+      ).toThrow(/must not name the workspace/);
+    }
   });
 
   it('refuses gitignore metacharacter roots at load, by name (issue #133 re-review)', () => {

@@ -510,7 +510,7 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     const status = await gitOrThrow(root, ['status', '--porcelain=v1']);
     expect(status.trim()).toBe('');
     const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
-    expect(exclude).toContain('.kubic-custom/wt/');
+    expect(exclude).toContain('/.kubic-custom/wt/');
 
     // `kubic clean` reads the same value: what orchestrate created is planned.
     const out: string[] = [];

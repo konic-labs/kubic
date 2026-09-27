@@ -569,6 +569,67 @@ describe('orchestrator root hardening (issue #133 review)', () => {
     }
   });
 
+  it('refuses case variants of the committed half (issue #133 fix-cycle-3)', () => {
+    // git case-folds ignore patterns on a case-insensitive filesystem
+    // (`core.ignorecase=true`, the macOS default), so `.KUBIC/` hides
+    // `.kubic/config.toml` and `.kubic/roles/*.md` exactly like `.kubic/`
+    // does. The segment compare folds with it: a variant that names the same
+    // directory is the same refusal, by name.
+    for (const root of [
+      '.KUBIC',
+      '.Kubic',
+      '.KUBIC/roles',
+      '.kubic/ROLES',
+      '.KUBIC/ROLES',
+      '.KUBIC//roles',
+    ]) {
+      expect(
+        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must not cover the committed config half/,
+      );
+    }
+    // Case variants that do not name the committed half stay allowed: the
+    // check is segment-wise, never a case-folded prefix. `.KUBIC/wt` is the
+    // shipped runtime parent's own directory.
+    for (const root of [
+      '.KUBIC/wt',
+      '.Kubic/orchestrator',
+      '.kubic/ROLES-archive',
+    ]) {
+      expect(
+        parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`).orchestrator
+          ?.root,
+        root,
+      ).toBe(root);
+    }
+  });
+
+  it('refuses roots that name the workspace or carry a . segment (issue #133 fix-cycle-3)', () => {
+    // A '.' segment names the directory it sits in: `.` is the workspace
+    // itself, `./` matches nothing at all, and `foo/.` is spelled `foo`. The
+    // derived `<root>/` entry would then ignore nothing — the worktree set
+    // would stay untracked and the pre-merge clean-tree guard would refuse
+    // every merge. Refused by name, never normalized: the value the operator
+    // wrote is the value that would ship.
+    for (const root of ['.', './.', './worktrees', 'foo/.', '././x']) {
+      expect(
+        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must not name the workspace or carry a '\.' segment/,
+      );
+    }
+    // A committed-half spelling keeps its own (more specific) refusal: the
+    // no-op rule never masks the rule that protects D35's files.
+    expect(() =>
+      parseTomlConfig('[orchestrator]\nroot = ".kubic/./roles"\n'),
+    ).toThrow(
+      /'orchestrator': 'root' must not cover the committed config half/,
+    );
+  });
+
   it('refuses gitignore metacharacters by name (issue #133 re-review)', () => {
     // The root is shipped verbatim as `<root>/` in `.git/info/exclude`, and
     // git reads that line as a gitignore pattern: `*`/`?`/`[`/`]` make the

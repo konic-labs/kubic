@@ -382,7 +382,7 @@ describe('runtime exclude (issue #91, moved order)', () => {
     expect(await dispatchCommand('orchestrate', [], h.deps)).toBe(0);
     expect(h.state.excludeEntries).toEqual([
       ...RUNTIME_EXCLUDE_ENTRIES,
-      '.kubic-custom/wt/',
+      '/.kubic-custom/wt/',
     ]);
 
     // The unconfigured load ships exactly the shipped prefixes — no
@@ -402,10 +402,11 @@ describe('runtime exclude (issue #91, moved order)', () => {
     expect(() => runtimeExcludeEntriesFor('wt\u001b[31mX')).toThrow(
       /control characters/,
     );
-    // The safe path is unchanged: the shipped five, plus the configured root.
+    // The safe path is unchanged: the shipped five, plus the configured root,
+    // anchored to the repo root (issue #133 fix-cycle-3).
     expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
       ...RUNTIME_EXCLUDE_ENTRIES,
-      '.kubic-custom/wt/',
+      '/.kubic-custom/wt/',
     ]);
   });
 
@@ -439,6 +440,66 @@ describe('runtime exclude (issue #91, moved order)', () => {
     ]) {
       expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
         /committed config half/,
+      );
+    }
+  });
+
+  it('anchors the derived entry to the repo root (issue #133 fix-cycle-3)', () => {
+    // A pattern whose only slash is trailing is NOT anchored: `worktrees/`
+    // matches a directory of that name at any depth, so `deep/worktrees/y.txt`
+    // and `src/worktrees/z.txt` would be hidden and skipped by `git add -A`.
+    // The derived entry carries the leading slash that anchors it; the
+    // shipped five already contain a middle slash, so they stay byte-identical.
+    const entries = runtimeExcludeEntriesFor('worktrees');
+    expect(entries.slice(0, -1)).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
+    expect(entries[entries.length - 1]).toBe('/worktrees/');
+    // Multi-segment roots are anchored the same way (a no-op for git, which
+    // anchors any pattern with a middle slash) — one entry shape, every root.
+    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '/.kubic-custom/wt/',
+    ]);
+    // The shipped default keeps the shipped list exactly: `.kubic/wt/` is
+    // already anchored by its middle slash, and the repo's own gate pins
+    // those five entries verbatim.
+    expect(runtimeExcludeEntriesFor('.kubic/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+    ]);
+    expect(runtimeExcludeEntriesFor(undefined)).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+    ]);
+  });
+
+  it('re-checks the path shape at the entry derivation (issue #133 fix-cycle-3)', () => {
+    // The config load refuses these first; the derivation re-checks for
+    // programmatic callers that never pass through the load, with the load's
+    // own message. An empty value, an absolute path, a `..` segment and a
+    // trailing '/' can never become a repo-root entry.
+    for (const root of ['', '   ', '/abs', '//', 'x/', 'a/..', '../x', '..']) {
+      expect(
+        () => runtimeExcludeEntriesFor(root),
+        JSON.stringify(root),
+      ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
+    }
+  });
+
+  it('re-checks the committed half case-insensitively at the derivation (issue #133 fix-cycle-3)', () => {
+    // git case-folds ignore patterns on a case-insensitive filesystem, so a
+    // case variant of `.kubic` / `.kubic/roles` hides the committed half
+    // exactly like the exact spelling — refused here with the same name.
+    for (const root of ['.KUBIC', '.Kubic', '.KUBIC/roles', '.kubic/ROLES']) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /committed config half/,
+      );
+    }
+  });
+
+  it('re-checks the no-op roots at the derivation (issue #133 fix-cycle-3)', () => {
+    // '.' / './…' / '…/.' names the directory it sits in: the derived entry
+    // would match nothing and the worktree set would stay unignored.
+    for (const root of ['.', './.', './worktrees', 'foo/.']) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /must not name the workspace or carry a '\.' segment/,
       );
     }
   });

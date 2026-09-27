@@ -564,7 +564,16 @@ export function checkOutOfScopeEntries(
 //   * a root whose exclude entry (`<root>/`) would ignore the committed
 //     half (`.kubic/config.toml`, `.kubic/roles/*.md`) is refused — the
 //     worktree parent must never make D35's committed files invisible to
-//     git.
+//     git. The segment compare is case-insensitive (issue #133
+//     fix-cycle-3): git case-folds ignore patterns on a case-insensitive
+//     filesystem (`core.ignorecase=true`, the macOS default), so `.KUBIC/`
+//     hides the committed half exactly like `.kubic/` does.
+//   * a root that names the workspace itself or carries a `.` segment is
+//     refused by name (issue #133 fix-cycle-3): `.`, `./`, `foo/.` all
+//     resolve to a directory the derived `<root>/` entry cannot match, so
+//     the worktree set would stay unignored and the pre-merge clean-tree
+//     guard would refuse every merge. Never normalized — the value the
+//     operator wrote is the value that would ship.
 const COMMITTED_CONFIG_DIR_SEGMENTS: readonly (readonly string[])[] = [
   ['.kubic'],
   ['.kubic', 'roles'],
@@ -572,7 +581,10 @@ const COMMITTED_CONFIG_DIR_SEGMENTS: readonly (readonly string[])[] = [
 
 // Segment-wise (never a string prefix), so `.kubic/roles-archive` is not
 // mistaken for `.kubic/roles`, and equivalent spellings of the same
-// directory (`.kubic//roles`, `.kubic/./roles`) are caught.
+// directory (`.kubic//roles`, `.kubic/./roles`) are caught. The compare
+// folds case per segment (issue #133 fix-cycle-3): git case-folds ignore
+// patterns on a case-insensitive filesystem, so a case variant of the
+// committed half hides exactly the same files.
 function isCommittedConfigHalfRoot(value: string): boolean {
   const segments = value
     .split('/')
@@ -580,16 +592,21 @@ function isCommittedConfigHalfRoot(value: string): boolean {
   return COMMITTED_CONFIG_DIR_SEGMENTS.some(
     (dir) =>
       segments.length === dir.length &&
-      dir.every((segment, index) => segments[index] === segment),
+      dir.every((segment, index) => segments[index].toLowerCase() === segment),
   );
 }
 
-export function checkOrchestratorRoot(
-  value: unknown,
+// §35/§44 root path shape (issue #133 fix-cycle-3): workspace-relative only —
+// never empty, never absolute, never climbing out with `..`, never ending in
+// `/` (the exclude-entry derivation appends one). Exported because the
+// derivation (apps/kubic/src/config-runtime.ts) re-checks the same rule for
+// programmatic callers that never pass through this parser; both call sites
+// refuse by the same name.
+export function checkOrchestratorRootShape(
+  value: string,
   keyPath: string,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string' || value.trim() === '') {
+): void {
+  if (value.trim() === '') {
     throw new ConfigError(
       `'${keyPath}': 'root' must be a workspace-relative path`,
     );
@@ -603,6 +620,37 @@ export function checkOrchestratorRoot(
       `'${keyPath}': 'root' must be a workspace-relative path (no leading '/', no '..' segments, no trailing '/')`,
     );
   }
+}
+
+// A `.` segment names the directory it sits in (issue #133 fix-cycle-3): `.`
+// is the workspace itself, `./` matches nothing at all, and `foo/.` is
+// spelled `foo`. The derived `<root>/` entry would then ignore nothing — the
+// worktree set would stay untracked and the pre-merge clean-tree guard would
+// refuse every merge. Refused by name, never normalized: the value the
+// operator wrote is the value that would ship. Exported for the derivation's
+// own re-check (programmatic callers).
+export function checkOrchestratorRootNoOp(
+  value: string,
+  keyPath: string,
+): void {
+  if (value.split('/').includes('.')) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must not name the workspace or carry a '.' segment — the derived exclude entry would match nothing and the worktree set would stay unignored`,
+    );
+  }
+}
+
+export function checkOrchestratorRoot(
+  value: unknown,
+  keyPath: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path`,
+    );
+  }
+  checkOrchestratorRootShape(value, keyPath);
   if (hasUnsafeCharacters(value)) {
     throw new ConfigError(
       `'${keyPath}': 'root' must be a workspace-relative path (control characters are refused — the value is shipped to git's exclude file verbatim)`,
@@ -614,6 +662,7 @@ export function checkOrchestratorRoot(
     );
   }
   checkCommittedConfigHalfRoot(value, keyPath);
+  checkOrchestratorRootNoOp(value, keyPath);
   return value;
 }
 

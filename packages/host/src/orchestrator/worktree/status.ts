@@ -10,6 +10,7 @@ import {
 } from './confinement.js';
 import { WorktreeError } from './errors.js';
 import type { WorktreeEntry } from './list.js';
+import { DEFAULT_WORKTREE_ROOT } from './naming.js';
 
 export interface WorktreeStatus {
   path: string;
@@ -45,7 +46,7 @@ export function markMerged(entry: WorktreeEntry): MergedWorktree {
 export async function getWorktreeStatus(
   env: ExecutionEnv,
   path: string,
-  options?: { sessionId?: string; repoRoot?: string },
+  options?: { sessionId?: string; repoRoot?: string; worktreeRoot?: string },
 ): Promise<WorktreeStatus> {
   if (!path.startsWith('/')) {
     throw new WorktreeError(
@@ -54,16 +55,16 @@ export async function getWorktreeStatus(
       1,
     );
   }
-  if (!isSpawnedWorktreeShape(path)) {
+  if (!isSpawnedWorktreeShape(path, options?.worktreeRoot)) {
     throw new WorktreeError(
       'status_failed',
-      `refusing status for ${path}: not a spawned worktree under .kubic/wt/`,
+      `refusing status for ${path}: not a spawned worktree under ${options?.worktreeRoot ?? DEFAULT_WORKTREE_ROOT}/`,
       1,
     );
   }
   if (
     options?.repoRoot !== undefined &&
-    !isSpawnedWorktreePath(options.repoRoot, path)
+    !isSpawnedWorktreePath(options.repoRoot, path, options.worktreeRoot)
   ) {
     throw new WorktreeError(
       'status_failed',

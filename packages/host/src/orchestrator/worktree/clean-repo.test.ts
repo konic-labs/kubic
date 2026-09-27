@@ -72,11 +72,13 @@ function kubicBranches(root: string): string[] {
 async function clean(
   root: string,
   args: string[],
+  worktreeRoot?: string,
 ): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
   const code = await runCleanCommand(args, {
     env: new NodeExecutionEnv(root),
     out: (line: string) => lines.push(line),
+    ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
   });
   return { code, lines };
 }
@@ -123,6 +125,22 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const secondText = second.lines.join('\n');
     expect(secondText).toContain('nothing to prune');
     expect(secondText).not.toContain('removed worktree');
+  });
+
+  it('disposes a retained worktree under the configured root (issue #133)', async () => {
+    const root = scratchRepo();
+    const custom = join(root, '.kubic-custom', 'wt', 'worker-1');
+    git(root, ['worktree', 'add', custom, '-b', 'kubic/worker-1']);
+
+    // The composition root threads `[orchestrator].root` here; the default
+    // scope would never plan this worktree.
+    const { code, lines } = await clean(root, [], '.kubic-custom/wt');
+
+    expect(code).toBe(0);
+    expect(lines).toContain(`removed worktree ${custom}`);
+    expect(lines).toContain('deleted branch kubic/worker-1');
+    expect(existsSync(custom)).toBe(false);
+    expect(kubicBranches(root)).toEqual([]);
   });
 
   it('leaves a hand-made worktree and its branch alone', async () => {

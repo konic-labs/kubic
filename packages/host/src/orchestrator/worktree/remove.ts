@@ -9,7 +9,11 @@ import {
   isSpawnedWorktreeShape,
 } from './confinement.js';
 import { WorktreeError } from './errors.js';
-import { branchForAgent, parseBranchAgent } from './naming.js';
+import {
+  branchForAgent,
+  DEFAULT_WORKTREE_ROOT,
+  parseBranchAgent,
+} from './naming.js';
 
 export interface RemoveWorktreeResult {
   path: string;
@@ -22,6 +26,9 @@ export interface RemoveWorktreeOptions {
   force?: boolean;
   sessionId?: string;
   repoRoot?: string;
+  // The worktree parent the path must live under: `[orchestrator].root` when
+  // the config sets one, `.kubic/wt` otherwise (issue #133).
+  worktreeRoot?: string;
 }
 
 function branchForPath(path: string): string | null {
@@ -33,15 +40,22 @@ function branchForPath(path: string): string | null {
   }
 }
 
-function assertSpawnedPath(path: string, repoRoot: string | undefined): void {
-  if (!isSpawnedWorktreeShape(path)) {
+function assertSpawnedPath(
+  path: string,
+  repoRoot: string | undefined,
+  worktreeRoot: string | undefined,
+): void {
+  if (!isSpawnedWorktreeShape(path, worktreeRoot)) {
     throw new WorktreeError(
       'remove_failed',
-      `refusing to remove ${path}: not a spawned worktree under .kubic/wt/`,
+      `refusing to remove ${path}: not a spawned worktree under ${worktreeRoot ?? DEFAULT_WORKTREE_ROOT}/`,
       1,
     );
   }
-  if (repoRoot !== undefined && !isSpawnedWorktreePath(repoRoot, path)) {
+  if (
+    repoRoot !== undefined &&
+    !isSpawnedWorktreePath(repoRoot, path, worktreeRoot)
+  ) {
     throw new WorktreeError(
       'remove_failed',
       `refusing to remove ${path}: outside the spawned set of ${repoRoot}`,
@@ -62,7 +76,7 @@ export async function removeWorktree(
       1,
     );
   }
-  assertSpawnedPath(path, options?.repoRoot);
+  assertSpawnedPath(path, options?.repoRoot, options?.worktreeRoot);
   const provenance: Provenance = {
     sessionId: options?.sessionId ?? 'cli',
     agentId: 'manager',

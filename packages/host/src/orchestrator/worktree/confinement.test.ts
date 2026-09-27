@@ -80,4 +80,53 @@ describe('worktree confinement (issue #45)', () => {
     expect(isSpawnedWorktreeShape('/repo/.kubic/wt/../escape')).toBe(false);
     expect(spawnedRootFor('/repo')).toBe('/repo/.kubic/wt');
   });
+
+  it('follows the configured worktree root (issue #133)', () => {
+    expect(spawnedRootFor('/repo', '.kubic-custom/wt')).toBe(
+      '/repo/.kubic-custom/wt',
+    );
+    expect(
+      isSpawnedWorktreePath(
+        '/repo',
+        '/repo/.kubic-custom/wt/agent-1',
+        '.kubic-custom/wt',
+      ),
+    ).toBe(true);
+    // The configured set is the only one: a default-root worktree is
+    // foreign to a repo that configured a custom root (and vice versa).
+    expect(
+      isSpawnedWorktreePath(
+        '/repo',
+        '/repo/.kubic/wt/agent-1',
+        '.kubic-custom/wt',
+      ),
+    ).toBe(false);
+    expect(
+      isSpawnedWorktreePath(
+        '/repo',
+        '/repo/.kubic-custom/wt/../escape',
+        '.kubic-custom/wt',
+      ),
+    ).toBe(false);
+    expect(
+      isSpawnedWorktreeShape(
+        '/repo/.kubic-custom/wt/agent-1',
+        '.kubic-custom/wt',
+      ),
+    ).toBe(true);
+    // The root itself is not a spawned worktree — a segment must follow.
+    expect(
+      isSpawnedWorktreeShape('/repo/.kubic-custom/wt', '.kubic-custom/wt'),
+    ).toBe(false);
+    expect(
+      isSpawnedWorktreeShape(
+        '/repo/.kubic-custom/wt/../escape/x',
+        '.kubic-custom/wt',
+      ),
+    ).toBe(false);
+    // The default shape check still requires the .kubic/wt pair.
+    expect(isSpawnedWorktreeShape('/repo/.kubic-custom/wt/agent-1')).toBe(
+      false,
+    );
+  });
 });

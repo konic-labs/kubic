@@ -52,8 +52,8 @@ try {
     out,
     loadConfig: loadCliConfig,
     version: cliVersion,
-    ensureRuntimeExclude: () =>
-      ensureRuntimeExcludeRules({ cwd: process.cwd() }),
+    ensureRuntimeExclude: (entries) =>
+      ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
     runners: createProdRunners({
       out,
       debug: (line) => console.error(line),

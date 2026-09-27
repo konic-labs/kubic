@@ -157,6 +157,27 @@ describe('kubic runtime state never reaches the commit path (issue #91)', () => 
     );
     assert.equal(isIgnored(dir, '.kubic/'), false);
   });
+
+  it('refuses a hostile entry instead of injecting patterns (issue #133 review)', () => {
+    // An entry is written one line at a time: a newline in one would inject
+    // arbitrary gitignore patterns into .git/info/exclude. Refused at render
+    // time — the file is untouched and the patterns never take effect.
+    const dir = scratchUserRepo();
+    ensureRuntimeExcludeRules({ cwd: dir });
+    const file = join(dir, '.git', 'info', 'exclude');
+    const before = readFileSync(file, 'utf8');
+
+    const result = ensureRuntimeExcludeRules({
+      cwd: dir,
+      entries: ['.kubic/wt/', 'x\n*.log\n!keep/'],
+    });
+
+    assert.equal(result.skipped, 'unavailable');
+    assert.equal(result.changed, false);
+    assert.equal(readFileSync(file, 'utf8'), before);
+    writeFileSync(join(dir, 'secret.log'), 'token=abc\n');
+    assert.equal(isIgnored(dir, 'secret.log'), false);
+  });
 });
 
 describe('this repo ships the split (issue #91)', () => {
@@ -187,14 +208,22 @@ describe('this repo ships the split (issue #91)', () => {
     // the production wiring too (the pre-#135 pin asserted exactly this,
     // against main.ts): the entry point must wire the real rules into the
     // seam it hands the dispatch — a no-op seam must not pass this test.
+    // Issue #133: the seam takes the config-derived entry list (the shipped
+    // prefixes plus a configured `[orchestrator].root`), so the pin reads the
+    // wiring with its argument.
     const main = readFileSync(
       join(ROOT, 'apps', 'kubic', 'src', 'main.ts'),
       'utf8',
     );
     assert.match(
       main,
-      /ensureRuntimeExclude:\s*\(\)\s*=>\s*ensureRuntimeExcludeRules\(/,
-      'apps/kubic/src/main.ts must wire ensureRuntimeExcludeRules into the dispatch seam',
+      /ensureRuntimeExclude:\s*\(entries\)\s*=>\s*ensureRuntimeExcludeRules\(\{\s*cwd: process\.cwd\(\),\s*entries\s*\}\)/,
+      'apps/kubic/src/main.ts must wire ensureRuntimeExcludeRules into the dispatch seam (with the config-derived entries, issue #133)',
+    );
+    assert.match(
+      dispatch,
+      /deps\.ensureRuntimeExclude\(\s*runtimeExcludeEntriesFor\(cliConfig\.runtime\?\.orchestrator\.root\)/,
+      'apps/kubic/src/dispatch.ts must ship the configured worktree parent with the runtime prefixes (issue #133)',
     );
   });
   // Issue #90 criterion 5: `checkGitignoreSplit` is the rule checker, and it

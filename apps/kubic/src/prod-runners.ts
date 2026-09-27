@@ -283,18 +283,28 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(cliConfig.runtime === undefined
             ? {}
             : { approvalPolicy: approvalSnapshotFrom(cliConfig.runtime) }),
+          // Issue #133: the runtime `[orchestrator]` projection (worktree
+          // parent + worker cap, validated at load) — the same values the
+          // dispatch shipped to the repo's exclude rules above.
+          ...(cliConfig.runtime === undefined
+            ? {}
+            : { orchestrator: cliConfig.runtime.orchestrator }),
         }),
       );
     },
-    clean: (rest) =>
+    clean: (rest, cliConfig) =>
       // Explicit-only disposer for retained orchestrator worktrees/branches
       // (issue #92, §42.4/§44.1/§78): the library path owns planning and
-      // git.
+      // git. Issue #133: the spawned set's parent comes from the same
+      // config load, so `kubic clean` finds what orchestrate created.
       runCleanCommand(
         [...rest],
         cleanDepsWithDefaults({
           env: new NodeExecutionEnv(process.cwd()),
           out,
+          ...(cliConfig.runtime?.orchestrator.root === undefined
+            ? {}
+            : { worktreeRoot: cliConfig.runtime.orchestrator.root }),
         }),
       ),
     cost: (rest) =>

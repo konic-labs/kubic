@@ -33,6 +33,7 @@ import {
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
+import { runCleanCommand } from './orchestrator/worktree/clean.js';
 import type { WorktreeError } from './orchestrator/worktree/errors.js';
 
 const PROVENANCE: Provenance = {
@@ -481,3 +482,59 @@ function findJsonl(sessionsRoot: string, worktreePath: string): string {
   if (file === undefined) throw new Error(`no session file under ${dir}`);
   return file.name;
 }
+
+describe('prod orchestrate path: the configured worktree root (issue #133)', () => {
+  it('creates worktrees under [orchestrator].root, keeps them out of git status, and clean finds them', async () => {
+    const root = await initRepo();
+    const sessionsRoot = scratchRoot('kubic-orch-sessions-');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      cwd: root,
+      sessionsRoot,
+      orchestrator: { root: '.kubic-custom/wt' },
+    });
+
+    const worktree = await deps.ensureWorktree('worker-1');
+    const expected = join(
+      realpathSync(root),
+      '.kubic-custom',
+      'wt',
+      'worker-1',
+    );
+    expect(realpathSync(worktree.path)).toBe(expected);
+    expect(worktree.branch).toBe('kubic/worker-1');
+
+    // The configured root joins the runtime exclude rules (issue #91's
+    // mechanism): an untracked worktree directory would make the pre-merge
+    // clean-tree guard refuse every merge.
+    const status = await gitOrThrow(root, ['status', '--porcelain=v1']);
+    expect(status.trim()).toBe('');
+    const exclude = readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
+    expect(exclude).toContain('.kubic-custom/wt/');
+
+    // `kubic clean` reads the same value: what orchestrate created is planned.
+    const out: string[] = [];
+    const code = await runCleanCommand(['--dry-run', '--json'], {
+      env: new NodeExecutionEnv(root),
+      out: (line) => out.push(line),
+      worktreeRoot: '.kubic-custom/wt',
+    });
+    expect(code).toBe(0);
+    const plan = JSON.parse(out.join('\n')) as {
+      worktrees: { path: string }[];
+    };
+    expect(plan.worktrees.map((w) => realpathSync(w.path))).toEqual([expected]);
+
+    // The default scope does NOT see it — the configured value is what makes
+    // clean find the set, not an accidental hardcode.
+    const defaultOut: string[] = [];
+    await runCleanCommand(['--dry-run', '--json'], {
+      env: new NodeExecutionEnv(root),
+      out: (line) => defaultOut.push(line),
+    });
+    const defaultPlan = JSON.parse(defaultOut.join('\n')) as {
+      worktrees: unknown[];
+    };
+    expect(defaultPlan.worktrees).toEqual([]);
+  });
+});

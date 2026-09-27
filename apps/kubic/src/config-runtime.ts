@@ -20,6 +20,11 @@ import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import {
+  hasUnsafeCharacters,
+  RUNTIME_EXCLUDE_ENTRIES,
+} from '../../../packages/exec/src/runtime-exclude.js';
+import { ConfigError } from '../../../packages/host/src/config/config.js';
+import {
   buildConfigDoctorInput,
   configDoctorProbe,
 } from '../../../packages/host/src/config/config-doctor.js';
@@ -31,6 +36,7 @@ import {
 } from '../../../packages/host/src/config/runtime.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
 
 export interface CliConfigResult {
@@ -51,6 +57,33 @@ export interface CliConfigOptions {
   home?: string;
   env?: Record<string, string | undefined>;
   projectTrusted?: boolean;
+}
+
+// The §35/§91 runtime exclude entries for a worktree parent (issue #133):
+// the shipped five prefixes, plus the configured `[orchestrator].root` when
+// it names a parent other than the default. An untracked worktree directory
+// would make the pre-merge clean-tree guard refuse every merge, so the
+// configured root is shipped to the repo's exclude file exactly like
+// `.kubic/wt/` is. One derivation, every consumer (dispatch's run/orchestrate/
+// tui write, and orchestrate's own startup write) — the list cannot drift.
+export function runtimeExcludeEntriesFor(
+  worktreeRoot: string | undefined,
+): readonly string[] {
+  if (worktreeRoot === undefined || worktreeRoot === DEFAULT_WORKTREE_ROOT) {
+    return RUNTIME_EXCLUDE_ENTRIES;
+  }
+  const entry = `${worktreeRoot}/`;
+  // Defense in depth (issue #133 review): the config load refuses control
+  // characters in the root by name (checkOrchestratorRoot). If a hostile
+  // value ever reached this seam, the derivation refuses to hand the entry
+  // to the writer — no entry with control characters can be written to
+  // `.git/info/exclude`, where a newline would inject gitignore lines.
+  if (hasUnsafeCharacters(entry)) {
+    throw new ConfigError(
+      "'orchestrator': 'root' must not contain control characters — the value is shipped to git's exclude file verbatim",
+    );
+  }
+  return [...RUNTIME_EXCLUDE_ENTRIES, entry];
 }
 
 function message(error: unknown): string {

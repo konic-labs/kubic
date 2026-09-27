@@ -5,7 +5,12 @@
 // (clean-repo.test.ts) proves it against real git.
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
-import { parseCleanArgs, planClean, runCleanCommand } from './clean.js';
+import {
+  parseCleanArgs,
+  planClean,
+  planSessionClean,
+  runCleanCommand,
+} from './clean.js';
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
 import { THREE_WT_PORCELAIN } from './list.test.js';
@@ -209,6 +214,65 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(unanchored.worktrees.map((w) => w.path)).not.toContain(
       '/repo/.kubic/wt/../escape',
     );
+  });
+
+  it('follows the configured worktree root (issue #133)', () => {
+    // A repo whose config sets `[orchestrator] root = ".kubic-custom/wt"`:
+    // the default set is out of scope, and the custom set is the plan.
+    const entries: WorktreeEntry[] = [
+      ...parseWorktreePorcelain(THREE_WT_PORCELAIN),
+      {
+        path: '/repo/.kubic-custom/wt/agent-7',
+        branch: 'kubic/agent-7',
+        bare: false,
+        detached: false,
+      },
+    ];
+    const plan = planClean(entries, {}, '/repo', [], '.kubic-custom/wt');
+    expect(plan.worktrees.map((w) => w.path)).toEqual([
+      '/repo/.kubic-custom/wt/agent-7',
+    ]);
+    // Session scope reads the same value: the retained set is derived
+    // under the configured root, so `kubic clean --session` finds it.
+    const session = planSessionClean(
+      ['agent-7'],
+      '/repo',
+      {},
+      '.kubic-custom/wt',
+    );
+    expect(session.worktrees).toEqual([
+      { path: '/repo/.kubic-custom/wt/agent-7', branch: 'kubic/agent-7' },
+    ]);
+    expect(session.branches).toEqual(['kubic/agent-7']);
+  });
+
+  it('plans a custom-root worktree from the deps root, not the argv (issue #133)', async () => {
+    const env = new FakeExecutionEnv(repoScripts());
+    const lines: string[] = [];
+    const removed: string[] = [];
+    const code = await runCleanCommand(['--json'], {
+      env,
+      out: (line: string) => lines.push(line),
+      worktreeRoot: '.kubic-custom/wt',
+      lister: async () =>
+        parseWorktreePorcelain(
+          `${THREE_WT_PORCELAIN}\nworktree /repo/.kubic-custom/wt/agent-7\nHEAD 7777777777777777\nbranch refs/heads/kubic/agent-7\n`,
+        ),
+      branchLister: async () => ['kubic/agent-7'],
+      remover: async (_env: unknown, path: string) => {
+        removed.push(path);
+      },
+      branchDeleter: async () => undefined,
+      pruner: async () => undefined,
+    });
+    expect(code).toBe(0);
+    expect(removed).toEqual(['/repo/.kubic-custom/wt/agent-7']);
+    const parsed = JSON.parse(lines.join('\n')) as {
+      worktrees: { path: string }[];
+    };
+    expect(parsed.worktrees).toEqual([
+      { path: '/repo/.kubic-custom/wt/agent-7', branch: 'kubic/agent-7' },
+    ]);
   });
 
   it('never plans a namespace-shaped worktree sitting on a foreign branch', () => {

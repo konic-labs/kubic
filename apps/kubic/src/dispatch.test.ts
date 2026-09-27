@@ -9,13 +9,24 @@
 // the documented deps shapes the root wires (clean {env,out}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
+import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
-import { type CliConfigResult, loadCliConfig } from './config-runtime.js';
+import {
+  type CliConfigResult,
+  loadCliConfig,
+  runtimeExcludeEntriesFor,
+} from './config-runtime.js';
 import {
   type CommandRunner,
   type DispatchDeps,
@@ -91,7 +102,10 @@ interface Harness {
   readonly deps: DispatchDeps;
   readonly calls: RunnerCall[];
   readonly lines: string[];
-  readonly state: { excludeCalls: number };
+  readonly state: {
+    excludeCalls: number;
+    excludeEntries: readonly string[] | undefined;
+  };
 }
 
 // A dispatch over fully faux runners: every runner records its call and
@@ -106,7 +120,10 @@ function harness(
 ): Harness {
   const calls: RunnerCall[] = [];
   const lines: string[] = [];
-  const state = { excludeCalls: 0 };
+  const state: Harness['state'] = {
+    excludeCalls: 0,
+    excludeEntries: undefined,
+  };
   const runners = {} as Record<RunnerKey, CommandRunner>;
   for (const key of RUNNER_KEYS) {
     const override = options.runners?.[key];
@@ -121,8 +138,9 @@ function harness(
     },
     loadConfig: () => options.config ?? loadedConfig(),
     version: () => options.version ?? '9.9.9',
-    ensureRuntimeExclude: () => {
+    ensureRuntimeExclude: (entries) => {
       state.excludeCalls += 1;
+      state.excludeEntries = entries;
     },
     runners,
   };
@@ -343,6 +361,52 @@ describe('runtime exclude (issue #91, moved order)', () => {
     expect(h.state.excludeCalls).toBe(1);
     expect(h.calls.map((call) => call.key)).toEqual(['run']);
     expect(h.calls[0]?.rest).toEqual(['--help']);
+  });
+
+  it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-dispatch-root-'));
+    mkdirSync(join(dir, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(dir, '.kubic', 'config.toml'),
+      '[orchestrator]\nroot = ".kubic-custom/wt"\n',
+    );
+    const config = loadCliConfig({
+      cwd: dir,
+      home: dir,
+      env: {},
+      projectTrusted: true,
+    });
+    expect(config.runtime?.orchestrator.root).toBe('.kubic-custom/wt');
+
+    const h = harness({ config });
+    expect(await dispatchCommand('orchestrate', [], h.deps)).toBe(0);
+    expect(h.state.excludeEntries).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '.kubic-custom/wt/',
+    ]);
+
+    // The unconfigured load ships exactly the shipped prefixes — no
+    // invented entry, no dropped one.
+    const bare = harness();
+    await dispatchCommand('run', [], bare.deps);
+    expect(bare.state.excludeEntries).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
+  });
+
+  it('refuses a hostile root at the entry derivation, before any write (issue #133 review)', () => {
+    // Defense in depth: the config load refuses control characters by name;
+    // if one ever reached this seam, the derivation refuses to hand the
+    // entry to the writer — no hostile entry can be written.
+    expect(() => runtimeExcludeEntriesFor('x\n*.log')).toThrow(
+      /control characters/,
+    );
+    expect(() => runtimeExcludeEntriesFor('wt\u001b[31mX')).toThrow(
+      /control characters/,
+    );
+    // The safe path is unchanged: the shipped five, plus the configured root.
+    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '.kubic-custom/wt/',
+    ]);
   });
 });
 

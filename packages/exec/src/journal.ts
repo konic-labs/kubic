@@ -849,6 +849,18 @@ function parseIgnoreFile(content: string): IgnoreRule[] {
 // (last match wins). Exotic forms (character classes beyond ?, rooted
 // mid-pattern **) are not covered — documented, and anything missed only
 // widens the baseline, never narrows the journal.
+//
+// Nested files (issue #116) are appended to the parent's rules verbatim and
+// matched against the workspace-relative path, exactly as root rules are —
+// they are NOT re-rooted at their own directory. The WALK is what scopes
+// them: a nested file's rules are in force only inside its own subtree, so a
+// rule can never match a sibling's path (git's per-directory scoping, held by
+// the recursion rather than by this matcher). The limit that remains is the
+// anchored form: a nested anchored pattern must be written repo-relative
+// (`packages/foo/build/`) to match — a git-style directory-relative one
+// (`sub/build/` inside `packages/foo/.gitignore`, meaning
+// `packages/foo/sub/build/` to git) matches nothing here and merely widens
+// the baseline. docs/packages/exec.md states the subset and its limits.
 function isIgnored(
   rules: IgnoreRule[],
   relPath: string,
@@ -890,30 +902,47 @@ export function isOutOfScope(
 }
 
 // Metadata walk, not a content copy: hashes only, no blobs. Always skips
-// .git/ and .kubic/ (journal state is never journaled), honors the root
-// .gitignore, and excludes caller-declared out-of-scope paths (§35: an entry
-// excludes the path itself and everything under it).
+// .git/ and .kubic/ (journal state is never journaled), honors every
+// `.gitignore` on the way down — the root's rules plus each nested file's,
+// child rules appended after the parent's (last-match-wins, so a nested
+// negation overrides a parent ignore — the ordering git uses) — and excludes
+// caller-declared out-of-scope paths (§35: an entry excludes the path itself
+// and everything under it).
 export function captureBaseline(
   root: string,
   options: BaselineOptions = {},
 ): Baseline {
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
-  let rules: IgnoreRule[] = [];
-  if (bridge.exists(join(root, '.gitignore'))) {
-    try {
-      rules = parseIgnoreFile(bridge.readTextFile(join(root, '.gitignore')));
-    } catch {
-      rules = [];
-    }
-  }
   const baseline: Baseline = {};
-  const walk = (dir: string, rel: string): void => {
+  const walk = (dir: string, rel: string, rules: IgnoreRule[]): void => {
     let infos: ReturnType<typeof bridge.listDir> = [];
     try {
       infos = bridge.listDir(dir);
     } catch {
       return;
+    }
+    // One `exists` per directory entered (issue #116 perf contract): the same
+    // order as the `listDir` already paid, and no read at all for a directory
+    // without an ignore file.
+    let localRules = rules;
+    const nested = join(dir, '.gitignore');
+    if (bridge.exists(nested)) {
+      try {
+        // Child rules are appended AFTER the parent's: `isIgnored` is
+        // last-match-wins, so a nested negation overrides the parent ignore —
+        // the ordering git uses. The array is path-depth-bounded (one copy per
+        // directory that has an ignore file) and dropped on recursion exit, so
+        // siblings never see each other's rules.
+        localRules = [
+          ...rules,
+          ...parseIgnoreFile(bridge.readTextFile(nested)),
+        ];
+      } catch {
+        // Unreadable nested ignore (chmod 000, a permission-denied mount):
+        // keep the parent rules and keep walking — the documented widening,
+        // never a throw.
+      }
     }
     for (const info of [...infos].sort((a, b) => (a.name < b.name ? -1 : 1))) {
       if (info.isSymbolicLink) continue;
@@ -921,9 +950,9 @@ export function captureBaseline(
       if (relPath === '.git' || relPath.startsWith('.git/')) continue;
       if (relPath === '.kubic' || relPath.startsWith('.kubic/')) continue;
       if (isOutOfScope(relPath, outOfScope)) continue;
-      if (isIgnored(rules, relPath, info.isDirectory)) continue;
+      if (isIgnored(localRules, relPath, info.isDirectory)) continue;
       if (info.isDirectory) {
-        walk(join(dir, info.name), relPath);
+        walk(join(dir, info.name), relPath, localRules);
       } else if (info.isFile === false) {
         // Not a regular file: a FIFO/socket/device must never be read. A
         // synchronous read of a named pipe blocks until a writer opens it,
@@ -954,7 +983,7 @@ export function captureBaseline(
       }
     }
   };
-  walk(root, '');
+  walk(root, '', []);
   return baseline;
 }
 

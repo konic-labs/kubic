@@ -97,7 +97,8 @@ excludes `dist/`, `dist/a.js` and `dist/sub/b.js`, and never a sibling that
 merely shares the prefix (`dist-x`). Path-boundary aware, applied identically
 to the §42.5 boot baseline and the end-of-run sweep — a build or formatter
 that touches a declared path produces no unattributed journal entry. Patterns
-and negations belong in `.gitignore` (the walk honours it); `.git/` and
+and negations belong in `.gitignore` — the walk honours the root's rules and
+every nested file's, child rules after the parent's (issue #116); `.git/` and
 `.kubic/` are hard-skipped before any config. An empty entry (`[""]`) is
 refused by name — it would match nothing.
 

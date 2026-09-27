@@ -639,8 +639,16 @@ composition paths therefore capture a **baseline** when the lane boots and
 - The sweep compares the tree against it and appends one entry per changed,
   created or deleted path with `unattributed: true` and `toolCallId: null`.
 - Excluded from **both** walks: `.git/`, `.kubic/` (journal state is never
-  journaled) and anything the root `.gitignore` matches; caller-declared
-  out-of-scope paths are honoured when supplied.
+  journaled) and anything the `.gitignore` files match — the root's rules plus
+  every nested file's, child rules after the parent's so a nested negation
+  overrides a parent ignore (last-match-wins, the ordering git uses, issue
+  #116); caller-declared out-of-scope paths are honoured when supplied. The
+  matcher is the documented common subset (`*`, `?`, `**` at the edges,
+  `dir/`, `!`) — exotic syntax is not covered, a nested anchored pattern is
+  matched against the workspace-relative path (write it repo-relative:
+  `packages/foo/build/`), and an unreadable nested ignore leaves its parent's
+  rules in force. Anything missed only widens the baseline, never narrows the
+  journal.
 - Before-content is unknowable for these finds — the baseline holds hashes,
   not copies — so they are recorded **hashes only** and the badge is
   `[unattributed, non-reversible]`: `kubic undo` skips them naming the path

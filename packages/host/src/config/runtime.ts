@@ -30,7 +30,10 @@ import {
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
+  checkOrchestratorMaxWorkers,
+  checkOrchestratorRoot,
   checkOutOfScopeEntries,
+  checkRoleModelRef,
   defaultLayerPaths,
   type KubicConfig,
   type LayerInput,
@@ -67,17 +70,54 @@ export const RUNTIME_DEFAULTS = {
 } as const;
 
 // Every documented config key, with the observable effect it has at runtime —
-// or an explicit not-yet-implemented marker. docs/cli/configuration.md and
-// example.toml are parsed against THIS table by config-docs.test.ts, so a
-// documented key can never quietly stop doing anything.
+// or an explicit marker for a key the product deliberately does not consume.
+// docs/cli/configuration.md and example.toml are parsed against THIS table by
+// config-docs.test.ts, so a documented key can never quietly stop doing
+// anything. Three dispositions (issue #133):
+//
+//   effect           — consumed: the value reaches a code path.
+//   kept             — a decision: the key is reserved and reported, and the
+//                      reason it is not consumed is stated here.
+//   notYetImplemented — pending work with a named follow-up; NEVER a pointer
+//                      at an issue, which is how the stale rows happened.
 export type RuntimeKeyEffect =
   | { effect: string }
+  | { kept: string }
   | { notYetImplemented: string };
+
+export type RuntimeKeyDisposition = 'consumed' | 'kept' | 'pending' | 'unknown';
+
+// The table lookup is section-or-key (issue #90's rule): `roles.implementer.
+// model` resolves through `roles`. Undefined means the table has no row for
+// the key at all — `config-doctor` flags exactly that by name (issue #133).
+export function keyEffectFor(key: string): RuntimeKeyEffect | undefined {
+  const direct = RUNTIME_KEY_EFFECTS[key];
+  if (direct !== undefined) return direct;
+  const section = key.split('.')[0] as string;
+  return RUNTIME_KEY_EFFECTS[section];
+}
+
+export function runtimeKeyDisposition(
+  entry: RuntimeKeyEffect | undefined,
+): RuntimeKeyDisposition {
+  if (entry === undefined) return 'unknown';
+  if ('effect' in entry) return 'consumed';
+  if ('kept' in entry) return 'kept';
+  return 'pending';
+}
+
+// The row's own words, whichever disposition it carries — one extraction, so
+// the docs test, the acceptance pin, and any reader agree.
+export function runtimeKeyEffectText(entry: RuntimeKeyEffect): string {
+  if ('effect' in entry) return entry.effect;
+  if ('kept' in entry) return entry.kept;
+  return entry.notYetImplemented;
+}
 
 export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'agent.name': {
-    notYetImplemented:
-      'accepted and reported by `kubic config`; the solo lane names the agent from the session (root) today',
+    effect:
+      'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
   },
   'model.provider': {
     effect: 'provider selection for `kubic run` (selectModel)',
@@ -132,28 +172,27 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'paths excluded from the §42.5 baseline and the end-of-run sweep (self + children)',
   },
   roles: {
-    notYetImplemented:
-      'per-role model/tools are parsed and reported; role documents land with #99',
+    effect:
+      'per-role model/tool defaults layered under the role document (§12.1)',
   },
   'orchestrator.root': {
-    notYetImplemented: 'orchestrator worktree root wiring lands with #94/#95',
+    effect: 'parent directory for orchestrator worktrees',
   },
   'orchestrator.maxWorkers': {
-    notYetImplemented: 'orchestrator concurrency wiring lands with #94/#95',
+    effect: 'default admission cap for the orchestrator scheduler (§45)',
   },
   'ui.theme': {
-    notYetImplemented: 'TUI theme selection lands with #88/#96',
+    kept: 'pi-tui owns presentation; no theme engine exists — key parsed and reported for forward-compat only',
   },
   'ui.statusBar': {
-    notYetImplemented: 'TUI status-bar selection lands with #88/#96',
+    kept: 'pi-tui owns presentation; the status bar belongs to the TUI — key parsed and reported for forward-compat only',
   },
   'session.store': {
-    notYetImplemented:
-      'jsonl is the only store implemented; sqlite/memory remain a separate decision',
+    kept: 'jsonl is the only store implemented; sqlite/memory are a separate decision — key parsed and reported for forward-compat only',
   },
   'session.dir': {
     notYetImplemented:
-      'the sessions root is host-owned today (~/.kubic/sessions); relocation lands with the session store work',
+      'sessions stay under ~/.kubic/sessions; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first)',
   },
   'session.retentionDays': {
     effect:
@@ -198,6 +237,21 @@ export interface RuntimeModes {
   source: ConfigValueSource;
 }
 
+export interface RuntimeOrchestrator {
+  /**
+   * §35/§44 worktree parent (issue #133): the spawned set lives at
+   * `<root>/<worktreeRoot>/<agent>`. Undefined means the shipped
+   * `.kubic/wt` — never an invented path.
+   */
+  root?: string;
+  /**
+   * §45 worker cap (issue #133): the default the scheduler resolves through
+   * resolveMaxConcurrency. Undefined means no configured cap; an explicit
+   * session/argv cap still wins.
+   */
+  maxWorkers?: number;
+}
+
 export interface RuntimeBudgets {
   // §71: nothing is capped until the operator configures a limit, and config
   // cannot express a budget at all — so this is always false today, reported
@@ -237,6 +291,7 @@ export interface RuntimeConfig {
   permissions: RuntimePermissions;
   journal: RuntimeJournal;
   modes: RuntimeModes;
+  orchestrator: RuntimeOrchestrator;
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
@@ -251,6 +306,10 @@ export interface EffectiveConfigValue {
   // machine view never disagree about what the value is.
   value: string;
   layer: ConfigValueSource;
+  // Issue #133: what the key-effect table says this key does — 'consumed'
+  // (an effect row), 'kept' (a recorded decision), 'pending' (a named
+  // follow-up), or 'unknown' (no row at all; config-doctor flags it).
+  disposition: RuntimeKeyDisposition;
 }
 
 export interface EffectiveConfigView {
@@ -631,6 +690,25 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       : (loaded.sources['journal.retentionDays'] ?? 'defaults'),
   };
 
+  // §35/§44/§45 orchestrator keys (issue #133): validated here too, because
+  // the programmatic session/agent layers never pass through the TOML
+  // parser — an escaping root or a non-positive cap is refused by name,
+  // never half-applied.
+  const orchestratorRoot = checkOrchestratorRoot(
+    config.orchestrator?.root,
+    'orchestrator',
+  );
+  const orchestratorMaxWorkers = checkOrchestratorMaxWorkers(
+    config.orchestrator?.maxWorkers,
+    'orchestrator',
+  );
+  // §12.1 per-role model pins (issue #133): validated here too, because the
+  // programmatic session/agent layers never pass through the TOML parser — a
+  // malformed `provider/id` ref is refused by name, never carried to the lane.
+  for (const [name, role] of Object.entries(config.roles ?? {})) {
+    checkRoleModelRef(role.model, name);
+  }
+
   // Effective provenance: an applied override owns the leaf it replaced, so
   // the view never reports a file layer for a value an override won.
   if (modelSource === 'cli' && cliModel !== undefined) {
@@ -667,6 +745,12 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     permissions,
     journal,
     modes: modesFrom(config, loaded.sources),
+    orchestrator: {
+      ...(orchestratorRoot === undefined ? {} : { root: orchestratorRoot }),
+      ...(orchestratorMaxWorkers === undefined
+        ? {}
+        : { maxWorkers: orchestratorMaxWorkers }),
+    },
     budgets: {
       configured: false,
       detail:
@@ -691,6 +775,7 @@ export function effectiveConfigView(
       key,
       value: formatValue(value),
       layer: runtime.sources[key] ?? 'defaults',
+      disposition: runtimeKeyDisposition(keyEffectFor(key)),
     });
   }
   values.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -730,8 +815,17 @@ export function effectiveConfigView(
 // verbatim — and an operator cannot paste one back into a shared log.
 export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   const lines: string[] = [];
+  // The disposition split up front (issue #133): a reader sees how many
+  // values are consumed, how many are kept decisions, and how many are
+  // pending — before the per-value lines repeat it.
+  const counts = { consumed: 0, kept: 0, pending: 0, unknown: 0 };
+  for (const value of view.values) counts[value.disposition] += 1;
   lines.push(
-    `config: ${view.values.length} value(s) from ${view.layers.filter((l) => l.present).length} present layer(s)`,
+    `config: ${view.values.length} value(s) from ${view.layers.filter((l) => l.present).length} present layer(s); effects: ${counts.consumed} consumed, ${counts.kept} kept, ${counts.pending} pending${
+      counts.unknown === 0
+        ? ''
+        : `, ${counts.unknown} with no effect row (see doctor)`
+    }`,
   );
   for (const layer of view.layers) {
     lines.push(
@@ -745,7 +839,9 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
     );
   }
   for (const value of view.values) {
-    lines.push(`${value.key} = ${value.value} (${value.layer})`);
+    lines.push(
+      `${value.key} = ${value.value} (${value.layer}, ${value.disposition})`,
+    );
   }
   if (view.model !== undefined) {
     lines.push(

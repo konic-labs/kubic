@@ -16,7 +16,11 @@ import {
   HELP_FLAGS,
 } from '../../../packages/core/src/cli-help.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
-import { type CliConfigResult, configRefusalExit } from './config-runtime.js';
+import {
+  type CliConfigResult,
+  configRefusalExit,
+  runtimeExcludeEntriesFor,
+} from './config-runtime.js';
 
 // The root dispatcher's usage line (issue #128): one string, printed by
 // `--help`/`-h` (exit 0 — a help request is a successful invocation) and by
@@ -69,8 +73,11 @@ export interface DispatchDeps {
   // reads this app's manifest through the exec FileBridge.
   readonly version: () => string;
   // `.kubic/` runtime ignore rules (issue #91), shipped before the modes
-  // that create runtime state; injected because it touches the repo.
-  readonly ensureRuntimeExclude: () => void;
+  // that create runtime state; injected because it touches the repo. The
+  // entries are derived from the loaded config (issue #133): a configured
+  // `[orchestrator].root` joins the shipped prefixes, so the worktree parent
+  // never dirties the tree the run merges into.
+  readonly ensureRuntimeExclude: (entries: readonly string[]) => void;
   readonly runners: DispatchRunners;
 }
 
@@ -100,7 +107,9 @@ export async function dispatchCommand(
   // first run/orchestrate leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
   if (command === 'run' || command === 'orchestrate' || command === 'tui') {
-    deps.ensureRuntimeExclude();
+    deps.ensureRuntimeExclude(
+      runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
+    );
   }
   // Root-level help (issue #128): the #100 convention — one implementation in
   // core/cli-help.ts, applied before argv validation — reaches the dispatcher

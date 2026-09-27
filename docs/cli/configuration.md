@@ -117,7 +117,12 @@ sessionScoped, requireJustification · `[permissions]` filesystem
 `packages/host/src/config/example.toml` (pinned by test — copy it to
 start). Unknown sections or keys are rejected (`ConfigError`).
 
-Every one of those keys has a runtime effect or says so plainly:
+Every one of those keys is in the key-effect table below: **consumed** keys
+name the code path that reads them, **kept** keys are reserved with the
+reason they are not consumed, and a key with no row at all fails `kubic
+doctor`'s config check by name. `kubic config` prints the disposition of
+every effective value (`(project, consumed)`), so a config file can never
+quietly stop configuring anything.
 
 | Key | Effect |
 | --- | --- |
@@ -129,12 +134,13 @@ Every one of those keys has a runtime effect or says so plainly:
 | `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
 | `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
-| `agent.name` | Reported by `kubic config`; the solo lane names the agent from the session. |
-| `roles.*` | Parsed and reported; role documents land with #99. |
-| `orchestrator.*` | Parsed and reported; orchestrator wiring lands with #94/#95. |
-| `ui.*` | Parsed and reported; TUI selection lands with #88/#96. |
-| `session.store` | `jsonl` only today; `sqlite`/`memory` remain a separate decision. |
-| `session.dir` | Parsed and reported; the sessions root is host-owned today. |
+| `agent.name` | The solo lane's agent id: journal entries are attributed to it and `kubic diff --agent <name>` filters by it. Unset ⇒ `root`, unchanged. |
+| `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` applies the whole layer (model pin + tools); `kubic tui --role` applies the `tools` layer and the `[agent].name` agent id only — the model pin is not yet applied on the interactive lane (pre-existing gap, disclosed rather than silent). |
+| `orchestrator.root` | Parent directory for orchestrator worktrees: the spawned set is `<repo>/<root>/<agent>`, `kubic clean` plans the same set, and the §35 runtime exclude entries cover it (the derived entry is `/<root>/`, anchored to the repo root, so only that directory matches — a bare `worktrees` never hides `deep/worktrees/…`). Workspace-relative only — refused by name at load: an absolute path, a `..` segment, a trailing `/`, an empty value, a `.` segment (`.`, `./x`, `foo/.` — the entry would match nothing and the worktree set would stay unignored), a control character, a gitignore metacharacter (`*`, `?`, `[`, `]`, a leading `#`, a backslash), and the committed half (`.kubic`, `.kubic/roles` — case-insensitively, since git folds ignore patterns on a case-insensitive filesystem). Unset ⇒ `.kubic/wt`. |
+| `orchestrator.maxWorkers` | Default admission cap for the orchestrator scheduler (§45): the concurrency a run starts with when nothing else caps it. A per-session override and an explicit limits cap still win; a value that is not a positive integer is refused by name. Unset ⇒ 4. |
+| `ui.*` | Kept: pi-tui owns presentation; no theme engine exists — parsed and reported for forward-compat only. |
+| `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
+| `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
 
 ### `autoApprove` capabilities
@@ -237,7 +243,10 @@ not. The split, exactly as shipped:
   those five runtime prefixes into the repository's **local, uncommitted**
   exclude file (`.git/info/exclude`), in a marked block it rewrites in
   place on later runs — so nothing of Kubic's own appears in `git status`,
-  and your committed `.gitignore` is never touched by the tool. `.kubic/`
+  and your committed `.gitignore` is never touched by the tool. A
+  configured `[orchestrator].root` joins that block as `/<root>/`, anchored
+  to the repo root, so a worktree parent named `worktrees` never hides a
+  `deep/worktrees/` or `src/worktrees/` you meant to keep. `.kubic/`
   itself is deliberately **not** ignored: `config.toml` and `roles/*.md`
   stay committable. Outside a git repository the write is a no-op (runtime
   state is local wherever it is written), and the write never fails a run.

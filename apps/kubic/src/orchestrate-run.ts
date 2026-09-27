@@ -19,6 +19,7 @@ import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
+import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
   MergeApprovalVerdict,
@@ -49,6 +50,7 @@ import type {
   ResolverRequest,
 } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { hashApprovalPolicy } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { ParallelScheduler } from '../../../packages/host/src/orchestrator/parallel/scheduler.js';
 import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchestrator/parallel/visibility.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {
@@ -78,6 +80,7 @@ import {
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import { runtimeExcludeEntriesFor } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 
 export interface OrchestrateRunOptions {
@@ -129,6 +132,14 @@ export interface OrchestrateRunOptions {
    *  Absent means no surface is attached: every ask denies closed on its
    *  bound, which is what a non-interactive run keeps. */
   approvalsSeat?: WorkerAskSeat;
+  /**
+   * The runtime `[orchestrator]` projection (issue #133), validated at
+   * config load: `root` is the worktree parent the spawned set lives under
+   * (`.kubic/wt` when absent) and `maxWorkers` is the admission cap the run
+   * scheduler resolves through resolveMaxConcurrency (the shipped four when
+   * absent). One projection, two consumers — never a second config read.
+   */
+  orchestrator?: RuntimeOrchestrator;
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -296,8 +307,15 @@ function workerRunError(
 // Best-effort: a repo we cannot write into fails later with its own named code.
 // The outcome still reaches the debug channel — a skipped/unavailable write is
 // otherwise indistinguishable from a successful one (issue #85 review).
-function ensureStateIgnored(root: string, debug: (line: string) => void): void {
-  const outcome = ensureRuntimeExcludeRules({ cwd: root });
+function ensureStateIgnored(
+  root: string,
+  debug: (line: string) => void,
+  entries?: readonly string[],
+): void {
+  const outcome = ensureRuntimeExcludeRules({
+    cwd: root,
+    ...(entries === undefined ? {} : { entries }),
+  });
   if (outcome.skipped !== undefined) {
     debug(
       `state ignore: skipped (${outcome.skipped})${outcome.detail === undefined ? '' : `: ${outcome.detail}`}`,
@@ -427,6 +445,13 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
+  // Issue #133: the runtime `[orchestrator]` projection — the worktree
+  // parent and the worker cap, both already validated at config load. The
+  // shipped defaults apply when the config sets neither: `.kubic/wt` for
+  // the spawned set, the scheduler's own cap of four for admissions.
+  const worktreeRoot = options.orchestrator?.root;
+  const maxWorkers = options.orchestrator?.maxWorkers;
+  const excludeEntries = runtimeExcludeEntriesFor(worktreeRoot);
   const workerRegistry = options.registry ?? new WorkerRegistry();
   // One registry for the whole invocation (issue #94): the orchestrator
   // writes rows here, `kubic workers` reads the same rows off disk, and a
@@ -492,14 +517,15 @@ export async function orchestrateDepsWithDefaults(
   };
 
   // The orchestrator writes its state under `<repo>/.kubic/` from the very
-  // first save (and adds worktrees under it). Make sure that dir never dirties
-  // the tree it sits in (§35: `.kubic/` is gitignored) BEFORE the first write
-  // — otherwise a fresh scratch repo shows `?? .kubic/` and the pre-merge
+  // first save (and adds worktrees under the configured `[orchestrator].root`
+  // — `.kubic/wt` by default). Make sure that dir never dirties the tree it
+  // sits in (§35: `.kubic/` is gitignored) BEFORE the first write —
+  // otherwise a fresh scratch repo shows `?? .kubic/` and the pre-merge
   // guard refuses every merge, so no run can ever settle. Best-effort here:
   // a repo we cannot write into fails later with its own named code.
   if (root !== undefined) {
     try {
-      ensureStateIgnored(root, debug);
+      ensureStateIgnored(root, debug, excludeEntries);
     } catch {
       // Intentionally swallowed — the named failure comes from the write path.
     }
@@ -636,6 +662,17 @@ export async function orchestrateDepsWithDefaults(
   return {
     out: options.out,
     debug,
+    // Issue #133: the configured worker cap is the run's own admission
+    // surface — the same scheduler the CLI would default to, constructed
+    // with the validated `[orchestrator].maxWorkers` as its default. Unset
+    // builds no scheduler and the CLI's shipped default cap of four stands.
+    ...(maxWorkers === undefined
+      ? {}
+      : {
+          scheduler: new ParallelScheduler(undefined, {
+            configured: { maxWorkers },
+          }),
+        }),
     isGitRepo: () => root !== undefined,
     // §44.1 retained-worktree status (issue #106): the run retained these
     // worktrees as evidence, so the operator is told which of them are dirty
@@ -648,6 +685,7 @@ export async function orchestrateDepsWithDefaults(
       return getWorktreeStatus(env, path, {
         sessionId: options.sessionId,
         ...(repo === undefined ? {} : { repoRoot: repo }),
+        ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
       });
     },
     trajectoryEvent:
@@ -698,11 +736,12 @@ export async function orchestrateDepsWithDefaults(
       const repo = needRoot();
       emitWorktreeNotice();
       const env = new NodeExecutionEnv(repo);
-      ensureStateIgnored(repo, debug);
+      ensureStateIgnored(repo, debug, excludeEntries);
       const worktreeStarted = Date.now();
       try {
         const added = await addWorktree(env, repo, agentId, {
           sessionId: 'cli',
+          ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
         });
         worktreeStartedAt.set(agentId, worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
@@ -714,7 +753,7 @@ export async function orchestrateDepsWithDefaults(
         // child spawn dies as a raw `spawn … ENOENT` uncaught event with
         // no §78 code (issue #85), so fail closed with a named error.
         if (isWorktreeError(error) && error.code === 'already_exists') {
-          const path = pathForAgent(repo, agentId);
+          const path = pathForAgent(repo, agentId, worktreeRoot);
           const branch = branchForAgent(agentId);
           const probe = new NodeExecutionEnv(repo);
           let present = false;

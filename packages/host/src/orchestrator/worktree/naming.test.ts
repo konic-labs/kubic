@@ -42,6 +42,30 @@ describe('worktree naming (issue #45)', () => {
   });
 });
 
+describe('worktree naming: configured root (issue #133)', () => {
+  it('derives the path under the configured worktree root', () => {
+    expect(pathForAgent('/repo', 'agent-1', '.kubic-custom/wt')).toBe(
+      '/repo/.kubic-custom/wt/agent-1',
+    );
+  });
+
+  it('keeps the documented default when no root is configured', () => {
+    expect(pathForAgent('/repo', 'agent-1')).toBe('/repo/.kubic/wt/agent-1');
+    expect(pathForAgent('/repo', 'agent-1', '.kubic/wt')).toBe(
+      '/repo/.kubic/wt/agent-1',
+    );
+  });
+
+  it('refuses a root that escapes the repository', () => {
+    // Defense in depth: the config load validates too, but the path
+    // builder is what a direct caller reaches — it never joins an escape.
+    expect(() => pathForAgent('/repo', 'agent-1', '../escape')).toThrow(/root/);
+    expect(() => pathForAgent('/repo', 'agent-1', 'a/../../b')).toThrow(/root/);
+    expect(() => pathForAgent('/repo', 'agent-1', '/abs/wt')).toThrow(/root/);
+    expect(() => pathForAgent('/repo', 'agent-1', '')).toThrow(/root/);
+  });
+});
+
 describe('worktree errors (issue #45)', () => {
   it('refuses non-git spawn with exit 5 pointing at solo', () => {
     expect(WORKTREE_EXIT_NOT_A_REPO).toBe(5);

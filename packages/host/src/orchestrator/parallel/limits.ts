@@ -5,6 +5,8 @@
 // config admits — §71 ships no defaults, so "unconfigured" never blocks.
 // No I/O, no clock, no network (faux-only); the scheduler owns time/queue.
 
+import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
+
 export const DEFAULT_MAX_CONCURRENCY = 4;
 
 export class ParallelConfigError extends Error {
@@ -17,15 +19,12 @@ export class ParallelConfigError extends Error {
 // Sanitize one value interpolated into a deny reason (agentId, worktree,
 // provider): strips C0 controls + DEL + C1 controls (U+0080-U+009F) +
 // bidi overrides, at reason-construction time so returned reasons are
-// already clean for any caller that prints them. Canonical home is here
-// (limits.js imports nothing from scheduler.js) with sanitizeLogLine in
-// scheduler.js delegating to it: one strip set, no import cycle.
+// already clean for any caller that prints them. The strip set is owned by
+// @kubic/exec's runtime-exclude module (the same characters an exclude
+// entry may never contain), with sanitizeLogLine in scheduler.js delegating
+// here: one strip set, no import cycle.
 export function sanitizeReasonField(value: unknown): string {
-  return String(value).replace(
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
-    /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
-    '',
-  );
+  return stripUnsafeCharacters(String(value));
 }
 
 export interface AggregateCaps {
@@ -78,11 +77,21 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
-// Default 4; a per-session override wins over the session config. Invalid
-// values throw — silently substituting a default would hide misconfig.
+// The configured default for the admission cap (issue #133): the validated
+// `[orchestrator].maxWorkers` value, or undefined when the config sets none.
+export interface ConfiguredConcurrency {
+  maxWorkers?: number;
+}
+
+// Default 4; an explicit cap wins over the configured default, and the
+// configured `[orchestrator].maxWorkers` (issue #133) wins over the shipped
+// constant. Precedence: sessionOverride > limits.maxConcurrency >
+// configured.maxWorkers > DEFAULT. Invalid values throw — silently
+// substituting a default would hide misconfig.
 export function resolveMaxConcurrency(
   limits?: ParallelLimits,
   sessionOverride?: number,
+  configured?: ConfiguredConcurrency,
 ): number {
   if (sessionOverride !== undefined) {
     if (!isPositiveInt(sessionOverride)) {
@@ -92,14 +101,23 @@ export function resolveMaxConcurrency(
     }
     return sessionOverride;
   }
-  const configured = limits?.maxConcurrency;
-  if (configured === undefined) return DEFAULT_MAX_CONCURRENCY;
-  if (!isPositiveInt(configured)) {
+  const explicit = limits?.maxConcurrency;
+  if (explicit !== undefined) {
+    if (!isPositiveInt(explicit)) {
+      throw new ParallelConfigError(
+        `maxConcurrency must be a positive integer (got ${String(explicit)})`,
+      );
+    }
+    return explicit;
+  }
+  const configDefault = configured?.maxWorkers;
+  if (configDefault === undefined) return DEFAULT_MAX_CONCURRENCY;
+  if (!isPositiveInt(configDefault)) {
     throw new ParallelConfigError(
-      `maxConcurrency must be a positive integer (got ${String(configured)})`,
+      `orchestrator.maxWorkers must be a positive integer (got ${String(configDefault)})`,
     );
   }
-  return configured;
+  return configDefault;
 }
 
 // Worker slots default to the resolved concurrency when unconfigured —
@@ -107,17 +125,18 @@ export function resolveMaxConcurrency(
 export function resolveWorkerCapacity(
   limits?: ParallelLimits,
   sessionOverride?: number,
+  configured?: ConfiguredConcurrency,
 ): number {
-  const configured = limits?.workerCapacity;
-  if (configured === undefined) {
-    return resolveMaxConcurrency(limits, sessionOverride);
+  const explicit = limits?.workerCapacity;
+  if (explicit === undefined) {
+    return resolveMaxConcurrency(limits, sessionOverride, configured);
   }
-  if (!isPositiveInt(configured)) {
+  if (!isPositiveInt(explicit)) {
     throw new ParallelConfigError(
-      `workerCapacity must be a positive integer (got ${String(configured)})`,
+      `workerCapacity must be a positive integer (got ${String(explicit)})`,
     );
   }
-  return configured;
+  return explicit;
 }
 
 function hasPositiveNumber(

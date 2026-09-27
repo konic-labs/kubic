@@ -50,7 +50,73 @@ export interface RuntimeExcludeText {
   changed: boolean;
 }
 
+export class RuntimeExcludeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RuntimeExcludeError';
+  }
+}
+
+// The characters that can never appear in an exclude entry (issue #133
+// review): C0 controls + DEL, C1 controls, and the bidi overrides — the same
+// set `sanitizeReasonField` (@kubic/host) strips from operator-facing
+// fields, kept here because this module owns what may become a gitignore
+// line. An entry is written one line at a time, so a newline would inject
+// arbitrary patterns into `.git/info/exclude`; an ESC or bidi override would
+// reach whatever reads the file. The config load refuses such a value at the
+// door; render time refuses it again. Never stripped on the write path: a
+// hostile entry must not be silently repaired into a different rule.
+const UNSAFE_CHARACTERS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching controls.
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const UNSAFE_CHARACTERS_ALL =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+
+export function hasUnsafeCharacters(value: string): boolean {
+  return UNSAFE_CHARACTERS.test(value);
+}
+
+// The gitignore metacharacters that may never appear in an exclude entry
+// (issue #133 re-review): an entry is written verbatim as one gitignore
+// pattern, and these make the line mean something other than the literal
+// path it names — `*`/`?`/`[`/`]` match other paths (hiding files from
+// `git add -A` and the pre-merge clean-tree guard), a leading `#` turns
+// the line into a comment, and a backslash escapes the following character
+// (a trailing one leaves an entry that matches nothing at all). The config
+// load refuses such a value at the door; render time refuses it again.
+// Never escaped on the write path: a hostile entry must not be silently
+// repaired into a different rule.
+const GITIGNORE_METACHARACTERS = /[*?[\]\\]/;
+
+export function hasGitignoreMetacharacters(value: string): boolean {
+  return value.startsWith('#') || GITIGNORE_METACHARACTERS.test(value);
+}
+
+// Display-only: strips the same set for a message that quotes a value back
+// (the scheduler's deny reasons). NEVER applied to a value that is written.
+export function stripUnsafeCharacters(value: string): string {
+  return value.replace(UNSAFE_CHARACTERS_ALL, '');
+}
+
 function renderBlock(entries: readonly string[]): string {
+  // Defense in depth (issue #133 review): no entry carrying control
+  // characters may ever be rendered — refused by name, never echoed.
+  for (const entry of entries) {
+    if (hasUnsafeCharacters(entry)) {
+      throw new RuntimeExcludeError(
+        'refusing to write an exclude entry with control characters: the entry would inject gitignore lines into .git/info/exclude',
+      );
+    }
+    // Same rule for the gitignore metacharacters (issue #133 re-review):
+    // `*`/`?`/`[`/`]`, a leading `#` or a backslash would make the entry
+    // act as a different rule than the literal path it names.
+    if (hasGitignoreMetacharacters(entry)) {
+      throw new RuntimeExcludeError(
+        'refusing to write an exclude entry with gitignore metacharacters: the entry would match a different set of paths than the one it names',
+      );
+    }
+  }
   return `${[RUNTIME_EXCLUDE_BEGIN, ...entries, RUNTIME_EXCLUDE_END].join('\n')}\n`;
 }
 

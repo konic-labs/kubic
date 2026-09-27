@@ -28,6 +28,7 @@ import {
   RUNTIME_EXCLUDE_BEGIN,
   RUNTIME_EXCLUDE_END,
   RUNTIME_EXCLUDE_ENTRIES,
+  RuntimeExcludeError,
 } from './runtime-exclude.js';
 
 function git(cwd: string, args: string[]): string {
@@ -236,5 +237,106 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
     mkdirSync(join(dir, '.kubic', 'orchestrator'), { recursive: true });
     writeFileSync(join(dir, '.kubic', 'orchestrator', 'x.json'), '{}\n');
     expect(status(dir)).toEqual([]);
+  });
+});
+
+describe('refusing hostile exclude entries (issue #133 review)', () => {
+  it('refuses to render an entry carrying control characters', () => {
+    // An entry is written one line at a time: a newline injects arbitrary
+    // gitignore patterns, and a literal ESC would reach whatever reads the
+    // file. Refused, never stripped — a hostile entry must not be silently
+    // repaired into a different rule.
+    expect(() =>
+      applyRuntimeExcludeBlock('', ['.kubic/wt/', 'x\n*.log\n!keep/']),
+    ).toThrow(RuntimeExcludeError);
+    expect(() => applyRuntimeExcludeBlock('', ['wt\u001b[31mX/'])).toThrow(
+      RuntimeExcludeError,
+    );
+    expect(() => applyRuntimeExcludeBlock('', ['wt\u0085X/'])).toThrow(
+      RuntimeExcludeError,
+    );
+    // The message names the rule and never echoes the hostile bytes.
+    try {
+      applyRuntimeExcludeBlock('', ['x\n*.log\n!keep/']);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain('*.log');
+      expect((error as Error).message).not.toContain('\n');
+    }
+  });
+
+  it('refuses to render an entry carrying gitignore metacharacters', () => {
+    // The entry is written verbatim as one gitignore pattern: `*`/`?`/`[`/
+    // `]` make it match paths other than the one it names, a leading `#`
+    // turns it into a comment, and a backslash escapes the next character
+    // (a trailing one leaves an entry that matches nothing). Refused, never
+    // escaped into a different rule.
+    for (const entry of [
+      '*/',
+      'wt?.log/',
+      'w[abc]/',
+      'w]x/',
+      '#comment/',
+      'x\\/',
+      'a\\b/',
+    ]) {
+      expect(
+        () => applyRuntimeExcludeBlock('', ['.kubic/wt/', entry]),
+        entry,
+      ).toThrow(RuntimeExcludeError);
+    }
+    // The message names the rule and never echoes the hostile entry.
+    try {
+      applyRuntimeExcludeBlock('', ['*/']);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain('*');
+      expect((error as Error).message).not.toContain('\\');
+    }
+  });
+
+  it('never writes a metacharacter entry into the exclude file', () => {
+    const dir = roleScratchRepo();
+    // First run: the shipped block lands.
+    ensureRuntimeExcludeRules({ cwd: dir });
+    const file = join(dir, '.git', 'info', 'exclude');
+    const before = readFileSync(file, 'utf8');
+
+    // Second run with a wildcard entry: refused, nothing written.
+    const result = ensureRuntimeExcludeRules({
+      cwd: dir,
+      entries: ['.kubic/wt/', '*/'],
+    });
+    expect(result.skipped).toBe('unavailable');
+    expect(result.changed).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    // Ground truth: no `*/` rule is in force — a new file stays visible
+    // and stageable.
+    writeFileSync(join(dir, 'src-new.txt'), 'x\n');
+    expect(isIgnored(dir, 'src-new.txt')).toBe(false);
+    expect(status(dir)).toEqual(['?? src-new.txt']);
+  });
+
+  it('never writes a hostile entry into the exclude file', () => {
+    const dir = roleScratchRepo();
+    // First run: the shipped block lands.
+    ensureRuntimeExcludeRules({ cwd: dir });
+    const file = join(dir, '.git', 'info', 'exclude');
+    const before = readFileSync(file, 'utf8');
+
+    // Second run with a hostile entry: refused, nothing written.
+    const result = ensureRuntimeExcludeRules({
+      cwd: dir,
+      entries: ['.kubic/wt/', 'x\n*.log\n!keep/'],
+    });
+    expect(result.skipped).toBe('unavailable');
+    expect(result.changed).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+
+    // Ground truth: the injected patterns are not in force.
+    writeFileSync(join(dir, 'secret.log'), 'token=abc\n');
+    expect(isIgnored(dir, 'secret.log')).toBe(false);
+    expect(status(dir)).toEqual(['?? secret.log']);
   });
 });

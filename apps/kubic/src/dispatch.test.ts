@@ -9,13 +9,24 @@
 // the documented deps shapes the root wires (clean {env,out}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
+import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
-import { type CliConfigResult, loadCliConfig } from './config-runtime.js';
+import {
+  type CliConfigResult,
+  loadCliConfig,
+  runtimeExcludeEntriesFor,
+} from './config-runtime.js';
 import {
   type CommandRunner,
   type DispatchDeps,
@@ -91,7 +102,10 @@ interface Harness {
   readonly deps: DispatchDeps;
   readonly calls: RunnerCall[];
   readonly lines: string[];
-  readonly state: { excludeCalls: number };
+  readonly state: {
+    excludeCalls: number;
+    excludeEntries: readonly string[] | undefined;
+  };
 }
 
 // A dispatch over fully faux runners: every runner records its call and
@@ -106,7 +120,10 @@ function harness(
 ): Harness {
   const calls: RunnerCall[] = [];
   const lines: string[] = [];
-  const state = { excludeCalls: 0 };
+  const state: Harness['state'] = {
+    excludeCalls: 0,
+    excludeEntries: undefined,
+  };
   const runners = {} as Record<RunnerKey, CommandRunner>;
   for (const key of RUNNER_KEYS) {
     const override = options.runners?.[key];
@@ -121,8 +138,9 @@ function harness(
     },
     loadConfig: () => options.config ?? loadedConfig(),
     version: () => options.version ?? '9.9.9',
-    ensureRuntimeExclude: () => {
+    ensureRuntimeExclude: (entries) => {
       state.excludeCalls += 1;
+      state.excludeEntries = entries;
     },
     runners,
   };
@@ -343,6 +361,147 @@ describe('runtime exclude (issue #91, moved order)', () => {
     expect(h.state.excludeCalls).toBe(1);
     expect(h.calls.map((call) => call.key)).toEqual(['run']);
     expect(h.calls[0]?.rest).toEqual(['--help']);
+  });
+
+  it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-dispatch-root-'));
+    mkdirSync(join(dir, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(dir, '.kubic', 'config.toml'),
+      '[orchestrator]\nroot = ".kubic-custom/wt"\n',
+    );
+    const config = loadCliConfig({
+      cwd: dir,
+      home: dir,
+      env: {},
+      projectTrusted: true,
+    });
+    expect(config.runtime?.orchestrator.root).toBe('.kubic-custom/wt');
+
+    const h = harness({ config });
+    expect(await dispatchCommand('orchestrate', [], h.deps)).toBe(0);
+    expect(h.state.excludeEntries).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '/.kubic-custom/wt/',
+    ]);
+
+    // The unconfigured load ships exactly the shipped prefixes — no
+    // invented entry, no dropped one.
+    const bare = harness();
+    await dispatchCommand('run', [], bare.deps);
+    expect(bare.state.excludeEntries).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
+  });
+
+  it('refuses a hostile root at the entry derivation, before any write (issue #133 review)', () => {
+    // Defense in depth: the config load refuses control characters by name;
+    // if one ever reached this seam, the derivation refuses to hand the
+    // entry to the writer — no hostile entry can be written.
+    expect(() => runtimeExcludeEntriesFor('x\n*.log')).toThrow(
+      /control characters/,
+    );
+    expect(() => runtimeExcludeEntriesFor('wt\u001b[31mX')).toThrow(
+      /control characters/,
+    );
+    // The safe path is unchanged: the shipped five, plus the configured root,
+    // anchored to the repo root (issue #133 fix-cycle-3).
+    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '/.kubic-custom/wt/',
+    ]);
+  });
+
+  it('refuses metacharacter roots and committed-half collisions at the derivation (issue #133 re-review)', () => {
+    // Defense in depth over the one derivation every consumer shares: a
+    // root whose `<root>/` entry would act as a gitignore pattern other
+    // than the literal path it names is refused here too — never repaired
+    // into a different rule.
+    for (const root of [
+      '*',
+      '**',
+      '.kubic*',
+      '.kubi[c]',
+      '.kubi?',
+      '#x',
+      'x\\',
+    ]) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /gitignore metacharacters/,
+      );
+    }
+    // The committed-half collision is re-checked here as well: the config
+    // load refuses `.kubic` / `.kubic/roles` first, but the derivation must
+    // never hand the writer an entry that would ignore D35's committed
+    // files even when a programmatic caller bypassed the load.
+    for (const root of [
+      '.kubic',
+      '.kubic/roles',
+      '.kubic//roles',
+      '.kubic/./roles',
+    ]) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /committed config half/,
+      );
+    }
+  });
+
+  it('anchors the derived entry to the repo root (issue #133 fix-cycle-3)', () => {
+    // A pattern whose only slash is trailing is NOT anchored: `worktrees/`
+    // matches a directory of that name at any depth, so `deep/worktrees/y.txt`
+    // and `src/worktrees/z.txt` would be hidden and skipped by `git add -A`.
+    // The derived entry carries the leading slash that anchors it; the
+    // shipped five already contain a middle slash, so they stay byte-identical.
+    const entries = runtimeExcludeEntriesFor('worktrees');
+    expect(entries.slice(0, -1)).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
+    expect(entries[entries.length - 1]).toBe('/worktrees/');
+    // Multi-segment roots are anchored the same way (a no-op for git, which
+    // anchors any pattern with a middle slash) — one entry shape, every root.
+    expect(runtimeExcludeEntriesFor('.kubic-custom/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+      '/.kubic-custom/wt/',
+    ]);
+    // The shipped default keeps the shipped list exactly: `.kubic/wt/` is
+    // already anchored by its middle slash, and the repo's own gate pins
+    // those five entries verbatim.
+    expect(runtimeExcludeEntriesFor('.kubic/wt')).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+    ]);
+    expect(runtimeExcludeEntriesFor(undefined)).toEqual([
+      ...RUNTIME_EXCLUDE_ENTRIES,
+    ]);
+  });
+
+  it('re-checks the path shape at the entry derivation (issue #133 fix-cycle-3)', () => {
+    // The config load refuses these first; the derivation re-checks for
+    // programmatic callers that never pass through the load, with the load's
+    // own message. An empty value, an absolute path, a `..` segment and a
+    // trailing '/' can never become a repo-root entry.
+    for (const root of ['', '   ', '/abs', '//', 'x/', 'a/..', '../x', '..']) {
+      expect(
+        () => runtimeExcludeEntriesFor(root),
+        JSON.stringify(root),
+      ).toThrow(/'orchestrator': 'root' must be a workspace-relative path/);
+    }
+  });
+
+  it('re-checks the committed half case-insensitively at the derivation (issue #133 fix-cycle-3)', () => {
+    // git case-folds ignore patterns on a case-insensitive filesystem, so a
+    // case variant of `.kubic` / `.kubic/roles` hides the committed half
+    // exactly like the exact spelling — refused here with the same name.
+    for (const root of ['.KUBIC', '.Kubic', '.KUBIC/roles', '.kubic/ROLES']) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /committed config half/,
+      );
+    }
+  });
+
+  it('re-checks the no-op roots at the derivation (issue #133 fix-cycle-3)', () => {
+    // '.' / './…' / '…/.' names the directory it sits in: the derived entry
+    // would match nothing and the worktree set would stay unignored.
+    for (const root of ['.', './.', './worktrees', 'foo/.']) {
+      expect(() => runtimeExcludeEntriesFor(root), root).toThrow(
+        /must not name the workspace or carry a '\.' segment/,
+      );
+    }
   });
 });
 

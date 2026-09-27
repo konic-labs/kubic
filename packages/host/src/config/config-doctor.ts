@@ -14,6 +14,10 @@ export interface ConfigDoctorInput {
   effectiveValues: number | undefined;
   refusal: string | undefined;
   projectTrusted: boolean | undefined;
+  // Accepted keys whose effective value has NO row in the key-effect table
+  // (issue #133): the table is the claim that every accepted key does
+  // something, so a key it cannot explain is reported by name, not glossed.
+  unexplainedKeys: string[];
   // The committed-vs-runtime ignore split for this workspace (§35/D35):
   // runtime prefixes absent from both the repo .gitignore and its local
   // exclude file are reported by name. Outside a git repository the check
@@ -34,6 +38,13 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
       id: CONFIG_DOCTOR_ID,
       ok: false,
       detail: `config refused (fail closed, no defaults applied): ${input.refusal}`,
+    };
+  }
+  if (input.unexplainedKeys.length > 0) {
+    return {
+      id: CONFIG_DOCTOR_ID,
+      ok: false,
+      detail: `accepted key(s) with no effect row in RUNTIME_KEY_EFFECTS: ${input.unexplainedKeys.join(', ')}`,
     };
   }
   if (input.ignoreSplitMissing.length > 0) {
@@ -58,7 +69,12 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
 export function buildConfigDoctorInput(
   loaded:
     | {
-        values: Array<{ key: string; value: string; layer: string }>;
+        values: Array<{
+          key: string;
+          value: string;
+          layer: string;
+          disposition: string;
+        }>;
         projectTrusted: boolean;
         budgetsConfigured: boolean;
         ignoreSplitMissing: string[];
@@ -75,6 +91,7 @@ export function buildConfigDoctorInput(
       effectiveValues: undefined,
       refusal: loaded.error,
       projectTrusted: undefined,
+      unexplainedKeys: [],
       ignoreSplitMissing: loaded.ignoreSplitMissing,
       ignoreSplitApplicable: loaded.ignoreSplitApplicable,
       budgetsConfigured: false,
@@ -84,6 +101,11 @@ export function buildConfigDoctorInput(
     effectiveValues: loaded.values.length,
     refusal: undefined,
     projectTrusted: loaded.projectTrusted,
+    // 'unknown' is the view's own word for "no effect row explains this key"
+    // (issue #133) — one derivation, so doctor and `kubic config` agree.
+    unexplainedKeys: loaded.values
+      .filter((value) => value.disposition === 'unknown')
+      .map((value) => value.key),
     ignoreSplitMissing: loaded.ignoreSplitMissing,
     ignoreSplitApplicable: loaded.ignoreSplitApplicable,
     budgetsConfigured: loaded.budgetsConfigured,

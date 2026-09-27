@@ -29,6 +29,9 @@ export interface AddWorktreeResult {
 export interface AddWorktreeOptions {
   now?: () => number;
   sessionId?: string;
+  // The worktree parent, workspace-relative: `[orchestrator].root` when the
+  // config sets one, `.kubic/wt` otherwise (issue #133).
+  worktreeRoot?: string;
 }
 
 export function isColdAddWithinBudget(elapsedMs: number): boolean {
@@ -129,7 +132,7 @@ export async function addWorktree(
   const now = options?.now ?? Date.now;
   const started = now();
   const branch = branchForAgent(agentId);
-  const path = pathForAgent(repoRoot, agentId);
+  const path = pathForAgent(repoRoot, agentId, options?.worktreeRoot);
   const provenance = provenanceFor(agentId, options?.sessionId ?? 'cli');
 
   const top = await runGit(env, ['rev-parse', '--show-toplevel'], provenance);

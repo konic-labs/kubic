@@ -11,6 +11,7 @@ export type WorktreeErrorCode =
   | 'not_writable'
   | 'object_store_unavailable'
   | 'invalid_agent'
+  | 'invalid_root'
   | 'add_failed'
   | 'already_exists'
   | 'worktree_missing'

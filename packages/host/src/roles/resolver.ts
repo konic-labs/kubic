@@ -153,6 +153,10 @@ export const KNOWN_ROLE_TOOLS: readonly string[] =
 export interface RoleLayerSpec {
   tools?: string[];
   classes?: RoleToolPolicy;
+  // The layer's per-role model pin (issue #133): `provider/id`, the same
+  // shape `[roles.<name>].model` declares. The role document itself has no
+  // model key — the layers are where a model pin comes from.
+  model?: string;
 }
 
 export interface RoleLayerInput {
@@ -163,6 +167,7 @@ export interface RoleLayerInput {
 export interface MergedRole {
   tools: string[] | undefined;
   classes: PermissionClasses;
+  model: string | undefined;
   overriddenAttempts: string[];
 }
 
@@ -188,6 +193,7 @@ export function mergeRoleLayers(
   );
   const overriddenAttempts: string[] = [];
   let tools: string[] | undefined;
+  let model: string | undefined;
   const classLeaves = new Map<string, unknown>();
   for (const input of ordered) {
     const spec = input.roles[doc.name];
@@ -197,6 +203,13 @@ export function mergeRoleLayers(
         tools = [...spec.tools];
       } else if (JSON.stringify(tools) !== JSON.stringify(spec.tools)) {
         overriddenAttempts.push(`roles.${doc.name}.tools`);
+      }
+    }
+    if (spec.model !== undefined) {
+      if (model === undefined) {
+        model = spec.model;
+      } else if (model !== spec.model) {
+        overriddenAttempts.push(`roles.${doc.name}.model`);
       }
     }
     if (spec.classes !== undefined) {
@@ -223,6 +236,7 @@ export function mergeRoleLayers(
   return {
     tools: tools ?? doc.tools,
     classes: validateClasses(rawClasses),
+    model,
     overriddenAttempts,
   };
 }
@@ -233,6 +247,9 @@ export interface ResolvedRole {
   // identical definitions always yields an identically-ordered list.
   tools: string[];
   classes: PermissionClasses;
+  // The layer-supplied `provider/id` pin (issue #133), or undefined when no
+  // layer set one — the run path then keeps its own selection default.
+  model: string | undefined;
   overriddenAttempts: string[];
 }
 
@@ -253,6 +270,7 @@ export function resolveRole(
     name: doc.name,
     tools,
     classes: merged.classes,
+    model: merged.model,
     overriddenAttempts: merged.overriddenAttempts,
   };
   if (options.validate !== false) validateResolvedRole(resolved);

@@ -14,7 +14,11 @@
 
 import { join } from 'node:path';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
+import {
+  hasGitignoreMetacharacters,
+  hasUnsafeCharacters,
+  RUNTIME_EXCLUDE_ENTRIES,
+} from '../../../exec/src/runtime-exclude.js';
 import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 
 export const CONFIG_LAYERS = [
@@ -536,6 +540,187 @@ export function checkOutOfScopeEntries(
   return entries;
 }
 
+// §35/§44 orchestrator worktree parent (issue #133): a workspace-relative
+// directory — never an absolute path, never a `..` segment, never a
+// trailing `/` — so the spawned set can never be steered outside the repo
+// and the value can be used verbatim as an ignore entry. The runtime
+// projection re-checks this rule because programmatic session/agent layers
+// never pass through this parser.
+//
+// Hardening (issue #133 review; the metacharacter rule re-reviewed), all
+// re-checked by the projection:
+//   * control characters are refused by name — the value is shipped to
+//     `.git/info/exclude` verbatim, so a newline would inject arbitrary
+//     gitignore patterns (hiding files from `git add -A` and the pre-merge
+//     clean-tree guard), and an ESC or bidi override would reach
+//     operator-facing messages. The set is the shared one in
+//     @kubic/exec's runtime-exclude module; the value is never echoed.
+//   * gitignore metacharacters are refused by name (issue #133
+//     re-review) — git reads the entry as a pattern, so `*`/`?`/`[`/`]`
+//     would match paths other than the named directory (same hiding harm),
+//     a leading `#` would turn the line into a comment, and a backslash
+//     would escape the next character (a trailing one leaves an entry that
+//     matches nothing). Refused, never escaped into a different rule.
+//   * a root whose exclude entry (`<root>/`) would ignore the committed
+//     half (`.kubic/config.toml`, `.kubic/roles/*.md`) is refused — the
+//     worktree parent must never make D35's committed files invisible to
+//     git. The segment compare is case-insensitive (issue #133
+//     fix-cycle-3): git case-folds ignore patterns on a case-insensitive
+//     filesystem (`core.ignorecase=true`, the macOS default), so `.KUBIC/`
+//     hides the committed half exactly like `.kubic/` does.
+//   * a root that names the workspace itself or carries a `.` segment is
+//     refused by name (issue #133 fix-cycle-3): `.`, `./`, `foo/.` all
+//     resolve to a directory the derived `<root>/` entry cannot match, so
+//     the worktree set would stay unignored and the pre-merge clean-tree
+//     guard would refuse every merge. Never normalized — the value the
+//     operator wrote is the value that would ship.
+const COMMITTED_CONFIG_DIR_SEGMENTS: readonly (readonly string[])[] = [
+  ['.kubic'],
+  ['.kubic', 'roles'],
+];
+
+// Segment-wise (never a string prefix), so `.kubic/roles-archive` is not
+// mistaken for `.kubic/roles`, and equivalent spellings of the same
+// directory (`.kubic//roles`, `.kubic/./roles`) are caught. The compare
+// folds case per segment (issue #133 fix-cycle-3): git case-folds ignore
+// patterns on a case-insensitive filesystem, so a case variant of the
+// committed half hides exactly the same files.
+function isCommittedConfigHalfRoot(value: string): boolean {
+  const segments = value
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.');
+  return COMMITTED_CONFIG_DIR_SEGMENTS.some(
+    (dir) =>
+      segments.length === dir.length &&
+      dir.every((segment, index) => segments[index].toLowerCase() === segment),
+  );
+}
+
+// §35/§44 root path shape (issue #133 fix-cycle-3): workspace-relative only —
+// never empty, never absolute, never climbing out with `..`, never ending in
+// `/` (the exclude-entry derivation appends one). Exported because the
+// derivation (apps/kubic/src/config-runtime.ts) re-checks the same rule for
+// programmatic callers that never pass through this parser; both call sites
+// refuse by the same name.
+export function checkOrchestratorRootShape(
+  value: string,
+  keyPath: string,
+): void {
+  if (value.trim() === '') {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path`,
+    );
+  }
+  if (
+    value.startsWith('/') ||
+    value.split('/').includes('..') ||
+    value.endsWith('/')
+  ) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path (no leading '/', no '..' segments, no trailing '/')`,
+    );
+  }
+}
+
+// A `.` segment names the directory it sits in (issue #133 fix-cycle-3): `.`
+// is the workspace itself, `./` matches nothing at all, and `foo/.` is
+// spelled `foo`. The derived `<root>/` entry would then ignore nothing — the
+// worktree set would stay untracked and the pre-merge clean-tree guard would
+// refuse every merge. Refused by name, never normalized: the value the
+// operator wrote is the value that would ship. Exported for the derivation's
+// own re-check (programmatic callers).
+export function checkOrchestratorRootNoOp(
+  value: string,
+  keyPath: string,
+): void {
+  if (value.split('/').includes('.')) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must not name the workspace or carry a '.' segment — the derived exclude entry would match nothing and the worktree set would stay unignored`,
+    );
+  }
+}
+
+export function checkOrchestratorRoot(
+  value: unknown,
+  keyPath: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path`,
+    );
+  }
+  checkOrchestratorRootShape(value, keyPath);
+  if (hasUnsafeCharacters(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path (control characters are refused — the value is shipped to git's exclude file verbatim)`,
+    );
+  }
+  if (hasGitignoreMetacharacters(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must be a workspace-relative path (gitignore metacharacters are refused — the value is shipped to git's exclude file verbatim)`,
+    );
+  }
+  checkCommittedConfigHalfRoot(value, keyPath);
+  checkOrchestratorRootNoOp(value, keyPath);
+  return value;
+}
+
+// D35: the exclude entry `<root>/` must never ignore the committed half
+// (`.kubic/config.toml`, `.kubic/roles/*.md`). Exported for the runtime
+// projection (apps/kubic/src/config-runtime.ts), which re-checks the same
+// rule at the one exclude-entry derivation every consumer shares (issue
+// #133 re-review): a programmatic caller that bypassed the config load can
+// never hand the writer an entry that would hide the committed files.
+export function checkCommittedConfigHalfRoot(
+  value: string,
+  keyPath: string,
+): void {
+  if (isCommittedConfigHalfRoot(value)) {
+    throw new ConfigError(
+      `'${keyPath}': 'root' must not cover the committed config half ('.kubic/config.toml', '.kubic/roles/*.md') — pick a runtime path like '.kubic/wt'`,
+    );
+  }
+}
+
+// §45 worker cap (issue #133): a positive integer or nothing. A value that
+// could never admit a worker is refused here, by name — never clamped into
+// one silently. The scheduler's own validation stays as the second layer.
+export function checkOrchestratorMaxWorkers(
+  value: unknown,
+  keyPath: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new ConfigError(
+      `'${keyPath}': 'maxWorkers' must be a positive integer`,
+    );
+  }
+  return value;
+}
+
+// §12.1 per-role model pin (issue #133): a `provider/id` ref, never a bare
+// provider or a half ref — the run path turns exactly this shape into a
+// selection. Refused by name here so a malformed pin never reaches the lane;
+// the runtime projection re-checks for the programmatic layers.
+export function checkRoleModelRef(
+  value: unknown,
+  roleName: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const keyPath = `roles.${roleName}`;
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ConfigError(`'${keyPath}': 'model' must be 'provider/id'`);
+  }
+  const slash = value.indexOf('/');
+  if (slash <= 0 || slash === value.length - 1) {
+    throw new ConfigError(
+      `'${keyPath}': 'model' must be 'provider/id' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 function checkNoUnknown(
   record: Record<string, unknown>,
   known: Set<string>,
@@ -689,7 +874,7 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
         throw new ConfigError(`'[roles.${name}]' must be a table`);
       }
       checkNoUnknown(spec, new Set(['model', 'tools']), `roles.${name}`);
-      const modelRef = reqString(spec, 'model', `roles.${name}`, true);
+      const modelRef = checkRoleModelRef(spec.model, name);
       const tools = optStringArray(spec, 'tools', `roles.${name}`);
       parsed[name] = {
         ...(modelRef === undefined ? {} : { model: modelRef }),
@@ -708,8 +893,11 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       new Set(['root', 'maxWorkers']),
       'orchestrator',
     );
-    const root = reqString(orchestrator, 'root', 'orchestrator', true);
-    const maxWorkers = optNumber(orchestrator, 'maxWorkers', 'orchestrator');
+    const root = checkOrchestratorRoot(orchestrator.root, 'orchestrator');
+    const maxWorkers = checkOrchestratorMaxWorkers(
+      orchestrator.maxWorkers,
+      'orchestrator',
+    );
     config.orchestrator = {
       ...(root === undefined ? {} : { root }),
       ...(maxWorkers === undefined ? {} : { maxWorkers }),

@@ -426,7 +426,12 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => parseTomlConfig('agent = "x"\n')).toThrow(/must be a table/);
     expect(() => parseTomlConfig('modes = true\n')).toThrow(/must be a table/);
     expect(() => parseTomlConfig('[roles.a]\nmodel = 42\n')).toThrow(
-      /non-empty string/,
+      /'roles\.a': 'model' must be 'provider\/id'/,
+    );
+    // The shape is checked too (issue #133): a bare provider can never
+    // become a selection, so it is refused by name at parse time.
+    expect(() => parseTomlConfig('[roles.a]\nmodel = "local"\n')).toThrow(
+      /'roles\.a': 'model' must be 'provider\/id'/,
     );
   });
 
@@ -497,6 +502,161 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => assertNoBudgetKeys(null)).not.toThrow();
     expect(() => assertNoBudgetKeys([])).not.toThrow();
     expect(() => assertNoBudgetKeys('budgets')).not.toThrow();
+  });
+});
+
+describe('orchestrator root hardening (issue #133 review)', () => {
+  it('refuses control characters by name, never echoing the value', () => {
+    // The root is shipped verbatim as a git exclude entry, so a newline
+    // injects arbitrary patterns into `.git/info/exclude` — the pre-merge
+    // clean-tree guard and `git add -A` would then silently skip matching
+    // paths. A literal ESC (single-quoted TOML) would reach operator-facing
+    // messages. Both are refused by name at parse time.
+    for (const text of [
+      '[orchestrator]\nroot = "x\\n*.log\\n!keep"\n',
+      '[orchestrator]\nroot = "wt\\rX"\n',
+      "[orchestrator]\nroot = 'wt\u001b[31m'\n",
+      '[orchestrator]\nroot = "wt\u0085X"\n',
+      '[orchestrator]\nroot = "wt\u202eX"\n',
+    ]) {
+      expect(() => parseTomlConfig(text), JSON.stringify(text)).toThrow(
+        /'orchestrator': 'root' must be a workspace-relative path \(control characters are refused/,
+      );
+    }
+    // The refusal never echoes the hostile bytes: an ESC in the message
+    // would reach the operator's terminal.
+    try {
+      parseTomlConfig("[orchestrator]\nroot = 'wt\u001b[31m'\n");
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain('\u001b');
+      expect((error as Error).message).not.toContain('31m');
+    }
+  });
+
+  it('refuses a root whose exclude entry would ignore the committed half', () => {
+    // D35: `.kubic/config.toml` and `.kubic/roles/*.md` are committed. An
+    // exclude entry `.kubic/` (or `.kubic/roles/`) hides them from git, so
+    // the root is refused by name — including equivalent spellings of the
+    // same directory.
+    for (const root of [
+      '.kubic',
+      '.kubic/roles',
+      '.kubic//roles',
+      '.kubic/./roles',
+    ]) {
+      expect(
+        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must not cover the committed config half/,
+      );
+    }
+    // The shipped parent, its runtime siblings, and a lookalike name stay
+    // allowed: the check is segment-wise, never a string prefix.
+    for (const root of [
+      '.kubic/wt',
+      '.kubic/orchestrator',
+      'wt',
+      '.kubic/roles-archive',
+      '.kubic/wt/nested',
+    ]) {
+      expect(
+        parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`).orchestrator
+          ?.root,
+        root,
+      ).toBe(root);
+    }
+  });
+
+  it('refuses case variants of the committed half (issue #133 fix-cycle-3)', () => {
+    // git case-folds ignore patterns on a case-insensitive filesystem
+    // (`core.ignorecase=true`, the macOS default), so `.KUBIC/` hides
+    // `.kubic/config.toml` and `.kubic/roles/*.md` exactly like `.kubic/`
+    // does. The segment compare folds with it: a variant that names the same
+    // directory is the same refusal, by name.
+    for (const root of [
+      '.KUBIC',
+      '.Kubic',
+      '.KUBIC/roles',
+      '.kubic/ROLES',
+      '.KUBIC/ROLES',
+      '.KUBIC//roles',
+    ]) {
+      expect(
+        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must not cover the committed config half/,
+      );
+    }
+    // Case variants that do not name the committed half stay allowed: the
+    // check is segment-wise, never a case-folded prefix. `.KUBIC/wt` is the
+    // shipped runtime parent's own directory.
+    for (const root of [
+      '.KUBIC/wt',
+      '.Kubic/orchestrator',
+      '.kubic/ROLES-archive',
+    ]) {
+      expect(
+        parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`).orchestrator
+          ?.root,
+        root,
+      ).toBe(root);
+    }
+  });
+
+  it('refuses roots that name the workspace or carry a . segment (issue #133 fix-cycle-3)', () => {
+    // A '.' segment names the directory it sits in: `.` is the workspace
+    // itself, `./` matches nothing at all, and `foo/.` is spelled `foo`. The
+    // derived `<root>/` entry would then ignore nothing — the worktree set
+    // would stay untracked and the pre-merge clean-tree guard would refuse
+    // every merge. Refused by name, never normalized: the value the operator
+    // wrote is the value that would ship.
+    for (const root of ['.', './.', './worktrees', 'foo/.', '././x']) {
+      expect(
+        () => parseTomlConfig(`[orchestrator]\nroot = "${root}"\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must not name the workspace or carry a '\.' segment/,
+      );
+    }
+    // A committed-half spelling keeps its own (more specific) refusal: the
+    // no-op rule never masks the rule that protects D35's files.
+    expect(() =>
+      parseTomlConfig('[orchestrator]\nroot = ".kubic/./roles"\n'),
+    ).toThrow(
+      /'orchestrator': 'root' must not cover the committed config half/,
+    );
+  });
+
+  it('refuses gitignore metacharacters by name (issue #133 re-review)', () => {
+    // The root is shipped verbatim as `<root>/` in `.git/info/exclude`, and
+    // git reads that line as a gitignore pattern: `*`/`?`/`[`/`]` make the
+    // entry match paths other than the named directory — hiding files from
+    // `git add -A` and the pre-merge clean-tree guard — a leading `#` turns
+    // it into a comment, and a backslash escapes the next character (a
+    // trailing one leaves an entry that matches nothing at all). Refused by
+    // name, never escaped into a different rule.
+    for (const root of [
+      '*',
+      '**',
+      '.kubic*',
+      '.kubi[c]',
+      '.kubi?',
+      '#x',
+      'x\\',
+      '\\',
+      'a\\b',
+    ]) {
+      expect(
+        () =>
+          parseTomlConfig(`[orchestrator]\nroot = ${JSON.stringify(root)}\n`),
+        root,
+      ).toThrow(
+        /'orchestrator': 'root' must be a workspace-relative path \(gitignore metacharacters are refused/,
+      );
+    }
   });
 });
 

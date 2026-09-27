@@ -20,6 +20,18 @@ import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import {
+  hasGitignoreMetacharacters,
+  hasUnsafeCharacters,
+  RUNTIME_EXCLUDE_ENTRIES,
+} from '../../../packages/exec/src/runtime-exclude.js';
+import {
+  CONFIG_LAYERS,
+  ConfigError,
+  checkCommittedConfigHalfRoot,
+  checkOrchestratorRootNoOp,
+  checkOrchestratorRootShape,
+} from '../../../packages/host/src/config/config.js';
+import {
   buildConfigDoctorInput,
   configDoctorProbe,
 } from '../../../packages/host/src/config/config-doctor.js';
@@ -31,6 +43,11 @@ import {
 } from '../../../packages/host/src/config/runtime.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import type {
+  RoleLayerInput,
+  RoleLayerSpec,
+} from '../../../packages/host/src/roles/resolver.js';
 import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
 
 export interface CliConfigResult {
@@ -51,6 +68,71 @@ export interface CliConfigOptions {
   home?: string;
   env?: Record<string, string | undefined>;
   projectTrusted?: boolean;
+}
+
+// The §35/§91 runtime exclude entries for a worktree parent (issue #133):
+// the shipped five prefixes, plus the configured `[orchestrator].root` when
+// it names a parent other than the default. An untracked worktree directory
+// would make the pre-merge clean-tree guard refuse every merge, so the
+// configured root is shipped to the repo's exclude file exactly like
+// `.kubic/wt/` is. One derivation, every consumer (dispatch's run/orchestrate/
+// tui write, and orchestrate's own startup write) — the list cannot drift.
+export function runtimeExcludeEntriesFor(
+  worktreeRoot: string | undefined,
+): readonly string[] {
+  if (worktreeRoot === undefined || worktreeRoot === DEFAULT_WORKTREE_ROOT) {
+    return RUNTIME_EXCLUDE_ENTRIES;
+  }
+  // Path shape re-checked at the derivation too (issue #133 fix-cycle-3): the
+  // config load refuses these first, but a programmatic caller that bypassed
+  // it must not hand the writer an empty or escaping value — same rule, same
+  // named refusal.
+  checkOrchestratorRootShape(worktreeRoot, 'orchestrator');
+  // The derived entry is anchored to the repository root (issue #133
+  // fix-cycle-3): a pattern whose only slash is trailing (`worktrees/`) is
+  // NOT anchored — git matches it at any depth, hiding `deep/worktrees/…`
+  // and `src/worktrees/…` from `git add -A` and the pre-merge clean-tree
+  // guard. The leading slash makes the entry relative to the repository
+  // root, so exactly the named directory (and everything under it) matches.
+  // The shipped five entries already carry a middle slash, so git anchors
+  // them as they are — they stay byte-identical.
+  const entry = `/${worktreeRoot}/`;
+  // Defense in depth (issue #133 review): the config load refuses control
+  // characters in the root by name (checkOrchestratorRoot). If a hostile
+  // value ever reached this seam, the derivation refuses to hand the entry
+  // to the writer — no entry with control characters can be written to
+  // `.git/info/exclude`, where a newline would inject gitignore lines.
+  // The ROOT is what ships (the entry only wraps it in slashes), so the rule
+  // reads the root: a `#`-leading root stays refused here even though the
+  // anchored entry no longer sits at the start of the gitignore line.
+  if (hasUnsafeCharacters(worktreeRoot)) {
+    throw new ConfigError(
+      "'orchestrator': 'root' must not contain control characters — the value is shipped to git's exclude file verbatim",
+    );
+  }
+  // Same rule for the gitignore metacharacters (issue #133 re-review): git
+  // reads the entry as a pattern, so `*`/`?`/`[`/`]` would hide paths other
+  // than the named directory (from `git add -A` and the pre-merge
+  // clean-tree guard), a leading `#` would comment the line out, and a
+  // backslash would escape the next character. Refused, never escaped into
+  // a different rule.
+  if (hasGitignoreMetacharacters(worktreeRoot)) {
+    throw new ConfigError(
+      "'orchestrator': 'root' must not contain gitignore metacharacters — the value is shipped to git's exclude file verbatim",
+    );
+  }
+  // D35 re-checked at the derivation too (issue #133 re-review): the entry
+  // must never ignore the committed half (`.kubic/config.toml`,
+  // `.kubic/roles/*.md`), even when a programmatic caller bypassed the
+  // config load. Same rule, same message as checkOrchestratorRoot's — the
+  // compare is case-insensitive, like git's own pattern folding on a
+  // case-insensitive filesystem (issue #133 fix-cycle-3).
+  checkCommittedConfigHalfRoot(worktreeRoot, 'orchestrator');
+  // No-op roots re-checked here as well (issue #133 fix-cycle-3): a `.`
+  // segment means the derived entry would match nothing, leaving the
+  // worktree set unignored. Same rule, same message as the load's.
+  checkOrchestratorRootNoOp(worktreeRoot, 'orchestrator');
+  return [...RUNTIME_EXCLUDE_ENTRIES, entry];
 }
 
 function message(error: unknown): string {
@@ -182,6 +264,59 @@ export function runtimeRunDeps(result: CliConfigResult): {
       ? {}
       : { reconcileOutOfScope: [...runtime.journal.outOfScope] }),
   };
+}
+
+// The shared solo-lane projections (issue #133): the agent id the lane and
+// its journal attribution carry, and the config-sourced role layers the
+// `--role` resolution merges under the role document. ONE projection with
+// two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
+// (tui-run.ts) — so both entry points name the lane and layer the roles
+// identically. Absent means the shipped behaviour: agent id 'root', no
+// layers.
+export function runtimeLaneDeps(result: CliConfigResult): {
+  agentId?: string;
+  roles?: { layers: RoleLayerInput[] };
+} {
+  const runtime = result.runtime;
+  if (runtime === undefined) return {};
+  const agentId = runtime.config.agent?.name;
+  const layers = roleLayersFromConfig(runtime);
+  return {
+    ...(agentId === undefined ? {} : { agentId }),
+    ...(layers.length === 0 ? {} : { roles: { layers } }),
+  };
+}
+
+// The config `[roles.<name>]` table as resolver layer inputs (issue #133):
+// one input per config layer that actually set a leaf, so the resolver's
+// first-layer-wins merge sees exactly the provenance the config load
+// recorded — `roles.implementer.model` from the project layer never
+// masquerades as an enterprise value. The layer order is CONFIG_LAYERS'.
+export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
+  const roles = runtime.config.roles;
+  if (roles === undefined) return [];
+  const layers: RoleLayerInput[] = [];
+  for (const layer of CONFIG_LAYERS) {
+    const specs: Record<string, RoleLayerSpec> = {};
+    for (const [name, entry] of Object.entries(roles)) {
+      const spec: RoleLayerSpec = {};
+      if (
+        entry.tools !== undefined &&
+        runtime.sources[`roles.${name}.tools`] === layer
+      ) {
+        spec.tools = [...entry.tools];
+      }
+      if (
+        entry.model !== undefined &&
+        runtime.sources[`roles.${name}.model`] === layer
+      ) {
+        spec.model = entry.model;
+      }
+      if (Object.keys(spec).length > 0) specs[name] = spec;
+    }
+    if (Object.keys(specs).length > 0) layers.push({ layer, roles: specs });
+  }
+  return layers;
 }
 
 // `kubic sessions prune`'s default keep-window (issue #119): the parsed

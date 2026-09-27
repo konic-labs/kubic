@@ -173,6 +173,63 @@ describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
   });
 });
 
+describe('solo-lane projections reach the TUI lane (issue #133)', () => {
+  // The same `runtimeLaneDeps` projection `kubic run` consumes: the TUI
+  // lane must name itself and layer `--role` identically, or the shared
+  // projection would have one consumer too many.
+  it('names the lane from [agent].name in the assembled prompt metadata', async () => {
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('tui-agent-sessions-'),
+      models: fauxModels(['done']),
+      env: new FakeExecutionEnv({}),
+      agentId: 'kubic-tui',
+    });
+    await boot.close?.();
+    expect(promptOf(createSpy)).toContain('agent=kubic-tui');
+
+    // Unset: 'root' — the shipped attribution, unchanged.
+    createSpy.mockClear();
+    const bare = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('tui-agent-bare-'),
+      models: fauxModels(['done']),
+      env: new FakeExecutionEnv({}),
+    });
+    await bare.close?.();
+    expect(promptOf(createSpy)).toContain('agent=root');
+  });
+
+  it('layers [roles.<name>] tools under the role document on --role', async () => {
+    const cwd = tmpRoot('tui-layers-cwd-');
+    writeRole(
+      cwd,
+      'reviewer',
+      'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
+      'You are the reviewer. Report findings.',
+    );
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('tui-layers-sessions-'),
+      models: fauxModels(['done']),
+      env: new FakeExecutionEnv({}),
+      role: 'reviewer',
+      roles: {
+        cwd,
+        layers: [
+          { layer: 'project', roles: { reviewer: { tools: ['read'] } } },
+        ],
+      },
+    });
+    await boot.close?.();
+    // The config layer's list replaces the document's broader one — the
+    // same first-wins merge `kubic run` resolves through.
+    const toolsLine = /^tools: (.*)$/m.exec(promptOf(createSpy))?.[1] ?? '';
+    expect(toolsLine).toContain('read');
+    expect(toolsLine).not.toContain('ls');
+    expect(toolsLine).not.toContain('grep');
+  });
+});
+
 describe('journal retention reaches the TUI store (issue #113, §42.4)', () => {
   it('constructs the session journal with the configured retention', async () => {
     const sessionsRoot = tmpRoot('tui-retention-');

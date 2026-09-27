@@ -9,7 +9,8 @@
 //
 // Refusal posture (never garbage-collect what Kubic did not name): the
 // planned set is the intersection of the spawned set under
-// `<root>/.kubic/wt/` and the `kubic/<agent>` branch namespace. A
+// `<root>/<worktreeRoot>/` (`.kubic/wt` unless `[orchestrator].root` says
+// otherwise, issue #133) and the `kubic/<agent>` branch namespace. A
 // hand-made worktree, a foreign branch, or the main checkout is never
 // planned — and each mutation re-checks its own confinement.
 
@@ -78,6 +79,10 @@ export interface CleanDeps {
   env: ExecutionEnv;
   out: (line: string) => void;
   repoRoot?: string;
+  // The spawned set's parent, workspace-relative: `[orchestrator].root` when
+  // the config sets one, `.kubic/wt` otherwise (issue #133). It is a config
+  // projection from the composition root — never an argv flag.
+  worktreeRoot?: string;
   lister?: (env: ExecutionEnv) => Promise<WorktreeEntry[]>;
   branchLister?: (env: ExecutionEnv) => Promise<string[]>;
   remover?: (
@@ -227,11 +232,13 @@ export function planClean(
   options: CleanOptions,
   repoRoot?: string,
   branches: readonly string[] = [],
+  worktreeRoot?: string,
 ): CleanPlan {
   const inScope =
     repoRoot === undefined
-      ? (path: string): boolean => isSpawnedWorktreeShape(path)
-      : (path: string): boolean => isSpawnedWorktreePath(repoRoot, path);
+      ? (path: string): boolean => isSpawnedWorktreeShape(path, worktreeRoot)
+      : (path: string): boolean =>
+          isSpawnedWorktreePath(repoRoot, path, worktreeRoot);
   const spawnedBranch = (branch: string | null): boolean =>
     branch !== null && parseBranchAgent(branch) !== null;
   return {
@@ -245,12 +252,14 @@ export function planClean(
 
 // Session scope: one failed or finished orchestrate run names its agents in
 // `<root>/.kubic/orchestrator/<session>.json`. The retained set for that
-// session is exactly `kubic/<agent>` at `<root>/.kubic/wt/<agent>` per named
-// agent — deterministic, so a hand-deleted directory still plans its branch.
+// session is exactly `kubic/<agent>` at `<root>/<worktreeRoot>/<agent>` per
+// named agent — deterministic, so a hand-deleted directory still plans its
+// branch.
 export function planSessionClean(
   agents: readonly string[],
   repoRoot: string,
   options: CleanOptions,
+  worktreeRoot?: string,
 ): CleanPlan {
   const worktrees: { path: string; branch: string | null }[] = [];
   const branches: string[] = [];
@@ -259,7 +268,10 @@ export function planSessionClean(
     // naming pattern is dropped here, never turned into a git path.
     if (validateAgentId(agent).length > 0) continue;
     const branch = branchForAgent(agent);
-    worktrees.push({ path: pathForAgent(repoRoot, agent), branch });
+    worktrees.push({
+      path: pathForAgent(repoRoot, agent, worktreeRoot),
+      branch,
+    });
     branches.push(branch);
   }
   return { worktrees, branches, journal: journalPolicy(options) };
@@ -315,10 +327,14 @@ function defaultPruneJournal(
 export function cleanDepsWithDefaults(options: {
   env: ExecutionEnv;
   out: (line: string) => void;
+  worktreeRoot?: string;
 }): CleanDeps {
   return {
     env: options.env,
     out: options.out,
+    ...(options.worktreeRoot === undefined
+      ? {}
+      : { worktreeRoot: options.worktreeRoot }),
     sessionAgents: defaultSessionAgents,
     pruneJournal: defaultPruneJournal,
   };
@@ -368,6 +384,9 @@ export async function runCleanCommand(
     deps.out('error: --all and --session are mutually exclusive');
     return usage(deps.out);
   }
+  // The spawned set's parent comes from the config projection on the deps
+  // (issue #133) — `[orchestrator].root`, `.kubic/wt` by default.
+  const worktreeRoot = deps.worktreeRoot;
 
   // Outside a git repo the refusal is explicit and non-destructive: exit 2
   // before any list or mutation (§78), never a silent solo-like no-op.
@@ -394,14 +413,14 @@ export async function runCleanCommand(
         );
         return CLEAN_EXIT_FAILURE;
       }
-      plan = planSessionClean(agents, repoRoot, options);
+      plan = planSessionClean(agents, repoRoot, options, worktreeRoot);
     } else {
       const lister = deps.lister ?? ((env) => listWorktrees(env));
       const branchLister =
         deps.branchLister ?? ((env) => listSpawnedBranches(env));
       const entries = await lister(deps.env);
       const branches = await branchLister(deps.env);
-      plan = planClean(entries, options, repoRoot, branches);
+      plan = planClean(entries, options, repoRoot, branches, worktreeRoot);
     }
   } catch (error) {
     if (isWorktreeError(error)) {
@@ -463,6 +482,7 @@ export async function runCleanCommand(
         force: removerOptions.force,
         sessionId: options.sessionId,
         repoRoot,
+        ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
       }));
   const branchDeleter =
     deps.branchDeleter ??

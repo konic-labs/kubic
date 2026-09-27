@@ -54,6 +54,46 @@ describe('parallel conc 4 + blocked-spawn modes (issue #47, §45.1)', () => {
   });
 });
 
+describe('parallel configured default (issue #133)', () => {
+  it('judges admissions against [orchestrator].maxWorkers', () => {
+    const sched = new ParallelScheduler(undefined, {
+      configured: { maxWorkers: 2 },
+    });
+    expect(sched.maxConcurrency()).toBe(2);
+    expect(sched.requestSpawn(req('a1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+    expect(sched.requestSpawn(req('a2'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+    // The configured default is a real cap, not a report: the third queues.
+    expect(sched.requestSpawn(req('a3'), 'autonomous').outcome).toBe('queued');
+  });
+
+  it('lets an explicit session override beat the configured default', () => {
+    const sched = new ParallelScheduler(undefined, {
+      sessionOverride: 1,
+      configured: { maxWorkers: 4 },
+    });
+    expect(sched.maxConcurrency()).toBe(1);
+    expect(sched.requestSpawn(req('a1'), 'autonomous').outcome).toBe(
+      'admitted',
+    );
+    expect(sched.requestSpawn(req('a2'), 'autonomous').outcome).toBe('queued');
+  });
+
+  it('keeps the shipped cap when no configured default is present', () => {
+    const sched = new ParallelScheduler(undefined, { configured: {} });
+    expect(sched.maxConcurrency()).toBe(4);
+  });
+
+  it('fails construction on a configured value that could never admit a worker', () => {
+    expect(
+      () => new ParallelScheduler(undefined, { configured: { maxWorkers: 0 } }),
+    ).toThrow(/orchestrator\.maxWorkers must be a positive integer/);
+  });
+});
+
 describe('parallel one-worktree-per-writer (issue #47, §11.1)', () => {
   it('refuses a second writer on the same worktree with a reason', () => {
     const sched = new ParallelScheduler();

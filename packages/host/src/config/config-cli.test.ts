@@ -41,6 +41,7 @@ function runtime(): RuntimeConfig {
       source: 'project',
     },
     modes: { solo: true, orchestrator: false, source: 'defaults' },
+    orchestrator: {},
     budgets: {
       configured: false,
       detail: 'no budgets are defaulted by config (§71)',
@@ -76,7 +77,7 @@ describe('kubic config (issue #90)', () => {
     const code = runConfigCommand([], { load: runtime, out });
     expect(code).toBe(CONFIG_EXIT_OK);
     const text = lines.join('\n');
-    expect(text).toContain('model.provider = "local" (global)');
+    expect(text).toContain('model.provider = "local" (global, consumed)');
     expect(text).toContain('approvals: route=deny (project)');
     expect(text).toContain('journal retention: 30 day(s)');
     expect(text).toContain('budgets: none');
@@ -156,6 +157,8 @@ describe('kubic config (issue #90)', () => {
     expect(runConfigCommand(['--'], { load: runtime, out })).toBe(
       CONFIG_EXIT_OK,
     );
-    expect(lines.join('\n')).toContain('model.provider = "local" (global)');
+    expect(lines.join('\n')).toContain(
+      'model.provider = "local" (global, consumed)',
+    );
   });
 });

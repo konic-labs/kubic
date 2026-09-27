@@ -24,7 +24,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PARSER = join(ROOT, 'packages', 'core', 'src', 'flags.ts');
-const HAND_ROLLED_GUARD = "startsWith('--')";
+// Both quote spellings: biome formats in-repo sources to single quotes, but
+// a copy-pasted or generated guard can carry either — matching only
+// `startsWith('--')` would let the double-quoted twin slip past.
+const HAND_ROLLED_GUARDS = ["startsWith('--')", 'startsWith("--")'];
 
 function walk(dir, found) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -61,7 +64,10 @@ describe('shared flag parser (issue #127)', () => {
     for (const file of sourceFiles()) {
       const lines = readFileSync(file, 'utf8').split('\n');
       for (const [index, line] of lines.entries()) {
-        if (!line.includes(HAND_ROLLED_GUARD)) continue;
+        const guard = HAND_ROLLED_GUARDS.find((candidate) =>
+          line.includes(candidate),
+        );
+        if (guard === undefined) continue;
         offenders.push(`${relative(ROOT, file)}:${index + 1}: ${line.trim()}`);
       }
     }
@@ -75,7 +81,12 @@ describe('shared flag parser (issue #127)', () => {
   it('the shared parser is the single implementation and the scan covers the tree', () => {
     const parser = readFileSync(PARSER, 'utf8');
     assert.match(parser, /export function parseFlagArgs\(/);
-    assert.match(parser, /startsWith\('--'\)|TERMINATOR/);
+    assert.match(parser, /startsWith\(['"]--['"]\)|TERMINATOR/);
+    // The gate itself must keep watching both quote spellings.
+    assert.deepEqual(HAND_ROLLED_GUARDS, [
+      "startsWith('--')",
+      'startsWith("--")',
+    ]);
     const files = sourceFiles();
     // The tree ships 200+ non-test sources; a collapsed walk must fail loudly
     // instead of certifying an empty scan.

@@ -17,6 +17,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import { answerHelp } from '../../../packages/core/src/cli-help.js';
+import {
+  type FlagSpec,
+  parseFlagArgs,
+} from '../../../packages/core/src/flags.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -600,55 +605,56 @@ export class TuiTurnRunner {
   }
 }
 
+export const TUI_USAGE =
+  'usage: kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]';
+
+// Issue #127: the shared parser replaces the hand-rolled loop. `kubic tui`
+// takes no operands, so an unconsumed positional is refused exactly like an
+// unknown flag (the pre-migration posture).
+const TUI_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--session', takes: 'value' },
+  { name: '--role', takes: 'value' },
+  { name: '--skill', takes: 'value', repeat: true },
+  { name: '--no-skills', takes: 'boolean' },
+];
+
+const TUI_MISSING_VALUE_MESSAGES: Readonly<Record<string, string>> = {
+  '--session': 'error: --session needs a value',
+  '--role': 'error: --role needs a value',
+  '--skill': 'error: --skill needs a value',
+};
+
 export async function runTuiCommand(
   args: string[],
   deps: TuiRunDeps,
 ): Promise<number> {
-  let sessionId: string | undefined;
+  const help = answerHelp(args, deps.out, TUI_USAGE);
+  if (help !== null) return help;
   // Issue #113: the parity flags, parsed with the same discipline as
   // `kubic run` — a value flag without a value is a usage error, an unknown
   // flag is refused by name.
-  const flags: TuiBootFlags = {};
-  const skillsList: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    if (arg === '--help' || arg === '-h') {
-      deps.out(
-        'usage: kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]',
-      );
-      return RUN_EXIT_OK;
-    }
-    if (arg === '--session') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --session needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      sessionId = value;
-      i += 1;
-    } else if (arg === '--role') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --role needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      flags.role = value;
-      i += 1;
-    } else if (arg === '--no-skills') {
-      flags.noSkills = true;
-    } else if (arg === '--skill') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --skill needs a value');
-        return RUN_EXIT_USAGE;
-      }
-      skillsList.push(value);
-      i += 1;
-    } else {
-      deps.out(`error: unknown flag ${arg}`);
-      return RUN_EXIT_USAGE;
-    }
+  const parsed = parseFlagArgs(args, TUI_FLAG_SPEC);
+  const operands = [...parsed.positional];
+  for (const flag of parsed.missing) {
+    deps.out(
+      TUI_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
+    );
+    return RUN_EXIT_USAGE;
   }
+  if (parsed.unknown.length > 0) {
+    deps.out(`error: unknown flag ${parsed.unknown[0]}`);
+    return RUN_EXIT_USAGE;
+  }
+  if (operands.length > 0) {
+    deps.out(`error: unknown flag ${operands[0]}`);
+    return RUN_EXIT_USAGE;
+  }
+  const sessionId = parsed.values['--session'] as string | undefined;
+  const role = parsed.values['--role'] as string | undefined;
+  const skillsList = (parsed.values['--skill'] as string[] | undefined) ?? [];
+  const flags: TuiBootFlags = {};
+  if (role !== undefined) flags.role = role;
+  if (parsed.values['--no-skills'] === true) flags.noSkills = true;
   if (skillsList.length > 0) flags.skillsList = skillsList;
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
     deps.out(

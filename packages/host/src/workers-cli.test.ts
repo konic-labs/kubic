@@ -72,4 +72,19 @@ describe('kubic workers (issue #42)', () => {
     expect(code).toBe(1);
     expect(lines.join('\n')).toMatch(/usage/);
   });
+
+  // Issue #127: `workers` parses through the shared flag parser now.
+  it('refuses a stray operand with usage', async () => {
+    const lines: string[] = [];
+    const code = await runWorkersCommand(['extra'], deps(lines));
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toMatch(/usage: kubic workers/);
+  });
+
+  it('accepts the -- end-of-flags terminator like every migrated command', async () => {
+    const lines: string[] = [];
+    const code = await runWorkersCommand(['--'], deps(lines));
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toMatch(/w-1/);
+  });
 });

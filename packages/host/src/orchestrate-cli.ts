@@ -23,6 +23,7 @@ import {
   renderDag,
 } from '../../agents/src/graph.js';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
@@ -95,6 +96,18 @@ export function orchestrateUsage(out: (line: string) => void): number {
   out(ORCHESTRATE_USAGE);
   return RUN_EXIT_USAGE;
 }
+
+// Issue #127: the shared parser's spec for this command's flags.
+const ORCHESTRATE_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--prompt', takes: 'value', aliases: ['-p'] },
+  { name: '--agents', takes: 'value' },
+  { name: '--session', takes: 'value' },
+  { name: '--resume', takes: 'boolean' },
+  { name: '--yes', takes: 'boolean' },
+  { name: '--full-access', takes: 'boolean' },
+  { name: '--budget', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
 
 export class MergeConflictError extends Error {
   agentId: string;
@@ -740,57 +753,44 @@ function parseAgents(raw: string): string[] | undefined {
 }
 
 function parseArgs(args: string[]): ParsedArgs | undefined {
+  // Issue #127: the shared parser replaces the hand-rolled loop; every
+  // syntax problem (missing value, unknown flag, stray operand) keeps the
+  // pre-migration posture — usage, exit 2, no run.
+  const flags = parseFlagArgs(args, ORCHESTRATE_FLAG_SPEC);
+  if (
+    flags.missing.length > 0 ||
+    flags.unknown.length > 0 ||
+    flags.positional.length > 0
+  ) {
+    return undefined;
+  }
   const parsed: ParsedArgs = {
     agents: [...ORCHESTRATE_DEFAULT_AGENTS],
-    resume: false,
-    autoApprove: false,
-    json: false,
+    resume: flags.values['--resume'] === true,
+    autoApprove: flags.values['--yes'] === true,
+    json: flags.values['--json'] === true,
     budgetsByAgent: {},
-    fullAccess: false,
+    fullAccess: flags.values['--full-access'] === true,
   };
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    if (arg === '-p' || arg === '--prompt') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) return undefined;
-      parsed.prompt = value;
-      i += 1;
-    } else if (arg === '--agents') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) return undefined;
-      const agents = parseAgents(value);
-      if (agents === undefined) return undefined;
-      parsed.agents = agents;
-      i += 1;
-    } else if (arg === '--session') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) return undefined;
-      parsed.sessionId = value;
-      i += 1;
-    } else if (arg === '--resume') {
-      parsed.resume = true;
-    } else if (arg === '--yes') {
-      parsed.autoApprove = true;
-    } else if (arg === '--full-access') {
-      // §41.4: the user's explicit per-session opt-in to skip approvals. The
-      // posture stays session-scoped — this flag cannot make it global.
-      parsed.fullAccess = true;
-    } else if (arg === '--budget') {
-      // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
-      // nothing configured → no limit applied. A malformed spec is refused
-      // (usage), never silently dropped.
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) return undefined;
-      const spec = parseBudgetSpec(value);
-      if (spec === undefined) return undefined;
-      parsed.budget = spec.shared;
-      parsed.budgetsByAgent = spec.byAgent;
-      i += 1;
-    } else if (arg === '--json') {
-      parsed.json = true;
-    } else {
-      return undefined;
-    }
+  const prompt = flags.values['--prompt'] as string | undefined;
+  if (prompt !== undefined) parsed.prompt = prompt;
+  const sessionId = flags.values['--session'] as string | undefined;
+  if (sessionId !== undefined) parsed.sessionId = sessionId;
+  const agentsRaw = flags.values['--agents'] as string | undefined;
+  if (agentsRaw !== undefined) {
+    const agents = parseAgents(agentsRaw);
+    if (agents === undefined) return undefined;
+    parsed.agents = agents;
+  }
+  const budgetRaw = flags.values['--budget'] as string | undefined;
+  if (budgetRaw !== undefined) {
+    // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
+    // nothing configured → no limit applied. A malformed spec is refused
+    // (usage), never silently dropped.
+    const spec = parseBudgetSpec(budgetRaw);
+    if (spec === undefined) return undefined;
+    parsed.budget = spec.shared;
+    parsed.budgetsByAgent = spec.byAgent;
   }
   return parsed;
 }

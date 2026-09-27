@@ -12,6 +12,7 @@
 //     no live substrate yet and for CI.
 
 import { answerHelp } from '../../../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
@@ -97,6 +98,17 @@ function parseSamples(raw: string): number[] | null {
   return samples.length > 0 ? samples : null;
 }
 
+// Issue #127: the shared parser replaces the hand-rolled loop. Missing
+// values keep their lines; unknown flags and stray operands keep the bare
+// usage exit; budget-kind and exclusivity checks stay this command's
+// semantics.
+const PERF_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--measure', takes: 'boolean' },
+  { name: '--budget', takes: 'value' },
+  { name: '--samples', takes: 'value' },
+];
+
 export async function runPerfCommand(
   args: string[],
   deps: PerfCommandDeps,
@@ -104,36 +116,18 @@ export async function runPerfCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, PERF_USAGE);
   if (help !== null) return help;
-  let json = false;
-  let measure = false;
-  let kind: string | undefined;
-  let samplesRaw: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--json') {
-      json = true;
-    } else if (arg === '--measure') {
-      measure = true;
-    } else if (arg === '--budget') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --budget needs a value');
-        return usage(deps.out);
-      }
-      kind = value;
-      i++;
-    } else if (arg === '--samples') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --samples needs a value');
-        return usage(deps.out);
-      }
-      samplesRaw = value;
-      i++;
-    } else {
-      return usage(deps.out);
-    }
+  const flags = parseFlagArgs(args, PERF_FLAG_SPEC);
+  for (const flag of flags.missing) {
+    deps.out(`error: ${flag} needs a value`);
+    return usage(deps.out);
   }
+  if (flags.unknown.length > 0 || flags.positional.length > 0) {
+    return usage(deps.out);
+  }
+  const json = flags.values['--json'] === true;
+  const measure = flags.values['--measure'] === true;
+  const kind = flags.values['--budget'] as string | undefined;
+  const samplesRaw = flags.values['--samples'] as string | undefined;
   if (kind === undefined) return usage(deps.out);
   if (!isBudgetKind(kind)) {
     // Fail-closed echo: the budget kind is argv-controlled and may carry

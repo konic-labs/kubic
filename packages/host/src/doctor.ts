@@ -10,6 +10,7 @@
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import { CAPABILITIES, validatePolicy } from './approvals.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
@@ -510,6 +511,14 @@ function summarize(checks: DoctorCheck[]): string {
   return `doctor: ${pass} pass, ${warn} warn, ${fail} fail, ${skip} skip`;
 }
 
+// Issue #127: the shared parser replaces the hand-rolled loop. `--skip`
+// stays repeatable (comma-splitting is this command's semantics); unknown
+// tokens and stray operands keep the pre-migration refusal line.
+const DOCTOR_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--skip', takes: 'value', repeat: true },
+  { name: '--json', takes: 'boolean' },
+];
+
 export async function runDoctorCommand(
   args: string[],
   deps: DoctorDeps,
@@ -517,25 +526,20 @@ export async function runDoctorCommand(
   // `--help`/`-h` prints the usage line and exits 0 (issue #100).
   const help = answerHelp(args, deps.out, DOCTOR_USAGE);
   if (help !== null) return help;
-  const skip: string[] = [];
-  let json = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    if (arg === '--skip') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        deps.out('error: --skip needs a value');
-        return DOCTOR_EXIT_USAGE;
-      }
-      skip.push(...value.split(',').map((part) => part.trim()));
-      i += 1;
-    } else if (arg === '--json') {
-      json = true;
-    } else {
-      deps.out(`error: unknown flag ${arg}`);
-      return DOCTOR_EXIT_USAGE;
-    }
+  const flags = parseFlagArgs(args, DOCTOR_FLAG_SPEC);
+  if (flags.missing.length > 0) {
+    deps.out(`error: ${flags.missing[0]} needs a value`);
+    return DOCTOR_EXIT_USAGE;
   }
+  const stray = flags.unknown[0] ?? flags.positional[0];
+  if (stray !== undefined) {
+    deps.out(`error: unknown flag ${stray}`);
+    return DOCTOR_EXIT_USAGE;
+  }
+  const skip = ((flags.values['--skip'] as string[] | undefined) ?? []).flatMap(
+    (value) => value.split(',').map((part) => part.trim()),
+  );
+  const json = flags.values['--json'] === true;
   const checks = collectDoctorChecks(deps, skip);
   const known = new Set(checks.map((check) => check.id));
   const unknownSkip = skip.find((id) => !known.has(id));

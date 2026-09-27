@@ -4,6 +4,7 @@
 // the journal path `kubic diff/undo` keeps working without git).
 
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import type { ExecutionEnv } from '../../exec/src/env.js';
 import {
   createInvocation,
@@ -23,8 +24,25 @@ export interface GitCommandDeps {
   out: (line: string) => void;
 }
 
+// Issue #127: per-subcommand specs. `status`/`stage` stay lenient about
+// unknown flags (they always were); `log` and `commit` keep their refusal
+// lines and exit 1.
+const GIT_STATUS_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+];
+const GIT_LOG_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--max', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
+const GIT_STAGE_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+];
+const GIT_COMMIT_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '-m', takes: 'value' },
+];
+
 export const GIT_USAGE =
-  'usage: kubic git <status [--json] | log [--max <n>] [--json] | stage <path...> | commit -m <message>>';
+  'usage: kubic git <status [--json] | log [--max <n>] [--json] | stage [--] <path...> | commit -m <message>>';
 
 export function gitUsage(out: (line: string) => void): number {
   out(GIT_USAGE);
@@ -65,7 +83,8 @@ export async function runGitCommand(
     const out = await callOperation('git_status', {}, inv('cli-status'), ctx);
     if (!out.ok) return fail(deps, out.error.message);
     const s = out.result;
-    if (rest.includes('--json')) {
+    const flags = parseFlagArgs(rest, GIT_STATUS_FLAG_SPEC);
+    if (flags.values['--json'] === true) {
       deps.out(JSON.stringify(s, null, 2));
       return 0;
     }
@@ -80,10 +99,11 @@ export async function runGitCommand(
   }
 
   if (sub === 'log') {
-    const maxAt = rest.indexOf('--max');
-    const max = maxAt === -1 ? undefined : Number(rest[maxAt + 1]);
+    const flags = parseFlagArgs(rest, GIT_LOG_FLAG_SPEC);
+    const maxRaw = flags.values['--max'] as string | undefined;
+    const max = maxRaw === undefined ? undefined : Number(maxRaw);
     if (
-      maxAt !== -1 &&
+      (maxRaw !== undefined || flags.missing.includes('--max')) &&
       (max === undefined || !Number.isInteger(max) || max < 1)
     ) {
       deps.out('error: --max needs a positive integer');
@@ -96,7 +116,7 @@ export async function runGitCommand(
       ctx,
     );
     if (!out.ok) return fail(deps, out.error.message);
-    if (rest.includes('--json')) {
+    if (flags.values['--json'] === true) {
       deps.out(JSON.stringify(out.result.entries, null, 2));
       return 0;
     }
@@ -111,7 +131,8 @@ export async function runGitCommand(
   }
 
   if (sub === 'stage') {
-    const paths = rest.filter((a) => !a.startsWith('--'));
+    const flags = parseFlagArgs(rest, GIT_STAGE_FLAG_SPEC);
+    const paths = [...flags.positional];
     if (paths.length === 0) {
       deps.out('error: stage needs at least one path');
       return 1;
@@ -128,8 +149,15 @@ export async function runGitCommand(
   }
 
   if (sub === 'commit') {
-    const mAt = rest.indexOf('-m');
-    const message = mAt === -1 ? undefined : rest[mAt + 1];
+    const flags = parseFlagArgs(rest, GIT_COMMIT_FLAG_SPEC);
+    // `-m -- <message>` (issue #127): the terminator is the escape hatch
+    // for a message that begins with `--`; the bare form stays refused as
+    // the typo rule (`-m --amend` never silently takes `--amend`).
+    const operands = [...flags.positional];
+    let message = flags.values['-m'] as string | undefined;
+    if (message === undefined && rest.includes('--') && operands.length > 0) {
+      message = operands.shift();
+    }
     if (message === undefined || message === '') {
       deps.out('error: commit needs -m <message>');
       return 1;

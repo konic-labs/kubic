@@ -4,6 +4,7 @@
 
 import { join } from 'node:path';
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
@@ -27,6 +28,12 @@ export interface ModelsCommandDeps {
 // invalid models.json is reported, never thrown past the CLI.
 export const MODELS_USAGE =
   'usage: kubic models [--json] [--resolve <provider/id>]';
+
+// Issue #127: the shared parser replaces the indexOf/includes pair.
+const MODELS_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+  { name: '--resolve', takes: 'value' },
+];
 
 export function assembleModels(cwd: string): {
   models: MutableModels;
@@ -59,16 +66,16 @@ export async function runModelsCommand(
   // `--help`/`-h` is answered before argv parsing (issue #100).
   const help = answerHelp(args, deps.out, MODELS_USAGE);
   if (help !== null) return help;
-  const json = args.includes('--json');
-  const resolveAt = args.indexOf('--resolve');
-  if (resolveAt !== -1) {
-    const flag = args[resolveAt + 1];
-    if (flag === undefined || flag.startsWith('--')) {
-      deps.out('error: --resolve needs provider/id');
-      return 1;
-    }
+  const parsed = parseFlagArgs(args, MODELS_FLAG_SPEC);
+  const json = parsed.values['--json'] === true;
+  const resolveRaw = parsed.values['--resolve'] as string | undefined;
+  if (parsed.missing.includes('--resolve')) {
+    deps.out('error: --resolve needs provider/id');
+    return 1;
+  }
+  if (resolveRaw !== undefined) {
     try {
-      const picked = selectModel(deps.models, parseModelFlag(flag));
+      const picked = selectModel(deps.models, parseModelFlag(resolveRaw));
       const levels = getSupportedThinkingLevels(picked);
       deps.out(
         `selected ${picked.provider}/${picked.id} (thinking: ${levels.join(', ') || 'off only'})`,
@@ -82,10 +89,11 @@ export async function runModelsCommand(
     }
   }
   // Fail-closed on unknown flags (issue #100): they used to be silently
-  // ignored, so a typo'd flag looked like a plain catalog readout.
-  const unknown = args.filter((arg) => arg !== '--json');
-  if (unknown.length > 0) {
-    deps.out(`error: unknown flag ${unknown[0]}`);
+  // ignored, so a typo'd flag looked like a plain catalog readout. Stray
+  // operands report through the same line (the pre-migration shape).
+  const stray = parsed.unknown[0] ?? parsed.positional[0];
+  if (stray !== undefined) {
+    deps.out(`error: unknown flag ${stray}`);
     deps.out(MODELS_USAGE);
     return 1;
   }

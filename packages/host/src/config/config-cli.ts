@@ -8,6 +8,7 @@
 // Exit codes: 0 report, 1 load/usage failure (a broken config fails closed
 // here too — the operator sees the named reason, not a silent default).
 
+import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
   effectiveConfigView,
@@ -30,19 +31,24 @@ function usage(out: (line: string) => void): number {
   return CONFIG_EXIT_FAIL;
 }
 
+// Issue #127: the shared parser replaces the manual loop. The refusal
+// line is unchanged: an unknown flag and a stray operand both report
+// `error: unknown flag <token>` + usage, exit 1.
+const CONFIG_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
+];
+
 export function runConfigCommand(
   args: string[],
   deps: ConfigCommandDeps,
 ): number {
-  let json = false;
-  for (const arg of args) {
-    if (arg === '--json') {
-      json = true;
-      continue;
-    }
-    deps.out(`error: unknown flag ${arg}`);
+  const parsed = parseFlagArgs(args, CONFIG_FLAG_SPEC);
+  const stray = parsed.unknown[0] ?? parsed.positional[0];
+  if (stray !== undefined) {
+    deps.out(`error: unknown flag ${stray}`);
     return usage(deps.out);
   }
+  const json = parsed.values['--json'] === true;
   let runtime: RuntimeConfig;
   try {
     runtime = deps.load();

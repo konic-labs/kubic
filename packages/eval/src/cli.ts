@@ -5,6 +5,7 @@
 // Exit codes: 0 pass/completed, 1 evaluated-and-failed, 2 usage/error.
 
 import { answerHelp } from '../../core/src/cli-help.js';
+import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import type { EvalRecord } from './records.js';
 import {
   EvalRunnerError,
@@ -37,43 +38,49 @@ interface Parsed {
   json: boolean;
 }
 
+// Issue #127: the shared parser's spec. `eval` is the permissive surface —
+// unknown tokens are ignored (they always were) and a value flag with no
+// value leaves its default in place.
+const EVAL_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--suite', takes: 'value' },
+  { name: '--task', takes: 'value' },
+  { name: '--trajectory', takes: 'value' },
+  { name: '--workspace', takes: 'value' },
+  { name: '--model', takes: 'value' },
+  { name: '--thinking', takes: 'value' },
+  { name: '--worktree', takes: 'value' },
+  { name: '--generation', takes: 'value' },
+  { name: '--tier', takes: 'value' },
+  { name: '--json', takes: 'boolean' },
+];
+
 function parseArgs(args: string[]): Parsed {
+  const flags = parseFlagArgs(args, EVAL_FLAG_SPEC);
   const parsed: Parsed = {
-    suite: undefined,
-    task: undefined,
-    trajectory: undefined,
+    suite: flags.values['--suite'] as string | undefined,
+    task: flags.values['--task'] as string | undefined,
+    trajectory: flags.values['--trajectory'] as string | undefined,
     workspace: 'inline',
     workspaceInvalid: false,
-    model: 'faux/faux',
-    thinking: null,
-    worktree: '',
+    model: (flags.values['--model'] as string | undefined) ?? 'faux/faux',
+    thinking: (flags.values['--thinking'] as string | undefined) ?? null,
+    worktree: (flags.values['--worktree'] as string | undefined) ?? '',
     generation: undefined,
-    tier: '',
-    json: false,
+    tier: (flags.values['--tier'] as string | undefined) ?? '',
+    json: flags.values['--json'] === true,
   };
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] as string;
-    const next = args[i + 1];
-    const take = (): string | undefined => {
-      i += 1;
-      return next;
-    };
-    if (arg === '--suite') parsed.suite = take();
-    else if (arg === '--task') parsed.task = take();
-    else if (arg === '--trajectory') parsed.trajectory = take();
-    else if (arg === '--workspace') {
-      const value = take();
-      if (value === 'inline' || value === 'worktree') parsed.workspace = value;
-      else parsed.workspaceInvalid = true;
-    } else if (arg === '--model') parsed.model = take() ?? parsed.model;
-    else if (arg === '--thinking') parsed.thinking = take() ?? null;
-    else if (arg === '--worktree') parsed.worktree = take() ?? '';
-    else if (arg === '--generation') {
-      const raw = take();
-      const n = raw === undefined ? Number.NaN : Number(raw);
-      parsed.generation = Number.isInteger(n) ? n : undefined;
-    } else if (arg === '--tier') parsed.tier = take() ?? '';
-    else if (arg === '--json') parsed.json = true;
+  const workspace = flags.values['--workspace'] as string | undefined;
+  if (workspace !== undefined) {
+    if (workspace === 'inline' || workspace === 'worktree') {
+      parsed.workspace = workspace;
+    } else {
+      parsed.workspaceInvalid = true;
+    }
+  }
+  const generation = flags.values['--generation'] as string | undefined;
+  if (generation !== undefined) {
+    const n = Number(generation);
+    parsed.generation = Number.isInteger(n) ? n : undefined;
   }
   return parsed;
 }

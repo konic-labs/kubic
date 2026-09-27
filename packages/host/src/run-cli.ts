@@ -267,21 +267,43 @@ export async function runRunCommand(
   const values = parsed.values;
   // `-p -- <prompt>` (issue #127): the end-of-flags terminator is the
   // escape hatch — the next raw token is the prompt, so a prompt that
-  // begins with `--` is expressible. The typo rule is never weakened:
+  // begins with `--` is expressible. Two guards keep it from weakening
+  // the typo rule:
+  //   * the operand is taken only when `-p`/`--prompt` was actually
+  //     starved by the terminator (`missing` records it), so a bare
+  //     `kubic run -- <x>` never silently becomes the prompt (exit 2);
+  //   * the skip below applies to that escape alone — a `-p` starved
+  //     after a prompt is already set is still reported
+  //     (`kubic run --prompt ok -p` → 'error: -p needs a value', exit 2).
   // `kubic run -p --json` has no terminator, so `-p` is still missing.
   const operands = [...parsed.positional];
   let prompt = values['--prompt'] as string | undefined;
-  if (prompt === undefined && args.includes('--') && operands.length > 0) {
+  let promptFromTerminator = false;
+  if (
+    prompt === undefined &&
+    parsed.missing.includes('--prompt') &&
+    operands.length > 0
+  ) {
     prompt = operands.shift();
+    promptFromTerminator = true;
   }
   // Missing values first, then unknown flags, then stray operands — each
   // keeps the exact line the old inline loop printed. A `-p` starved by a
   // flag-like token is the flagship typo (`kubic run -p --json`), so the
   // missing-value class is reported before the unknown class.
   for (const flag of parsed.missing) {
-    if (flag === '--prompt' && prompt !== undefined) continue;
+    if (flag === '--prompt' && promptFromTerminator) continue;
     deps.out(
       RUN_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  // An empty prompt is no prompt: the old loop refused `--prompt=` as an
+  // unknown flag (exit 2), so the equals form is refused here with the
+  // missing-value line instead of booting a lane with a blank prompt.
+  if (prompt === '') {
+    deps.out(
+      RUN_MISSING_VALUE_MESSAGES['--prompt'] ?? 'error: -p needs a value',
     );
     return RUN_EXIT_USAGE;
   }
@@ -292,6 +314,9 @@ export async function runRunCommand(
   if (operands.length > 0) {
     // Operands are not part of this command's surface (the prompt is a
     // flag), so an unconsumed one is refused exactly like an unknown flag.
+    // `kubic run -- <x>` lands here now; the old loop named `--` itself,
+    // but `--` is accepted syntax since #127, so the stray operand is the
+    // token named (exit 2 either way).
     deps.out(`error: unknown flag ${operands[0]}`);
     return RUN_EXIT_USAGE;
   }

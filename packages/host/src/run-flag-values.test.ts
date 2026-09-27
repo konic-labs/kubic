@@ -162,3 +162,109 @@ describe('run flag values starting with -- (issue #127)', () => {
     expect(o.lines.join('\n')).toMatch(/-p needs a value/);
   });
 });
+
+// Review fix (issue #127): the terminator escape must not weaken the
+// missing-value report. Only the starved `-p` that the terminator itself
+// answered is skipped; a `-p`/`--prompt` starved AFTER a prompt is already
+// set keeps its old line and exit 2. A bare `run -- <x>` is a stray
+// operand, never a prompt, and an empty prompt (`--prompt=`, `-p ''`) is
+// no prompt. The old inline loop's behaviors, input by input:
+//   --prompt ok -p  → exit 2, `error: -p needs a value`
+//   -p x -p         → exit 2, `error: -p needs a value`
+//   -p x -p --      → exit 2, `error: -p needs a value`
+//   -- x            → exit 2 (`--` was the old first-offender token)
+//   --prompt=       → exit 2 (`--prompt=` was an unknown flag)
+describe('run missing values vs the -- escape (issue #127 review)', () => {
+  async function refusal(argv: string[]): Promise<{
+    exit: number;
+    text: string;
+    called: boolean;
+  }> {
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(argv, {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return fauxRun(tmpRoot())('x');
+      },
+    });
+    return { exit, text: o.lines.join('\n'), called };
+  }
+
+  it('reports a starved duplicate -p after --prompt ok (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['--prompt', 'ok', '-p']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('reports a starved duplicate -p after -p x (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', 'x', '-p']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('reports a starved duplicate -p starved by the terminator (exit 2, no lane)', async () => {
+    const { exit, text, called } = await refusal(['-p', 'x', '-p', '--']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses a bare -- operand instead of taking it as the prompt (exit 2)', async () => {
+    const { exit, text, called } = await refusal(['--', 'x']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/unknown flag x/);
+  });
+
+  it('refuses an empty --prompt= value (exit 2, the missing-value line)', async () => {
+    const { exit, text, called } = await refusal(['--prompt=']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('refuses an empty positional -p value too (exit 2)', async () => {
+    const { exit, text, called } = await refusal(['-p', '']);
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    expect(text).toMatch(/-p needs a value/);
+  });
+
+  it('boots a lane for --prompt ok (the long spelling keeps working)', async () => {
+    const root = tmpRoot();
+    const o = out();
+    const seen: { prompt?: string } = {};
+    const exit = await runRunCommand(['--prompt', 'ok'], {
+      out: o.write,
+      run: async (prompt: string) => {
+        seen.prompt = prompt;
+        return fauxRun(root)(prompt);
+      },
+    });
+    expect(exit).toBe(0);
+    expect(seen.prompt).toBe('ok');
+  });
+
+  it('answers --help before parsing even after -- (issue #100), never a missing error', async () => {
+    // `wantsHelp` matches `--help` anywhere in argv, so `-p -- --help` is
+    // the help path (exit 0 + usage), not a missing-value error. The
+    // literal-`--help`-prompt path is the equals form (pinned above).
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(['-p', '--', '--help'], {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return fauxRun(tmpRoot())('x');
+      },
+    });
+    expect(exit).toBe(0);
+    expect(called).toBe(false);
+    expect(o.lines.join('\n')).toMatch(/^usage: kubic run/);
+    expect(o.lines.join('\n')).not.toMatch(/needs a value/);
+  });
+});

@@ -299,3 +299,53 @@ describe('parallel provider admission exact (issue #70 mutation E/F)', () => {
     expect(sanitizeReasonField(42)).toBe('42');
   });
 });
+
+describe('parallel configured default (issue #133)', () => {
+  it('uses [orchestrator].maxWorkers as the default when nothing else caps', () => {
+    expect(resolveMaxConcurrency(undefined, undefined, { maxWorkers: 7 })).toBe(
+      7,
+    );
+    // Unset stays the shipped default — never an invented cap.
+    expect(resolveMaxConcurrency(undefined, undefined, {})).toBe(
+      DEFAULT_MAX_CONCURRENCY,
+    );
+    expect(resolveMaxConcurrency(undefined, undefined, undefined)).toBe(4);
+  });
+
+  it('lets an explicit cap win over the configured default', () => {
+    // A per-session override is the most explicit cap there is.
+    expect(resolveMaxConcurrency(undefined, 2, { maxWorkers: 7 })).toBe(2);
+    expect(
+      resolveMaxConcurrency({ maxConcurrency: 6 }, 2, { maxWorkers: 7 }),
+    ).toBe(2);
+    // An explicit limits cap beats the config default too.
+    expect(
+      resolveMaxConcurrency({ maxConcurrency: 3 }, undefined, {
+        maxWorkers: 7,
+      }),
+    ).toBe(3);
+  });
+
+  it('keeps §45 validation for a configured value that could never admit a worker', () => {
+    expect(() =>
+      resolveMaxConcurrency(undefined, undefined, { maxWorkers: 0 }),
+    ).toThrow(/orchestrator\.maxWorkers must be a positive integer/);
+    expect(() =>
+      resolveMaxConcurrency(undefined, undefined, { maxWorkers: 1.5 }),
+    ).toThrow(/orchestrator\.maxWorkers must be a positive integer/);
+    expect(() =>
+      resolveMaxConcurrency(undefined, undefined, { maxWorkers: Number.NaN }),
+    ).toThrow(ParallelConfigError);
+  });
+
+  it('resolves worker capacity through the same configured default', () => {
+    expect(resolveWorkerCapacity(undefined, undefined, { maxWorkers: 7 })).toBe(
+      7,
+    );
+    expect(
+      resolveWorkerCapacity({ workerCapacity: 2 }, undefined, {
+        maxWorkers: 7,
+      }),
+    ).toBe(2);
+  });
+});

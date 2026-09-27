@@ -50,6 +50,7 @@ import type {
   ResolverRequest,
 } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { hashApprovalPolicy } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { ParallelScheduler } from '../../../packages/host/src/orchestrator/parallel/scheduler.js';
 import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchestrator/parallel/visibility.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {
@@ -445,9 +446,11 @@ export async function orchestrateDepsWithDefaults(
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
   // Issue #133: the runtime `[orchestrator]` projection — the worktree
-  // parent, already validated at config load. The shipped default applies
-  // when the config sets none: `.kubic/wt` for the spawned set.
+  // parent and the worker cap, both already validated at config load. The
+  // shipped defaults apply when the config sets neither: `.kubic/wt` for
+  // the spawned set, the scheduler's own cap of four for admissions.
   const worktreeRoot = options.orchestrator?.root;
+  const maxWorkers = options.orchestrator?.maxWorkers;
   const excludeEntries = runtimeExcludeEntriesFor(worktreeRoot);
   const workerRegistry = options.registry ?? new WorkerRegistry();
   // One registry for the whole invocation (issue #94): the orchestrator
@@ -659,6 +662,17 @@ export async function orchestrateDepsWithDefaults(
   return {
     out: options.out,
     debug,
+    // Issue #133: the configured worker cap is the run's own admission
+    // surface — the same scheduler the CLI would default to, constructed
+    // with the validated `[orchestrator].maxWorkers` as its default. Unset
+    // builds no scheduler and the CLI's shipped default cap of four stands.
+    ...(maxWorkers === undefined
+      ? {}
+      : {
+          scheduler: new ParallelScheduler(undefined, {
+            configured: { maxWorkers },
+          }),
+        }),
     isGitRepo: () => root !== undefined,
     // §44.1 retained-worktree status (issue #106): the run retained these
     // worktrees as evidence, so the operator is told which of them are dirty

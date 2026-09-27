@@ -9,7 +9,11 @@
 // clock/log; no I/O, no network.
 
 import type { RunMode } from '../../../../agents/src/budget.js';
-import type { ParallelLimits, UsageTally } from './limits.js';
+import type {
+  ConfiguredConcurrency,
+  ParallelLimits,
+  UsageTally,
+} from './limits.js';
 import {
   checkAggregateAdmission,
   checkBudgetAdmission,
@@ -43,6 +47,10 @@ export interface SchedulerDeps {
   log?: (line: string) => void;
   sessionOverride?: number;
   usage?: UsageTally;
+  // The configured default (issue #133): `[orchestrator].maxWorkers`, the
+  // product default a session override or an explicit limits cap still wins
+  // over. Absent means the shipped DEFAULT_MAX_CONCURRENCY.
+  configured?: ConfiguredConcurrency;
 }
 
 interface RunningEntry {
@@ -75,6 +83,7 @@ export class ParallelScheduler {
   private readonly clock: () => number;
   private readonly log: (line: string) => void;
   private readonly sessionOverride: number | undefined;
+  private readonly configured: ConfiguredConcurrency | undefined;
   private usage: UsageTally | undefined;
   private readonly running = new Map<string, RunningEntry>();
   private readonly queue: QueuedEntry[] = [];
@@ -83,13 +92,14 @@ export class ParallelScheduler {
   constructor(limits?: ParallelLimits, deps?: SchedulerDeps) {
     // Validate eagerly so misconfig fails at construction, never mid-spawn.
     validateParallelLimits(limits);
-    resolveMaxConcurrency(limits, deps?.sessionOverride);
-    resolveWorkerCapacity(limits, deps?.sessionOverride);
+    resolveMaxConcurrency(limits, deps?.sessionOverride, deps?.configured);
+    resolveWorkerCapacity(limits, deps?.sessionOverride, deps?.configured);
     this.limits = limits ?? {};
     this.clock = deps?.clock ?? Date.now;
     const sink = deps?.log ?? (() => undefined);
     this.log = (line: string) => sink(sanitizeLogLine(line));
     this.sessionOverride = deps?.sessionOverride;
+    this.configured = deps?.configured;
     this.usage = deps?.usage;
   }
 
@@ -107,7 +117,11 @@ export class ParallelScheduler {
   // admission decision used — a second computation at the caller would be
   // free to drift. Pure getter, no state change.
   maxConcurrency(): number {
-    return resolveMaxConcurrency(this.limits, this.sessionOverride);
+    return resolveMaxConcurrency(
+      this.limits,
+      this.sessionOverride,
+      this.configured,
+    );
   }
 
   pendingIds(): string[] {
@@ -267,6 +281,7 @@ export class ParallelScheduler {
     const maxConcurrency = resolveMaxConcurrency(
       this.limits,
       this.sessionOverride,
+      this.configured,
     );
     if (this.running.size >= maxConcurrency) {
       return {
@@ -277,6 +292,7 @@ export class ParallelScheduler {
     const workerCapacity = resolveWorkerCapacity(
       this.limits,
       this.sessionOverride,
+      this.configured,
     );
     if (this.running.size >= workerCapacity) {
       return {

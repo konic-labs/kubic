@@ -537,4 +537,37 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     };
     expect(defaultPlan.worktrees).toEqual([]);
   });
+
+  it('builds the run scheduler from [orchestrator].maxWorkers (issue #133)', async () => {
+    const root = await initRepo();
+    const sessionsRoot = scratchRoot('kubic-orch-sessions-');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      cwd: root,
+      sessionsRoot,
+      orchestrator: { maxWorkers: 7 },
+    });
+
+    // The config value is the resolved default the admission surface judges
+    // against — not a reported number that nothing reads.
+    expect(deps.scheduler?.maxConcurrency()).toBe(7);
+    expect(
+      deps.scheduler?.requestSpawn(
+        {
+          agentId: 'w1',
+          sessionId: 's1',
+          worktree: join(root, '.kubic', 'wt', 'w1'),
+        },
+        'autonomous',
+      ),
+    ).toMatchObject({ outcome: 'admitted' });
+
+    // Unset keeps the shipped default cap of four (no scheduler built).
+    const bare = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      cwd: root,
+      sessionsRoot,
+    });
+    expect(bare.scheduler).toBeUndefined();
+  });
 });

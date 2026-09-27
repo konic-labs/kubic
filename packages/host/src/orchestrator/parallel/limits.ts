@@ -77,11 +77,21 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
-// Default 4; a per-session override wins over the session config. Invalid
-// values throw — silently substituting a default would hide misconfig.
+// The configured default for the admission cap (issue #133): the validated
+// `[orchestrator].maxWorkers` value, or undefined when the config sets none.
+export interface ConfiguredConcurrency {
+  maxWorkers?: number;
+}
+
+// Default 4; an explicit cap wins over the configured default, and the
+// configured `[orchestrator].maxWorkers` (issue #133) wins over the shipped
+// constant. Precedence: sessionOverride > limits.maxConcurrency >
+// configured.maxWorkers > DEFAULT. Invalid values throw — silently
+// substituting a default would hide misconfig.
 export function resolveMaxConcurrency(
   limits?: ParallelLimits,
   sessionOverride?: number,
+  configured?: ConfiguredConcurrency,
 ): number {
   if (sessionOverride !== undefined) {
     if (!isPositiveInt(sessionOverride)) {
@@ -91,14 +101,23 @@ export function resolveMaxConcurrency(
     }
     return sessionOverride;
   }
-  const configured = limits?.maxConcurrency;
-  if (configured === undefined) return DEFAULT_MAX_CONCURRENCY;
-  if (!isPositiveInt(configured)) {
+  const explicit = limits?.maxConcurrency;
+  if (explicit !== undefined) {
+    if (!isPositiveInt(explicit)) {
+      throw new ParallelConfigError(
+        `maxConcurrency must be a positive integer (got ${String(explicit)})`,
+      );
+    }
+    return explicit;
+  }
+  const configDefault = configured?.maxWorkers;
+  if (configDefault === undefined) return DEFAULT_MAX_CONCURRENCY;
+  if (!isPositiveInt(configDefault)) {
     throw new ParallelConfigError(
-      `maxConcurrency must be a positive integer (got ${String(configured)})`,
+      `orchestrator.maxWorkers must be a positive integer (got ${String(configDefault)})`,
     );
   }
-  return configured;
+  return configDefault;
 }
 
 // Worker slots default to the resolved concurrency when unconfigured —
@@ -106,17 +125,18 @@ export function resolveMaxConcurrency(
 export function resolveWorkerCapacity(
   limits?: ParallelLimits,
   sessionOverride?: number,
+  configured?: ConfiguredConcurrency,
 ): number {
-  const configured = limits?.workerCapacity;
-  if (configured === undefined) {
-    return resolveMaxConcurrency(limits, sessionOverride);
+  const explicit = limits?.workerCapacity;
+  if (explicit === undefined) {
+    return resolveMaxConcurrency(limits, sessionOverride, configured);
   }
-  if (!isPositiveInt(configured)) {
+  if (!isPositiveInt(explicit)) {
     throw new ParallelConfigError(
-      `workerCapacity must be a positive integer (got ${String(configured)})`,
+      `workerCapacity must be a positive integer (got ${String(explicit)})`,
     );
   }
-  return configured;
+  return explicit;
 }
 
 function hasPositiveNumber(

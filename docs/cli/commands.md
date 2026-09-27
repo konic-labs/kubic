@@ -63,9 +63,18 @@ starting with `--` still means "missing value" — that is the typo guard
 value that begins with `--` is expressible two ways:
 
 ```console
-$ kubic run --prompt="--help"   # equals form: value is everything after '='
-$ kubic run -p -- --help        # end-of-flags: the next raw token is the value
+$ kubic run --prompt="--help"           # equals form: value is everything after '='
+$ kubic run -p -- --json-experiment     # end-of-flags: the next raw token is the value
 ```
+
+The end-of-flags form is the value escape for a `-p`/`--prompt` that was
+left without one: `kubic run -p -- <prompt>` takes the next raw token as
+the prompt, and only then. A bare `kubic run -- <x>` is a stray operand
+(exit 2), never a prompt, and a `-p` starved *after* a prompt is already
+set is still `-p needs a value` (exit 2). An empty prompt (`--prompt=`,
+`-p ''`) is refused the same way. Note `--help`/`-h` anywhere in argv is
+answered by the help convention before parsing (issue #100) — a literal
+`--help` prompt needs the equals form.
 
 **Installed policy** (issue #86). A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission

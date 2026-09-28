@@ -25,6 +25,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
   confinePath,
   defaultIsDestructive,
@@ -37,6 +38,7 @@ import {
   detectTriggers,
   FileApprovalStore,
   type TriggerContext,
+  triggerContextFor,
   validatePolicy,
 } from './approvals.js';
 import { parseTomlConfig } from './config/config.js';
@@ -455,6 +457,122 @@ describe('capability/trigger vocabulary parity (issue #131)', () => {
     expect(new Set(ORCHESTRATOR_TRIGGERS).size).toBe(
       ORCHESTRATOR_TRIGGERS.length,
     );
+  });
+});
+
+describe('shell-expanded and cd-relative write targets (issue #355)', () => {
+  it('treats ~, ~user, $HOME, braced HOME and $VAR prefixes as outside', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo x >> ~/.bashrc',
+      'echo x > $HOME/.zshrc',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell syntax
+      'echo x > ${HOME}/.profile',
+      'echo x > "$HOME/.profile"',
+      'echo x > ~root/.bashrc',
+      'echo x > ~',
+      'echo x > $OUT/file',
+      'cp a ~/.ssh/authorized_keys',
+      'tee ~/.config/x',
+      'mv a $XDG_CONFIG_HOME/x',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toContain(
+        'outside-write',
+      );
+    }
+  });
+
+  it('resolves relative targets against a preceding cd/pushd', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'cd /etc && echo x > y',
+      'pushd /tmp && cp a b',
+      'cd /etc; tee y',
+      'cd .. && echo x > y',
+      'cd sub && cd ../.. && echo x > y',
+      // An unknown destination fails closed for relative targets.
+      'cd && echo x > y',
+      'cd ~ && echo x > y',
+      'cd $HOME/x && echo x > y',
+      'cd - && echo x > y',
+      'pushd sub && popd && echo x > y',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
+    }
+  });
+
+  it('keeps inside targets quiet, with or without a cd inside the workspace', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo x > ./out.txt',
+      'cd sub && echo x > y',
+      'cd /work/sub && cp a b',
+      'cd "sub dir" ; echo x > y',
+      'cp a b/c',
+      'cd /etc && echo x > /work/y',
+      'cd -P sub && echo x > y',
+      // A redirect BEFORE the cd is resolved against the workspace.
+      'echo x > y && cd /etc',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+  });
+
+  it('always raises for a target under ~/.kubic, even when the workspace is home', () => {
+    const home = '/home/u';
+    const ctx = triggerContext({
+      workspace: home,
+      home,
+      isOutsideWorkspace: (path: string) => confinePath(home, path).rewritten,
+    });
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > ~/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > /home/u/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > .kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
+    expect(
+      detectTriggers(
+        'write',
+        { path: '/home/u/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
+    // A sibling that merely shares the prefix is an ordinary inside path.
+    expect(
+      detectTriggers('bash', { command: 'echo x > .kubicrc' }, ctx),
+    ).toEqual([]);
+    expect(detectTriggers('write', { path: 'notes.txt' }, ctx)).toEqual([]);
+  });
+
+  it('wires the home directory through triggerContextFor', () => {
+    const home = mkTmp('kubic-355-home-');
+    const ctx = triggerContextFor(SOLO_DEFAULTS, home, home);
+    expect(ctx.home).toBe(home);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: `echo {} > ${home}/.kubic/sessions/x/posture.json` },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
   });
 });
 

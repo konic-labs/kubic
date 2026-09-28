@@ -324,6 +324,24 @@ describe('policy interceptors (issue #15, slice C)', () => {
     });
   });
 
+  it('keeps tilde/$VAR tokens workspace-relative for tool paths (issue #355)', () => {
+    // The write/edit/read ops resolve a path with node `resolve(cwd, path)`
+    // and never expand `~` or `$VAR`, so for a TOOL path these tokens are
+    // literal workspace entries (`/work/~/.bashrc`) — confinePath is right to
+    // leave them unrewritten. Shell targets are different: bash expands
+    // them, so the bash outside-write detector (host approvals.ts) treats a
+    // `~`/`$VAR` prefix as outside, fail-closed — pinned in
+    // approvals-detectors.test.ts.
+    expect(confinePath('/work', '~/.bashrc')).toEqual({
+      confined: '/work/~/.bashrc',
+      rewritten: false,
+    });
+    expect(confinePath('/work', '$HOME/.zshrc')).toEqual({
+      confined: '/work/$HOME/.zshrc',
+      rewritten: false,
+    });
+  });
+
   it('matches every destructive shape, not just rm and git clean', () => {
     // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch:
     // surviving Regex mutants here mean a destructive shape slips through.

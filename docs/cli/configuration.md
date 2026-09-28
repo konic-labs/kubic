@@ -203,6 +203,21 @@ heuristics:
   clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
   file and is skipped, while `>& out.txt` names a file. The target is the
   next token up to whitespace or a `|;&<>` character, quotes stripped.
+- **Shell-expanded and `cd`-relative targets** — bash expands a target
+  before it writes, the detector does not, so a target starting with `~`
+  (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+  `$OUT/file`) counts as outside-write, fail-closed. A `cd <dir>` or
+  `pushd <dir>` at a command start moves the directory later relative
+  targets resolve against: `cd /etc && echo x > y` raises, `cd sub &&
+  echo x > y` does not. After a `cd` to an unknown place (bare `cd`,
+  `cd ~`, `cd $X`, `cd -`, any `popd`) every later relative target raises.
+  Subshells are not modelled: `(cd /etc); echo x > y` over-triggers. A
+  `$VAR` in the middle of a target (`out/$f.log`) is not expanded and is
+  checked as written. Any target under `~/.kubic` (session state,
+  `posture.json`, `approvals.json`) — including a `write`/`edit` path —
+  raises outside-write even when the workspace is the home directory.
+  Tool paths are not shell-expanded: the `write` tool takes `~/.bashrc`
+  literally, as a workspace file.
 - **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
   anywhere in the raw command, quoted text included
   (`echo "needs sudo"` raises it). A raised capability becomes an ask,

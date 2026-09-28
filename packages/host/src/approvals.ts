@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import type { PermissionClasses } from '../../agents/src/policy.js';
 import {
   checkAgreement,
@@ -180,6 +181,10 @@ export interface TriggerContext {
   isDestructive: (command: string, workspace: string) => boolean;
   isNetworkCommand: (command: string) => boolean;
   isOutsideWorkspace: (path: string) => boolean;
+  // The user's home directory: any write target under `<home>/.kubic`
+  // (session state, posture.json, approvals.json) is outside-write
+  // whatever the workspace is — even a workspace AT home (issue #355).
+  home?: string;
   requires?: string[];
   budgetOverrun?: boolean;
 }
@@ -362,6 +367,93 @@ function targetToken(
   return stripQuotes(raw.slice(0, raw.length - cut));
 }
 
+// Shell-expanded and cd-relative write targets (issue #355). The literal
+// detectors see the command before bash expands it, so a target starting
+// with `~` (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+// any `$VAR/...`) names a path the workspace check cannot know — it counts
+// as OUTSIDE, fail-closed, never joined under the workspace. A preceding
+// `cd <dir>` / `pushd <dir>` (at a command start) moves the cwd relative
+// targets resolve against for the rest of the command: into an outside dir
+// they resolve outside, and to an unknown one (bare `cd`, `cd ~`, `cd $X`,
+// `cd -`, any `popd`) every later relative target fails closed. Subshell
+// scoping is not modelled — a `(cd /etc)` still moves the tracked cwd,
+// which over-triggers, never under-triggers.
+const CD_COMMAND =
+  /(^|[;&|\n(])[ \t]*(cd|pushd|popd)(?=$|[\s;&|)])([^;&|\n)]*)/g;
+const SHELL_EXPANDED = /^[~$]/;
+
+interface CdEvent {
+  index: number;
+  cwd: string | null;
+}
+
+function cdArgument(rest: string): string {
+  const args = rest.trim().replace(/^(-[LPe@]+\s+)+/, '');
+  const quote = args[0];
+  if (quote === '"' || quote === "'") {
+    const close = args.indexOf(quote, 1);
+    return close < 0 ? args.slice(1) : args.slice(1, close);
+  }
+  return args.split(/\s+/)[0] ?? '';
+}
+
+function cdEvents(command: string, workspace: string): CdEvent[] {
+  const events: CdEvent[] = [];
+  let cwd: string | null = resolve(workspace);
+  for (const match of command.matchAll(CD_COMMAND)) {
+    const dir = match[2] === 'popd' ? '' : cdArgument(match[3] ?? '');
+    if (dir === '' || dir.startsWith('-') || /[~$`]/.test(dir[0] ?? '')) {
+      cwd = null;
+    } else if (isAbsolute(dir)) {
+      cwd = resolve(dir);
+    } else if (cwd !== null) {
+      cwd = resolve(cwd, dir);
+    }
+    events.push({ index: match.index + (match[1] ?? '').length, cwd });
+  }
+  return events;
+}
+
+function cwdAt(
+  events: readonly CdEvent[],
+  position: number,
+  workspace: string,
+): string | null {
+  let cwd: string | null = resolve(workspace);
+  for (const event of events) {
+    if (event.index >= position) break;
+    cwd = event.cwd;
+  }
+  return cwd;
+}
+
+function underKubicHome(path: string, home: string | undefined): boolean {
+  if (home === undefined) return false;
+  const state = resolve(home, '.kubic');
+  return path === state || path.startsWith(`${state}/`);
+}
+
+function shellTargetOutside(
+  target: string,
+  cwd: string | null,
+  ctx: TriggerContext,
+): boolean {
+  if (SHELL_EXPANDED.test(target)) return true;
+  if (isAbsolute(target)) {
+    return (
+      underKubicHome(resolve(target), ctx.home) ||
+      ctx.isOutsideWorkspace(target)
+    );
+  }
+  if (cwd === null) return true;
+  const absolute = resolve(cwd, target);
+  if (underKubicHome(absolute, ctx.home)) return true;
+  // No cd moved the cwd: hand the raw token over, exactly as before.
+  return ctx.isOutsideWorkspace(
+    cwd === resolve(ctx.workspace) ? target : absolute,
+  );
+}
+
 export function detectTriggers(
   toolName: string,
   args: Record<string, unknown>,
@@ -389,50 +481,41 @@ export function detectTriggers(
       found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
+    // Every write target (redirect, tee, cp/mv/install) goes through one
+    // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
+    // failing closed on shell-expanded prefixes (issue #355).
+    const cdTrail = cdEvents(command, ctx.workspace);
+    const outside = (raw: string, end: number, start: number): boolean => {
+      // Targets arrive raw: quotes always come off, and a lifted token also
+      // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
+      // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
+      // plain literal `)`/`]` stays part of the path.
+      const target = targetToken(raw, end, spanClosers);
+      return (
+        target !== '' &&
+        shellTargetOutside(target, cwdAt(cdTrail, start, ctx.workspace), ctx)
+      );
+    };
+    const targets: Array<[string, number, number]> = [];
     for (const redirect of command.matchAll(REDIRECT)) {
       const raw = redirect[2] ?? '';
       if (redirect[1]?.endsWith('&') === true && FD_DUPLICATION.test(raw)) {
         continue;
       }
-      // Targets arrive raw: quotes always come off, and a lifted token also
-      // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
-      // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
-      // plain literal `)`/`]` stays part of the path.
-      const target = targetToken(
-        raw,
-        redirect.index + redirect[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([raw, redirect.index + redirect[0].length, redirect.index]);
     }
     // Shell-side writes by another name (issue #131): tee and trailing
     // cp/mv/install targets reach files no `>` ever touches. Both use the
     // same shared quote-stripping and last-argument target extraction,
     // scoped so the closer trim fires only on lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
-      const target = targetToken(
-        tee[1] ?? '',
-        tee.index + tee[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([tee[1] ?? '', tee.index + tee[0].length, tee.index]);
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
-      const target = targetToken(
-        copy[2] ?? '',
-        copy.index + copy[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([copy[2] ?? '', copy.index + copy[0].length, copy.index]);
+    }
+    if (targets.some(([raw, end, start]) => outside(raw, end, start))) {
+      found.push('outside-write');
     }
     // Privilege escalation and command indirection (issue #131): sudo is a
     // capability event wherever it sits, and a destructive/network verb
@@ -457,7 +540,12 @@ export function detectTriggers(
     (toolName === 'write' || toolName === 'edit') &&
     typeof args.path === 'string'
   ) {
-    if (ctx.isOutsideWorkspace(args.path)) found.push('outside-write');
+    if (
+      underKubicHome(resolve(ctx.workspace, args.path), ctx.home) ||
+      ctx.isOutsideWorkspace(args.path)
+    ) {
+      found.push('outside-write');
+    }
   }
   return [...new Set(found)];
 }
@@ -1210,9 +1298,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
 export function triggerContextFor(
   classes: PermissionClasses,
   workspace: string,
+  home: string = homedir(),
 ): TriggerContext {
   return {
     workspace,
+    home,
     network: classes.network,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,

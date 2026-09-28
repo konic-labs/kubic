@@ -43,6 +43,11 @@ import {
 // The shared timeout-reason marker (issue #129): the elapse denial below
 // interpolates THIS constant — never a copied literal — so the merge seat's
 // wording cannot drift from the worker-ask convention.
+import {
+  BUDGET_EXHAUSTED,
+  childBudgetOf,
+  RUN_EXIT_BUDGET,
+} from '../../../packages/host/src/orchestrator/approvals/budgets.js';
 import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/orchestrator/approvals/timeout-reason.js';
 import {
   createOrchestratorApprovalsRun,
@@ -599,6 +604,17 @@ export function workerFailureResult(
       },
     },
   });
+}
+
+// The named wall-clock budget end (issue #208, §71): the manager's watchdog
+// fired because a worker outlived its maxRuntimeMs. The message names the
+// exact limit= that tripped, so it is distinct from the child's own
+// --timeout terminus (a single drive's bound inside the worker).
+export function wallClockBudgetMessage(
+  agentId: string,
+  maxRuntimeMs: number,
+): string {
+  return `worker '${agentId}' exceeded maxRuntimeMs=${maxRuntimeMs}: budget ${BUDGET_EXHAUSTED} (limit=wallClock), exit ${RUN_EXIT_BUDGET}`;
 }
 
 function workerRunError(
@@ -1392,6 +1408,10 @@ export async function orchestrateDepsWithDefaults(
       // code), records the §61 startup latency, and classifies a failed
       // child through the §52 codes.
       throwIfCancelled(agentId);
+      // §71 (issue #208): the resolved budget for THIS spawn drives both the
+      // child env handoff and the host's wall-clock watchdog. Read once so
+      // the two can never disagree about which spec is in force.
+      const budgetForSpawn = approvalsActive?.budgetFor(agentId);
       const launched = launchWorker(
         {
           workerId: agentId,
@@ -1434,6 +1454,17 @@ export async function orchestrateDepsWithDefaults(
                   ),
                 }),
             ...modelsRootEnv(),
+            // §71 child-side budget (issue #208): ALWAYS written from the
+            // resolved plan — set when one exists, cleared otherwise — so an
+            // ambient KUBIC_BUDGET in the manager's own environment can never
+            // leak into a child the manager did not budget. The child
+            // enforces toolCalls/tokens/cost from this spec; maxRuntimeMs is
+            // stripped (wall clock belongs to the WATCHDOG below, never to
+            // the child — one owner per dimension).
+            KUBIC_BUDGET:
+              budgetForSpawn === undefined
+                ? ''
+                : JSON.stringify(childBudgetOf(budgetForSpawn)),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
@@ -1521,15 +1552,47 @@ export async function orchestrateDepsWithDefaults(
         // concurrent/next `kubic workers` invocation lists it (§50) even if
         // this launch later fails.
         persistWorkerRowsNow();
+        // §71 wall-clock watchdog (issue #208): maxRuntimeMs bounds the
+        // worker once it is UP. On elapse the child's process group is
+        // killed and the run ends BUDGET_EXHAUSTED (exit 3) with
+        // limit=wallClock — distinct from the child's own --timeout, which
+        // bounds one drive.
+        const maxRuntimeMs = budgetForSpawn?.maxRuntimeMs;
+        let wallClockWatchdog: ReturnType<typeof setTimeout> | undefined;
+        const wallClockExceeded =
+          maxRuntimeMs === undefined
+            ? undefined
+            : new Promise<never>((_resolve, reject) => {
+                wallClockWatchdog = setTimeout(() => {
+                  // Kill first: a sleeping worker must die, not be reported
+                  // at its leisure. reap() kills the detached process group.
+                  void launched.reap().catch(() => undefined);
+                  reject(
+                    new WorkerRunFailure(
+                      'worker_failed',
+                      wallClockBudgetMessage(agentId, maxRuntimeMs),
+                      { code: BUDGET_EXHAUSTED, exitCode: RUN_EXIT_BUDGET },
+                    ),
+                  );
+                }, maxRuntimeMs);
+              });
+        // A watchdog that lost the race (the worker settled first) never
+        // rejects; this keeps its abandoned promise from becoming an
+        // unhandled rejection.
+        wallClockExceeded?.catch(() => undefined);
         // A launch that never became ready is already terminal; the read
         // below is what turns it into the run's §78 `spawn_failed` code.
         let done: { exitCode: number; stdout: string; stderr: string };
         try {
-          done = await launched.wait();
+          done =
+            wallClockExceeded === undefined
+              ? await launched.wait()
+              : await Promise.race([launched.wait(), wallClockExceeded]);
         } catch (error) {
           persistWorkerRowsNow();
           throw error;
         } finally {
+          if (wallClockWatchdog !== undefined) clearTimeout(wallClockWatchdog);
           untrack();
         }
         finished = done;

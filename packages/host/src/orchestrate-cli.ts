@@ -77,6 +77,7 @@ import {
   workerRoleAssignment,
 } from './roles/worker-roles.js';
 import {
+  MAX_RUN_TIMEOUT_MS,
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -231,6 +232,11 @@ export interface OrchestratorRunState {
   // intent identifies the in-flight agent so the branch is checked with
   // isBranchMerged and marked merged WITHOUT re-running the worker.
   merging?: string | null;
+  // The opt-in budget this run started with (issue #208, §71): persisted so
+  // --resume re-applies exactly the spec the run was launched under instead
+  // of re-deriving (or dropping) it. A state written before #208 has none,
+  // and a resume may then supply one.
+  budget?: ParsedBudgetSpec;
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -263,6 +269,16 @@ export function parseOrchestratorRunState(
     !value.pending.every((entry) => typeof entry === 'string')
   ) {
     return undefined;
+  }
+  const agents = value.agents as string[];
+  if (value.budget !== undefined) {
+    const budget = parseStoredBudgetSpec(value.budget);
+    if (budget === undefined) return undefined;
+    // A per-agent clause for a worker this run never spawns would look
+    // configured while enforcing nothing (issue #208).
+    for (const agent of Object.keys(budget.byAgent)) {
+      if (!agents.includes(agent)) return undefined;
+    }
   }
   if (typeof value.stopped !== 'boolean') return undefined;
   if (!Array.isArray(value.records)) return undefined;
@@ -806,8 +822,8 @@ interface ParsedArgs {
   // Opt-in budgets (§71, issue #105): absent means NO budget is applied to a
   // spawn. Per-worker overrides arrive as --budget <agent>=<dims>; the shared
   // --budget <dims> applies to every worker of the run.
-  budget?: unknown;
-  budgetsByAgent: Record<string, unknown>;
+  budget?: Record<string, number>;
+  budgetsByAgent: Record<string, Record<string, number>>;
   fullAccess: boolean;
 }
 
@@ -838,6 +854,11 @@ function parseBudgetDims(raw: string): Record<string, number> | undefined {
     const value = Number(trimmed.slice(equals + 1));
     if (!Number.isFinite(value) || !(value > 0)) return undefined;
     if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
+    // setTimeout's 32-bit ceiling (same rule as --timeout): a larger "bound"
+    // would clamp to 1ms and the watchdog would fire, misreporting
+    // limit=wallClock, almost immediately — refused at parse time, never
+    // clamped.
+    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) return undefined;
     dims[name] = value;
   }
   return Object.keys(dims).length === 0 ? undefined : dims;
@@ -845,8 +866,13 @@ function parseBudgetDims(raw: string): Record<string, number> | undefined {
 
 export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
   // Per-agent entries are `<agent>:<dims>` clauses separated by ';' so a
-  // comma stays inside one agent's dimension list.
-  const byAgent: Record<string, Record<string, number>> = {};
+  // comma stays inside one agent's dimension list. The accumulator is
+  // null-prototype (issue #208 review): `__proto__` is a legal agent id, and
+  // on a plain {} accumulator it would set the prototype instead of an own
+  // key, so the clause would vanish from Object.keys and the JSON state.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
   let shared: Record<string, number> | undefined;
   for (const clause of raw.split(';')) {
     const trimmed = clause.trim();
@@ -871,6 +897,109 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
     ...(shared === undefined ? {} : { shared }),
     byAgent,
   };
+}
+
+function storedBudgetDims(raw: unknown): Record<string, number> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const dims: Record<string, number> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
+      return undefined;
+    }
+    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) return undefined;
+    dims[name] = value;
+  }
+  return Object.keys(dims).length === 0 ? undefined : dims;
+}
+
+// The stored form of a ParsedBudgetSpec (OrchestratorRunState.budget). Unlike
+// the flag parser this receives parsed JSON: anything that is not exactly a
+// positive, known-dimension spec fails closed, so resume reports
+// no_orchestrator_state instead of handing garbage to the budget layer.
+export function parseStoredBudgetSpec(
+  raw: unknown,
+): ParsedBudgetSpec | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) => key !== 'shared' && key !== 'byAgent')
+  ) {
+    return undefined;
+  }
+  const shared = storedBudgetDims(record.shared);
+  if (record.shared !== undefined && shared === undefined) return undefined;
+  // Null-prototype for the same reason as parseBudgetSpec (issue #208
+  // review): a stored `__proto__` clause must survive as data.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
+  if (record.byAgent !== undefined) {
+    if (
+      typeof record.byAgent !== 'object' ||
+      record.byAgent === null ||
+      Array.isArray(record.byAgent)
+    ) {
+      return undefined;
+    }
+    for (const [agent, dims] of Object.entries(
+      record.byAgent as Record<string, unknown>,
+    )) {
+      if (validateAgentId(agent).length > 0) return undefined;
+      const parsed = storedBudgetDims(dims);
+      if (parsed === undefined) return undefined;
+      byAgent[agent] = parsed;
+    }
+  }
+  if (shared === undefined && Object.keys(byAgent).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(shared === undefined ? {} : { shared }),
+    byAgent,
+  };
+}
+
+// Canonical equality for two parsed specs (issue #208): resume re-applies the
+// STORED budget, so a flag that differs in any dimension — or names a
+// different agent — is refused rather than silently mixed in.
+export function budgetSpecsEqual(
+  a: ParsedBudgetSpec,
+  b: ParsedBudgetSpec,
+): boolean {
+  const dimsEqual = (
+    x: Record<string, number>,
+    y: Record<string, number>,
+  ): boolean => {
+    const xKeys = Object.keys(x).sort();
+    const yKeys = Object.keys(y).sort();
+    if (xKeys.length !== yKeys.length) return false;
+    return xKeys.every(
+      (key, index) => key === yKeys[index] && x[key] === y[key],
+    );
+  };
+  const sharedEqual =
+    a.shared === undefined || b.shared === undefined
+      ? a.shared === undefined && b.shared === undefined
+      : dimsEqual(a.shared, b.shared);
+  if (!sharedEqual) return false;
+  const aAgents = Object.keys(a.byAgent).sort();
+  const bAgents = Object.keys(b.byAgent).sort();
+  if (aAgents.length !== bAgents.length) return false;
+  return aAgents.every((agent, index) => {
+    const other = bAgents[index] as string;
+    return (
+      agent === other &&
+      dimsEqual(
+        a.byAgent[agent] as Record<string, number>,
+        b.byAgent[other] as Record<string, number>,
+      )
+    );
+  });
 }
 
 // `--agents a,b`: comma-separated worker ids, each a valid agent id and
@@ -1080,6 +1209,18 @@ export async function runOrchestrateCommand(
   // untrusted JSON — anything malformed fails closed here as
   // no_orchestrator_state. A stopped queue also fails closed here —
   // blocked candidates are re-reported, never retried silently.
+  //
+  // §71 budget ownership (issue #208): the requested spec is reconstructed
+  // once here; it is persisted below on a fresh run and re-applied from the
+  // state on --resume (a differing flag is refused after the state loads).
+  const requestedBudget: ParsedBudgetSpec | undefined =
+    parsed.budget === undefined &&
+    Object.keys(parsed.budgetsByAgent).length === 0
+      ? undefined
+      : {
+          ...(parsed.budget === undefined ? {} : { shared: parsed.budget }),
+          byAgent: { ...parsed.budgetsByAgent },
+        };
   let state: OrchestratorRunState;
   if (parsed.resume) {
     const loaded = await deps.loadState?.(sessionId);
@@ -1130,6 +1271,53 @@ export async function runOrchestrateCommand(
       stopped: false,
       records: [],
     };
+  }
+  // A per-agent clause must name an agent of THIS run: the stored session's
+  // list on resume, the parsed --agents list otherwise. A clause for a worker
+  // that never spawns would look configured while enforcing nothing
+  // (issue #208).
+  const unknownBudgetAgent =
+    requestedBudget === undefined
+      ? undefined
+      : Object.keys(requestedBudget.byAgent).find(
+          (agent) => !state.agents.includes(agent),
+        );
+  if (unknownBudgetAgent !== undefined) {
+    log.error(
+      `--budget names worker '${unknownBudgetAgent}', which is not part of this run (agents: ${state.agents.join(', ')})`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  // --resume re-applies the STORED spec; a flag naming a different one is
+  // refused rather than silently mixed in (issue #208). A state written
+  // before the budget persisted has nothing to differ from — the flag is
+  // adopted and persisted below.
+  if (
+    parsed.resume &&
+    state.budget !== undefined &&
+    requestedBudget !== undefined &&
+    !budgetSpecsEqual(state.budget, requestedBudget)
+  ) {
+    log.error(
+      `--budget differs from the budget stored for session '${sessionId}': --resume re-applies the stored spec — drop the flag to continue`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  const effectiveBudget = state.budget ?? requestedBudget;
+  // The spec this run started with travels with its state (issue #208): a
+  // fresh run adopts the requested spec here, a pre-#208 stored state adopts
+  // one supplied on resume.
+  if (effectiveBudget !== undefined && state.budget === undefined) {
+    state = { ...state, budget: effectiveBudget };
+  }
+  // No approvals layer means no gate to enforce the spec. Refused, never
+  // silently dropped — the exact false sense of cost control issue #208
+  // exists to remove.
+  if (effectiveBudget !== undefined && deps.approvals === undefined) {
+    log.error(
+      '--budget cannot be enforced: this run has no approvals layer wired — refusing rather than dropping the limit',
+    );
+    return RUN_EXIT_USAGE;
   }
   // Role documents on the delegation path (issue #104, §12/§12.1). The
   // loader runs BEFORE anything spawns or merges: a contradictory document
@@ -1269,11 +1457,14 @@ export async function runOrchestrateCommand(
       deps.approvalPolicy?.maxPendingMs ?? ORCHESTRATE_APPROVAL_BOUND_MS,
     // No `--yes` here (issue #323): the standing answer is the MERGE gate's,
     // never a worker-ask seat.
-    ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),
+    ...(effectiveBudget?.shared === undefined
+      ? {}
+      : { budget: effectiveBudget.shared }),
     // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
-    // of THAT spawn only; absent, the shared spec applies.
+    // of THAT spawn only; absent, the shared spec applies. The spec read here
+    // is the EFFECTIVE one: a resume re-applies what the state stored.
     budgetForAgent: (agentId: string) =>
-      parsed.budgetsByAgent[agentId] ?? parsed.budget,
+      effectiveBudget?.byAgent[agentId] ?? effectiveBudget?.shared,
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
   });
   const approvalScopeFor = (

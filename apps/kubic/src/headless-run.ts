@@ -55,6 +55,14 @@ import {
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
 import {
+  BUDGET_EXHAUSTED,
+  type BudgetLimit,
+  createRunBudgetEnforcer,
+  type OrchestratorBudget,
+  parseWorkerBudgetEnv,
+  RUN_EXIT_BUDGET,
+} from '../../../packages/host/src/orchestrator/approvals/budgets.js';
+import {
   createWorkerMailboxSeat,
   TIMEOUT_REASON_MARKER,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
@@ -109,6 +117,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  type Hooks,
   type MutableModels,
   type OperationResultRecord,
   type Session,
@@ -258,6 +267,21 @@ class WallClockError extends Error {
   }
 }
 
+// §71 child-side budget exhaustion (issue #208): the worker's own lane hit a
+// dimension of the KUBIC_BUDGET the manager handed down. Control flow, never a
+// lane failure: caught below and mapped to budget_exhausted (exit 3) with the
+// exact limit that tripped.
+export class BudgetExceededError extends Error {
+  readonly limit: BudgetLimit;
+  constructor(limit: BudgetLimit) {
+    super(
+      `budget ${BUDGET_EXHAUSTED} (limit=${limit}): the worker exceeded its configured ${limit} budget, exit ${RUN_EXIT_BUDGET}`,
+    );
+    this.name = 'BudgetExceededError';
+    this.limit = limit;
+  }
+}
+
 // An interrupt (SIGINT/SIGTERM/SIGHUP) ends the drive like a guard does: control
 // flow, mapped to `failed` (exit 1) after the drain — §78 has no separate
 // interrupt code.
@@ -353,6 +377,7 @@ async function driveWithGuard(
   boundMs: number,
   maxTurns: number | undefined,
   interrupted: Promise<never>,
+  budgetExceeded: Promise<never>,
 ): Promise<SettledDrive> {
   let turns = 0;
   const counting: LaneDriver = {
@@ -369,6 +394,10 @@ async function driveWithGuard(
     return await Promise.race([
       driveToSettled(counting, operationId, context),
       interrupted,
+      // An exhausted KUBIC_BUDGET (issue #208): the drive is abandoned and
+      // the caller maps the rejection to budget_exhausted, exactly like the
+      // wall-clock guard below.
+      budgetExceeded,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new WallClockError(boundMs)), boundMs);
       }),
@@ -653,6 +682,17 @@ async function runHeadlessPromptImpl(
     (!Number.isInteger(options.maxTurns) || options.maxTurns <= 0)
   ) {
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  // §71 child-side budget (issue #208): the manager hands each worker its
+  // resolved spec through the §3.8 allowlisted KUBIC_BUDGET. A malformed
+  // payload fails closed as a usage terminus — a silently dropped limit is
+  // the false sense of cost control this issue exists to remove.
+  let runBudget: OrchestratorBudget | undefined;
+  try {
+    runBudget = parseWorkerBudgetEnv(process.env.KUBIC_BUDGET);
+  } catch (error) {
+    const invalid = error instanceof Error ? error.message : String(error);
     return finished('unassigned', 'usage', invalid, invalid);
   }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
@@ -1165,6 +1205,23 @@ async function runHeadlessPromptImpl(
       pin: deps.model,
       roleModel: role?.resolved.model,
     });
+    // §71 child-side enforcement (issue #208): one meter for the run, built
+    // BEFORE the lane so its before_tool gate can subscribe BEFORE the
+    // policy interceptors — Pi's before_tool chain stops at the first block,
+    // so a later subscriber would never count a blocked/denied attempt. A
+    // breach rejects the drive race, so the run ends BUDGET_EXHAUSTED
+    // (exit 3) with the dimension named — never a silent overspend.
+    const budgetPlan = runBudget;
+    let rejectBudget: ((error: Error) => void) | undefined;
+    const budgetExceeded = new Promise<never>((_resolve, reject) => {
+      rejectBudget = reject;
+    });
+    const budgetEnforcer =
+      budgetPlan === undefined
+        ? undefined
+        : createRunBudgetEnforcer(budgetPlan, (termination) => {
+            rejectBudget?.(new BudgetExceededError(termination.limit));
+          });
     try {
       solo = await bootSoloLane({
         session,
@@ -1201,6 +1258,15 @@ async function runHeadlessPromptImpl(
           classes: installed.classes,
           interceptors: installed.interceptors,
           ...(contributions.length === 0 ? {} : { contributions }),
+          // §71 (issue #208): the budget meter goes FIRST. The chain stops
+          // at the first block, so this is what makes a destructive or
+          // network-denied call still count against maxToolCalls.
+          ...(budgetEnforcer === undefined
+            ? {}
+            : {
+                beforePolicyHooks: (hooks: Hooks) =>
+                  hooks.on('before_tool', budgetEnforcer.onToolAttempt),
+              }),
         },
       });
     } catch (error) {
@@ -1224,6 +1290,14 @@ async function runHeadlessPromptImpl(
     // lanes) yields no registry: telemetry degrades to lane/run spans and
     // never fails the run.
     const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
+    // §71 child-side enforcement (issue #208): the usage half of the meter.
+    // Usage is an event, not a hook, so it has no ordering constraint; it
+    // shares the meter the before_tool gate already registered.
+    const detachBudgetUsage =
+      budgetEnforcer === undefined
+        ? undefined
+        : harness.events.on('usage', budgetEnforcer.onUsage);
+    const detachBudgetHooks = solo.detachBeforePolicyHooks;
     try {
       const beforeAccept = bootInterrupted();
       if (beforeAccept !== undefined) return beforeAccept;
@@ -1268,6 +1342,7 @@ async function runHeadlessPromptImpl(
                 boundMs,
                 options.maxTurns,
                 interrupted,
+                budgetExceeded,
               ),
           );
           notice(describeSettlement(settled));
@@ -1304,6 +1379,7 @@ async function runHeadlessPromptImpl(
           boundMs,
           options.maxTurns,
           interrupted,
+          budgetExceeded,
         );
       } catch (error) {
         // Guard exhaustion or an interrupt only: any other throw re-enters
@@ -1315,7 +1391,8 @@ async function runHeadlessPromptImpl(
         }
         if (
           error instanceof TurnBudgetError ||
-          error instanceof WallClockError
+          error instanceof WallClockError ||
+          error instanceof BudgetExceededError
         ) {
           const message = error.message;
           spans.endLane(driveSpan, message);
@@ -1385,6 +1462,8 @@ async function runHeadlessPromptImpl(
           : `${record.error.code}: ${record.error.message}`;
       return finished(id, terminus, summary, summary);
     } finally {
+      detachBudgetHooks?.();
+      detachBudgetUsage?.();
       detachToolSpans();
     }
   } catch (error) {

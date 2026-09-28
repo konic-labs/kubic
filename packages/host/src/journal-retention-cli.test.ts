@@ -204,6 +204,12 @@ describe('read-time journal self-heal (issue #119)', () => {
       {
         root,
         sessionsRoot,
+        // Issue #362: both sessions were recorded for this workspace.
+        sessionWorkspaces: async () =>
+          new Map([
+            ['sess-old', root],
+            ['sess-new', root],
+          ]),
         retentionDays: sessionRetentionDays(loaded),
         out: o.write,
       },
@@ -211,7 +217,9 @@ describe('read-time journal self-heal (issue #119)', () => {
 
     expect(code).toBe(0);
     // No `err` channel given: the fallback note lands on `out`.
-    expect(o.lines[0]).toBe('info: session: sess-new (latest session journal)');
+    expect(o.lines[0]).toBe(
+      `info: session: sess-new (latest session journal for this workspace) — workspace ${root}`,
+    );
     const healed = indexLines(newDir);
     expect(healed).toHaveLength(1);
     expect(healed[0]).toContain('fresh.txt');

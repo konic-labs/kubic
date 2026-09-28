@@ -49,8 +49,9 @@ function jsonOption() {
 }
 
 const DIFF_HELP = `
-Store: --session <id>, else <cwd>/.kubic/journal, else the latest session
-journal (named on stderr).
+Store: --session <id> (paths resolve in that session's recorded workspace),
+else <cwd>/.kubic/journal, else the latest session journal recorded for this
+workspace (named on stderr).
 
 Examples:
   $ kubic diff                         # every journaled change, as a diff

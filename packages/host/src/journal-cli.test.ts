@@ -88,8 +88,15 @@ describe('journal CLI (issue #18, slice D)', () => {
         },
       ),
     ).toBe(0);
-    const parsed = JSON.parse(json.join('\n')) as Array<{ path: string }>;
-    expect(parsed[0]?.path).toBe('a.txt');
+    const parsed = JSON.parse(json.join('\n')) as {
+      session: string | null;
+      root: string | null;
+      changes: Array<{ path: string }>;
+    };
+    // Issue #362: the document names the resolved store.
+    expect(parsed.session).toBe(null);
+    expect(parsed.root).toBe(root);
+    expect(parsed.changes[0]?.path).toBe('a.txt');
   });
 
   it('undoes to pre-run content, dry-runs cleanly, and logs the timeline', async () => {
@@ -289,7 +296,8 @@ describe('journal CLI corrupt content (issue #111)', () => {
 // store no runtime path writes (runs journal under
 // `<sessions-root>/<id>/journal`), so `kubic diff` after `kubic run` printed
 // `no changes` from a dead store. With no workspace store, bare commands
-// fall back to the latest session journal and name it first (`session: <id>`)
+// fall back to the latest session journal recorded for this workspace (#362)
+// and name it first (`session: <id>`)
 // so the fallback is never silent; `--json` keeps its parseable envelope.
 describe('journal CLI default store fallback (issue #125)', () => {
   function seedSessions(): {
@@ -330,6 +338,14 @@ describe('journal CLI default store fallback (issue #125)', () => {
     return { root, sessionsRoot, oldId, newId };
   }
 
+  // Issue #362: both sessions were recorded for `root` (the fallback only
+  // considers sessions recorded for the current workspace).
+  const recordedAt = (root: string) => async (): Promise<Map<string, string>> =>
+    new Map([
+      ['sess-old', root],
+      ['sess-new', root],
+    ]);
+
   it('bare diff falls back to the latest session journal and names it first', async () => {
     const { root, sessionsRoot, newId } = seedSessions();
     const lines: string[] = [];
@@ -339,13 +355,16 @@ describe('journal CLI default store fallback (issue #125)', () => {
       {
         root,
         sessionsRoot,
+        sessionWorkspaces: recordedAt(root),
         out: (l) => lines.push(l),
         err: (l) => errs.push(l),
       },
     );
     expect(code).toBe(0);
     // The note is a diagnostic: stderr, before any report line.
-    expect(errs).toEqual([`info: session: ${newId} (latest session journal)`]);
+    expect(errs).toEqual([
+      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+    ]);
     expect(lines[0]).toBe('--- a/new.txt');
     const text = lines.join('\n');
     expect(text).toContain('new.txt');
@@ -362,12 +381,15 @@ describe('journal CLI default store fallback (issue #125)', () => {
         {
           root,
           sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
           out: (l) => log.push(l),
           err: (l) => errs.push(l),
         },
       ),
     ).toBe(0);
-    expect(errs).toEqual([`info: session: ${newId} (latest session journal)`]);
+    expect(errs).toEqual([
+      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+    ]);
     expect(log.join('\n')).toContain('new.txt');
     const status: string[] = [];
     errs.length = 0;
@@ -377,12 +399,15 @@ describe('journal CLI default store fallback (issue #125)', () => {
         {
           root,
           sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
           out: (l) => status.push(l),
           err: (l) => errs.push(l),
         },
       ),
     ).toBe(0);
-    expect(errs).toEqual([`info: session: ${newId} (latest session journal)`]);
+    expect(errs).toEqual([
+      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+    ]);
     expect(status[0]).toBe('entries: 1 (reversible: 1, non-reversible: 0)');
     expect(status.join('\n')).toContain('entries: 1');
   });
@@ -395,13 +420,18 @@ describe('journal CLI default store fallback (issue #125)', () => {
       {
         root,
         sessionsRoot,
+        sessionWorkspaces: recordedAt(root),
         out: (l) => lines.push(l),
         err: (l) => lines.push(l),
       },
     );
     expect(code).toBe(0);
-    const parsed = JSON.parse(lines.join('\n')) as Array<{ path: string }>;
-    expect(parsed.map((c) => c.path)).toEqual(['new.txt']);
+    const parsed = JSON.parse(lines.join('\n')) as {
+      session: string;
+      changes: Array<{ path: string }>;
+    };
+    expect(parsed.session).toBe('sess-new');
+    expect(parsed.changes.map((c) => c.path)).toEqual(['new.txt']);
     expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
   });
 
@@ -424,6 +454,7 @@ describe('journal CLI default store fallback (issue #125)', () => {
       {
         root,
         sessionsRoot,
+        sessionWorkspaces: recordedAt(root),
         out: (l) => lines.push(l),
       },
     );
@@ -460,6 +491,7 @@ describe('journal CLI default store fallback (issue #125)', () => {
           {
             root,
             sessionsRoot,
+            sessionWorkspaces: recordedAt(root),
             out: (l) => lines.push(l),
           },
         ),
@@ -484,12 +516,15 @@ describe('journal CLI default store fallback (issue #125)', () => {
       {
         root,
         sessionsRoot,
+        sessionWorkspaces: recordedAt(root),
         out: (l) => lines.push(l),
         err: (l) => errs.push(l),
       },
     );
     expect(code).toBe(0);
-    expect(errs).toEqual([`info: session: ${newId} (latest session journal)`]);
+    expect(errs).toEqual([
+      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+    ]);
     expect(lines.join('\n')).toContain('would restore 1 step(s)');
     expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('n2\n');
   });
@@ -504,6 +539,7 @@ describe('journal CLI default store fallback (issue #125)', () => {
       {
         root,
         sessionsRoot,
+        sessionWorkspaces: recordedAt(root),
         out: (l) => lines.push(l),
         err: (l) => errs.push(l),
       },
@@ -526,7 +562,11 @@ describe('journal CLI default store fallback (issue #125)', () => {
         },
       ),
     ).toBe(0);
-    expect(json).toEqual(['[]']);
+    expect(JSON.parse(json.join('\n'))).toEqual({
+      session: null,
+      root,
+      changes: [],
+    });
   });
 
   it('a missing sessions root is the same empty path, no throw', async () => {
@@ -764,7 +804,7 @@ describe('journal CLI diff --json content bounds (issue #126)', () => {
       },
     );
     expect(code).toBe(0);
-    return JSON.parse(lines.join('\n')) as JsonChange[];
+    return (JSON.parse(lines.join('\n')) as { changes: JsonChange[] }).changes;
   }
 
   it('clips both sides at exactly 64 KiB by default, with marker and flag', async () => {
@@ -929,16 +969,16 @@ describe('journal CLI --json parity', () => {
     expect(doc).toMatchObject({ restored: [], skipped: [] });
   });
 
-  it('diff and log --json on an empty journal are JSON arrays', async () => {
+  it('diff and log --json on an empty journal carry empty arrays', async () => {
     const root = mkTmp('ws-');
     const journalDir = mkTmp('j-');
     expect(
       (await runJson({ command: 'diff', json: true }, { journalDir, root }))
         .doc,
-    ).toEqual([]);
+    ).toEqual({ session: null, root, changes: [] });
     expect(
       (await runJson({ command: 'log', json: true }, { journalDir, root })).doc,
-    ).toEqual([]);
+    ).toEqual({ session: null, root, entries: [] });
   });
 });
 

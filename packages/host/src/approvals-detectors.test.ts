@@ -488,6 +488,11 @@ describe('shell-expanded and cd-relative write targets (issue #355)', () => {
       'cd /etc && echo x > y',
       'pushd /tmp && cp a b',
       'cd /etc; tee y',
+      'cd "/etc" && echo x > y',
+      "cd '/etc' && cp a b",
+      'cd -P /etc && echo x > y',
+      'cd `pwd` && echo x > y',
+      'cd /etc && cd sub && echo x > y',
       'cd .. && echo x > y',
       'cd sub && cd ../.. && echo x > y',
       // An unknown destination fails closed for relative targets.
@@ -513,6 +518,9 @@ describe('shell-expanded and cd-relative write targets (issue #355)', () => {
       'cp a b/c',
       'cd /etc && echo x > /work/y',
       'cd -P sub && echo x > y',
+      'cd -L -P sub && echo x > y',
+      'cd -LP  sub && echo x > y',
+      "cd '/work/sub' && echo x > y",
       // A redirect BEFORE the cd is resolved against the workspace.
       'echo x > y && cd /etc',
     ]) {
@@ -594,6 +602,8 @@ describe('every redirect is scanned (issue #326)', () => {
       'cmd &>> /etc/all.log',
       'echo x >| /etc/x',
       'echo x 1>>/etc/x',
+      'cmd >& /etc/all.log',
+      'cd /etc && cmd >&out.log',
       "echo ok > a.txt; echo x > '/etc/q'",
       'echo x >/etc/x;ls',
     ]) {
@@ -616,6 +626,10 @@ describe('every redirect is scanned (issue #326)', () => {
       // Stream pseudo-devices are not persistent writes: a second-segment
       // `2>/dev/null` must not turn every quiet command into an ask.
       'cmd > out.txt 2>/dev/null',
+      // fd duplication names no file, even where a relative token would
+      // resolve outside.
+      'cd /etc && ls 2>&1',
+      'cd /etc && ls >&2 2>&-',
       'ls missing 2> /dev/null || echo none > /dev/stderr',
       'echo hi > /dev/stdout; echo x >/dev/tty',
       'echo x > /dev/fd/2',

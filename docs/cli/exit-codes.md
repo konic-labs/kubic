@@ -15,7 +15,7 @@
 | Code | Terminus / meaning | When you see it |
 | --- | --- | --- |
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
-| 1 | `failed` | Run failed without a more specific cause; doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
+| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
 | 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with skipped steps — non-reversible, stale, or already-undone (see below). |
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
@@ -50,9 +50,10 @@
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
   listing (the same usage line an unknown command gets).
-- **Bare `kubic`** (no command): 1, with the identical listing —
+- **Bare `kubic`** (no command) off a TTY: 1, with the identical listing —
   usage-on-no-args is the deliberate POSIX posture, so `--help` and the
-  bare invocation differ only in their exit code.
+  bare invocation differ only in their exit code. On an interactive
+  terminal a bare `kubic` opens the TUI and exits as `kubic tui` does.
 - **Unexpected top-level failures** (a bug in a command's wiring, an
   unshaped IO error): one `error: <message>` line on stderr, 1 — the full
   stack only with `KUBIC_DEBUG=1` (see
@@ -73,6 +74,7 @@
 - **`kubic orchestrate`**: 0 all workers merged; 1 session-creation,
   spawn, worker, merge, or reap failure, or resume with no state
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
+  `result_invalid` (a worker exited 0 without a valid §68 result report),
   `spawn_denied`, `merge_failed`, `merge_conflict`,
   `no_orchestrator_state`, `reap_failed`); 2 usage errors and the non-git
   refusal (never silently solo); 4 approval denied **or** approval timeout

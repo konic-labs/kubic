@@ -53,6 +53,9 @@ the same thing as one object — `values`: `{ key, value, layer }` per set
 key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
 instead of printing defaults.
+`kubic config --help` (or `-h`) prints `usage: kubic config [--json]` and
+exits 0 without loading anything; an unknown flag prints the same line and
+exits 1.
 
 A refusal also stops the modes that execute an agent: `kubic run`,
 `kubic orchestrate` and `kubic tui` exit 1 with the named reason rather than
@@ -255,7 +258,14 @@ not. The split, exactly as shipped:
   `scripts/runtime-exclude.test.mjs` and the config tests.
 - **Models**: `./models.json` in the working directory (custom providers
   registered on top of built-ins; a `loaded models.json:` /
-  `models.json ignored:` note is printed on `models`/`doctor`/`run`).
+  `models.json ignored:` note is printed on `models`/`doctor`; `run`
+  always prints `models.json ignored: …` on stderr and the `loaded` receipt
+  only under `--debug`). A model without `contextWindow`/`maxTokens` gets
+  fail-safe defaults `8192`/`2048` (small local servers overflow above
+  them). The 16384-token compaction reserve is
+  clamped to a quarter of the model's window (an 8192-token model reserves
+  2048), so a small-window model compacts only near its limit, never every
+  turn.
 - **Sessions store**: `~/.kubic/sessions` by default. Retention is opt-in
   and manual: `kubic sessions prune` lists candidates by default and
   deletes only with `--yes`, and `[session] retentionDays` (above) supplies

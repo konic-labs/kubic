@@ -20,9 +20,11 @@ exactly the flags its parser accepts.
 
 The **root dispatcher** follows the same convention (issue #128):
 `kubic --help` / `kubic -h` prints the top-level command listing — the
-full `usage` line below — and exits 0. A **bare `kubic`** (no command)
-prints the *identical* listing and exits 1: usage-on-no-args is the deliberate
-POSIX posture, so only the exit code differs between the two paths.
+full `usage` line below — and exits 0. A **bare `kubic`** (no command) on
+an interactive terminal (stdin and stdout both a TTY) opens the TUI, exactly
+as `kubic tui`. Off a TTY (a pipe, CI, a script) it prints the *identical*
+listing and exits 1: usage-on-no-args is the deliberate POSIX posture, so
+only the exit code differs between the two paths.
 `scripts/binary-contract.mjs` pins both exits and the line itself, so the
 dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 
@@ -44,8 +46,17 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
 | `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
-| `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel). Off by default; stdout stays consumable. |
+| `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. |
+
+**Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` (e.g. an orchestrator
+stopping a worker) and `SIGHUP` during a run are handled like the
+wall-clock guard (a signal during boot, before the prompt is admitted,
+cancels the boot — the lane never drives): the in-flight tool process groups are killed at once, the
+operation is aborted durably, the reconciliation sweep runs, the session is
+closed, and the run prints its normal result with `status: failed`,
+`run interrupted by <SIGNAL>` (exit 1). A second signal while that cleanup
+runs takes the default path and ends the process immediately.
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 `usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`); on failure an
@@ -79,7 +90,11 @@ Anything else keeps the typo guard: no terminator means no promotion
 rescued by a later `--` (`kubic run -p --json -- x` exits 2), a `-p`
 starved *after* a prompt is already set or a starved duplicate ahead of
 the terminator-answered one is still `-p needs a value` (exit 2), and a
-bare `kubic run -- <x>` is a stray operand (exit 2), never a prompt. An
+bare `kubic run -- <x>` is a stray operand (exit 2), never a prompt. A
+positional prompt without `-p` (`kubic run "fix tests"`) is refused the
+same way (exit 2) with the exact form to use:
+`error: unexpected argument "fix tests" — the prompt is a flag: kubic run -p 'fix tests'`
+(single-quoted, so nothing in the suggestion expands when pasted). An
 empty prompt (`--prompt=`, `-p ''`) is refused the same way. Note
 `--help`/`-h` anywhere in argv is answered by the help convention before
 parsing (issue #100) — a literal `--help` prompt needs the equals form.
@@ -167,6 +182,22 @@ as evidence (only `kubic clean` disposes) — that claim is asserted by
 if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
+Workers never outlive the manager on a signal: each child runs in its own
+process group, so while any worker is live the manager traps
+SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
+then re-delivers the signal. A manager killed with SIGKILL cannot do this.
+A manager killed hard (SIGKILL, crash) leaves rows claiming live workers; the
+next `kubic orchestrate` start reconciles them: an orphan still running under
+its own `--session` is killed (`cancelled`), a dead one is marked `crashed`,
+and a reused pid that is not a Kubic worker is never touched. A legacy row
+that names no manager is never killed (only marked `crashed` once dead).
+`workers.json` updates are atomic and lock-serialized; an unparsable file is
+refused, never overwritten. A signal owned by another listener (the TUI) still
+stops the run: the in-flight worker fails with `code=cancelled`.
+A worker exit code of 0 is not success on its own: the child's final `--json`
+report must be `ok`, `completed`, name the worker's own session and carry a
+summary, and the §68 AgentResult built from it must validate — otherwise the
+run fails with `code=result_invalid`.
 
 **The delegation model, as shipped (issues #95, #103, #104, #106).** The CLI process is the
 manager: it registers the manager lane's toolset through the §40 allowlist
@@ -322,6 +353,10 @@ The explicit-only disposer for retained orchestrator state. `orchestrate`
 keeps every spawned worktree (`<root>/.kubic/wt/<agent>`) and branch
 (`kubic/<agent>`) as evidence (§44.1); `clean` is the only command that
 removes them. It also carries the §42.4 journal retention prune.
+A worktree whose worker process is still live (per `workers.json`) is never
+removed: it is reported (`worker '<agent>' is still live (pid N)`), its branch
+is kept, and the command exits 1 — `--force` stops the worker's process group,
+then disposes it.
 
 Refusal posture: the planned set is exactly Kubic's own spawned set — a
 worktree under `<root>/.kubic/wt/` **on a `kubic/<agent>` branch**, plus
@@ -393,6 +428,18 @@ status bar fills with usage rows. While a turn runs the editor disables
 submit; `Ctrl-C` cancels the in-flight operation and keeps the session
 alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
 
+**Screen layout.** Top to bottom: a one-line header (the Konic `■ kubic`
+wordmark, mode and model); the agent tree, sized to its content (at most 6
+rows — older calls fold into `… N earlier calls`); the transcript, which
+follows the end as the turn streams (your prompt is echoed as `› …` the
+moment you submit, assistant prose renders as markdown, and each tool call
+renders as `● name args` with its output folded underneath `⎿`); the
+status bar; the editor; and a footer row that shows a `working… 3s`
+spinner during a turn and the solo notice or the turn's outcome otherwise.
+Colour follows the Konic palette on truecolor terminals, falls back to
+256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY
+stdout (`FORCE_COLOR=0..3` overrides).
+
 | Key | Meaning |
 | --- | --- |
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
@@ -400,6 +447,7 @@ alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
 | `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
 | `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
+| `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
 | `a` | Approval overlay: **allow once** the challenged call. |
 | `s` | Approval overlay: **allow for the session**. |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call. |
@@ -447,13 +495,13 @@ terminal. The renderer's own styling is unaffected.
 Sessions live under `~/.kubic/sessions` by default.
 
 ```
-usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
+usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list [--json] | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a warning — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list` | One `<id>  <cwd>` line per session. |
+| `list [--json]` | One `<id>  <cwd>` line per session. `--json` prints one array of `{id, cwd}` objects — `[]` when there are none. An unknown flag prints the usage and exits 1. |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`**. See [Session retention](#session-retention-prune) below. |
 
@@ -583,13 +631,13 @@ session dirs, one entry at a time. The workspace journal is not affected
 unset — or `0` — the log path writes nothing: reads never mutate the store.
 
 ```
-usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--session <id>] [--] [<path>] | log [--session <id>] | status [--session <id>]>
+usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--json] [--session <id>] [--] [<path>] | log [--json] [--session <id>] | status [--json] [--session <id>]>
 ```
 
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, exits 1. |
-| `undo [--] [<path>] [--step] [--dry-run] [--force] [--session <id>]` | Restore journaled changes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
@@ -607,6 +655,13 @@ would write), so layered edits unwind in order. The matrix:
 | missing | delete entry (after is null) | restore (brings pre-delete content back) |
 | exists at a journaled *before*-state | any | **already undone: skip** (a prior undo reached this state — re-writing would be a no-op mislabeled as restored) |
 | exists but unreadable | any | **stale: skip** (cannot verify — refuse) |
+| exists, hash == recorded after | agent **create** (no before) | restore = **remove the file** (its pre-state was "absent") |
+| missing | agent **create** | **already undone: skip** (already absent — also with `--force`) |
+
+An agent-authored create (the write tool made a new file) reverts by removing
+the file; the removal is journaled as a `kubic-undo` delete carrying the
+removed content, so `kubic undo --step` right after it is the redo.
+Unattributed reconciliation creates stay non-reversible.
 
 `--force` overrides the stale refusals per-invocation (nothing persists it;
 the next `undo` re-checks by default). `--force` does not override
@@ -629,7 +684,7 @@ targets `kubic-undo` records: it restores real agent work once and then
 reports `already undone` without appending, so repeating it never re-undoes
 the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
 | `log [--json] [--session <id>]` | One line per journal entry (`journal is empty` + exit 0 when empty); `--json` prints the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
-| `status [--session <id>]` | `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
+| `status [--json] [--session <id>]` | `--json` prints the status object (`entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `repo`). Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown`. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
 
 **Display truthfulness (issue #126).** Three display-level guarantees on the
 read side:
@@ -746,7 +801,8 @@ Worker list read from the repo's persisted record
 (`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
 fresh empty registry): one line per worker with
 the §13 status verbatim, age, owner, pid, startup span ms, and
-resources (`skills=… templates=…`, `-` when none). A repo that never ran
+resources (`skills=… templates=…`, `-` when none). A row that claims a live status
+whose worker and manager processes are both gone is shown as `crashed`. A repo that never ran
 an orchestrator has no record — no text output (`--json` prints `[]`), exit 0.
 
 | Flag | Meaning |
@@ -892,9 +948,11 @@ and exits 2.
 ## `kubic policy --tool <name> [--json]`
 
 Policy query as a routing offer (never enforcement): `allow <tool>`
-or `deny <tool>` under the enterprise default (deny-by-default — a
-tool with no enterprise allow is denied). Tool names match case- and
-whitespace-insensitively.
+or `deny <tool>` against the tool policy a run from this directory
+actually installs — the same permission classes, over the same config
+load, that `kubic run` enforces and `kubic doctor` reports on its
+`policy:installed` line. Deny-by-default: a tool outside that installed
+allowlist is denied. Tool names match case- and whitespace-insensitively.
 
 | Flag | Meaning |
 | --- | --- |
@@ -910,9 +968,16 @@ Audit-trail query: exact match on each supplied dimension, full
 14-field records out (one JSON object per line; `no audit records` +
 exit 0 when empty). Every printed record is redacted first —
 secret-shaped values and listed-secret inventory values become
-`[redacted-secret]` — so credentials stay sentinel-only. No audit
-persistence is wired yet, so the one-shot CLI reads zero rows; the
-filters and the redaction are live.
+`[redacted-secret]` — so credentials stay sentinel-only. Records come
+from the repo's §60 ledger, `.kubic/orchestrator/approvals/audit.jsonl`
+under the current directory (one record per line, covered by the shipped
+runtime ignore rules). `kubic orchestrate` appends one record per
+approval decision — approved, denied, timed out, or a refused manager
+approve — with `--posture approvals` or `full-access`. Solo approval
+decisions (`kubic run` / `kubic tui`) append one `mode: solo` record per
+resolved ask — approved or denied, `posture` `approvals` or `full-access`
+— to the workspace's ledger; a failed ledger write never changes the
+decision.
 
 | Flag | Meaning |
 | --- | --- |

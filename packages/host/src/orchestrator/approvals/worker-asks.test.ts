@@ -22,7 +22,8 @@ describe('worker ask question (issue #131)', () => {
       provenance: { parentSessionId: 'root-sess' },
     });
     expect(formatWorkerAskQuestion(request)).toBe(
-      "worker 'agent-1' requests privilege-escalation (bash): restart the service after the deploy — approve?",
+      // Issue #316: the full command is part of the question.
+      "worker 'agent-1' requests privilege-escalation (bash): restart the service after the deploy\n  command: sudo systemctl restart foo\napprove?",
     );
   });
 });

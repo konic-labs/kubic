@@ -96,6 +96,10 @@ export interface ApprovalSurface {
   // Issue #315: false during the arming window after a request appears —
   // every decision key but the immediate deny is ignored until then.
   isArmed(): boolean;
+  // Issue #316: the page of a long command the dialog shows, and the
+  // `v` key that advances it (wrapping back to the first page).
+  commandPage(): number;
+  nextCommandPage(): boolean;
   // Settles every queued and shown request as a deny. Used by the quit path
   // and by the in-flight cancel path, so nothing is left hanging.
   cancelPending(reason?: string): void;
@@ -186,6 +190,7 @@ export function createApprovalSurface(
   const now = options.now ?? ((): number => performance.now());
   const setTimer = options.setTimer ?? defaultArmTimer;
   let shownAt = 0;
+  let page = 0;
   let cancelArmTimer: (() => void) | undefined;
   const notify = (): void => {
     hooks.onChange?.();
@@ -201,6 +206,7 @@ export function createApprovalSurface(
     // own arming window, and the frame repaints when it arms so the key
     // hints unlock visibly.
     shownAt = now();
+    page = 0;
     cancelArmTimer?.();
     cancelArmTimer = undefined;
     if (armingMs > 0) {
@@ -263,6 +269,13 @@ export function createApprovalSurface(
     pending: (): SurfaceRequest | undefined => shown?.request,
     isShowing: (): boolean => shown !== undefined,
     isArmed,
+    commandPage: (): number => page,
+    nextCommandPage: (): boolean => {
+      if (shown === undefined) return false;
+      page += 1;
+      notify();
+      return true;
+    },
     cancelPending: (reason?: string): void => {
       const decision: ApprovalDecision = {
         approved: false,
@@ -281,6 +294,7 @@ export function createApprovalSurface(
       if (current === undefined) return [];
       return renderApprovalInline(current.request, width, {
         armed: isArmed(),
+        commandPage: page,
         keys: surface.keys(),
       });
     },
@@ -289,6 +303,7 @@ export function createApprovalSurface(
       if (current === undefined) return [];
       return renderApprovalLines(current.request, width, {
         armed: isArmed(),
+        commandPage: page,
         keys: surface.keys(),
       });
     },

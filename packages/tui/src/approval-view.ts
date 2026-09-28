@@ -108,6 +108,52 @@ function truncateLine(line: string, width: number): string {
 export interface ApprovalRenderOptions {
   readonly armed?: boolean;
   readonly keys?: Record<ApprovalAction, readonly string[]>;
+  // Issue #316: which page of a long command is shown (wraps around).
+  readonly commandPage?: number;
+}
+
+// Issue #316: the dialog shows what will actually run. A command wraps
+// across rows; one page holds this many rows, and a taller command shows an
+// explicit `… command lines a–b of n · [v] next page` marker — the height is
+// capped honestly, never by a silent character slice.
+export const APPROVAL_COMMAND_PAGE_LINES = 8;
+export const APPROVAL_PAGE_KEY = 'v';
+const COMMAND_PREFIX = 'command: ';
+
+function commandRows(command: string, width: number): string[] {
+  const room = Math.max(1, width - COMMAND_PREFIX.length);
+  const rows: string[] = [];
+  for (const line of command.split('\n')) {
+    if (line === '') {
+      rows.push('');
+      continue;
+    }
+    for (let at = 0; at < line.length; at += room) {
+      rows.push(line.slice(at, at + room));
+    }
+  }
+  return rows;
+}
+
+function commandLines(command: string, width: number, page: number): string[] {
+  const rows = commandRows(command, width);
+  const pages = Math.max(
+    1,
+    Math.ceil(rows.length / APPROVAL_COMMAND_PAGE_LINES),
+  );
+  const current = ((page % pages) + pages) % pages;
+  const from = current * APPROVAL_COMMAND_PAGE_LINES;
+  const shown = rows.slice(from, from + APPROVAL_COMMAND_PAGE_LINES);
+  const indent = ' '.repeat(COMMAND_PREFIX.length);
+  const out = shown.map((row, index) =>
+    index === 0 ? `${COMMAND_PREFIX}${row}` : `${indent}${row}`,
+  );
+  if (pages > 1) {
+    out.push(
+      `… command lines ${from + 1}–${from + shown.length} of ${rows.length} · [${APPROVAL_PAGE_KEY}] next page`,
+    );
+  }
+  return out;
 }
 
 // Operator-facing key names: `ctrl+s` → `Ctrl-S`, `escape` → `Esc`.
@@ -151,19 +197,30 @@ export function renderApprovalLines(
   // "capability: <tool> <path>". Without this line the operator approves a
   // capability without seeing the operation, which is the whole point of the
   // surface. Empty means "no summary supplied" — a minimal request is not a
-  // blank line.
-  if (request.summary !== undefined && request.summary !== '') {
+  // blank line. Issue #316: when the request carries the full command, that
+  // is what the dialog shows — wrapped and paged, never cut — and the
+  // one-line summary (a shortened copy of it) is not repeated.
+  const hasCommand = request.command !== undefined && request.command !== '';
+  if (!hasCommand && request.summary !== undefined && request.summary !== '') {
     lines.push(`summary: ${request.summary}`);
   }
-  if (request.command !== undefined && request.command !== '') {
-    lines.push(`command: ${request.command}`);
-  }
+  const commandBlock = hasCommand
+    ? commandLines(request.command ?? '', w, options.commandPage ?? 0)
+    : [];
   if (request.paths !== undefined && request.paths.length > 0) {
     lines.push(`paths: ${request.paths.join(', ')}`);
   }
   lines.push(`justification: ${request.justification ?? '(none)'}`);
   lines.push(hintLine(options));
-  return lines.map((line) => truncateLine(line, w));
+  const head = lines.slice(0, 2).map((line) => truncateLine(line, w));
+  const rest = lines.slice(2).map((line) => truncateLine(line, w));
+  // The command rows are already fitted to the width (wrapped, not cut);
+  // only the page marker could exceed a very narrow width.
+  return [
+    ...head,
+    ...commandBlock.map((line) => truncateLine(line, w)),
+    ...rest,
+  ];
 }
 
 // Narrow-terminal fallback (w < 80): same body under an inline header so
@@ -370,6 +427,8 @@ export interface ApprovalViewOptions {
   // Issue #315: the surface's arming state, read on every render so the key
   // hints unlock in the frame the surface arms. Absent means armed.
   readonly isArmed?: () => boolean;
+  // Issue #316: the page of a long command the surface shows.
+  readonly commandPage?: () => number;
 }
 
 export class ApprovalView implements Component, Focusable {
@@ -382,6 +441,7 @@ export class ApprovalView implements Component, Focusable {
   private readonly onFocusEditor: () => void;
   private readonly keyOverrides?: ApprovalKeyOverrides;
   private readonly isArmed: () => boolean;
+  private readonly commandPage: () => number;
 
   constructor(options: ApprovalViewOptions) {
     this.viewRequest = options.request;
@@ -389,6 +449,7 @@ export class ApprovalView implements Component, Focusable {
     this.onFocusEditor = options.onFocusEditor ?? (() => {});
     this.keyOverrides = options.keyOverrides;
     this.isArmed = options.isArmed ?? (() => true);
+    this.commandPage = options.commandPage ?? (() => 0);
   }
 
   getRequest(): ApprovalViewRequest {
@@ -406,6 +467,7 @@ export class ApprovalView implements Component, Focusable {
   render(width: number): string[] {
     const lines = renderApprovalLines(this.viewRequest, width, {
       armed: this.isArmed(),
+      commandPage: this.commandPage(),
       keys: resolvedBindings(this.keyOverrides),
     });
     if (this.focused && lines.length > 0) {

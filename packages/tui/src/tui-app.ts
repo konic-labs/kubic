@@ -47,7 +47,11 @@ import type {
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
-import { ApprovalView, showApprovalOverlay } from './approval-view.js';
+import {
+  APPROVAL_PAGE_KEY,
+  ApprovalView,
+  showApprovalOverlay,
+} from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
 import {
   entriesToCells,
@@ -514,6 +518,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       onDecision: () => {},
       // Issue #315: the hints stay locked until the surface arms.
       isArmed: () => approvalSurface.isArmed(),
+      commandPage: () => approvalSurface.commandPage(),
       keyOverrides: approvalSurface.keys() as ApprovalKeyOverrides,
     });
     overlayView = view;
@@ -564,6 +569,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // key it did not take — prose typed ahead for the next prompt, and a
       // decision key pressed inside the arming window — is dropped rather
       // than reaching the draft. Only the loop's global keys still act.
+      // Issue #316: `v` pages a long command in the dialog (never decides).
+      if (
+        approvalSurface.isShowing() &&
+        keyId === APPROVAL_PAGE_KEY &&
+        approvalSurface.nextCommandPage()
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
       if (approvalSurface.isShowing() && !isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }

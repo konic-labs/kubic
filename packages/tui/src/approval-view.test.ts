@@ -86,7 +86,8 @@ describe('approval render (issue #26; §41)', () => {
     expect(lines).toEqual([
       'Approval required: privilege-escalation',
       'tool: bash',
-      'summary: privilege-escalation: sudo systemctl restart foo',
+      // Issue #316: with the full command present the summary (a shortened
+      // copy of it) is not repeated.
       'command: sudo systemctl restart foo',
       'justification: (none)',
       '[a] allow once   [Ctrl-S] allow session   [d]/[Esc] deny',

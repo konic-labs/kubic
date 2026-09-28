@@ -19,6 +19,7 @@ import {
 } from '../../worker/src/lane/interceptors.js';
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
+import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
@@ -115,7 +116,25 @@ export interface ApprovalRequest {
   capability: Capability;
   toolName: string;
   summary: string;
+  // Issue #316: the FULL command a bash call will run — derived from the
+  // same args the key hashes, redacted and with hidden characters made
+  // visible (approval-display.ts), never truncated. Absent for calls that
+  // carry no command (file tools): their summary names the path.
+  command?: string;
   justification?: string;
+}
+
+// The request fields an ask shows (issue #316): the one-line summary and,
+// for a bash call, the full command — both from the call's own args.
+export function approvalRequestDisplay(
+  toolName: string,
+  capability: Capability,
+  args: Record<string, unknown>,
+): { summary: string; command?: string } {
+  const summary = summarizeRequest(toolName, capability, args);
+  return toolName === 'bash' && typeof args.command === 'string'
+    ? { summary, command: approvalCommandText(args.command) }
+    : { summary };
 }
 
 export type ApprovalVerdict =
@@ -478,7 +497,9 @@ export function summarizeRequest(
   // Summaries reach the TUI and the trajectory: secret-shaped values are
   // redacted exactly like block reasons (issue #15).
   if (toolName === 'bash' && typeof args.command === 'string') {
-    return redactReason(`${capability}: ${args.command.slice(0, 120)}`);
+    // Issue #316: never a silent slice — a shortened summary says how much
+    // it hid; the full command travels in the request's `command` field.
+    return summarizeCommand(capability, args.command);
   }
   if (typeof args.path === 'string') {
     return redactReason(`${capability}: ${toolName} ${args.path}`);
@@ -596,7 +617,7 @@ export function createApprovalAsk(
         key: approvalKey(call.toolName, capability, call.args),
         capability,
         toolName: call.toolName,
-        summary: summarizeRequest(call.toolName, capability, call.args),
+        ...approvalRequestDisplay(call.toolName, capability, call.args),
       });
       if (!verdict.approved) {
         return { approved: false, reason: verdict.reason };
@@ -893,7 +914,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           key,
           capability,
           toolName: call.toolName,
-          summary: summarizeRequest(call.toolName, capability, call.args),
+          ...approvalRequestDisplay(call.toolName, capability, call.args),
         });
         if (!verdict.approved) {
           return deny(capability, call.toolName, verdict.reason);

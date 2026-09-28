@@ -395,4 +395,50 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
+
+  // Issue #316: a padded 400-char command reaches the dialog whole — the
+  // seat receives the full command derived from the same args the key
+  // hashes, and the overlay shows it wrapped instead of a 120-char slice.
+  it('delivers the full padded command to the dialog', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    const padded = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf /tmp/x`;
+    const { models } = fauxModels([
+      fauxAssistantMessage([fauxToolCall('bash', { command: padded })]),
+      fauxAssistantMessage('padded turn done'),
+    ]);
+    const seen: Array<{ command?: string; summary: string }> = [];
+    const boot = fauxLaneBoot(root, models);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
+        bootLane: (sessionId, answer, flags) =>
+          boot(
+            sessionId,
+            answer === undefined
+              ? undefined
+              : (request) => {
+                  seen.push(request);
+                  return answer(request);
+                },
+            flags,
+          ),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'pad') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(seen[0]?.command).toBe(padded);
+    expect(seen[0]?.summary).toMatch(/… \(\+\d+ chars\)$/);
+    expect(fake.frame).toContain('command: ');
+    expect(fake.frame).not.toContain('summary: ');
+    fake.feed('d');
+    await waitFor(() => fake.frame.includes('padded turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
 });

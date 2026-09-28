@@ -533,6 +533,7 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `a` | Approval overlay: **allow once** the challenged call (after the arming delay). |
 | `Ctrl-S` | Approval overlay: **allow for the session** (after the arming delay; never a bare letter). |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call (`Esc` acts at once, `d` after the arming delay). |
+| `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
@@ -547,7 +548,15 @@ control sequences before they are drawn.
 
 A challenged call opens the **approval overlay** instead of being refused: it
 names the tool class and the exact command, so the decision is made on what
-was actually asked, not on the tool's name. Below 80 columns the overlay
+was actually asked, not on the tool's name. The command is shown **whole**:
+it is the same text the approval key is computed from (secrets redacted;
+control, bidi and zero-width characters shown as visible escapes such as
+`\x1b` or `\u202e`), wrapped across rows and never cut. A command taller
+than 8 rows shows one page at a time with an explicit
+`… command lines 1–8 of N · [v] next page` marker, and `v` pages through it.
+One-line summaries (audit detail, the orchestrator's blocked indicator)
+that shorten a command say so: `… (+N chars)`. Orchestrator worker asks
+carry the full command to your seat as well. Below 80 columns the overlay
 falls back to an inline slot in the transcript (`! approval (inline)`) rather
 than rendering an unusable box — a narrow terminal can still answer. Denying
 leaves the session running; the transcript shows the refusal instead of the

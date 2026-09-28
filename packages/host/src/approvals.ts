@@ -24,6 +24,7 @@ import {
   appendToLedger,
   auditLedgerDirFor,
   fullAccessEnabledAudit,
+  postureChangedAudit,
   soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
@@ -589,10 +590,13 @@ export function createApprovalAsk(
   ctx: TriggerContext,
   store: FileApprovalStore,
 ): ApprovalAsk {
+  // Issue #325: the posture is read ONCE, when the ask is built (session
+  // boot) — never per call, so a posture.json written mid-session by the
+  // model cannot switch approvals off.
+  const posture = store.loadPosture();
   return async (call) => {
     const capabilities = detectTriggers(call.toolName, call.args, ctx);
     if (capabilities.length === 0) return { approved: true, challenged: false };
-    const posture = store.loadPosture();
     if (posture.fullAccess) {
       return { approved: true, challenged: true };
     }
@@ -836,10 +840,15 @@ export interface InstalledSoloPolicy {
   denials: () => RecordedApprovalDeny[];
   // The decider, exposed so a caller (or a test) can drive it directly.
   ask: ApprovalAsk;
+  // Issue #325: the end-of-session posture check — a posture.json written
+  // after the last ask is restored and recorded before the session closes.
+  settle?: () => void;
 }
 
 export function installedPolicyPosture(
   input: SoloPolicyInput,
+  // The posture record read at boot (issue #325); absent reads it here.
+  bootPosture?: AccessPosture,
 ): InstalledPolicyPosture {
   const classes = validateClasses({ ...(input.classes ?? {}) });
   const allowlist = toolsForClasses(classes);
@@ -870,9 +879,10 @@ export function installedPolicyPosture(
       : { requireJustification: input.requireJustification }),
   });
   const fullAccess =
-    input.sessionDir === undefined
+    bootPosture?.fullAccess ??
+    (input.sessionDir === undefined
       ? false
-      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess;
+      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess);
   return {
     // The layer's own answer when the caller supplies it (the composition
     // root does); the shape rule only as the legacy fallback, so the printed
@@ -901,12 +911,19 @@ export function installedPolicyPosture(
 }
 
 export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
-  const posture = installedPolicyPosture(input);
   const denials: RecordedApprovalDeny[] = [];
   const store =
     input.sessionDir === undefined
       ? undefined
       : new FileApprovalStore(input.sessionDir);
+  // Issue #325 (§41.4, §59): the full-access posture is resolved ONCE, here,
+  // at session boot — from what the explicit flag or `sessions create
+  // --dangerously-skip-approvals` recorded — and kept in memory. posture.json
+  // is never re-read to decide an ask.
+  const bootPosture: AccessPosture = store?.loadPosture() ?? {
+    fullAccess: false,
+  };
+  const posture = installedPolicyPosture(input, bootPosture);
   const service = new ApprovalService({
     policy: validatePolicy({
       route: posture.route,
@@ -996,8 +1013,50 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     denials.push({ capability, toolName, reason });
     return { approved: false, reason };
   };
+  // A posture.json change made DURING the session (issue #325) is refused:
+  // the file is restored to the boot posture (so a later resume does not
+  // inherit it) and the change is recorded once in the ledger. Checked on
+  // every ask and on settle(), never consulted for the decision itself.
+  let postureChangeRecorded = false;
+  const guardPosture = (): void => {
+    if (store === undefined) return;
+    let current: AccessPosture;
+    try {
+      current = store.loadPosture();
+    } catch {
+      return;
+    }
+    if (
+      current.fullAccess === bootPosture.fullAccess &&
+      current.enabledAt === bootPosture.enabledAt &&
+      current.enabledBy === bootPosture.enabledBy
+    ) {
+      return;
+    }
+    const onError = input.onAuditError ?? (() => undefined);
+    try {
+      store.savePosture(bootPosture);
+    } catch (error) {
+      onError(
+        `posture restore failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (postureChangeRecorded) return;
+    postureChangeRecorded = true;
+    appendToLedger(
+      ledgerDir,
+      postureChangedAudit({
+        sessionId: auditSessionId,
+        workspace: input.workspace,
+        bootFullAccess: bootPosture.fullAccess,
+        observedFullAccess: current.fullAccess === true,
+      }),
+      onError,
+    );
+  };
   const ask: ApprovalAsk = async (call) => {
-    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
+    guardPosture();
+    if (posture.fullAccess && posture.route === 'ask-user') {
       // Explicit, session-scoped full access — recorded, never implied.
       audit(
         call.toolName,
@@ -1128,6 +1187,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     posture,
     denials: () => [...denials],
     ask,
+    settle: guardPosture,
   };
 }
 

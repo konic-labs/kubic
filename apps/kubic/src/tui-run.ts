@@ -265,12 +265,19 @@ export async function bootTuiLane(
   // a mutation landing between two closes IS appended (pinned by the exec
   // suite). Assigned inside the try below.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #325: the installed policy's end-of-session posture check.
+  let settlePolicy: (() => void) | undefined;
   const close = async (): Promise<void> => {
     try {
       reconciliation?.sweep();
     } catch {
       // A sweep failure never masks the clean quit (same posture as the
       // headless runner: reconciliation observes, it does not gate).
+    }
+    try {
+      settlePolicy?.();
+    } catch {
+      // Best-effort, like the sweep: the clean quit stands.
     }
     try {
       await session.close(context);
@@ -420,6 +427,7 @@ export async function bootTuiLane(
       },
     });
     const fullAccess = installed.posture.fullAccess;
+    settlePolicy = installed.settle;
     return {
       sessionId: id,
       model: `${model.provider}/${model.id}`,

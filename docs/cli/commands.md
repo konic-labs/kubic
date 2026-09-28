@@ -480,6 +480,16 @@ full access for the session it opens or resumes, through the same path as
 terminal the bare form prints the usage line and exits 1, like bare
 `kubic`. The flag is never written to config.
 
+**The posture is decided at boot (§41.4, issue #325).** `kubic run` and
+`kubic tui` read the session's full-access posture once, when the lane
+boots, from what the flag or `kubic sessions create
+--dangerously-skip-approvals` recorded. `posture.json` is never re-read to
+decide an ask: a change written during the session (for example by a tool
+call) is ignored, the file is restored to the boot posture before the next
+ask and at session close, and one `posture:changed-mid-session` row
+(`result deny`) is appended to the audit ledger. Every decision row carries
+the posture decided at boot.
+
 **Parity with `kubic run` (issue #113).** The interactive lane carries the
 same context the headless one does:
 
@@ -1205,6 +1215,11 @@ shipped runtime ignore rules cover this file.
   the child makes on its own (a latched answer, the route,
   `autoApprove`, full access) is recorded once as `mode: orchestrator`
   for that worker in the main repo ledger, never inside its worktree.
+- Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
+  `run`, `sessions create` or `orchestrate`) appends one
+  `posture:full-access` row naming the session and the command. A
+  `posture.json` change made during a session is refused and recorded
+  once as `posture:changed-mid-session`.
 - A failed ledger write never changes the decision.
 
 | Flag | Meaning |

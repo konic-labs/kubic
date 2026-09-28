@@ -328,6 +328,37 @@ export function fullAccessEnabledAudit(
   };
 }
 
+// §60 record for a posture.json change made DURING a session (issue #325):
+// the change is refused — the boot posture stays in force and the file is
+// restored — and recorded once, so a model-written grant is never mistaken
+// for the user's.
+export interface PostureChangedInput {
+  sessionId: string;
+  workspace: string;
+  bootFullAccess: boolean;
+  observedFullAccess: boolean;
+}
+
+export function postureChangedAudit(input: PostureChangedInput): AuditInput {
+  const boot = input.bootFullAccess ? 'full-access' : 'approvals';
+  const seen = input.observedFullAccess ? 'full-access' : 'approvals';
+  return {
+    who: 'agent:root',
+    what: 'posture:changed-mid-session',
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'root' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: { permission: 'posture:change', approval: 'denied' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'solo',
+    posture: boot,
+    result: 'deny',
+    reason: `posture.json changed during the session (${boot} -> ${seen}); ignored and restored — the posture decided at boot stays in force`,
+  };
+}
+
 function redactLeaves(value: unknown): unknown {
   if (typeof value === 'string') return redactSecretShapes(value);
   if (Array.isArray(value)) return value.map(redactLeaves);

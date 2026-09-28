@@ -562,6 +562,8 @@ async function runHeadlessPromptOnce(
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #325: the installed policy's end-of-session posture check.
+  let settlePolicy: (() => void) | undefined;
   // Issue #109: the booted lane and the admitted operation are hoisted the
   // same way, so every exit path can drain in-flight work — a guard
   // firing mid-drive must not abandon the tool processes it interrupted.
@@ -870,6 +872,7 @@ async function runHeadlessPromptOnce(
         })(),
       });
     report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
+    settlePolicy = installed.settle;
     // A headless run on a full-access session is never silent (issue #308):
     // the grant's own warning when this run enabled it, otherwise the named
     // in-force warning — on stderr, so stdout stays consumable.
@@ -1143,6 +1146,13 @@ async function runHeadlessPromptOnce(
       }
     }
     flushSpans();
+    // Issue #325: a posture.json written after the last ask is restored to
+    // the boot posture (and recorded) before the session closes.
+    try {
+      settlePolicy?.();
+    } catch {
+      // Best-effort: the mapped result stands.
+    }
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {

@@ -19,7 +19,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
-import { isolateTestEnv } from '../../../test/hermetic-env.js';
+import { isolateTestEnv, isLoopbackHost } from '../../../test/hermetic-env.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   AgentHarness,
@@ -108,12 +108,31 @@ describe('hermetic unit-test environment (issue #377)', () => {
     expect(existsSync(isolated.home)).toBe(false);
   });
 
-  it('refuses TCP connects so no test reaches the network', () => {
-    expect(() => connect({ host: '127.0.0.1', port: 1 })).toThrow(
+  it('refuses non-loopback TCP connects so no test reaches the network', () => {
+    expect(() => connect({ host: '10.0.0.1', port: 1 })).toThrow(
       /hermetic test env/,
     );
-    expect(() => new Socket().connect(1, '127.0.0.1')).toThrow(
+    expect(() => new Socket().connect(1, '10.0.0.1')).toThrow(
       /hermetic test env/,
     );
+    expect(() => new Socket().connect(1, 'provider.example.com')).toThrow(
+      /hermetic test env/,
+    );
+  });
+
+  it('allows a test-owned loopback server (issues #359 e2e, #377 guard)', () => {
+    for (const host of [
+      undefined,
+      '',
+      'localhost',
+      '127.0.0.1',
+      '127.9.9.9',
+      '::1',
+      '[::1]',
+      '::ffff:127.0.0.1',
+    ])
+      expect(isLoopbackHost(host), String(host)).toBe(true);
+    for (const host of ['10.0.0.1', '192.168.1.4', 'provider.example.com', '0.0.0.0'])
+      expect(isLoopbackHost(host), host).toBe(false);
   });
 });

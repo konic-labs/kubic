@@ -5,8 +5,9 @@
 // from KUBIC_TRUST_PROJECT, so without isolation every system-prompt
 // assertion depended on the developer's machine. isolateTestEnv() points
 // HOME at a fresh temp dir, clears every ambient KUBIC_* variable, and
-// refuses TCP connects; restore() undoes all three and removes the temp
-// HOME. test/vitest-setup.ts applies it to every test file.
+// refuses non-loopback TCP connects (a test-owned loopback server is
+// allowed); restore() undoes all three and removes the temp HOME.
+// test/vitest-setup.ts applies it to every test file.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -40,6 +41,30 @@ function describeTarget(args: unknown[]): string {
   return `${host}:${String(first)}`;
 }
 
+// A loopback destination never leaves the machine, so a test that owns a
+// local server (`createServer` on port 0) stays hermetic; only egress is
+// refused. `undefined`/empty host means Node's default, localhost.
+// Exported for the contract test (hermetic-test-env.test.ts).
+export function isLoopbackHost(host: unknown): boolean {
+  if (host === undefined || host === '' || host === null) return true;
+  if (typeof host !== 'string') return false;
+  const bare = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (bare === 'localhost' || bare === '::1') return true;
+  if (/^127(\.\d{1,3}){3}$/.test(bare)) return true;
+  // IPv4-mapped IPv6 loopback (`::ffff:127.0.0.1`).
+  return /^::ffff:127(\.\d{1,3}){3}$/.test(bare);
+}
+
+// The host a connect() call would reach: `connect(port, host)`,
+// `connect(options)` (host absent means localhost).
+function connectHost(args: unknown[]): unknown {
+  const first = Array.isArray(args[0]) ? args[0][0] : args[0];
+  if (typeof first === 'object' && first !== null) {
+    return (first as { host?: unknown }).host;
+  }
+  return args[1];
+}
+
 export function isolateTestEnv(parent: string = tmpdir()): HermeticEnv {
   const saved = new Map<string, string | undefined>();
   const save = (key: string): void => {
@@ -59,9 +84,9 @@ export function isolateTestEnv(parent: string = tmpdir()): HermeticEnv {
 
   const original = Socket.prototype.connect;
   const guarded = function connect(this: Socket, ...args: unknown[]): Socket {
-    if (!isPathConnect(args)) {
+    if (!isPathConnect(args) && !isLoopbackHost(connectHost(args))) {
       throw new Error(
-        `hermetic test env: TCP connect to ${describeTarget(args)} refused — unit tests must not open sockets (use the faux provider)`,
+        `hermetic test env: TCP connect to ${describeTarget(args)} refused — unit tests must not reach the network (a test-owned loopback server is fine: bind port 0)`,
       );
     }
     return (original as (...rest: unknown[]) => Socket).apply(this, args);

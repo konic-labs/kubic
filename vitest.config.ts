@@ -7,7 +7,7 @@ export default defineConfig({
     include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
     environment: 'node',
     // Hermetic env (issue #377): temp HOME, no ambient KUBIC_* variables,
-    // TCP connects refused — see test/hermetic-env.ts. Credential-shaped
+    // non-loopback TCP connects refused — see test/hermetic-env.ts. Credential-shaped
     // env vars are scrubbed first (issues #221, #322) so no test can see
     // the developer's provider keys.
     globalSetup: ['./test/vitest-global-setup.ts'],

@@ -4,7 +4,7 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkFiles } from './walk.js';
+import { walkCapNotice, walkFiles } from './walk.js';
 
 export const GREP_DEFAULT_MAX = 100;
 
@@ -25,6 +25,8 @@ export interface GrepResult {
   pattern: string;
   matches: GrepMatch[];
   truncated: boolean;
+  /** Present when a cap (walk or maxMatches) stopped the search. */
+  notice?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,10 +96,10 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
     const root = args.root ?? '.';
     const max = args.maxMatches ?? GREP_DEFAULT_MAX;
     const matches: GrepMatch[] = [];
-    let truncated = false;
-    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
-    truncated = hitCap;
-    for (const entry of entries) {
+    const walk = walkFiles(ctx.env.fs, root);
+    let truncated = walk.hitCap;
+    let notice = walk.hitCap ? walkCapNotice(walk.capAt) : undefined;
+    for (const entry of walk.entries) {
       if (entry.isDirectory) continue;
       if (args.include && !entry.path.includes(args.include)) continue;
       let text: string;
@@ -109,18 +111,23 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
       const lines = text.split('\n');
       for (let i = 0; i < lines.length; i += 1) {
         if (!re.test(lines[i] as string)) continue;
-        if (matches.length >= max) {
-          truncated = true;
-          break;
-        }
+        if (matches.length >= max) break;
         matches.push({
           path: entry.path,
           line: i + 1,
           text: lines[i] as string,
         });
       }
-      if (truncated) break;
+      // The match cap stopped the scan before the tree was exhausted, so the
+      // result says so and names the bound (#172) — even when the cap was
+      // reached on the very last line, "stopped at the bound" is the honest
+      // reading (the same one `read` uses for a bound-stopped scan).
+      if (matches.length >= max) {
+        truncated = true;
+        notice ??= `result cap ${max} reached (maxMatches); results may be incomplete`;
+        break;
+      }
     }
-    return { pattern: args.pattern, matches, truncated };
+    return { pattern: args.pattern, matches, truncated, notice };
   },
 };

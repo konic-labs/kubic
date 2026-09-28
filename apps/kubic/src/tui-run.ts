@@ -535,10 +535,9 @@ export async function bootTuiLane(
             { provider: resolved.provider, modelId: resolved.id },
             loopContext,
           );
-          const live = await solo.lane.getModel(loopContext);
-          return live === undefined
-            ? `${resolved.provider}/${resolved.id}`
-            : `${live.provider}/${live.id}`;
+          // Pi stores exactly the identity it is given, so the resolved id
+          // IS the live label — no read-back branch to keep honest.
+          return `${resolved.provider}/${resolved.id}`;
         },
         requestAbort: (operationId, loopContext) =>
           solo.lane.requestAbort(operationId, loopContext),
@@ -556,7 +555,7 @@ export async function bootTuiLane(
   }
 }
 
-export function tuiDepsWithDefaults(provided: {
+export interface TuiDepsInput {
   out: (line: string) => void;
   err?: (line: string) => void;
   // Config projections (issues #86, #90): the TUI installs the same policy
@@ -574,15 +573,40 @@ export function tuiDepsWithDefaults(provided: {
   // runtimeModelPin projection `kubic run` consumes, so the interactive
   // boot selects what the headless one selects.
   model?: ModelSelection;
-}): TuiRunDeps {
-  const {
-    classes,
-    policySource,
-    policy,
-    journalRetention,
-    reconcileOutOfScope,
-    model,
-  } = provided;
+}
+
+// The boot options `tuiDepsWithDefaults` hands `bootTuiLane`, projected from
+// the config deps plus the parsed parity flags. Pure and exported (issue
+// #227) so the prod wiring — including the model pin — is testable without
+// opening a terminal.
+export function tuiBootOptions(
+  provided: TuiDepsInput,
+  flags: TuiBootFlags | undefined,
+  answer: TuiApprovalSeat | undefined,
+): TuiRunOptions {
+  return {
+    ...(provided.classes === undefined ? {} : { classes: provided.classes }),
+    ...(provided.policySource === undefined
+      ? {}
+      : { policySource: provided.policySource }),
+    ...(provided.policy === undefined ? {} : { policy: provided.policy }),
+    ...(answer === undefined ? {} : { answer }),
+    ...(provided.journalRetention === undefined
+      ? {}
+      : { journalRetention: provided.journalRetention }),
+    ...(provided.reconcileOutOfScope === undefined
+      ? {}
+      : { reconcileOutOfScope: provided.reconcileOutOfScope }),
+    ...(provided.model === undefined ? {} : { model: provided.model }),
+    ...(flags?.role === undefined ? {} : { role: flags.role }),
+    ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
+    ...(flags?.skillsList === undefined || flags.skillsList.length === 0
+      ? {}
+      : { skillsList: flags.skillsList }),
+  };
+}
+
+export function tuiDepsWithDefaults(provided: TuiDepsInput): TuiRunDeps {
   return {
     out: provided.out,
     ...(provided.err === undefined ? {} : { err: provided.err }),
@@ -592,21 +616,7 @@ export function tuiDepsWithDefaults(provided: {
       sessionId?: string,
       answer?: TuiApprovalSeat,
       flags?: TuiBootFlags,
-    ) =>
-      bootTuiLane(sessionId, {
-        ...(classes === undefined ? {} : { classes }),
-        ...(policySource === undefined ? {} : { policySource }),
-        ...(policy === undefined ? {} : { policy }),
-        ...(answer === undefined ? {} : { answer }),
-        ...(journalRetention === undefined ? {} : { journalRetention }),
-        ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
-        ...(model === undefined ? {} : { model }),
-        ...(flags?.role === undefined ? {} : { role: flags.role }),
-        ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
-        ...(flags?.skillsList === undefined || flags.skillsList.length === 0
-          ? {}
-          : { skillsList: flags.skillsList }),
-      }),
+    ) => bootTuiLane(sessionId, tuiBootOptions(provided, flags, answer)),
   };
 }
 

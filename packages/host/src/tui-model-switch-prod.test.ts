@@ -182,6 +182,9 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
 
     type(fake, '/model alt/m1');
     await waitFor(() => fake.frame.includes('model: alt/m1'));
+    // The status bar moved too, not only the footer: its model line is
+    // `<model> • thinking …`.
+    await waitFor(() => fake.frame.includes('alt/m1 • thinking'));
     // The switch is real: the next request is answered on the alt provider.
     type(fake, 'hello');
     await waitFor(() => fake.frame.includes('from alt'));

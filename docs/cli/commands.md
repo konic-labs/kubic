@@ -512,7 +512,11 @@ rows — older calls fold into `… N earlier calls`); the transcript, which
 follows the end as the turn streams (your prompt is echoed as `› …` the
 moment you submit, assistant prose renders as markdown, and each tool call
 renders as `● name args` with its output folded underneath `⎿`); the
-status bar; the editor; and a footer row that shows a `working… 3s`
+status bar, whose second row is the always-visible mode indicator
+(`solo • approvals:on`, or the warning-styled
+`! warning: approvals OFF (full-access)` when the session's installed
+policy auto-approves every challenged call — read from that policy, at
+boot and after every turn, never assumed); the editor; and a footer row that shows a `working… 3s`
 spinner during a turn and the solo notice or the turn's outcome otherwise.
 Colour follows the Konic palette on truecolor terminals, falls back to
 256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY

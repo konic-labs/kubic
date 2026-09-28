@@ -22,7 +22,12 @@ const cp = (ch: string): number => ch.codePointAt(0) ?? 0;
 const NOT_QUIT = { quit: false, consumed: true, cancel: false };
 
 function app(): TuiApp {
-  return createTuiApp({ sessionId: SESSION, model: MODEL });
+  return createTuiApp({
+    sessionId: SESSION,
+    model: MODEL,
+    mode: 'solo',
+    approvalsSkipped: false,
+  });
 }
 
 function type(target: TuiApp, text: string): void {

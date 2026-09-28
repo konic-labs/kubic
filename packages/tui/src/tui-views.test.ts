@@ -48,7 +48,12 @@ function appWithRun(
   changes: ReadonlyArray<JournalChangeLike> = [change()],
   toolCallId = 'tc-1',
 ) {
-  const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+  const app = createTuiApp({
+    sessionId: SESSION,
+    model: MODEL,
+    mode: 'solo',
+    approvalsSkipped: false,
+  });
   app.applyLaneEvent({ type: 'run-start' });
   app.applyLaneEvent({
     type: 'tool-start',
@@ -236,7 +241,12 @@ describe('panel content is untrusted (issue #96, criterion 3 sanitisation)', () 
 
 describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
   it('leaves plain d/D/j/J to the editor', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     for (const ch of 'dD jJ') app.handleInput(ch);
     expect(app.editor.getText()).toBe('dD jJ');
     expect(app.panelMode()).toBe('closed');

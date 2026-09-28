@@ -57,6 +57,7 @@ import { buildLayoutRoot, type Viewport } from './layout.js';
 import {
   StatusBar,
   type StatusBarState,
+  type StatusMode,
   type StatusUsageRow,
 } from './status-bar.js';
 import {
@@ -113,6 +114,12 @@ export interface TuiAppSeed {
   // one — the viewer shell (`kubic tui` with an injected boot) still renders
   // an ask inline instead of hanging.
   readonly approvalSurface?: ApprovalSurface;
+  // Issue #307 (§17, §18): the always-visible mode indicator. Both fields
+  // are REQUIRED — seeded from the posture the composition root actually
+  // installed — so no call site can silently default a full-access session
+  // to 'approvals:on'.
+  readonly mode: StatusMode;
+  readonly approvalsSkipped: boolean;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -121,8 +128,14 @@ export interface TuiAppSeed {
 export function seedFromPresentation(
   state: KubicPresentationState,
   model: string,
+  posture: { readonly mode: StatusMode; readonly approvalsSkipped: boolean },
 ): TuiAppSeed {
-  return { sessionId: state.session.sessionId, model };
+  return {
+    sessionId: state.session.sessionId,
+    model,
+    mode: posture.mode,
+    approvalsSkipped: posture.approvalsSkipped,
+  };
 }
 
 export interface TuiInputResult {
@@ -193,6 +206,9 @@ export interface TuiApp {
   busyElapsedMs(now?: number): number | undefined;
   // Ctrl-X: expand / collapse tool output blocks.
   toggleToolOutput(): boolean;
+  // Issue #307: a posture change (the policy's own predicate) reaches the
+  // indicator on the very next frame.
+  setApprovalsSkipped(skipped: boolean): void;
   // Issue #96: the §17 inspectable pair.
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
@@ -387,8 +403,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     model: seed.model,
     thinking: seed.thinking ?? 'off',
     rows: [],
-    mode: 'solo',
-    approvalsSkipped: false,
+    mode: seed.mode,
+    approvalsSkipped: seed.approvalsSkipped,
     sessionId: seed.sessionId,
   };
   const status = new StatusBar(barState);
@@ -411,7 +427,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const root = buildLayoutRoot({
     tree,
     header: lineComponent((width) =>
-      renderHeader(width, { mode: 'solo', model: seed.model }),
+      renderHeader(width, { mode: seed.mode, model: seed.model }),
     ),
     transcript: transcript.component,
     status,
@@ -636,6 +652,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ? undefined
         : Math.max(0, now - editorRow.busySince),
     toggleToolOutput: (): boolean => transcript.toggleExpanded(),
+    setApprovalsSkipped: (skipped: boolean): void => {
+      status.setApprovalsSkipped(skipped);
+    },
     setNotice: (text: string): void => {
       notice = sanitizeLaneText(text);
       refreshWelcome();

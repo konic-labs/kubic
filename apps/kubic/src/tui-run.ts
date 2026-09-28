@@ -145,6 +145,11 @@ export interface TuiLaneBoot {
   // tests) can observe the retention policy the boot installed. The loop
   // itself uses the lane's own recording; this is the same store.
   journal?: FileJournalStore;
+  // Issue #307: the installed policy's own full-access predicate (the SAME
+  // one its ask auto-approves on), read for the mode indicator at boot and
+  // after every turn. Absent (a viewer boot with no policy) means approvals
+  // are in force — there is no policy that could skip them.
+  approvalsSkipped?: () => boolean;
   // Issue #88: the boot hands the loop its drive surface. Injected boots in
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
@@ -422,6 +427,7 @@ export async function bootTuiLane(
       sessionId: id,
       model: modelRef,
       journal,
+      approvalsSkipped: installed.approvalsSkipped,
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -796,7 +802,17 @@ export async function runTuiCommand(
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
+    // Issue #307: `kubic tui` is the solo lane; the approvals half of the
+    // indicator comes from the installed policy, never a literal.
+    mode: 'solo',
+    approvalsSkipped: boot.approvalsSkipped?.() === true,
   });
+  // Re-read after each turn (and each mid-turn refresh): a posture change
+  // lands on the indicator in the same frame the loop paints next.
+  const syncPosture = (): void => {
+    if (boot.approvalsSkipped !== undefined)
+      app.setApprovalsSkipped(boot.approvalsSkipped());
+  };
   const terminal = deps.createTerminal();
   // Solo no-isolation notice (issue #89): the trust statement is carried in
   // the editor footer — the loop's always-visible status surface — from the
@@ -815,6 +831,7 @@ export async function runTuiCommand(
     boot.loop === undefined
       ? undefined
       : new TuiTurnRunner(app, boot.loop, boot.model, () => {
+          syncPosture();
           if (!stopped) screen?.update();
         });
   // The working indicator animates while a turn runs.
@@ -957,6 +974,7 @@ export async function runTuiCommand(
           .then((outcome) => {
             app.setBusy(false);
             stopSpinner();
+            syncPosture();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the trust statement instead of going blank
             // (issue #89) — a cancelled/failed turn keeps its own report.

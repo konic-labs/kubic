@@ -720,6 +720,11 @@ export interface InstalledSoloPolicy {
   denials: () => RecordedApprovalDeny[];
   // The decider, exposed so a caller (or a test) can drive it directly.
   ask: ApprovalAsk;
+  // Issue #307: true exactly when the ask above auto-approves every
+  // challenged call as full access — the SAME predicate over the SAME store
+  // the ask consults per call, so an indicator derived from it cannot drift
+  // from what the policy does.
+  approvalsSkipped: () => boolean;
 }
 
 export function installedPolicyPosture(
@@ -838,8 +843,10 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     audit(toolName, capability, { approved: false, reason }, false);
     return { approved: false, reason };
   };
+  const approvalsSkipped = (): boolean =>
+    store?.loadPosture().fullAccess === true && posture.route === 'ask-user';
   const ask: ApprovalAsk = async (call) => {
-    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
+    if (approvalsSkipped()) {
       // Explicit, session-scoped full access — recorded, never implied.
       audit(
         call.toolName,
@@ -933,6 +940,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     posture,
     denials: () => [...denials],
     ask,
+    approvalsSkipped,
   };
 }
 

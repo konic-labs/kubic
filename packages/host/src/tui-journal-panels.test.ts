@@ -1,0 +1,326 @@
+// The §17 inspectable pair on the real `kubic tui` path (issue #311): the
+// Ctrl-O diff panel and the Ctrl-R journal panel read the session journal
+// (the same diffEntries projection `kubic diff` uses) instead of showing
+// 'no changes' for the whole session.
+//
+// Real code end to end: the prod bootTuiLane re-rooted onto temp state, the
+// real NodeExecutionEnv inside a temp workspace, a recording fake Terminal
+// under the real alt-screen. Faux provider only: zero network.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  bootTuiLane,
+  JournalPanelFeed,
+  runTuiCommand,
+  type TuiRunDeps,
+} from '../../../apps/kubic/src/tui-run.js';
+import { NodeExecutionEnv } from '../../exec/src/env.js';
+import type { FileJournalStore } from '../../exec/src/journal.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '../../worker/src/pi-boundary.js';
+
+const made: string[] = [];
+
+function tmpRoot(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'tui-journal-'));
+  made.push(dir);
+  return dir;
+}
+
+beforeEach(() => {
+  vi.stubEnv('KUBIC_PROVIDER', undefined);
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
+type Step = Parameters<typeof fauxAssistantMessage>[0];
+
+function recordingTerminal() {
+  const writes: string[] = [];
+  const counts = { started: 0, stopped: 0 };
+  let handler: ((data: string) => void) | undefined;
+  return {
+    writes,
+    counts,
+    mark: (): number => writes.length,
+    since: (mark: number): string => writes.slice(mark).join(''),
+    feed: (data: string) => handler?.(data),
+    terminal: {
+      start: (input: (data: string) => void) => {
+        counts.started += 1;
+        handler = input;
+      },
+      stop: () => {
+        counts.stopped += 1;
+      },
+      drainInput: () => Promise.resolve(),
+      write: (data: string) => writes.push(data),
+      get columns(): number {
+        return 120;
+      },
+      get rows(): number {
+        return 40;
+      },
+      get kittyProtocolActive(): boolean {
+        return false;
+      },
+      moveBy: () => {},
+      hideCursor: () => {},
+      showCursor: () => {},
+      clearLine: () => {},
+      clearFromCursor: () => {},
+      clearScreen: () => {},
+      setTitle: () => {},
+      setProgress: () => {},
+    },
+  };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 1000 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  expect(condition()).toBe(true);
+}
+
+function prodBoot(
+  sessionsRoot: string,
+  workspace: string,
+  steps: Step[],
+): TuiRunDeps['bootLane'] {
+  return (sessionId, answer) => {
+    const faux = fauxProvider();
+    faux.setResponses(steps.map((step) => fauxAssistantMessage(step)));
+    const models = createModels();
+    models.setProvider(faux.provider);
+    return bootTuiLane(sessionId, {
+      sessionsRoot,
+      models,
+      env: new NodeExecutionEnv(workspace),
+      skills: { homeDir: workspace, cwd: workspace, trusted: false },
+      ...(answer === undefined ? {} : { answer }),
+    });
+  };
+}
+
+async function openTui(
+  sessionsRoot: string,
+  workspace: string,
+  steps: Step[],
+  session?: string,
+) {
+  const fake = recordingTerminal();
+  const lines: string[] = [];
+  const exit = runTuiCommand(session === undefined ? {} : { session }, {
+    out: (line) => lines.push(line),
+    createTerminal: () => fake.terminal,
+    bootLane: prodBoot(sessionsRoot, workspace, steps),
+  });
+  await waitFor(() => fake.counts.started === 1);
+  return { fake, lines, exit };
+}
+
+async function submit(
+  fake: ReturnType<typeof recordingTerminal>,
+  prompt: string,
+  settled: string,
+): Promise<void> {
+  for (const ch of prompt) fake.feed(ch);
+  fake.feed('\r');
+  await waitFor(() => fake.since(0).includes(settled));
+  // Let the settlement's own journal read and frame land.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+}
+
+describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () => {
+  it('after a write, Ctrl-O renders a hunk for the written path', async () => {
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+      [fauxToolCall('write', { path: 'hello.txt', content: 'hi there\n' })],
+      'wrote it',
+    ]);
+    await submit(fake, 'write hello', 'wrote it');
+    const mark = fake.mark();
+    fake.feed('\x0f');
+    await waitFor(() => fake.since(mark).includes('hello.txt'));
+    expect(fake.since(mark)).toContain('+hi there');
+    expect(fake.since(mark)).not.toContain('no changes');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('the journal panel lists every change in the session', async () => {
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+      [
+        fauxToolCall('write', { path: 'alpha.txt', content: 'a\n' }),
+        fauxToolCall('write', { path: 'beta.txt', content: 'b\n' }),
+      ],
+      'two files',
+    ]);
+    await submit(fake, 'write two', 'two files');
+    const mark = fake.mark();
+    fake.feed('\x12');
+    await waitFor(
+      () =>
+        fake.since(mark).includes('alpha.txt') &&
+        fake.since(mark).includes('beta.txt'),
+    );
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('the diff panel follows the most recent tool call that has journal rows', async () => {
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+      [fauxToolCall('write', { path: 'kept.txt', content: 'kept\n' })],
+      // A read has no journal rows: the panel must not fall to 'no changes'.
+      [fauxToolCall('read', { path: 'kept.txt' })],
+      'read back',
+    ]);
+    await submit(fake, 'write then read', 'read back');
+    const mark = fake.mark();
+    fake.feed('\x0f');
+    await waitFor(() => fake.since(mark).includes('kept.txt'));
+    expect(fake.since(mark)).not.toContain('no changes');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('resuming a session shows its earlier journal entries on the first Ctrl-R', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot();
+    const first = await prodBoot(sessionsRoot, workspace, ['unused'])();
+    first.journal?.append({
+      path: 'earlier.txt',
+      op: 'create',
+      before: null,
+      after: 'from before\n',
+      bytesDelta: 12,
+      sessionId: first.sessionId,
+      agentId: 'root',
+      toolCallId: 'call-earlier',
+      timestamp: Date.now(),
+    });
+    await first.close?.();
+    const { fake, exit } = await openTui(
+      sessionsRoot,
+      workspace,
+      ['unused'],
+      first.sessionId,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const mark = fake.mark();
+    fake.feed('\x12');
+    await waitFor(() => fake.since(mark).includes('earlier.txt'));
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('journal rows are sanitized before they reach the panel', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot();
+    const first = await prodBoot(sessionsRoot, workspace, ['unused'])();
+    const store = first.journal as FileJournalStore;
+    store.append({
+      path: 'evil\x1b[2Jname.txt',
+      op: 'create',
+      before: null,
+      after: 'x\n',
+      bytesDelta: 2,
+      sessionId: first.sessionId,
+      agentId: 'root',
+      toolCallId: 'call-evil',
+      timestamp: Date.now(),
+    });
+    await first.close?.();
+    const { fake, exit } = await openTui(
+      sessionsRoot,
+      workspace,
+      ['unused'],
+      first.sessionId,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const mark = fake.mark();
+    fake.feed('\x12');
+    await waitFor(() => fake.since(mark).includes('name.txt'));
+    expect(fake.since(mark)).not.toContain('evil\x1b[2J');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+});
+
+describe('JournalPanelFeed throttles journal reads (issue #311)', () => {
+  it('a burst of 10 tool-end events reads the journal at most once per window', () => {
+    let reads = 0;
+    const applied: number[] = [];
+    const timers: Array<() => void> = [];
+    const feed = new JournalPanelFeed({
+      read: () => {
+        reads += 1;
+        return [];
+      },
+      apply: () => {
+        applied.push(reads);
+      },
+      schedule: (fn) => {
+        timers.push(fn);
+      },
+    });
+    for (let i = 0; i < 10; i += 1) feed.request();
+    expect(reads).toBe(0);
+    expect(timers).toHaveLength(1);
+    timers.shift()?.();
+    expect(reads).toBe(1);
+    // The next window opens only after the previous read ran.
+    for (let i = 0; i < 10; i += 1) feed.request();
+    expect(timers).toHaveLength(1);
+    timers.shift()?.();
+    expect(reads).toBe(2);
+    expect(applied).toEqual([1, 2]);
+  });
+
+  it('now() reads at once and supersedes a pending window', () => {
+    let reads = 0;
+    const timers: Array<() => void> = [];
+    const feed = new JournalPanelFeed({
+      read: () => {
+        reads += 1;
+        return [];
+      },
+      apply: () => {},
+      schedule: (fn) => {
+        timers.push(fn);
+      },
+    });
+    feed.request();
+    feed.now();
+    expect(reads).toBe(1);
+    timers.shift()?.();
+    // The superseded window does not read again.
+    expect(reads).toBe(1);
+  });
+
+  it('a read failure never escapes the feed', () => {
+    const feed = new JournalPanelFeed({
+      read: () => {
+        throw new Error('journal unreadable');
+      },
+      apply: () => {},
+      schedule: (fn) => fn(),
+    });
+    expect(() => feed.request()).not.toThrow();
+    expect(() => feed.now()).not.toThrow();
+  });
+});

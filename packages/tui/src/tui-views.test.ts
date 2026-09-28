@@ -128,8 +128,30 @@ describe('diff panel (issue #96, criterion 3)', () => {
     expect(app.render(100).join('\n')).toContain('src/app.ts — edit');
   });
 
-  it('says so plainly when the selected call changed nothing', () => {
+  it('says so plainly when the pinned call changed nothing', () => {
     const app = appWithRun([change({ toolCallId: 'tc-9' })]);
+    app.setDiffToolCall('tc-none');
+    app.handleInput(OPEN_DIFF);
+    expect(app.render(100).join('\n')).toContain('no changes');
+  });
+
+  // Issue #311: following the run, a call that wrote nothing (a read, a
+  // listing) must not blank the panel — it shows the most recent call that
+  // has journal rows.
+  it('follows the most recent call with journal rows when the run call wrote nothing', () => {
+    const app = appWithRun([
+      change({ path: 'old.md', toolCallId: 'tc-7', timestamp: 1 }),
+      change({ path: 'new.md', toolCallId: 'tc-9', timestamp: 2 }),
+    ]);
+    app.handleInput(OPEN_DIFF);
+    const frame = app.render(100).join('\n');
+    expect(frame).toContain('new.md');
+    expect(frame).not.toContain('old.md');
+    expect(frame).not.toContain('no changes');
+  });
+
+  it('shows no changes while the session journal is empty', () => {
+    const app = appWithRun([]);
     app.handleInput(OPEN_DIFF);
     expect(app.render(100).join('\n')).toContain('no changes');
   });

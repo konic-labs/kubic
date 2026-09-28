@@ -527,8 +527,8 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
-| `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
-| `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
+| `Ctrl-O` | Toggle the **diff panel** — the most recent tool call that changed files, rendered as unified hunks. |
+| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal (filter by path or agent on the command line with `kubic diff --path/--agent`). |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
 | `a` | Approval overlay: **allow once** the challenged call. |
 | `s` | Approval overlay: **allow for the session**. |
@@ -537,6 +537,13 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
+
+Both panels read the session's own journal through the same projection
+`kubic diff` prints (one change per path, latest attribution): once at boot
+— so `kubic tui --session <id>` shows earlier turns the first time `Ctrl-R`
+opens — after each tool call (throttled to one read per 100 ms burst) and
+when a turn settles. Paths and file content are stripped of terminal
+control sequences before they are drawn.
 
 A challenged call opens the **approval overlay** instead of being refused: it
 names the tool class and the exact command, so the decision is made on what

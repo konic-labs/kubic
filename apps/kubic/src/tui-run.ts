@@ -23,6 +23,7 @@ import {
   FileJournalStore,
   type JournalRetention,
 } from '../../../packages/exec/src/journal.js';
+import { diffEntries } from '../../../packages/exec/src/journal-diff.js';
 import {
   beginReconciliation,
   type RunReconciliation,
@@ -72,6 +73,7 @@ import {
 } from '../../../packages/tui/src/theme.js';
 import {
   createTuiApp,
+  type JournalChangeLike,
   type TuiApp,
 } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
@@ -528,6 +530,67 @@ export function tuiDepsWithDefaults(
   };
 }
 
+// Issue #311: the §17 inspectable pair reads the session journal through
+// the SAME projection `kubic diff` uses (diffEntries: one change per path,
+// latest attribution). Reads are throttled like the transcript refresh: a
+// burst of tool-end events collapses into one read per window, and a
+// settlement (or the boot) reads at once. A read failure never reaches the
+// loop — the panels keep their last rows.
+export const JOURNAL_REFRESH_MS = 100;
+
+export class JournalPanelFeed {
+  private readonly read: () => ReadonlyArray<JournalChangeLike>;
+  private readonly apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
+  private readonly schedule: (fn: () => void) => void;
+  private pending = false;
+  private token = 0;
+
+  constructor(options: {
+    read: () => ReadonlyArray<JournalChangeLike>;
+    apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
+    // Injectable window (tests); absent means a JOURNAL_REFRESH_MS timer.
+    schedule?: (fn: () => void) => void;
+  }) {
+    this.read = options.read;
+    this.apply = options.apply;
+    this.schedule =
+      options.schedule ??
+      ((fn: () => void): void => {
+        const timer = setTimeout(fn, JOURNAL_REFRESH_MS);
+        timer.unref?.();
+      });
+  }
+
+  // A tool call ended: read once the current window closes.
+  request(): void {
+    if (this.pending) return;
+    this.pending = true;
+    this.token += 1;
+    const token = this.token;
+    this.schedule(() => {
+      if (token !== this.token) return;
+      this.pending = false;
+      this.load();
+    });
+  }
+
+  // Settlement / boot: read now; a pending window is superseded.
+  now(): void {
+    this.token += 1;
+    this.pending = false;
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      this.apply(this.read());
+    } catch {
+      // The journal is observed, never a gate: a failed read keeps the
+      // panels on their last rows.
+    }
+  }
+}
+
 export interface TuiTurnOutcome {
   readonly status: 'completed' | 'cancelled' | 'failed';
   readonly detail?: string;
@@ -562,16 +625,22 @@ export class TuiTurnRunner {
   private refreshing = false;
   private refreshAgain = false;
 
+  // Issue #311: every lane event, after the app folded it in (the root
+  // requests a journal read on tool-end).
+  private readonly onLaneEvent: ((event: KubicLaneEvent) => void) | undefined;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
     model: string,
     onUpdate?: () => void,
+    onLaneEvent?: (event: KubicLaneEvent) => void,
   ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
     this.onUpdate = onUpdate;
+    this.onLaneEvent = onLaneEvent;
   }
 
   // TUI polish: the transcript follows the turn instead of appearing only
@@ -615,6 +684,7 @@ export class TuiTurnRunner {
   // with no model field of their own) so the bar can group them.
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     this.app.applyLaneEvent(event);
+    this.onLaneEvent?.(event);
     if (event.type !== 'run-start') this.scheduleRefresh();
     if (event.type === 'usage') {
       this.usageRows.push({
@@ -827,13 +897,36 @@ export async function runTuiCommand(
     boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
       ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
       : soloNotice;
+  // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
+  // boot created — loaded once now (a resumed session shows its earlier
+  // turns), after each tool call (throttled) and at every settlement.
+  const journalStore = boot.journal;
+  const journalFeed =
+    journalStore === undefined
+      ? undefined
+      : new JournalPanelFeed({
+          read: () => diffEntries(journalStore, {}),
+          apply: (rows) => {
+            app.setJournalChanges(rows);
+            if (!stopped) screen?.update();
+          },
+        });
+  journalFeed?.now();
   const turn =
     boot.loop === undefined
       ? undefined
-      : new TuiTurnRunner(app, boot.loop, boot.model, () => {
-          syncPosture();
-          if (!stopped) screen?.update();
-        });
+      : new TuiTurnRunner(
+          app,
+          boot.loop,
+          boot.model,
+          () => {
+            syncPosture();
+            if (!stopped) screen?.update();
+          },
+          (event) => {
+            if (event.type === 'tool-end') journalFeed?.request();
+          },
+        );
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -975,6 +1068,7 @@ export async function runTuiCommand(
             app.setBusy(false);
             stopSpinner();
             syncPosture();
+            journalFeed?.now();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the trust statement instead of going blank
             // (issue #89) — a cancelled/failed turn keeps its own report.

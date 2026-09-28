@@ -360,10 +360,17 @@ you, and your verdict travels back to the worker:
   (headless, no TTY) denies closed with the reason `approval_timeout` — exit
   **4** — on the run's bound; the child denies on its own bound too, so a run
   never hangs on a question nobody can answer.
-- **Budgets are opt-in per spawn (§71).** With no `--budget` the run applies no
-  limit at all. With one configured, a worker that exceeds it is blocked with
-  `BUDGET_EXHAUSTED` and the run exits **3**. A worker cannot raise its own
-  budget: the raise is refused and audited.
+- **Budgets are opt-in per spawn and enforced (§71).** With no `--budget` the
+  run applies no limit at all. With one configured, each worker's own lane
+  enforces `maxToolCalls` on **every** tool call it makes (brokered or not)
+  and `maxTokens` / `maxCostUsd` from its own usage roll-up; the run ends
+  `BUDGET_EXHAUSTED` (**exit 3**) naming the `limit=` that tripped, and that
+  worker cannot make another tool call. `maxRuntimeMs` is the manager's
+  wall-clock watchdog: a worker that outlives it is killed and the run reports
+  `limit=wallClock` — distinct from the child's own `--timeout`. A worker
+  cannot raise its own budget: the raise is refused and audited. The spec
+  persists with the session, so `--resume` re-applies it; a differing
+  `--budget` on resume is refused (exit 2) rather than silently mixed.
 - **`--dangerously-skip-approvals` is the session-scoped skip (§41.4).** It
   is stored per session, indicated on the surface, recorded for audit/doctor
   (one `posture:full-access` ledger row), warned on stderr, and a fresh
@@ -442,9 +449,9 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | `-p`, `--prompt <text>` | **Required** (unless `--resume`). The objective the manager derives the plan from; each worker receives its own plan step built on this text, never the text verbatim. |
 | `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, spawned one after another). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
-| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
+| `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The budget the run started with is re-applied from the state; a `--budget` naming a different spec is refused (exit 2). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
-| `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`. Absent means **no limit is applied**; a worker exceeding it ends `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own budget. |
+| `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls` — positive numbers; `maxRuntimeMs` at most `2147483647`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`; a clause naming an agent that is not in the run (`--agents`, or the stored session on `--resume`) exits 2. Absent means **no limit is applied**. Each worker's own lane counts every tool call and its usage roll-up; the manager watches `maxRuntimeMs` and kills a worker that outlives it. Either end is `BUDGET_EXHAUSTED` (exit 3) naming the `limit=` that tripped, and a worker cannot raise its own budget. The spec persists with the session. |
 | `--dangerously-skip-approvals` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated, recorded in the audit ledger, and warned on stderr. A fresh session starts enforced again. |
 | `--full-access` | Deprecated alias of `--dangerously-skip-approvals`; prints `hint: --full-access is deprecated — use --dangerously-skip-approvals` on stderr. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. |

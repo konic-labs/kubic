@@ -5,7 +5,7 @@
 // gate blocks with budget_exhausted — a distinct status from failure that
 // maps to exit 3 (RUN_EXIT_BUDGET). Above-task raises need user approval:
 // a worker self-raise of its own budget is refused, never applied.
-import { RUN_EXIT_BUDGET } from '../../run-cli.js';
+import { MAX_RUN_TIMEOUT_MS, RUN_EXIT_BUDGET } from '../../run-cli.js';
 
 export const BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED';
 
@@ -55,6 +55,14 @@ export function validateOrchestratorBudget(input: unknown): OrchestratorBudget {
   }
   if (record.maxRuntimeMs !== undefined) {
     assertPositive('maxRuntimeMs', record.maxRuntimeMs);
+    // setTimeout stores its delay in a 32-bit signed int: above this the
+    // "bound" clamps to 1ms and the wall-clock watchdog would fire (and
+    // misreport limit=wallClock) almost immediately. Refused, never clamped.
+    if ((record.maxRuntimeMs as number) > MAX_RUN_TIMEOUT_MS) {
+      throw new OrchestratorBudgetError(
+        `maxRuntimeMs must be no more than ${MAX_RUN_TIMEOUT_MS}`,
+      );
+    }
     budget.maxRuntimeMs = record.maxRuntimeMs as number;
   }
   if (record.maxToolCalls !== undefined) {
@@ -214,6 +222,168 @@ export function recordToolCall(
   ledger.tokens += assertSpend('tokens', spend.tokens);
   ledger.costUsd += assertSpend('costUsd', spend.costUsd);
   ledger.runtimeMs += assertSpend('runtimeMs', spend.runtimeMs);
+}
+
+// ---------------------------------------------------------------------------
+// Child-side run enforcement (issue #208, §71)
+// ---------------------------------------------------------------------------
+
+// The manager hands each worker its resolved budget through this §3.8
+// allowlisted env var; the child's lane then runs under the meter below.
+// maxRuntimeMs is deliberately NOT part of the handoff: wall clock is the
+// manager's watchdog (host ownership, §71), never the child's.
+export const AGENT_BUDGET_ENV = 'KUBIC_BUDGET';
+
+// The meter the child's lane runs under: maxToolCalls counts every tool
+// ATTEMPT (brokered or not), tokens/cost come from the lane's own usage
+// roll-up. Every refused attempt and every accumulated row is checked against
+// the SAME budget via checkBudgetExhaustion, so the child and the parent can
+// never disagree about which dimension tripped.
+export interface RunBudgetMeter {
+  usage: () => BudgetUsage;
+  /**
+   * Consulted BEFORE each tool attempt: the returned termination blocks the
+   * attempt; undefined admits it (and counts it).
+   */
+  nextToolCall: () => BudgetTermination | undefined;
+  /** Adds one usage row; the returned termination ends the run. */
+  recordUsage: (spend: {
+    tokens?: number;
+    costUsd?: number;
+  }) => BudgetTermination | undefined;
+}
+
+export function createRunBudgetMeter(
+  budget: OrchestratorBudget,
+): RunBudgetMeter {
+  const usage: BudgetUsage = {
+    tokens: 0,
+    costUsd: 0,
+    runtimeMs: 0,
+    toolCalls: 0,
+    retries: 0,
+  };
+  const exhausted = (): BudgetTermination | undefined =>
+    checkBudgetExhaustion(budget, usage);
+  return {
+    usage: () => ({ ...usage }),
+    nextToolCall: () => {
+      const hit = exhausted();
+      if (hit !== undefined) return hit;
+      // The attempt is counted only once it is admitted, so the cap admits
+      // exactly maxToolCalls calls and refuses the next.
+      usage.toolCalls += 1;
+      return undefined;
+    },
+    recordUsage: (spend) => {
+      usage.tokens += assertSpend('tokens', spend.tokens);
+      usage.costUsd += assertSpend('costUsd', spend.costUsd);
+      return exhausted();
+    },
+  };
+}
+
+// The minimal row shape the child reads. Structural on purpose: the meter
+// understands a usage row without this module importing the harness types.
+export interface BudgetUsageRowLike {
+  usage: { input: number; output: number; cost: { total: number } };
+}
+
+// Tokens are input+output (the count the run's own readout prints); cost is
+// the row's own total. Cache reads/writes are excluded from the token count
+// so a cache-heavy turn is not billed twice against the window.
+export function usageSpendOf(row: BudgetUsageRowLike): {
+  tokens: number;
+  costUsd: number;
+} {
+  return {
+    tokens: row.usage.input + row.usage.output,
+    costUsd: row.usage.cost.total,
+  };
+}
+
+// The child's half of a resolved budget: wall clock belongs to the manager's
+// watchdog, so it never travels in KUBIC_BUDGET.
+export function childBudgetOf(budget: OrchestratorBudget): OrchestratorBudget {
+  const child = { ...budget };
+  delete child.maxRuntimeMs;
+  return child;
+}
+
+// Parse the env handoff, fail closed: a malformed payload is a usage error at
+// the child (never a silently-dropped limit). Absent/empty means no budget.
+export function parseWorkerBudgetEnv(
+  raw: string | undefined,
+): OrchestratorBudget | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new OrchestratorBudgetError(
+      `worker budget env (${AGENT_BUDGET_ENV}) is not valid JSON`,
+    );
+  }
+  return validateOrchestratorBudget(parsed);
+}
+
+// The harness seams the child enforcement attaches to. Structural (never a
+// harness import) so the wiring itself is unit-testable with fakes.
+export interface BudgetHookRegistry {
+  on(
+    name: 'before_tool',
+    handler: (event: {
+      toolCallId: string;
+      toolName: string;
+    }) => { block: { reason: string; terminate: false } } | undefined,
+  ): () => void;
+}
+
+export interface BudgetUsageEventSource {
+  on(
+    name: 'usage',
+    handler: (event: { row: BudgetUsageRowLike }) => void,
+  ): () => void;
+}
+
+export function budgetBlockReason(termination: BudgetTermination): string {
+  return `budget ${BUDGET_EXHAUSTED} (limit=${termination.limit}): the call is blocked, exit ${RUN_EXIT_BUDGET}`;
+}
+
+// Wire the meter onto a live lane: every before_tool attempt is counted and
+// every usage row accumulates; the FIRST termination calls onBreach exactly
+// once (the run ends on it) and every later attempt is still blocked.
+export function attachRunBudget(input: {
+  budget: OrchestratorBudget;
+  hooks: BudgetHookRegistry;
+  events: BudgetUsageEventSource;
+  onBreach: (termination: BudgetTermination) => void;
+}): () => void {
+  const meter = createRunBudgetMeter(input.budget);
+  let breached: BudgetTermination | undefined;
+  const stop = (
+    termination: BudgetTermination,
+  ): { block: { reason: string; terminate: false } } => {
+    if (breached === undefined) {
+      breached = termination;
+      input.onBreach(termination);
+    }
+    return {
+      block: { reason: budgetBlockReason(termination), terminate: false },
+    };
+  };
+  const offTool = input.hooks.on('before_tool', () => {
+    const hit = meter.nextToolCall();
+    return hit === undefined ? undefined : stop(hit);
+  });
+  const offUsage = input.events.on('usage', (event) => {
+    const hit = meter.recordUsage(usageSpendOf(event.row));
+    if (hit !== undefined) stop(hit);
+  });
+  return () => {
+    offTool();
+    offUsage();
+  };
 }
 
 export interface SelfRaiseRefusal {

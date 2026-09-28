@@ -61,8 +61,12 @@ solo) — and `run` never delegates.
   `approval_timeout` rather than hanging), decisions are durable and memoized
   so an answered operation is never re-asked, and a denial reaches the worker
   as a named status (exit 4) instead of a crash. Budgets are **opt-in per
-  spawn** (§71): no configuration enforces nothing, a configured budget blocks
-  with `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own. The
+  spawn** and enforced (§71): no configuration enforces nothing; a configured
+  tool-call/token/cost budget is counted by the worker's own lane and ends the
+  run with `BUDGET_EXHAUSTED` (exit 3) naming the `limit=`, the manager's own
+  `maxRuntimeMs` watchdog kills a worker that outlives it (`limit=wallClock`),
+  and a worker cannot raise its own. The budget persists with the session so
+  `--resume` re-applies it. The
   full-access posture is session-scoped (§41.4) — enabled per session,
   indicated, recorded, never global. The manager's only view of a pending ask
   is a read-only blocked indicator; a manager approval attempt is refused and

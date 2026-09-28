@@ -1,0 +1,813 @@
+// Budget enforcement on the delegation path (issue #208, §71). RED first:
+// `--budget maxCostUsd=0.10` let a worker spend $5 and exit 0,
+// `maxToolCalls=3` never stopped 50 read calls, a per-agent clause naming a
+// worker that was not in the run enforced nothing, and `--resume` dropped the
+// budget entirely. This file pins the shipped behaviour:
+//
+//   - the child's own lane enforces toolCalls (every attempt) and tokens/cost
+//     from its usage roll-up, ending BUDGET_EXHAUSTED exit 3 with the limit;
+//   - the manager hands each worker its resolved budget through the §3.8
+//     allowlisted KUBIC_BUDGET env (asserted across a real process boundary);
+//   - maxRuntimeMs is the MANAGER's watchdog: a sleeping child is killed and
+//     the run reports limit=wallClock (distinct from --timeout);
+//   - a per-agent clause naming an agent not in the run is a usage error;
+//   - the budget spec persists in OrchestratorRunState and --resume
+//     re-applies it, refusing a differing spec;
+//   - a --budget no approvals layer could enforce is refused, never dropped.
+//
+// Zero network, zero paid tokens: the lane runs on the `faux` provider and
+// the process-boundary tests use fixture children. Every scratch dir is
+// removed after each test; every env change is unstubbed.
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BudgetExceededError,
+  runHeadlessPrompt,
+} from '../../../apps/kubic/src/headless-run.js';
+import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import type { Provenance } from '../../exec/src/env.js';
+import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import {
+  createSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../worker/src/pi-boundary.js';
+import type {
+  OrchestrateCommandDeps,
+  OrchestratorRunState,
+  ParsedBudgetSpec,
+  WorkerSpawnInfo,
+} from './orchestrate-cli.js';
+import {
+  budgetSpecsEqual,
+  parseBudgetSpec,
+  parseOrchestratorRunState,
+  runOrchestrateCommand,
+} from './orchestrate-cli.js';
+import { createOrchestratorApprovalsRun } from './orchestrator/approvals/worker-asks.js';
+import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { mapTerminusToExitCode } from './run-cli.js';
+
+const PROVENANCE: Provenance = {
+  sessionId: 'issue-208',
+  agentId: 'manager',
+  toolCallId: 'issue-208-budget',
+  turnId: 0,
+  operation: 'issue_208_budget',
+};
+
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
+function scratchRoot(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+beforeEach(() => {
+  // The solo no-isolation notice is not under test here; the documented
+  // opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+function budgetSpec(raw: string): ParsedBudgetSpec {
+  const spec = parseBudgetSpec(raw);
+  if (spec === undefined) throw new Error(`bad budget spec: ${raw}`);
+  return spec;
+}
+
+function fauxToolCallModels(calls: number): MutableModels {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const responses = [];
+  for (let index = 0; index < calls; index += 1) {
+    responses.push(
+      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })]),
+    );
+  }
+  responses.push(fauxAssistantMessage('done'));
+  faux.setResponses(responses);
+  return models;
+}
+
+interface World {
+  deps: OrchestrateCommandDeps;
+  lines: string[];
+  errLines: string[];
+  debugLines: string[];
+  calls: string[];
+  saved: OrchestratorRunState[];
+  /** The resolved budget each spawn's gate saw, as the run handed it down. */
+  spawnBudgets: (unknown | undefined)[];
+  approvalsDir: string;
+  /** The approvals layer the CLI constructed (available after the first spawn). */
+  readonly approvals: {
+    budget: () => unknown;
+    budgetFor: (agentId: string) => unknown;
+  };
+}
+
+interface WorldOptions {
+  overrides?: Partial<OrchestrateCommandDeps>;
+  /** Absent means the CLI gets no approvals layer at all. */
+  withoutApprovals?: boolean;
+  runWorker?: OrchestrateCommandDeps['runWorker'];
+}
+
+function makeWorld(options: WorldOptions = {}): World {
+  const root = scratchRoot('kubic-208-');
+  const approvalsDir = join(root, 'approvals');
+  const lines: string[] = [];
+  const errLines: string[] = [];
+  const debugLines: string[] = [];
+  const calls: string[] = [];
+  const saved: OrchestratorRunState[] = [];
+  const spawnBudgets: (unknown | undefined)[] = [];
+  let built: ReturnType<typeof createOrchestratorApprovalsRun> | undefined;
+  const deps: OrchestrateCommandDeps = {
+    out: (line) => {
+      lines.push(line);
+    },
+    err: (line) => {
+      errLines.push(line);
+    },
+    debug: (line) => {
+      debugLines.push(line);
+    },
+    now: () => 1700000000000,
+    isGitRepo: () => true,
+    ensureWorktree: (agentId: string) => ({
+      path: `/repo/.kubic/wt/${agentId}`,
+      branch: `kubic/${agentId}`,
+    }),
+    createWorkerSession: (input) => ({ sessionId: input.workerSessionId }),
+    runWorker: async (
+      agentId: string,
+      _worktree,
+      _prompt: string,
+      _info?: WorkerSpawnInfo,
+    ): Promise<MergedHunk[]> => {
+      calls.push(agentId);
+      spawnBudgets.push(built?.budgetFor(agentId));
+      return [{ path: `${agentId}.txt`, hunk: `@@ -0,0 +1 @@ +${agentId}` }];
+    },
+    mergeBranch: () => undefined,
+    reapWorker: () => undefined,
+    requestApproval: () => true,
+    loadState: () => undefined,
+    saveState: (state) => {
+      saved.push(structuredClone(state));
+    },
+    ...(options.withoutApprovals === true
+      ? {}
+      : {
+          approvals: (cliOptions: {
+            sessionId: string;
+            maxPendingMs: number;
+            budget?: unknown;
+            budgetForAgent?: (agentId: string) => unknown;
+          }) => {
+            built = createOrchestratorApprovalsRun({
+              dir: approvalsDir,
+              sessionId: cliOptions.sessionId,
+              maxPendingMs: cliOptions.maxPendingMs,
+              pollMs: 5,
+              ...(cliOptions.budget === undefined
+                ? {}
+                : { budget: cliOptions.budget }),
+              ...(cliOptions.budgetForAgent === undefined
+                ? {}
+                : { budgetForAgent: cliOptions.budgetForAgent }),
+              debug: (line) => debugLines.push(line),
+            });
+            return built;
+          },
+        }),
+    ...(options.runWorker === undefined
+      ? {}
+      : { runWorker: options.runWorker }),
+    ...options.overrides,
+  };
+  return {
+    deps,
+    lines,
+    errLines,
+    debugLines,
+    calls,
+    saved,
+    spawnBudgets,
+    approvalsDir,
+    get approvals(): World['approvals'] {
+      if (built === undefined) {
+        throw new Error('the CLI never constructed the approvals layer');
+      }
+      return {
+        budget: () => built?.budget(),
+        budgetFor: (agentId: string) => built?.budgetFor(agentId),
+      };
+    },
+  };
+}
+
+async function gitIn(
+  cwd: string,
+  args: string[],
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const env = new NodeExecutionEnv(cwd);
+  return env.shell.spawn('git', args, { provenance: PROVENANCE }).wait();
+}
+
+async function initRepo(): Promise<string> {
+  const root = scratchRoot('kubic-208-prod-');
+  await gitIn(root, ['init', '-b', 'main']);
+  await gitIn(root, ['config', 'user.email', 'issue208@kubic.dev']);
+  await gitIn(root, ['config', 'user.name', 'kubic issue 208']);
+  await gitIn(root, ['config', 'commit.gpgsign', 'false']);
+  writeFileSync(join(root, 'base.txt'), 'base\n');
+  await gitIn(root, ['add', 'base.txt']);
+  await gitIn(root, ['commit', '-m', 'base']);
+  return root;
+}
+
+describe('budget spec validation helpers (issue #208)', () => {
+  it('parseBudgetSpec refuses a maxRuntimeMs above the setTimeout ceiling', () => {
+    expect(parseBudgetSpec('maxRuntimeMs=2147483648')).toBeUndefined();
+    expect(parseBudgetSpec('maxRuntimeMs=2147483647')).toEqual({
+      byAgent: {},
+      shared: { maxRuntimeMs: 2_147_483_647 },
+    });
+  });
+
+  it('budgetSpecsEqual compares dims and agent clauses order-insensitively', () => {
+    const a = {
+      shared: { maxTokens: 1, maxCostUsd: 2 },
+      byAgent: { 'worker-1': { maxToolCalls: 3 } },
+    };
+    const b = {
+      byAgent: { 'worker-1': { maxToolCalls: 3 } },
+      shared: { maxCostUsd: 2, maxTokens: 1 },
+    };
+    expect(budgetSpecsEqual(a, b)).toBe(true);
+    // A missing/extra dimension or agent differs, in either direction.
+    expect(budgetSpecsEqual(a, { ...b, shared: { maxTokens: 1 } })).toBe(false);
+    expect(budgetSpecsEqual(a, { shared: a.shared, byAgent: {} })).toBe(false);
+    expect(
+      budgetSpecsEqual(a, {
+        shared: a.shared,
+        byAgent: { 'worker-1': { maxToolCalls: 4 } },
+      }),
+    ).toBe(false);
+    expect(
+      budgetSpecsEqual(a, {
+        shared: a.shared,
+        byAgent: { 'worker-2': { maxToolCalls: 3 } },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('budget spec parsing and stored-spec validation (issue #208)', () => {
+  const base = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'orch-208',
+    prompt: 'do the work',
+    agents: ['worker-1'],
+    merged: [],
+    pending: ['worker-1'],
+    stopped: false,
+    records: [],
+  });
+
+  it('parseBudgetSpec bounds only maxRuntimeMs at the setTimeout ceiling', () => {
+    expect(parseBudgetSpec('maxRuntimeMs=5')).toEqual({
+      byAgent: {},
+      shared: { maxRuntimeMs: 5 },
+    });
+    // The ceiling belongs to the wall-clock dimension alone: a large token
+    // budget is a valid (if unwise) configuration.
+    expect(parseBudgetSpec('maxTokens=2147483648')).toEqual({
+      byAgent: {},
+      shared: { maxTokens: 2_147_483_648 },
+    });
+    // Non-positive and non-numeric values are refused at parse time...
+    expect(parseBudgetSpec('maxToolCalls=0')).toBeUndefined();
+    expect(parseBudgetSpec('maxToolCalls=-1')).toBeUndefined();
+    expect(parseBudgetSpec('maxCostUsd=abc')).toBeUndefined();
+    // ...including inside a per-agent clause.
+    expect(parseBudgetSpec('worker-1:maxRuntimeMs=2147483648')).toBeUndefined();
+    expect(parseBudgetSpec('worker-1:maxRuntimeMs=2147483647')).toEqual({
+      byAgent: { 'worker-1': { maxRuntimeMs: 2_147_483_647 } },
+    });
+  });
+
+  it('parseOrchestratorRunState refuses every malformed stored budget shape', () => {
+    const budgets: unknown[] = [
+      null,
+      [],
+      42,
+      'x',
+      { shared: null, byAgent: {} },
+      { shared: 1, byAgent: {} },
+      { shared: { maxRuntimeMs: 2_147_483_648 }, byAgent: {} },
+      { shared: {}, byAgent: {} },
+      { shared: { maxTokens: 1 }, byAgent: [] },
+      { shared: { maxTokens: 1 }, byAgent: 'x' },
+      { byAgent: { 'worker-1': null } },
+      { byAgent: { 'worker-1': {} } },
+      { byAgent: { 'worker-1': { nope: 1 } } },
+      { byAgent: { 'worker-1': { maxTokens: true } } },
+      { shared: { maxTokens: 1 }, byAgent: {}, extra: true },
+    ];
+    for (const budget of budgets) {
+      expect(
+        parseOrchestratorRunState({ ...base(), budget }, 'orch-208'),
+        JSON.stringify(budget),
+      ).toBeUndefined();
+    }
+    // A byAgent-only spec is valid and round-trips.
+    expect(
+      parseOrchestratorRunState(
+        { ...base(), budget: { byAgent: { 'worker-1': { maxTokens: 1 } } } },
+        'orch-208',
+      )?.budget,
+    ).toEqual({ byAgent: { 'worker-1': { maxTokens: 1 } } });
+  });
+
+  it('budgetSpecsEqual compares key sets and pairings, not insertion order', () => {
+    expect(budgetSpecsEqual({ byAgent: {} }, { byAgent: {} })).toBe(true);
+    // One side carrying a shared spec differs from one that does not.
+    expect(
+      budgetSpecsEqual(
+        { byAgent: {} },
+        { shared: { maxTokens: 1 }, byAgent: {} },
+      ),
+    ).toBe(false);
+    // Different key-set sizes differ.
+    expect(
+      budgetSpecsEqual({ byAgent: { a: { maxTokens: 1 } } }, { byAgent: {} }),
+    ).toBe(false);
+    // Insertion order is irrelevant; the dims still match their agent.
+    expect(
+      budgetSpecsEqual(
+        { byAgent: { a: { maxTokens: 1 }, b: { maxCostUsd: 2 } } },
+        { byAgent: { b: { maxCostUsd: 2 }, a: { maxTokens: 1 } } },
+      ),
+    ).toBe(true);
+    // Cross-paired values are NOT equal even though the key sets match.
+    expect(
+      budgetSpecsEqual(
+        { byAgent: { a: { maxTokens: 1 }, b: { maxCostUsd: 2 } } },
+        { byAgent: { a: { maxCostUsd: 2 }, b: { maxTokens: 1 } } },
+      ),
+    ).toBe(false);
+    // A dim value change in either direction differs.
+    expect(
+      budgetSpecsEqual(
+        { shared: { maxTokens: 1 }, byAgent: {} },
+        { shared: { maxTokens: 2 }, byAgent: {} },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC1/AC2)', () => {
+  it('AC1: maxToolCalls=2 with 3 non-dangerous tool calls ends BUDGET_EXHAUSTED (limit=toolCalls); orchestrate exits 3', async () => {
+    const sessionsRoot = scratchRoot('kubic-208-sessions-');
+    const store = openSessionStore(
+      sessionsRoot,
+      createNodeFileBridge(sessionsRoot),
+    );
+    const models = fauxToolCallModels(3);
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'budget fixture\n');
+    let childResult: string | undefined;
+    let childMessage: string | undefined;
+    const world = makeWorld({
+      runWorker: async (agentId, _worktree, _prompt, info) => {
+        // The resolved budget, exactly as the prod spawn env hands it down:
+        // the manager's gate for THIS worker, read from the layer the CLI
+        // built. No budget configured for the agent would mean no limit.
+        const resolved = world.approvals.budgetFor(agentId);
+        if (resolved !== undefined) {
+          vi.stubEnv('KUBIC_BUDGET', JSON.stringify(resolved));
+        }
+        const result = await runHeadlessPrompt(
+          'work',
+          { sessionId: info?.workerSessionId },
+          { sessionsRoot, models, env },
+        );
+        childResult = result.terminus;
+        childMessage = result.error?.message;
+        if (result.terminus !== 'completed') {
+          const error = new Error(
+            result.error?.message ?? result.terminus,
+          ) as Error & { approval?: { code: string; exitCode: number } };
+          error.approval =
+            result.terminus === 'budget_exhausted'
+              ? { code: 'BUDGET_EXHAUSTED', exitCode: 3 }
+              : {
+                  code: result.terminus,
+                  exitCode: mapTerminusToExitCode(result.terminus),
+                };
+          throw error;
+        }
+        return [{ path: `${agentId}.txt`, hunk: 'x' }];
+      },
+      overrides: {
+        createWorkerSession: async (input) => {
+          const session = await createSession(
+            store,
+            '/fake',
+            BACKGROUND_CONTEXT,
+            input.workerSessionId,
+          );
+          await session.close(BACKGROUND_CONTEXT);
+          return { sessionId: input.workerSessionId };
+        },
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1'],
+        session: 'orch-208',
+        budget: budgetSpec('maxToolCalls=2'),
+      },
+      world.deps,
+    );
+
+    // The child lane itself ended on the budget: three attempts, the third
+    // blocked, with the dimension named.
+    expect(childResult).toBe('budget_exhausted');
+    expect(childMessage).toContain('BUDGET_EXHAUSTED');
+    expect(childMessage).toContain('limit=toolCalls');
+    // ...and the orchestration surfaced it as exit 3 with the same limit.
+    // The failure message is the stderr diagnostic in text mode.
+    expect(code).toBe(3);
+    const err = world.errLines.join('\n');
+    expect(err).toContain('BUDGET_EXHAUSTED');
+    expect(err).toContain('limit=toolCalls');
+  }, 60_000);
+
+  it('AC2: a faux usage row over maxTokens ends BUDGET_EXHAUSTED (limit=tokens)', async () => {
+    // The faux provider estimates the context tokens, so the very first
+    // response already breaches a one-token window. The script keeps the
+    // drive alive after that response (a tool call follows), so the usage
+    // roll-up — not the drive's natural settlement — is what ends the run.
+    const sessionsRoot = scratchRoot('kubic-208-sessions-');
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'budget fixture\n');
+    vi.stubEnv('KUBIC_BUDGET', JSON.stringify({ maxTokens: 1 }));
+    const result = await runHeadlessPrompt(
+      'work',
+      {},
+      { sessionsRoot, models: fauxToolCallModels(1), env },
+    );
+    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.error?.message).toContain('BUDGET_EXHAUSTED');
+    expect(result.error?.message).toContain('limit=tokens');
+  }, 60_000);
+
+  it('a malformed KUBIC_BUDGET is a usage terminus (exit 2), never a silently dropped limit', async () => {
+    const sessionsRoot = scratchRoot('kubic-208-sessions-');
+    vi.stubEnv('KUBIC_BUDGET', '{not json');
+    const result = await runHeadlessPrompt(
+      'work',
+      {},
+      {
+        sessionsRoot,
+        models: fauxToolCallModels(0),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('usage');
+    expect(result.error?.message).toMatch(/KUBIC_BUDGET|budget/);
+    expect(result.sessionId).toBe('unassigned');
+  }, 60_000);
+
+  it('BudgetExceededError names the dimension and the §78 terminus', () => {
+    const error = new BudgetExceededError('tokens');
+    expect(error.name).toBe('BudgetExceededError');
+    expect(error.limit).toBe('tokens');
+    expect(error.message).toContain('BUDGET_EXHAUSTED');
+    expect(error.message).toContain('limit=tokens');
+    expect(error.message).toContain('exit 3');
+  });
+});
+
+describe('the manager hands each worker its resolved budget (issue #208)', () => {
+  it('the child process receives KUBIC_BUDGET through the §3.8 allowlist, and its budget terminus maps to exit 3', async () => {
+    const root = await initRepo();
+    const scratch = scratchRoot('kubic-208-child-');
+    const fixture = join(scratch, 'budget-child.mjs');
+    // The child contract, as a real process: announce readiness (the launch
+    // waits for exactly that line), record the budget it was handed, then
+    // exit on its own §78 budget terminus with the limit named.
+    writeFileSync(
+      fixture,
+      `
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + String.fromCharCode(10));
+writeFileSync(join(process.cwd(), 'budget-seen.json'), process.env.KUBIC_BUDGET ?? 'ABSENT');
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 3, sessionId: process.argv[process.argv.indexOf('--session') + 1], status: 'budget_exhausted', error: { kind: 'budget_exhausted', message: 'budget BUDGET_EXHAUSTED (limit=toolCalls): fixture reported the cap' } }) + String.fromCharCode(10));
+process.exit(3);
+`,
+    );
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: (line) => lines.push(line),
+      debug: () => undefined,
+      cwd: root,
+      sessionsRoot: scratchRoot('kubic-208-prod-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        session: 'orch-208',
+        agents: ['worker-1'],
+        budget: budgetSpec('maxToolCalls=2'),
+      },
+      deps,
+    );
+    expect(code).toBe(3);
+    const text = lines.join('\n');
+    expect(text).toContain('BUDGET_EXHAUSTED');
+    expect(text).toContain('limit=toolCalls');
+    // The child really saw the resolved spec, filtered through the allowlist.
+    expect(
+      JSON.parse(
+        readFileSync(
+          // Issue #144 (rebased onto the wave): the worktree is scoped by
+          // the owning orchestrator session.
+          join(
+            root,
+            '.kubic',
+            'wt',
+            'orch-208',
+            'worker-1',
+            'budget-seen.json',
+          ),
+          'utf8',
+        ),
+      ),
+    ).toEqual({ maxToolCalls: 2 });
+  }, 60_000);
+
+  it('AC3: maxRuntimeMs is the MANAGER watchdog — a sleeping child is killed and the run reports limit=wallClock', async () => {
+    const root = await initRepo();
+    const scratch = scratchRoot('kubic-208-sleep-');
+    const fixture = join(scratch, 'sleeping-child.mjs');
+    // A worker that becomes ready and then never settles: only the manager's
+    // own watchdog can end it. 30s is far beyond the 50ms budget under test.
+    writeFileSync(
+      fixture,
+      `
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + String.fromCharCode(10));
+setTimeout(() => process.exit(0), 30000);
+`,
+    );
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: (line) => lines.push(line),
+      debug: () => undefined,
+      cwd: root,
+      sessionsRoot: scratchRoot('kubic-208-prod-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+    });
+    const started = Date.now();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        session: 'orch-208',
+        agents: ['worker-1'],
+        budget: budgetSpec('maxRuntimeMs=50'),
+      },
+      deps,
+    );
+    // Bounded: killed on the watchdog, not after the 30s sleep.
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(code).toBe(3);
+    const text = lines.join('\n');
+    expect(text).toContain('BUDGET_EXHAUSTED');
+    expect(text).toContain('limit=wallClock');
+    // Distinct from the child's own --timeout terminus: the watchdog names
+    // the wall-clock budget dimension, never a generic timeout.
+    expect(text).not.toContain('run timed out after');
+  }, 60_000);
+});
+
+describe('budget usage errors are refused before anything spawns (issue #208, AC4)', () => {
+  it('a per-agent clause naming an agent not in the run exits 2 with a named usage error', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['a', 'b'],
+        session: 'orch-208',
+        budget: budgetSpec('worker-1:maxToolCalls=5'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    const err = world.errLines.join('\n');
+    expect(err).toContain('--budget');
+    expect(err).toContain('worker-1');
+    expect(world.calls).toEqual([]);
+  });
+
+  it('a per-agent clause naming an agent in the run is accepted', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['a', 'b'],
+        session: 'orch-208',
+        budget: budgetSpec('a:maxToolCalls=5'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.spawnBudgets).toEqual([{ maxToolCalls: 5 }, undefined]);
+  });
+
+  it('refuses --budget when no approvals layer could enforce it', async () => {
+    const world = makeWorld({ withoutApprovals: true });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1'],
+        session: 'orch-208',
+        budget: budgetSpec('maxToolCalls=5'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toContain('--budget');
+    expect(world.calls).toEqual([]);
+  });
+});
+
+describe('the budget spec persists and --resume re-applies it (issue #208, AC5)', () => {
+  const baseState = (): OrchestratorRunState => ({
+    version: 1,
+    sessionId: 'orch-208',
+    prompt: 'do the work',
+    agents: ['worker-1'],
+    merged: [],
+    pending: ['worker-1'],
+    stopped: false,
+    records: [],
+  });
+
+  it('parseOrchestratorRunState validates the stored budget', () => {
+    const base = baseState();
+    const valid = {
+      ...base,
+      budget: { shared: { maxToolCalls: 2 }, byAgent: {} },
+    };
+    expect(parseOrchestratorRunState(valid, 'orch-208')?.budget).toEqual({
+      shared: { maxToolCalls: 2 },
+      byAgent: {},
+    });
+    // Anything that could reach the budget layer as garbage fails closed —
+    // resume reports no_orchestrator_state instead of crashing mid-run.
+    for (const budget of [
+      { shared: { maxToolCalls: 0 }, byAgent: {} },
+      { shared: { nope: 1 }, byAgent: {} },
+      { shared: { maxTokens: '5' }, byAgent: {} },
+      { shared: {}, byAgent: {} },
+      { byAgent: { ghost: { maxTokens: 1 } } },
+      { byAgent: { 'bad/id': { maxTokens: 1 } } },
+      'not-an-object',
+    ]) {
+      expect(
+        parseOrchestratorRunState({ ...base, budget }, 'orch-208'),
+      ).toBeUndefined();
+    }
+    // The per-agent key must name an agent of the stored run.
+    const inRun = {
+      ...base,
+      budget: { byAgent: { 'worker-1': { maxToolCalls: 1 } } },
+    };
+    expect(parseOrchestratorRunState(inRun, 'orch-208')?.budget).toEqual({
+      byAgent: { 'worker-1': { maxToolCalls: 1 } },
+    });
+  });
+
+  it('resume applies the stored budget to the spawn gates, with no flag given', async () => {
+    const stored = {
+      ...baseState(),
+      budget: { shared: { maxToolCalls: 2 }, byAgent: {} },
+    };
+    const world = makeWorld({
+      overrides: { loadState: () => structuredClone(stored) },
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'orch-208' },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.spawnBudgets).toEqual([{ maxToolCalls: 2 }]);
+    expect(world.approvals.budgetFor('worker-1')).toEqual({
+      maxToolCalls: 2,
+    });
+  });
+
+  it('resume with a DIFFERING --budget is refused (exit 2), never silently mixed', async () => {
+    const stored = {
+      ...baseState(),
+      budget: { shared: { maxToolCalls: 2 }, byAgent: {} },
+    };
+    const world = makeWorld({
+      overrides: { loadState: () => structuredClone(stored) },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'orch-208',
+        budget: budgetSpec('maxToolCalls=5'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toContain('--budget');
+    expect(world.calls).toEqual([]);
+  });
+
+  it('an identical --budget on resume is accepted and the stored spec is applied', async () => {
+    const stored = {
+      ...baseState(),
+      budget: { shared: { maxToolCalls: 2 }, byAgent: {} },
+    };
+    const world = makeWorld({
+      overrides: { loadState: () => structuredClone(stored) },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'orch-208',
+        budget: budgetSpec('maxToolCalls=2'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.spawnBudgets).toEqual([{ maxToolCalls: 2 }]);
+  });
+
+  it('a fresh run persists its budget in the saved state and resume-without-state applies the flag', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the work',
+        agents: ['worker-1'],
+        session: 'orch-208',
+        budget: budgetSpec('worker-1:maxCostUsd=0.5'),
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const last = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(last.budget).toEqual({
+      byAgent: { 'worker-1': { maxCostUsd: 0.5 } },
+    });
+
+    // A resume of a state written before #208 (no budget) applies the flag.
+    const world2 = makeWorld({
+      overrides: { loadState: () => structuredClone(baseState()) },
+    });
+    const code2 = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'orch-208',
+        budget: budgetSpec('maxToolCalls=1'),
+      },
+      world2.deps,
+    );
+    expect(code2).toBe(0);
+    expect(world2.spawnBudgets).toEqual([{ maxToolCalls: 1 }]);
+  });
+});

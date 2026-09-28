@@ -47,6 +47,11 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // The child's approval bound (issue #230): derived from the manager's
   // config maxPendingMs and kept below it. A number, not a secret.
   'KUBIC_APPROVALS_BOUND_MS',
+  // Per-spawn budget (issue #208, §71): the orchestration run hands its child
+  // the resolved spec (JSON) so the child's own lane enforces maxToolCalls /
+  // maxTokens / maxCostUsd — non-secret limits, the same class as the
+  // locations above. maxRuntimeMs never travels here (host watchdog).
+  'KUBIC_BUDGET',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

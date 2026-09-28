@@ -203,6 +203,10 @@ heuristics:
   clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
   file and is skipped, while `>& out.txt` names a file. The target is the
   next token up to whitespace or a `|;&<>` character, quotes stripped.
+  Stream pseudo-devices persist nothing and never raise: exactly
+  `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` and `/dev/fd/<n>`
+  (so `cmd > out.txt 2>/dev/null` stays quiet); any other `/dev` target
+  still raises.
 - **Shell-expanded and `cd`-relative targets** — bash expands a target
   before it writes, the detector does not, so a target starting with `~`
   (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,

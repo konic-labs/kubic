@@ -400,6 +400,10 @@ function targetToken(
 const CD_COMMAND =
   /(^|[;&|\n(])[ \t]*(cd|pushd|popd)(?=$|[\s;&|)])([^;&|\n)]*)/g;
 const SHELL_EXPANDED = /^[~$]/;
+// Stream pseudo-devices persist nothing: `2>/dev/null` or `> /dev/stderr`
+// anywhere in a command is not an outside write (exact paths only — any
+// other /dev target is a real device and still raises).
+const STREAM_DEVICE = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 
 interface CdEvent {
   index: number;
@@ -459,6 +463,7 @@ function shellTargetOutside(
 ): boolean {
   if (SHELL_EXPANDED.test(target)) return true;
   if (isAbsolute(target)) {
+    if (STREAM_DEVICE.test(resolve(target))) return false;
     return (
       underKubicHome(resolve(target), ctx.home) ||
       ctx.isOutsideWorkspace(target)

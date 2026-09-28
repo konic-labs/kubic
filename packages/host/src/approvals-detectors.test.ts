@@ -613,8 +613,24 @@ describe('every redirect is scanned (issue #326)', () => {
       'cmd >& out.txt',
       'echo x >| a.txt',
       'cmd &> all.log',
+      // Stream pseudo-devices are not persistent writes: a second-segment
+      // `2>/dev/null` must not turn every quiet command into an ask.
+      'cmd > out.txt 2>/dev/null',
+      'ls missing 2> /dev/null || echo none > /dev/stderr',
+      'echo hi > /dev/stdout; echo x >/dev/tty',
+      'echo x > /dev/fd/2',
     ]) {
       expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+    // …but only those exact paths: other /dev targets are real devices.
+    for (const command of [
+      'echo x > /dev/sda',
+      'echo x > /dev/null/../sda',
+      'echo x > /dev/nullx',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
     }
   });
 

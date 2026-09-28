@@ -328,6 +328,17 @@ describe('kubic tui', () => {
     expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
   });
 
+  // Issue #295: the explicit model pin, same `provider/id` rule as replay.
+  it('parses --model <provider/id> and refuses a malformed ref', async () => {
+    expect((await kubic(['tui', '--model', 'faux/b'])).calls).toEqual([
+      { key: 'tui', input: { model: { provider: 'faux', id: 'b' } } },
+    ]);
+    expect(await usageError(['tui', '--model', 'nope'])).toContain(
+      "must be 'provider/id'",
+    );
+    expect(await usageError(['tui', '--model'])).toContain('argument missing');
+  });
+
   it('refuses operands, missing values and unsafe ids', async () => {
     expect(await usageError(['tui', 'extra'])).toContain('too many arguments');
     expect(await usageError(['tui', '--role'])).toContain('argument missing');

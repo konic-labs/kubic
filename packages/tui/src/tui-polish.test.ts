@@ -182,7 +182,12 @@ describe('transcript blocks', () => {
 
 describe('app chrome', () => {
   it('echoes a submitted prompt before the lane commits it', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.onSubmit(() => {});
     for (const ch of 'hello there') app.handleInput(ch);
     app.handleInput('\r');
@@ -203,7 +208,12 @@ describe('app chrome', () => {
   });
 
   it('shows the working indicator while busy and key hints when idle', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     expect(app.render(100).at(-1)).toContain('enter send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
@@ -213,7 +223,12 @@ describe('app chrome', () => {
   });
 
   it('toggles tool output expansion with Ctrl-X', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     expect(app.handleInput('\x18')).toEqual({
       quit: false,
       consumed: true,
@@ -223,7 +238,12 @@ describe('app chrome', () => {
   });
 
   it('wraps a long footer onto a second row instead of cutting it', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
     const tail = app.render(60).slice(-2);
     expect(tail[0]).toContain('solo:');
@@ -290,7 +310,12 @@ describe('review fixes', () => {
   });
 
   it('keeps a resubmitted identical prompt echoed until the NEW cell lands', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.onSubmit(() => {});
     app.applyLaneEntries([userEntry('u1', 1, 'again')]);
     for (const ch of 'again') app.handleInput(ch);
@@ -322,7 +347,12 @@ describe('review fixes', () => {
   });
 
   it('drops a transcript read that resolves after a newer one', async () => {
-    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const resolvers: Array<(entries: unknown[]) => void> = [];
     const loop = {
       findEntries: () =>

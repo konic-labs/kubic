@@ -113,7 +113,7 @@ describe('createInteractiveSeat parsing (issue #379)', () => {
     });
     await seat(request);
     expect(questions).toEqual([
-      "worker 'agent-1' requests outside-write (bash): configure the service — approve? [y/N] ",
+      "worker 'agent-1' requests outside-write (bash): configure the service\n  command: echo x > /etc/y\napprove? [y/N] ",
     ]);
   });
 

@@ -3,13 +3,18 @@
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on
 // captured writes. Faux lane boot only — zero network.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bootTuiLane,
   runTuiCommand,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
+import { tuiTheme } from './theme.js';
 import type { Terminal } from './tui-boundary.js';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function fakeTerminal(
   width: number,
@@ -72,6 +77,7 @@ function deps(
   return {
     out: () => {},
     createTerminal: () => terminal,
+    colorLevel: 'none',
     bootLane: async (sessionId?: string) => ({
       sessionId: sessionId ?? 's1',
       model: 'faux/test',
@@ -245,5 +251,44 @@ describe('kubic tui (issue #75)', () => {
     expect(terminal.started).toBe(1);
     expect(terminal.stopped).toBe(1);
     expect(closed).toBe(1);
+  });
+});
+
+// Issue #319: the suite must not depend on the shell's colour variables, and
+// a run must not leave its colour theme behind for the next test.
+describe('kubic tui colour isolation (issue #319)', () => {
+  it('passes under FORCE_COLOR=3 with the injected colour level', async () => {
+    vi.stubEnv('FORCE_COLOR', '3');
+    const lines: string[] = [];
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(100, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, { out: (l) => lines.push(l) }),
+    );
+    await waitFor(() => terminal.started === 1);
+    input('\x03');
+    expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('◌ solo');
+    // No Konic palette colour reached the document (truecolor SGR 38;2).
+    expect(lines.join('\n')).not.toContain('38;2;');
+  });
+
+  it('restores the previous theme when the run ends', async () => {
+    let input!: (data: string) => void;
+    const terminal = fakeTerminal(100, (cb) => {
+      input = cb;
+    });
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, { colorLevel: 'truecolor' }),
+    );
+    await waitFor(() => terminal.started === 1);
+    expect(tuiTheme().level).toBe('truecolor');
+    input('\x03');
+    expect(await pending).toBe(0);
+    expect(tuiTheme().level).toBe('none');
   });
 });

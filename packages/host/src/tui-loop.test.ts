@@ -194,6 +194,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -225,6 +226,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -310,6 +312,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane,
       },
     );
@@ -361,6 +364,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -403,6 +407,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
         {
           out: (line: string) => lines.push(line),
           createTerminal: () => fake.terminal,
+          colorLevel: 'none',
           bootLane: fauxLaneBoot(root, models),
         },
       );
@@ -436,6 +441,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -466,6 +472,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -491,6 +498,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
         {
           out: (line: string) => lines.push(line),
           createTerminal: () => fake.terminal,
+          colorLevel: 'none',
           bootLane: fauxLaneBoot(root, models),
         },
       );
@@ -512,6 +520,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, models),
       },
     );

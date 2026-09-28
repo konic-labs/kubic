@@ -316,6 +316,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // interactive lane's baseline and sweep exclude what `kubic run`
           // excludes.
           reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
+          // Issue #295: the SAME `[model]`/KUBIC_MODEL pin `kubic run`
+          // selects with — both solo entry points talk to one model.
+          model: runtimeModelPin(cliConfig),
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),

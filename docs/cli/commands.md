@@ -529,7 +529,7 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 2 without touching anything
 (§78). See [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--dangerously-skip-approvals]`
+## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--model <provider/id>] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -592,6 +592,19 @@ same context the headless one does:
 - **Journal retention (§42.4):** the session journal takes the same
   `[journal] retentionDays` projection `run` threads — a TUI session's
   journal age-prunes under config.
+- **Model selection (§38.1):** the same precedence as `run` — an explicit
+  pin (`--model <provider/id>`, else `[model]` in config or
+  `KUBIC_MODEL`), then the `--role` layer's `[roles.<name>].model`, then
+  the first registered model. The header and status bar name the model
+  the lane actually runs on. An unknown or unavailable pinned model exits
+  6 with the named reason before the alt-screen opens. A bare `kubic
+  --model <provider/id>` on a terminal is `kubic tui --model …`.
+- **Agent id and role layers (§12.1, §35):** `[agent].name` names the lane
+  (journal and reconciliation attribution, so `kubic diff --agent <name>`
+  finds TUI changes) and `[roles.<name>].tools` layers under the role
+  document on `--role`, exactly as `run`.
+- **Audit identity (§60):** every approval the TUI resolves writes its
+  ledger record with the session id and the `provider/id` model.
 - **Runtime exclude rules (§35):** `kubic tui` ships the same `.kubic/`
   exclude rules before creating state, so a session whose config ever
   relocates state in-repo leaves `git status` clean.
@@ -609,7 +622,11 @@ rows — older calls fold into `… N earlier calls`); the transcript, which
 follows the end as the turn streams (your prompt is echoed as `› …` the
 moment you submit, assistant prose renders as markdown, and each tool call
 renders as `● name args` with its output folded underneath `⎿`); the
-status bar; the editor; and a footer row that shows a `working… 3s`
+status bar, whose second row is the always-visible mode indicator
+(`solo • approvals:on`, or the warning-styled
+`! warning: approvals OFF (full-access)` when the session's installed
+policy auto-approves every challenged call — read from that policy, at
+boot and after every turn, never assumed); the editor; and a footer row that shows a `working… 3s`
 spinner during a turn and the solo notice or the turn's outcome otherwise.
 Colour follows the Konic palette on truecolor terminals, falls back to
 256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY
@@ -620,38 +637,98 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
-| `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
-| `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
+| `Ctrl-O` | Toggle the **diff panel** — the most recent tool call that changed files, rendered as unified hunks. |
+| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal (filter by path or agent on the command line with `kubic diff --path/--agent`). |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
-| `a` | Approval overlay: **allow once** — this call only. Nothing is stored: the next identical call asks again. |
-| `s` | Approval overlay: **allow for the session** — latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. A denial latches for the session like `s`, so the same operation is refused without asking again. |
+| `a` | Approval overlay: **allow once** — this call only, after the arming delay. Nothing is stored: the next identical call asks again. |
+| `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
+| `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
+| `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
 
+Both panels read the session's own journal through the same projection
+`kubic diff` prints (one change per path, latest attribution): once at boot
+— so `kubic tui --session <id>` shows earlier turns the first time `Ctrl-R`
+opens — after each tool call (throttled to one read per 100 ms burst) and
+when a turn settles. Paths and file content are stripped of terminal
+control sequences before they are drawn.
+
 A challenged call opens the **approval overlay** instead of being refused: it
 names the tool class and the exact command, so the decision is made on what
-was actually asked, not on the tool's name. Below 80 columns the overlay
+was actually asked, not on the tool's name. The command is shown **whole**:
+it is the same text the approval key is computed from (secrets redacted;
+control, bidi and zero-width characters shown as visible escapes such as
+`\x1b` or `\u202e`), wrapped across rows and never cut. A command taller
+than 8 rows shows one page at a time with an explicit
+`… command lines 1–8 of N · [v] next page` marker, and `v` pages through it.
+One-line summaries (audit detail, the orchestrator's blocked indicator)
+that shorten a command say so: `… (+N chars)`. Orchestrator worker asks
+carry the full command to your seat as well. Below 80 columns the overlay
 falls back to an inline slot in the transcript (`! approval (inline)`) rather
 than rendering an unusable box — a narrow terminal can still answer. Denying
 leaves the session running; the transcript shows the refusal instead of the
 call's result. Quitting with an ask still pending denies it, so a shutdown
 cannot strand the turn.
 
+An approval is consent to run code with your authority, so keys typed for
+the editor can never produce one. Asks arrive while you may be typing the
+next prompt, so the overlay is a capturing modal: while it shows, printable
+keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
+`Ctrl-D`, `Ctrl-T`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work). Each request
+— including the next queued one — starts with an **arming delay** of 400 ms
+during which the decision keys are ignored and the hint row reads
+`… keys unlock in a moment · [Esc] deny now`; `Esc` (deny) is the only key
+that acts immediately. Once armed the hint row shows the live keys:
+`a` allows once, `Ctrl-S` allows for the session — a key ordinary typing
+cannot produce — and `d` or `Esc` denies. The keys live in the approval key
+registry, which refuses a map where two actions share a key, allow-session
+is a prose key, or an approval key shadows one of the global keys.
+
 These keys are classified by the terminal library's key decoder, not by
 matching raw bytes, so they work on terminals that negotiate the Kitty
 keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
 as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
-send the legacy control bytes. A refused cancel is reported in the editor
+send the legacy control bytes. On terminals that also report key-release
+and key-repeat events (Kitty, Ghostty, WezTerm, foot, recent iTerm2), each
+key acts on its press only: a release is ignored, so a toggle never
+cancels itself on key-up and a `Ctrl-C` cancel or an `Esc` deny never
+becomes a quit. A held key repeats in the editor (held `Backspace` keeps
+deleting), but repeats of the global keys and the approval keys are
+ignored — a held `Ctrl-O` does not strobe the panel. Every key repaints
+the screen at once, including while no turn is running. A refused cancel is reported in the editor
 footer (`cancel failed: …`) instead of being swallowed — the turn keeps
 running and the key is never a silent no-op.
 
-Quitting restores the main screen and prints the final document (no cursor
-loss on interrupt). Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
-`SIGTERM`/`SIGHUP` have no handler and exit without restoring the
-alt-screen. Solo mode runs in-process with your user authority: no
+Quitting leaves the alternate screen first (autowrap, cursor, mouse and
+keyboard modes restored) and **then** prints the final document on your
+main screen, so it stays in your scrollback: the whole last frame at the
+terminal's width — header, tree, the transcript including the last
+assistant answer, status bar, editor and footer — on stdout. A crash
+restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
+`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs: the operation
+is aborted (recorded in the session, so a resumed session shows no
+unfinished operation), every tool process group it started is killed, and
+the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
+the end-of-run reconciliation sweep and the session close — so a killed
+tool's last write is still journaled and no child keeps running after the
+TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once.
+Before the screen is restored the quit drains stdin for a moment (the Kitty
+keyboard protocol is popped first), so the release of the quitting key —
+which can arrive late over SSH — is swallowed instead of printing as
+`[27;1:3u` in your shell.
+
+**Signals and crashes.** `SIGINT`, `SIGTERM` (a supervisor `kill`) and
+`SIGHUP` (a closed terminal tab) all take the same quit path — mid-turn
+drain, terminal restore, sweep, session close — run it once however many
+arrive, and exit `128+signo` (130, 143, 129). A second signal during the
+drain ends the wait. An exception in input or render, or an unhandled
+promise rejection, restores the terminal first (alt screen left, autowrap
+back on, cursor shown, mouse tracking and the Kitty protocol off, cooked
+mode), then prints `error: kubic tui crashed: …` on stderr and exits 1.
+`Ctrl-Z` suspend is not supported. Solo mode runs in-process with your user authority: no
 isolation, no containment. The no-isolation statement is on screen from the
 first frame: the editor footer carries the one-line form at startup and
 returns after every completed turn (a cancelled or failed turn reports that

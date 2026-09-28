@@ -22,6 +22,8 @@ export type {
 export {
   CURSOR_MARKER,
   Editor,
+  isKeyRelease,
+  isKeyRepeat,
   Markdown,
   MouseRegion,
   matchesKey,

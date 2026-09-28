@@ -4,7 +4,7 @@
 // alt-screen on the replicated presentation, routes keyboard input through
 // the tui controller, drives the lane for whatever the user submits, feeds
 // lane events into the tree and usage rows into the status bar, and restores
-// the main screen with the final document printed — on quit, on SIGINT,
+// the main screen with the final document printed — on quit, on a signal,
 // and exactly once. `kubic run` is untouched (headless regression:
 // tui-command.test.ts + binary exit codes).
 //
@@ -14,7 +14,7 @@
 // first Ctrl-C quits. Esc and Ctrl-D-on-an-empty-draft quit too, so no
 // honoured key is a silent no-op.
 
-import { homedir } from 'node:os';
+import { homedir, constants as osConstants } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
@@ -23,6 +23,7 @@ import {
   FileJournalStore,
   type JournalRetention,
 } from '../../../packages/exec/src/journal.js';
+import { diffEntries } from '../../../packages/exec/src/journal-diff.js';
 import {
   beginReconciliation,
   type RunReconciliation,
@@ -73,17 +74,25 @@ import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
+  type ColorLevel,
   createTuiTheme,
   detectColorLevel,
   setTuiTheme,
+  tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import {
   createTuiApp,
+  type JournalChangeLike,
   type TuiApp,
 } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
-import { ProcessTerminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
+  isKeyRelease,
+  ProcessTerminal,
+  parseKey,
+} from '../../../packages/tui/src/tui-boundary.js';
+import {
+  drainOperation,
   type LaneAborter,
   type OperationKillRegistry,
   requestLaneAbort,
@@ -110,6 +119,7 @@ import {
 } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
+  type ModelSelection,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
@@ -118,6 +128,8 @@ import {
   type MutableModels,
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
+import type { runtimeLaneDeps } from './config-runtime.js';
+import { roleModelSelection } from './headless-run.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -150,6 +162,11 @@ export interface TuiLaneBoot {
   // tests) can observe the retention policy the boot installed. The loop
   // itself uses the lane's own recording; this is the same store.
   journal?: FileJournalStore;
+  // Issue #307: the installed policy's own full-access predicate (the SAME
+  // one its ask auto-approves on), read for the mode indicator at boot and
+  // after every turn. Absent (a viewer boot with no policy) means approvals
+  // are in force — there is no policy that could skip them.
+  approvalsSkipped?: () => boolean;
   // Issue #88: the boot hands the loop its drive surface. Injected boots in
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
@@ -190,6 +207,61 @@ export interface TuiRunDeps {
     // the command shell owns parsing, the boot owner owns the defaults.
     options?: TuiBootFlags,
   ) => Promise<TuiLaneBoot>;
+  // Issue #312: the bound on the quit-time drain (a turn still running when
+  // the operator quits is aborted, its kills run, and the loop waits at most
+  // this long for it to settle before the sweep and session close). Absent
+  // means TUI_DRAIN_TIMEOUT_MS; the timer is injectable so tests are
+  // deterministic. It returns a canceller.
+  drainTimeoutMs?: number;
+  setDrainTimer?: (ms: number, fire: () => void) => () => void;
+  // Issue #313: the process-level event source — SIGINT/SIGTERM/SIGHUP and
+  // uncaughtException/unhandledRejection. Absent means the real process;
+  // tests inject an emitter so the runner itself is never signalled.
+  signals?: TuiProcessEvents;
+  // Issue #313: how a fatal error (an exception in input or render, an
+  // unhandled rejection) ends the process once the terminal is restored.
+  // Absent means process.exit; tests inject a recorder.
+  exit?: (code: number) => void;
+  // Issue #315: the approval overlay's arming delay and the clock it runs
+  // on. Absent means APPROVAL_ARMING_MS on the real clock; tests inject 0
+  // (or a manual clock) instead of sleeping.
+  approvalArmingMs?: number;
+  approvalClock?: () => number;
+  // Issue #319: the colour depth. Absent means detectColorLevel over
+  // process.env and stdout's TTY flag (the shipped behaviour); tests pass
+  // 'none' so the shell's NO_COLOR / FORCE_COLOR never reach them.
+  colorLevel?: ColorLevel;
+}
+
+export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+export type TuiProcessEvent =
+  | TuiSignal
+  | 'uncaughtException'
+  | 'unhandledRejection';
+
+export interface TuiProcessEvents {
+  on(event: TuiProcessEvent, listener: (value: unknown) => void): unknown;
+  off(event: TuiProcessEvent, listener: (value: unknown) => void): unknown;
+}
+
+const TUI_SIGNALS: readonly TuiSignal[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const TUI_FATAL_EVENTS = ['uncaughtException', 'unhandledRejection'] as const;
+
+// Issue #313: a signalled quit exits 128+signo (SIGHUP 129, SIGINT 130,
+// SIGTERM 143) — the shell convention, so a supervisor can tell a signalled
+// TUI from a clean quit.
+export function signalExitCode(signal: TuiSignal): number {
+  return 128 + osConstants.signals[signal];
+}
+
+// Issue #312: how long a quit waits for an aborted turn to settle. The kills
+// have already run by then; the wait only lets the lane record its terminal
+// status and the killed tool finish its last write before the §42.5 sweep.
+export const TUI_DRAIN_TIMEOUT_MS = 3000;
+
+function defaultDrainTimer(ms: number, fire: () => void): () => void {
+  const timer = setTimeout(fire, ms);
+  return () => clearTimeout(timer);
 }
 
 // The `kubic tui` parity flags (issue #113): same names and semantics as
@@ -200,6 +272,8 @@ export interface TuiBootFlags {
   skillsList?: string[];
   // Issue #308: `--dangerously-skip-approvals` for the booted session.
   dangerouslySkipApprovals?: boolean;
+  // Issue #295: `--model <provider/id>` — the explicit pin, above config.
+  model?: ModelSelection;
 }
 
 export interface TuiRunOptions {
@@ -248,6 +322,10 @@ export interface TuiRunOptions {
   // §41.4 (issue #308): enable full access for the booted session through
   // the one host enable path before the policy is installed.
   dangerouslySkipApprovals?: boolean;
+  // Issue #295 (§38.1): the explicit model pin — `--model`, else the
+  // `[model]`/KUBIC_MODEL projection runtimeModelPin makes for `kubic run`.
+  // It beats the role layer's model, which beats first-available.
+  model?: ModelSelection;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -344,14 +422,56 @@ export async function bootTuiLane(
     // pick never takes a keyless built-in (issue #221).
     const fauxPinned =
       options.models === undefined && fauxProviderActive(process.env);
+    // Issue #113 (§12.1): `--role` derives both halves of the boot from
+    // the role document — prompt text and tool allowlist — with the same
+    // fail-closed refusals as `kubic run`. An unknown role refuses the
+    // boot (the catch below closes the session and rethrows for the
+    // command shell to print) rather than silently booting a roleless
+    // lane. Resolved BEFORE model selection: the role layer's model pin is
+    // a selection input (issue #295).
+    const selectedRole = (() => {
+      if (options.role === undefined) return undefined;
+      const rolesCwd = options.roles?.cwd ?? process.cwd();
+      const rolesBridge = createNodeFileBridge(rolesCwd);
+      const selected = selectRole({
+        bridge: rolesBridge,
+        cwd: rolesCwd,
+        role: options.role,
+        ...(options.roles?.layers === undefined
+          ? {}
+          : { layers: options.roles.layers }),
+      });
+      const promptText = rolePromptFor(
+        selected.doc,
+        rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
+      );
+      return { resolved: selected.resolved, prompt: promptText };
+    })();
+    const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =
+      selectedRole === undefined
+        ? {}
+        : {
+            rolePrompt: selectedRole.prompt,
+            ...(selectedRole.resolved.tools.length === 0
+              ? {}
+              : { toolAllowlist: selectedRole.resolved.tools }),
+          };
+    // Issue #295 (§38.1): the same precedence as `kubic run` — the explicit
+    // pin (`--model`, `[model]`, KUBIC_MODEL), then the role layer's model,
+    // then first-available. The faux testing provider (`KUBIC_PROVIDER=faux`)
+    // is pinned, never picked implicitly; the footer names it
+    // (runTuiCommand). A ModelSelectError propagates to runTuiCommand, which
+    // reports it as exit 6 before the alt-screen opens.
+
     const model = selectModel(
       models,
       fauxPinned
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : undefined,
-      undefined,
+        : options.model,
+      roleModelSelection(selectedRole?.resolved.model),
       assembled?.fallbackProviders,
     );
+    const modelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -379,6 +499,11 @@ export async function bootTuiLane(
         sessionDir: join(root, id),
         // The session root in use is refused control-plane state (#324).
         sessionsRoot: root,
+        // §60 audit identity (issue #295): every resolved ask names the
+        // session and the model the lane runs on, like `kubic run`'s.
+        sessionId: id,
+        model: modelRef,
+
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
@@ -436,35 +561,7 @@ export async function bootTuiLane(
             : { skillReadRoots: skills.readRoots }),
         };
       })(),
-      // Issue #113 (§12.1): `--role` derives both halves of the boot from
-      // the role document — prompt text and tool allowlist — with the same
-      // fail-closed refusals as `kubic run`. An unknown role refuses the
-      // boot (the catch below closes the session and rethrows for the
-      // command shell to print) rather than silently booting a roleless
-      // lane.
-      ...(() => {
-        if (options.role === undefined) return {};
-        const rolesCwd = options.roles?.cwd ?? process.cwd();
-        const rolesBridge = createNodeFileBridge(rolesCwd);
-        const selected = selectRole({
-          bridge: rolesBridge,
-          cwd: rolesCwd,
-          role: options.role,
-          ...(options.roles?.layers === undefined
-            ? {}
-            : { layers: options.roles.layers }),
-        });
-        const promptText = rolePromptFor(
-          selected.doc,
-          rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
-        );
-        return {
-          rolePrompt: promptText,
-          ...(selected.resolved.tools.length === 0
-            ? {}
-            : { toolAllowlist: selected.resolved.tools }),
-        };
-      })(),
+      ...roleBoot,
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
       policy: {
@@ -511,6 +608,8 @@ export async function bootTuiLane(
             notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
           }
         : {}),
+      approvalsSkipped: installed.approvalsSkipped,
+
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -531,9 +630,12 @@ export async function bootTuiLane(
   }
 }
 
-export function tuiDepsWithDefaults(provided: {
-  out: (line: string) => void;
-  err?: (line: string) => void;
+// The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
+// #133). The lane half is `runtimeLaneDeps`' own return type BY NAME
+// (issue #294): a key that projection gains can never be silently dropped
+// here, because the forwarding table in tuiDepsWithDefaults must name
+// every key of this type.
+export type TuiConfigProjection = {
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -546,15 +648,47 @@ export function tuiDepsWithDefaults(provided: {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
-}): TuiRunDeps {
-  const {
-    classes,
-    policySource,
-    approvals,
-    policy,
-    journalRetention,
-    reconcileOutOfScope,
-  } = provided;
+  // Issue #295: the `[model]`/KUBIC_MODEL pin (runtimeModelPin).
+  model?: ModelSelection;
+} & ReturnType<typeof runtimeLaneDeps>;
+
+function definedOnly<T extends object>(
+  table: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  const out: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
+  for (const key of Object.keys(table) as Array<keyof T>) {
+    const value = table[key];
+    if (value !== undefined) out[key] = value as Exclude<T[keyof T], undefined>;
+  }
+  return out;
+}
+
+export function tuiDepsWithDefaults(
+  provided: {
+    out: (line: string) => void;
+    err?: (line: string) => void;
+  } & TuiConfigProjection,
+  // The boot the deps drive. Absent means the prod bootTuiLane; tests pass a
+  // wrapper to observe (or re-root) exactly what the projection forwards.
+  boot: typeof bootTuiLane = bootTuiLane,
+): TuiRunDeps {
+  // Every projection key must appear (possibly undefined): the `satisfies`
+  // makes omitting one a compile error (issue #294).
+  const forwarded = {
+    classes: provided.classes,
+    approvals: provided.approvals,
+    policySource: provided.policySource,
+    policy: provided.policy,
+    journalRetention: provided.journalRetention,
+    reconcileOutOfScope: provided.reconcileOutOfScope,
+    // Issue #294: `[agent].name` (journal and reconciliation attribution)
+    // and the `[roles.<name>]` layers `--role` merges under the document.
+    agentId: provided.agentId,
+    roles: provided.roles,
+    model: provided.model,
+  } satisfies Record<keyof TuiConfigProjection, unknown>;
+  const projection = definedOnly(forwarded);
+
   return {
     out: provided.out,
     ...(provided.err === undefined ? {} : { err: provided.err }),
@@ -565,14 +699,10 @@ export function tuiDepsWithDefaults(provided: {
       answer?: TuiApprovalSeat,
       flags?: TuiBootFlags,
     ) =>
-      bootTuiLane(sessionId, {
-        ...(classes === undefined ? {} : { classes }),
-        ...(policySource === undefined ? {} : { policySource }),
-        ...(approvals === undefined ? {} : { approvals }),
-        ...(policy === undefined ? {} : { policy }),
+      boot(sessionId, {
+        ...projection,
+
         ...(answer === undefined ? {} : { answer }),
-        ...(journalRetention === undefined ? {} : { journalRetention }),
-        ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
         ...(flags?.role === undefined ? {} : { role: flags.role }),
         ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0
@@ -581,8 +711,79 @@ export function tuiDepsWithDefaults(provided: {
         ...(flags?.dangerouslySkipApprovals === true
           ? { dangerouslySkipApprovals: true }
           : {}),
+        // `--model` beats the config pin (§38.1: CLI over config).
+        ...(flags?.model === undefined ? {} : { model: flags.model }),
       }),
   };
+}
+
+// Issue #311: the §17 inspectable pair reads the session journal through
+// the SAME projection `kubic diff` uses (diffEntries: one change per path,
+// latest attribution). Reads are throttled like the transcript refresh: a
+// burst of tool-end events collapses into one read per window, and a
+// settlement (or the boot) reads at once. A read failure never reaches the
+// loop — the panels keep their last rows.
+export const JOURNAL_REFRESH_MS = 100;
+
+export class JournalPanelFeed {
+  private readonly read: () => ReadonlyArray<JournalChangeLike>;
+  private readonly apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
+  private readonly schedule: (fn: () => void) => void;
+  private pending = false;
+  private token = 0;
+
+  constructor(options: {
+    read: () => ReadonlyArray<JournalChangeLike>;
+    apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
+    // Injectable window (tests); absent means a JOURNAL_REFRESH_MS timer.
+    schedule?: (fn: () => void) => void;
+  }) {
+    this.read = options.read;
+    this.apply = options.apply;
+    this.schedule =
+      options.schedule ??
+      ((fn: () => void): void => {
+        const timer = setTimeout(fn, JOURNAL_REFRESH_MS);
+        timer.unref?.();
+      });
+  }
+
+  // A tool call ended: read once the current window closes.
+  request(): void {
+    if (this.pending) return;
+    this.pending = true;
+    this.token += 1;
+    const token = this.token;
+    this.schedule(() => {
+      if (token !== this.token) return;
+      this.pending = false;
+      this.load();
+    });
+  }
+
+  // Settlement / boot: read now; a pending window is superseded.
+  now(): void {
+    this.token += 1;
+    this.pending = false;
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      this.apply(this.read());
+    } catch {
+      // The journal is observed, never a gate: a failed read keeps the
+      // panels on their last rows.
+    }
+  }
+}
+
+function keyIs(data: string, key: string): boolean {
+  try {
+    return parseKey(data) === key;
+  } catch {
+    return false;
+  }
 }
 
 export interface TuiTurnOutcome {
@@ -619,16 +820,22 @@ export class TuiTurnRunner {
   private refreshing = false;
   private refreshAgain = false;
 
+  // Issue #311: every lane event, after the app folded it in (the root
+  // requests a journal read on tool-end).
+  private readonly onLaneEvent: ((event: KubicLaneEvent) => void) | undefined;
+
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
     model: string,
     onUpdate?: () => void,
+    onLaneEvent?: (event: KubicLaneEvent) => void,
   ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
     this.onUpdate = onUpdate;
+    this.onLaneEvent = onLaneEvent;
   }
 
   // TUI polish: the transcript follows the turn instead of appearing only
@@ -672,6 +879,7 @@ export class TuiTurnRunner {
   // with no model field of their own) so the bar can group them.
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     this.app.applyLaneEvent(event);
+    this.onLaneEvent?.(event);
     if (event.type !== 'run-start') this.scheduleRefresh();
     if (event.type === 'usage') {
       this.usageRows.push({
@@ -691,7 +899,39 @@ export class TuiTurnRunner {
   private readonly usageRows: Array<Parameters<TuiApp['setUsage']>[0][number]> =
     [];
 
-  async run(prompt: string): Promise<TuiTurnOutcome> {
+  // The in-flight run (issue #312): a quit waits on it, bounded.
+  private running: Promise<TuiTurnOutcome> | undefined;
+
+  run(prompt: string): Promise<TuiTurnOutcome> {
+    const running = this.drive(prompt);
+    this.running = running;
+    return running;
+  }
+
+  // Issue #312 (§18, #109): quitting mid-turn aborts and drains the
+  // operation — the durable abort request, then every registered kill — and
+  // waits for the run to settle, at most until `bound` resolves. A quit that
+  // lands before admission is latched: `drive` aborts on the real id.
+  async drainForQuit(bound: Promise<void>): Promise<void> {
+    if (!this.isRunning()) return;
+    this.aborted = true;
+    const operationId = this.activeOperationId;
+    if (operationId !== undefined) {
+      await drainOperation(
+        this.loop,
+        this.loop.kills,
+        operationId,
+        this.loop.context,
+      );
+    }
+    const settled = (this.running ?? Promise.resolve()).then(
+      () => undefined,
+      () => undefined,
+    );
+    await Promise.race([settled, bound]);
+  }
+
+  private async drive(prompt: string): Promise<TuiTurnOutcome> {
     this.starting = true;
     this.aborted = false;
     this.detach = attachLaneEvents(
@@ -810,6 +1050,8 @@ export interface TuiCommandOptions {
   readonly noSkills?: boolean;
   // §41.4 (issue #308): session-scoped full access (bare `kubic` and `tui`).
   readonly dangerouslySkipApprovals?: boolean;
+  // Issue #295: `--model <provider/id>`, parsed by the registrar.
+  readonly model?: ModelSelection;
 }
 
 export async function runTuiCommand(
@@ -820,6 +1062,7 @@ export async function runTuiCommand(
   const flags: TuiBootFlags = {};
   if (options.role !== undefined) flags.role = options.role;
   if (options.noSkills === true) flags.noSkills = true;
+  if (options.model !== undefined) flags.model = options.model;
   const skillsList = options.skills ?? [];
   if (skillsList.length > 0) flags.skillsList = [...skillsList];
   if (options.dangerouslySkipApprovals === true) {
@@ -838,7 +1081,12 @@ export async function runTuiCommand(
   // creates the surface, hands its ask to the boot AS the seat, and attaches
   // the same surface to the app it builds for this boot — one object, so the
   // verdict collected on screen is the verdict the lane receives.
-  const surface = createApprovalSurface();
+  const surface = createApprovalSurface({
+    ...(deps.approvalArmingMs === undefined
+      ? {}
+      : { armingMs: deps.approvalArmingMs }),
+    ...(deps.approvalClock === undefined ? {} : { now: deps.approvalClock }),
+  });
   let boot: TuiLaneBoot;
   try {
     boot = await deps.bootLane(sessionId, surface.seat, flags);
@@ -852,9 +1100,14 @@ export async function runTuiCommand(
       : RUN_EXIT_FAILED;
   }
   // Colour only for a real terminal; NO_COLOR / FORCE_COLOR honoured.
+  // Issue #319: the level is injectable (tests pass 'none', so the suite
+  // never depends on the shell's colour variables) and the theme this run
+  // replaces is restored when it ends — the global never leaks.
+  const previousTheme = tuiTheme();
   setTuiTheme(
     createTuiTheme(
-      detectColorLevel(process.env, process.stdout.isTTY === true),
+      deps.colorLevel ??
+        detectColorLevel(process.env, process.stdout.isTTY === true),
     ),
   );
   // Issue #308: the full-access warning lands on stderr (the main screen)
@@ -866,8 +1119,19 @@ export async function runTuiCommand(
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
-    ...(boot.fullAccess === true ? { approvalsSkipped: true } : {}),
+    // Issue #307: `kubic tui` is the solo lane; the approvals half of the
+    // indicator comes from the installed policy, never a literal. A boot
+    // that only reports the older `fullAccess` signal (fakes, injected
+    // lanes) still seeds the OFF indicator.
+    mode: 'solo',
+    approvalsSkipped: boot.approvalsSkipped?.() ?? boot.fullAccess === true,
   });
+  // Re-read after each turn (and each mid-turn refresh): a posture change
+  // lands on the indicator in the same frame the loop paints next.
+  const syncPosture = (): void => {
+    if (boot.approvalsSkipped !== undefined)
+      app.setApprovalsSkipped(boot.approvalsSkipped());
+  };
   const terminal = deps.createTerminal();
   // Solo no-isolation notice (issue #89): the trust statement is carried in
   // the editor footer — the loop's always-visible status surface — from the
@@ -882,12 +1146,36 @@ export async function runTuiCommand(
     boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
       ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
       : soloNotice;
+  // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
+  // boot created — loaded once now (a resumed session shows its earlier
+  // turns), after each tool call (throttled) and at every settlement.
+  const journalStore = boot.journal;
+  const journalFeed =
+    journalStore === undefined
+      ? undefined
+      : new JournalPanelFeed({
+          read: () => diffEntries(journalStore, {}),
+          apply: (rows) => {
+            app.setJournalChanges(rows);
+            if (!stopped) screen?.update();
+          },
+        });
+  journalFeed?.now();
   const turn =
     boot.loop === undefined
       ? undefined
-      : new TuiTurnRunner(app, boot.loop, boot.model, () => {
-          if (!stopped) screen?.update();
-        });
+      : new TuiTurnRunner(
+          app,
+          boot.loop,
+          boot.model,
+          () => {
+            syncPosture();
+            if (!stopped) screen?.update();
+          },
+          (event) => {
+            if (event.type === 'tool-end') journalFeed?.request();
+          },
+        );
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -907,12 +1195,77 @@ export async function runTuiCommand(
   };
   let screen: Screen | undefined;
   let stopped = false;
+  let exitCode = RUN_EXIT_OK;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
-  const onSigint = (): void => {
-    shutdown();
+  // Issue #313 (§16.1, §18): SIGINT, SIGTERM and SIGHUP all run the same
+  // shutdown (mid-turn drain, restore, sweep, close) and exit 128+signo. The
+  // listeners stay attached until the terminal is restored, so a second
+  // signal during the drain only shortens it; they are detached before the
+  // session close, so a signal after that takes the default disposition.
+  const signals: TuiProcessEvents = deps.signals ?? process;
+  const signalListeners = new Map<TuiSignal, (value: unknown) => void>();
+  for (const name of TUI_SIGNALS) {
+    signalListeners.set(name, () => {
+      if (!stopped) exitCode = signalExitCode(name);
+      shutdown();
+    });
+  }
+  let signalsAttached = false;
+  const attachSignals = (): void => {
+    if (signalsAttached) return;
+    signalsAttached = true;
+    for (const [name, listener] of signalListeners) signals.on(name, listener);
+  };
+  const detachSignals = (): void => {
+    if (!signalsAttached) return;
+    signalsAttached = false;
+    for (const [name, listener] of signalListeners) signals.off(name, listener);
+  };
+  // Issue #313: the last-resort restore. An exception in input or render, or
+  // an unhandled rejection, would otherwise kill the process with the alt
+  // screen, raw mode, mouse tracking and the Kitty protocol still active.
+  // The terminal is restored first (nothing is printed — the layout may be
+  // what threw), then the error is reported and the process exits 1.
+  let fatalHandled = false;
+  const fatal = (error: unknown): void => {
+    if (fatalHandled) return;
+    fatalHandled = true;
+    stopped = true;
+    exitCode = RUN_EXIT_FAILED;
+    stopSpinner();
+    endDrain?.();
+    try {
+      screen?.restore();
+    } catch {
+      // Best effort: the report below must still happen.
+    }
+    detachSignals();
+    detachFatal();
+    stdin?.removeListener('end', onStdinEnd);
+    stdin?.removeListener('close', onStdinEnd);
+    surface.cancelPending('the session ended before the approval was answered');
+    const detail =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
+    (deps.err ?? deps.out)(`error: kubic tui crashed: ${detail}`);
+    (deps.exit ?? ((code: number) => process.exit(code)))(RUN_EXIT_FAILED);
+    resolveExit();
+  };
+  const fatalListener = (value: unknown): void => {
+    fatal(value);
+  };
+  let fatalAttached = false;
+  const attachFatal = (): void => {
+    if (fatalAttached) return;
+    fatalAttached = true;
+    for (const name of TUI_FATAL_EVENTS) signals.on(name, fatalListener);
+  };
+  const detachFatal = (): void => {
+    if (!fatalAttached) return;
+    fatalAttached = false;
+    for (const name of TUI_FATAL_EVENTS) signals.off(name, fatalListener);
   };
   // Stdin EOF (a closed pty, `kubic tui < /dev/null`, or a shell that
   // detached the tty) is a quit: Pi's terminal never reports it, so a
@@ -922,8 +1275,16 @@ export async function runTuiCommand(
   const onStdinEnd = (): void => {
     shutdown();
   };
+  // Issue #312: set while a quit drains a running turn; calling it ends the
+  // wait at once (a second Ctrl-C, a second SIGINT, or the bound firing).
+  let endDrain: (() => void) | undefined;
   const shutdown = (): void => {
-    if (stopped) return;
+    if (stopped) {
+      // A second quit while the drain waits shortens it: the kills already
+      // ran, so the loop exits now instead of at the bound.
+      endDrain?.();
+      return;
+    }
     stopped = true;
     stopSpinner();
     // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
@@ -931,16 +1292,59 @@ export async function runTuiCommand(
     // would otherwise sit until the lane's timeout, and the operator gets no
     // second chance to answer a screen they have left.
     surface.cancelPending('the session quit before the approval was answered');
-    process.removeListener('SIGINT', onSigint);
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
-    screen?.stop((line: string) => deps.out(line));
+    // Issue #312 (§18, §42.5, #109): a turn still running is aborted and
+    // drained BEFORE the sweep and the session close — otherwise its detached
+    // process group outlives the session, its late writes escape both the
+    // journal and the reconciliation, and the operation never records a
+    // terminal status. The screen stays up (footer: cancelling…) until the
+    // drain ends, bounded by drainTimeoutMs.
+    const draining = turn?.isRunning() === true;
+    if (draining) {
+      app.setEditorFooter('cancelling…');
+      screen?.render();
+    }
     void (async () => {
+      if (draining && turn !== undefined) {
+        let cancelTimer: () => void = () => {};
+        const bound = new Promise<void>((resolve) => {
+          endDrain = resolve;
+          cancelTimer = (deps.setDrainTimer ?? defaultDrainTimer)(
+            deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
+            resolve,
+          );
+        });
+        try {
+          await turn.drainForQuit(bound);
+        } catch {
+          // The drain is best-effort; the sweep and close still run.
+        }
+        cancelTimer();
+        endDrain = undefined;
+      }
+      if (fatalHandled) return;
+      // Issue #313: pop the Kitty protocol and let late input (the quitting
+      // key's release, especially over SSH) arrive and be swallowed here
+      // instead of printing as `[27;1:3u` in the operator's shell.
+      try {
+        await terminal.drainInput();
+      } catch {
+        // Draining is best effort; the restore below still runs.
+      }
+      if (fatalHandled) return;
+      try {
+        screen?.stop((line: string) => deps.out(line));
+      } catch {
+        // Restore failures never mask the clean quit.
+      }
+      detachSignals();
       try {
         await boot.close?.();
       } catch {
         // Close failures never mask the clean quit.
       }
+      detachFatal();
       resolveExit();
     })();
   };
@@ -965,12 +1369,33 @@ export async function runTuiCommand(
         .filter((line): line is string => line !== undefined)
         .join(' · ') || notice,
     );
+    attachFatal();
+
     booted.render();
-    process.once('SIGINT', onSigint);
+    attachSignals();
     stdin?.once('end', onStdinEnd);
     stdin?.once('close', onStdinEnd);
     booted.tui.addInputListener((data: string) => {
-      if (stopped) return { consume: true };
+      // Issue #313: an exception anywhere in input handling (including the
+      // synchronous paints it triggers) restores the terminal first.
+      try {
+        return routeInput(data);
+      } catch (error) {
+        fatal(error);
+        return { consume: true };
+      }
+    });
+    const routeInput = (data: string): { consume: true } | undefined => {
+      if (stopped) {
+        // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
+        if (!isKeyRelease(data) && keyIs(data, 'ctrl+c')) shutdown();
+        return { consume: true };
+      }
+      // Issue #306, defence in depth: TuiApp.handleInput already drops Kitty
+      // key releases, but the quit/cancel counting below must never see one
+      // even if a future caller routes around it — a Ctrl-C release counted
+      // as the second Ctrl-C would quit the session on key-up.
+      if (isKeyRelease(data)) return { consume: true };
       const routed = app.handleInput(data);
       if (routed.quit) {
         if (routed.cancel && turn?.isRunning()) {
@@ -1007,8 +1432,17 @@ export async function runTuiCommand(
         shutdown();
         return { consume: true };
       }
-      return routed.consumed ? { consume: true } : undefined;
-    });
+      // Issue #274: a consuming listener pre-empts pi-tui's own post-input
+      // render (it only runs on the focused-component path), so every key
+      // the app consumed — a typed character, a global toggle, an approval
+      // decision — asks for its frame here. Without it nothing repaints
+      // while idle: no spinner, no turn refresh.
+      if (routed.consumed) {
+        screen?.update();
+        return { consume: true };
+      }
+      return undefined;
+    };
     if (turn !== undefined) {
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
@@ -1020,6 +1454,8 @@ export async function runTuiCommand(
           .then((outcome) => {
             app.setBusy(false);
             stopSpinner();
+            syncPosture();
+            journalFeed?.now();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the trust statement instead of going blank
             // (issue #89) — a cancelled/failed turn keeps its own report.
@@ -1042,7 +1478,8 @@ export async function runTuiCommand(
     // after the alt-screen went active — restore the main screen and
     // close the lane so the reject never strands either. The setup
     // error stands.
-    process.removeListener('SIGINT', onSigint);
+    detachSignals();
+    detachFatal();
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
     try {
@@ -1055,8 +1492,10 @@ export async function runTuiCommand(
     } catch {
       // Close failures never mask the setup error.
     }
+    setTuiTheme(previousTheme);
     throw error;
   }
   await exited;
-  return RUN_EXIT_OK;
+  setTuiTheme(previousTheme);
+  return exitCode;
 }

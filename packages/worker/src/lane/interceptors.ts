@@ -176,7 +176,13 @@ export function confinePath(
 // truncated and secret-shaped values redacted before they become blocks.
 export function redactReason(value: string): string {
   const short = value.length > 200 ? `${value.slice(0, 200)}…` : value;
-  return short.replace(
+  return redactSecrets(short);
+}
+
+// The redaction half alone, never truncating (issue #316): an approval
+// dialog must show the whole command, so it redacts without cutting.
+export function redactSecrets(value: string): string {
+  return value.replace(
     /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
     '$1[REDACTED]',
   );

@@ -88,7 +88,10 @@ file that no longer exists, or when a row's file has become reachable
 - Issue #96 executed its three rows: `packages/tui/src/diff-view.ts`,
   `journal-view.ts` and `approval-view.ts` are all reached from the binary now.
   The first two through `view-panel.ts` → `tui-app.ts` (the `Ctrl-O` diff panel
-  and the `Ctrl-R` journal panel); `approval-view.ts` through
+  and the `Ctrl-R` journal panel) — reachable at import level since #96, and
+  fed with rows in production only since issue #311 (`tui-run.ts` reads the
+  session journal through `diffEntries` into `setJournalChanges`; before that
+  both panels always showed `no changes`); `approval-view.ts` through
   `approval-surface.ts`, which is the answer seat the installed policy consults
   when a challenged call is deferred — the overlay the TUI was designed around
   and the inline fallback both render from it.

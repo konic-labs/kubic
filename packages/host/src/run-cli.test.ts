@@ -398,6 +398,25 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
       ),
     ).toBe('workspace_unavailable');
   });
+  // A path is data, not a signal: a repo under ~/workspace or an agent
+  // worktree must not turn an unrelated failure into exit 5.
+  it('ignores workspace/worktree words that only appear inside a path', () => {
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: skills/budget missing at /home/u/workspace/repo/.claude/worktrees/wf-1/ext',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file, open '/home/u/workspace/x'"),
+      ),
+    ).toBe('workspace_unavailable');
+    expect(
+      mapCaughtErrorToTerminus(new Error('workspace root is not a directory')),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

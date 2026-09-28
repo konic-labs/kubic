@@ -105,6 +105,7 @@ describe('tui entry regression (issue #75)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: async (sessionId?: string) => ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',

@@ -294,7 +294,12 @@ export function formatWorkerAskQuestion(
     request.justification === undefined || request.justification.trim() === ''
       ? 'no justification given'
       : request.justification.trim();
-  return `worker '${request.agentId}' requests ${request.trigger} (${request.toolName}): ${reason} — approve?`;
+  // Issue #316: the full command, on its own lines, so a padded prefix
+  // cannot hide the tail the approval actually covers.
+  const head = `worker '${request.agentId}' requests ${request.trigger} (${request.toolName}): ${reason}`;
+  if (request.command === undefined) return `${head} — approve?`;
+  const command = request.command.split('\n').join('\n           ');
+  return `${head}\n  command: ${command}\napprove?`;
 }
 
 // The worker CHILD's seat: what a spawned `kubic run` attaches so a
@@ -312,16 +317,22 @@ export function createWorkerMailboxSeat(options: {
   capability: string;
   toolName: string;
   summary: string;
+  command?: string;
   justification?: string;
 }) => Promise<OrchestratorVerdict | undefined> {
   return async (request) => {
     const published = publishWorkerAsk(options.dir, {
       trigger: request.capability,
       toolName: request.toolName,
-      // The seat sees the lane's own request shape (key/capability/summary),
-      // never the raw args: the ask is re-derived by the router from what the
-      // lane reports, so a seat cannot smuggle args it was not given.
-      args: { summary: request.summary },
+      // The seat sees the lane's own request shape (key/capability/summary/
+      // command), never the raw args: the ask is re-derived by the router
+      // from what the lane reports, so a seat cannot smuggle args it was not
+      // given. Issue #316: a bash call forwards its FULL command, so the
+      // manager's seat shows what will run instead of a cut summary.
+      args:
+        request.command === undefined
+          ? { summary: request.summary }
+          : { command: request.command },
       justification:
         request.justification ??
         `worker child needs ${request.capability} to complete its plan step`,

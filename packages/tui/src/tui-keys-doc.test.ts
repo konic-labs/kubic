@@ -95,12 +95,13 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       // The shipped binding table itself, not a regex over its source text.
       expect(APPROVAL_DEFAULT_KEYS).toEqual({
         'allow-once': ['a'],
-        'allow-session': ['s'],
+        'allow-session': ['ctrl+s'],
         deny: ['d', 'escape'],
       });
       const section = tuiSection();
       expect(section).toMatch(/\| `a` \|[^|]*allow once/i);
-      expect(section).toMatch(/\| `s` \|[^|]*allow for the session/i);
+      expect(section).toMatch(/\| `Ctrl-S` \|[^|]*allow for the session/i);
+      expect(section).toMatch(/arming delay[^.]*400 ms/i);
       expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
     });
 

@@ -115,6 +115,12 @@ export async function dispatchCommand(
   // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
   // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
   // posture pinned by scripts/binary-contract.mjs.
+  // Issue #295: `kubic --model <provider/id>` on a TTY is
+  // `kubic tui --model …` — the bare form takes the TUI's model pin too.
+  const bareModel =
+    requested !== undefined &&
+    (requested === '--model' || requested.startsWith('--model=')) &&
+    deps.isInteractive?.() === true;
   // Issue #308 (§41.4, §78): `kubic --dangerously-skip-approvals` is the
   // bare invocation with the session-scoped full-access flag — on a TTY it is
   // `kubic tui --dangerously-skip-approvals`; off a TTY it keeps the bare
@@ -122,10 +128,12 @@ export async function dispatchCommand(
   const bareSkip =
     requested === BARE_SKIP_FLAG && deps.isInteractive?.() === true;
   const command =
-    (requested === undefined && deps.isInteractive?.() === true) || bareSkip
+    (requested === undefined && deps.isInteractive?.() === true) ||
+    bareSkip ||
+    bareModel
       ? 'tui'
       : requested;
-  const args = bareSkip ? [BARE_SKIP_FLAG, ...rest] : rest;
+  const args = bareSkip || bareModel ? [String(requested), ...rest] : rest;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and

@@ -86,10 +86,11 @@ describe('approval render (issue #26; §41)', () => {
     expect(lines).toEqual([
       'Approval required: privilege-escalation',
       'tool: bash',
-      'summary: privilege-escalation: sudo systemctl restart foo',
+      // Issue #316: with the full command present the summary (a shortened
+      // copy of it) is not repeated.
       'command: sudo systemctl restart foo',
       'justification: (none)',
-      '[a] allow once   [s] allow session   [d] deny',
+      '[a] allow once   [Ctrl-S] allow session   [d]/[Esc] deny',
     ]);
   });
 });
@@ -127,9 +128,10 @@ describe('approval overlay geometry (issue #26; §16.4)', () => {
 });
 
 describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
-  it('resolves a/s/d via matchesKey with zero conflicts', () => {
+  it('resolves a/Ctrl-S/d via matchesKey with zero conflicts', () => {
     expect(resolveApprovalAction('a')).toBe('allow-once');
-    expect(resolveApprovalAction('s')).toBe('allow-session');
+    expect(resolveApprovalAction('\x13')).toBe('allow-session');
+    expect(resolveApprovalAction('s')).toBeUndefined();
     expect(resolveApprovalAction('d')).toBe('deny');
     expect(resolveApprovalAction('x')).toBeUndefined();
     expect(approvalKeyConflicts()).toEqual([]);
@@ -165,7 +167,7 @@ describe('approval keybindings (issue #26; §16.6/§16.9)', () => {
       onDecision: (action) => seen.push(action),
       onFocusEditor: () => editorFocus++,
     });
-    view.handleInput('s');
+    view.handleInput('\x13');
     expect(seen).toEqual(['allow-session']);
     expect(editorFocus).toBe(1);
     view.handleInput('a');

@@ -42,11 +42,16 @@ import {
 } from './approval-surface.js';
 import type {
   ApprovalDecision,
+  ApprovalKeyOverrides,
   ApprovalOverlayHandle,
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
-import { ApprovalView, showApprovalOverlay } from './approval-view.js';
+import {
+  APPROVAL_PAGE_KEY,
+  ApprovalView,
+  showApprovalOverlay,
+} from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
 import {
   entriesToCells,
@@ -57,6 +62,7 @@ import { buildLayoutRoot, type Viewport } from './layout.js';
 import {
   StatusBar,
   type StatusBarState,
+  type StatusMode,
   type StatusUsageRow,
 } from './status-bar.js';
 import {
@@ -71,6 +77,8 @@ import { createTranscriptView, type TranscriptView } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
 import {
+  isKeyRelease,
+  isKeyRepeat,
   parseKey,
   truncateToWidth,
   visibleWidth,
@@ -111,9 +119,12 @@ export interface TuiAppSeed {
   // one — the viewer shell (`kubic tui` with an injected boot) still renders
   // an ask inline instead of hanging.
   readonly approvalSurface?: ApprovalSurface;
-  // Issue #308 (§41.4): the session runs with full access — the status bar
-  // shows the OFF indicator from the first frame.
-  readonly approvalsSkipped?: boolean;
+  // Issue #307 (§17, §18): the always-visible mode indicator. Both fields
+  // are REQUIRED — seeded from the posture the composition root actually
+  // installed — so no call site can silently default a full-access session
+  // to 'approvals:on'.
+  readonly mode: StatusMode;
+  readonly approvalsSkipped: boolean;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -122,8 +133,14 @@ export interface TuiAppSeed {
 export function seedFromPresentation(
   state: KubicPresentationState,
   model: string,
+  posture: { readonly mode: StatusMode; readonly approvalsSkipped: boolean },
 ): TuiAppSeed {
-  return { sessionId: state.session.sessionId, model };
+  return {
+    sessionId: state.session.sessionId,
+    model,
+    mode: posture.mode,
+    approvalsSkipped: posture.approvalsSkipped,
+  };
 }
 
 export interface TuiInputResult {
@@ -155,6 +172,21 @@ function keyIdOf(data: string): string | undefined {
   }
 }
 
+// The keys handleInput claims before the editor (see the key map above).
+const GLOBAL_KEYS: ReadonlySet<string> = new Set([
+  'ctrl+c',
+  'escape',
+  'ctrl+d',
+  'ctrl+t',
+  'ctrl+o',
+  'ctrl+r',
+  'ctrl+x',
+]);
+
+function isGlobalKey(keyId: string | undefined): boolean {
+  return keyId !== undefined && GLOBAL_KEYS.has(keyId);
+}
+
 export interface TuiApp {
   readonly root: VStack;
   readonly tree: AgentTreeView;
@@ -179,6 +211,9 @@ export interface TuiApp {
   busyElapsedMs(now?: number): number | undefined;
   // Ctrl-X: expand / collapse tool output blocks.
   toggleToolOutput(): boolean;
+  // Issue #307: a posture change (the policy's own predicate) reaches the
+  // indicator on the very next frame.
+  setApprovalsSkipped(skipped: boolean): void;
   // Issue #96: the §17 inspectable pair.
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
@@ -373,8 +408,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     model: seed.model,
     thinking: seed.thinking ?? 'off',
     rows: [],
-    mode: 'solo',
-    approvalsSkipped: seed.approvalsSkipped === true,
+    mode: seed.mode,
+    approvalsSkipped: seed.approvalsSkipped,
     sessionId: seed.sessionId,
   };
   const status = new StatusBar(barState);
@@ -397,7 +432,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const root = buildLayoutRoot({
     tree,
     header: lineComponent((width) =>
-      renderHeader(width, { mode: 'solo', model: seed.model }),
+      renderHeader(width, { mode: seed.mode, model: seed.model }),
     ),
     transcript: transcript.component,
     status,
@@ -445,7 +480,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   approvalSurface.onChange = onSurfaceChange;
   // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
   // name here rather than binding one action to two keys silently.
-  approvalSurface.checkKeys();
+  // Issue #315: an approval key may not shadow a loop key either.
+  approvalSurface.checkKeys([...GLOBAL_KEYS]);
   let overlayHost: ApprovalOverlayTui | undefined;
   let overlayHandle: ApprovalOverlayHandle | undefined;
   let overlayView: ApprovalView | undefined;
@@ -480,6 +516,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // callback exists because ApprovalView requires the seat, and it must
       // not double-apply — the loop's own handler is the single path.
       onDecision: () => {},
+      // Issue #315: the hints stay locked until the surface arms.
+      isArmed: () => approvalSurface.isArmed(),
+      commandPage: () => approvalSurface.commandPage(),
+      keyOverrides: approvalSurface.keys() as ApprovalKeyOverrides,
     });
     overlayView = view;
     overlayHandle = showApprovalOverlay(overlayHost, view);
@@ -497,7 +537,25 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     handleInput: (data: string): TuiInputResult => {
       // Classified by pi-tui's parseKey so both encodings are honoured:
       // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
+      // Issue #306: a Kitty-class terminal reports key releases (and
+      // repeats) as their own events, and this listener runs before pi-tui's
+      // focused-path release filter. A release is never an action: dropping
+      // it here — before approval decide, the global keys and the editor —
+      // keeps toggles from cancelling themselves on key-up and a Ctrl-C
+      // cancel or an Esc deny from turning into a quit.
+      if (isKeyRelease(data))
+        return { quit: false, consumed: true, cancel: false };
       const keyId = keyIdOf(data);
+      // Decision (issue #306): a held key's repeats reach the draft (held
+      // backspace keeps deleting) but never the approval decision keys or a
+      // global key — a held Ctrl-O must not strobe the panel, and a held
+      // allow key must not answer the NEXT request too.
+      if (
+        isKeyRepeat(data) &&
+        (approvalSurface.isShowing() || isGlobalKey(keyId))
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
       // Issue #96: a shown approval owns the decision keys FIRST — above every
       // global binding. Answering with Esc must deny the request, not quit the
       // session; the operator can still quit after the request settles. A key
@@ -505,6 +563,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
       if (approvalSurface.isShowing() && approvalSurface.decide(data)) {
         settleApproval();
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #315: the approval is a capturing modal. While it shows, every
+      // key it did not take — prose typed ahead for the next prompt, and a
+      // decision key pressed inside the arming window — is dropped rather
+      // than reaching the draft. Only the loop's global keys still act.
+      // Issue #316: `v` pages a long command in the dialog (never decides).
+      if (
+        approvalSurface.isShowing() &&
+        keyId === APPROVAL_PAGE_KEY &&
+        approvalSurface.nextCommandPage()
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
+      if (approvalSurface.isShowing() && !isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }
       if (keyId === 'ctrl+c') {
@@ -604,6 +677,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ? undefined
         : Math.max(0, now - editorRow.busySince),
     toggleToolOutput: (): boolean => transcript.toggleExpanded(),
+    setApprovalsSkipped: (skipped: boolean): void => {
+      status.setApprovalsSkipped(skipped);
+    },
     setNotice: (text: string): void => {
       notice = sanitizeLaneText(text);
       refreshWelcome();

@@ -102,11 +102,90 @@ function truncateLine(line: string, width: number): string {
   return `${line.slice(0, width - 1)}…`;
 }
 
+// Issue #315: how the key hints read. `armed: false` is the arming window —
+// decision keys are ignored, only Esc (deny) acts — so the hint says so
+// instead of advertising keys that do nothing yet. Absent means armed.
+export interface ApprovalRenderOptions {
+  readonly armed?: boolean;
+  readonly keys?: Record<ApprovalAction, readonly string[]>;
+  // Issue #316: which page of a long command is shown (wraps around).
+  readonly commandPage?: number;
+}
+
+// Issue #316: the dialog shows what will actually run. A command wraps
+// across rows; one page holds this many rows, and a taller command shows an
+// explicit `… command lines a–b of n · [v] next page` marker — the height is
+// capped honestly, never by a silent character slice.
+export const APPROVAL_COMMAND_PAGE_LINES = 8;
+export const APPROVAL_PAGE_KEY = 'v';
+const COMMAND_PREFIX = 'command: ';
+
+function commandRows(command: string, width: number): string[] {
+  const room = Math.max(1, width - COMMAND_PREFIX.length);
+  const rows: string[] = [];
+  for (const line of command.split('\n')) {
+    if (line === '') {
+      rows.push('');
+      continue;
+    }
+    for (let at = 0; at < line.length; at += room) {
+      rows.push(line.slice(at, at + room));
+    }
+  }
+  return rows;
+}
+
+function commandLines(command: string, width: number, page: number): string[] {
+  const rows = commandRows(command, width);
+  const pages = Math.max(
+    1,
+    Math.ceil(rows.length / APPROVAL_COMMAND_PAGE_LINES),
+  );
+  const current = ((page % pages) + pages) % pages;
+  const from = current * APPROVAL_COMMAND_PAGE_LINES;
+  const shown = rows.slice(from, from + APPROVAL_COMMAND_PAGE_LINES);
+  const indent = ' '.repeat(COMMAND_PREFIX.length);
+  const out = shown.map((row, index) =>
+    index === 0 ? `${COMMAND_PREFIX}${row}` : `${indent}${row}`,
+  );
+  if (pages > 1) {
+    out.push(
+      `… command lines ${from + 1}–${from + shown.length} of ${rows.length} · [${APPROVAL_PAGE_KEY}] next page`,
+    );
+  }
+  return out;
+}
+
+// Operator-facing key names: `ctrl+s` → `Ctrl-S`, `escape` → `Esc`.
+export function approvalKeyLabel(key: string): string {
+  if (key === 'escape') return 'Esc';
+  const parts = key.split('+');
+  if (parts.length === 1) return key;
+  const base = (parts.at(-1) ?? '').toUpperCase();
+  const mods = parts
+    .slice(0, -1)
+    .map((mod) => `${mod.charAt(0).toUpperCase()}${mod.slice(1)}`);
+  return [...mods, base].join('-');
+}
+
+function hintLine(options: ApprovalRenderOptions): string {
+  const keys = options.keys ?? APPROVAL_DEFAULT_KEYS;
+  if (options.armed === false) {
+    return keys.deny.includes(APPROVAL_IMMEDIATE_KEY)
+      ? '… keys unlock in a moment · [Esc] deny now'
+      : '… keys unlock in a moment';
+  }
+  const labels = (action: ApprovalAction): string =>
+    keys[action].map((key) => `[${approvalKeyLabel(key)}]`).join('/');
+  return `${labels('allow-once')} allow once   ${labels('allow-session')} allow session   ${labels('deny')} deny`;
+}
+
 // Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
 // these lines directly like renderLayout in layout.test.ts.
 export function renderApprovalLines(
   request: ApprovalViewRequest,
   width: number,
+  options: ApprovalRenderOptions = {},
 ): string[] {
   const w = Math.max(0, Math.floor(width));
   const lines = [
@@ -118,19 +197,30 @@ export function renderApprovalLines(
   // "capability: <tool> <path>". Without this line the operator approves a
   // capability without seeing the operation, which is the whole point of the
   // surface. Empty means "no summary supplied" — a minimal request is not a
-  // blank line.
-  if (request.summary !== undefined && request.summary !== '') {
+  // blank line. Issue #316: when the request carries the full command, that
+  // is what the dialog shows — wrapped and paged, never cut — and the
+  // one-line summary (a shortened copy of it) is not repeated.
+  const hasCommand = request.command !== undefined && request.command !== '';
+  if (!hasCommand && request.summary !== undefined && request.summary !== '') {
     lines.push(`summary: ${request.summary}`);
   }
-  if (request.command !== undefined && request.command !== '') {
-    lines.push(`command: ${request.command}`);
-  }
+  const commandBlock = hasCommand
+    ? commandLines(request.command ?? '', w, options.commandPage ?? 0)
+    : [];
   if (request.paths !== undefined && request.paths.length > 0) {
     lines.push(`paths: ${request.paths.join(', ')}`);
   }
   lines.push(`justification: ${request.justification ?? '(none)'}`);
-  lines.push('[a] allow once   [s] allow session   [d] deny');
-  return lines.map((line) => truncateLine(line, w));
+  lines.push(hintLine(options));
+  const head = lines.slice(0, 2).map((line) => truncateLine(line, w));
+  const rest = lines.slice(2).map((line) => truncateLine(line, w));
+  // The command rows are already fitted to the width (wrapped, not cut);
+  // only the page marker could exceed a very narrow width.
+  return [
+    ...head,
+    ...commandBlock.map((line) => truncateLine(line, w)),
+    ...rest,
+  ];
 }
 
 // Narrow-terminal fallback (w < 80): same body under an inline header so
@@ -138,11 +228,12 @@ export function renderApprovalLines(
 export function renderApprovalInline(
   request: ApprovalViewRequest,
   width: number,
+  options: ApprovalRenderOptions = {},
 ): string[] {
   const w = Math.max(0, Math.floor(width));
   return [
     truncateLine('! approval (inline) — narrow terminal', w),
-    ...renderApprovalLines(request, w),
+    ...renderApprovalLines(request, w, options),
   ];
 }
 
@@ -156,10 +247,23 @@ export const APPROVAL_DEFAULT_KEYS: Record<
   ApprovalAction,
   readonly ApprovalKeyId[]
 > = {
+  // Issue #315: an approval is consent to run code with the operator's
+  // authority, so type-ahead meant for the editor must never produce one.
+  // allow-once and deny keep a letter but act only after the arming delay
+  // below; allow-session (consent for the whole session) is Ctrl-S, which
+  // prose cannot produce; Esc is the one immediate key, and it only denies.
   'allow-once': ['a'],
-  'allow-session': ['s'],
+  'allow-session': ['ctrl+s'],
   deny: ['d', 'escape'],
 };
+
+// Issue #315: decision keys are ignored for this long after a request
+// appears (and again for each queued request), so a keystroke typed into the
+// editor a moment before the ask arrived cannot answer it.
+export const APPROVAL_ARMING_MS = 400;
+
+// The one binding honoured during the arming window: Esc, and only as deny.
+export const APPROVAL_IMMEDIATE_KEY = 'escape';
 
 export type ApprovalKeyOverrides = Partial<
   Record<ApprovalAction, readonly ApprovalKeyId[]>
@@ -189,13 +293,53 @@ export function resolveApprovalAction(
   data: string,
   overrides?: ApprovalKeyOverrides,
 ): ApprovalAction | undefined {
+  return resolveApprovalKey(data, overrides)?.action;
+}
+
+// The action AND the binding that matched: the arming window lets only the
+// immediate deny key through, so the caller needs to know which key it was.
+export function resolveApprovalKey(
+  data: string,
+  overrides?: ApprovalKeyOverrides,
+): { action: ApprovalAction; key: string } | undefined {
   const bindings = resolvedBindings(overrides);
   for (const action of ACTION_ORDER) {
     for (const key of bindings[action]) {
-      if (matchesKey(data, key)) return action;
+      if (matchesKey(data, key)) return { action, key };
     }
   }
   return undefined;
+}
+
+// Issue #315: a key ordinary typing can produce — a bare character, space,
+// or a shifted character (an upper-case letter or a symbol).
+export function isProseKey(key: string): boolean {
+  return key.length === 1 || key === 'space' || /^shift\+.$/.test(key);
+}
+
+// Issue #315 (§16.9): registry hygiene beyond action overlaps. allow-session
+// may never be a prose key, and no approval key may shadow one of the loop's
+// own global keys (`reserved`, supplied by the app; Esc is exempt — its deny
+// is intentional). One message per problem.
+export function approvalKeyProblems(
+  overrides?: ApprovalKeyOverrides,
+  reserved: ReadonlyArray<string> = [],
+): string[] {
+  const bindings = resolvedBindings(overrides);
+  const problems: string[] = [];
+  for (const key of bindings['allow-session']) {
+    if (isProseKey(key))
+      problems.push(
+        `allow-session key ${key} can be typed as prose (bind a modified key)`,
+      );
+  }
+  for (const action of ACTION_ORDER) {
+    for (const key of bindings[action]) {
+      if (key !== APPROVAL_IMMEDIATE_KEY && reserved.includes(key))
+        problems.push(`approval key conflict: ${key} is a global TUI key`);
+    }
+  }
+  return problems;
 }
 
 export interface ApprovalKeyConflict {
@@ -280,6 +424,11 @@ export interface ApprovalViewOptions {
   ) => void;
   readonly onFocusEditor?: () => void;
   readonly keyOverrides?: ApprovalKeyOverrides;
+  // Issue #315: the surface's arming state, read on every render so the key
+  // hints unlock in the frame the surface arms. Absent means armed.
+  readonly isArmed?: () => boolean;
+  // Issue #316: the page of a long command the surface shows.
+  readonly commandPage?: () => number;
 }
 
 export class ApprovalView implements Component, Focusable {
@@ -291,12 +440,16 @@ export class ApprovalView implements Component, Focusable {
   ) => void;
   private readonly onFocusEditor: () => void;
   private readonly keyOverrides?: ApprovalKeyOverrides;
+  private readonly isArmed: () => boolean;
+  private readonly commandPage: () => number;
 
   constructor(options: ApprovalViewOptions) {
     this.viewRequest = options.request;
     this.onDecision = options.onDecision ?? (() => {});
     this.onFocusEditor = options.onFocusEditor ?? (() => {});
     this.keyOverrides = options.keyOverrides;
+    this.isArmed = options.isArmed ?? (() => true);
+    this.commandPage = options.commandPage ?? (() => 0);
   }
 
   getRequest(): ApprovalViewRequest {
@@ -304,14 +457,19 @@ export class ApprovalView implements Component, Focusable {
   }
 
   handleInput(data: string): void {
-    const action = resolveApprovalAction(data, this.keyOverrides);
-    if (action === undefined) return;
-    this.onDecision(action, this.viewRequest);
+    const match = resolveApprovalKey(data, this.keyOverrides);
+    if (match === undefined) return;
+    if (!this.isArmed() && match.key !== APPROVAL_IMMEDIATE_KEY) return;
+    this.onDecision(match.action, this.viewRequest);
     this.onFocusEditor();
   }
 
   render(width: number): string[] {
-    const lines = renderApprovalLines(this.viewRequest, width);
+    const lines = renderApprovalLines(this.viewRequest, width, {
+      armed: this.isArmed(),
+      commandPage: this.commandPage(),
+      keys: resolvedBindings(this.keyOverrides),
+    });
     if (this.focused && lines.length > 0) {
       lines[0] += CURSOR_MARKER;
     }

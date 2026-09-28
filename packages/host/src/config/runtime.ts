@@ -120,9 +120,11 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
   },
   'model.provider': {
-    effect: 'provider selection for `kubic run` (selectModel)',
+    effect: 'provider selection for `kubic run` and `kubic tui` (selectModel)',
   },
-  'model.id': { effect: 'model selection for `kubic run` (selectModel)' },
+  'model.id': {
+    effect: 'model selection for `kubic run` and `kubic tui` (selectModel)',
+  },
   'model.thinking': {
     effect:
       'default thinking level reported by `kubic config`; per-run override is --model',

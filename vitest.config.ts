@@ -11,7 +11,12 @@ export default defineConfig({
     // env vars are scrubbed first (issues #221, #322) so no test can see
     // the developer's provider keys.
     globalSetup: ['./test/vitest-global-setup.ts'],
-    setupFiles: ['./vitest.setup.mjs', './test/vitest-setup.ts'],
+    // Issue #319: fail any test that leaves a coloured TUI theme behind.
+    setupFiles: [
+      './vitest.setup.mjs',
+      './test/vitest-setup.ts',
+      './vitest.setup.ts',
+    ],
     // Half the cores, not vitest's cores-1 default: several coding agents
     // often run the suite at once on one laptop. The suite is ~10s either way.
     maxWorkers: '50%',

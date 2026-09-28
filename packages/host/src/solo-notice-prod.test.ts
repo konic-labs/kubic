@@ -378,6 +378,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: async (sessionId?: string) => ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',
@@ -403,6 +404,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       {
         out: () => undefined,
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: async () => ({ sessionId: 's1', model: FAUX_MODEL_REF }),
       },
     );
@@ -423,6 +425,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: fauxLaneBoot(root, fauxModels(['all done, boss']).models),
       },
     );
@@ -453,6 +456,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: async (sessionId?: string) => ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',
@@ -475,6 +479,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: async (sessionId?: string) => ({
           sessionId: sessionId ?? 's1',
           model: 'faux/test',

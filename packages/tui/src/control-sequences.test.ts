@@ -15,7 +15,12 @@ const ESC = '\u001b';
 const BEL = '\u0007';
 
 function frameWith(text: string): string {
-  const app = createTuiApp({ sessionId: 's', model: 'm' });
+  const app = createTuiApp({
+    sessionId: 's',
+    model: 'm',
+    mode: 'solo',
+    approvalsSkipped: false,
+  });
   app.applyLaneEntries([
     {
       id: 'e1',
@@ -42,7 +47,12 @@ describe('terminal control sequences from lane content (issue #88)', () => {
   });
 
   it('does not let tool-result text emit raw escapes either', () => {
-    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEntries([
       {
         id: 'e2',
@@ -63,7 +73,12 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     // model emitting a call named `evil\x1b[2Jname` still rendered the
     // clear-screen sequence. Names are model-supplied, so they are the same
     // class of untrusted input.
-    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEntries([
       {
         id: 'e3',
@@ -85,7 +100,12 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     // path takes the lane event's `toolName` verbatim into AgentTreeState
     // (tree.ts). Both come from the same model-supplied name, so the tree is
     // the same class of untrusted input and was still a live leak.
-    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEvent({
       type: 'tool-start',
       toolCallId: 'tc-tree',
@@ -105,7 +125,12 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     // row already filters its own footer text (the only ESC bytes left in
     // the frame are its focus styling, `\x1b[7m`/`\x1b[0m`), so this stays
     // green as a regression pin rather than a new defence.
-    const app = createTuiApp({ sessionId: 's', model: 'm' });
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.setEditorFooter(
       `cancel failed: ${JSON.stringify({ message: `zap${ESC}[2J${BEL}` })}`,
     );

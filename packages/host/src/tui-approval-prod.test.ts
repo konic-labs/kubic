@@ -196,6 +196,9 @@ describe('allow once is not a session approval (issue #231)', () => {
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        // Issue #315's arming delay is pinned off for the #231 latch test.
+        approvalArmingMs: 0,
         bootLane: (sessionId, answer, flags) =>
           boot(
             sessionId,
@@ -241,6 +244,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -283,6 +288,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -322,6 +329,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -350,6 +359,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -386,6 +397,8 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -401,5 +414,91 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
+  });
+
+  // Issue #315: type-ahead cannot approve. With the shipped arming delay on
+  // an injected clock, an `a` typed 50 ms after the overlay appeared neither
+  // answers the ask nor reaches the draft; the same key once armed does.
+  it('ignores a decision key typed inside the arming window', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    let now = 0;
+    const { models } = fauxModels([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
+      fauxAssistantMessage('armed turn done'),
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalClock: () => now,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'clean up') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(fake.frame).toContain('keys unlock in a moment');
+    now += 50;
+    fake.feed('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.frame).not.toContain('armed turn done');
+    now += 400;
+    fake.feed('a');
+    await waitFor(() => fake.frame.includes('armed turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  // Issue #316: a padded 400-char command reaches the dialog whole — the
+  // seat receives the full command derived from the same args the key
+  // hashes, and the overlay shows it wrapped instead of a 120-char slice.
+  it('delivers the full padded command to the dialog', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    const padded = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf /tmp/x`;
+    const { models } = fauxModels([
+      fauxAssistantMessage([fauxToolCall('bash', { command: padded })]),
+      fauxAssistantMessage('padded turn done'),
+    ]);
+    const seen: Array<{ command?: string; summary: string }> = [];
+    const boot = fauxLaneBoot(root, models);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: (sessionId, answer, flags) =>
+          boot(
+            sessionId,
+            answer === undefined
+              ? undefined
+              : (request) => {
+                  seen.push(request);
+                  return answer(request);
+                },
+            flags,
+          ),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'pad') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(seen[0]?.command).toBe(padded);
+    expect(seen[0]?.summary).toMatch(/… \(\+\d+ chars\)$/);
+    expect(fake.frame).toContain('command: ');
+    expect(fake.frame).not.toContain('summary: ');
+    fake.feed('d');
+    await waitFor(() => fake.frame.includes('padded turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 });

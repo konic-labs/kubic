@@ -32,6 +32,7 @@ import {
 } from '../../worker/src/lane/interceptors.js';
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
+import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
@@ -148,12 +149,29 @@ export interface ApprovalRequest {
   capability: Capability;
   toolName: string;
   summary: string;
+  // Issue #316: the FULL command a bash call will run — derived from the
+  // same args the key hashes, redacted and with hidden characters made
+  // visible (approval-display.ts), never truncated. Absent for calls that
+  // carry no command (file tools): their summary names the path.
+  command?: string;
   justification?: string;
 }
 
 // The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
 // issue #231): approved, audited, never latched or persisted.
 export const ALLOW_ONCE = 'allow-once';
+// The request fields an ask shows (issue #316): the one-line summary and,
+// for a bash call, the full command — both from the call's own args.
+export function approvalRequestDisplay(
+  toolName: string,
+  capability: Capability,
+  args: Record<string, unknown>,
+): { summary: string; command?: string } {
+  const summary = summarizeRequest(toolName, capability, args);
+  return toolName === 'bash' && typeof args.command === 'string'
+    ? { summary, command: approvalCommandText(args.command) }
+    : { summary };
+}
 
 export type ApprovalVerdict =
   | { approved: true; by: string; justified?: boolean }
@@ -770,7 +788,9 @@ export function summarizeRequest(
   // Summaries reach the TUI and the trajectory: secret-shaped values are
   // redacted exactly like block reasons (issue #15).
   if (toolName === 'bash' && typeof args.command === 'string') {
-    return redactReason(`${capability}: ${args.command.slice(0, 120)}`);
+    // Issue #316: never a silent slice — a shortened summary says how much
+    // it hid; the full command travels in the request's `command` field.
+    return summarizeCommand(capability, args.command);
   }
   if (typeof args.path === 'string') {
     return redactReason(`${capability}: ${toolName} ${args.path}`);
@@ -901,7 +921,7 @@ export function createApprovalAsk(
         key: approvalKey(call.toolName, capability, call.args),
         capability,
         toolName: call.toolName,
-        summary: summarizeRequest(call.toolName, capability, call.args),
+        ...approvalRequestDisplay(call.toolName, capability, call.args),
       });
       if (!verdict.approved) {
         return { approved: false, reason: verdict.reason };
@@ -1146,6 +1166,10 @@ export interface InstalledSoloPolicy {
   // Issue #325: the end-of-session posture check — a posture.json written
   // after the last ask is restored and recorded before the session closes.
   settle?: () => void;
+  // Issue #307: true exactly when the ask above auto-approves every
+  // challenged call as full access — the boot posture (#325) the ask
+  // itself decides on, so the indicator cannot drift from the policy.
+  approvalsSkipped: () => boolean;
 }
 
 export function installedPolicyPosture(
@@ -1325,6 +1349,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     denials.push({ capability, toolName, reason });
     return { approved: false, reason };
   };
+  // Issue #307: true exactly when the ask auto-approves every challenged
+  // call as full access — the SAME boot posture the ask consults (#325), so
+  // the status bar's OFF indicator cannot drift from what the policy does.
+  const approvalsSkipped = (): boolean =>
+    posture.fullAccess && posture.route === 'ask-user';
   // A posture.json change made DURING the session (issue #325) is refused:
   // the file is restored to the boot posture (so a later resume does not
   // inherit it) and the change is recorded once in the ledger. Checked on
@@ -1467,7 +1496,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           key,
           capability,
           toolName: call.toolName,
-          summary: summarizeRequest(call.toolName, capability, call.args),
+          ...approvalRequestDisplay(call.toolName, capability, call.args),
         });
         // A worker child's seat IS the manager (issue #279): the manager's
         // worker-asks record is the one §60 record for this decision.
@@ -1520,6 +1549,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     posture,
     denials: () => [...denials],
     ask,
+    approvalsSkipped,
     settle: guardPosture,
   };
 }

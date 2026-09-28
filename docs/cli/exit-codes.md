@@ -121,6 +121,11 @@
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.
+  A signalled quit exits `128+signo` after the same drain, restore and
+  session close as a keyboard quit: 129 `SIGHUP`, 130 `SIGINT`, 143
+  `SIGTERM`. An exception in input or render, or an unhandled rejection,
+  restores the terminal, prints `error: kubic tui crashed: …` on stderr and
+  exits 1.
 - **Analysis commands** (`eval`, `benchmark`, `replay`, `export`,
   `cost`, `perf`, `policy`, `audit`): an argv syntax error exits 2 with
   one commander `error: …` line on stderr and nothing on stdout, even

@@ -75,3 +75,41 @@ export async function requestLaneAbort(
   }
   return { newlyRequested: requested.value.newlyRequested, killed };
 }
+
+// Best-effort drain of one in-flight operation (issue #109; shared with the
+// TUI quit path, issue #312): the durable abort request first (the harness
+// records operation_abort in-session, so a resume sees a settled operation),
+// then EVERY registered kill (detached process groups, so grandchildren die
+// with them). Never throws: a refused or throwing abort is reported and the
+// kills still run — the drain is the backstop and must not be skipped.
+export async function drainOperation(
+  lane: LaneAborter,
+  kills: OperationKillRegistry,
+  operationId: string,
+  context: Context,
+  report?: (message: string) => void,
+): Promise<void> {
+  try {
+    const requested = await lane.requestAbort(operationId, context);
+    if (!requested.ok) {
+      report?.(
+        `requestAbort refused: ${
+          requested.error instanceof Error
+            ? requested.error.message
+            : JSON.stringify(requested.error)
+        }`,
+      );
+    }
+  } catch (error) {
+    report?.(
+      `requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  for (const kill of kills.drain(operationId)) {
+    try {
+      kill();
+    } catch {
+      // Already exited — the registry drains every entry regardless.
+    }
+  }
+}

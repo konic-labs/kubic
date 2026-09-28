@@ -344,6 +344,25 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
+  // Issue #295: bare `kubic --model p/id` on a TTY is `kubic tui --model`.
+  it('routes a bare --model on an interactive terminal to the TUI', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand('--model', ['faux/b'], deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['tui', { model: { provider: 'faux', id: 'b' } }],
+    ]);
+    // Off a TTY it stays the usage + exit 1 posture.
+    const off = harness();
+    expect(
+      await dispatchCommand('--model', ['faux/b'], {
+        ...off.deps,
+        isInteractive: () => false,
+      }),
+    ).toBe(1);
+    expect(off.calls).toEqual([]);
+  });
+
   it('the bare invocation off a TTY keeps the usage + exit 1 posture', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };

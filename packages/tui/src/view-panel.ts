@@ -113,9 +113,22 @@ export class DiffPanel implements Component {
   // selection rule directly instead of reverse-engineering a frame.
   visibleRows(): ReadonlyArray<JournalChangeLike> {
     const effective = this.getToolCall();
-    return this.rows.filter(
-      (row) => effective === null || row.toolCallId === effective,
-    );
+    if (effective === null) return this.rows;
+    const matched = this.rows.filter((row) => row.toolCallId === effective);
+    // An explicit pin is honoured exactly: an empty result says `no changes`.
+    if (matched.length > 0 || this.selected !== null) return matched;
+    // Issue #311: following the run, the call the run last touched may have
+    // written nothing (a read, a listing). The panel then shows the most
+    // recent call that DID change something instead of blanking.
+    let latest: JournalChangeLike | undefined;
+    for (const row of this.rows) {
+      if (row.toolCallId === null) continue;
+      if (latest === undefined || row.timestamp >= latest.timestamp)
+        latest = row;
+    }
+    if (latest === undefined) return [];
+    const id = latest.toolCallId;
+    return this.rows.filter((row) => row.toolCallId === id);
   }
 
   render(width: number): string[] {

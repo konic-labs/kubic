@@ -87,3 +87,16 @@ export function createLogger(options: LoggerOptions): CliLogger {
     consola: instance,
   };
 }
+
+// A logger over a LINE channel (`console.error`-style: it appends its own
+// newline), the shape command handlers receive as `err`. The logger's
+// chunk writer ends every message in '\n'; the channel adds it back.
+export function createLineLogger(
+  line: (text: string) => void,
+  options: Omit<LoggerOptions, 'write'> = {},
+): CliLogger {
+  return createLogger({
+    ...options,
+    write: (chunk) => line(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk),
+  });
+}

@@ -7,7 +7,7 @@ import {
   EXIT_USAGE,
   exitCodeForParseError,
 } from './exit-codes.js';
-import { createLogger, debugEnabled } from './logger.js';
+import { createLineLogger, createLogger, debugEnabled } from './logger.js';
 import { formatJson, outputModeFor } from './output.js';
 import {
   canPrompt,
@@ -173,6 +173,14 @@ describe('logger', () => {
     expect(chunks[0]).toContain(ESC);
     expect(chunks[0]).toContain('error:');
     expect(chunks[0]?.endsWith(' x\n')).toBe(true);
+  });
+
+  it('createLineLogger writes whole lines to a line channel (no trailing newline)', () => {
+    const lines: string[] = [];
+    const logger = createLineLogger((line) => lines.push(line));
+    logger.error('boom');
+    logger.warn('careful');
+    expect(lines).toEqual(['error: boom', 'warn: careful']);
   });
 
   it('--debug or KUBIC_DEBUG=1 enables debug', () => {

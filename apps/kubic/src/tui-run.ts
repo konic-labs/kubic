@@ -867,7 +867,16 @@ export async function runTuiCommand(
         shutdown();
         return { consume: true };
       }
-      return routed.consumed ? { consume: true } : undefined;
+      // Issue #274: a consuming listener pre-empts pi-tui's own post-input
+      // render (it only runs on the focused-component path), so every key
+      // the app consumed — a typed character, a global toggle, an approval
+      // decision — asks for its frame here. Without it nothing repaints
+      // while idle: no spinner, no turn refresh.
+      if (routed.consumed) {
+        screen?.update();
+        return { consume: true };
+      }
+      return undefined;
     });
     if (turn !== undefined) {
       app.onSubmit((prompt: string) => {

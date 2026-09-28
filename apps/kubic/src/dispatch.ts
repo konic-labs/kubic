@@ -12,6 +12,10 @@
 // usage fallthrough → commander (help, version, crash probe, commands).
 
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import {
+  type ModelSelection,
+  parseModelFlag,
+} from '../../../packages/worker/src/model-select.js';
 import type {
   CommandContext,
   CommandRegistrar,
@@ -68,6 +72,56 @@ const ROOT_OPTIONS: ReadonlySet<string> = new Set([
 // re-exported here because the dispatch seam is what callers wire.
 export type { CommandRunner, DispatchRunners } from './cli/context.js';
 
+// Issue #227 (§38.1): commands whose `--model <provider/id>` is the `cli`
+// config layer. The flag is an input to the ONE config load dispatch
+// performs before commander runs, so it is read from the raw argv here.
+const CLI_MODEL_COMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'tui',
+  'config',
+]);
+
+function tryParseCliModel(value: string): ModelSelection | undefined {
+  try {
+    return parseModelFlag(value);
+  } catch {
+    return undefined;
+  }
+}
+
+// Read the session model override exactly once, from the raw argv, for the
+// commands that own the flag. A `--` ends the scan (the rest are operands);
+// only well-formed `provider/id` values are forwarded — a malformed one is
+// left to commander, whose own option rule refuses it with exit 2 before any
+// runner runs. Later occurrences win, matching commander's repetition
+// behaviour, so the load sees the same value the parser will.
+export function cliModelFromArgs(
+  command: string | undefined,
+  rest: readonly string[],
+): ModelSelection | undefined {
+  if (command === undefined || !CLI_MODEL_COMMANDS.has(command)) {
+    return undefined;
+  }
+  let found: ModelSelection | undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (token === '--') break;
+    if (token === '--model') {
+      const value = rest[index + 1];
+      if (value !== undefined) {
+        const parsed = tryParseCliModel(value);
+        if (parsed !== undefined) found = parsed;
+      }
+      continue;
+    }
+    if (token.startsWith('--model=')) {
+      const parsed = tryParseCliModel(token.slice('--model='.length));
+      if (parsed !== undefined) found = parsed;
+    }
+  }
+  return found;
+}
+
 // Every command module registers its own commander commands, so parallel
 // command migrations never edit the same file.
 const REGISTRARS: readonly CommandRegistrar[] = [
@@ -87,8 +141,10 @@ export interface DispatchDeps {
   // means stdout (the fakes in dispatch.test.ts capture one channel).
   readonly err?: (line: string) => void;
   // One config load for the whole process, injected so the dispatch can be
-  // exercised over loaded and refused results alike.
-  readonly loadConfig: () => CliConfigResult;
+  // exercised over loaded and refused results alike. The `cli` model input
+  // (issue #227) is the only argument: the session override is a config-layer
+  // input, so it must reach the load itself, never a post-load patch.
+  readonly loadConfig: (input?: { model?: ModelSelection }) => CliConfigResult;
   // The version half of `--version` (the license half is core's): the root
   // reads this app's manifest through the exec FileBridge.
   readonly version: () => string;
@@ -121,8 +177,13 @@ export async function dispatchCommand(
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and
   // secret refs. Commands below consume it through the injected runners;
-  // nothing here re-derives a default by hand.
-  const cliConfig = deps.loadConfig();
+  // nothing here re-derives a default by hand. The `--model` override is
+  // read from the raw argv (issue #227) and becomes the `cli` layer of this
+  // same load.
+  const cliModel = cliModelFromArgs(command, rest);
+  const cliConfig = deps.loadConfig(
+    cliModel === undefined ? undefined : { model: cliModel },
+  );
   // A refused config stops the agent-executing modes: they may not run on
   // built-in defaults while the user believes their config file is in force.
   // `config` and `doctor` still run so the named reason can be reported.

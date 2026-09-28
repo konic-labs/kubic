@@ -44,17 +44,18 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>]... [--no-skills] [--debug] [--json]`
+## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--debug] [--json]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
-| `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
+| `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
 | `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
 | `--role <name>` | Boot as the role document `.kubic/roles/<name>.md` (prompt text, tool set, model pin). |
+| `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins. An unknown provider/model exits 6 with the id named; the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
@@ -524,7 +525,7 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 2 without touching anything
 (§78). See [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]`
+## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -535,10 +536,16 @@ boots). Usage errors (unknown option, missing value, any operand) exit 2
 on stderr before the screen opens. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
 `error: …` line on stderr (never stdout) before the screen opens. The
-`--session` model rule is the same as `kubic run`'s (issue #148; the TUI's
-only pin is `KUBIC_PROVIDER=faux`): the status bar and usage rows name the
-model the lane actually runs, and a kept or switched model is named in the
-first footer. A session left with a pending operation
+`--session` model rule is the same as `kubic run`'s (issue #148; issue
+#227 adds the same pins): `--model <provider/id>`, `KUBIC_MODEL`,
+`[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux` —
+the status bar and usage rows name the model the lane actually runs, and a
+kept or switched model is named in the first footer. In the loop,
+`/model <provider/id>` switches the live lane: the id is resolved against
+the catalogue, committed to the session as a config update, and the
+header, welcome block and status bar all move to it; `/model` alone
+reports the current model, and an unknown or malformed id is refused in
+the footer while the lane keeps the model it had. A session left with a pending operation
 by a crashed run (issue #147) has it durably aborted at boot — its
 approvals would need the overlay, which is not on screen yet, and the
 operator is present to re-send — and the editor footer names the outcome
@@ -548,7 +555,9 @@ interrupted run`) from the first render.
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
 the derived allowlist, and the destructive/network/confine guards with the
-approval ask. A challenged call surfaces the approval overlay — the
+approval ask. Each decision lands in the §60 ledger with the session id
+and the model the lane runs (`provider/id`) — the same audit identity the
+headless runner records. A challenged call surfaces the approval overlay — the
 interactive path can actually collect a verdict on it — and an unanswered
 ask denies on the same bounded wait.
 
@@ -594,6 +603,7 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | Key | Meaning |
 | --- | --- |
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
+| `/model <provider/id>` | Switch the live lane's model (the §38.1 session override): resolved against the catalogue, committed to the session, and shown in the header and status bar. `/model` alone reports the current model; an unknown or malformed id is refused in the footer and the lane keeps its model. |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
 | `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
@@ -633,7 +643,7 @@ first frame: the editor footer carries the one-line form at startup and
 returns after every completed turn (a cancelled or failed turn reports that
 outcome instead). It is suppressed for orchestrator-managed worker children
 (`KUBIC_WORKER_ID` set) and by the opt-out `KUBIC_NO_NOTICE=1`; see
-[`kubic run`](#kubic-run--p-prompt---session-id---timeout-ms---max-turns-n---json).
+[`kubic run`](#kubic-run--p-prompt---session-id---timeout-ms---max-turns-n---role-name---model-providerid---skill-path---no-skills---debug---json).
 
 Text rendered in the transcript is stripped of terminal control sequences
 before it reaches the frame: assistant text and tool output are untrusted
@@ -1026,11 +1036,14 @@ e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 Usage errors (unknown option, `--resolve` without a value, an operand)
 exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
 
-## `kubic config [--json]`
+## `kubic config [--json] [--model <provider/id>]`
 
 The effective configuration with the layer each value came from — see
 [configuration](configuration.md#seeing-the-effective-values). `--json`
-prints one pretty-printed JSON document. A refused config prints
+prints one pretty-printed JSON document. `--model <provider/id>` reports
+the config as if that session override were passed, so the `model.*` rows
+and the `selected model:` line carry the `(cli)` source the `run`/`tui`
+lane would use. A refused config prints
 `error: <reason>` on stderr and exits 1; usage errors exit 2.
 
 ## `kubic doctor [--skip <id[,id…]>]... [--json]`

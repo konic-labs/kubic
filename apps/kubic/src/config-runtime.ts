@@ -68,6 +68,14 @@ export interface CliConfigOptions {
   home?: string;
   env?: Record<string, string | undefined>;
   projectTrusted?: boolean;
+  /**
+   * The `--model` session override (issue #227; §38.1): the `cli` layer of
+   * the ONE runtime load, above `env` and the file layers. A frozen
+   * enterprise `model.provider`/`model.id` still wins — `loadRuntimeConfig`
+   * owns that rule, so the flag is an input to the load, never a post-load
+   * mutation that could bypass the freeze.
+   */
+  model?: ModelSelection;
 }
 
 // The §35/§91 runtime exclude entries for a worktree parent (issue #133):
@@ -153,6 +161,7 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
       home,
       cwd,
       env,
+      ...(options.model === undefined ? {} : { cli: { model: options.model } }),
       ...(options.projectTrusted === undefined
         ? {}
         : { projectTrusted: options.projectTrusted }),

@@ -285,4 +285,21 @@ describe('lane snapshot feed (issue #88)', () => {
     const occurrences = app.render(100).join('\n').split('only once').length;
     expect(occurrences).toBe(2);
   });
+
+  // Issue #227: a `/model` switch lands on every surface that names the
+  // model — header, welcome block and status bar — through one call, so the
+  // three cannot drift apart.
+  it('updates header, welcome and status bar on a model switch', () => {
+    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    expect(app.status.getState().model).toBe(MODEL);
+    expect(app.render(100).join('\n')).toContain(MODEL);
+
+    app.setModel('alt/m1', 'high');
+
+    expect(app.status.getState().model).toBe('alt/m1');
+    expect(app.status.getState().thinking).toBe('high');
+    const doc = app.render(100).join('\n');
+    expect(doc).toContain('alt/m1');
+    expect(doc).not.toContain(MODEL);
+  });
 });

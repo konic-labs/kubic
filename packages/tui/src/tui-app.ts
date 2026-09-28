@@ -164,6 +164,10 @@ export interface TuiApp {
   applyLaneEvent(event: LaneEventLike): void;
   applyLaneEntries(entries: ReadonlyArray<LaneEntryLike>): void;
   setUsage(rows: ReadonlyArray<StatusUsageRow>): void;
+  // Issue #227: the live model label the header, welcome block and status
+  // bar show. Called after a `/model` switch lands; presentation only — the
+  // lane switch itself happens through the lane's own setModel.
+  setModel(model: string, thinking?: string): void;
   onSubmit(handler: (prompt: string) => void): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
@@ -360,15 +364,20 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         : undefined,
   });
   let notice = '';
+  // Issue #227: the live model label (seed = the boot's model, replaced by
+  // `/model`). The header, welcome block and status bar all read it, so one
+  // call keeps the three surfaces from drifting apart.
+  let modelLabel = seed.model;
+  let thinkingLabel = seed.thinking ?? 'off';
   const refreshWelcome = (): void => {
     transcript.setWelcome(
-      welcomeLines({ sessionId: seed.sessionId, model: seed.model, notice }),
+      welcomeLines({ sessionId: seed.sessionId, model: modelLabel, notice }),
     );
   };
   refreshWelcome();
   const barState: StatusBarState = {
-    model: seed.model,
-    thinking: seed.thinking ?? 'off',
+    model: modelLabel,
+    thinking: thinkingLabel,
     rows: [],
     mode: 'solo',
     approvalsSkipped: false,
@@ -394,7 +403,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const root = buildLayoutRoot({
     tree,
     header: lineComponent((width) =>
-      renderHeader(width, { mode: 'solo', model: seed.model }),
+      renderHeader(width, { mode: 'solo', model: modelLabel }),
     ),
     transcript: transcript.component,
     status,
@@ -580,6 +589,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     setUsage: (rows: ReadonlyArray<StatusUsageRow>): void => {
       status.setRows(rows);
+    },
+    setModel: (next: string, thinking?: string): void => {
+      modelLabel = sanitizeLaneText(next);
+      if (thinking !== undefined) thinkingLabel = thinking;
+      status.setState({
+        ...status.getState(),
+        model: modelLabel,
+        thinking: thinkingLabel,
+      });
+      refreshWelcome();
     },
     onSubmit: (handler: (prompt: string) => void): void => {
       submitHandler = handler;

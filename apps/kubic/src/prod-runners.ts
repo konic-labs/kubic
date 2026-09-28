@@ -316,6 +316,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),
+          // Issue #227 (§38.1): the SAME model projection `kubic run`
+          // consumes. Without it the TUI ignored `[model]`/`KUBIC_MODEL`/
+          // `--model` and ran the first registered provider.
+          model: runtimeModelPin(cliConfig),
         }),
       );
     },

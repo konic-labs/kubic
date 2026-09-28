@@ -117,6 +117,7 @@ describe('solo commands: generated help', () => {
       '--no-skills',
       '--debug',
       '--json',
+      '--model <provider/id>',
     ]) {
       expect(help).toContain(flag);
     }
@@ -246,6 +247,24 @@ describe('kubic run', () => {
     expect(result.calls[0]?.input).toEqual({ prompt: '- fix the tests' });
   });
 
+  // Issue #227: `--model` is a config-layer input (dispatch reads it from
+  // the raw argv into the ONE load), not a runner option — the runner
+  // consumes its effect through the loaded config (runtimeModelPin).
+  it('accepts the config-layer --model flag without copying it into the runner options', async () => {
+    expect(
+      (await kubic(['run', '-p', 'hi', '--model', 'faux/small'])).calls,
+    ).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
+  });
+
+  it('refuses a malformed --model value with commander exit 2', async () => {
+    expect(await usageError(['run', '-p', 'hi', '--model', 'nope'])).toContain(
+      "--model must be 'provider/id'",
+    );
+    expect(await usageError(['run', '-p', 'hi', '--model'])).toContain(
+      'argument missing',
+    );
+  });
+
   it('refuses an empty prompt', async () => {
     expect(await usageError(['run', '--prompt='])).toContain(
       'the prompt is empty',
@@ -328,6 +347,14 @@ describe('kubic tui', () => {
     expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
   });
 
+  it('documents and accepts the config-layer --model flag', async () => {
+    const help = (await kubic(['tui', '--help'])).out.join('\n');
+    expect(help).toContain('--model <provider/id>');
+    expect((await kubic(['tui', '--model=faux/small'])).calls).toEqual([
+      { key: 'tui', input: {} },
+    ]);
+  });
+
   it('refuses operands, missing values and unsafe ids', async () => {
     expect(await usageError(['tui', 'extra'])).toContain('too many arguments');
     expect(await usageError(['tui', '--role'])).toContain('argument missing');
@@ -397,6 +424,11 @@ describe('kubic models / config', () => {
     ]);
     expect((await kubic(['config', '--json'])).calls).toEqual([
       { key: 'config', input: { json: true } },
+    ]);
+    // Issue #227: the flag feeds the load dispatch already performed (the
+    // runner input is the rendering options only).
+    expect((await kubic(['config', '--model', 'faux/small'])).calls).toEqual([
+      { key: 'config', input: {} },
     ]);
     expect(await usageError(['config', 'extra'])).toContain(
       'too many arguments',

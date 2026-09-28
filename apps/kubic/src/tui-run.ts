@@ -48,10 +48,14 @@ import {
   type AssembledModels,
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
-import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
+import type {
+  ResolvedRole,
+  RoleLayerInput,
+} from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
   rolePromptFor,
+  type SelectedRole,
   selectRole,
 } from '../../../packages/host/src/roles/roles-boot.js';
 import {
@@ -107,6 +111,8 @@ import {
 } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
+  type ModelSelection,
+  parseModelFlag,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
@@ -115,6 +121,10 @@ import {
   type MutableModels,
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
+import {
+  hasExplicitModelSelection,
+  selectLaneModel,
+} from './model-projection.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -129,6 +139,18 @@ export type TuiApprovalSeat = (
 export interface TuiLaneLoop {
   accept(prompt: string, context: Context): Promise<OperationAdmissionResult>;
   lane: LaneDriver;
+  /**
+   * Issue #227: the live model switch (`/model`). The prod boot resolves
+   * the id against the live catalog (selectModel — an unknown provider or
+   * model fails by name), calls lane.setModel, which commits the
+   * config_update to the session, and returns the model the lane reports.
+   * A viewer-shell stub may omit it; `/model` then says so instead of
+   * pretending to switch.
+   */
+  switchModel?: (
+    model: { provider: string; modelId: string },
+    context: Context,
+  ) => Promise<string>;
   requestAbort: LaneAborter['requestAbort'];
   findEntries(
     query: undefined,
@@ -231,6 +253,11 @@ export interface TuiRunOptions {
   // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
   // 'root' — the shipped attribution, unchanged.
   agentId?: string;
+  // Issue #227: the runtime pin the config load projected (cli `--model` >
+  // `KUBIC_MODEL` > `[model]`), from the SAME runtimeModelPin seam
+  // `kubic run` consumes. An explicit pin selects the model and makes a
+  // resumed session switch (the #148 rule); absent means the default pick.
+  model?: ModelSelection;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -320,14 +347,49 @@ export async function bootTuiLane(
     // pick never takes a keyless built-in (issue #221).
     const fauxPinned =
       options.models === undefined && fauxProviderActive(process.env);
-    const model = selectModel(
+    // §12.1 role selection (issue #99; issue #133 adds the config layers):
+    // resolved BEFORE the model selection so the role's
+    // `[roles.<name>].model` pin can act as the selection default — the same
+    // order and the same fail-closed refusals as `kubic run`. An unknown
+    // role refuses the boot (the catch below closes the session and
+    // rethrows for the command shell to print) rather than silently booting
+    // a roleless lane.
+    let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    if (options.role !== undefined) {
+      const rolesCwd = options.roles?.cwd ?? process.cwd();
+      const rolesBridge = createNodeFileBridge(rolesCwd);
+      const selected: SelectedRole = selectRole({
+        bridge: rolesBridge,
+        cwd: rolesCwd,
+        role: options.role,
+        ...(options.roles?.layers === undefined
+          ? {}
+          : { layers: options.roles.layers }),
+      });
+      role = {
+        resolved: selected.resolved,
+        prompt: rolePromptFor(
+          selected.doc,
+          rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
+        ),
+      };
+    }
+    // The ONE projection `kubic run` and `kubic tui` share (issue #227):
+    // the runtime pin (cli > env > `[model]`) beats the role's default pin,
+    // which beats the first usable provider. The implicit pick never takes a
+    // keyless built-in (issue #221).
+    const model = selectLaneModel({
       models,
-      fauxPinned
-        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : undefined,
-      undefined,
-      assembled?.fallbackProviders,
-    );
+      fauxPinned,
+      pin: options.model,
+      roleModel: role?.resolved.model,
+      fallbackProviders: assembled?.fallbackProviders,
+    });
+    const explicitModel = hasExplicitModelSelection({
+      fauxPinned,
+      pin: options.model,
+      roleModel: role?.resolved.model,
+    });
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -343,21 +405,27 @@ export async function bootTuiLane(
         sessionDir: join(root, id),
         // The session root in use is refused control-plane state (#324).
         sessionsRoot: root,
+        // §60 audit identity (issue #227): the approval ledger records name
+        // this session and the model the lane runs, exactly like the
+        // headless runner's install — the interactive path is never the
+        // unattributed one.
+        sessionId: id,
+        model: `${model.provider}/${model.id}`,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
         // (tests, and any caller that supplies its own) keep their own seat.
         ...(options.answer === undefined ? {} : { answer: options.answer }),
       });
-    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (the faux
-    // pin is the TUI's only one) switches a resumed session whose stored
-    // model differs; the default pick keeps the session's own model.
+    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (faux,
+    // runtime, or the role's default) switches a resumed session whose
+    // stored model differs; the default pick keeps the session's own model.
     const modelNotices: string[] = [];
     const solo = await bootSoloLane({
       session,
       models,
       model,
-      modelPolicy: fauxPinned ? 'selected' : 'stored',
+      modelPolicy: explicitModel ? 'selected' : 'stored',
       onModelNotice: (line) => modelNotices.push(line),
       env,
       sessionId: id,
@@ -401,34 +469,17 @@ export async function bootTuiLane(
         };
       })(),
       // Issue #113 (§12.1): `--role` derives both halves of the boot from
-      // the role document — prompt text and tool allowlist — with the same
-      // fail-closed refusals as `kubic run`. An unknown role refuses the
-      // boot (the catch below closes the session and rethrows for the
-      // command shell to print) rather than silently booting a roleless
-      // lane.
-      ...(() => {
-        if (options.role === undefined) return {};
-        const rolesCwd = options.roles?.cwd ?? process.cwd();
-        const rolesBridge = createNodeFileBridge(rolesCwd);
-        const selected = selectRole({
-          bridge: rolesBridge,
-          cwd: rolesCwd,
-          role: options.role,
-          ...(options.roles?.layers === undefined
-            ? {}
-            : { layers: options.roles.layers }),
-        });
-        const promptText = rolePromptFor(
-          selected.doc,
-          rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
-        );
-        return {
-          rolePrompt: promptText,
-          ...(selected.resolved.tools.length === 0
-            ? {}
-            : { toolAllowlist: selected.resolved.tools }),
-        };
-      })(),
+      // the role document — prompt text and tool allowlist — resolved above,
+      // before model selection, with the same fail-closed refusals as
+      // `kubic run`.
+      ...(role === undefined
+        ? {}
+        : {
+            rolePrompt: role.prompt,
+            ...(role.resolved.tools.length === 0
+              ? {}
+              : { toolAllowlist: role.resolved.tools }),
+          }),
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
       policy: {
@@ -471,6 +522,24 @@ export async function bootTuiLane(
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
         lane: solo.lane,
+        // Issue #227: resolve against the live catalog before touching the
+        // lane, so `/model typo/nope` fails by name and the lane keeps the
+        // model it had; setModel then records the config_update in the
+        // session, and the read-back is the label every surface shows.
+        switchModel: async (selection, loopContext) => {
+          const resolved = selectModel(models, {
+            provider: selection.provider,
+            id: selection.modelId,
+          });
+          await solo.lane.setModel(
+            { provider: resolved.provider, modelId: resolved.id },
+            loopContext,
+          );
+          const live = await solo.lane.getModel(loopContext);
+          return live === undefined
+            ? `${resolved.provider}/${resolved.id}`
+            : `${live.provider}/${live.id}`;
+        },
         requestAbort: (operationId, loopContext) =>
           solo.lane.requestAbort(operationId, loopContext),
         findEntries: (query, loopContext) =>
@@ -501,6 +570,10 @@ export function tuiDepsWithDefaults(provided: {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
+  // Issue #227: the runtime model pin (cli > env > `[model]`) from the SAME
+  // runtimeModelPin projection `kubic run` consumes, so the interactive
+  // boot selects what the headless one selects.
+  model?: ModelSelection;
 }): TuiRunDeps {
   const {
     classes,
@@ -508,6 +581,7 @@ export function tuiDepsWithDefaults(provided: {
     policy,
     journalRetention,
     reconcileOutOfScope,
+    model,
   } = provided;
   return {
     out: provided.out,
@@ -526,6 +600,7 @@ export function tuiDepsWithDefaults(provided: {
         ...(answer === undefined ? {} : { answer }),
         ...(journalRetention === undefined ? {} : { journalRetention }),
         ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
+        ...(model === undefined ? {} : { model }),
         ...(flags?.role === undefined ? {} : { role: flags.role }),
         ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0
@@ -558,7 +633,7 @@ export function footerForOutcome(outcome: TuiTurnOutcome): string {
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
-  private readonly model: string;
+  private model: string;
   private activeOperationId: string | undefined;
   private detach: (() => void) | undefined;
   private starting = false;
@@ -607,6 +682,29 @@ export class TuiTurnRunner {
 
   get operationId(): string | undefined {
     return this.activeOperationId;
+  }
+
+  // Issue #227: the live model label (updated by a `/model` switch), so the
+  // `/model` report and the headers never read a stale boot snapshot.
+  get modelRef(): string {
+    return this.model;
+  }
+
+  // Issue #227: `/model provider/id`. The loop owns the lane-side switch
+  // (catalog resolution, setModel, read-back); this runner keeps the model
+  // every later usage row and the app's status bar name on the live one.
+  async switchModel(selection: ModelSelection): Promise<string> {
+    const switchModel = this.loop.switchModel;
+    if (switchModel === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    const label = await switchModel(
+      { provider: selection.provider, modelId: selection.id },
+      this.loop.context,
+    );
+    this.model = label;
+    this.app.setModel(label);
+    return label;
   }
 
   // Busy from the moment a submit is accepted by the loop — not from the
@@ -747,6 +845,30 @@ export class TuiTurnRunner {
     if (seq < this.appliedSeq) return;
     this.appliedSeq = seq;
     this.app.applyLaneEntries(entries);
+  }
+}
+
+// The `/model` command of the interactive loop (issue #227; §38.1). One
+// parser for the three forms the loop acts on — report, switch, invalid —
+// so the submit path and its tests agree on what is a command and what is a
+// prompt handed to the lane.
+export type TuiModelCommand =
+  | { kind: 'report' }
+  | { kind: 'switch'; selection: ModelSelection }
+  | { kind: 'invalid'; message: string };
+
+export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
+  if (prompt !== '/model' && !prompt.startsWith('/model ')) return undefined;
+  const argument =
+    prompt === '/model' ? '' : prompt.slice('/model '.length).trim();
+  if (argument === '') return { kind: 'report' };
+  try {
+    return { kind: 'switch', selection: parseModelFlag(argument) };
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -949,8 +1071,47 @@ export async function runTuiCommand(
       return routed.consumed ? { consume: true } : undefined;
     });
     if (turn !== undefined) {
+      // Issue #227: `/model` never reaches the lane as a prompt. The report
+      // and the refusal are footer lines (the editor row's always-visible
+      // status surface); a successful switch updates the app's model label
+      // and leaves a confirmation behind.
+      const handleModelCommand = (command: TuiModelCommand): void => {
+        if (command.kind === 'report') {
+          app.setEditorFooter(`model: ${turn.modelRef}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        if (command.kind === 'invalid') {
+          app.setEditorFooter(`model switch failed: ${command.message}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        app.setEditorFooter(
+          `switching model to ${command.selection.provider}/${command.selection.id}…`,
+        );
+        if (!stopped) screen?.render();
+        void turn
+          .switchModel(command.selection)
+          .then((label) => {
+            if (stopped) return;
+            app.setEditorFooter(`model: ${label} (switched)`);
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `model switch failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
+        const modelCommand = parseModelCommand(prompt);
+        if (modelCommand !== undefined) {
+          handleModelCommand(modelCommand);
+          return;
+        }
         app.setBusy(true);
         startSpinner();
         screen?.render();

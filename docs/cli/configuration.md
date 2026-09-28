@@ -25,6 +25,13 @@ against every override attempt, the environment and the CLI included.
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model` | Highest, except against a frozen `enterprise` key. |
 
+The `cli` flag is `--model <provider/id>` (issue #227), accepted by
+`kubic run`, `kubic tui` and `kubic config`: it is the §38.1 session
+override, above `KUBIC_MODEL` and every file layer, and still below a
+frozen `enterprise` key. The flag is an input to the one config load, so
+`kubic config --model <provider/id>` shows the same `(cli)` source the
+`run`/`tui` lane boots with.
+
 Trust is accepted per workspace: `KUBIC_TRUST_PROJECT=1` records the project
 layer as trusted for that invocation. Anything else leaves it distrusted,
 and a project `config.toml` that exists is then **refused by path** before it

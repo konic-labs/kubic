@@ -883,7 +883,9 @@ export function createOrchestratorApprovalsRun(
     }
     const live = fullAccessLive();
     let outcome: WorkerAskOutcome;
-    if (live !== undefined) {
+    // A write into Kubic's control plane ALWAYS asks (issue #324): the
+    // full-access posture never answers it.
+    if (live !== undefined && request.trigger !== 'kubic-state-write') {
       // Full access for THIS session only: indicated, recorded, never quiet.
       debug(formatSessionSkipIndicator(live));
       outcome = await decisions.ask(inputFromRequest(published, scope), {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import type { PermissionClasses } from '../../agents/src/policy.js';
 import {
   checkAgreement,
@@ -53,7 +53,25 @@ export const CAPABILITIES = [
   'budget-overrun',
   'spawn-agents',
   'privilege-escalation',
+  'kubic-state-write',
 ] as const;
+
+// Kubic's own control plane (issue #324; §59): a write into
+// `<workspace>/.kubic/` could widen the model's future permissions (config,
+// roles) or corrupt the state `kubic undo`/`kubic audit` rest on. The model
+// never decides its own permissions, so this capability ALWAYS asks — no
+// autoApprove entry and no full-access posture answers it.
+export const KUBIC_STATE_WRITE = 'kubic-state-write';
+const ALWAYS_ASK: ReadonlySet<string> = new Set([KUBIC_STATE_WRITE]);
+
+// Subtrees of `.kubic/` an agent may never write at all (a tool error, not an
+// ask): the change journal, the orchestrator's state (approvals, audit ledger,
+// decisions, mailbox) and session state.
+const REFUSED_STATE_DIRS: ReadonlySet<string> = new Set([
+  'journal',
+  'orchestrator',
+  'sessions',
+]);
 
 export type Capability = (typeof CAPABILITIES)[number] | string;
 
@@ -347,6 +365,71 @@ function targetToken(
   return stripQuotes(raw.slice(0, raw.length - cut));
 }
 
+// Where a write target lands in Kubic's control plane, lexically: `refuse`
+// for the refused state subtrees, `ask` for anything else under
+// `<workspace>/.kubic/`, undefined outside it. Case-folded, because the
+// default macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml`
+// IS the config file there). Symlinks are not followed — lexical, like every
+// shell detector in this module.
+function controlPlaneClass(
+  workspace: string,
+  target: string,
+): 'refuse' | 'ask' | undefined {
+  const path = stripQuotes(target);
+  if (path === '') return undefined;
+  const rel = relative(resolve(workspace), resolve(workspace, path));
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined;
+  const parts = rel.split(/[\\/]/).map((part) => part.toLowerCase());
+  if (parts[0] !== '.kubic') return undefined;
+  const sub = parts[1];
+  return sub !== undefined && REFUSED_STATE_DIRS.has(sub) ? 'refuse' : 'ask';
+}
+
+// Every write target a call names: write/edit's `path`, and for bash every
+// redirect (`>`, `>>`, `>|`, `N>`), tee and cp/mv/install target — the same
+// lexical shapes the outside-write detector reads. Redirects are scanned
+// one by one, so a trailing `2>/dev/null` cannot mask an earlier target.
+function writeTargets(
+  toolName: string,
+  args: Record<string, unknown>,
+): string[] {
+  if (toolName === 'write' || toolName === 'edit') {
+    return typeof args.path === 'string' ? [args.path] : [];
+  }
+  if (toolName !== 'bash' || typeof args.command !== 'string') return [];
+  const command = args.command;
+  const targets: string[] = [];
+  for (const match of command.matchAll(ALL_REDIRECT_TARGETS)) {
+    targets.push(match[1] ?? '');
+  }
+  for (const tee of command.matchAll(TEE_TARGET)) {
+    targets.push((tee[1] ?? '').trim().split(/\s+/).pop() ?? '');
+  }
+  for (const copy of command.matchAll(COPY_TARGET)) {
+    targets.push((copy[2] ?? '').trim().split(/\s+/).pop() ?? '');
+  }
+  return targets.map((target) => target.replace(/[)`]+$/, ''));
+}
+
+// Every redirect target in a command (see writeTargets). `&N` duplications
+// and process substitutions are not file targets and are skipped.
+const ALL_REDIRECT_TARGETS = />{1,2}\|?\s*([^\s|;&<>()]+)/g;
+
+// The named refusal for a write into refused control-plane state (issue
+// #324), or undefined. The caller returns it as a tool error without asking.
+export function controlPlaneRefusal(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+): string | undefined {
+  for (const target of writeTargets(toolName, args)) {
+    if (controlPlaneClass(workspace, target) === 'refuse') {
+      return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it`;
+    }
+  }
+  return undefined;
+}
+
 export function detectTriggers(
   toolName: string,
   args: Record<string, unknown>,
@@ -439,6 +522,13 @@ export function detectTriggers(
     typeof args.path === 'string'
   ) {
     if (ctx.isOutsideWorkspace(args.path)) found.push('outside-write');
+  }
+  if (
+    writeTargets(toolName, args).some(
+      (target) => controlPlaneClass(ctx.workspace, target) !== undefined,
+    )
+  ) {
+    found.push(KUBIC_STATE_WRITE);
   }
   return [...new Set(found)];
 }
@@ -587,11 +677,20 @@ export function createApprovalAsk(
   return async (call) => {
     const capabilities = detectTriggers(call.toolName, call.args, ctx);
     if (capabilities.length === 0) return { approved: true, challenged: false };
+    const refusal = controlPlaneRefusal(
+      call.toolName,
+      call.args,
+      ctx.workspace,
+    );
+    if (refusal !== undefined) return { approved: false, reason: refusal };
     const posture = store.loadPosture();
-    if (posture.fullAccess) {
+    const asked = posture.fullAccess
+      ? capabilities.filter((capability) => ALWAYS_ASK.has(capability))
+      : capabilities;
+    if (asked.length === 0) {
       return { approved: true, challenged: true };
     }
-    for (const capability of capabilities) {
+    for (const capability of asked) {
       const verdict = await service.request({
         key: approvalKey(call.toolName, capability, call.args),
         capability,
@@ -839,21 +938,39 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     return { approved: false, reason };
   };
   const ask: ApprovalAsk = async (call) => {
-    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
-      // Explicit, session-scoped full access — recorded, never implied.
-      audit(
-        call.toolName,
-        'full-access',
-        { approved: true, by: 'full-access' },
-        true,
-      );
-      return { approved: true, challenged: true };
+    // Refused control-plane state (issue #324): a tool error before any
+    // posture is consulted — full access included — and never an ask.
+    const refusal = controlPlaneRefusal(
+      call.toolName,
+      call.args,
+      input.workspace,
+    );
+    if (refusal !== undefined) {
+      return deny(KUBIC_STATE_WRITE, call.toolName, refusal);
     }
-    const capabilities = detectTriggers(
+    const detected = detectTriggers(
       call.toolName,
       call.args,
       triggerContextFor(posture.classes, input.workspace),
     );
+    let capabilities = detected;
+    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
+      // Full access never answers an always-ask capability (issue #324):
+      // those still go through the ask below; everything else is approved.
+      capabilities = detected.filter((capability) =>
+        ALWAYS_ASK.has(capability),
+      );
+      if (capabilities.length === 0) {
+        // Explicit, session-scoped full access — recorded, never implied.
+        audit(
+          call.toolName,
+          'full-access',
+          { approved: true, by: 'full-access' },
+          true,
+        );
+        return { approved: true, challenged: true };
+      }
+    }
     if (capabilities.length === 0) return { approved: true, challenged: false };
     for (const capability of capabilities) {
       const key = approvalKey(call.toolName, capability, call.args);
@@ -1032,7 +1149,10 @@ export class ApprovalService {
       // persists — so the eviction is durable and the denial is recorded.
       this.decisions.delete(request.key);
     }
-    if (this.policy.autoApprove.includes(request.capability)) {
+    if (
+      this.policy.autoApprove.includes(request.capability) &&
+      !ALWAYS_ASK.has(request.capability)
+    ) {
       if (
         this.policy.requireJustification &&
         request.justification === undefined

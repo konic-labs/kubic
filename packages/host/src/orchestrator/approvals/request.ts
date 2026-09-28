@@ -27,6 +27,8 @@ export const ORCHESTRATOR_TRIGGERS = [
   // for a new capability would be refused as an unknown trigger before any
   // surface could render it (issue #131).
   'privilege-escalation',
+  // Issue #324: a worker write into Kubic's control plane (`.kubic/`).
+  'kubic-state-write',
 ] as const;
 
 export type OrchestratorTrigger = (typeof ORCHESTRATOR_TRIGGERS)[number];

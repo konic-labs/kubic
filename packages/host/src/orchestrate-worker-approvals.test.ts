@@ -596,3 +596,21 @@ describe('--yes answers the merge gate only (issue #323)', () => {
     ]);
   });
 });
+
+// Issue #324: a worker write into Kubic's control plane always reaches the
+// user — the session's full-access posture never answers it.
+describe('kubic-state-write under --full-access (issue #324)', () => {
+  it('still goes to the seat; a denial ends the run with exit 4', async () => {
+    const h = harness(() => ({ approved: false, reason: 'not my config' }), {
+      triggerFor: () => 'kubic-state-write',
+    });
+    const code = await runOrchestrateCommand(
+      { ...ORCHESTRATE_ARGS, fullAccess: true },
+      h.deps,
+    );
+    expect(h.raised.map((request) => request.trigger)).toEqual([
+      'kubic-state-write',
+    ]);
+    expect(code).toBe(4);
+  });
+});

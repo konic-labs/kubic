@@ -66,9 +66,11 @@ is additive by construction.
 
 ### Approvals (`approvals.ts`, #48)
 
-`CAPABILITIES` (10): `network`, `credentials`, `git-push`,
+`CAPABILITIES` (11): `network`, `credentials`, `git-push`,
 `destructive-shell`, `install`, `deploy`, `outside-write`,
-`budget-overrun`, `spawn-agents`, `privilege-escalation`.
+`budget-overrun`, `spawn-agents`, `privilege-escalation`,
+`kubic-state-write` (always asks; `controlPlaneRefusal` refuses writes into
+`.kubic/journal|orchestrator|sessions` outright, issue #324).
 
 | Interface | Fields |
 | --- | --- |

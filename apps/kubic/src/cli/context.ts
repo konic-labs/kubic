@@ -3,6 +3,7 @@
 // every command module's `register*Commands(program, ctx)` receives.
 
 import type { Command } from '@commander-js/extra-typings';
+import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
 
 // `rest` is the argv after the command name — journal commands receive
@@ -13,7 +14,9 @@ export type CommandRunner = (
   config: CliConfigResult,
 ) => number | Promise<number>;
 
-export interface DispatchRunners {
+// Migrated command groups declare typed runners (parsed options in) in
+// their own module; the rest still take raw argv.
+export interface DispatchRunners extends AnalysisRunners {
   readonly sessions: CommandRunner;
   readonly git: CommandRunner;
   readonly journal: CommandRunner;
@@ -23,16 +26,8 @@ export interface DispatchRunners {
   readonly doctor: CommandRunner;
   readonly orchestrate: CommandRunner;
   readonly clean: CommandRunner;
-  readonly cost: CommandRunner;
-  readonly perf: CommandRunner;
-  readonly policy: CommandRunner;
   readonly config: CommandRunner;
-  readonly audit: CommandRunner;
   readonly workers: CommandRunner;
-  readonly eval: CommandRunner;
-  readonly benchmark: CommandRunner;
-  readonly replay: CommandRunner;
-  readonly export: CommandRunner;
 }
 
 // The root commander program every registrar attaches to.

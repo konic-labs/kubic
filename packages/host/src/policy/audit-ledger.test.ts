@@ -145,11 +145,15 @@ describe('§60 audit ledger', () => {
     const router = createWorkerAskRouter({ dir, maxPendingMs: 1_000 });
     await router.ask(askInput, { autoApprove: true });
     const lines: string[] = [];
-    const code = await runAuditCommand(['--mode', 'orchestrator', '--json'], {
-      loadRecords: () => readAuditLedger(dir),
-      loadSecrets: () => [],
-      out: (line) => lines.push(line),
-    });
+    const code = await runAuditCommand(
+      { mode: 'orchestrator', json: true },
+      {
+        loadRecords: () => readAuditLedger(dir),
+        loadSecrets: () => [],
+        out: (line) => lines.push(line),
+        err: (line) => lines.push(line),
+      },
+    );
     expect(code).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as unknown[];
     expect(parsed).toHaveLength(1);

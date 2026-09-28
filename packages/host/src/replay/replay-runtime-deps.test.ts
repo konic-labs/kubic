@@ -168,17 +168,15 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     writeFileSync(lockPath, JSON.stringify({ models: { faux: ['m1'] } }));
     let captured: ReplayRuntimeDeps | undefined;
     const exit = await runReplayCommand(
-      [
-        trajPath,
-        '--tier',
-        'deterministic',
-        '--model',
-        'faux/m1',
-        '--lockfile',
-        lockPath,
-      ],
+      {
+        trajectory: trajPath,
+        tier: 'deterministic',
+        model: 'faux/m1',
+        lockfile: lockPath,
+      },
       {
         out: () => {},
+        err: () => {},
         run: async (_request, runtime) => {
           captured = runtime;
           return { terminus: 'completed', summary: 'replayed' };

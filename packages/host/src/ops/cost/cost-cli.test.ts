@@ -3,11 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
 import { runCostCommand } from './cost-cli.js';
-import {
-  formatAgentCostRow,
-  summarizePerAgentCost,
-  toCostJson,
-} from './per-agent-cost.js';
+import { summarizePerAgentCost, toCostJson } from './per-agent-cost.js';
 
 const ROWS = [
   {
@@ -26,12 +22,19 @@ const ROWS = [
   },
 ];
 
+// stdout (`lines`) and stderr (`errs`) captured separately: data and
+// diagnostics never share a channel.
 function capture() {
   const lines: string[] = [];
+  const errs: string[] = [];
   return {
     lines,
+    errs,
     out: (line: string): void => {
       lines.push(line);
+    },
+    err: (line: string): void => {
+      errs.push(line);
     },
   };
 }
@@ -39,29 +42,47 @@ function capture() {
 describe('kubic cost text view (issue #79)', () => {
   it('prints one row per agent plus the task total', async () => {
     const cap = capture();
-    const code = await runCostCommand([], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(0);
-    const first = ROWS[0];
-    const second = ROWS[1];
-    if (first === undefined || second === undefined) {
-      throw new Error('missing fixture agent');
-    }
-    expect(cap.lines).toContain(formatAgentCostRow(first));
-    expect(cap.lines).toContain(formatAgentCostRow(second));
-    const total = cap.lines.find((line) => line.startsWith('task total'));
-    expect(total).toMatch(/0\.50/);
-    expect(total).toMatch(/2 agents/);
+    // One plain (uncoloured, unboxed) table, then the task total.
+    expect(cap.lines[0]).toBe(
+      [
+        'AGENT     MODEL        TOKENS   COST',
+        'worker-1  cheap/small     150  $0.20',
+        'worker-2  pro/large       260  $0.30',
+      ].join('\n'),
+    );
+    expect(cap.lines[1]).toBe('task total $0.50 (2 agents)');
+    expect(cap.errs).toEqual([]);
+  });
+
+  it('draws a box table only when fancy', async () => {
+    const cap = capture();
+    await runCostCommand(
+      {},
+      { loadRows: () => ROWS, out: cap.out, err: cap.err, fancy: true },
+    );
+    expect(cap.lines[0]).toContain('┌');
+    expect(cap.lines[0]).toContain('worker-2');
   });
 
   it('reports no cost rows on an empty rollup', async () => {
     const cap = capture();
-    const code = await runCostCommand([], {
-      loadRows: () => [],
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => [],
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['no cost rows']);
   });
@@ -70,12 +91,17 @@ describe('kubic cost text view (issue #79)', () => {
 describe('kubic cost --json (issue #79)', () => {
   it('matches the in-code toCostJson shape field-for-field', async () => {
     const cap = capture();
-    const code = await runCostCommand(['--json'], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      { json: true },
+      {
+        loadRows: () => ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(0);
     expect(cap.lines).toHaveLength(1);
+    expect(cap.errs).toEqual([]);
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed: unknown = JSON.parse(head);
@@ -89,10 +115,14 @@ describe('kubic cost --json (issue #79)', () => {
 
   it('sums to exactly the task total (Σ verified)', async () => {
     const cap = capture();
-    await runCostCommand(['--json'], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
+    await runCostCommand(
+      { json: true },
+      {
+        loadRows: () => ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed = JSON.parse(head) as {
@@ -105,65 +135,65 @@ describe('kubic cost --json (issue #79)', () => {
 });
 
 describe('kubic cost usage (issue #79, §78)', () => {
-  it('exits 2 on an unknown flag', async () => {
-    const cap = capture();
-    const code = await runCostCommand(['--bogus'], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
-    expect(code).toBe(2);
-    expect(cap.lines[0]).toMatch(/^usage: kubic cost/);
-  });
-
-  it('exits 2 when --session has no value', async () => {
-    const cap = capture();
-    const code = await runCostCommand(['--session'], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
-    expect(code).toBe(2);
-  });
-
+  // Argv syntax (unknown flags, a missing --session value, --help) is
+  // commander's: apps/kubic/src/commands/analysis.test.ts pins it.
   it('exits 2 on an invalid session id before any store is touched', async () => {
     let touched = false;
     const cap = capture();
-    const code = await runCostCommand(['--session', '../evil'], {
-      loadRows: () => {
-        touched = true;
-        return ROWS;
+    const code = await runCostCommand(
+      { session: '../evil' },
+      {
+        loadRows: () => {
+          touched = true;
+          return ROWS;
+        },
+        out: cap.out,
+        err: cap.err,
       },
-      out: cap.out,
-    });
+    );
     expect(code).toBe(2);
     expect(touched).toBe(false);
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toEqual([
+      'error: invalid --session id "../evil" (use [A-Za-z0-9_-])',
+    ]);
   });
 
   it('forwards the session id to the loader', async () => {
     let seen: string | undefined;
     const cap = capture();
-    const code = await runCostCommand(['--session', 'sess-1'], {
-      loadRows: (sessionId) => {
-        seen = sessionId;
-        return ROWS;
+    const code = await runCostCommand(
+      { session: 'sess-1' },
+      {
+        loadRows: (sessionId) => {
+          seen = sessionId;
+          return ROWS;
+        },
+        out: cap.out,
+        err: cap.err,
       },
-      out: cap.out,
-    });
+    );
     expect(code).toBe(0);
     expect(seen).toBe('sess-1');
   });
 
   it('exits 1 when the session is unknown', async () => {
     const cap = capture();
-    const code = await runCostCommand(['--session', 'missing'], {
-      loadRows: () => {
-        const error = new Error('unknown session: missing');
-        error.name = 'SessionAttachError';
-        throw error;
+    const code = await runCostCommand(
+      { session: 'missing' },
+      {
+        loadRows: () => {
+          const error = new Error('unknown session: missing');
+          error.name = 'SessionAttachError';
+          throw error;
+        },
+        out: cap.out,
+        err: cap.err,
       },
-      out: cap.out,
-    });
+    );
     expect(code).toBe(1);
-    expect(cap.lines[0]).toMatch(/unknown session/);
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toEqual(['error: unknown session: missing']);
   });
 });
 
@@ -191,12 +221,16 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
 
   it('reports the prefix hit-rate from the real usage rows it loaded', async () => {
     const cap = capture();
-    const code = await runCostCommand([], {
-      loadRows: () => CACHED_ROWS,
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => CACHED_ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(0);
-    const text = cap.lines.join('\n');
+    const text = [...cap.lines, ...cap.errs].join('\n');
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
     // rows the loader returned, never an invented number.
     expect(text).toMatch(/cache: 1\/2 sessions with prefix hits/);
@@ -205,16 +239,23 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
 
   it('states that caching is transparent on the same readout', async () => {
     const cap = capture();
-    await runCostCommand([], { loadRows: () => CACHED_ROWS, out: cap.out });
+    await runCostCommand(
+      {},
+      { loadRows: () => CACHED_ROWS, out: cap.out, err: cap.err },
+    );
     expect(cap.lines.join('\n')).toMatch(/caching is transparent/);
   });
 
   it('keeps the --json top-level shape field-for-field and adds cache per row', async () => {
     const cap = capture();
-    const code = await runCostCommand(['--json'], {
-      loadRows: () => CACHED_ROWS,
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      { json: true },
+      {
+        loadRows: () => CACHED_ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(0);
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
@@ -232,7 +273,10 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
 
   it('stays quiet about cache when the loader returned no cache data', async () => {
     const cap = capture();
-    await runCostCommand([], { loadRows: () => ROWS, out: cap.out });
+    await runCostCommand(
+      {},
+      { loadRows: () => ROWS, out: cap.out, err: cap.err },
+    );
     expect(cap.lines.join('\n')).not.toMatch(/prefix hits/);
   });
 });
@@ -244,30 +288,38 @@ describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
 
   it('redacts a secret-shaped session id in the unknown-session error', async () => {
     const cap = capture();
-    const code = await runCostCommand(['--session', SHAPED_SESSION], {
-      loadRows: () => {
-        const error = new Error(`unknown session: ${SHAPED_SESSION}`);
-        error.name = 'SessionAttachError';
-        throw error;
+    const code = await runCostCommand(
+      { session: SHAPED_SESSION },
+      {
+        loadRows: () => {
+          const error = new Error(`unknown session: ${SHAPED_SESSION}`);
+          error.name = 'SessionAttachError';
+          throw error;
+        },
+        out: cap.out,
+        err: cap.err,
       },
-      out: cap.out,
-    });
+    );
     expect(code).toBe(1);
-    const text = cap.lines.join('\n');
+    const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(SHAPED_SESSION);
     expect(text).toContain(REDACTED_SECRET);
   });
 
   it('redacts secret-shaped material in store error messages', async () => {
     const cap = capture();
-    const code = await runCostCommand([], {
-      loadRows: () => {
-        throw new Error(`store boom ${SHAPED_SESSION}`);
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => {
+          throw new Error(`store boom ${SHAPED_SESSION}`);
+        },
+        out: cap.out,
+        err: cap.err,
       },
-      out: cap.out,
-    });
+    );
     expect(code).toBe(1);
-    const text = cap.lines.join('\n');
+    const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(SHAPED_SESSION);
     expect(text).toContain(REDACTED_SECRET);
   });
@@ -277,12 +329,16 @@ describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
     // and lands in the invalid-id echo — which must not carry it.
     const shaped = 'Bearer abcdefghij1234567890';
     const cap = capture();
-    const code = await runCostCommand(['--session', shaped], {
-      loadRows: () => ROWS,
-      out: cap.out,
-    });
+    const code = await runCostCommand(
+      { session: shaped },
+      {
+        loadRows: () => ROWS,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
     expect(code).toBe(2);
-    const text = cap.lines.join('\n');
+    const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(shaped);
     expect(text).toContain(REDACTED_SECRET);
   });

@@ -11,19 +11,12 @@
 // pins the request path only.
 import { describe, expect, it } from 'vitest';
 import { runTuiCommand } from '../../../apps/kubic/src/tui-run.js';
-import { runBenchmarkCommand, runEvalCommand } from '../../eval/src/cli.js';
-import { runExportCommand } from '../../eval/src/export-cli.js';
 import { runDoctorCommand } from './doctor.js';
 import { runGitCommand } from './git-cli.js';
 import { runJournalCommand } from './journal-cli.js';
 import { runModelsCommand } from './models-cli.js';
-import { runCostCommand } from './ops/cost/cost-cli.js';
-import { runPerfCommand } from './ops/perf/perf-cli.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { runCleanCommand } from './orchestrator/worktree/clean.js';
-import { runAuditCommand } from './policy/audit-cli.js';
-import { runPolicyCommand } from './policy/policy-cli.js';
-import { runReplayCommand } from './replay/replay.js';
 import { runRunCommand } from './run-cli.js';
 import { runSessionsCommand } from './sessions-cli.js';
 import { runWorkersCommand } from './workers-cli.js';
@@ -118,51 +111,16 @@ const CASES: Case[] = [
     run: (args, out) =>
       runWorkersCommand(args, { out, list: never('the worker registry') }),
   },
-  {
-    command: 'eval',
-    run: (args, out) =>
-      runEvalCommand(args, { out, runSuite: never('the suite runner') }),
-  },
-  {
-    command: 'benchmark',
-    run: (args, out) =>
-      runBenchmarkCommand(args, { out, runSuite: never('the suite runner') }),
-  },
-  {
-    command: 'replay',
-    run: (args, out) =>
-      runReplayCommand(args, { out, run: never('the replay run') }),
-  },
-  {
-    command: 'export',
-    run: (args, out) =>
-      runExportCommand(args, { out, readFile: never('the file read') }),
-  },
-  {
-    command: 'cost',
-    run: (args, out) =>
-      runCostCommand(args, { out, loadRows: never('the session store') }),
-  },
-  {
-    command: 'perf',
-    run: (args, out) => runPerfCommand(args, { out }),
-  },
-  {
-    command: 'policy',
-    run: (args, out) =>
-      runPolicyCommand(args, { out, resolvePolicy: never('the policy load') }),
-  },
-  {
-    command: 'audit',
-    run: (args, out) =>
-      runAuditCommand(args, { out, loadRecords: never('the audit store') }),
-  },
 ];
 
 describe('--help convention (issue #100)', () => {
-  it('covers every shipped command', () => {
-    // The 21 commands the binary dispatches; a new command must be added
-    // here or it ships without the convention.
+  it('covers every command still parsed by its own handler', () => {
+    // The commands whose handler still answers `--help` itself; a new
+    // hand-parsed command must be added here or it ships without the
+    // convention. Commands migrated to commander get generated help from
+    // their registrar, pinned per group (the analysis surfaces — eval,
+    // benchmark, replay, export, cost, perf, policy, audit — in
+    // apps/kubic/src/commands/analysis.test.ts).
     expect(CASES.map((c) => c.command)).toEqual([
       'run',
       'orchestrate',
@@ -177,14 +135,6 @@ describe('--help convention (issue #100)', () => {
       'status',
       'doctor',
       'workers',
-      'eval',
-      'benchmark',
-      'replay',
-      'export',
-      'cost',
-      'perf',
-      'policy',
-      'audit',
     ]);
   });
 

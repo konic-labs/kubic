@@ -19,7 +19,15 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
 import {
@@ -79,24 +87,57 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['orchestrate', [], 'orchestrate'],
   ['clean', ['--dry-run'], 'clean'],
   ['cost', ['--json'], 'cost'],
-  ['perf', [], 'perf'],
+  ['perf', ['--budget', 'spawn', '--samples', '1'], 'perf'],
   ['policy', ['--tool', 'shell'], 'policy'],
   ['config', ['--json'], 'config'],
   ['audit', [], 'audit'],
   ['workers', ['--json'], 'workers'],
-  ['eval', ['--task', 'p'], 'eval'],
-  ['benchmark', [], 'benchmark'],
-  ['replay', ['--tier', 'recorded'], 'replay'],
-  ['export', ['trajectory.json'], 'export'],
+  [
+    'eval',
+    ['--suite', 'swe-bench-mini', '--task', 'p', '--generation', '1'],
+    'eval',
+  ],
+  ['benchmark', ['--generation', '1'], 'benchmark'],
+  ['replay', ['t.json', '--tier', 'recorded'], 'replay'],
+  ['export', ['--trajectory', 'trajectory.json'], 'export'],
 ];
+
+// The analysis group is migrated to commander (./commands/analysis.ts):
+// its runners receive commander's parsed options, not raw argv. The
+// options each route above must produce (the full option matrix is pinned
+// in ./commands/analysis.test.ts).
+const ANALYSIS_OPTIONS: Readonly<Record<string, unknown>> = {
+  cost: { json: true },
+  perf: { budget: 'spawn', samples: '1' },
+  policy: { tool: 'shell' },
+  audit: {},
+  eval: {
+    suite: 'swe-bench-mini',
+    task: 'p',
+    generation: '1',
+    model: 'faux/faux',
+  },
+  benchmark: { generation: '1', model: 'faux/faux' },
+  replay: { trajectory: 't.json', tier: 'recorded' },
+  export: { trajectory: 'trajectory.json' },
+};
 
 const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
 
 interface RunnerCall {
   readonly key: RunnerKey;
-  readonly rest: readonly string[];
+  // Raw argv for the forwarders; commander's parsed options for the
+  // migrated (analysis) runners.
+  readonly rest: unknown;
   readonly config: CliConfigResult;
 }
+
+// One fake shape for every runner: raw-argv forwarders and typed analysis
+// runners alike record their first argument.
+type FakeRunner = (
+  first: never,
+  config: CliConfigResult,
+) => number | Promise<number>;
 
 interface Harness {
   readonly deps: DispatchDeps;
@@ -113,7 +154,7 @@ interface Harness {
 // `version` is a constant, `loadConfig` answers the given result.
 function harness(
   options: {
-    runners?: Partial<Record<RunnerKey, CommandRunner>>;
+    runners?: Partial<Record<RunnerKey, CommandRunner | FakeRunner>>;
     config?: CliConfigResult;
     version?: string;
   } = {},
@@ -124,12 +165,13 @@ function harness(
     excludeCalls: 0,
     excludeEntries: undefined,
   };
-  const runners = {} as Record<RunnerKey, CommandRunner>;
+  const runners = {} as Record<RunnerKey, FakeRunner>;
   for (const key of RUNNER_KEYS) {
-    const override = options.runners?.[key];
-    runners[key] = (rest, config) => {
-      calls.push({ key, rest: [...rest], config });
-      return override === undefined ? 0 : override(rest, config);
+    const override = options.runners?.[key] as FakeRunner | undefined;
+    runners[key] = (first: never, config) => {
+      const rest: unknown = Array.isArray(first) ? [...first] : first;
+      calls.push({ key, rest, config });
+      return override === undefined ? 0 : override(first, config);
     };
   }
   const deps: DispatchDeps = {
@@ -142,7 +184,7 @@ function harness(
       state.excludeCalls += 1;
       state.excludeEntries = entries;
     },
-    runners,
+    runners: runners as unknown as DispatchRunners,
   };
   return { deps, calls, lines, state };
 }
@@ -205,7 +247,8 @@ describe('dispatch routing (issue #135)', () => {
         label,
       ).toEqual([key]);
       expect(h.calls[0]?.rest, label).toEqual(
-        JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest,
+        ANALYSIS_OPTIONS[command] ??
+          (JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest),
       );
       expect(code, `${label} — exit code must flow back`).toBe(0);
     }
@@ -327,7 +370,7 @@ describe('front door (issue #128 behavior, moved)', () => {
 
   it('forwards a leading `--` verbatim (commander would drop it)', async () => {
     const h = harness();
-    await dispatchCommand('export', ['--', '-trajectory.json'], h.deps);
+    await dispatchCommand('sessions', ['--', '-trajectory.json'], h.deps);
     expect(h.calls[0]?.rest).toEqual(['--', '-trajectory.json']);
   });
 });
@@ -365,7 +408,10 @@ describe('config refusal (issue #90 policy, moved)', () => {
     expect(others).toHaveLength(16);
     for (const command of others) {
       const h = harness({ config: refusedConfig() });
-      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      // Each command's routing argv (a migrated command validates its
+      // required options before its runner is reached).
+      const rest = ROUTES.find(([name]) => name === command)?.[1] ?? [];
+      expect(await dispatchCommand(command, rest, h.deps), command).toBe(0);
       expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
       expect(h.lines, `${command} must not print a refusal`).toEqual([]);
     }
@@ -573,6 +619,15 @@ describe('workers usage remap (issue #77, §78)', () => {
 });
 
 describe('prod wiring deps shapes (moved from main.ts)', () => {
+  // The prod runners colour from the real stdout; NO_COLOR pins plain
+  // diagnostics whatever terminal the test runner has.
+  beforeEach(() => {
+    vi.stubEnv('NO_COLOR', '1');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   function capture() {
     const lines: string[] = [];
     const errs: string[] = [];
@@ -594,23 +649,19 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     const cap = capture();
     const runners = createProdRunners(cap.io);
     const code = await runners.eval(
-      [
-        '--task',
-        'do it',
-        '--suite',
-        'swe-bench-mini',
-        '--worktree',
-        '/tmp/w',
-        '--generation',
-        '1',
-        '--tier',
-        'smoke',
-      ],
+      {
+        task: 'do it',
+        suite: 'swe-bench-mini',
+        worktree: '/tmp/w',
+        generation: '1',
+        tier: 'smoke',
+      },
       loadedConfig(),
     );
     expect(code).toBe(1);
-    expect(cap.lines).toEqual([
-      'eval error: live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toEqual([
+      'error: live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
     ]);
   });
 
@@ -630,11 +681,12 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     process.env.HOME = FIXTURE;
     try {
       const code = await createProdRunners(cap.io).cost(
-        ['--session', 'no-such-session'],
+        { session: 'no-such-session' },
         loadedConfig(),
       );
       expect(code).toBe(1);
-      expect(cap.lines).toEqual(['error: unknown session: no-such-session']);
+      expect(cap.lines).toEqual([]);
+      expect(cap.errs).toEqual(['error: unknown session: no-such-session']);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -643,7 +695,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
 
   it('audit receives { loadRecords, loadSecrets, out } (zero rows is a clean report)', async () => {
     const cap = capture();
-    const code = await createProdRunners(cap.io).audit([], loadedConfig());
+    const code = await createProdRunners(cap.io).audit({}, loadedConfig());
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['no audit records']);
   });
@@ -651,13 +703,14 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
   it('export receives { readFile, out } (a missing trajectory is a named failure)', async () => {
     const cap = capture();
     const code = await createProdRunners(cap.io).export(
-      ['--trajectory', '/definitely/missing.json', '--type', 'sft'],
+      { trajectory: '/definitely/missing.json', type: 'sft' },
       loadedConfig(),
     );
     expect(code).toBe(2);
-    expect(cap.lines).toHaveLength(1);
-    expect(cap.lines[0]).toMatch(
-      /^export error \[trajectory-unreadable\]: cannot read trajectory "\/definitely\/missing\.json"/,
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toHaveLength(1);
+    expect(cap.errs[0]).toMatch(
+      /^error: \[trajectory-unreadable\] cannot read trajectory "\/definitely\/missing\.json"/,
     );
   });
 });

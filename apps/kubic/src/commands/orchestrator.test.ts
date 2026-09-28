@@ -341,3 +341,37 @@ describe('kubic workers (commander)', () => {
     expect(result.calls).toHaveLength(1);
   });
 });
+
+describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
+  it('accepts the unified flag name', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--dangerously-skip-approvals',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+    expect(result.calls).toEqual([
+      {
+        runner: 'orchestrate',
+        config: CONFIG,
+        args: { prompt: 'x', fullAccess: true },
+      },
+    ]);
+  });
+
+  it('keeps --full-access working as a deprecated alias with a hint', async () => {
+    const result = await run(['orchestrate', '-p', 'x', '--full-access']);
+    expect(result.code).toBe(0);
+    expect(result.calls).toEqual([
+      {
+        runner: 'orchestrate',
+        config: CONFIG,
+        args: { prompt: 'x', fullAccess: true },
+      },
+    ]);
+    expect(result.err.join('\n')).toContain('--full-access is deprecated');
+    expect(result.err.join('\n')).toContain('--dangerously-skip-approvals');
+  });
+});

@@ -28,6 +28,8 @@ import type {
   PostureOptions,
 } from '../../../packages/extensions/src/startup.js';
 import {
+  enableSessionFullAccess,
+  fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
   orchestratedWorkerFromEnv,
@@ -122,6 +124,10 @@ export interface HeadlessRunOptions {
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
   debug?: boolean;
+  // §41.4 (issue #308): `--dangerously-skip-approvals` — full access for the
+  // session this run creates or resumes, recorded in its posture.json and
+  // the audit ledger, never in config.
+  dangerouslySkipApprovals?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -444,6 +450,21 @@ export async function runHeadlessPrompt(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  // Issue #308: the approval posture the lane was installed with travels on
+  // the result (and so the --json envelope), whatever path the run ends on.
+  const report: { posture?: 'approvals' | 'full-access' } = {};
+  const result = await runHeadlessPromptOnce(prompt, options, deps, report);
+  return report.posture === undefined
+    ? result
+    : { ...result, posture: report.posture };
+}
+
+async function runHeadlessPromptOnce(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps,
+  report: { posture?: 'approvals' | 'full-access' },
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
@@ -794,6 +815,23 @@ export async function runHeadlessPrompt(
             // than outliving the run that would answer it.
             maxPendingMs: workerBoundMs,
           });
+    const warnLine =
+      deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+    // §41.4 (issue #308): the explicit flag enables full access for THIS
+    // session through the one host enable path (posture.json + one §60 row +
+    // the shared warning) BEFORE the policy is installed, so the lane boots
+    // under the posture the user asked for.
+    const fullAccessGrant =
+      options.dangerouslySkipApprovals === true
+        ? enableSessionFullAccess({
+            sessionDir: join(root, id),
+            sessionId: id,
+            command: 'run',
+            workspace: env.cwd,
+            onAuditError: (message) =>
+              debug?.(`audit: ledger append failed: ${message}`),
+          })
+        : undefined;
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -831,6 +869,13 @@ export async function runHeadlessPrompt(
           return worker === undefined ? {} : { orchestratedWorker: worker };
         })(),
       });
+    report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
+    // A headless run on a full-access session is never silent (issue #308):
+    // the grant's own warning when this run enabled it, otherwise the named
+    // in-force warning — on stderr, so stdout stays consumable.
+    if (installed.posture.fullAccess) {
+      warnLine(fullAccessGrant?.warning ?? fullAccessInForceWarning(id));
+    }
     const journal = new FileJournalStore(
       join(root, id, 'journal'),
       deps.journalRetention ?? {},

@@ -30,6 +30,8 @@ import {
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
+  enableSessionFullAccess,
+  fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
   type SoloApprovalConfig,
@@ -144,6 +146,12 @@ export interface TuiLaneBoot {
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
   loop?: TuiLaneLoop;
+  // Issue #308 (§41.4): the approval posture the lane was installed with —
+  // true seeds the status bar's OFF indicator from the first frame.
+  fullAccess?: boolean;
+  // Issue #308: warnings to print on stderr before the alt-screen opens
+  // (the full-access grant/in-force warning).
+  notices?: string[];
 }
 
 export interface TuiRunDeps {
@@ -174,6 +182,8 @@ export interface TuiBootFlags {
   role?: string;
   noSkills?: boolean;
   skillsList?: string[];
+  // Issue #308: `--dangerously-skip-approvals` for the booted session.
+  dangerouslySkipApprovals?: boolean;
 }
 
 export interface TuiRunOptions {
@@ -219,6 +229,9 @@ export interface TuiRunOptions {
   // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
   // 'root' — the shipped attribution, unchanged.
   agentId?: string;
+  // §41.4 (issue #308): enable full access for the booted session through
+  // the one host enable path before the policy is installed.
+  dangerouslySkipApprovals?: boolean;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -306,6 +319,17 @@ export async function bootTuiLane(
     // (host/approvals.installSoloPolicy), which is also what `doctor`
     // reports. Without this the interactive path would be the unprotected
     // one, which is the defect this issue exists to close.
+    // §41.4 (issue #308): the explicit flag records full access for THIS
+    // session (posture.json + one §60 row) before the policy is installed.
+    const fullAccessGrant =
+      options.dangerouslySkipApprovals === true
+        ? enableSessionFullAccess({
+            sessionDir: join(root, id),
+            sessionId: id,
+            command: 'tui',
+            workspace: env.cwd,
+          })
+        : undefined;
     const installed =
       options.policy ??
       installSoloPolicy({
@@ -395,10 +419,17 @@ export async function bootTuiLane(
           : { contributions: installed.contributions }),
       },
     });
+    const fullAccess = installed.posture.fullAccess;
     return {
       sessionId: id,
       model: `${model.provider}/${model.id}`,
       journal,
+      fullAccess,
+      ...(fullAccess
+        ? {
+            notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
+          }
+        : {}),
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -466,6 +497,9 @@ export function tuiDepsWithDefaults(provided: {
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0
           ? {}
           : { skillsList: flags.skillsList }),
+        ...(flags?.dangerouslySkipApprovals === true
+          ? { dangerouslySkipApprovals: true }
+          : {}),
       }),
   };
 }
@@ -693,6 +727,8 @@ export interface TuiCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
+  // §41.4 (issue #308): session-scoped full access (bare `kubic` and `tui`).
+  readonly dangerouslySkipApprovals?: boolean;
 }
 
 export async function runTuiCommand(
@@ -705,6 +741,9 @@ export async function runTuiCommand(
   if (options.noSkills === true) flags.noSkills = true;
   const skillsList = options.skills ?? [];
   if (skillsList.length > 0) flags.skillsList = [...skillsList];
+  if (options.dangerouslySkipApprovals === true) {
+    flags.dangerouslySkipApprovals = true;
+  }
   // commander validated the id already; re-checked because it becomes a
   // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
@@ -737,10 +776,16 @@ export async function runTuiCommand(
       detectColorLevel(process.env, process.stdout.isTTY === true),
     ),
   );
+  // Issue #308: the full-access warning lands on stderr (the main screen)
+  // before the alt-screen opens, and the bar shows OFF from the first frame.
+  for (const notice of boot.notices ?? []) {
+    (deps.err ?? deps.out)(`warning: ${notice}`);
+  }
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
+    ...(boot.fullAccess === true ? { approvalsSkipped: true } : {}),
   });
   const terminal = deps.createTerminal();
   // Solo no-isolation notice (issue #89): the trust statement is carried in

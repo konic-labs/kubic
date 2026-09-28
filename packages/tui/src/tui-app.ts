@@ -111,6 +111,9 @@ export interface TuiAppSeed {
   // one — the viewer shell (`kubic tui` with an injected boot) still renders
   // an ask inline instead of hanging.
   readonly approvalSurface?: ApprovalSurface;
+  // Issue #308 (§41.4): the session runs with full access — the status bar
+  // shows the OFF indicator from the first frame.
+  readonly approvalsSkipped?: boolean;
 }
 
 // §66 replication: the TUI holds no authority — it reads the replicated
@@ -371,7 +374,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     thinking: seed.thinking ?? 'off',
     rows: [],
     mode: 'solo',
-    approvalsSkipped: false,
+    approvalsSkipped: seed.approvalsSkipped === true,
     sessionId: seed.sessionId,
   };
   const status = new StatusBar(barState);

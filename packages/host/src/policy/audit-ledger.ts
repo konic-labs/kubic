@@ -293,6 +293,41 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   };
 }
 
+// §60 record for switching a session to full access (issue #308, §41.4):
+// who enabled it (the user, through the CLI), when, for which session, and
+// through which command. One row per enable; the per-ask rows that follow
+// carry posture 'full-access' on their own.
+export interface FullAccessEnabledInput {
+  sessionId: string;
+  /** The originating command line, e.g. `kubic run --dangerously-skip-approvals`. */
+  command: string;
+  workspace: string;
+  mode: 'solo' | 'orchestrator';
+}
+
+export function fullAccessEnabledAudit(
+  input: FullAccessEnabledInput,
+): AuditInput {
+  return {
+    who: 'user:cli',
+    what: 'posture:full-access',
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'posture:full-access',
+      approval: `enabled by ${input.command}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: input.mode,
+    posture: 'full-access',
+    result: 'ok',
+    reason: `full access enabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
+  };
+}
+
 function redactLeaves(value: unknown): unknown {
   if (typeof value === 'string') return redactSecretShapes(value);
   if (Array.isArray(value)) return value.map(redactLeaves);

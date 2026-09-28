@@ -20,6 +20,7 @@ import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
+import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
 import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import type {
@@ -1040,7 +1041,7 @@ export async function orchestrateDepsWithDefaults(
     // through the §3.8 allowlist (KUBIC_APPROVALS_DIR), so a challenged call
     // the child cannot answer is published for the manager to route to the
     // user — never stopped at a missing surface.
-    approvals: (options: {
+    approvals: (approvalOptions: {
       sessionId: string;
       maxPendingMs: number;
       autoApprove: boolean;
@@ -1048,29 +1049,45 @@ export async function orchestrateDepsWithDefaults(
       budgetForAgent?: (agentId: string) => unknown;
       fullAccess?: boolean;
     }): WorkerApprovalsRun => {
+      // §41.4 (issue #308): the shared enable path — one §60 row naming the
+      // orchestration session and the command, and the common stderr
+      // warning. The posture itself is the run's own skip record below.
+      if (approvalOptions.fullAccess === true) {
+        const grant = enableSessionFullAccess({
+          sessionId: approvalOptions.sessionId,
+          command: 'orchestrate',
+          workspace: needRoot(),
+          mode: 'orchestrator',
+          onAuditError: (message) =>
+            debug(`audit: ledger append failed: ${message}`),
+        });
+        options.err(`warning: ${grant.warning}`);
+      }
       const run = createOrchestratorApprovalsRun({
         dir: join(needRoot(), '.kubic', 'orchestrator'),
-        sessionId: options.sessionId,
-        maxPendingMs: options.maxPendingMs,
-        ...(options.autoApprove ? { autoApprove: true } : {}),
-        ...(options.budget === undefined ? {} : { budget: options.budget }),
+        sessionId: approvalOptions.sessionId,
+        maxPendingMs: approvalOptions.maxPendingMs,
+        ...(approvalOptions.autoApprove ? { autoApprove: true } : {}),
+        ...(approvalOptions.budget === undefined
+          ? {}
+          : { budget: approvalOptions.budget }),
         // Per-spawn budget spec (§71, issue #105): the CLI decodes
         // `--budget <agent>:<dims>` and this hands it to the spawn's own gate,
         // so an override never widens another worker's limit.
-        ...(options.budgetForAgent === undefined
+        ...(approvalOptions.budgetForAgent === undefined
           ? {}
-          : { budgetForAgent: options.budgetForAgent }),
-        ...(options.fullAccess ? { fullAccess: true } : {}),
+          : { budgetForAgent: approvalOptions.budgetForAgent }),
+        ...(approvalOptions.fullAccess ? { fullAccess: true } : {}),
         // The TTY seat when this run has a user attached; a run with `--yes`
         // answers with the standing seat instead, and a run with neither
         // denies closed on the router's own bound (never a silent hang).
-        ...(options.autoApprove || optionsSeat === undefined
+        ...(approvalOptions.autoApprove || optionsSeat === undefined
           ? {}
           : { seat: optionsSeat }),
         debug: (line) => debug(line),
       });
       approvalsActive = run;
-      approvalsBoundMs = options.maxPendingMs;
+      approvalsBoundMs = approvalOptions.maxPendingMs;
       return run;
     },
     createWorkerSession: async (input) => {

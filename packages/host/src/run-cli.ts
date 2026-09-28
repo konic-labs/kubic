@@ -89,6 +89,9 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // The approval posture the lane ran under (issue #308): 'full-access'
+  // when the session skips approvals. Absent when no lane was installed.
+  posture?: 'approvals' | 'full-access';
 }
 
 export interface RunEnvelope {
@@ -100,6 +103,8 @@ export interface RunEnvelope {
   journal: { ref: string };
   usage: { ref: string };
   trajectory: { ref: string };
+  // Issue #308: scripted callers detect a full-access session here.
+  approvals?: { posture: 'approvals' | 'full-access' };
   error?: { kind: string; message: string };
 }
 
@@ -116,6 +121,9 @@ export function buildRunEnvelope(
     journal: { ref: result.journalRef },
     usage: { ref: result.usageRef },
     trajectory: { ref: result.trajectoryRef },
+    ...(result.posture === undefined
+      ? {}
+      : { approvals: { posture: result.posture } }),
     ...(result.error === undefined ? {} : { error: result.error }),
   };
 }
@@ -138,6 +146,8 @@ export interface RunCommandDeps extends CliIo {
       // §50 debug channel (issue #98): a boolean request is forwarded to the
       // runner, which owns the sink (stderr in prod). Never gates the run.
       debug?: boolean;
+      // §41.4 (issue #308): forwarded to the runner's one enable path.
+      dangerouslySkipApprovals?: boolean;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
@@ -174,6 +184,8 @@ export interface RunCommandOptions {
   readonly noSkills?: boolean;
   readonly debug?: boolean;
   readonly json?: boolean;
+  // §41.4 (issue #308): session-scoped full access for this run's session.
+  readonly dangerouslySkipApprovals?: boolean;
 }
 
 // A value the command refuses (exit 2). The message is the whole reason;
@@ -321,6 +333,9 @@ export async function runRunCommand(
       ...(options.noSkills === true ? { noSkills: true } : {}),
       ...(skills.length === 0 ? {} : { skills: [...skills] }),
       ...(options.debug === true ? { debug: true } : {}),
+      ...(options.dangerouslySkipApprovals === true
+        ? { dangerouslySkipApprovals: true }
+        : {}),
     });
     await deps.persist?.(result);
   } catch (error) {

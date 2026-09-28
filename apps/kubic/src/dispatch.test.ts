@@ -322,6 +322,28 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.lines).toEqual([]);
   });
 
+  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals` (issue #308)', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(
+      await dispatchCommand('--dangerously-skip-approvals', [], deps),
+    ).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['tui', { dangerouslySkipApprovals: true }],
+    ]);
+    expect(h.state.excludeCalls).toBe(1);
+  });
+
+  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1 (issue #308)', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => false };
+    expect(
+      await dispatchCommand('--dangerously-skip-approvals', [], deps),
+    ).toBe(1);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+
   it('the bare invocation off a TTY keeps the usage + exit 1 posture', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };

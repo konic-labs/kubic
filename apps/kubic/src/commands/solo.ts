@@ -95,6 +95,10 @@ function registerRun(program: Command, ctx: CommandContext): void {
     .option('--no-skills', 'disable layered skill discovery')
     .option('--debug', 'emit lane/tool span lines on stderr')
     .option('--json', 'print one JSON envelope line instead of text')
+    .option(
+      '--dangerously-skip-approvals',
+      'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
+    )
     .allowExcessArguments()
     .addHelpText(
       'after',
@@ -148,6 +152,9 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.skills === false ? { noSkills: true } : {}),
             ...(opts.debug === true ? { debug: true } : {}),
             ...(opts.json === true ? { json: true } : {}),
+            ...(opts.dangerouslySkipApprovals === true
+              ? { dangerouslySkipApprovals: true }
+              : {}),
           },
           ctx.config,
         ),
@@ -172,6 +179,10 @@ function registerTui(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
+    .option(
+      '--dangerously-skip-approvals',
+      'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
+    )
     .addHelpText(
       'after',
       examples(['kubic tui', 'kubic tui --session my-session --role reviewer']),
@@ -184,6 +195,9 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
+            ...(opts.dangerouslySkipApprovals === true
+              ? { dangerouslySkipApprovals: true }
+              : {}),
           },
           ctx.config,
         ),

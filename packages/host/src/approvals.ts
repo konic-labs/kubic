@@ -23,6 +23,7 @@ import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.j
 import {
   appendToLedger,
   auditLedgerDirFor,
+  fullAccessEnabledAudit,
   soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
@@ -622,6 +623,72 @@ export function enableFullAccess(
   };
   store.savePosture(posture);
   return posture;
+}
+
+// The one flag name for session-scoped full access (issue #308, §41.4).
+export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
+
+export interface SessionFullAccessOptions {
+  /**
+   * The session dir whose posture.json records the grant. Absent for a
+   * posture kept elsewhere (orchestrate's own skip record): only the audit
+   * row and the warning are produced then.
+   */
+  sessionDir?: string;
+  sessionId: string;
+  /** The command after `kubic`: 'run', 'tui', 'sessions create', 'orchestrate'. */
+  command: string;
+  /** Resolves the repo ledger (resolveRepoRuntimeRoot). */
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  clock?: () => number;
+  onAuditError?: (message: string) => void;
+}
+
+export interface SessionFullAccessGrant {
+  posture: AccessPosture;
+  /** The stderr warning every enabling command prints, word for word. */
+  warning: string;
+}
+
+// The ONE enable path for session-scoped full access (issue #308): `kubic`,
+// `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
+// all come through here. It records the posture in the session dir (never in
+// config), appends one §60 row naming the session and the originating
+// command, and returns the warning the caller prints on stderr.
+export function enableSessionFullAccess(
+  options: SessionFullAccessOptions,
+): SessionFullAccessGrant {
+  const commandLine = `kubic ${options.command} ${FULL_ACCESS_FLAG}`;
+  const clock = options.clock ?? Date.now;
+  const posture =
+    options.sessionDir === undefined
+      ? { fullAccess: true, enabledAt: clock(), enabledBy: commandLine }
+      : enableFullAccess(
+          new FileApprovalStore(options.sessionDir),
+          commandLine,
+          clock,
+        );
+  appendToLedger(
+    auditLedgerDirFor(options.workspace),
+    fullAccessEnabledAudit({
+      sessionId: options.sessionId,
+      command: commandLine,
+      workspace: options.workspace,
+      mode: options.mode ?? 'solo',
+    }),
+    options.onAuditError,
+  );
+  return {
+    posture,
+    warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
+  };
+}
+
+// The warning a headless run prints when the session it runs in already has
+// full access (issue #308): a scripted caller must never be surprised.
+export function fullAccessInForceWarning(sessionId: string): string {
+  return `session ${sessionId} runs with full access: approvals are skipped for every challenged call`;
 }
 
 // The INSTALLED solo policy (issue #86; §40, §41, §59.1). This is the

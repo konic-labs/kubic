@@ -506,3 +506,33 @@ describe('kubic sessions', () => {
     }
   });
 });
+
+describe('--dangerously-skip-approvals on run and tui (issue #308)', () => {
+  it('run passes the session-scoped flag to the runner', async () => {
+    const result = await kubic([
+      'run',
+      '--dangerously-skip-approvals',
+      '-p',
+      'hi',
+    ]);
+    expect(result.calls).toEqual([
+      { key: 'run', input: { prompt: 'hi', dangerouslySkipApprovals: true } },
+    ]);
+  });
+
+  it('tui passes the session-scoped flag to the runner', async () => {
+    const result = await kubic(['tui', '--dangerously-skip-approvals']);
+    expect(result.calls).toEqual([
+      { key: 'tui', input: { dangerouslySkipApprovals: true } },
+    ]);
+  });
+
+  it('documents the flag in run and tui help', async () => {
+    for (const command of ['run', 'tui']) {
+      const result = await kubic([command, '--help']);
+      expect(result.out.join('\n'), command).toContain(
+        '--dangerously-skip-approvals',
+      );
+    }
+  });
+});

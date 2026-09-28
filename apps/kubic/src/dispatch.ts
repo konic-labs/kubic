@@ -104,6 +104,8 @@ export interface DispatchDeps {
   readonly isInteractive?: () => boolean;
 }
 
+const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
+
 export async function dispatchCommand(
   requested: string | undefined,
   rest: readonly string[],
@@ -113,10 +115,17 @@ export async function dispatchCommand(
   // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
   // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
   // posture pinned by scripts/binary-contract.mjs.
+  // Issue #308 (§41.4, §78): `kubic --dangerously-skip-approvals` is the
+  // bare invocation with the session-scoped full-access flag — on a TTY it is
+  // `kubic tui --dangerously-skip-approvals`; off a TTY it keeps the bare
+  // usage + exit 1 posture.
+  const bareSkip =
+    requested === BARE_SKIP_FLAG && deps.isInteractive?.() === true;
   const command =
-    requested === undefined && deps.isInteractive?.() === true
+    (requested === undefined && deps.isInteractive?.() === true) || bareSkip
       ? 'tui'
       : requested;
+  const args = bareSkip ? [BARE_SKIP_FLAG, ...rest] : rest;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and
@@ -168,7 +177,7 @@ export async function dispatchCommand(
   const ctx: CommandContext = {
     config: cliConfig,
     runners: deps.runners,
-    rest,
+    rest: args,
     out: io.out,
     err: io.err,
     setExitCode: (code) => {
@@ -190,7 +199,7 @@ export async function dispatchCommand(
         throw new Error('injected probe failure');
       });
   }
-  return runKubicProgram(program, [command, ...rest], io, {
+  return runKubicProgram(program, [command, ...args], io, {
     code: () => exitCode,
   });
 }

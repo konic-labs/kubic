@@ -185,6 +185,7 @@ async function startTui(bootLane: TuiRunDeps['bootLane']) {
     {
       out: (line: string) => lines.push(line),
       createTerminal: () => fake.terminal,
+      colorLevel: 'none',
       approvalArmingMs: 0,
       bootLane,
     },

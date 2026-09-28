@@ -63,6 +63,10 @@ Every issue, every wave, no freelancing:
   anything under `pi/`; it is gitignored upstream material, not Kubic.
 - **Tests never need network or paid tokens** — `faux` provider,
   headless `VirtualTerminal`, fixture `usage` rows.
+- **Tests never depend on the shell's colour variables** — `runTuiCommand`
+  takes `colorLevel` through its deps (pass `'none'`), and the shared
+  `vitest.setup.ts` fails any test that leaves a coloured TUI theme active,
+  so `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
 
 ## Docs rule
 

@@ -191,6 +191,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -234,6 +235,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -274,6 +276,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -303,6 +306,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -340,6 +344,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -376,6 +381,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: () => {},
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalClock: () => now,
         bootLane: fauxLaneBoot(root, models),
       },
@@ -414,6 +420,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: () => {},
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         approvalArmingMs: 0,
         bootLane: (sessionId, answer, flags) =>
           boot(

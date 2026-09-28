@@ -290,6 +290,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
         rerooted(workspace, tmpRoot(), twoModels()),
       ),
       createTerminal: () => fake.terminal,
+      colorLevel: 'none' as const,
     };
     return { deps, fake, lines, errs };
   }

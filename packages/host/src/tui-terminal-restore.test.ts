@@ -143,6 +143,7 @@ function start(
       out: (line) => log.push(`OUT:${line}`),
       err: (line) => errors.push(line),
       createTerminal: () => fake.terminal,
+      colorLevel: 'none',
       bootLane,
       signals,
       exit: (code) => {
@@ -326,6 +327,7 @@ describe('terminal restore on every exit path (issue #313)', () => {
       {
         out: () => {},
         createTerminal: () => fake.terminal,
+        colorLevel: 'none',
         bootLane: viewerBoot([]),
       },
     );

@@ -67,9 +67,11 @@ import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
+  type ColorLevel,
   createTuiTheme,
   detectColorLevel,
   setTuiTheme,
+  tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import {
   createTuiApp,
@@ -200,6 +202,10 @@ export interface TuiRunDeps {
   // (or a manual clock) instead of sleeping.
   approvalArmingMs?: number;
   approvalClock?: () => number;
+  // Issue #319: the colour depth. Absent means detectColorLevel over
+  // process.env and stdout's TTY flag (the shipped behaviour); tests pass
+  // 'none' so the shell's NO_COLOR / FORCE_COLOR never reach them.
+  colorLevel?: ColorLevel;
 }
 
 export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -961,9 +967,14 @@ export async function runTuiCommand(
       : RUN_EXIT_FAILED;
   }
   // Colour only for a real terminal; NO_COLOR / FORCE_COLOR honoured.
+  // Issue #319: the level is injectable (tests pass 'none', so the suite
+  // never depends on the shell's colour variables) and the theme this run
+  // replaces is restored when it ends — the global never leaks.
+  const previousTheme = tuiTheme();
   setTuiTheme(
     createTuiTheme(
-      detectColorLevel(process.env, process.stdout.isTTY === true),
+      deps.colorLevel ??
+        detectColorLevel(process.env, process.stdout.isTTY === true),
     ),
   );
   const app = createTuiApp({
@@ -1334,8 +1345,10 @@ export async function runTuiCommand(
     } catch {
       // Close failures never mask the setup error.
     }
+    setTuiTheme(previousTheme);
     throw error;
   }
   await exited;
+  setTuiTheme(previousTheme);
   return exitCode;
 }

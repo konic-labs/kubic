@@ -108,6 +108,7 @@ async function firstFrame(
   const exit = runTuiCommand(session === undefined ? {} : { session }, {
     out: () => {},
     createTerminal: () => fake.terminal,
+    colorLevel: 'none',
     bootLane: prodBoot(sessionsRoot, workspace),
   });
   for (let i = 0; i < 500 && fake.counts.started === 0; i += 1) {

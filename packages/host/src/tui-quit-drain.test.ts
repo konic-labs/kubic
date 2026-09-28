@@ -197,6 +197,7 @@ function start(
     {
       out: () => {},
       createTerminal: () => fake.terminal,
+      colorLevel: 'none',
       bootLane: h.bootLane,
       ...extra,
     },

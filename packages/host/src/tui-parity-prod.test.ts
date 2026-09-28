@@ -340,6 +340,7 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
     const deps: TuiRunDeps = {
       out: (line) => lines.push(line),
       createTerminal: () => fake.terminal,
+      colorLevel: 'none',
       bootLane: async (
         sessionId?: string,
         _answer?: unknown,

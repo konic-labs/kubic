@@ -125,6 +125,7 @@ async function openTui(
   const exit = runTuiCommand(session === undefined ? {} : { session }, {
     out: (line) => lines.push(line),
     createTerminal: () => fake.terminal,
+    colorLevel: 'none',
     bootLane: prodBoot(sessionsRoot, workspace, steps),
   });
   await waitFor(() => fake.counts.started === 1);

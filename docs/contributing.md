@@ -76,9 +76,10 @@ standalone `npm run docs:check` step, and again inside `npm test` via
 ## CI gates (run these locally)
 
 A push runs the `verify` job (the suites + linters below) and the
-`binary-contract` job (the shipped artifact), each on node 22 and 24 —
-the `mutation` job is disabled (`if: false`, see "Known blocker").
-Mirror both before you push — same commands, same order:
+`binary-contract` job (the shipped artifact), each on node 22 and 24, plus
+the per-push `mutation` job on the touched files (see "The gate"). A
+nightly `mutation-nightly` job runs the full scope. Mirror `verify` and
+`binary-contract` before you push — same commands, same order:
 
 ```sh
 npm ci
@@ -106,14 +107,16 @@ review.
 
 ## The gate
 
-`npm run test:mutation` runs the Stryker vitest gate, the Stryker tap gate,
-then the per-file check over both JSON reports. The bar is **total and
-per-file mutation score ≥ 80%**:
+The bar is **mutation score ≥ 80% per file**, enforced by
+`scripts/mutation-check.mjs` over Stryker's JSON report (Stryker's own
+`thresholds.break` is total-only, so the vitest config sets it to `null` and
+leaves gating to the per-file check).
 
-- **vitest side** — `stryker.conf.json` (`@stryker-mutator/vitest-runner`)
-  mutates `packages/*/src/**/*.ts` (test files excluded).
-  `thresholds.break: 80` fails the run below 80% total. Currently
-  advisory-only in CI (see "Known blocker" below).
+- **vitest side** — `stryker.conf.json` (`@stryker-mutator/vitest-runner`,
+  patched on `postinstall`, see "vitest-runner × vitest 5" below) with
+  `coverageAnalysis: "perTest"`: each mutant runs only the tests that cover
+  it. `ignoreStatic: true` skips module-level mutants, which are ~5% of
+  mutants but ~67% of the runtime (each would re-run the whole suite).
 - **tap side** — `stryker.tap.conf.json` (`@stryker-mutator/tap-runner`)
   mutates the script systems under test (`scripts/dep-lint.mjs`,
   `scripts/check-pinned-deps.mjs`) and runs the killing suites
@@ -123,11 +126,31 @@ per-file mutation score ≥ 80%**:
   `coverageAnalysis: "perTest"` (file-level: every hit lands in the static
   bucket, which the tap runner maps per test file). Proof run: **83.50 total
   (334 killed), 83.53 check-pinned-deps, 83.49 dep-lint — gate exit 0**.
-- **per-file enforcement** — Stryker's `break` threshold is total-only, so
-  both runs are followed by
-  `node scripts/mutation-check.mjs --report <mutation.json> --min 80`, which
-  exits 1 listing any file below 80% (verified: exit 0 at 83.5, exit 1 with
-  `--min 100`).
+- **ratchet** — `mutation-check.mjs --baseline <previous report>` holds each
+  file to `min(80, its baseline score)`: a file below 80 may not drop below
+  its baseline, a file at or above 80 must stay ≥ 80, and files new to the
+  baseline need 80. Without `--baseline` every file needs 80 (`npm run
+  test:mutation`, the full local run).
+- **concurrency** — both configs default to `"50%"` of the cores (CI passes
+  `--concurrency 4`); vitest itself runs at `maxWorkers: '50%'`.
+
+### CI: per push and nightly
+
+- **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>
+  [--tap]` maps the diff to the touched source files (a changed
+  `x.test.ts` maps to its sibling `x.ts`), capped at 25 files; the rest are
+  left to the nightly run with a warning. No mutable file changed → the step
+  is skipped; a failed diff exits 1 rather than widening or emptying the
+  scope. The run is non-incremental (the report holds only the touched
+  files) and ratchets against the cached nightly baseline.
+- **`mutation-nightly` (03:00 UTC + `workflow_dispatch`)** — full scope with
+  `--incremental` against the previous run (only changed code and tests
+  re-run), ratcheted against the baseline. The incremental file is cached
+  after every run; the baseline only when the ratchet passes, so a
+  regression never becomes the new floor.
+
+Run a scope locally: `npx stryker run --mutate "path/a.ts,path/b.ts"`, then
+`node scripts/mutation-check.mjs --report reports/mutation/mutation.json`.
 
 ## Suite selection notes (all evidence-based)
 
@@ -149,48 +172,34 @@ per-file mutation score ≥ 80%**:
   non-string JSON value stringifies to an exact-version match). Zero
   unexplained exclusions.
 
-## Known blocker: vitest-runner × vitest 5 (upstream)
+## vitest-runner × vitest 5 (fixed locally, issue #72)
 
-Full vitest-side runs do not yet produce real scores with the project's
-vitest 5.0.1. Root-caused, not assumed:
+`@stryker-mutator/vitest-runner` 10.0.0 names tests by space-joining suite +
+test names and filters each mutant run with that name as `testNamePattern`;
+vitest 5 matches the pattern against `fullTestName` (`" > "`-joined). Every
+filtered run executed **zero** tests, so `coverageAnalysis: "perTest"` was
+unusable and every mutant fell back to the full suite (~9h CI runs, #72).
 
-- `VitestTestRunner.mutantRun` filters each mutant to its covering tests via
-  `testNamePattern` built from space-joined suite+test names
-  (`collectTestName`: `nameParts.join(' ')`).
-- Vitest 5 matches `testNamePattern` against `>`-joined full test names
-  (`task-utils.js`: `createTaskName(names, separator = " > ")`, then
-  `if (namePattern && !t.fullTestName.match(namePattern)) t.mode = "skip"`).
-- Result: every filtered mutant run executes **zero** tests (339/339 covered
-  mutants at `testsCompleted: 0` → `Survived`); only uncovered mutants run the
-  full suite. Independent repro (throwaway, since removed): files-only
-  selection runs 15 tests, adding the runner-style pattern drops it to 0,
-  test-name-only pattern runs 1. `coverageAnalysis: "off"` does not bypass
-  the filter — the "off" run shows the identical 0.71 artifact. Also
-  observed: the runner's debug log line `JSON.stringify(this.ctx.config)`
-  crashes on vitest 5's circular project config — do not use
-  `--fileLogLevel debug` with the vitest runner.
+`scripts/patch-vitest-runner.mjs` (run on `postinstall`) names tests by
+vitest's own `fullTestName` and anchors the filter (`^(?:a|b)$`). It is
+idempotent and fails loudly if the runner changes shape, so a runner
+upgrade can never silently drop the fix. Verified: on the trajectory scope
+`perTest` and a filter-free `coverageAnalysis: "all"` run produce identical
+per-mutant statuses (0 differences), at seconds instead of hours. Scores
+before this fix were artifacts of the bug; the first nightly report is the
+real baseline.
 
-What still holds on the vitest side: instrumentation (424 mutants across the
-trajectory proof scope), dry-run green (115 tests), and the fail direction —
-the gate exits 1 below `thresholds.break`. Until the upstream runner supports
-vitest 5 name matching, the CI `mutation` job runs the vitest gate
-**advisory-only** (`continue-on-error`) while the tap gate blocks. Per-area
-follow-ups (#67–#70) own re-enabling full vitest runs once fixed upstream.
+Tests that scan **source text** (e.g. `clean-docs`, `tui-keys-doc`) cannot
+run under Stryker — every literal is instrumented — and kill no mutants, so
+they skip when `STRYKER_MUTATOR_WORKER` is set; plain `vitest` still runs
+them. Tests that list repo files must not rely on `git ls-files` alone:
+Stryker's sandbox is a gitignored copy (see `orchestrate-roles-docs`).
 
 ## What new suites owe the gate
 
-Every new suite must survive mutation at ≥ 80% per file. When your area lands
-(per-area tracking in #67–#70), widen the default `mutate` lists in
-`stryker.conf.json` / `stryker.tap.conf.json` to include it — keep them in sync
-with `DEFAULT_VITEST_MUTATE` / `DEFAULT_TAP_MUTATE` in
-`scripts/mutation-scope.mjs`.
-
-## Changed-package CI
-
-The `mutation` CI job (main pushes + PRs) mutates touched packages at minimum:
-`scripts/mutation-scope.mjs --ref <base> [--tap]` maps the diff to `--mutate`
-globs. Detection failures warn on stderr and fall back to the proven
-trajectory/scripts scope — the gate never goes silently empty.
+Every new source file must reach ≥ 80% per file the first time it is
+mutated (it is absent from the nightly baseline, so the ratchet holds it to
+80). A new package goes into `mutate` in `stryker.conf.json`.
 
 ## Spike verdict (recorded for #66)
 

@@ -3,10 +3,16 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    # Nightly full-scope mutation run (issue #72).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 jobs:
   verify:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         node: ['22', '24']
@@ -25,7 +31,9 @@ jobs:
       - run: npx biome ci .
       - run: npm run docs:check
   binary-contract:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         node: ['22', '24']
@@ -43,13 +51,13 @@ jobs:
       - run: npm run build
       - run: npm run test:binary-contract
   mutation:
+    # Per-push gate on the touched files only (<= 25, see mutation-scope.mjs),
+    # ratcheted against the last accepted nightly report: a touched file
+    # below 80 may not drop below its baseline, one at or above 80 must stay
+    # >= 80, and files new to the baseline need 80.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Temporarily disabled: the vitest side grinds ~9h per run (20k mutants x
-    # full-suite-each, no incremental cache on fresh checkouts) while gating
-    # nothing. See the backlog issue "Mutation CI: 9h runs" for the full
-    # diagnosis and the re-enable plan (nightly schedule + scope caps +
-    # incremental cache). Re-enable by restoring the `if:` below.
-    if: false
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,19 +67,100 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Mutation gate on touched scope (per-file >= 80)
-        # Vitest side is advisory until the upstream vitest-runner supports
-        # vitest 5 name matching (see docs/contributing.md "Known blocker").
-        # Tap side blocks.
+      - name: Restore the ratchet baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/baseline.json
+          key: stryker-baseline-${{ github.run_id }}
+          restore-keys: stryker-baseline-
+      - name: Scope the diff
+        id: scope
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          REF="${{ github.event.pull_request.base.sha }}"
-          if [ -z "$REF" ]; then REF="HEAD~1"; fi
-          npx stryker run --mutate "$(node scripts/mutation-scope.mjs --ref "$REF")"
-          node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80
-        continue-on-error: true
-      - name: Mutation gate, tap side (blocking)
+          REF="${PR_BASE:-$PUSH_BEFORE}"
+          # New branch (all-zero before), force-push or tag: diff against main.
+          if ! git cat-file -e "$REF^{commit}" 2>/dev/null; then
+            REF="$(git merge-base origin/main HEAD)"
+          fi
+          test -n "$REF"
+          # Assign first so a failing scope fails the step (a failure inside
+          # $(...) in an echo argument would not).
+          VITEST="$(node scripts/mutation-scope.mjs --ref "$REF")"
+          TAP="$(node scripts/mutation-scope.mjs --ref "$REF" --tap)"
+          echo "vitest=$VITEST" >> "$GITHUB_OUTPUT"
+          echo "tap=$TAP" >> "$GITHUB_OUTPUT"
+          if [ ! -f reports/baseline.json ]; then
+            echo "::warning::No nightly baseline cached yet; touched files are held to 80%."
+          fi
+      - name: Mutation gate, vitest side (touched files)
+        if: steps.scope.outputs.vitest != ''
+        env:
+          MUTATE: ${{ steps.scope.outputs.vitest }}
         run: |
-          REF="${{ github.event.pull_request.base.sha }}"
-          if [ -z "$REF" ]; then REF="HEAD~1"; fi
-          npx stryker run stryker.tap.conf.json --mutate "$(node scripts/mutation-scope.mjs --ref "$REF" --tap)"
+          npx stryker run --concurrency 4 --mutate "$MUTATE"
+          BASELINE=()
+          if [ -f reports/baseline.json ]; then BASELINE=(--baseline reports/baseline.json); fi
+          node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 "${BASELINE[@]}"
+      - name: Mutation gate, tap side (touched scripts)
+        if: steps.scope.outputs.tap != ''
+        env:
+          MUTATE: ${{ steps.scope.outputs.tap }}
+        run: |
+          npx stryker run stryker.tap.conf.json --concurrency 4 --mutate "$MUTATE"
+          node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80
+  mutation-nightly:
+    # Full scope, incremental against the previous run (only changed code
+    # and tests re-run). Two caches: the incremental file is saved after
+    # every run (speed); the ratchet baseline only when the ratchet passes,
+    # so a regression can never become the new floor.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Restore the incremental file
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.run_id }}
+          restore-keys: stryker-incremental-
+      - name: Restore the ratchet baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: reports/baseline.json
+          key: stryker-baseline-${{ github.run_id }}
+          restore-keys: stryker-baseline-
+      - name: Full mutation run, vitest side
+        run: npx stryker run --incremental --concurrency 4 --reporters json,clear-text,progress-append-only
+      - name: Save the incremental file
+        if: always() && hashFiles('reports/stryker-incremental.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.run_id }}
+      - name: Ratchet against the baseline
+        run: |
+          if [ -f reports/baseline.json ]; then
+            node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 --baseline reports/baseline.json
+          else
+            echo "::notice::First nightly: recording the baseline, nothing to ratchet against."
+            node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 || true
+          fi
+          cp reports/mutation/mutation.json reports/baseline.json
+      - name: Save the ratchet baseline
+        uses: actions/cache/save@v4
+        with:
+          path: reports/baseline.json
+          key: stryker-baseline-${{ github.run_id }}
+      - name: Full mutation run, tap side
+        if: always()
+        run: |
+          npx stryker run stryker.tap.conf.json --concurrency 4
           node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80

@@ -77,8 +77,8 @@ standalone `npm run docs:check` step, and again inside `npm test` via
 
 A push runs the `verify` job (the suites + linters below) and the
 `binary-contract` job (the shipped artifact), each on node 22 and 24, plus
-the per-push `mutation` job on the touched files (see "The gate"). A
-nightly `mutation-nightly` job runs the full scope. Mirror `verify` and
+the per-push `mutation` job on the changed lines (see "The gate"). The
+nightly full-scope `mutation-nightly` job is postponed (#137). Mirror `verify` and
 `binary-contract` before you push — same commands, same order:
 
 ```sh
@@ -148,7 +148,9 @@ leaves gating to the per-file check).
   than widening or emptying the scope. The changed lines' score is
   ratcheted against the file's nightly baseline: new code may not drag a
   file down.
-- **`mutation-nightly` (03:00 UTC + `workflow_dispatch`)** — full scope with
+- **`mutation-nightly`** — *postponed (backlog #137): the job is disabled and
+  no baseline exists yet, so per-push changed lines are held to a strict 80%.*
+  When enabled (03:00 UTC + `workflow_dispatch`) — full scope with
   `--incremental` against the previous run (only changed code and tests
   re-run), ratcheted against the baseline. The incremental file is cached
   after every run; the baseline only when the ratchet passes, so a

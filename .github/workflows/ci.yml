@@ -3,9 +3,9 @@ name: CI
 on:
   push:
   pull_request:
-  schedule:
-    # Nightly full-scope mutation run (issue #72).
-    - cron: '0 3 * * *'
+  # Nightly full-scope mutation run is postponed (backlog #137); restore:
+  # schedule:
+  #   - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -115,7 +115,9 @@ jobs:
     # and tests re-run). Two caches: the incremental file is saved after
     # every run (speed); the ratchet baseline only when the ratchet passes,
     # so a regression can never become the new floor.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Postponed (backlog #137): re-enable by restoring the schedule trigger
+    # above and the condition below.
+    if: false # github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # A cold run (no incremental cache) is ~2h+ on a 4-vCPU runner; warm
     # runs only re-test changed code and tests.

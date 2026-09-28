@@ -75,11 +75,17 @@ function withNewline(text: string): string {
 
 // `[read <path>: lines a-b of N]` + the raw lines. `of at least N` when the
 // read was cut (totalLines is then a lower bound); `more: offset=K` whenever
-// lines remain past the window, so the model knows how to continue.
+// lines remain past the window, so the model knows how to continue. A
+// refusal or cut notice (issue #176) rides the same header — or replaces
+// the empty-window text, since "no lines at offset K" would misname a line
+// that exists but exceeds the output cap.
 export function renderReadText(result: ReadResult): string {
   const shown = lineCount(result.content);
   const total = `${result.truncated ? 'at least ' : ''}${result.totalLines}`;
   if (shown === 0) {
+    if (result.notice !== undefined) {
+      return `[read ${result.path}: ${result.notice}]\n`;
+    }
     return result.totalLines === 0 && !result.truncated
       ? `[read ${result.path}: empty (0 lines)]\n`
       : `[read ${result.path}: no lines at offset ${result.offset} (file has ${total} lines)]\n`;
@@ -89,7 +95,8 @@ export function renderReadText(result: ReadResult): string {
     result.truncated || end < result.totalLines
       ? `; more: offset=${end + 1}`
       : '';
-  return `[read ${result.path}: lines ${result.offset}-${end} of ${total}${more}]\n${withNewline(result.content)}`;
+  const notice = result.notice === undefined ? '' : `; ${result.notice}`;
+  return `[read ${result.path}: lines ${result.offset}-${end} of ${total}${more}${notice}]\n${withNewline(result.content)}`;
 }
 
 // `[grep /<pattern>/: N matches]` + one `path:line: text` per match.

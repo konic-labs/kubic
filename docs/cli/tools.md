@@ -30,7 +30,7 @@ workspace.
 
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |
-| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned. |
+| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
 | `ls` | `path?` (default `.`) | One directory, not recursive. |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive. |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob. |
@@ -56,6 +56,10 @@ an exact-match `edit`):
 [read src/app.ts: lines 1-120 of 480; more: offset=121]
 <raw lines 1-120>
 
+[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' 'min.js' | head -c 51200]
+
+[read logo.png: binary file (4096B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]
+
 [grep /TODO/: 2 matches]
 src/a.ts:14: // TODO tighten
 src/b.ts:3: // TODO remove
@@ -69,8 +73,18 @@ src/b.ts:3: // TODO remove
 
 - `read` says `of at least N` when the scan stopped early (N is then a
   lower bound), `more: offset=K` whenever lines remain past the window,
-  `empty (0 lines)` for an empty file, and `no lines at offset K` past the
-  end.
+  `empty (0 lines)` for an empty file, and `no lines at offset K` when the
+  8 MiB scan budget stopped before the offset.
+- `read` caps the returned content at **51200 bytes**. A window past the
+  cap keeps the lines that fit and says `output clipped at 51200B`; a line
+  that alone exceeds the cap is left out whole (never a partial line that
+  an exact-match `edit` could half-copy) with a `line K is NB — above the
+  51200B output cap; read it with bash: …` notice (the path single-quoted
+  in the suggested command, and `; more: offset=K+1` when further lines
+  exist); an offset past the last line is named `offset K is past the last
+  line (N lines total)`; and a binary file — NUL byte or invalid UTF-8 in
+  the first chunk — is refused with `binary file (NB, <reason>) — …` and
+  empty content.
 - `grep` adds `, truncated (narrow pattern, root or include)` at the match
   cap; `bash` adds `, timed out`, `, aborted` or `, output truncated`, and
   `(no output)` when both streams are empty.

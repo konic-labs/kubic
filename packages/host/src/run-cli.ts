@@ -257,11 +257,14 @@ function isWorkspaceFailure(error: unknown): boolean {
   // missing session: the workspace cannot host this run right now — the
   // named SessionLockError message carries the holder pid.
   if (record.name === 'SessionLockError') return true;
-  const haystack = [
-    record.code,
-    record.name,
-    error instanceof Error ? error.message : error,
-  ]
+  // Paths the message quotes are removed first: a word inside a path (a
+  // checkout under `…/worktrees/…` or `~/workspace/…`) is where the failure
+  // happened, not what kind of failure it was — it must not turn an
+  // unrelated error into workspace_unavailable.
+  const message = String(
+    (error instanceof Error ? error.message : error) ?? '',
+  ).replace(/(?:~|\.{0,2})\/[^\s'"`,;)]*/g, ' ');
+  const haystack = [record.code, record.name, message]
     .map((part) => String(part ?? ''))
     .join(' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(

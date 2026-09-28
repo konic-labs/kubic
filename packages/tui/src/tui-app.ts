@@ -27,6 +27,8 @@
 //   Enter            submit the draft
 //   Ctrl-J, Shift+Enter, `\`+Enter   newline (multi-line entry)
 //   Ctrl-T           toggle the tree
+//   Ctrl-G           switch the session mode (solo ↔ orchestrator;
+//                    refused while a turn runs)
 //   Ctrl-O           toggle the diff panel (this run's changes)
 //   Ctrl-R           toggle the journal panel (the whole session)
 //   Ctrl-X           expand / collapse every tool output block
@@ -73,7 +75,11 @@ import {
   WORDMARK_NAME,
   WORDMARK_TAGLINE,
 } from './theme.js';
-import { createTranscriptView, type TranscriptView } from './transcript.js';
+import {
+  createTranscriptView,
+  type TranscriptEntry,
+  type TranscriptView,
+} from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
 import {
@@ -177,6 +183,7 @@ const GLOBAL_KEYS: ReadonlySet<string> = new Set([
   'ctrl+c',
   'escape',
   'ctrl+d',
+  'ctrl+g',
   'ctrl+t',
   'ctrl+o',
   'ctrl+r',
@@ -203,6 +210,10 @@ export interface TuiApp {
   // bar show. Called after a `/model` switch lands; presentation only — the
   // lane switch itself happens through the lane's own setModel.
   setModel(model: string, thinking?: string): void;
+  // Issue #327: orchestrator report lines (the manager-lane run's own
+  // output) rendered as transcript text. Presentation only: the report
+  // never drives state, and a solo lane snapshot replaces it.
+  appendReport(lines: ReadonlyArray<string>): void;
   onSubmit(handler: (prompt: string) => void): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
@@ -218,6 +229,11 @@ export interface TuiApp {
   // Issue #307: a posture change (the policy's own predicate) reaches the
   // indicator on the very next frame.
   setApprovalsSkipped(skipped: boolean): void;
+  // Issue #327: the session mode state — the footer toggle and the runner's
+  // submit routing read and write the same value, and the header/status
+  // indicator render it.
+  mode(): StatusMode;
+  setMode(mode: StatusMode): void;
   // Issue #96: the §17 inspectable pair.
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
@@ -248,6 +264,7 @@ export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['ctrl+o', 'diff'],
   ['ctrl+r', 'journal'],
   ['ctrl+t', 'tree'],
+  ['ctrl+g', 'mode'],
   ['esc', 'quit'],
 ];
 
@@ -413,15 +430,24 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     );
   };
   refreshWelcome();
+  // Issue #327: the session mode is live state, not a boot-time literal:
+  // the header and the status bar both read this cell, and Ctrl-G writes it
+  // (refused while a turn runs). The seed is only the starting value.
+  const sessionMode: { current: StatusMode } = { current: seed.mode };
   const barState: StatusBarState = {
     model: modelLabel,
     thinking: thinkingLabel,
     rows: [],
-    mode: seed.mode,
+    mode: sessionMode.current,
     approvalsSkipped: seed.approvalsSkipped,
     sessionId: seed.sessionId,
   };
   const status = new StatusBar(barState);
+  const setMode = (next: StatusMode): void => {
+    if (next === sessionMode.current) return;
+    sessionMode.current = next;
+    status.setMode(next);
+  };
   const editor = new PromptEditor();
   const editorRow = new EditorRow(editor);
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
@@ -441,7 +467,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const root = buildLayoutRoot({
     tree,
     header: lineComponent((width) =>
-      renderHeader(width, { mode: seed.mode, model: modelLabel }),
+      renderHeader(width, { mode: sessionMode.current, model: modelLabel }),
     ),
     transcript: transcript.component,
     status,
@@ -450,6 +476,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   });
   let busy = false;
   let revision = 0;
+  // Issue #327: the orchestrator report's own cells. The solo lane's
+  // entries own the transcript while that lane drives; applying a lane
+  // snapshot clears the report (a report is not a session transcript).
+  let reportRevision = 0;
+  let reportCells: TranscriptEntry[] = [];
   let submitHandler: ((prompt: string) => void) | undefined;
   let pendingPrompt: string | undefined;
   let promptCells = 0;
@@ -615,6 +646,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #327 (§17, §81): Ctrl-G switches the session between solo and
+      // orchestrator. A turn owns the lane while it runs, so the key is
+      // refused there — with the reason on the footer, never a silent no-op.
+      if (keyId === 'ctrl+g') {
+        if (busy) {
+          editorRow.setFooter('mode: finish the current turn before switching');
+          return { quit: false, consumed: true, cancel: false };
+        }
+        setMode(sessionMode.current === 'solo' ? 'orchestrator' : 'solo');
+        return { quit: false, consumed: true, cancel: false };
+      }
       // Issue #96: Ctrl-O / Ctrl-R toggle the §17 inspectable pair. Both are
       // free of pi-tui's own bindings (probed: editor bindings claim
       // a/b/c/d/e/f/g/j/k/u/w/y, the alt-screen claims the arrows, home/end,
@@ -654,6 +696,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       revision += 1;
       const cells = entriesToCells(entries);
       transcript.applyLaneSnapshot({ laneId: seed.sessionId }, cells, revision);
+      // Issue #327: a solo lane snapshot is the session's own transcript, so
+      // the orchestrator report stops being it.
+      reportCells = [];
       // The echoed prompt is dropped once the lane has committed a NEW
       // prompt cell (counted, not matched by text: an identical resubmit
       // must not clear on the previous turn's cell).
@@ -675,6 +720,26 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         thinking: thinkingLabel,
       });
       refreshWelcome();
+    },
+    appendReport: (lines: ReadonlyArray<string>): void => {
+      const clean = lines
+        .map((line) => sanitizeLaneText(line))
+        .filter((line) => line !== '');
+      if (clean.length === 0) return;
+      reportRevision += 1;
+      reportCells = [
+        ...reportCells,
+        {
+          id: `${seed.sessionId}:report:${reportRevision}`,
+          kind: 'text',
+          markdown: clean.join('\n'),
+        },
+      ];
+      transcript.applyLaneSnapshot(
+        { laneId: `${seed.sessionId}:orchestrator` },
+        reportCells,
+        reportRevision,
+      );
     },
     onSubmit: (handler: (prompt: string) => void): void => {
       submitHandler = handler;
@@ -699,6 +764,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setApprovalsSkipped: (skipped: boolean): void => {
       status.setApprovalsSkipped(skipped);
     },
+    mode: (): StatusMode => sessionMode.current,
+    setMode,
     setNotice: (text: string): void => {
       notice = sanitizeLaneText(text);
       refreshWelcome();

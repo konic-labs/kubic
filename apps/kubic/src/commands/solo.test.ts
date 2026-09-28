@@ -378,6 +378,19 @@ describe('kubic tui', () => {
     );
   });
 
+  // Issue #327: the explicit interactive orchestrator entry — delegation
+  // stays opt-in, and the flag parses into the runner's own option.
+  it('parses --orchestrator and documents it in the generated help', async () => {
+    const result = await kubic(['tui', '--orchestrator']);
+    expect(result.calls).toEqual([
+      { key: 'tui', input: { orchestrator: true } },
+    ]);
+    const help = await kubic(['tui', '--help']);
+    const text = help.out.join('\n');
+    expect(text).toContain('--orchestrator');
+    expect(text).toMatch(/orchestrator mode/i);
+  });
+
   // Issue #36: skills never fetch — no fetch/install flag exists on the
   // skill surface (run and tui), so commander refuses one by name.
   it('refuses fetcher/install skill flags on run and tui', async () => {

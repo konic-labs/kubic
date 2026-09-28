@@ -161,6 +161,10 @@ export interface DispatchDeps {
 }
 
 const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
+// Issue #327: `kubic --orchestrator` is the bare invocation's explicit
+// orchestrator entry — on a TTY it is `kubic tui --orchestrator`; off a TTY
+// it keeps the bare usage + exit 1 posture like the other bare flags.
+const BARE_ORCHESTRATOR_FLAG = '--orchestrator';
 
 export async function dispatchCommand(
   requested: string | undefined,
@@ -183,13 +187,16 @@ export async function dispatchCommand(
   // usage + exit 1 posture.
   const bareSkip =
     requested === BARE_SKIP_FLAG && deps.isInteractive?.() === true;
+  const bareOrchestrator =
+    requested === BARE_ORCHESTRATOR_FLAG && deps.isInteractive?.() === true;
+  // One bare-flag form of the TUI: every bare flag is `kubic tui <flag>` on
+  // a terminal (and keeps the usage + exit 1 posture off one).
+  const bareFlag = bareSkip || bareModel || bareOrchestrator;
   const command =
-    (requested === undefined && deps.isInteractive?.() === true) ||
-    bareSkip ||
-    bareModel
+    (requested === undefined && deps.isInteractive?.() === true) || bareFlag
       ? 'tui'
       : requested;
-  const args = bareSkip || bareModel ? [String(requested), ...rest] : rest;
+  const args = bareFlag ? [String(requested), ...rest] : rest;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and

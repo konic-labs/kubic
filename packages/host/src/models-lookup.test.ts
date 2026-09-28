@@ -176,4 +176,30 @@ describe('models.json lookup (issue #222)', () => {
       `loaded models.json: ${path} (global): mine`,
     );
   });
+
+  it('`kubic run` loads the project models.json under a store-granted decision (issue #228)', async () => {
+    const home = tmpDir();
+    const { root, sub } = repo();
+    const path = writeJson(join(root, 'models.json'), provider('mine'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    // No KUBIC_TRUST_PROJECT: the decision arrives as the composition
+    // root's explicit `projectTrusted` gate (from the trust store).
+    const debugLines: string[] = [];
+    await runHeadlessPrompt(
+      'hello',
+      { timeoutMs: 1, debug: true },
+      {
+        sessionsRoot: tmpDir(),
+        env: new FakeExecutionEnv({}),
+        modelsCwd: sub,
+        debugSink: (line) => debugLines.push(line),
+        warn: () => undefined,
+        projectTrusted: true,
+      },
+    );
+    expect(debugLines.join('\n')).toContain(
+      `loaded models.json: ${path} (project, trusted): mine`,
+    );
+  });
 });

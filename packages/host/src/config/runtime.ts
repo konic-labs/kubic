@@ -488,9 +488,11 @@ function loadLayers(
     if (layer === 'project' && !projectTrusted) {
       if (present) {
         // Refused pre-trust, before the file is read (§35.1). Named by path
-        // so the operator knows exactly which layer is waiting on trust.
+        // so the operator knows exactly which layer is waiting on trust,
+        // and with the remedies named (issue #228): the durable grant or the
+        // per-invocation env opt-in, never a bare issue number.
         throw new ProjectUntrustedError(
-          `project-local config refused pre-trust: ${path} (issue #38)`,
+          `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
         );
       }
       continue;
@@ -879,7 +881,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
     `budgets: ${view.budgets.configured ? 'configured' : 'none'} — ${view.budgets.detail}`,
   );
   lines.push(
-    `project layer: ${view.projectTrusted ? 'trusted' : 'distrusted (refused pre-trust; KUBIC_TRUST_PROJECT=1 to accept)'}`,
+    `project layer: ${view.projectTrusted ? 'trusted' : "distrusted (refused pre-trust; run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation)"}`,
   );
   lines.push(
     view.overriddenAttempts.length === 0

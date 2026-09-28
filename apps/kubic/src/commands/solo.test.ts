@@ -14,7 +14,14 @@ import { registerSoloCommands } from './solo.js';
 
 const CONFIG = {} as CliConfigResult;
 
-type Key = 'run' | 'tui' | 'doctor' | 'models' | 'config' | 'sessions';
+type Key =
+  | 'run'
+  | 'tui'
+  | 'doctor'
+  | 'models'
+  | 'config'
+  | 'trust'
+  | 'sessions';
 
 interface Result {
   readonly code: number;
@@ -51,6 +58,7 @@ async function kubic(
     doctor: runner('doctor'),
     models: runner('models'),
     config: runner('config'),
+    trust: runner('trust'),
     sessions: runner('sessions'),
   } as unknown as DispatchRunners;
   const ctx: CommandContext = {
@@ -83,6 +91,7 @@ const GROUP: readonly (readonly string[])[] = [
   ['doctor'],
   ['models'],
   ['config'],
+  ['trust'],
   ['sessions'],
   ['sessions', 'create'],
   ['sessions', 'list'],
@@ -401,6 +410,39 @@ describe('kubic models / config', () => {
     expect(await usageError(['config', 'extra'])).toContain(
       'too many arguments',
     );
+  });
+});
+
+describe('kubic trust', () => {
+  it('parses the grant form with no flags', async () => {
+    expect((await kubic(['trust'])).calls).toEqual([
+      { key: 'trust', input: {} },
+    ]);
+  });
+
+  it('parses --revoke, --list and a path operand into the runner options', async () => {
+    expect((await kubic(['trust', '--revoke'])).calls).toEqual([
+      { key: 'trust', input: { revoke: true } },
+    ]);
+    expect((await kubic(['trust', '--list'])).calls).toEqual([
+      { key: 'trust', input: { list: true } },
+    ]);
+    expect((await kubic(['trust', '/repos/app'])).calls).toEqual([
+      { key: 'trust', input: { path: '/repos/app' } },
+    ]);
+    expect((await kubic(['trust', '/repos/app', '--revoke'])).calls).toEqual([
+      { key: 'trust', input: { path: '/repos/app', revoke: true } },
+    ]);
+  });
+
+  it('refuses a stray second operand', async () => {
+    expect(await usageError(['trust', 'a', 'b'])).toContain(
+      "error: too many arguments for 'trust'.",
+    );
+  });
+
+  it('passes the runner exit code through', async () => {
+    expect((await kubic(['trust'], 1)).code).toBe(1);
   });
 });
 

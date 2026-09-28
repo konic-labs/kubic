@@ -97,6 +97,11 @@ export interface ReplayRuntimeDeps {
   policyClasses?: PermissionClasses;
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
+  // Issue #228 (§35.1): the effective project-trust decision (store or
+  // env), from the same config load the re-execution tier runs under — it
+  // gates the project models.json of the assembled catalog. Absent falls
+  // back to the env opt-in inside assembleModels.
+  projectTrusted?: boolean;
 }
 
 export interface ReplayCommandDeps {

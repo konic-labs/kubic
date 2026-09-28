@@ -227,6 +227,11 @@ export interface TuiRunOptions {
   // threads, so a declared directory is excluded from this lane's §42.5
   // baseline and sweep too. Absent means the mechanism's own skips only.
   reconcileOutOfScope?: string[];
+  // Issue #228 (§35.1): the effective project-trust decision (store or
+  // env), from the composition root's config load — gates the project
+  // models.json and the trusted-ancestor project skills on the interactive
+  // lane exactly as `kubic run` gates them. Absent falls back to the env.
+  projectTrusted?: boolean;
   // The lane's agent id (issue #133): the configured `[agent].name`, from
   // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
   // 'root' — the shipped attribution, unchanged.
@@ -312,6 +317,9 @@ export async function bootTuiLane(
       options.models === undefined
         ? await assembleModels(process.cwd(), process.env, {
             resolveApiKey: keyResolver.resolve,
+            ...(options.projectTrusted === undefined
+              ? {}
+              : { projectTrusted: options.projectTrusted }),
           })
         : undefined;
     const models = options.models ?? (assembled as AssembledModels).models;
@@ -377,6 +385,7 @@ export async function bootTuiLane(
           homeDir: options.skills?.homeDir ?? homedir(),
           trusted:
             options.skills?.trusted ??
+            options.projectTrusted ??
             (process.env.KUBIC_TRUST_PROJECT === '1' ||
               process.env.KUBIC_TRUST_PROJECT === 'true'),
           ...(options.noSkills === undefined
@@ -501,6 +510,13 @@ export function tuiDepsWithDefaults(provided: {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
+  // Issue #228 (§29.3): the project-trust decision for skills discovery,
+  // threaded from the same config report `kubic run` consumes — a store
+  // grant unlocks trusted ancestor project skills on the interactive lane.
+  skills?: { homeDir?: string; cwd?: string; trusted?: boolean };
+  // Issue #228 (§35.1): the same decision gates the project models.json on
+  // this lane's assembled catalog.
+  projectTrusted?: boolean;
 }): TuiRunDeps {
   const {
     classes,
@@ -508,6 +524,8 @@ export function tuiDepsWithDefaults(provided: {
     policy,
     journalRetention,
     reconcileOutOfScope,
+    skills,
+    projectTrusted,
   } = provided;
   return {
     out: provided.out,
@@ -526,6 +544,8 @@ export function tuiDepsWithDefaults(provided: {
         ...(answer === undefined ? {} : { answer }),
         ...(journalRetention === undefined ? {} : { journalRetention }),
         ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
+        ...(skills === undefined ? {} : { skills }),
+        ...(projectTrusted === undefined ? {} : { projectTrusted }),
         ...(flags?.role === undefined ? {} : { role: flags.role }),
         ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0

@@ -41,6 +41,12 @@ import {
   loadRuntimeConfig,
   type RuntimeConfig,
 } from '../../../packages/host/src/config/runtime.js';
+import {
+  type ProjectTrustReport,
+  ProjectTrustStore,
+  projectTrustReport,
+  projectTrustStorePath,
+} from '../../../packages/host/src/config/trust-store.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
@@ -61,6 +67,10 @@ export interface CliConfigResult {
   // `kubic config` and by doctor: the five runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
+  // Issue #228: the project trust state the load above was gated on — the
+  // same report `kubic doctor` renders, `kubic config` counts and the TUI
+  // prompt resolves, so they can never disagree about who accepted what.
+  trust: ProjectTrustReport;
 }
 
 export interface CliConfigOptions {
@@ -141,26 +151,77 @@ function message(error: unknown): string {
 
 // One load for the whole process: paths per §35.1, the project layer behind
 // the trust gate, the documented env overrides above the file layers.
+//
+// Trust (issue #228) is resolved from the persistent store under
+// `~/.kubic/trust.json` for this cwd, with the env opt-in still honoured
+// above it and an explicit caller decision (the accepted TUI prompt) above
+// both. The same report reaches the result so every consumer — doctor, the
+// models assembly, the skills loader — reads one derivation.
 export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const cwd = options.cwd ?? process.cwd();
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;
   const bridge = createNodeFileBridge(cwd);
   const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, cwd);
+  const stored = projectTrustReport({ home, cwd, env });
+  const trusted = options.projectTrusted === true || stored.trusted;
+  const trust = trusted === stored.trusted ? stored : { ...stored, trusted };
   try {
     const runtime = loadRuntimeConfig({
       bridge,
       home,
       cwd,
       env,
-      ...(options.projectTrusted === undefined
-        ? {}
-        : { projectTrusted: options.projectTrusted }),
+      projectTrusted: trusted,
     });
-    return { runtime, error: undefined, ignoreSplit };
+    return { runtime, error: undefined, ignoreSplit, trust };
   } catch (error) {
-    return { runtime: undefined, error: message(error), ignoreSplit };
+    return { runtime: undefined, error: message(error), ignoreSplit, trust };
   }
+}
+
+// The interactive half of the trust gate (issue #228): `kubic tui` and the
+// bare `kubic` on a TTY ask once about a present, undecided project config
+// before the config load, persist the answer and hand it back — so the
+// current invocation boots on the accepted decision and the next one never
+// asks again. No question is asked when the config is absent or a decision
+// is already recorded (including a recorded decline: the operator answered).
+// A cancelled prompt is not an answer: nothing is persisted, and the
+// invocation fails closed into the refusal path.
+export interface InteractiveTrustDeps {
+  home?: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  // The question channel: production passes core's `promptConfirm` bound to
+  // `interactive: true`; a test passes a collector. `null` means cancelled.
+  confirm: (message: string) => Promise<boolean | null>;
+  store?: ProjectTrustStore;
+}
+
+export async function resolveInteractiveProjectTrust(
+  deps: InteractiveTrustDeps,
+): Promise<boolean | undefined> {
+  const home = deps.home ?? homedir();
+  const cwd = deps.cwd ?? process.cwd();
+  const store =
+    deps.store ?? new ProjectTrustStore(projectTrustStorePath(home));
+  const report = projectTrustReport({
+    home,
+    cwd,
+    env: deps.env ?? process.env,
+    store,
+  });
+  if (!report.present) return undefined;
+  if (report.trusted) return true;
+  // A recorded decline is an answer: the refusal stands silently, and the
+  // remedies are named by the refusal itself.
+  if (report.decision === false) return false;
+  const answer = await deps.confirm(
+    `Trust project ${report.key}? Kubic will load ${report.configPath}, which can set the model, approvals, permissions and journal retention for runs in this project.`,
+  );
+  if (answer === null) return false;
+  store.set(cwd, answer);
+  return answer;
 }
 
 // The config the rest of the process runs on; a refusal throws with its
@@ -174,8 +235,11 @@ export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
 
 // Commands whose whole job is to tell the operator about the effective
 // configuration (or about a refusal) must still run when the load was
-// refused — otherwise the named reason has nowhere to surface.
-const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor']);
+// refused — otherwise the named reason has nowhere to surface. `trust`
+// (issue #228) is the repair path for a refusal: it must run in exactly the
+// repository whose project layer is refused, or the durable grant could
+// never be recorded.
+const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
 
 // The modes that execute an agent under the configuration. They may not
 // proceed on defaults once the load was refused: silently running on
@@ -390,6 +454,7 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
         error: result.error ?? 'config refused',
         ignoreSplitMissing: missing,
         ignoreSplitApplicable: applicable,
+        projectTrust: result.trust,
       }),
     );
   }
@@ -401,6 +466,7 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
       budgetsConfigured: view.budgets.configured,
       ignoreSplitMissing: missing,
       ignoreSplitApplicable: applicable,
+      projectTrust: result.trust,
     }),
   );
 }

@@ -185,6 +185,11 @@ export interface HeadlessRunDeps {
     cwd?: string;
     trusted?: boolean;
   };
+  // Issue #228 (§35.1): the effective project-trust decision (store or
+  // env), threaded from the composition root's config load. It gates the
+  // project models.json and the trusted-ancestor project skills exactly as
+  // KUBIC_TRUST_PROJECT does. Absent falls back to the env flag.
+  projectTrusted?: boolean;
   // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
   // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
   // through the real FileBridge. Tests inject a fixture cwd.
@@ -794,7 +799,12 @@ async function runHeadlessPromptImpl(
       const assembled = await assembleModels(
         deps.modelsCwd ?? process.cwd(),
         process.env,
-        { resolveApiKey: keyResolver.resolve },
+        {
+          resolveApiKey: keyResolver.resolve,
+          ...(deps.projectTrusted === undefined
+            ? {}
+            : { projectTrusted: deps.projectTrusted }),
+        },
       );
       for (const note of assembled.notes) {
         if (note.startsWith('models.json ignored')) {
@@ -972,6 +982,7 @@ async function runHeadlessPromptImpl(
       homeDir: deps.skills?.homeDir ?? homedir(),
       trusted:
         deps.skills?.trusted ??
+        deps.projectTrusted ??
         (process.env.KUBIC_TRUST_PROJECT === '1' ||
           process.env.KUBIC_TRUST_PROJECT === 'true'),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),

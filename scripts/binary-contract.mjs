@@ -53,7 +53,7 @@ export const DOCTOR_PROVIDER_EXIT = 6;
 // `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
 // a command-list drift fails here instead of shipping stale help.
 export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`

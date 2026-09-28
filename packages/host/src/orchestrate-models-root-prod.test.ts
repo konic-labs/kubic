@@ -153,4 +153,48 @@ describe("prod orchestrate path: workers resolve the manager's models.json (issu
     );
     expect(assembled.models.getProvider('managers')?.id).toBe('managers');
   });
+
+  it('carries a store-granted trust decision to the child with no env export (issue #228)', async () => {
+    // The operator did not export KUBIC_TRUST_PROJECT; the manager's trust
+    // came from the durable store. The child's worktree path is not the key
+    // that decision is recorded under, so the manager must synthesize the
+    // env opt-in for the child — otherwise a committed config.toml would
+    // refuse every worker.
+    delete process.env.KUBIC_TRUST_PROJECT;
+    expect(process.env.KUBIC_TRUST_PROJECT).toBeUndefined();
+    vi.stubEnv('KUBIC_MODELS_ROOT', '');
+    const root = scratchRoot('kubic-orch-trust-');
+    await gitOrThrow(root, ['init', '-b', 'main']);
+    await gitOrThrow(root, ['config', 'user.email', 'trust@kubic.dev']);
+    await gitOrThrow(root, ['config', 'user.name', 'kubic trust']);
+    await gitOrThrow(root, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(root, 'base.txt'), 'base\n');
+    await gitOrThrow(root, ['add', 'base.txt']);
+    await gitOrThrow(root, ['commit', '-m', 'base']);
+    const fixture = join(scratchRoot('kubic-orch-trust-child-'), 'child.mjs');
+    writeFileSync(fixture, FIXTURE);
+    const dumpDir = scratchRoot('kubic-orch-trust-dump-');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratchRoot('kubic-orch-trust-sessions-'),
+      registry: new WorkerRegistry(),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+      trustProject: true,
+    });
+    await runOrchestrateCommand(
+      {
+        prompt: `resolve trust DUMPDIR=${dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'trustproject',
+      },
+      deps,
+    );
+    const dump = JSON.parse(
+      readFileSync(join(dumpDir, 'alpha.json'), 'utf8'),
+    ) as { trust: string | null };
+    expect(dump.trust).toBe('1');
+  });
 });

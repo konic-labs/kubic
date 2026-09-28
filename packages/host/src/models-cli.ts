@@ -203,7 +203,7 @@ export async function assembleModels(
         providers: [],
       });
       notes.push(
-        `models.json ignored: ${path} (${label}, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`,
+        `models.json ignored: ${path} (${label}, untrusted — run 'kubic trust' or set KUBIC_TRUST_PROJECT=1 to load it)`,
       );
       return;
     }

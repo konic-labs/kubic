@@ -34,7 +34,7 @@ import {
 // deliberate POSIX posture). Both exits are pinned by
 // scripts/binary-contract.mjs; the two paths must never drift apart.
 export const ROOT_USAGE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The supported command names, read off the usage line so the routing
 // table and the listing can never drift apart (dispatch.test.ts also pins
@@ -52,6 +52,15 @@ const STATE_CREATING_COMMANDS: ReadonlySet<string> = new Set([
   'orchestrate',
   'tui',
 ]);
+
+// The interactive lane whose boot asks the project-trust question (issue
+// #228): the explicit `tui` command and the bare invocation it becomes.
+const INTERACTIVE_TRUST_COMMANDS: ReadonlySet<string> = new Set(['tui']);
+
+// A help request must never block on a question (issue #228): commander
+// answers `--help`/`-h` after this point, so the trust prompt is skipped
+// when the invocation is asking for usage rather than booting the lane.
+const HELP_TOKENS: ReadonlySet<string> = new Set(['--help', '-h']);
 
 // The contract's internal failure seam (issue #128), never listed.
 const CRASH_PROBE = '__crash-probe';
@@ -87,8 +96,12 @@ export interface DispatchDeps {
   // means stdout (the fakes in dispatch.test.ts capture one channel).
   readonly err?: (line: string) => void;
   // One config load for the whole process, injected so the dispatch can be
-  // exercised over loaded and refused results alike.
-  readonly loadConfig: () => CliConfigResult;
+  // exercised over loaded and refused results alike. The optional decision
+  // (issue #228) is the accepted/declined answer of the interactive trust
+  // prompt — an explicit gate on top of the store and the env opt-in.
+  readonly loadConfig: (options?: {
+    projectTrusted?: boolean;
+  }) => CliConfigResult;
   // The version half of `--version` (the license half is core's): the root
   // reads this app's manifest through the exec FileBridge.
   readonly version: () => string;
@@ -102,6 +115,12 @@ export interface DispatchDeps {
   // §78/§80 "interactive by default": true when stdin AND stdout are a TTY.
   // Only consulted for the bare invocation; absent means non-interactive.
   readonly isInteractive?: () => boolean;
+  // Issue #228 (§35.1): the interactive trust question for `kubic tui` / the
+  // bare interactive invocation, run once BEFORE the config load. `undefined`
+  // means "nothing to ask" (no project config, or a decision already
+  // recorded); true/false is the effective decision threaded into the load.
+  // Absent means the path asks nobody — a non-TTY caller keeps the refusal.
+  readonly resolveProjectTrust?: () => Promise<boolean | undefined>;
 }
 
 export async function dispatchCommand(
@@ -113,16 +132,28 @@ export async function dispatchCommand(
   // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
   // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
   // posture pinned by scripts/binary-contract.mjs.
-  const command =
-    requested === undefined && deps.isInteractive?.() === true
-      ? 'tui'
-      : requested;
+  const interactive = deps.isInteractive?.() === true;
+  const command = requested === undefined && interactive ? 'tui' : requested;
+  // Issue #228 (§35.1): the interactive trust gate runs BEFORE the one
+  // process-wide config load. Only the interactive TUI path asks; the
+  // resolver persists the answer and this same invocation loads on it, so
+  // the lane either boots trusted or stops on the ordinary refusal — whose
+  // message names `kubic trust` and KUBIC_TRUST_PROJECT=1.
+  const trust =
+    command !== undefined &&
+    interactive &&
+    !rest.some((token) => HELP_TOKENS.has(token)) &&
+    INTERACTIVE_TRUST_COMMANDS.has(command)
+      ? await deps.resolveProjectTrust?.()
+      : undefined;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and
   // secret refs. Commands below consume it through the injected runners;
   // nothing here re-derives a default by hand.
-  const cliConfig = deps.loadConfig();
+  const cliConfig = deps.loadConfig(
+    trust === undefined ? undefined : { projectTrusted: trust },
+  );
   // A refused config stops the agent-executing modes: they may not run on
   // built-in defaults while the user believes their config file is in force.
   // `config` and `doctor` still run so the named reason can be reported.

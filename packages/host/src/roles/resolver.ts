@@ -24,6 +24,12 @@ import { detectTriggers } from '../approvals.js';
 import type { ConfigLayer } from '../config/config.js';
 import { CONFIG_LAYERS } from '../config/config.js';
 import type { DoctorCheck } from '../doctor.js';
+import {
+  assertToolGrantable,
+  type EffectivePolicy,
+  hasToolPolicy,
+  PolicyDeniedError,
+} from '../policy/enterprise.js';
 
 export class RoleParseError extends Error {
   constructor(message: string) {
@@ -255,6 +261,14 @@ export interface ResolvedRole {
 
 export interface ResolveOptions {
   validate?: boolean;
+  /**
+   * §58 enterprise policy (issue #288): a role grant funnels through
+   * `assertToolGrantable`, so a role document (or a layer) that declares a
+   * denied tool is REFUSED by name — never silently widened, and never
+   * re-enabled because a role asked. Absent means no enterprise tool policy
+   * is configured; a policy with no tool gate leaves roles untouched.
+   */
+  toolPolicy?: EffectivePolicy;
 }
 
 export function resolveRole(
@@ -273,6 +287,22 @@ export function resolveRole(
     model: merged.model,
     overriddenAttempts: merged.overriddenAttempts,
   };
+  const toolPolicy = options.toolPolicy;
+  if (toolPolicy !== undefined && hasToolPolicy(toolPolicy)) {
+    for (const tool of resolved.tools) {
+      try {
+        assertToolGrantable(toolPolicy, tool, {
+          layer: 'agent',
+          role: resolved.name,
+        });
+      } catch (error) {
+        if (error instanceof PolicyDeniedError) {
+          throw new RoleRefusedError(resolved.name, error.message);
+        }
+        throw error;
+      }
+    }
+  }
   if (options.validate !== false) validateResolvedRole(resolved);
   return resolved;
 }

@@ -12,6 +12,7 @@ import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
 import {
   type EffectivePolicy,
   isToolAllowed,
+  normalizeToolName,
   resolveEffectivePolicy,
 } from './enterprise.js';
 import { redactSecretShapes } from './secret-shapes.js';
@@ -60,6 +61,52 @@ export function policyFromInstalledAllowlist(
   ]).policy;
 }
 
+// The policy a run from THIS workspace actually installs (issue #288): the
+// §58 enterprise/product/… policy INTERSECTED with the installed class
+// allowlist. Denies and provenance survive; a tool the enterprise allows but
+// the classes withhold is refused (and vice versa) — `kubic policy` never
+// reports a tool the lane would not register.
+export function policyWithInstalledAllowlist(
+  policy: EffectivePolicy,
+  allowlist: readonly string[],
+): EffectivePolicy {
+  const installed = new Set(allowlist.map(normalizeToolName));
+  const allow =
+    policy.tools.allow === undefined
+      ? [...allowlist]
+      : policy.tools.allow.filter((tool) =>
+          installed.has(normalizeToolName(tool)),
+        );
+  return {
+    ...policy,
+    tools: {
+      ...policy.tools,
+      allow,
+      // The installed allowlist is supplied as the session layer, so the
+      // displayed source reads 'installed' unless a higher layer set allow.
+      allowSource:
+        policy.tools.allow === undefined ? 'session' : policy.tools.allowSource,
+    },
+  };
+}
+
+// The layer that decided the offer: an explicit deny first, then the allow
+// list's own setter, then the engine default. 'session' is the projection's
+// marker for the installed class allowlist, so it reads 'installed'.
+function decisionSource(
+  policy: EffectivePolicy,
+  normalizedTool: string,
+  decision: 'allow' | 'deny',
+): string {
+  const source =
+    decision === 'allow'
+      ? (policy.tools.allowSource ?? 'defaults')
+      : (policy.tools.denySources[normalizedTool] ??
+        policy.tools.allowSource ??
+        'defaults');
+  return source === 'session' ? 'installed' : source;
+}
+
 // `kubic policy` over parsed options: commander (apps/kubic/src/commands/
 // analysis.ts) owns argv syntax — unknown flags, a missing value, the
 // required --tool, `--help`; this handler owns the tool name's emptiness
@@ -84,6 +131,7 @@ export async function runPolicyCommand(
   }
   const policy = await deps.resolvePolicy();
   const decision = isToolAllowed(policy, tool) ? 'allow' : 'deny';
+  const source = decisionSource(policy, normalizeToolName(tool), decision);
   // Fail-closed echo: the tool name is free-form argv and may carry
   // secret-shaped material — the offer names the decision, never the secret.
   const safeTool = redactSecretShapes(tool);
@@ -93,6 +141,7 @@ export async function runPolicyCommand(
       formatJson({
         tool: safeTool,
         decision,
+        source,
         ...(unsupported.length === 0 ? {} : { unsupported }),
       }),
     );
@@ -101,6 +150,6 @@ export async function runPolicyCommand(
   for (const entry of unsupported) log.warn(describeUnsupported(entry));
   const word =
     decision === 'allow' ? theme.success(decision) : theme.error(decision);
-  deps.out(`${word} ${safeTool}`);
+  deps.out(`${word} ${safeTool} (${source})`);
   return EXIT_OK;
 }

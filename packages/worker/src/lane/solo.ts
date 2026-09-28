@@ -119,6 +119,15 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
+  /**
+   * §58 enterprise tool gate (issue #288): the composition root closes this
+   * over `isToolAllowedByEnterprise(effectivePolicy, tool)`, so the lane
+   * has no policy import of its own. When present, the base/class/role
+   * intersection is filtered through it for BOTH the active tool set and
+   * the prompt's `tools:` line — the two can never disagree about what the
+   * model may call. Absent means no enterprise tool policy is configured.
+   */
+  toolAllowed?: (tool: string) => boolean;
 }
 
 // Harness compaction budget overrides. keepRecentTokens mirrors Pi's
@@ -440,23 +449,37 @@ export async function bootSoloLane(
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
   const baseTools = kubicToolsToPiTools();
-  // §12.1 role narrowing (issue #99): the role's resolved tool set is the
-  // NARROWER of the two allowlists — a role can never widen what the
-  // permission classes permit. Computed BEFORE the harness boots so the
-  // assembled `tools:` line names exactly what the lane registers: the
-  // model must be told the truth about its own tool set (§40.3), and the
-  // value is fixed for the boot, so the prompt-cache prefix (#33) is still
-  // byte-stable across turns.
+  // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the lane
+  // activates and the tools the prompt advertises are ONE set — base tools,
+  // narrowed by the permission classes when declared, by the role allowlist
+  // when declared, and by the enterprise tool policy when configured. A
+  // role or an enterprise deny can only narrow what the classes allow,
+  // never widen it. Computed BEFORE the harness boots so the assembled
+  // `tools:` line names exactly what the lane registers: the model must be
+  // told the truth about its own tool set (§40.3), and the value is fixed
+  // for the boot, so the prompt-cache prefix (#33) is still byte-stable
+  // across turns.
   const classAllowed =
     options.policy?.classes === undefined
       ? undefined
       : toolsForClasses(validateClasses({ ...options.policy.classes }));
-  const effectiveToolNames =
-    options.toolAllowlist === undefined
-      ? baseTools.map((t) => t.name)
-      : classAllowed === undefined
-        ? [...options.toolAllowlist]
-        : options.toolAllowlist.filter((tool) => classAllowed.includes(tool));
+  const enterpriseGate = options.policy?.toolAllowed;
+  const baseNames = baseTools.map((t) => t.name);
+  const roleNames = options.toolAllowlist ?? baseNames;
+  let effectiveToolNames =
+    classAllowed === undefined
+      ? [...roleNames]
+      : roleNames.filter((tool) => classAllowed.includes(tool));
+  if (enterpriseGate !== undefined) {
+    effectiveToolNames = effectiveToolNames.filter((tool) =>
+      enterpriseGate(tool),
+    );
+  }
+  // Without a role or enterprise gate, applyToolPolicy already installs the
+  // class-derived allowlist; only the two narrowing paths need their own
+  // activation (and their set can never exceed the class-derived one).
+  const mustActivateTools =
+    options.toolAllowlist !== undefined || enterpriseGate !== undefined;
   // Issue #148: reconcile the stored lane model with the selection BEFORE
   // the harness fixes the system prompt and the reserve.
   const selectedId = defaultSoloModelId(options.model);
@@ -545,7 +568,7 @@ export async function bootSoloLane(
   // set is the noTools case (the lane allow-lists nothing). The absence
   // guard (issue #43's createRoleToolGuard) stays available to callers;
   // registration-time absence is what this pins.
-  if (options.toolAllowlist !== undefined) {
+  if (mustActivateTools) {
     await lane.setActiveTools(effectiveToolNames, context);
   }
   if (options.policy?.interceptors !== undefined) {

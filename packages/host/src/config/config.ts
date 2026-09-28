@@ -23,6 +23,7 @@ import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 
 export const CONFIG_LAYERS = [
   'enterprise',
+  'product',
   'global',
   'project',
   'workspace',
@@ -124,6 +125,43 @@ export interface SessionConfig {
   retentionDays?: number;
 }
 
+// §58 Enterprise Policy (issue #288): the documented flat `[policy]` surface.
+// The parser accepts exactly these keys and normalizes them for the policy
+// engine's own vocabulary (`layerPolicyFromConfig` in host/policy). Unknown
+// keys fail closed and are named; a value the engine has no enforceable leaf
+// for is still parsed and carried (`dataPolicy`, `loggingPolicy`) so doctor
+// can report it rather than silently dropping it.
+export interface PolicyAgentConfig {
+  maxAgents?: number;
+  maxCostUsd?: number;
+}
+
+export interface PolicyConfig {
+  allowedModels?: string[];
+  allowedProviders?: string[];
+  allowedTools?: string[];
+  deniedTools?: string[];
+  // 'proxy' is the §58 spelling of the engine's 'allowlist' mode; the engine
+  // mode names are accepted too so the two vocabularies meet in one place.
+  networkPolicy?: string;
+  allowedDomains?: string[];
+  // 'workspace-only' is the §58 spelling of the engine's 'workspace-write'.
+  filesystemPolicy?: string;
+  requireCredentialBroker?: boolean;
+  denyLocalCredentials?: boolean;
+  dataPolicy?: string;
+  loggingPolicy?: string;
+  agentPolicy?: PolicyAgentConfig;
+}
+
+// §58 `[[audit]]` (parsed here; sink construction is a named follow-up).
+export interface AuditTableConfig {
+  sink: string;
+  level?: string;
+  target?: string;
+  facility?: string;
+}
+
 export interface KubicConfig {
   agent?: AgentConfig;
   model?: ModelConfig;
@@ -135,6 +173,8 @@ export interface KubicConfig {
   orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
+  policy?: PolicyConfig;
+  audit?: AuditTableConfig[];
 }
 
 const THINKING_LEVELS = [
@@ -158,6 +198,8 @@ const KNOWN_SECTIONS = new Set([
   'orchestrator',
   'ui',
   'session',
+  'policy',
+  'audit',
 ]);
 
 // Exported for the docs-drift gate (issue #90): the page's Shape paragraph
@@ -220,6 +262,24 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+
+[policy]
+allowed_models = ["local/*"]
+allowed_providers = ["local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = []
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+
+[[audit]]
+sink = "syslog"
+level = "privileged"
 `;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -301,10 +361,10 @@ function splitTopLevel(text: string, lineNo: number): string[] {
     } else if (ch === '"') {
       inDouble = true;
       current += ch;
-    } else if (ch === '[') {
+    } else if (ch === '[' || ch === '{') {
       depth += 1;
       current += ch;
-    } else if (ch === ']') {
+    } else if (ch === ']' || ch === '}') {
       depth -= 1;
       current += ch;
     } else if (ch === ',' && depth === 0) {
@@ -354,6 +414,12 @@ function parseScalar(text: string, lineNo: number): unknown {
   if (token === 'true') return true;
   if (token === 'false') return false;
   if (/^[+-]?\d+(\.\d+)?$/.test(token)) return Number(token);
+  if (token.startsWith('{')) {
+    if (!token.endsWith('}')) {
+      throw new ConfigError(`line ${lineNo}: unterminated inline table`);
+    }
+    return parseInlineTable(token.slice(1, -1), lineNo);
+  }
   if (token.startsWith('[') && token.endsWith(']')) {
     const inner = token.slice(1, -1).trim();
     if (inner === '') return [];
@@ -370,6 +436,32 @@ function parseScalar(text: string, lineNo: number): unknown {
     });
   }
   throw new ConfigError(`line ${lineNo}: cannot parse value ${token}`);
+}
+
+// §58's `agent_policy = { max_agents = 2, max_cost_usd = 5.0 }` (issue #288):
+// a TOML inline table is the only nested shape the [policy] surface uses, so
+// the parser supports exactly one level of it. Guarded like the section
+// parser: dunder keys are refused and duplicates are named.
+function parseInlineTable(
+  inner: string,
+  lineNo: number,
+): Record<string, unknown> {
+  const trimmed = inner.trim();
+  const out: Record<string, unknown> = {};
+  if (trimmed === '') return out;
+  for (const entry of splitTopLevel(trimmed, lineNo)) {
+    const [rawKey, rawValue] = splitEquals(entry.trim(), lineNo);
+    const key = rawKey.trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) {
+      throw new ConfigError(`line ${lineNo}: bad key '${key}'`);
+    }
+    assertSafePathKey(key, `line ${lineNo}`);
+    if (Object.hasOwn(out, key)) {
+      throw new ConfigError(`line ${lineNo}: duplicate key '${key}'`);
+    }
+    out[key] = parseScalar(rawValue, lineNo);
+  }
+  return out;
 }
 
 // Prototype-pollution guard: TOML section/key segments are
@@ -416,17 +508,73 @@ function setPath(
   node[leaf] = value;
 }
 
+// `[[audit]]` (issue #288): append a fresh table to the array at `path` and
+// return it so following key lines land inside that element. The path walk
+// mirrors setPath's guards (dunder segments refused, collisions named) and
+// the array container is created on first sight.
+function appendArrayTable(
+  root: Record<string, unknown>,
+  path: string[],
+  lineNo: number,
+): Record<string, unknown> {
+  for (const key of path) assertSafePathKey(key, `line ${lineNo}`);
+  let node = root;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const key = path[i] as string;
+    const next = node[key];
+    if (next === undefined) {
+      const fresh: Record<string, unknown> = {};
+      node[key] = fresh;
+      node = fresh;
+    } else if (isRecord(next)) {
+      node = next;
+    } else {
+      throw new ConfigError(
+        `line ${lineNo}: '${path.slice(0, i + 1).join('.')}' is already a value`,
+      );
+    }
+  }
+  const leaf = path[path.length - 1] as string;
+  const existing = node[leaf];
+  const fresh: Record<string, unknown> = {};
+  if (existing === undefined) {
+    node[leaf] = [fresh];
+    return fresh;
+  }
+  if (!Array.isArray(existing)) {
+    throw new ConfigError(
+      `line ${lineNo}: '${path.join('.')}' is already a value`,
+    );
+  }
+  existing.push(fresh);
+  return fresh;
+}
+
 function parseTomlDocument(text: string): Record<string, unknown> {
   const root: Record<string, unknown> = {};
   let section: string[] = [];
+  // The table key lines land in: `root` for ordinary sections, the newest
+  // element for an `[[array-of-tables]]` header (issue #288).
+  let table: Record<string, unknown> = root;
   const lines = text.split('\n');
   lines.forEach((rawLine, index) => {
     const lineNo = index + 1;
     const line = stripTrailingComment(rawLine).trim();
     if (line === '') return;
+    const arrayHeader = /^\[\[([A-Za-z0-9_.-]+)\]\]$/.exec(line);
+    if (arrayHeader !== null) {
+      section = [];
+      table = appendArrayTable(
+        root,
+        (arrayHeader[1] as string).split('.'),
+        lineNo,
+      );
+      return;
+    }
     const header = /^\[([A-Za-z0-9_.-]+)\]$/.exec(line);
     if (header) {
       section = (header[1] as string).split('.');
+      table = root;
       return;
     }
     if (line.startsWith('[')) {
@@ -438,7 +586,7 @@ function parseTomlDocument(text: string): Record<string, unknown> {
       throw new ConfigError(`line ${lineNo}: bad key '${key}'`);
     }
     setPath(
-      root,
+      table,
       [...section, ...key.split('.')],
       parseScalar(rawValue, lineNo),
       lineNo,
@@ -733,6 +881,161 @@ function checkNoUnknown(
   }
 }
 
+// §58 keys and their allowed values (issue #288). The engine vocabulary
+// names are accepted alongside the design's spellings so one section can
+// carry either; the translation to LayerPolicy lives in host/policy.
+const POLICY_KEYS = new Set([
+  'allowed_models',
+  'allowed_providers',
+  'allowed_tools',
+  'denied_tools',
+  'network_policy',
+  'allowed_domains',
+  'filesystem_policy',
+  'require_credential_broker',
+  'deny_local_credentials',
+  'data_policy',
+  'logging_policy',
+  'agent_policy',
+]);
+
+const NETWORK_POLICIES = ['proxy', 'none', 'allowlist', 'full'] as const;
+const FILESYSTEM_POLICIES = [
+  'workspace-only',
+  'none',
+  'read',
+  'workspace-write',
+  'full',
+] as const;
+const AUDIT_SINKS = ['syslog', 'file', 'memory'] as const;
+const AUDIT_LEVELS = ['privileged', 'all'] as const;
+
+function parsePolicySection(raw: unknown): PolicyConfig {
+  if (!isRecord(raw)) {
+    throw new ConfigError("'[policy]' must be a table");
+  }
+  checkNoUnknown(raw, POLICY_KEYS, 'policy');
+  const allowedModels = optStringArray(raw, 'allowed_models', 'policy');
+  const allowedProviders = optStringArray(raw, 'allowed_providers', 'policy');
+  const allowedTools = optStringArray(raw, 'allowed_tools', 'policy');
+  const deniedTools = optStringArray(raw, 'denied_tools', 'policy');
+  const networkPolicy = reqString(raw, 'network_policy', 'policy', true);
+  if (
+    networkPolicy !== undefined &&
+    !(NETWORK_POLICIES as readonly string[]).includes(networkPolicy)
+  ) {
+    throw new ConfigError(
+      `'policy': 'network_policy' must be one of ${NETWORK_POLICIES.join(', ')}`,
+    );
+  }
+  const allowedDomains = optStringArray(raw, 'allowed_domains', 'policy');
+  const filesystemPolicy = reqString(raw, 'filesystem_policy', 'policy', true);
+  if (
+    filesystemPolicy !== undefined &&
+    !(FILESYSTEM_POLICIES as readonly string[]).includes(filesystemPolicy)
+  ) {
+    throw new ConfigError(
+      `'policy': 'filesystem_policy' must be one of ${FILESYSTEM_POLICIES.join(', ')}`,
+    );
+  }
+  const requireCredentialBroker = optBoolean(
+    raw,
+    'require_credential_broker',
+    'policy',
+  );
+  const denyLocalCredentials = optBoolean(
+    raw,
+    'deny_local_credentials',
+    'policy',
+  );
+  const dataPolicy = reqString(raw, 'data_policy', 'policy', true);
+  const loggingPolicy = reqString(raw, 'logging_policy', 'policy', true);
+  let agentPolicy: PolicyAgentConfig | undefined;
+  const rawAgentPolicy = raw.agent_policy;
+  if (rawAgentPolicy !== undefined) {
+    if (!isRecord(rawAgentPolicy)) {
+      throw new ConfigError("'policy.agent_policy' must be a table");
+    }
+    checkNoUnknown(
+      rawAgentPolicy,
+      new Set(['max_agents', 'max_cost_usd']),
+      'policy.agent_policy',
+    );
+    const maxAgents = optNumber(
+      rawAgentPolicy,
+      'max_agents',
+      'policy.agent_policy',
+    );
+    const maxCostUsd = optNumber(
+      rawAgentPolicy,
+      'max_cost_usd',
+      'policy.agent_policy',
+    );
+    agentPolicy = {
+      ...(maxAgents === undefined ? {} : { maxAgents }),
+      ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+    };
+  }
+  return {
+    ...(allowedModels === undefined ? {} : { allowedModels }),
+    ...(allowedProviders === undefined ? {} : { allowedProviders }),
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(deniedTools === undefined ? {} : { deniedTools }),
+    ...(networkPolicy === undefined ? {} : { networkPolicy }),
+    ...(allowedDomains === undefined ? {} : { allowedDomains }),
+    ...(filesystemPolicy === undefined ? {} : { filesystemPolicy }),
+    ...(requireCredentialBroker === undefined
+      ? {}
+      : { requireCredentialBroker }),
+    ...(denyLocalCredentials === undefined ? {} : { denyLocalCredentials }),
+    ...(dataPolicy === undefined ? {} : { dataPolicy }),
+    ...(loggingPolicy === undefined ? {} : { loggingPolicy }),
+    ...(agentPolicy === undefined ? {} : { agentPolicy }),
+  };
+}
+
+// `[[audit]]` (issue #288): each element names a sink kind and a level; a
+// `target` (path or host:port) and `facility` are accepted for the sink
+// follow-up. Unknown kinds, levels and keys are refused by name.
+function parseAuditTables(raw: unknown): AuditTableConfig[] {
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(
+      "'[[audit]]' must be an array of tables (use '[[audit]]', not '[audit]')",
+    );
+  }
+  return raw.map((entry, index) => {
+    const path = `audit[${index + 1}]`;
+    if (!isRecord(entry)) {
+      throw new ConfigError(`'${path}' must be a table`);
+    }
+    checkNoUnknown(
+      entry,
+      new Set(['sink', 'level', 'target', 'facility']),
+      path,
+    );
+    const sink = reqString(entry, 'sink', path, false);
+    if (!(AUDIT_SINKS as readonly string[]).includes(sink)) {
+      throw new ConfigError(
+        `'${path}': 'sink' must be one of ${AUDIT_SINKS.join(', ')}`,
+      );
+    }
+    const level = reqString(entry, 'level', path, false);
+    if (!(AUDIT_LEVELS as readonly string[]).includes(level)) {
+      throw new ConfigError(
+        `'${path}': 'level' is required and must be one of ${AUDIT_LEVELS.join(', ')}`,
+      );
+    }
+    const target = reqString(entry, 'target', path, true);
+    const facility = reqString(entry, 'facility', path, true);
+    return {
+      sink,
+      level,
+      ...(target === undefined ? {} : { target }),
+      ...(facility === undefined ? {} : { facility }),
+    };
+  });
+}
+
 function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
   assertNoMcpConfig(raw);
   assertNoBudgetKeys(raw);
@@ -933,6 +1236,14 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...(retentionDays === undefined ? {} : { retentionDays }),
     };
   }
+  const policy = raw.policy;
+  if (policy !== undefined) {
+    config.policy = parsePolicySection(policy);
+  }
+  const audit = raw.audit;
+  if (audit !== undefined) {
+    config.audit = parseAuditTables(audit);
+  }
   return config;
 }
 
@@ -964,6 +1275,25 @@ function emitTable(
   }
   lines.push('');
 }
+
+// The `[policy]` TOML spelling of each PolicyConfig field (issue #288): the
+// serializer must emit what the parser accepts, and the §58 surface is
+// snake_case while the TS shape is camelCase. `agentPolicy` is emitted as
+// its own sub-table, so it is not in this list.
+type PolicyFlatField = Exclude<keyof PolicyConfig, 'agentPolicy'>;
+const POLICY_TOML_KEYS: ReadonlyArray<[PolicyFlatField, string]> = [
+  ['allowedModels', 'allowed_models'],
+  ['allowedProviders', 'allowed_providers'],
+  ['allowedTools', 'allowed_tools'],
+  ['deniedTools', 'denied_tools'],
+  ['networkPolicy', 'network_policy'],
+  ['allowedDomains', 'allowed_domains'],
+  ['filesystemPolicy', 'filesystem_policy'],
+  ['requireCredentialBroker', 'require_credential_broker'],
+  ['denyLocalCredentials', 'deny_local_credentials'],
+  ['dataPolicy', 'data_policy'],
+  ['loggingPolicy', 'logging_policy'],
+];
 
 export function serializeTomlConfig(config: KubicConfig): string {
   const lines: string[] = [];
@@ -1010,6 +1340,35 @@ export function serializeTomlConfig(config: KubicConfig): string {
   }
   if (config.session !== undefined) {
     emitTable(lines, 'session', config.session as Record<string, unknown>);
+  }
+  if (config.policy !== undefined) {
+    const { agentPolicy, ...rest } = config.policy;
+    const record: Record<string, unknown> = {};
+    for (const [field, tomlKey] of POLICY_TOML_KEYS) {
+      const value = rest[field];
+      if (value !== undefined) record[tomlKey] = value;
+    }
+    if (Object.keys(record).length > 0) emitTable(lines, 'policy', record);
+    if (agentPolicy !== undefined) {
+      emitTable(lines, 'policy.agent_policy', {
+        ...(agentPolicy.maxAgents === undefined
+          ? {}
+          : { max_agents: agentPolicy.maxAgents }),
+        ...(agentPolicy.maxCostUsd === undefined
+          ? {}
+          : { max_cost_usd: agentPolicy.maxCostUsd }),
+      });
+    }
+  }
+  if (config.audit !== undefined) {
+    for (const entry of config.audit) {
+      lines.push('[[audit]]');
+      const record = entry as unknown as Record<string, unknown>;
+      for (const key of Object.keys(record).sort()) {
+        lines.push(`${key} = ${formatValue(record[key])}`);
+      }
+      lines.push('');
+    }
   }
   return lines.join('\n');
 }
@@ -1103,9 +1462,11 @@ export function defaultLayerPaths(args: {
   projectRoot: string;
   workspaceRoot?: string;
   enterprisePath?: string;
+  productPath?: string;
 }): Record<ConfigLayer, string | undefined> {
   return {
     enterprise: args.enterprisePath ?? join('/etc', 'kubic', 'config.toml'),
+    product: args.productPath ?? join('/etc', 'kubic', 'product.toml'),
     global: join(args.home, '.kubic', 'config.toml'),
     project: join(args.projectRoot, '.kubic', 'config.toml'),
     workspace:

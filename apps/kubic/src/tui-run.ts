@@ -52,6 +52,11 @@ import {
   type AssembledModels,
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  type EffectivePolicy,
+  hasToolPolicy,
+  isToolAllowedByEnterprise,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
@@ -123,7 +128,6 @@ import {
 import {
   ModelSelectError,
   type ModelSelection,
-  selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
   BACKGROUND_CONTEXT,
@@ -132,7 +136,10 @@ import {
   type OperationAdmissionResult,
   type TerminalStatus,
 } from '../../../packages/worker/src/pi-boundary.js';
-import type { runtimeLaneDeps } from './config-runtime.js';
+import {
+  type runtimeLaneDeps,
+  selectModelUnderPolicy,
+} from './config-runtime.js';
 import {
   assistantSummary,
   NO_ASSISTANT_TEXT_SUMMARY,
@@ -349,6 +356,10 @@ export interface TuiRunOptions {
   // `[model]`/KUBIC_MODEL projection runtimeModelPin makes for `kubic run`.
   // It beats the role layer's model, which beats first-available.
   model?: ModelSelection;
+  // §58 enterprise policy (issue #288): the same EffectivePolicy the
+  // headless runner gates with — the interactive lane is not the
+  // unprotected one.
+  modelPolicy?: EffectivePolicy;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -452,6 +463,14 @@ export async function bootTuiLane(
     // command shell to print) rather than silently booting a roleless
     // lane. Resolved BEFORE model selection: the role layer's model pin is
     // a selection input (issue #295).
+    // §58 enterprise policy (issue #288): the same gates the headless runner
+    // applies — role grants are checked and the model selection is gated.
+    const enterprisePolicy = options.modelPolicy;
+    const toolGate =
+      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
+        ? (tool: string): boolean =>
+            isToolAllowedByEnterprise(enterprisePolicy, tool)
+        : undefined;
     const selectedRole = (() => {
       if (options.role === undefined) return undefined;
       const rolesCwd = options.roles?.cwd ?? process.cwd();
@@ -463,6 +482,9 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { layers: options.roles.layers }),
+        ...(enterprisePolicy === undefined
+          ? {}
+          : { toolPolicy: enterprisePolicy }),
       });
       const promptText = rolePromptFor(
         selected.doc,
@@ -486,14 +508,19 @@ export async function bootTuiLane(
     // (runTuiCommand). A ModelSelectError propagates to runTuiCommand, which
     // reports it as exit 6 before the alt-screen opens.
 
-    const model = selectModel(
-      models,
-      fauxPinned
+    const model = (() => {
+      const explicitSelection = fauxPinned
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : options.model,
-      roleModelSelection(selectedRole?.resolved.model),
-      assembled?.fallbackProviders,
-    );
+        : options.model;
+      const roleSelection = roleModelSelection(selectedRole?.resolved.model);
+      return selectModelUnderPolicy(
+        models,
+        explicitSelection,
+        roleSelection,
+        assembled?.fallbackProviders,
+        enterprisePolicy,
+      );
+    })();
     const modelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // The loaded skill names, for the §46 trajectory's resources (#383).
@@ -597,6 +624,9 @@ export async function bootTuiLane(
         ...(installed.contributions.length === 0
           ? {}
           : { contributions: installed.contributions }),
+        // §58 enterprise tool gate (issue #288): the same active-tools /
+        // prompt-tools intersection the headless lane installs.
+        ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
       },
     });
     // Issue #147 (§21): a turn a dead process left open would refuse every

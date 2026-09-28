@@ -473,7 +473,7 @@ describe('analysis commands: happy paths over the real handlers', () => {
 
   it('policy prints the decision', async () => {
     const run = await kubic(['policy', '--tool', 'shell'], true);
-    expect(run.out).toEqual(['allow shell']);
+    expect(run.out).toEqual(['allow shell (installed)']);
   });
 
   it('audit prints the record table', async () => {
@@ -520,7 +520,7 @@ describe('analysis commands: --json prints exactly one JSON document', () => {
   const shapes: Record<AnalysisName, readonly string[]> = {
     cost: ['agents', 'taskTotal'],
     perf: ['budgetMs', 'count', 'kind', 'p50', 'p95', 'regression', 'within'],
-    policy: ['decision', 'tool'],
+    policy: ['decision', 'source', 'tool'],
     audit: [],
     eval: ['exitCode', 'ok', 'record'],
     benchmark: ['exitCode', 'ok', 'results'],

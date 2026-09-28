@@ -60,6 +60,11 @@ import {
   createWorkerMailboxSeat,
   TIMEOUT_REASON_MARKER,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import {
+  type EffectivePolicy,
+  hasToolPolicy,
+  isToolAllowedByEnterprise,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type {
   ResolvedRole,
   RoleLayerInput,
@@ -107,7 +112,7 @@ import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
   type ModelSelection,
-  selectModel,
+  type selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
   BACKGROUND_CONTEXT,
@@ -116,6 +121,7 @@ import {
   type OperationResultRecord,
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { selectModelUnderPolicy } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 
@@ -172,6 +178,12 @@ export interface HeadlessRunDeps {
   // autoApprove, requireJustification, sessionScoped). Absent means the
   // documented defaults.
   approvals?: SoloApprovalConfig;
+  // §58 enterprise policy (issue #288): the composition root resolves it
+  // once (`runtimePolicy` in config-runtime) and threads it here. A run only
+  // gates its tool set and model selection when the layer actually
+  // configured those halves — an absent [policy] section never narrows
+  // anything.
+  modelPolicy?: EffectivePolicy;
   journalRetention?: JournalRetention;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
@@ -848,6 +860,15 @@ async function runHeadlessPromptImpl(
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    // §58 enterprise gates (issue #288): one local view of the resolved
+    // policy, so the role resolution, the model selection and the lane tool
+    // set all read the same object.
+    const enterprisePolicy = deps.modelPolicy;
+    const toolGate =
+      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
+        ? (tool: string): boolean =>
+            isToolAllowedByEnterprise(enterprisePolicy, tool)
+        : undefined;
     if (options.role !== undefined) {
       const rolesBridge = createNodeFileBridge(
         deps.roles?.cwd ?? process.cwd(),
@@ -862,6 +883,11 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),
+          // §58 enterprise policy (issue #288): a role document declaring a
+          // denied tool is refused here, by name, before the lane boots.
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { toolPolicy: enterprisePolicy }),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -949,13 +975,16 @@ async function runHeadlessPromptImpl(
       // selection; the role layer's own `provider/id` pin (issue #133) is
       // the next default, and `kubic run` with neither takes the first
       // usable provider (customs first; never a keyless built-in).
-      model = selectModel(
+      const explicitSelection = fauxPinned
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : deps.model;
+      const roleSelection = roleModelSelection(role?.resolved.model);
+      model = selectModelUnderPolicy(
         models,
-        fauxPinned
-          ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-          : deps.model,
-        roleModelSelection(role?.resolved.model),
+        explicitSelection,
+        roleSelection,
         fallbackProviders,
+        enterprisePolicy,
       );
     } catch (error) {
       if (error instanceof ModelSelectError) {
@@ -1198,6 +1227,9 @@ async function runHeadlessPromptImpl(
           classes: installed.classes,
           interceptors: installed.interceptors,
           ...(contributions.length === 0 ? {} : { contributions }),
+          // §58 enterprise tool gate (issue #288): the same predicate drives
+          // the active tool set and the prompt tools line.
+          ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
         },
       });
     } catch (error) {

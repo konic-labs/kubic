@@ -21,6 +21,7 @@ import {
   fauxProvider,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
+import { resolveEffectivePolicy } from './policy/enterprise.js';
 import {
   buildRunEnvelope,
   mapTerminusToExitCode,
@@ -290,6 +291,89 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
     );
     expect(result.terminus).toBe('completed');
     expect(result.summary).toBe('all done');
+  });
+});
+
+describe('enterprise policy gate on model selection (issue #288)', () => {
+  it('refuses a model outside allowed_models before any provider call', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const denied = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    models.setProvider(allowed.provider);
+    models.setProvider(denied.provider);
+    allowed.setResponses([fauxAssistantMessage('should never run')]);
+    denied.setResponses([fauxAssistantMessage('should never run')]);
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        model: { provider: 'other', id: denied.getModel().id },
+        modelPolicy: policy,
+      },
+    );
+    // A named policy refusal, never a probe against the denied provider: the
+
+    // run ends before the first request.
+    expect(result.terminus).toBe('provider_probe_failed');
+    expect(result.error?.message).toMatch(/policy/i);
+    expect(result.error?.message).toContain('other');
+    expect(allowed.state.callCount).toBe(0);
+    expect(denied.state.callCount).toBe(0);
+  });
+
+  it('skips a policy-denied provider for the implicit fallback pick', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const denied = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    // The registered order makes the DENIED provider first: the fallback
+    // pick must skip it rather than select-and-refuse.
+    models.setProvider(denied.provider);
+    models.setProvider(allowed.provider);
+    allowed.setResponses([fauxAssistantMessage('allowed answer')]);
+    denied.setResponses([fauxAssistantMessage('should never run')]);
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        modelPolicy: policy,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.model).toContain(`faux/`);
+    expect(allowed.state.callCount).toBeGreaterThan(0);
+    expect(denied.state.callCount).toBe(0);
+  });
+
+  it('runs a model the policy allows, unchanged (control)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['policy ok']),
+        env: new FakeExecutionEnv({}),
+        modelPolicy: resolveEffectivePolicy([
+          { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+        ]).policy,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('policy ok');
   });
 });
 

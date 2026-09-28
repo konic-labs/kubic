@@ -9,6 +9,7 @@
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
+import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
   applyRoleToLane,
@@ -122,6 +123,10 @@ export interface RoleSelectionInput extends RolesDirInput {
   // §35.1/§58 layering: layer-supplied tool_policy/tools over the document.
   // Empty in the shipped binary (no config layer populates roles yet).
   layers?: RoleLayerInput[];
+  // §58 enterprise policy (issue #288): the resolved role's declared tools
+  // are checked against it — a denied tool refuses the role instead of
+  // reaching the lane.
+  toolPolicy?: EffectivePolicy;
 }
 
 export interface SelectedRole {
@@ -138,7 +143,9 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
       `no role document for '${input.role}' under ${ROLES_DIR}${known === '' ? ' (no role documents found)' : ` (loaded: ${known})`}`,
     );
   }
-  const resolved = resolveRole(doc, input.layers ?? []);
+  const resolved = resolveRole(doc, input.layers ?? [], {
+    ...(input.toolPolicy === undefined ? {} : { toolPolicy: input.toolPolicy }),
+  });
   return { resolved, doc };
 }
 

@@ -4,10 +4,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import {
+  hasToolPolicy,
+  isToolAllowed,
+  isToolAllowedByEnterprise,
+} from '../policy/enterprise.js';
 import {
   BudgetKeyError,
   ConfigError,
@@ -680,6 +685,200 @@ describe('effective config view (issue #90)', () => {
     expect(active).not.toContain('bash');
     expect(active).not.toContain('write');
     await session.close(BACKGROUND_CONTEXT);
+  });
+});
+
+describe('enterprise [policy] on the live path (issue #288)', () => {
+  const ENTERPRISE = '/etc/kubic/config.toml';
+  const PRODUCT = '/etc/kubic/product.toml';
+  const GLOBAL = `${HOME}/.kubic/config.toml`;
+
+  const S58_EXAMPLE = `[policy]
+allowed_models = ["claude-sonnet-4-6", "local/*"]
+allowed_providers = ["anthropic", "local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = ["network_fetch"]
+
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+
+[[audit]]
+sink = "syslog"
+level = "privileged"
+`;
+
+  function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
+    const call = spy.mock.calls[0] as
+      | [{ systemPrompt?: string }, ...unknown[]]
+      | undefined;
+    const options = call?.[0];
+    expect(options?.systemPrompt).toBeTypeOf('string');
+    return options?.systemPrompt as string;
+  }
+
+  it('loads the §58 example as the enterprise layer and resolves it', () => {
+    const runtime = load({ [ENTERPRISE]: S58_EXAMPLE });
+    expect(runtime.policy.tools.deny).toEqual(['network_fetch']);
+    expect(runtime.policy.tools.allow).toContain('bash');
+    expect(runtime.policy.models.allowed).toEqual([
+      'claude-sonnet-4-6',
+      'local/*',
+    ]);
+    expect(runtime.policy.models.providers).toEqual(['anthropic', 'local']);
+    // 'proxy' is carried as the engine's allowlist mode; workspace-only as
+    // workspace-write. Both reconciliations are documented in design-drift.
+    expect(runtime.policy.network.mode).toBe('allowlist');
+    expect(runtime.policy.filesystem.level).toBe('workspace-write');
+    expect(runtime.policy.credentials.requireCredentialBroker).toBe(true);
+    expect(runtime.policy.agent).toEqual({ maxWorkers: 2, maxCostUsd: 5 });
+    // Every policy key has an effect row: the effective view never reports
+    // the documented surface as decoration.
+    const view = effectiveConfigView(runtime);
+    const policyValues = view.values.filter((entry) =>
+      entry.key.startsWith('policy.'),
+    );
+    expect(policyValues.length).toBeGreaterThan(0);
+    expect(policyValues.every((entry) => entry.disposition !== 'unknown')).toBe(
+      true,
+    );
+  });
+
+  it('refuses an unknown [policy] key as the enterprise layer, naming the key and layer', () => {
+    expect(() => load({ [ENTERPRISE]: '[policy]\nbogus_key = 1\n' })).toThrow(
+      /layer 'enterprise':.*unknown key 'bogus_key'/,
+    );
+  });
+
+  it('pins enterprise > product > global > project > session, denying downward only', () => {
+    const runtime = load(
+      {
+        [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+        [PRODUCT]: '[policy]\nallowed_tools = ["bash", "read"]\n',
+        [GLOBAL]: '[policy]\nallowed_tools = ["bash", "read", "write"]\n',
+        [PROJECT]: '[policy]\nallowed_tools = ["bash"]\n',
+      },
+      {
+        projectTrusted: true,
+        session: { policy: { allowedTools: ['bash'] } },
+      },
+    );
+    // The product layer is the first to set the allow list; global, project
+    // and session narrower/wider attempts are reported, never applied.
+    expect(runtime.policy.tools.allowSource).toBe('product');
+    expect(runtime.policy.tools.denySources).toEqual({ bash: 'enterprise' });
+    // The enterprise deny holds against every lower layer...
+    expect(isToolAllowed(runtime.policy, 'bash')).toBe(false);
+    // ...the product allow still admits what it names, and no lower layer
+    // can add a tool the product did not allow (write is dropped).
+    expect(isToolAllowed(runtime.policy, 'read')).toBe(true);
+    expect(isToolAllowed(runtime.policy, 'write')).toBe(false);
+  });
+
+  it('narrows a live lane from an enterprise tool deny (active tools and prompt tools line)', async () => {
+    const runtime = load(
+      {
+        [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+        [PROJECT]: '[permissions]\nshell = true\n',
+      },
+      { projectTrusted: true },
+    );
+    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
+    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
+    const {
+      AgentHarness,
+      BACKGROUND_CONTEXT,
+      createModels,
+      fauxAssistantMessage,
+      fauxProvider,
+      MemorySessionRepo,
+    } = await import('../../../worker/src/pi-boundary.js');
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('hi')]);
+    const booted = await bootSoloLane({
+      session,
+      models,
+      model: faux.getModel(),
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+      policy: {
+        classes: runtime.permissions.classes,
+        toolAllowed: (tool) => isToolAllowedByEnterprise(runtime.policy, tool),
+      },
+    });
+    try {
+      // The class-derived allowlist would include bash (shell=true); the
+      // enterprise deny removes it from what the lane actually activates.
+      const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
+      expect(active).not.toContain('bash');
+      expect(active).toContain('read');
+      // The prompt tells the model the truth about its own tool set (§40.3).
+      const toolsLine = /^tools: (.*)$/m.exec(promptOf(createSpy))?.[1] ?? '';
+      const advertised = toolsLine.split(',').map((name) => name.trim());
+      expect(advertised).not.toContain('bash');
+      expect(advertised).toContain('read');
+    } finally {
+      createSpy.mockRestore();
+      await session.close(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('leaves a lane without an enterprise tool policy untouched (control)', async () => {
+    const runtime = load(
+      { [PROJECT]: '[permissions]\nshell = true\n' },
+      { projectTrusted: true },
+    );
+    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
+    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
+    const {
+      BACKGROUND_CONTEXT,
+      createModels,
+      fauxAssistantMessage,
+      fauxProvider,
+      MemorySessionRepo,
+    } = await import('../../../worker/src/pi-boundary.js');
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('hi')]);
+    const booted = await bootSoloLane({
+      session,
+      models,
+      model: faux.getModel(),
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+      policy: {
+        classes: runtime.permissions.classes,
+        ...(hasToolPolicy(runtime.policy)
+          ? {
+              toolAllowed: (tool: string) =>
+                isToolAllowedByEnterprise(runtime.policy, tool),
+            }
+          : {}),
+      },
+    });
+    try {
+      const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
+      expect(active).toContain('bash');
+    } finally {
+      await session.close(BACKGROUND_CONTEXT);
+    }
   });
 });
 

@@ -97,7 +97,7 @@ describe('models.json trust gate (issue #322)', () => {
     const assembled = await assembleModels(
       cwd,
       {},
-      { home: tmpDir(), projectTrusted: true },
+      { home: tmpDir(), projectTrust: () => true },
     );
     expect(assembled.models.getProvider('local')?.id).toBe('local');
   });

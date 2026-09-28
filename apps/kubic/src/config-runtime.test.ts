@@ -15,6 +15,7 @@ import {
 } from '../../../packages/host/src/config/trust-store.js';
 import {
   loadCliConfig,
+  projectTrustFor,
   resolveInteractiveProjectTrust,
 } from './config-runtime.js';
 
@@ -105,6 +106,29 @@ describe('project trust store wiring (issue #228)', () => {
     });
     expect(result.error).toBeUndefined();
     expect(result.runtime?.projectTrusted).toBe(true);
+  });
+
+  it('refuses a home that cannot hold the store instead of trusting the cwd', () => {
+    const project = projectWithConfig();
+    const result = loadCliConfig({ cwd: project, home: '', env: {} });
+    expect(result.runtime).toBeUndefined();
+    expect(result.error).toMatch(/absolute home/);
+    expect(result.trust.trusted).toBe(false);
+  });
+
+  it('projects the loaded report into a per-path check, not a cwd boolean', () => {
+    const home = tmpDir('kubic-trust-home-');
+    const root = tmpDir('kubic-trust-root-');
+    const child = join(root, 'pkg');
+    mkdirSync(child);
+    storeFor(home).set(root, true);
+    const result = loadCliConfig({ cwd: child, home, env: {} });
+    // The cwd itself is undecided...
+    expect(result.trust.trusted).toBe(false);
+    // ...but the grant for the tree the ancestor files live in still applies.
+    const check = projectTrustFor(result);
+    expect(check(root)).toBe(true);
+    expect(check(child)).toBe(false);
   });
 });
 

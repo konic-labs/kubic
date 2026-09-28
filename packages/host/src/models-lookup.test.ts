@@ -10,6 +10,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
+import {
+  ProjectTrustStore,
+  projectTrustCheck,
+  projectTrustStorePath,
+} from './config/trust-store.js';
 import { assembleModels, findModelsProjectRoot } from './models-cli.js';
 
 const made: string[] = [];
@@ -177,14 +182,17 @@ describe('models.json lookup (issue #222)', () => {
     );
   });
 
-  it('`kubic run` loads the project models.json under a store-granted decision (issue #228)', async () => {
+  it('scopes a store grant to the tree the models.json lives in (issue #228 review)', async () => {
     const home = tmpDir();
     const { root, sub } = repo();
     const path = writeJson(join(root, 'models.json'), provider('mine'));
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
     vi.stubEnv('HOME', home);
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
-    // No KUBIC_TRUST_PROJECT: the decision arrives as the composition
-    // root's explicit `projectTrusted` gate (from the trust store).
+    // The grant names the repository root; the run starts in src/deep, and
+    // the root's committed file must still load — the decision belongs to
+    // the tree the file lives in.
+    store.set(root, true);
     const debugLines: string[] = [];
     await runHeadlessPrompt(
       'hello',
@@ -195,11 +203,38 @@ describe('models.json lookup (issue #222)', () => {
         modelsCwd: sub,
         debugSink: (line) => debugLines.push(line),
         warn: () => undefined,
-        projectTrusted: true,
+        trustProject: projectTrustCheck({ home, env: {}, store }),
       },
     );
     expect(debugLines.join('\n')).toContain(
       `loaded models.json: ${path} (project, trusted): mine`,
+    );
+  });
+
+  it('never lets a subdirectory grant reach the ancestor models.json (issue #228 review)', async () => {
+    const home = tmpDir();
+    const { root, sub } = repo();
+    const path = writeJson(join(root, 'models.json'), provider('mine'));
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    // A grant in src/deep only: the root's committed file is out of scope.
+    store.set(sub, true);
+    const warnings: string[] = [];
+    await runHeadlessPrompt(
+      'hello',
+      { timeoutMs: 1, debug: true },
+      {
+        sessionsRoot: tmpDir(),
+        env: new FakeExecutionEnv({}),
+        modelsCwd: sub,
+        debugSink: () => undefined,
+        warn: (line) => warnings.push(line),
+        trustProject: projectTrustCheck({ home, env: {}, store }),
+      },
+    );
+    expect(warnings.join('\n')).toContain(
+      `models.json ignored: ${path} (project, untrusted`,
     );
   });
 });

@@ -22,6 +22,9 @@ export interface ConfigDoctorInput {
         decision: boolean | null;
         envTrust: boolean;
         storePath: string;
+        // Issue #228 review: the store exists but could not be read or
+        // parsed — named instead of reported as "no decision recorded".
+        storeError?: string;
       }
     | undefined;
   // Accepted keys whose effective value has NO row in the key-effect table
@@ -51,8 +54,14 @@ function projectTrustDetail(input: ConfigDoctorInput): string {
     const via = [
       trust.decision === true ? `recorded in ${trust.storePath}` : undefined,
       trust.envTrust ? 'KUBIC_TRUST_PROJECT=1' : undefined,
+      trust.storeError === undefined
+        ? undefined
+        : `store error: ${trust.storeError}`,
     ].filter((part): part is string => part !== undefined);
     return `project layer trusted${via.length === 0 ? '' : ` (${via.join(' + ')})`}`;
+  }
+  if (trust.storeError !== undefined) {
+    return `project layer not trusted (${trust.storeError})`;
   }
   if (trust.decision === false) {
     return `project layer not trusted (declined in ${trust.storePath}; run 'kubic trust' to accept)`;

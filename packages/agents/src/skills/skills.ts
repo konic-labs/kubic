@@ -47,7 +47,15 @@ export interface DiscoverSkillsOptions {
   bridge: FileBridge;
   homeDir: string;
   cwd: string;
+  // The global trust decision (the KUBIC_TRUST_PROJECT opt-in, fixtures):
+  // every project ancestor is in scope. Production callers pass
+  // `trustProject` so the decision is checked per ancestor instead.
   trusted: boolean;
+  // Issue #228 review: per-directory trust. Takes precedence over
+  // `trusted`: a project/package skill is loaded only when its own
+  // directory is trusted, so a grant for a child never walks up into an
+  // untrusted parent (and a grant for a parent applies from a child cwd).
+  trustProject?: (dir: string) => boolean;
   settingsSkills?: string[];
   cliSkills?: string[];
   noSkills?: boolean;
@@ -304,6 +312,7 @@ export function discoverSkills(
     homeDir,
     cwd,
     trusted,
+    trustProject,
     settingsSkills = [],
     cliSkills = [],
     noSkills = false,
@@ -327,9 +336,11 @@ export function discoverSkills(
         add(loadSkillDir(bridge, dir, 'user', log));
       }
     }
-    if (trusted) {
+    const trustFor = trustProject ?? (() => trusted);
+    if (trustProject !== undefined || trusted) {
       const chain = ancestorsOf(cwd).reverse();
       for (const ancestor of chain) {
+        if (!trustFor(ancestor)) continue;
         for (const rootName of ['.pi/skills', '.agents/skills']) {
           const root = joinPosix(ancestor, rootName);
           roots.push(root);
@@ -341,6 +352,7 @@ export function discoverSkills(
       // Package-declared dirs: nearest package.json wins per name via the
       // same shadowing map (ancestors far-to-near so nearer shadows).
       for (const ancestor of chain) {
+        if (!trustFor(ancestor)) continue;
         for (const dir of readPackageSkillDirs(bridge, ancestor, log)) {
           add(loadSkillDir(bridge, dir, 'package', log));
         }

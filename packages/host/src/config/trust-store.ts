@@ -24,7 +24,7 @@
 // imports node:fs) and its locked tmp+rename update, so a concurrent
 // grant/revoke can never leave a half-written store.
 
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import {
   createNodeFileBridge,
   updateFileLocked,
@@ -58,6 +58,10 @@ export interface ProjectTrustReport {
   // The effective gate: a recorded true or the env opt-in.
   readonly trusted: boolean;
   readonly storePath: string;
+  // Present when the store file exists but could not be read or parsed
+  // (issue #228 review): reads stay fail-closed (no decision), and the
+  // report names the file instead of implying the user never decided.
+  readonly storeError?: string;
 }
 
 // A broken store file, named by path — never silently replaced.
@@ -86,7 +90,21 @@ export const NO_PROJECT_TRUST: ProjectTrustReport = {
 };
 
 export function projectTrustStorePath(home: string): string {
-  return join(resolve(home), '.kubic', 'trust.json');
+  return join(requireHome(home), '.kubic', 'trust.json');
+}
+
+// The trust store lives under the user's home and nowhere else (issue #228
+// review): an empty or relative home would resolve against the process cwd
+// and put the store inside the project it is meant to gate — a repository
+// could then ship its own decision. Refused by name; `loadCliConfig` turns
+// the refusal into a named config error.
+function requireHome(home: string): string {
+  if (home === '' || !isAbsolute(home)) {
+    throw new TrustStoreError(
+      `project trust needs an absolute home directory, got ${JSON.stringify(home)} — the store cannot live inside the project`,
+    );
+  }
+  return resolve(home);
 }
 
 // The key a decision is recorded under: the realpath when the path exists,
@@ -162,16 +180,21 @@ export class ProjectTrustStore {
   // The decision for `cwd`; null when absent or when the store cannot be
   // read (fail closed — the caller refuses the project layer by name).
   get(cwd: string): ProjectTrustDecision {
-    const raw = this.readText();
-    if (raw === undefined) return null;
-    let entries: Record<string, boolean | null>;
-    try {
-      entries = parseTrustFile(raw, this.file);
-    } catch {
-      return null;
+    const read = this.readStore();
+    return read.kind === 'entries' ? decisionOf(read.entries, cwd) : null;
+  }
+
+  // As `get`, plus the reason when the store exists but could not be used
+  // (issue #228 review): the report and doctor then say "unreadable" or
+  // "corrupt" instead of implying the user simply never decided.
+  inspect(cwd: string): { decision: ProjectTrustDecision; error?: string } {
+    const read = this.readStore();
+    if (read.kind === 'unreadable' || read.kind === 'corrupt') {
+      return { decision: null, error: read.error };
     }
-    const value = entries[canonicalTrustPath(cwd)];
-    return value === true || value === false ? value : null;
+    return {
+      decision: read.kind === 'entries' ? decisionOf(read.entries, cwd) : null,
+    };
   }
 
   // Records `decision`; null removes the entry (revoke). The read → update
@@ -189,12 +212,16 @@ export class ProjectTrustStore {
   }
 
   // Every recorded boolean decision, sorted by path. Throws on a corrupt
-  // store: the operator asked to see the records, so silence would lie.
+  // store: the operator asked to see the records, so silence would lie. An
+  // UNREADABLE store (EACCES/ELOOP) is not a corrupt one — it reads as
+  // nothing recorded, never a throw (issue #228 review: `kubic trust` stays
+  // the repair path even when the store cannot be read).
   entries(): ProjectTrustEntry[] {
-    const raw = this.readText();
-    const parsed = raw === undefined ? {} : parseTrustFile(raw, this.file);
+    const read = this.readStore();
+    if (read.kind === 'corrupt') throw new TrustStoreError(read.error);
+    if (read.kind !== 'entries') return [];
     const out: ProjectTrustEntry[] = [];
-    for (const [path, value] of Object.entries(parsed)) {
+    for (const [path, value] of Object.entries(read.entries)) {
       if (value === true || value === false)
         out.push({ path, decision: value });
     }
@@ -202,18 +229,79 @@ export class ProjectTrustStore {
     return out;
   }
 
-  private readText(): string | undefined {
-    if (!BRIDGE.exists(this.file)) return undefined;
+  private readStore(): StoreRead {
+    let text: string;
     try {
-      return BRIDGE.readTextFile(this.file);
-    } catch {
-      return undefined;
+      if (!BRIDGE.exists(this.file)) return { kind: 'missing' };
+      text = BRIDGE.readTextFile(this.file);
+    } catch (error) {
+      // A race with another writer's rename is "no file yet", not an error.
+      if ((error as { code?: unknown } | null)?.code === 'ENOENT') {
+        return { kind: 'missing' };
+      }
+      return { kind: 'unreadable', error: message(error) };
+    }
+    try {
+      return { kind: 'entries', entries: parseTrustFile(text, this.file) };
+    } catch (error) {
+      return { kind: 'corrupt', error: message(error) };
     }
   }
 }
 
+// What one read of the store found. `get` collapses every non-entry outcome
+// to "no decision" (fail closed); `inspect` keeps the reason so the report
+// and doctor can name it; `entries` names a genuinely corrupt file but
+// treats an unreadable one as "nothing recorded".
+type StoreRead =
+  | { kind: 'missing' }
+  | { kind: 'unreadable'; error: string }
+  | { kind: 'corrupt'; error: string }
+  | { kind: 'entries'; entries: Record<string, boolean | null> };
+
+function decisionOf(
+  entries: Record<string, boolean | null>,
+  cwd: string,
+): ProjectTrustDecision {
+  const value = entries[canonicalTrustPath(cwd)];
+  return value === true || value === false ? value : null;
+}
+
 function envFlag(raw: string | undefined): boolean {
   return raw === '1' || raw === 'true';
+}
+
+// A per-path trust check for consumers that resolve the file they load by
+// walking ancestors — the project `models.json` root and each skills
+// ancestor (issue #228 review). The decision belongs to the tree the file
+// lives in: a grant for /repo covers /repo's committed files when a run
+// starts in /repo/pkg, while a grant for /repo/pkg never reaches /repo.
+// `KUBIC_TRUST_PROJECT=1/true` is a global opt-in above the store.
+export type ProjectTrustCheck = (path: string) => boolean;
+
+export function projectTrustCheck(inputs: {
+  home: string;
+  env?: Record<string, string | undefined>;
+  // The already-derived opt-in (the report's `envTrust`): callers holding a
+  // report pass it instead of re-reading an env map.
+  envTrust?: boolean;
+  store?: ProjectTrustStore;
+}): ProjectTrustCheck {
+  const envTrust =
+    inputs.envTrust ??
+    envFlag(inputs.env?.[RUNTIME_ENV_OVERRIDES.trustProject]);
+  let store = inputs.store;
+  if (store === undefined) {
+    try {
+      store = new ProjectTrustStore(projectTrustStorePath(inputs.home));
+    } catch {
+      // An unusable home cannot record decisions: fail closed. The config
+      // load names the refusal; the env opt-in still applies (it is global,
+      // not keyed to a store).
+      store = undefined;
+    }
+  }
+  return (path) => envTrust || (store?.get(path) ?? false);
 }
 
 // The trust state of one project directory over the store + the documented
@@ -225,10 +313,10 @@ export function projectTrustReport(inputs: {
   env?: Record<string, string | undefined>;
   store?: ProjectTrustStore;
 }): ProjectTrustReport {
-  const home = resolve(inputs.home);
+  const home = requireHome(inputs.home);
   const store =
     inputs.store ?? new ProjectTrustStore(projectTrustStorePath(home));
-  const decision = store.get(inputs.cwd);
+  const inspected = store.inspect(inputs.cwd);
   const envTrust = envFlag(inputs.env?.[RUNTIME_ENV_OVERRIDES.trustProject]);
   const root = resolve(inputs.cwd);
   const configPath = join(root, '.kubic', 'config.toml');
@@ -236,10 +324,22 @@ export function projectTrustReport(inputs: {
     home,
     key: canonicalTrustPath(inputs.cwd),
     configPath,
-    present: BRIDGE.exists(configPath),
-    decision,
+    present: presentFile(configPath),
+    decision: inspected.decision,
     envTrust,
-    trusted: decision === true || envTrust,
+    trusted: inspected.decision === true || envTrust,
     storePath: store.file,
+    ...(inspected.error === undefined ? {} : { storeError: inspected.error }),
   };
+}
+
+// A config-presence probe must never throw the command off its refusal path:
+// an unsearchable `.kubic` reads as "not present", and the config load names
+// the real failure when it tries the layer itself.
+function presentFile(path: string): boolean {
+  try {
+    return BRIDGE.exists(path);
+  } catch {
+    return false;
+  }
 }

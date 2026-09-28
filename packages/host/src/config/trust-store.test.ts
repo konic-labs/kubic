@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   canonicalTrustPath,
   ProjectTrustStore,
+  projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
 } from './trust-store.js';
@@ -157,6 +158,46 @@ describe('project trust store (issue #228)', () => {
     expect(() => store.entries()).toThrow(/trust store/);
     expect(() => store.set(project, true)).toThrow(/trust store/);
   });
+
+  it('refuses an empty or relative home instead of keying the store to the cwd', () => {
+    expect(() => projectTrustStorePath('')).toThrow(/absolute home/);
+    expect(() => projectTrustStorePath('relative/home')).toThrow(
+      /absolute home/,
+    );
+    expect(() =>
+      projectTrustReport({ home: '', cwd: '/repo', env: {} }),
+    ).toThrow(/absolute home/);
+  });
+
+  it('reads an unreadable store as no decision and names it for the doctor', () => {
+    const home = tmpDir();
+    const path = projectTrustStorePath(home);
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    symlinkSync(path, path); // a self-loop: lstat sees a link, readFile ELOOPs
+    const store = new ProjectTrustStore(path);
+    expect(store.get('/repo')).toBe(null);
+    expect(store.entries()).toEqual([]);
+    const report = projectTrustReport({ home, cwd: '/repo', env: {} });
+    expect(report.trusted).toBe(false);
+    expect(report.storeError).toBeDefined();
+  });
+
+  it('checks trust for the path the files live in, never the process cwd', () => {
+    const home = tmpDir();
+    const root = tmpDir();
+    const child = join(root, 'pkg');
+    mkdirSync(child);
+    const store = storeFor(home);
+    store.set(root, true);
+    const rootGrant = projectTrustCheck({ home, env: {}, store });
+    expect(rootGrant(root)).toBe(true);
+    expect(rootGrant(child)).toBe(false);
+    store.set(root, null);
+    store.set(child, true);
+    const childGrant = projectTrustCheck({ home, env: {}, store });
+    expect(childGrant(child)).toBe(true);
+    expect(childGrant(root)).toBe(false);
+  });
 });
 
 describe('project trust report (issue #228)', () => {
@@ -207,5 +248,14 @@ describe('project trust report (issue #228)', () => {
     const report = projectTrustReport({ home, cwd: project });
     expect(report.present).toBe(false);
     expect(report.trusted).toBe(false);
+  });
+
+  it('names a corrupt store in the report without trusting it', () => {
+    const home = tmpDir();
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(projectTrustStorePath(home), 'not json');
+    const report = projectTrustReport({ home, cwd: '/repo', env: {} });
+    expect(report.trusted).toBe(false);
+    expect(report.storeError).toContain('not valid JSON');
   });
 });

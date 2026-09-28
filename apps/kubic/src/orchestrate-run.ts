@@ -182,14 +182,13 @@ export interface OrchestrateRunOptions {
    */
   orchestrator?: RuntimeOrchestrator;
   /**
-   * Issue #228 (§35.1): the effective project-trust decision (the durable
-   * store or the env opt-in). When trusted, every spawned child inherits
-   * `KUBIC_TRUST_PROJECT=1` unless the operator exported it already — the
-   * child's worktree path is not the key the manager's decision is recorded
-   * under, so the child must be told exactly as it was before this store
-   * existed.
+   * Issue #228 (§35.1): the manager's trust decision, propagated to every
+   * spawned child as the `KUBIC_TRUST_PROJECT=1` env opt-in unless the
+   * operator exported it already — the child's worktree path is not the key
+   * the manager's decision is recorded under, so the child must be told
+   * exactly as it was before this store existed.
    */
-  trustProject?: boolean;
+  trustProjectEnv?: boolean;
   /**
    * The process-signal seam the live-worker guard hangs off. Prod uses the
    * real process (SIGINT/SIGTERM/SIGHUP + 'exit'); tests inject a fake so
@@ -896,7 +895,7 @@ export async function orchestrateDepsWithDefaults(
   // under — without this, a committed `.kubic/config.toml` (which IS in the
   // worktree) would refuse every worker while the manager loads trusted.
   const trustEnv = (): Record<string, string> =>
-    options.trustProject === true &&
+    options.trustProjectEnv === true &&
     process.env.KUBIC_TRUST_PROJECT === undefined
       ? { KUBIC_TRUST_PROJECT: '1' }
       : {};

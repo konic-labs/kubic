@@ -95,6 +95,7 @@ import {
   installedPolicyClasses,
   installedPolicyDeps,
   kubicConfigLoader,
+  projectTrustFor,
   runtimeLaneDeps,
   runtimeModelPin,
   runtimeRunDeps,
@@ -275,7 +276,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // passes the one report the config load already consumed.
       const assembled = await assembleModels(process.cwd(), process.env, {
         home: cliConfig.trust.home,
-        projectTrusted: cliConfig.trust.trusted,
+        projectTrust: projectTrustFor(cliConfig),
       });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
@@ -300,12 +301,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           runHeadlessPrompt(prompt, options, {
             model: runtimeModelPin(cliConfig),
             ...runtimeRunDeps(cliConfig),
-            // Issue #228 (§29.3): the store's decision unlocks trusted
-            // ancestor project skills, exactly as the env opt-in does.
-            skills: { trusted: cliConfig.trust.trusted },
-            // Issue #228 (§35.1): the same decision gates the project
-            // models.json on this lane's assembled catalog.
-            projectTrusted: cliConfig.trust.trusted,
+            // Issue #228 review: one per-path check gates the project
+            // models.json and each ancestor skill root on the tree the
+            // files live in — never a cwd boolean applied to ancestors.
+            trustProject: projectTrustFor(cliConfig),
             // Issue #133: the shared lane projections — the configured agent
             // id (journal attribution, `kubic diff --agent`) and the
             // config-sourced role layers `--role` merges under the document.
@@ -338,10 +337,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // interactive lane's baseline and sweep exclude what `kubic run`
           // excludes.
           reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
-          // Issue #228 (§29.3): the store's decision unlocks trusted
-          // ancestor project skills on the interactive lane too.
-          skills: { trusted: cliConfig.trust.trusted },
-          projectTrusted: cliConfig.trust.trusted,
+          // Issue #228 review: the same per-path check gates the project
+          // models.json and each ancestor skill root on the interactive lane.
+          trustProject: projectTrustFor(cliConfig),
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),
@@ -355,7 +353,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       const view = presentation(out, debug, options.json === true);
       const assembled = await assembleModels(process.cwd(), process.env, {
         home: cliConfig.trust.home,
-        projectTrusted: cliConfig.trust.trusted,
+        projectTrust: projectTrustFor(cliConfig),
       });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
@@ -469,7 +467,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // worker child; the child's worktree path is not the key the
           // manager's decision is recorded under, so the child inherits the
           // env opt-in exactly as it does when the operator exported it.
-          trustProject: cliConfig.trust.trusted,
+          trustProjectEnv: cliConfig.trust.trusted,
           // Issue #133: the runtime `[orchestrator]` projection (worktree
           // parent + worker cap, validated at load) — the same values the
           // dispatch shipped to the repo's exclude rules above.
@@ -607,11 +605,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         },
         // Issue #114: the re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
-        // Issue #228: and the same project-trust decision, so the assembled
-        // catalog loads the project models.json the same way.
+        // Issue #228 review: and the same per-path trust check, so the
+        // assembled catalog gates the project models.json on its own root.
         {
           ...runtimeRunDeps(cliConfig),
-          projectTrusted: cliConfig.trust.trusted,
+          trustProject: projectTrustFor(cliConfig),
         },
       ),
     export: (options) =>

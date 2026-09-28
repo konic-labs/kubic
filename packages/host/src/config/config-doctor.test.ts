@@ -170,4 +170,26 @@ describe('doctor config section (issue #90)', () => {
     expect(undecided.detail).toMatch(/no decision recorded/);
     expect(undecided.detail).toContain('KUBIC_TRUST_PROJECT=1');
   });
+
+  it('names a store error instead of reporting no decision (issue #228 review)', () => {
+    const probe = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: false,
+        projectTrust: {
+          decision: null,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+          storeError:
+            'trust store /home/u/.kubic/trust.json is not valid JSON: bad',
+        },
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain('not valid JSON');
+    expect(probe.detail).not.toContain('no decision recorded');
+  });
 });

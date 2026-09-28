@@ -40,9 +40,9 @@ export async function runProdReplay(
       runRuntime: ReplayRuntimeDeps,
     ) => {
       const assembled = await assembleModels(process.cwd(), process.env, {
-        ...(runtime.projectTrusted === undefined
+        ...(runtime.trustProject === undefined
           ? {}
-          : { projectTrusted: runtime.projectTrusted }),
+          : { projectTrust: runtime.trustProject }),
       });
       try {
         const selection = parseModelFlag(model);

@@ -76,9 +76,13 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
   // The home holding ~/.kubic/models/models.json; also what the auth
   // context expands `~` against (tests pass a temp dir).
   readonly home?: string;
-  // The caller's accepted trust decision for the project layer (§35.1);
-  // KUBIC_TRUST_PROJECT=1 in `env` also opts in.
-  readonly projectTrusted?: boolean;
+  // Issue #228 review: the per-path trust check for the project layer. The
+  // project root is resolved by walking ancestors (findModelsProjectRoot),
+  // so the decision is checked for THAT root — a grant for /repo covers
+  // /repo/models.json when a run starts in /repo/pkg, and a grant for
+  // /repo/pkg never reaches /repo. Absent leaves only the global
+  // KUBIC_TRUST_PROJECT opt-in.
+  readonly projectTrust?: (path: string) => boolean;
 }
 
 // The user-global models.json (§35 global tree: ~/.kubic/models/).
@@ -168,8 +172,6 @@ export async function assembleModels(
   options: AssembleOptions = {},
 ): Promise<AssembledModels> {
   const home = options.home ?? homedir();
-  const projectTrusted =
-    options.projectTrusted === true || envTrustsProject(env);
   const models = createModels({
     credentials: new InMemoryCredentialStore(),
     authContext: authContextFor(env, home),
@@ -252,7 +254,11 @@ export async function assembleModels(
     pinnedRoot !== undefined && pinnedRoot !== ''
       ? resolve(pinnedRoot)
       : findModelsProjectRoot(cwd, home);
-  load(projectModelsPath(projectRoot), 'project', projectTrusted);
+  load(
+    projectModelsPath(projectRoot),
+    'project',
+    options.projectTrust?.(projectRoot) === true || envTrustsProject(env),
+  );
   const checks = await Promise.all(
     builtins.map(async (provider) => {
       try {

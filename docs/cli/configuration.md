@@ -42,9 +42,13 @@ a cancelled prompt records nothing and fails closed.
 - `KUBIC_TRUST_PROJECT=1` accepts the project layer for one invocation,
 above the persistent store, and records nothing.
 
-Trust is exact-path: a decision never applies to a parent or sibling
-directory (`/a` does not trust `/a-sibling`), and a symlinked path is the
-same decision as its target. `kubic doctor`'s `config-load` check names the
+Trust is exact-path: a decision names the tree its files live in and never
+applies to a parent or sibling directory (`/a` does not trust `/a-sibling`,
+and a grant for `/a/b` never unlocks `/a`'s committed files). Consumers that
+walk up to the repository root — the project `models.json`, project skills —
+check the store for the directory they resolved, so a grant for the root
+still applies from a subdirectory. A symlinked path is the same decision as
+its target. `kubic doctor`'s `config-load` check names the
 trust state and where it came from. Full detail — the store file, its
 concurrency posture and every message — is on
 [project trust](trust.md).

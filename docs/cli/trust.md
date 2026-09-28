@@ -19,10 +19,15 @@ half-applied — and the refusal names the remedies:
 error: project-local config refused pre-trust: <path>/.kubic/config.toml — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation
 ```
 
-The same gate covers the project `models.json` and trusted-ancestor project
-skills, so a repository cannot point a provider — and your API key — at its
-own URL either. The decision is threaded to every consuming lane (`run`,
-`tui`, `replay`, `models`, `doctor`, and orchestrate worker children).
+The same gate covers the project `models.json` and ancestor project skills,
+so a repository cannot point a provider — and your API key — at its own URL
+either. Those consumers resolve their files by walking up to the repository
+root, so the decision is checked against **the directory the file lives
+in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
+skills even when a run starts in `/repo/pkg`, while a grant for `/repo/pkg`
+never reaches `/repo`. The decision is threaded to every consuming lane
+(`run`, `tui`, `replay`, `models`, `doctor`, and orchestrate worker
+children).
 
 ## `kubic trust`
 
@@ -63,10 +68,12 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
   a symlinked path and its target share one decision.
 - **Values are `true` (trusted) or `false` (declined)**; an absent key is
   "no decision yet". A `null` value is accepted and read as "no decision".
-- **Trust is exact-path.** It never applies to a parent or a sibling
-  directory: trusting `/a` does not trust `/a-sibling`, and a child
-  directory has its own decision. This is stricter than an ancestor walk on
-  purpose.
+- **Trust is exact-path.** A decision names the tree its files live in; it
+  never applies to a parent or a sibling directory: trusting `/a` does not
+  trust `/a-sibling`, and a grant for `/a/b` never unlocks files committed
+  at `/a`. Ancestor-resolving consumers (the project `models.json`, project
+  skills) check the store for the directory they resolved, so a grant for
+  `/a` still applies to `/a`'s own files from any subdirectory.
 - **Writes are atomic**: a locked read → tmp+rename update (the same
   primitive the orchestrator state files use), keys sorted, so two
   concurrent grants cannot lose one another.
@@ -124,7 +131,10 @@ in its own worktree — a different path from the manager's recorded decision.
   `project layer trusted (recorded in ~/.kubic/trust.json)`,
   `project layer trusted (KUBIC_TRUST_PROJECT=1)`,
   `project layer not trusted (declined in …; run 'kubic trust' to accept)`
-  or `project layer not trusted (no decision recorded; …)`.
+  or `project layer not trusted (no decision recorded; …)`. A store that
+  exists but cannot be read or parsed is named there
+  (`project layer not trusted (trust store …)`) instead of being passed off
+  as an undecided project.
 - `kubic models` and `kubic doctor` report the project `models.json` as
   `loaded` or `ignored, untrusted` under the same decision.
 

@@ -42,8 +42,11 @@ import {
   type RuntimeConfig,
 } from '../../../packages/host/src/config/runtime.js';
 import {
+  NO_PROJECT_TRUST,
+  type ProjectTrustCheck,
   type ProjectTrustReport,
   ProjectTrustStore,
+  projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
@@ -163,7 +166,20 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const env = options.env ?? process.env;
   const bridge = createNodeFileBridge(cwd);
   const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, cwd);
-  const stored = projectTrustReport({ home, cwd, env });
+  let stored: ProjectTrustReport;
+  try {
+    stored = projectTrustReport({ home, cwd, env });
+  } catch (error) {
+    // A home that cannot hold the store (empty or relative) is a named
+    // refusal, not a crash: the trust boundary cannot be established, so no
+    // project-local file may load.
+    return {
+      runtime: undefined,
+      error: message(error),
+      ignoreSplit,
+      trust: NO_PROJECT_TRUST,
+    };
+  }
   const trusted = options.projectTrusted === true || stored.trusted;
   const trust = trusted === stored.trusted ? stored : { ...stored, trusted };
   try {
@@ -178,6 +194,18 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   } catch (error) {
     return { runtime: undefined, error: message(error), ignoreSplit, trust };
   }
+}
+
+// Issue #228 review: the per-path trust check for consumers that resolve
+// the file they load by walking ancestors (the project models.json root,
+// each skills ancestor). Built from the same report the config load
+// consumed, so the store/env decision can never disagree with the config
+// gate. An unusable home yields an env-only check (fail closed).
+export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
+  return projectTrustCheck({
+    home: result.trust.home,
+    envTrust: result.trust.envTrust,
+  });
 }
 
 // The interactive half of the trust gate (issue #228): `kubic tui` and the

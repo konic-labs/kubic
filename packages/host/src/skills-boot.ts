@@ -28,9 +28,13 @@ export interface BootSkillOptions {
   cwd: string;
   homeDir: string;
   // §29.3 trust gate: false keeps every project root (`.pi/skills`,
-  // `.agents/skills`, package-declared dirs) out of discovery. The
-  // composition root passes the documented `KUBIC_TRUST_PROJECT` opt-in.
+  // `.agents/skills`, package-declared dirs) out of discovery — unless
+  // `trustProject` is given, which checks each ancestor on its own.
   trusted: boolean;
+  // Issue #228 review: per-ancestor trust. Production passes the store's
+  // per-path check, so a grant for the tree a skill lives in applies and a
+  // grant for a child never reaches an untrusted parent.
+  trustProject?: (dir: string) => boolean;
   // --no-skills: layered discovery off. Explicit --skill paths still apply
   // (the loader's own contract: explicit intent always applies).
   noSkills?: boolean;
@@ -84,6 +88,9 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     homeDir: options.homeDir,
     cwd: options.cwd,
     trusted: options.trusted,
+    ...(options.trustProject === undefined
+      ? {}
+      : { trustProject: options.trustProject }),
     ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
     ...(options.cliSkills === undefined
       ? {}

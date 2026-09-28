@@ -20,6 +20,7 @@ docs and code must never imply otherwise (design §59.1).
 | `config/config-cli.ts` | `runConfigCommand`, `ConfigCommandDeps`, `CONFIG_EXIT_OK/FAIL` — `kubic config [--json]` (#90) |
 | `config/config-doctor.ts` | `configDoctorProbe`, `buildConfigDoctorInput`, `CONFIG_DOCTOR_ID` — doctor's config check (#90) |
 | `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
+| `config/role-credentials.ts` | `ProviderKeyEnv`, `ProviderKeyIndex`, `providerOfModelRef`, `resolveWorkerProvider`, `resolveProviderGrant`, `planWorkerCredentials`, `workerCredentialDoctorProbe` — §36.3 provider-credential scoping for orchestrator workers (#200): which provider a role resolves to, exactly which key env vars that provider needs, and when the run must refuse by provider name before any worktree exists (#200) |
 | `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `SessionOverlapProbe`, `DoctorDeps`, `collectDoctorChecks` |
 | `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
 | `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool spans on the run path, #98) |

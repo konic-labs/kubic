@@ -90,7 +90,9 @@ describe("prod orchestrate path: workers resolve the manager's models.json (issu
     await gitOrThrow(root, ['add', 'base.txt']);
     await gitOrThrow(root, ['commit', '-m', 'base']);
     // The provider config stays machine-local: untracked AND excluded, so
-    // no worktree checkout ever contains it.
+    // no worktree checkout ever contains it. The local endpoint is keyless
+    // (a literal apiKey), so the issue #200 credential preflight has nothing
+    // to deliver and this test keeps asserting the models-root propagation.
     writeFileSync(
       join(root, 'models.json'),
       JSON.stringify({
@@ -99,6 +101,7 @@ describe("prod orchestrate path: workers resolve the manager's models.json (issu
             id: 'managers',
             baseUrl: 'http://127.0.0.1:1/v1',
             api: 'openai-completions',
+            apiKey: 'not-needed',
             models: [{ id: 'm1' }],
           },
         ],

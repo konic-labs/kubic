@@ -317,6 +317,23 @@ Conflict delegation with parallel surfacing and retained-worktree status
 (issue #106) runs today — see below; so do per-worker approvals and opt-in
 budgets (issue #105, §41/§71).
 
+**Worker provider credentials (issue #200, §36.3, §59).** Each worker's
+provider key is delivered as that worker's role grant, never as ambient env:
+the manager resolves the provider the role will use, forwards exactly that
+provider's key variables as `KUBIC_ROLE_<ROLE>_<ENV_VAR>` through the §3.8
+allowlist, and the child reads them back as the provider's `apiKeyEnv` auth
+(a `models.json` key is still resolved per request and audited in the child's
+run, §36.1 rules 3-4; a built-in key keeps Pi's own env auth).
+No sibling role's provider key, no second provider's key, and no unrelated
+parent secret (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, …) reaches the child
+env, and the grant is redacted from `--debug` spawn lines and every export.
+When a role's provider key is missing from the orchestrator's environment,
+the run exits 6 (`code=credential_unavailable`) naming the provider **before
+any worktree is created**; the conflict resolver is held to the same rule,
+and `kubic doctor`'s `dep:credentials:roles` line lists the provider each
+role gets credentials for (names only). A credential refusal is
+provider-bound, not a usage error: fix the key or the model pin.
+
 **Per-worker approvals and opt-in budgets (issue #105, §41.1/§41.2/§71).** A
 worker child is a real `kubic run` process, so its dangerous calls are
 challenged by the installed policy — and on this path the challenge routes to

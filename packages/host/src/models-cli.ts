@@ -24,6 +24,7 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import type { ProviderKeyEnv } from './config/role-credentials.js';
 import type { DepProbe, ProviderProbe } from './doctor.js';
 import {
   FAUX_PROVIDER_ID,
@@ -66,6 +67,10 @@ export interface AssembledModels {
   // first: the testing provider, models.json customs, then built-ins whose
   // auth is configured. A keyless built-in is never on this list.
   readonly fallbackProviders: readonly string[];
+  // How each provider's key reaches the process (issue #200, §36.3): what
+  // an orchestrator worker's role grant must forward. A provider absent here
+  // is unregistered — the child's own provider probe names it.
+  readonly keyEnv: ReadonlyMap<string, ProviderKeyEnv>;
 }
 
 // Assembly options are also the provider-registration options (issue #359,
@@ -176,6 +181,8 @@ export async function assembleModels(
   });
   const bridge = createNodeFileBridge('/');
   const providers = new Map<string, ProviderInfo>();
+  // Issue #200: the per-provider key env names a worker grant may forward.
+  const keyEnv = new Map<string, ProviderKeyEnv>();
   const notes: string[] = [];
   const sources: ModelsSource[] = [];
   const customs: string[] = [];
@@ -215,6 +222,20 @@ export async function assembleModels(
       // A run passes its request-time key resolver (issue #359) so every
       // provider-key use is resolved and audited per request.
       const names = registerCustomProviders(models, specs, options);
+      for (const spec of specs) {
+        // §36.3 (issue #200): the names a worker role grant must forward —
+        // the declared apiKeyEnv, or the documented KUBIC_API_KEY default
+        // registerCustomProviders falls back to. A literal models.json key
+        // (the keyless-local-server form) is already in the catalog, so
+        // nothing needs forwarding.
+        keyEnv.set(spec.id, {
+          envVars:
+            spec.apiKey === undefined
+              ? [spec.apiKeyEnv ?? 'KUBIC_API_KEY']
+              : [],
+          noKeyNeeded: spec.apiKey !== undefined,
+        });
+      }
       for (const name of names) {
         const at = customs.indexOf(name);
         if (at !== -1) customs.splice(at, 1);
@@ -266,6 +287,20 @@ export async function assembleModels(
   builtins.forEach((provider, index) => {
     const check = checks[index];
     if (check !== undefined) usableBuiltins.push(provider.id);
+    // §36.3 (issue #200): a built-in authenticated from an env var forwards
+    // exactly that var; one authenticated WITHOUT an env var (an ambient
+    // credential file the child can reach through HOME) forwards nothing;
+    // an unusable one has no deliverable credential at all.
+    const envSource =
+      check?.source !== undefined &&
+      typeof env[check.source] === 'string' &&
+      env[check.source] !== ''
+        ? check.source
+        : undefined;
+    keyEnv.set(provider.id, {
+      envVars: envSource === undefined ? [] : [envSource],
+      noKeyNeeded: check !== undefined && envSource === undefined,
+    });
     providers.set(provider.id, {
       origin: 'built-in',
       usable: check !== undefined,
@@ -277,7 +312,14 @@ export async function assembleModels(
     ...customs,
     ...usableBuiltins.filter((id) => !customs.includes(id)),
   ];
-  return { models, notes, providers, sources, fallbackProviders };
+  return {
+    models,
+    notes,
+    providers,
+    sources,
+    fallbackProviders,
+    keyEnv,
+  };
 }
 
 // Doctor's models.json line (issue #322): each file found, its scope and

@@ -393,7 +393,27 @@ parser exists in `packages/host/src/config/secrets.ts`; wiring them is
 #224), and **tool-credential brokering** — no budget-bounded scoped token is
 issued to a worker or revoked at settle/exit (see
 [design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
-Agent processes see the spawn allowlist plus their role grants.
+
+**Provider credentials reach workers per role (issue #200; §36.3).** An
+orchestrator worker is a `kubic run` child behind the §3.8 allowlist, so its
+provider key does not travel as ambient env. The manager resolves which
+provider each worker's role will use, forwards exactly that provider's key
+environment variables, and passes them as the child's role grant —
+`KUBIC_ROLE_<ROLE>_<ENV_VAR>` (e.g. `KUBIC_ROLE_IMPLEMENTER_GW_API_KEY`) —
+from where the child reads them back as the provider's apiKey auth. Nothing
+else rides along: never a sibling role's provider key, never an unrelated
+parent secret (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, …), never the key
+under its plain name in the child env. A `models.json` key is still resolved
+per request and audited in the child's run (§36.1 rules 3-4); a built-in key
+keeps Pi's own env auth. Every spawn/log surface redacts the `KUBIC_ROLE_*`
+namespace. When the provider's key is
+missing from the orchestrator's environment, `kubic orchestrate` fails
+closed with **exit 6 naming the provider** before it creates any worktree;
+`kubic doctor` reports the same per-role provider list (`dep:credentials:roles`).
+With `require_credential_broker` the grant carries `broker:<ref>` sentinels
+instead of values, so no secret material reaches the child env — the flag is
+host policy input, and no shipped config key sets it yet (see
+[design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
 
 ## What lives where
 

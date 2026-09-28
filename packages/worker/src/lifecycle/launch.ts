@@ -36,6 +36,13 @@ export interface LaunchWorkerRequest {
   workerId: string;
   sessionId: string;
   role: string;
+  /**
+   * The role whose grant namespace the credentials are minted under
+   * (issue #200). The child reads back the role it was TOLD it runs as;
+   * a resolver without a role document is told nothing and falls back to
+   * `worker`, while its row keeps the spec's role. Defaults to `role`.
+   */
+  grantRole?: string;
   cmd: string;
   args: string[];
   /** Owner recorded on the registry row (§50: who started the worker). */
@@ -188,6 +195,9 @@ export function launchWorker(
     sessionId: request.sessionId,
     generation,
     role: request.role,
+    ...(request.grantRole === undefined
+      ? {}
+      : { grantRole: request.grantRole }),
     cmd: request.cmd,
     args: request.args,
     // The worker's own identity travels with the allowlist (§3.8): the

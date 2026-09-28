@@ -32,7 +32,7 @@ diff touching the boundary for maintainer review.
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |
-| `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `buildSpawnEnv`, `redactEnvForLog` |
+| `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
 | `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
 | `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
 | `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `formatUsageLine` |
@@ -254,6 +254,13 @@ tests use fixture rows, never network or paid tokens.
 (`ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`,
 `buildSpawnEnv`, `redactEnvForLog`); detached exits are reaped with a
 1s teardown budget (`TEARDOWN_BUDGET_MS`).
+
+A worker child reads its own provider credential back with
+`roleGrantEnv`/`withRoleGrant` (issue #200): the `KUBIC_ROLE_<ROLE>_*`
+grant is exposed under the plain provider-key names the models assembly
+asks for, only for the role the child was told it runs as — a sibling
+prefix never matches. The plain names exist only in the env view handed
+to the models assembly for that read, never in the child's process env.
 
 ### Live spawn path (issue #94: `launch.ts`, `shell.ts`, `rows.ts`)
 

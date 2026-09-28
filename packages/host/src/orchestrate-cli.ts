@@ -27,6 +27,13 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { AgentResult } from '../../worker/src/result.js';
 import { validateAgentResult } from '../../worker/src/result.js';
+// §36.3 provider-credential scoping (issue #200): the run's pre-state check
+// names a provider and fails closed before any worktree exists. Host-local
+// contract (the composition root resolves the grants); host never spawns.
+import type {
+  WorkerCredentialRefusal,
+  WorkerCredentialRequest,
+} from './config/role-credentials.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
@@ -80,10 +87,18 @@ import {
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
+  RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
   SESSION_ID_PATTERN,
 } from './run-cli.js';
 import type { WorkerListRow } from './workers-cli.js';
+
+// The §36.3 credential contracts the preflight dep speaks (issue #200),
+// re-exported so composition roots and tests import one module.
+export type {
+  WorkerCredentialRefusal,
+  WorkerCredentialRequest,
+} from './config/role-credentials.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
@@ -590,6 +605,16 @@ export interface OrchestrateCommandDeps {
   // documents (the plan prompt stands, unchanged). Synchronous so the
   // composition root can read the directory with the real FileBridge.
   loadWorkerRoles?: (agents: readonly string[]) => WorkerRolesPlan;
+  // §36.3 worker provider credentials (issue #200): called ONCE, with every
+  // pending worker's role and resolved model pin, BEFORE any state write,
+  // worktree or session exists. Returning a refusal fails the run closed
+  // with exit 6 and `code=credential_unavailable` naming the provider — a
+  // worker that could not authenticate must never cost a worktree. Absent
+  // (legacy callers/tests) means no preflight: the existing path is
+  // unchanged, and the child's own provider probe still fails its run.
+  preflightWorkerCredentials?: (
+    requests: readonly WorkerCredentialRequest[],
+  ) => WorkerCredentialRefusal | undefined;
   // The manager lane's registration seam (issue #103, §40). The run calls
   // this BEFORE it spawns anything; the lane it returns is the toolset the
   // root runs with. Defaults to `registerManagerLane()` — the §40 allowlist
@@ -1192,6 +1217,32 @@ export async function runOrchestrateCommand(
       modelRef: assignment.modelRef,
     };
   };
+  // §36.3 credential preflight (issue #200): the same role/model inputs
+  // every launch below gets, checked ONCE before the first state write,
+  // worktree or session exists. A refusal is exit 6 (`provider`-bound) and
+  // names the provider; a run that cannot authenticate its workers must not
+  // create any work first. The hook is the composition root's — the host
+  // side never reads process.env or a provider catalog.
+  if (deps.preflightWorkerCredentials !== undefined) {
+    const requests: WorkerCredentialRequest[] = state.agents.map((agentId) => {
+      const info = spawnRoleInfo(agentId, rolePlan);
+      return {
+        agentId,
+        role: info.role ?? 'worker',
+        ...(info.modelRef === undefined ? {} : { modelRef: info.modelRef }),
+      };
+    });
+    const refusal = deps.preflightWorkerCredentials(requests);
+    if (refusal !== undefined) {
+      return fail(
+        RUN_EXIT_PROVIDER_PROBE_FAILED,
+        'credential_unavailable',
+        `worker '${refusal.agentId}' (${refusal.role}): ${refusal.message}`,
+        undefined,
+        state.agents,
+      );
+    }
+  }
   // The lane's own call trace (issue #103): the manager drives each worker
   // through spawn → wait → collect, and each driven worker contributes its
   // own sequence — recorded through the allowlist-checking recorder as the

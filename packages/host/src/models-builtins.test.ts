@@ -249,3 +249,85 @@ describe('built-in providers (issue #221)', () => {
     });
   });
 });
+
+describe('provider key env index for worker grants (issue #200)', () => {
+  it('maps a configured built-in to the env var its auth came from', async () => {
+    const assembled = await assemble({ ANTHROPIC_API_KEY: 'x' });
+    expect(assembled.keyEnv.get('anthropic')).toEqual({
+      envVars: ['ANTHROPIC_API_KEY'],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('maps an unconfigured built-in to a registration with no deliverable key', async () => {
+    const assembled = await assemble({});
+    expect(assembled.keyEnv.get('anthropic')).toEqual({
+      envVars: [],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('maps a custom provider to its apiKeyEnv, defaulting to KUBIC_API_KEY', async () => {
+    const cwd = tmpDir();
+    writeFileSync(
+      join(cwd, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'gw',
+            baseUrl: 'http://127.0.0.1:9000/v1',
+            api: 'openai-completions',
+            apiKeyEnv: 'GW_API_KEY',
+            models: [{ id: 'm1' }],
+          },
+          {
+            id: 'plain',
+            baseUrl: 'http://127.0.0.1:9001/v1',
+            api: 'openai-completions',
+            models: [{ id: 'm1' }],
+          },
+        ],
+      }),
+    );
+    const assembled = await assembleModels(
+      cwd,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    expect(assembled.keyEnv.get('gw')).toEqual({
+      envVars: ['GW_API_KEY'],
+      noKeyNeeded: false,
+    });
+    expect(assembled.keyEnv.get('plain')).toEqual({
+      envVars: ['KUBIC_API_KEY'],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('marks a literal-key custom provider as needing no env key', async () => {
+    const cwd = tmpDir();
+    writeFileSync(
+      join(cwd, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            api: 'openai-completions',
+            apiKey: 'not-needed',
+            models: [{ id: 'llama3' }],
+          },
+        ],
+      }),
+    );
+    const assembled = await assembleModels(
+      cwd,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    expect(assembled.keyEnv.get('local')).toEqual({
+      envVars: [],
+      noKeyNeeded: true,
+    });
+  });
+});

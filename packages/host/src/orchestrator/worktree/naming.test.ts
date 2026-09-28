@@ -10,6 +10,7 @@ import {
 import {
   branchForAgent,
   parseBranchAgent,
+  parseSpawnedBranch,
   pathForAgent,
   validateAgentId,
 } from './naming.js';
@@ -63,6 +64,42 @@ describe('worktree naming: configured root (issue #133)', () => {
     expect(() => pathForAgent('/repo', 'agent-1', 'a/../../b')).toThrow(/root/);
     expect(() => pathForAgent('/repo', 'agent-1', '/abs/wt')).toThrow(/root/);
     expect(() => pathForAgent('/repo', 'agent-1', '')).toThrow(/root/);
+  });
+});
+
+describe('session-scoped worktree naming (issue #144)', () => {
+  it('scopes the branch by the owning orchestrator session', () => {
+    expect(branchForAgent('worker-1', 'orch-7')).toBe('kubic/orch-7/worker-1');
+  });
+
+  it('scopes the path by the owning orchestrator session', () => {
+    expect(pathForAgent('/repo', 'worker-1', undefined, 'orch-7')).toBe(
+      '/repo/.kubic/wt/orch-7/worker-1',
+    );
+    expect(pathForAgent('/repo', 'worker-1', 'custom/wt', 'orch-7')).toBe(
+      '/repo/custom/wt/orch-7/worker-1',
+    );
+  });
+
+  it('refuses a session scope with slashes or traversal', () => {
+    expect(() => branchForAgent('worker-1', '../x')).toThrow(WorktreeError);
+    expect(() => pathForAgent('/repo', 'worker-1', undefined, 'a/b')).toThrow(
+      WorktreeError,
+    );
+  });
+
+  it('parses both the scoped and the legacy branch shapes', () => {
+    expect(parseSpawnedBranch('kubic/orch-7/worker-1')).toEqual({
+      agentId: 'worker-1',
+      sessionId: 'orch-7',
+    });
+    expect(parseSpawnedBranch('kubic/worker-1')).toEqual({
+      agentId: 'worker-1',
+    });
+    expect(parseBranchAgent('kubic/orch-7/worker-1')).toBe('worker-1');
+    expect(parseSpawnedBranch('kubic/a/b/c')).toBeNull();
+    expect(parseSpawnedBranch('kubic/orch-7/')).toBeNull();
+    expect(parseSpawnedBranch('feature/orch-7/worker-1')).toBeNull();
   });
 });
 

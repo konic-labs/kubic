@@ -221,8 +221,9 @@ exits 2 with `error: missing -p, --prompt <text> …` /
 `error: --resume needs --session <id> …`.
 
 Opt-in orchestrator mode: plans N workers, spawns one worker process per
-subagent in its own git worktree (`kubic/<agent>` at
-`<root>/.kubic/wt/<agent>`), settles/merges FIFO through the merge queue
+subagent in its own git worktree (`kubic/<session>/<agent>` at
+`<root>/.kubic/wt/<session>/<agent>`, where `<session>` is the run's
+`--session` id or the generated `orch-<ms>`), settles/merges FIFO through the merge queue
 with per-agent attribution, routes merge approvals to the user, and reaps.
 The manager authors nothing — workers commit on their own branches, the
 manager only merges. Worktrees and branches stay retained after the merge
@@ -231,6 +232,14 @@ as evidence (only `kubic clean` disposes) — that claim is asserted by
 if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
+Worktree names carry the session, so a later run with the same agents
+(e.g. the default `worker-1`/`worker-2`) always starts on fresh worktrees at
+the current HEAD — never on an earlier run's retained, possibly dirty or
+unmerged tree — and two runs in one repo never share a worktree. Only
+`--resume --session <id>` reuses that session's own worktrees; a fresh run
+whose session-scoped worktree or branch already exists (a reused
+`--session <id>`) fails closed with `code=worktree_exists`, exit 1, naming
+the `--resume` and `kubic clean --session <id>` ways out.
 Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
@@ -406,8 +415,8 @@ indistinguishable from no attempt at all.
 `kubic clean --help` prints the generated help with examples and exits 0.
 
 The explicit-only disposer for retained orchestrator state. `orchestrate`
-keeps every spawned worktree (`<root>/.kubic/wt/<agent>`) and branch
-(`kubic/<agent>`) as evidence (§44.1); `clean` is the only command that
+keeps every spawned worktree (`<root>/.kubic/wt/<session>/<agent>`) and branch
+(`kubic/<session>/<agent>`) as evidence (§44.1); `clean` is the only command that
 removes them. It also carries the §42.4 journal retention prune.
 A worktree whose worker process is still live (per `workers.json`) is never
 removed: it is reported (`worker '<agent>' is still live (pid N)`), its branch
@@ -415,8 +424,9 @@ is kept, and the command exits 1 — `--force` stops the worker's process group,
 then disposes it.
 
 Refusal posture: the planned set is exactly Kubic's own spawned set — a
-worktree under `<root>/.kubic/wt/` **on a `kubic/<agent>` branch**, plus
-any other `kubic/<agent>` branch left behind. The main checkout, hand-made
+worktree under `<root>/.kubic/wt/` **on a `kubic/<session>/<agent>` branch**
+(or the unscoped `kubic/<agent>` shape runs before session scoping created),
+plus any other such branch left behind. The main checkout, hand-made
 worktrees (`git worktree add handmade-wt -b handmade`), and namespace-shaped
 checkouts sitting on a foreign branch are never planned or touched, and
 never appear in `--dry-run`.
@@ -425,7 +435,7 @@ never appear in `--dry-run`.
 | --- | --- |
 | (none) | Remove every retained worktree+branch for this repo. One `removed worktree <path>` line per worktree, one `deleted branch <branch>` line per branch; `clean: nothing to prune` (exit 0) when there is nothing left. |
 | `--all` | Explicit scope-all (the default scope). Mutually exclusive with `--session` — both exit 2. |
-| `--session <id>` | Scope to one `orchestrate` run: the agents named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. |
+| `--session <id>` | Scope to one `orchestrate` run: `kubic/<id>/<agent>` at `<root>/.kubic/wt/<id>/<agent>` for each agent named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too, and another session's same-named agent (its worktree, branch and live worker) is never planned or touched. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. |
 | `--dry-run` | Print `would remove worktree <path>` / `would delete branch <branch>` and exit 0 — mutates nothing (`git worktree list` is byte-identical before and after). |
 | `--force` | Pass `git worktree remove --force`, disposing a worktree with uncommitted worker changes. Without it a dirty worktree fails loudly: exit 1, an `error:` line per failure, and the branch is kept (never half-disposed). |
 | `--journal` | Also enforce the journal retention policy at `<root>/.kubic/journal`. Alone it prunes to the store's default byte bound; with `--max-age-ms`/`--max-bytes` it prunes to those bounds. Prints `journal: pruned <n> entr(ies), freed <b> byte(s)`. |

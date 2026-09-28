@@ -254,6 +254,26 @@ export interface OrchestrateWorktree {
   branch: string;
 }
 
+// What the run tells the worktree seam (issue #144): the owning session
+// scopes the names, and `resume` is the only licence to reuse a tree that
+// already exists under them.
+export interface WorktreeRequest {
+  sessionId: string;
+  resume: boolean;
+}
+
+// A fresh run that finds its own session-scoped worktree already on disk is
+// refused with this named code, never silently reused (issue #144).
+export const WORKTREE_EXISTS_CODE = 'worktree_exists';
+
+function worktreeFailureCode(error: unknown): string {
+  return typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === WORKTREE_EXISTS_CODE
+    ? WORKTREE_EXISTS_CODE
+    : 'spawn_failed';
+}
+
 // Worker-session naming (issue #85): one session per (orchestrator session,
 // agent), so a worker's journals/usage/trajectory resolve inside its own
 // worktree. The id must satisfy SESSION_ID_PATTERN — the child refuses
@@ -414,8 +434,12 @@ export interface OrchestrateCommandDeps {
   debug?: (line: string) => void;
   now?: () => number;
   isGitRepo: () => boolean | Promise<boolean>;
+  // Issue #144: the run names the owning session and whether it is a
+  // --resume, so the worktree is scoped to this session and an existing
+  // one is reused ONLY when this run resumes that same session.
   ensureWorktree: (
     agentId: string,
+    context?: WorktreeRequest,
   ) => OrchestrateWorktree | Promise<OrchestrateWorktree>;
   // Session creation (issue #85): the manager creates the worker session
   // (explicit id, cwd = the worker worktree) BEFORE the child spawns,
@@ -1210,6 +1234,10 @@ export async function runOrchestrateCommand(
   // branch is not merged (kill before the merge, or a failed merge),
   // drop the stale intent so the normal path retries the worker behind
   // the pre-merge guard. Unknown (no isBranchMerged probe) retries.
+  const worktreeRequest: WorktreeRequest = {
+    sessionId,
+    resume: parsed.resume,
+  };
   const reconcileMergeIntent = async (): Promise<number | undefined> => {
     const inFlight = state.merging;
     if (inFlight === undefined || inFlight === null) return undefined;
@@ -1219,12 +1247,12 @@ export async function runOrchestrateCommand(
     }
     let worktree: OrchestrateWorktree;
     try {
-      worktree = await deps.ensureWorktree(inFlight);
+      worktree = await deps.ensureWorktree(inFlight, worktreeRequest);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return fail(
         RUN_EXIT_FAILED,
-        'spawn_failed',
+        worktreeFailureCode(error),
         `spawn failed for worker '${inFlight}': ${message}`,
         partial(),
       );
@@ -1277,14 +1305,14 @@ export async function runOrchestrateCommand(
     let worktree = worktrees.get(agentId);
     if (worktree === undefined) {
       try {
-        worktree = await deps.ensureWorktree(agentId);
+        worktree = await deps.ensureWorktree(agentId, worktreeRequest);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const failure = await reapSpawned(spawned);
         void failure;
         return fail(
           RUN_EXIT_FAILED,
-          'spawn_failed',
+          worktreeFailureCode(error),
           `spawn failed for worker '${agentId}': ${message}`,
           partial(),
         );

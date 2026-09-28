@@ -3,6 +3,7 @@
 // argv (never shell-interpolated). The branch is never deleted here:
 // removal disposes the checkout, the `kubic/<agent>` branch stays.
 
+import { resolve, sep } from 'node:path';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import {
   isSpawnedWorktreePath,
@@ -31,13 +32,28 @@ export interface RemoveWorktreeOptions {
   worktreeRoot?: string;
 }
 
-function branchForPath(path: string): string | null {
-  const agent = path.split('/').pop() ?? '';
-  try {
-    return branchForAgent(agent);
-  } catch {
+// The branch a spawned path was created on: the segments below the worktree
+// root are `<agent>` (legacy) or `<session>/<agent>` (issue #144).
+function branchForPath(
+  path: string,
+  worktreeRoot: string = DEFAULT_WORKTREE_ROOT,
+): string | null {
+  const segments = resolve(path).split(sep);
+  const rootSegments = worktreeRoot.split('/');
+  for (let i = segments.length - rootSegments.length - 1; i >= 0; i -= 1) {
+    if (!rootSegments.every((segment, j) => segments[i + j] === segment)) {
+      continue;
+    }
+    const tail = segments.slice(i + rootSegments.length);
+    try {
+      if (tail.length === 1) return branchForAgent(tail[0] ?? '');
+      if (tail.length === 2) return branchForAgent(tail[1] ?? '', tail[0]);
+    } catch {
+      return null;
+    }
     return null;
   }
+  return null;
 }
 
 function assertSpawnedPath(
@@ -95,7 +111,12 @@ export async function removeWorktree(
       1,
     );
   }
-  return { path, removed: true, branchKept: true, branch: branchForPath(path) };
+  return {
+    path,
+    removed: true,
+    branchKept: true,
+    branch: branchForPath(path, options?.worktreeRoot),
+  };
 }
 
 // Branch half of disposal (issue #92): a spawned worktree's `kubic/<agent>`
@@ -111,7 +132,7 @@ export async function deleteSpawnedBranch(
   if (parseBranchAgent(branch) === null) {
     throw new WorktreeError(
       'remove_failed',
-      `refusing to delete ${branch}: not a kubic/<agent> branch`,
+      `refusing to delete ${branch}: not a kubic/<session>/<agent> branch`,
       1,
     );
   }

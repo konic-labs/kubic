@@ -1,7 +1,10 @@
-// Worktree naming (issue #45; §44; issue #133: the parent is configurable).
-// One worktree per writer: branch `kubic/<agent>` at
-// `<root>/<worktreeRoot>/<agent>` — `.kubic/wt` unless `[orchestrator].root`
-// names another workspace-relative parent. Pure — no I/O, no git.
+// Worktree naming (issue #45; §44; issue #133: the parent is configurable;
+// issue #144: names are scoped by the owning orchestrator session).
+// One worktree per writer: branch `kubic/<session>/<agent>` at
+// `<root>/<worktreeRoot>/<session>/<agent>` — `.kubic/wt` unless
+// `[orchestrator].root` names another workspace-relative parent. The legacy
+// unscoped `kubic/<agent>` shape still parses, so `kubic clean` disposes
+// trees retained by older runs. Pure — no I/O, no git.
 
 import { resolve } from 'node:path';
 import { WorktreeError } from './errors.js';
@@ -66,15 +69,37 @@ function assertWorktreeRoot(worktreeRoot: string): void {
   }
 }
 
-export function branchForAgent(agentId: string): string {
-  assertAgentId(agentId);
-  return `${WORKTREE_BRANCH_PREFIX}${agentId}`;
+// The owning orchestrator session scopes both names (issue #144): worktrees
+// are retained until `kubic clean` (§44.1), so a name keyed on the agent id
+// alone hands a later run the previous run's stale tree. The session id
+// shares the agent id's charset, so it is one path segment and one ref
+// component — never a slash or a traversal.
+function assertSessionScope(sessionId: string): void {
+  if (!AGENT_ID_PATTERN.test(sessionId)) {
+    throw new WorktreeError(
+      'invalid_agent',
+      'invalid session scope: must match [A-Za-z0-9_-]+ (no slashes or traversal)',
+      1,
+    );
+  }
 }
 
+// `kubic/<session>/<agent>` when the owning session is named (every
+// orchestrate run); the legacy `kubic/<agent>` shape otherwise.
+export function branchForAgent(agentId: string, sessionId?: string): string {
+  assertAgentId(agentId);
+  if (sessionId === undefined) return `${WORKTREE_BRANCH_PREFIX}${agentId}`;
+  assertSessionScope(sessionId);
+  return `${WORKTREE_BRANCH_PREFIX}${sessionId}/${agentId}`;
+}
+
+// `<root>/<worktreeRoot>/<session>/<agent>` when the owning session is named;
+// the legacy `<root>/<worktreeRoot>/<agent>` shape otherwise.
 export function pathForAgent(
   repoRoot: string,
   agentId: string,
   worktreeRoot: string = DEFAULT_WORKTREE_ROOT,
+  sessionId?: string,
 ): string {
   if (!repoRoot.startsWith('/')) {
     throw new WorktreeError(
@@ -85,11 +110,32 @@ export function pathForAgent(
   }
   assertAgentId(agentId);
   assertWorktreeRoot(worktreeRoot);
-  return resolve(repoRoot, worktreeRoot, agentId);
+  if (sessionId === undefined) return resolve(repoRoot, worktreeRoot, agentId);
+  assertSessionScope(sessionId);
+  return resolve(repoRoot, worktreeRoot, sessionId, agentId);
+}
+
+export interface SpawnedBranch {
+  agentId: string;
+  sessionId?: string;
+}
+
+// Both shapes Kubic names: `kubic/<session>/<agent>` and the legacy
+// `kubic/<agent>`. Anything deeper, empty, or outside `kubic/` is foreign.
+export function parseSpawnedBranch(branch: string): SpawnedBranch | null {
+  if (!branch.startsWith(WORKTREE_BRANCH_PREFIX)) return null;
+  const parts = branch.slice(WORKTREE_BRANCH_PREFIX.length).split('/');
+  if (parts.length === 1) {
+    const agentId = parts[0] ?? '';
+    return validateAgentId(agentId).length === 0 ? { agentId } : null;
+  }
+  if (parts.length !== 2) return null;
+  const [sessionId = '', agentId = ''] = parts;
+  if (!AGENT_ID_PATTERN.test(sessionId)) return null;
+  if (validateAgentId(agentId).length > 0) return null;
+  return { agentId, sessionId };
 }
 
 export function parseBranchAgent(branch: string): string | null {
-  if (!branch.startsWith(WORKTREE_BRANCH_PREFIX)) return null;
-  const agent = branch.slice(WORKTREE_BRANCH_PREFIX.length);
-  return validateAgentId(agent).length === 0 ? agent : null;
+  return parseSpawnedBranch(branch)?.agentId ?? null;
 }

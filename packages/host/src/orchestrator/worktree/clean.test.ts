@@ -485,3 +485,48 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
     expect(reused.removed).toContain('/repo/.kubic/wt/agent-2');
   });
 });
+
+describe('kubic clean --session is scoped to its own session (issue #144)', () => {
+  const run = async (liveSession: string) => {
+    const removed: string[] = [];
+    const deleted: string[] = [];
+    const killed: number[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { sessionId: 'sa', force: true },
+      {
+        env: new FakeExecutionEnv(repoScripts()),
+        out: () => undefined,
+        err: (line: string) => errs.push(line),
+        repoRoot: '/repo',
+        sessionAgents: () => ['worker-1'],
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+        branchDeleter: async (_e: unknown, branch: string) => {
+          deleted.push(branch);
+        },
+        pruner: async () => undefined,
+        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        liveWorkers: () =>
+          new Map([['worker-1', { pid: 4242, sessionId: liveSession }]]),
+        workerCommand: async () => `node kubic.js run --session ${liveSession}`,
+        killWorker: (pid: number) => {
+          killed.push(pid);
+        },
+      },
+    );
+    return { code, removed, deleted, killed, errs };
+  };
+
+  it('plans only kubic/<session>/<agent> and never kills another session’s same-named worker', async () => {
+    const other = await run('sb-worker-1');
+    expect(other.code, other.errs.join('\n')).toBe(0);
+    expect(other.removed).toEqual(['/repo/.kubic/wt/sa/worker-1']);
+    expect(other.deleted).toEqual(['kubic/sa/worker-1']);
+    expect(other.killed).toEqual([]);
+
+    const own = await run('sa-worker-1');
+    expect(own.killed).toEqual([4242]);
+  });
+});

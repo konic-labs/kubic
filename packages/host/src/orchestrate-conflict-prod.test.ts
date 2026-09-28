@@ -186,7 +186,9 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     expect(log).toContain('kubic: merge beta');
     // …and the resolution was performed by the spawned resolver, whose prompt
     // it wrote into its worktree before committing.
-    const resolverWorktree = realpathSync(join(h.root, '.kubic', 'wt', 'beta'));
+    const resolverWorktree = realpathSync(
+      join(h.root, '.kubic', 'wt', 'iss106', 'beta'),
+    );
     const resolverPrompt = readFileSync(
       join(resolverWorktree, 'resolver-prompt.txt'),
       'utf8',
@@ -249,7 +251,9 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // Never delegated: the resolver child, which writes its prompt first
     // thing, was never spawned in the conflicted worktree.
     expect(
-      existsSync(join(h.root, '.kubic', 'wt', 'beta', 'resolver-prompt.txt')),
+      existsSync(
+        join(h.root, '.kubic', 'wt', 'iss106', 'beta', 'resolver-prompt.txt'),
+      ),
     ).toBe(false);
     expect(h.lines.join('\n')).not.toMatch(/resolver: resolver child exited/);
   });
@@ -272,9 +276,11 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
       h.lines,
       `lines were:\n${h.lines.join('\n')}\ndebug:\n${h.debugLines.join('\n')}`,
     ).toContain(
-      `retained: alpha branch=kubic/alpha worktree=${join(h.root, '.kubic', 'wt', 'alpha')} clean=true`,
+      `retained: alpha branch=kubic/iss106/alpha worktree=${join(h.root, '.kubic', 'wt', 'iss106', 'alpha')} clean=true`,
     );
-    const dirtyWorktree = realpathSync(join(h.root, '.kubic', 'wt', 'alpha'));
+    const dirtyWorktree = realpathSync(
+      join(h.root, '.kubic', 'wt', 'iss106', 'alpha'),
+    );
     // A modification of a TRACKED file is what `unstaged` means; a brand-new
     // file is `untracked`. Getting this backwards would make the assertion
     // pass for the wrong reason.
@@ -294,7 +300,7 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // The worktree is still on disk with its branch: retaining is the rule,
     // and `kubic clean` (pinned by clean-docs.test.ts) is the only disposer.
     expect(gitIn(dirtyWorktree, ['branch', '--show-current']).trim()).toBe(
-      'kubic/alpha',
+      'kubic/iss106/alpha',
     );
   });
 

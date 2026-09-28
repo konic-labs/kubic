@@ -29,6 +29,7 @@ import type {
   OrchestratorRunState,
   ResolverOutcome,
   WorkerSpawnInfo,
+  WorktreeRequest,
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   MergeConflictError,
@@ -56,6 +57,7 @@ import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchest
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
 import {
   isWorktreeError,
+  WorktreeError,
   worktreeMissingError,
 } from '../../../packages/host/src/orchestrator/worktree/errors.js';
 import {
@@ -995,41 +997,62 @@ export async function orchestrateDepsWithDefaults(
         agents,
       });
     },
-    ensureWorktree: async (agentId: string): Promise<OrchestrateWorktree> => {
+    ensureWorktree: async (
+      agentId: string,
+      context?: WorktreeRequest,
+    ): Promise<OrchestrateWorktree> => {
       const repo = needRoot();
       emitWorktreeNotice();
       const env = new NodeExecutionEnv(repo);
       ensureStateIgnored(repo, debug, excludeEntries);
       const worktreeStarted = Date.now();
+      // Issue #144: the worktree and branch are scoped by the owning
+      // orchestrator session (`kubic/<session>/<agent>`), so a retained tree
+      // from another run is never this run's worktree.
+      const ownerSession = context?.sessionId;
       try {
         const added = await addWorktree(env, repo, agentId, {
-          sessionId: 'cli',
+          sessionId: ownerSession ?? 'cli',
+          ...(ownerSession === undefined ? {} : { ownerSession }),
           ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
         });
         worktreeStartedAt.set(agentId, worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
         return { path: added.path, branch: added.branch };
       } catch (error) {
+        if (!isWorktreeError(error) || error.code !== 'already_exists') {
+          throw error;
+        }
+        const path = pathForAgent(repo, agentId, worktreeRoot, ownerSession);
+        const branch = branchForAgent(agentId, ownerSession);
+        // Only a --resume of the SAME session may reuse the tree: the names
+        // carry the session, so an existing tree under them is that
+        // session's own. A fresh run that finds one fails closed — the tree
+        // may be dirty or unmerged, and the worker commit would take its
+        // leftovers as this run's work.
+        if (context?.resume !== true) {
+          const session = ownerSession ?? '<id>';
+          throw new WorktreeError(
+            'worktree_exists',
+            `worktree ${path} (branch ${branch}) is retained from an earlier run of session '${session}' — continue it with \`kubic orchestrate --resume --session ${session}\` or dispose it with \`kubic clean --session ${session}\``,
+            1,
+          );
+        }
         // Resume tolerance: the worktree/branch from a killed run is
         // reused — never rebuilt over, never silently dropped. The
         // directory must really be there: handing a vanished path to the
         // child spawn dies as a raw `spawn … ENOENT` uncaught event with
         // no §78 code (issue #85), so fail closed with a named error.
-        if (isWorktreeError(error) && error.code === 'already_exists') {
-          const path = pathForAgent(repo, agentId, worktreeRoot);
-          const branch = branchForAgent(agentId);
-          const probe = new NodeExecutionEnv(repo);
-          let present = false;
-          try {
-            present = probe.fs.stat(path).isDirectory;
-          } catch {
-            present = false;
-          }
-          if (!present) throw worktreeMissingError(path, branch);
-          worktreeStartedAt.set(agentId, worktreeStarted);
-          return { path, branch };
+        let present = false;
+        try {
+          present = env.fs.stat(path).isDirectory;
+        } catch {
+          present = false;
         }
-        throw error;
+        if (!present) throw worktreeMissingError(path, branch);
+        debug(`worktree: resuming '${agentId}' in its own ${path}`);
+        worktreeStartedAt.set(agentId, worktreeStarted);
+        return { path, branch };
       }
     },
     // Per-worker approvals (issue #105): the run constructs ONE approvals

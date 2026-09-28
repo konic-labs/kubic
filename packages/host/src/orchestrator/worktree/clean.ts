@@ -52,7 +52,9 @@ import {
 import {
   branchForAgent,
   parseBranchAgent,
+  parseSpawnedBranch,
   pathForAgent,
+  type SpawnedBranch,
   validateAgentId,
 } from './naming.js';
 import {
@@ -182,14 +184,17 @@ export function planClean(
 
 // Session scope: one failed or finished orchestrate run names its agents in
 // `<root>/.kubic/orchestrator/<session>.json`. The retained set for that
-// session is exactly `kubic/<agent>` at `<root>/<worktreeRoot>/<agent>` per
-// named agent — deterministic, so a hand-deleted directory still plans its
-// branch.
+// session is exactly `kubic/<session>/<agent>` at
+// `<root>/<worktreeRoot>/<session>/<agent>` per named agent (issue #144: the
+// names carry the session, so another session's same-named agent is never
+// planned) — deterministic, so a hand-deleted directory still plans its
+// branch. Without a session the legacy unscoped names are planned.
 export function planSessionClean(
   agents: readonly string[],
   repoRoot: string,
   options: CleanOptions,
   worktreeRoot?: string,
+  sessionId?: string,
 ): CleanPlan {
   const worktrees: { path: string; branch: string | null }[] = [];
   const branches: string[] = [];
@@ -197,9 +202,9 @@ export function planSessionClean(
     // Agent ids from stored state are untrusted JSON — anything outside the
     // naming pattern is dropped here, never turned into a git path.
     if (validateAgentId(agent).length > 0) continue;
-    const branch = branchForAgent(agent);
+    const branch = branchForAgent(agent, sessionId);
     worktrees.push({
-      path: pathForAgent(repoRoot, agent, worktreeRoot),
+      path: pathForAgent(repoRoot, agent, worktreeRoot, sessionId),
       branch,
     });
     branches.push(branch);
@@ -310,9 +315,29 @@ function defaultLiveWorkers(
   for (const row of workersListFromRepo(repoRoot)) {
     if (row.pid !== undefined && isLiveWorkerRow(row)) {
       live.set(row.workerId, { pid: row.pid, sessionId: row.sessionId });
+      // Also keyed by the worker session (issue #144): two sessions may
+      // each run a `worker-1`, and only the planned session's row counts.
+      live.set(row.sessionId, { pid: row.pid, sessionId: row.sessionId });
     }
   }
   return live;
+}
+
+// The live row for a planned branch (issue #144). A session-scoped branch
+// matches only its own worker session (`<session>-<agent>`, the
+// orchestrator's worker-session naming), so cleaning session A never kills
+// or refuses on session B's same-named worker. A legacy branch keeps the
+// agent-keyed lookup.
+function liveEntryFor(
+  live: Map<string, { pid: number; sessionId: string }>,
+  spawned: SpawnedBranch,
+): { pid: number; sessionId: string } | undefined {
+  if (spawned.sessionId === undefined) return live.get(spawned.agentId);
+  const workerSession = `${spawned.sessionId}-${spawned.agentId}`;
+  const bySession = live.get(workerSession);
+  if (bySession !== undefined) return bySession;
+  const byAgent = live.get(spawned.agentId);
+  return byAgent?.sessionId === workerSession ? byAgent : undefined;
 }
 
 // The parsed `kubic clean` options arrive from the commander program
@@ -355,7 +380,7 @@ export async function runCleanCommand(
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
   if (repoRoot === undefined) {
     log.error(
-      '`kubic clean` needs a git repository — it disposes retained `kubic/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
+      '`kubic clean` needs a git repository — it disposes retained `kubic/<session>/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
     return CLEAN_EXIT_USAGE;
   }
@@ -373,7 +398,13 @@ export async function runCleanCommand(
         );
         return CLEAN_EXIT_FAILURE;
       }
-      plan = planSessionClean(agents, repoRoot, options, worktreeRoot);
+      plan = planSessionClean(
+        agents,
+        repoRoot,
+        options,
+        worktreeRoot,
+        options.sessionId,
+      );
     } else {
       const lister = deps.lister ?? ((env) => listWorktrees(env));
       const branchLister =
@@ -472,8 +503,9 @@ export async function runCleanCommand(
       return ps.exitCode === 0 ? ps.stdout.trim() : undefined;
     });
   for (const item of plan.worktrees) {
-    const agent = item.branch === null ? null : parseBranchAgent(item.branch);
-    const entry = agent === null ? undefined : live.get(agent);
+    const spawned =
+      item.branch === null ? null : parseSpawnedBranch(item.branch);
+    const entry = spawned === null ? undefined : liveEntryFor(live, spawned);
     // Pid-reuse guard: a live pid whose command line does not name the
     // worker's own session is not our worker — treated as dead, never killed.
     const livePid =
@@ -486,7 +518,7 @@ export async function runCleanCommand(
     } else if (livePid !== undefined) {
       failures.push({
         target: item.path,
-        message: `worker '${agent}' is still live (pid ${livePid}) — not removed; stop it or rerun with --force`,
+        message: `worker '${spawned?.agentId}' is still live (pid ${livePid}) — not removed; stop it or rerun with --force`,
       });
       continue;
     }

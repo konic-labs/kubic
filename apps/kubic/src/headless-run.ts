@@ -74,6 +74,7 @@ import {
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
+import { drainOperation } from '../../../packages/worker/src/lane/abort.js';
 import {
   attachSession,
   createSession,
@@ -548,20 +549,13 @@ export async function runHeadlessPrompt(
   // channel — the backstop is the drain, and a refusal must not skip it.
   const drainInFlight = async (): Promise<void> => {
     if (solo === undefined || activeOperationId === undefined) return;
-    try {
-      await solo.lane.requestAbort(activeOperationId, context);
-    } catch (error) {
-      debug?.(
-        `guard: requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    for (const kill of solo.kills.drain(activeOperationId)) {
-      try {
-        kill();
-      } catch {
-        // Already exited — the kill registry drains every entry regardless.
-      }
-    }
+    await drainOperation(
+      solo.lane,
+      solo.kills,
+      activeOperationId,
+      context,
+      (message) => debug?.(`guard: ${message}`),
+    );
   };
   // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally has
   // drained, so the default handler can no longer kill the run past its own

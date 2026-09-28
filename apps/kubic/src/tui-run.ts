@@ -80,8 +80,10 @@ import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
   isKeyRelease,
   ProcessTerminal,
+  parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
 import {
+  drainOperation,
   type LaneAborter,
   type OperationKillRegistry,
   requestLaneAbort,
@@ -178,6 +180,23 @@ export interface TuiRunDeps {
     // the command shell owns parsing, the boot owner owns the defaults.
     options?: TuiBootFlags,
   ) => Promise<TuiLaneBoot>;
+  // Issue #312: the bound on the quit-time drain (a turn still running when
+  // the operator quits is aborted, its kills run, and the loop waits at most
+  // this long for it to settle before the sweep and session close). Absent
+  // means TUI_DRAIN_TIMEOUT_MS; the timer is injectable so tests are
+  // deterministic. It returns a canceller.
+  drainTimeoutMs?: number;
+  setDrainTimer?: (ms: number, fire: () => void) => () => void;
+}
+
+// Issue #312: how long a quit waits for an aborted turn to settle. The kills
+// have already run by then; the wait only lets the lane record its terminal
+// status and the killed tool finish its last write before the §42.5 sweep.
+export const TUI_DRAIN_TIMEOUT_MS = 3000;
+
+function defaultDrainTimer(ms: number, fire: () => void): () => void {
+  const timer = setTimeout(fire, ms);
+  return () => clearTimeout(timer);
 }
 
 // The `kubic tui` parity flags (issue #113): same names and semantics as
@@ -591,6 +610,14 @@ export class JournalPanelFeed {
   }
 }
 
+function keyIs(data: string, key: string): boolean {
+  try {
+    return parseKey(data) === key;
+  } catch {
+    return false;
+  }
+}
+
 export interface TuiTurnOutcome {
   readonly status: 'completed' | 'cancelled' | 'failed';
   readonly detail?: string;
@@ -704,7 +731,39 @@ export class TuiTurnRunner {
   private readonly usageRows: Array<Parameters<TuiApp['setUsage']>[0][number]> =
     [];
 
-  async run(prompt: string): Promise<TuiTurnOutcome> {
+  // The in-flight run (issue #312): a quit waits on it, bounded.
+  private running: Promise<TuiTurnOutcome> | undefined;
+
+  run(prompt: string): Promise<TuiTurnOutcome> {
+    const running = this.drive(prompt);
+    this.running = running;
+    return running;
+  }
+
+  // Issue #312 (§18, #109): quitting mid-turn aborts and drains the
+  // operation — the durable abort request, then every registered kill — and
+  // waits for the run to settle, at most until `bound` resolves. A quit that
+  // lands before admission is latched: `drive` aborts on the real id.
+  async drainForQuit(bound: Promise<void>): Promise<void> {
+    if (!this.isRunning()) return;
+    this.aborted = true;
+    const operationId = this.activeOperationId;
+    if (operationId !== undefined) {
+      await drainOperation(
+        this.loop,
+        this.loop.kills,
+        operationId,
+        this.loop.context,
+      );
+    }
+    const settled = (this.running ?? Promise.resolve()).then(
+      () => undefined,
+      () => undefined,
+    );
+    await Promise.race([settled, bound]);
+  }
+
+  private async drive(prompt: string): Promise<TuiTurnOutcome> {
     this.starting = true;
     this.aborted = false;
     this.detach = attachLaneEvents(
@@ -961,8 +1020,19 @@ export async function runTuiCommand(
   const onStdinEnd = (): void => {
     shutdown();
   };
+  // Issue #312: set while a quit drains a running turn; calling it ends the
+  // wait at once (a second Ctrl-C, a second SIGINT, or the bound firing).
+  let endDrain: (() => void) | undefined;
+  const onDrainSigint = (): void => {
+    endDrain?.();
+  };
   const shutdown = (): void => {
-    if (stopped) return;
+    if (stopped) {
+      // A second quit while the drain waits shortens it: the kills already
+      // ran, so the loop exits now instead of at the bound.
+      endDrain?.();
+      return;
+    }
     stopped = true;
     stopSpinner();
     // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
@@ -973,8 +1043,42 @@ export async function runTuiCommand(
     process.removeListener('SIGINT', onSigint);
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
-    screen?.stop((line: string) => deps.out(line));
+    // Issue #312 (§18, §42.5, #109): a turn still running is aborted and
+    // drained BEFORE the sweep and the session close — otherwise its detached
+    // process group outlives the session, its late writes escape both the
+    // journal and the reconciliation, and the operation never records a
+    // terminal status. The screen stays up (footer: cancelling…) until the
+    // drain ends, bounded by drainTimeoutMs.
+    const draining = turn?.isRunning() === true;
+    if (draining) {
+      app.setEditorFooter('cancelling…');
+      screen?.render();
+      process.on('SIGINT', onDrainSigint);
+    }
     void (async () => {
+      if (draining && turn !== undefined) {
+        let cancelTimer: () => void = () => {};
+        const bound = new Promise<void>((resolve) => {
+          endDrain = resolve;
+          cancelTimer = (deps.setDrainTimer ?? defaultDrainTimer)(
+            deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
+            resolve,
+          );
+        });
+        try {
+          await turn.drainForQuit(bound);
+        } catch {
+          // The drain is best-effort; the sweep and close still run.
+        }
+        cancelTimer();
+        endDrain = undefined;
+        process.removeListener('SIGINT', onDrainSigint);
+      }
+      try {
+        screen?.stop((line: string) => deps.out(line));
+      } catch {
+        // Restore failures never mask the clean quit.
+      }
       try {
         await boot.close?.();
       } catch {
@@ -1003,7 +1107,11 @@ export async function runTuiCommand(
     stdin?.once('end', onStdinEnd);
     stdin?.once('close', onStdinEnd);
     booted.tui.addInputListener((data: string) => {
-      if (stopped) return { consume: true };
+      if (stopped) {
+        // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
+        if (!isKeyRelease(data) && keyIs(data, 'ctrl+c')) shutdown();
+        return { consume: true };
+      }
       // Issue #306, defence in depth: TuiApp.handleInput already drops Kitty
       // key releases, but the quit/cancel counting below must never see one
       // even if a future caller routes around it — a Ctrl-C release counted

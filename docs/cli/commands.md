@@ -570,7 +570,15 @@ footer (`cancel failed: …`) instead of being swallowed — the turn keeps
 running and the key is never a silent no-op.
 
 Quitting restores the main screen and prints the final document (no cursor
-loss on interrupt). Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
+loss on interrupt). **Quitting mid-turn aborts the turn** — `Esc`, a second
+`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs: the operation
+is aborted (recorded in the session, so a resumed session shows no
+unfinished operation), every tool process group it started is killed, and
+the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
+the end-of-run reconciliation sweep and the session close — so a killed
+tool's last write is still journaled and no child keeps running after the
+TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once.
+Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
 `SIGTERM`/`SIGHUP` have no handler and exit without restoring the
 alt-screen. Solo mode runs in-process with your user authority: no
 isolation, no containment. The no-isolation statement is on screen from the

@@ -164,9 +164,9 @@ quietly stop configuring anything.
 | --- | --- |
 | `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
-| `git-push` | `git push`, `git remote add/set-url/remove/rename`. |
-| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `install` | Package installs (`npm install`, `pip install`, `brew install`, `apt install`, `cargo install`, `go install`). |
+| `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`) and after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`). |
+| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
+| `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
 | `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
 | `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
 | `budget-overrun` | The budget/concurrency overrun flag. |
@@ -236,8 +236,12 @@ What remains out of scope — documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
 the command is data to the literal patterns), network exfiltration via
 `python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
-quoted or backslash-obfuscated verbs the literal patterns cannot see, and
-whitespace tricks around redirection targets.
+quoted or backslash-obfuscated verbs the literal patterns cannot see,
+whitespace tricks around redirection targets, git subcommands reached
+through an alias (`git config alias.p push; git p`), package managers
+not listed above, and installs run by a build script (`npm run setup`).
+The literal verb scan over-triggers on quoted text: `echo "git push
+later"` raises `git-push` (an ask, never a silent grant).
 
 Two keys are forbidden outright, not defaulted: **`[budgets]`**
 (`BudgetKeyError` — budgets are never defaulted by config) and

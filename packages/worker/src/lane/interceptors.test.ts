@@ -363,4 +363,40 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
     expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
   });
+
+  // Issue #357: each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
+  // near-miss beside it, so weakening one regex fails exactly one row.
+  it.each([
+    ['git push --force origin main', true],
+    ['git push -f', true],
+    ['git push -uf origin main', true],
+    ['git push --force-with-lease', true],
+    ['git push --force-if-includes origin main', true],
+    ['git push origin +main', true],
+    ['git -C . push --force', true],
+    ['git push -u origin main', false],
+    ['git push origin feat-fix', false],
+    ['find / -delete', true],
+    ['find . -type f -delete', true],
+    ['find . -name delete', false],
+    ['git reset --hard HEAD~5', true],
+    ['git -C sub reset --hard', true],
+    ['git reset --soft HEAD~1', false],
+    ['git checkout -- .', true],
+    ['git checkout main -- a.ts', true],
+    ['git checkout .', true],
+    ['git checkout -f main', true],
+    ['git checkout --force main', true],
+    ['git checkout -b feature', false],
+    ['git checkout main', false],
+    ['git restore .', true],
+    ['git restore src/a.ts', true],
+    ['git restore --staged --worktree .', true],
+    ['git restore -W a.ts', true],
+    ['git restore --staged a.ts', false],
+    ['git restore -S a.ts', false],
+    ['git status; git log', false],
+  ])('classifies %s as destructive=%s (issue #357)', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
 });

@@ -189,10 +189,29 @@ export interface TriggerContext {
   budgetOverrun?: boolean;
 }
 
-const GIT_PUSH = /^\s*git\s+push\b/i;
-const GIT_REMOTE_MUTATION = /^\s*git\s+remote\s+(add|set-url|remove|rename)\b/i;
+// git push / remote mutation in ANY command segment (issue #357): the
+// verb is matched after a command-position boundary (start, `|;&`,
+// newline, whitespace or a subshell paren) and after any run of git global
+// options (`-C <dir>`, `-c <k=v>`, `--git-dir=…`, `--work-tree …`,
+// `--no-pager`, …) — so `ls; git push`, `cd x && git push` and
+// `git -C . push` all raise. A push named inside a quoted argument
+// (`echo "git push later"`) raises too: the literal scan cannot see
+// quotes, and an over-trigger is an ask, never a silent grant.
+const GIT_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
+const GIT_PUSH = new RegExp(
+  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+push\b`,
+  'i',
+);
+const GIT_REMOTE_MUTATION = new RegExp(
+  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
+  'i',
+);
+// Package installs and fetch-and-run launchers (issue #357): every one can
+// run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
+// npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
+// installs), pip/pipx/uv, gem, composer, brew, apt, cargo and go.
 const INSTALL =
-  /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+  /(^|[|;&\s(])(npm\s+(i|install|add|clean-install|ci|exec|x)|pnpm\s+(i|install|add|dlx)|yarn(\s+(add|install|dlx|global\s+add)|(?=\s*($|[|;&)])))|bun\s+(i|install|add)|npx|bunx|uvx|pip(3)?\s+install|pipx\s+(install|run)|uv\s+(add|pip\s+install|tool\s+install)|gem\s+install|composer\s+(require|install)|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
 const DEPLOY =
   /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
 // Shell redirection into an absolute target is a write by another name —

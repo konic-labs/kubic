@@ -232,7 +232,7 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
     }
     const lines = view.text.split('\n');
     // A trailing '\n' ends the last line; it does not start an empty one.
-    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    if (lines[lines.length - 1] === '') lines.pop();
     const window = lines.slice(0, span);
     const body = window.slice(0, READ_MAX_LINES).join('\n');
     // truncated is honest (issue #122): true whenever the scan stopped

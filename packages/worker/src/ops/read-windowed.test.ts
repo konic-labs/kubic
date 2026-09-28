@@ -223,6 +223,17 @@ describe('bounded read windowing (issue #122)', () => {
     expect(blank.content).toBe('\n');
     expect(empty.content).toBe('');
   });
+
+  it('keeps the last line of a file without a trailing newline', async () => {
+    writeFileSync(join(dir, 'open.txt'), 'one\ntwo');
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'open.txt' },
+      countingEnv(false),
+    );
+    expect(out.content).toBe('one\ntwo\n');
+    expect(out.totalLines).toBe(2);
+  });
 });
 
 // totalLines/truncated honesty (issue #122 contract): truncated:false

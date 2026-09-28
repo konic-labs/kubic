@@ -71,11 +71,28 @@ describe('kubic policy (prod wiring)', () => {
     for (const tool of allowlist) {
       const { lines, r } = runners();
       await r.policy({ tool }, noConfig);
-      expect(lines).toEqual([`allow ${tool}`]);
+      expect(lines).toEqual([`allow ${tool} (installed)`]);
     }
     const { lines, r } = runners();
     await r.policy({ tool: 'network_fetch' }, noConfig);
-    expect(lines).toEqual(['deny network_fetch']);
+    expect(lines).toEqual(['deny network_fetch (installed)']);
+  });
+
+  it('fails closed with the named reason when the config load was refused', async () => {
+    const { lines, errs, r } = runners();
+    const code = await r.policy(
+      { tool: 'bash' },
+      {
+        runtime: undefined,
+        error: "layer 'enterprise': unknown key 'bogus_key'",
+        ignoreSplit: { missing: [], checked: [], applicable: false },
+      },
+    );
+    expect(code).toBe(1);
+    expect(lines).toEqual([]);
+    expect(errs).toEqual([
+      "error: layer 'enterprise': unknown key 'bogus_key'",
+    ]);
   });
 });
 

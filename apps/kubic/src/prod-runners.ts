@@ -10,7 +10,10 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
-import { EXIT_USAGE } from '../../../packages/core/src/cli/exit-codes.js';
+import {
+  EXIT_FAILED,
+  EXIT_USAGE,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import {
   type CliLogger,
   createLineLogger,
@@ -79,6 +82,7 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   policyFromInstalledAllowlist,
+  policyWithInstalledAllowlist,
   runPolicyCommand,
 } from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
@@ -106,6 +110,7 @@ import {
   runtimeApprovalDeps,
   runtimeLaneDeps,
   runtimeModelPin,
+  runtimePolicy,
   runtimeRunDeps,
   sessionRetentionDays,
 } from './config-runtime.js';
@@ -289,20 +294,29 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         providers: assembled.providers,
       });
     },
-    run: (options, cliConfig) =>
-      runRunCommand(options, {
+    run: (options, cliConfig) => {
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      return runRunCommand(options, {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, {
             model: runtimeModelPin(cliConfig),
+            // §58 enterprise policy (issue #288): the model gate, the role
+            // grant check and the lane tool intersection all read this one
+            // resolved object.
+            ...(enterprisePolicy === undefined
+              ? {}
+              : { modelPolicy: enterprisePolicy }),
             ...runtimeRunDeps(cliConfig),
             // Issue #133: the shared lane projections — the configured agent
             // id (journal attribution, `kubic diff --agent`) and the
             // config-sourced role layers `--role` merges under the document.
             ...runtimeLaneDeps(cliConfig),
           }),
-      }),
+      });
+    },
     tui: async (options, cliConfig) => {
+      const enterprisePolicy = runtimePolicy(cliConfig);
       // Extension startup (issue #93): the TUI lane loads the first-party
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
@@ -335,6 +349,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // included. Without it the TUI ignored those pins and ran the first
           // registered provider.
           model: runtimeModelPin(cliConfig),
+          // §58 enterprise policy (issue #288): the interactive lane gates
+          // role grants, model selection and its tool set identically.
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { modelPolicy: enterprisePolicy }),
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),
@@ -549,29 +568,37 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
     perf: (options) =>
       // Perf-budget evaluation over measured or supplied samples (#79, #98).
       runPerfCommand(options, report()),
-    policy: (options, cliConfig) =>
-      // The tool policy a run from THIS cwd actually installs — the same
-      // derivation (host/approvals.installedPolicyPosture) over the same
-      // config load `kubic run` boots with and `kubic doctor` reports — so
-      // the three surfaces cannot disagree. Deny-by-default still holds:
-      // a tool outside the installed allowlist answers `deny`.
-      runPolicyCommand(options, {
+    policy: (options, cliConfig) => {
+      // A refused config is never answered around (issue #90 posture): the
+      // offer and the run must agree, so `kubic policy` reports the refusal
+      // instead of printing a decision a run would never enforce.
+      if (cliConfig.runtime === undefined && cliConfig.error !== undefined) {
+        debug(`error: ${cliConfig.error}`);
+        return EXIT_FAILED;
+      }
+      // The tool policy a run from THIS cwd actually installs (issue #288):
+      // the §58 enterprise policy merged with the same installed class
+      // allowlist `kubic run` boots with and `kubic doctor` reports — so the
+      // three surfaces cannot disagree. Deny-by-default still holds once the
+      // installed allowlist is supplied; the deciding layer is named.
+      const posture = installedPolicyPosture({
+        workspace: process.cwd(),
+        ...installedPolicyDeps(cliConfig),
+      });
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      return runPolicyCommand(options, {
         resolvePolicy: () =>
-          policyFromInstalledAllowlist(
-            installedPolicyPosture({
-              workspace: process.cwd(),
-              ...installedPolicyDeps(cliConfig),
-            }).allowlist,
-          ),
+          enterprisePolicy === undefined
+            ? // No loaded config (a direct-call seam): the installed class
+              // allowlist is the whole policy, exactly as before.
+              policyFromInstalledAllowlist(posture.allowlist)
+            : policyWithInstalledAllowlist(enterprisePolicy, posture.allowlist),
         // Issue #166 (§40.2): the same posture's inexpressible levels, so
         // `kubic policy` and `kubic doctor` name the same unsupported set.
-        unsupported: () =>
-          installedPolicyPosture({
-            workspace: process.cwd(),
-            ...installedPolicyDeps(cliConfig),
-          }).unsupported,
+        unsupported: () => posture.unsupported,
         ...report(),
-      }),
+      });
+    },
     config: (options, cliConfig) =>
       // Effective configuration with the layer each value came from (issue
       // #90): human lines, or --json for machines. Fails closed on a broken

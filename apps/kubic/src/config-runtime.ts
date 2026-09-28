@@ -45,11 +45,22 @@ import {
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import {
+  type EffectivePolicy,
+  hasModelPolicy,
+  isModelAllowed,
+  isProviderAllowed,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type {
   RoleLayerInput,
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
-import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
+import {
+  ModelSelectError,
+  type ModelSelection,
+  selectModel,
+} from '../../../packages/worker/src/model-select.js';
+import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
 
 export interface CliConfigResult {
   // Present only when the load succeeded. A refusal leaves it undefined:
@@ -240,6 +251,66 @@ export function runtimeModelPin(
   const selection = result.runtime?.model;
   if (selection === undefined) return undefined;
   return { provider: selection.provider, id: selection.id };
+}
+
+// §58 enterprise policy (issue #288): the EffectivePolicy resolved once at
+// load — `kubic run` and `kubic tui` gate role grants, model selection and
+// the lane tool set with it. Undefined when the config was refused: the
+// agent-executing commands fail closed on their own before this matters, and
+// an absent [policy] section leaves the object empty (hasModelPolicy /
+// hasToolPolicy decide whether any gate applies).
+export function runtimePolicy(
+  result: CliConfigResult,
+): EffectivePolicy | undefined {
+  return result.runtime?.policy;
+}
+
+// The named refusal both solo entry points share (issue #288): one text, so
+// the headless terminus and the TUI's exit-6 report cannot drift apart.
+function modelPolicyRefusal(provider: string, id: string): string {
+  return `model '${provider}/${id}' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made`;
+}
+
+// Model selection under the §58 enterprise gate (issue #288), shared by
+// `kubic run` and `kubic tui`: an explicit/role/config selection outside
+// `allowed_models`/`allowed_providers` is refused with a named
+// ModelSelectError BEFORE the registry is probed or any provider is called,
+// and the implicit fallback pick only considers allowed providers. With no
+// model policy configured this is exactly `selectModel` — the selection
+// behaviour is byte-identical to before.
+export function selectModelUnderPolicy(
+  models: MutableModels,
+  explicit: ModelSelection | undefined,
+  configDefault: ModelSelection | undefined,
+  fallbackProviders: readonly string[] | undefined,
+  policy: EffectivePolicy | undefined,
+): ReturnType<typeof selectModel> {
+  const gate =
+    policy !== undefined && hasModelPolicy(policy) ? policy : undefined;
+  if (gate !== undefined) {
+    for (const selection of [explicit, configDefault]) {
+      if (
+        selection !== undefined &&
+        !isModelAllowed(gate, selection.provider, selection.id)
+      ) {
+        throw new ModelSelectError(
+          modelPolicyRefusal(selection.provider, selection.id),
+        );
+      }
+    }
+  }
+  const candidates =
+    gate === undefined
+      ? fallbackProviders
+      : (
+          fallbackProviders ??
+          models.getProviders().map((provider) => provider.id)
+        ).filter((provider) => isProviderAllowed(gate, provider));
+  const picked = selectModel(models, explicit, configDefault, candidates);
+  if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
+    throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
+  }
+  return picked;
 }
 
 // The config `[approvals]` policy as the solo install consumes it (issue

@@ -24,6 +24,12 @@ import {
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { validatePolicy } from '../approvals.js';
+import {
+  type EffectivePolicy,
+  layerPolicyFromConfig,
+  type PolicyInput,
+  resolveEffectivePolicy,
+} from '../policy/enterprise.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
   type ApprovalsConfig,
@@ -203,6 +209,56 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
   },
+  // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
+  // the live path (lane tool intersection, model selection gate, `kubic
+  // policy`). The rest are resolved into the effective policy and reported by
+  // doctor: parsing them is the contract, enforcement is not invented.
+  policy: {
+    kept: '§58 enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
+  },
+  'policy.allowed_models': {
+    effect:
+      'model selection gate (`provider/id`, `provider/*`, bare ids) before any provider call',
+  },
+  'policy.allowed_providers': {
+    effect:
+      'provider gate shared by model selection and the implicit fallback pick',
+  },
+  'policy.allowed_tools': {
+    effect:
+      'lane tool intersection (active tools and the prompt tools line); a lower layer cannot widen it',
+  },
+  'policy.denied_tools': {
+    effect:
+      'lane tool intersection; the deny holds against every lower layer, role document and model grant',
+  },
+  'policy.network_policy': {
+    kept: 'resolved into the effective policy; proxy-mediated enforcement is a named follow-up, reported by doctor rather than silently ignored',
+  },
+  'policy.allowed_domains': {
+    kept: 'resolved into the effective policy alongside network_policy; no live network enforcement exists yet',
+  },
+  'policy.filesystem_policy': {
+    kept: 'resolved into the effective policy; the lane derives filesystem reach from [permissions] classes today',
+  },
+  'policy.require_credential_broker': {
+    kept: 'resolved into the effective policy; the broker is not yet on the worker spawn path, so doctor reports it',
+  },
+  'policy.deny_local_credentials': {
+    kept: 'resolved into the effective policy; the check is not yet on the worker spawn path, so doctor reports it',
+  },
+  'policy.data_policy': {
+    kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
+  },
+  'policy.logging_policy': {
+    kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
+  },
+  'policy.agent_policy': {
+    kept: 'max_agents/max_cost_usd resolve into the effective policy; the orchestrator cap is a named follow-up, reported by doctor',
+  },
+  audit: {
+    kept: '[[audit]] sinks are parsed and validated; sink construction is a named follow-up, so the CLI cannot write to them yet',
+  },
 };
 
 export interface RuntimeModelSelection {
@@ -278,6 +334,7 @@ export interface RuntimeConfigInputs {
   cwd: string;
   workspaceRoot?: string;
   enterprisePath?: string;
+  productPath?: string;
   env?: Record<string, string | undefined>;
   // Trust gate for the project layer (§35.1). An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
@@ -290,6 +347,13 @@ export interface RuntimeConfigInputs {
 
 export interface RuntimeConfig {
   config: KubicConfig;
+  /**
+   * §58 enterprise policy (issue #288), resolved ONCE per process from the
+   * per-layer `[policy]` sections (enterprise > product > … > agent) — the
+   * same merge the config layers use, with deny accumulation and layer
+   * provenance. Empty when no layer declares `[policy]`.
+   */
+  policy: EffectivePolicy;
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
   approvals: RuntimeApprovals;
@@ -346,6 +410,7 @@ export interface EffectiveConfigView {
 
 const LAYER_ORDER: readonly ConfigLayer[] = [
   'enterprise',
+  'product',
   'global',
   'project',
   'workspace',
@@ -444,6 +509,11 @@ function envFlag(raw: string | undefined): boolean {
 
 interface LoadedLayers {
   inputs: LayerInput[];
+  // Each present layer's own parsed config, in precedence order: the §58
+  // policy resolution (issue #288) needs per-layer inputs so a lower layer
+  // can narrow a higher one's deny list without the pre-flattened merge
+  // dropping the addition.
+  perLayer: Array<{ layer: ConfigLayer; config: KubicConfig }>;
   sources: Record<string, ConfigValueSource>;
   paths: Record<ConfigLayer, string | undefined>;
   reports: ConfigLayerReport[];
@@ -465,8 +535,12 @@ function loadLayers(
     ...(inputs.enterprisePath === undefined
       ? {}
       : { enterprisePath: inputs.enterprisePath }),
+    ...(inputs.productPath === undefined
+      ? {}
+      : { productPath: inputs.productPath }),
   });
   const layerInputs: LayerInput[] = [];
+  const perLayer: Array<{ layer: ConfigLayer; config: KubicConfig }> = [];
   const sources: Record<string, ConfigValueSource> = {};
   const reports: ConfigLayerReport[] = [];
   for (const layer of LAYER_ORDER) {
@@ -479,8 +553,10 @@ function loadLayers(
         present: programmatic !== undefined,
         trusted: true,
       });
-      if (programmatic !== undefined)
+      if (programmatic !== undefined) {
         layerInputs.push({ layer, config: programmatic });
+        perLayer.push({ layer, config: programmatic });
+      }
       continue;
     }
     const present = path !== undefined && safeExists(inputs.bridge, path);
@@ -507,11 +583,12 @@ function loadLayers(
       config: parsed,
       ...(layer === 'project' ? { trusted: true as const } : {}),
     });
+    perLayer.push({ layer, config: parsed });
     for (const leaf of Object.keys(flatten(parsed))) {
       if (!(leaf in sources)) sources[leaf] = layer;
     }
   }
-  return { inputs: layerInputs, sources, paths, reports };
+  return { inputs: layerInputs, perLayer, sources, paths, reports };
 }
 
 function flatten(value: unknown, prefix = ''): Record<string, unknown> {
@@ -623,6 +700,20 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const merged = mergeLayered(loaded.inputs);
   const config = merged.config;
   assertNoSecretRefs(config);
+  // §58 enterprise policy (issue #288): resolved once, from EACH layer's own
+  // `[policy]` section in precedence order — never from the pre-flattened
+  // merge, so a lower layer's added deny accumulates (the first-wins leaf
+  // merge would drop it) while a lower allow can never lift an enterprise
+  // deny. Absent `[policy]` anywhere leaves an empty effective policy and
+  // gates nothing.
+  const policyInputs: PolicyInput[] = [];
+  for (const entry of loaded.perLayer) {
+    const layerPolicy = layerPolicyFromConfig(entry.config);
+    if (Object.keys(layerPolicy).length > 0) {
+      policyInputs.push({ layer: entry.layer, policy: layerPolicy });
+    }
+  }
+  const policy = resolveEffectivePolicy(policyInputs).policy;
 
   const envModelRaw = env[RUNTIME_ENV_OVERRIDES.model];
   const envModel =
@@ -753,6 +844,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
 
   return {
     config,
+    policy,
     model,
     modelSource,
     approvals,

@@ -1,14 +1,15 @@
 # Configuration
 
-> Design ref: §33–§36 config/secrets. Implementation:
+> Design ref: §33–§36 config/secrets; §58 enterprise policy. Implementation:
 > `packages/host/src/config/config.ts` (layers, TOML, merge),
 > `runtime.ts` (the load the binary actually runs on), `config-cli.ts`
 > (`kubic config`), `secrets.ts` (request-time secrets), `stances.ts`
-> (refusals). This table matches that implementation exactly.
+> (refusals), `../host/src/policy/enterprise.ts` (the `[policy]` engine).
+> This table matches that implementation exactly.
 
 ## Precedence: first layer wins
 
-Six layers, highest first, then the documented environment overrides, then
+Seven layers, highest first, then the documented environment overrides, then
 an explicit CLI flag. Merge is per leaf path: the first (highest) layer to
 set a key owns it — a lower layer attempting to override a set key is
 reported in `overriddenAttempts`, never applied. Enterprise keys are frozen
@@ -17,11 +18,12 @@ against every override attempt, the environment and the CLI included.
 | # | Layer | Source file | Notes |
 | --- | --- | --- | --- |
 | 1 | `enterprise` | `/etc/kubic/config.toml` (or an explicit `enterprisePath` override) | Highest. Never overridden — by a file, the environment, or a flag. |
-| 2 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
-| 3 | `project` | `<projectRoot>/.kubic/config.toml` | **Trust-gated**: refused before you accept the workspace trust prompt (`ProjectUntrustedError`); absent file counts as an empty layer. |
-| 4 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. |
-| 5 | `session` | Supplied programmatically | Never a file. |
-| 6 | `agent` | Supplied programmatically | Never a file. Lowest. |
+| 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
+| 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
+| 4 | `project` | `<projectRoot>/.kubic/config.toml` | **Trust-gated**: refused before you accept the workspace trust prompt (`ProjectUntrustedError`); absent file counts as an empty layer. |
+| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. |
+| 6 | `session` | Supplied programmatically | Never a file. |
+| 7 | `agent` | Supplied programmatically | Never a file. Lowest. |
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model` | Highest, except against a frozen `enterprise` key. |
 
@@ -165,7 +167,8 @@ approval trigger), credentials `allowlist` → `none`, filesystem `full` →
 `workspace-write`, git `full` → `workspace` ·
 `[journal]` retentionDays/outOfScope · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
-`[session]` store/dir/retentionDays. The canonical example is
+`[session]` store/dir/retentionDays · `[policy]` (the §58 enterprise policy,
+below) · `[[audit]]` (sink/level, below). The canonical example is
 `packages/host/src/config/example.toml` (pinned by test — copy it to
 start). Unknown sections or keys are rejected (`ConfigError`).
 
@@ -187,12 +190,21 @@ quietly stop configuring anything.
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
 | `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
 | `agent.name` | The solo lane's agent id: journal entries are attributed to it and `kubic diff --agent <name>` filters by it. Unset ⇒ `root`, unchanged. |
-| `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools); the TUI also takes the `[agent].name` agent id. |
+| `roles.<name>.model`, `roles.<name>.tools` | Per-role defaults layered under the role document for `kubic run --role <name>` (§12.1): `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list. Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools); the TUI also takes the `[agent].name` agent id. |
 | `orchestrator.root` | Parent directory for orchestrator worktrees: the spawned set is `<repo>/<root>/<session>/<agent>`, `kubic clean` plans the same set, and the §35 runtime exclude entries cover it (the derived entry is `/<root>/`, anchored to the repo root, so only that directory matches — a bare `worktrees` never hides `deep/worktrees/…`). Workspace-relative only — refused by name at load: an absolute path, a `..` segment, a trailing `/`, an empty value, a `.` segment (`.`, `./x`, `foo/.` — the entry would match nothing and the worktree set would stay unignored), a control character, a gitignore metacharacter (`*`, `?`, `[`, `]`, a leading `#`, a backslash), and the committed half (`.kubic`, `.kubic/roles` — case-insensitively, since git folds ignore patterns on a case-insensitive filesystem). Unset ⇒ `.kubic/wt`. || `orchestrator.maxWorkers` | Default admission cap for the orchestrator scheduler (§45): the concurrency a run starts with when nothing else caps it. A per-session override and an explicit limits cap still win; a value that is not a positive integer is refused by name. Unset ⇒ 4. |
 | `ui.*` | Kept: pi-tui owns presentation; no theme engine exists — parsed and reported for forward-compat only. |
 | `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
 | `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
+| `policy.allowed_models` | The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. |
+| `policy.allowed_providers` | The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model. |
+| `policy.allowed_tools`, `policy.denied_tools` | The lane tool intersection: `kubic run`/`kubic tui` activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name. With no allow list, only the deny list narrows; with one, anything outside it is refused. |
+| `policy.network_policy`, `policy.allowed_domains` | Parsed and resolved into the effective policy: `"proxy"` is carried as the engine's allowlist mode. Proxy-mediated enforcement is a named follow-up — doctor reports it rather than the section being silently ignored. The engine mode names (`none`, `allowlist`, `full`) are accepted too. |
+| `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from `[permissions]` classes today; doctor reports the policy value. |
+| `policy.require_credential_broker`, `policy.deny_local_credentials` | Parsed and resolved into the effective policy; the credential broker is not yet on the worker spawn path, so doctor reports them rather than claiming enforcement. |
+| `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
+| `policy.agent_policy` | `{ max_agents, max_cost_usd }`, parsed into the effective policy's `agent` bounds; the orchestrator does not consume them yet and doctor reports that. |
+| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); sink construction is a named follow-up, so the CLI cannot write to them yet. |
 
 ### `autoApprove` capabilities
 
@@ -293,6 +305,67 @@ Two keys are forbidden outright, not defaulted: **`[budgets]`**
 **`[mcp]`** (unsupported in v1; third-party tools/MCP arrive in Phase 4
 — doctor surfaces these as `policy-mismatch` fails pointing at
 [doctor and debug](doctor-and-debug.md)).
+
+## Enterprise policy (`[policy]`, §58)
+
+An enterprise admin can put a §58 `[policy]` section in
+`/etc/kubic/config.toml` (or in `/etc/kubic/product.toml` for a
+product/vertical profile). It is the highest-precedence layer: a lower
+layer, a role document or the model can narrow it, never widen or remove
+it. One `EffectivePolicy` is resolved once per process at startup and
+threaded through the composition root.
+
+```toml
+[policy]
+allowed_models = ["claude-sonnet-4-6", "local/*"]
+allowed_providers = ["anthropic", "local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = ["network_fetch"]
+
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+
+[[audit]]
+sink = "syslog"
+level = "privileged"
+```
+
+The keys, and the vocabulary reconciliation with the engine that consumes
+them:
+
+- `allowed_models` — `provider/id`, `provider/*`, `*` globs and bare model
+  ids. `allowed_providers` intersects with it. Both gate `kubic run` and
+  `kubic tui` (the explicit `--model` pin, `[model]`, `KUBIC_MODEL`, a role
+  pin, and the implicit first-available pick) before any provider call.
+- `allowed_tools` / `denied_tools` — the lane's tool intersection. The
+  system prompt's `tools:` line and the active tool set are the same set;
+  a tool named in `denied_tools` cannot be re-enabled by a project config,
+  a role document or the model.
+- `network_policy` — `"proxy"` is carried as the engine's `allowlist`
+  mode; the engine names (`none`, `allowlist`, `full`) are accepted too.
+  Proxy-mediated enforcement is a named follow-up, so doctor reports the
+  value instead of the section being silently ignored.
+- `filesystem_policy` — `"workspace-only"` is the engine's
+  `workspace-write`; the engine level names are accepted too.
+- `require_credential_broker`, `deny_local_credentials`, `data_policy`,
+  `logging_policy`, `agent_policy` (`{ max_agents, max_cost_usd }`) —
+  parsed into the effective policy and reported by doctor; each one's
+  enforcement status is the key-effect row above, never a claim.
+- `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
+  and `facility`). Unknown kinds, levels and keys are refused by name.
+
+Unknown keys inside `[policy]` fail closed and are named. `kubic policy
+--tool <name>` answers from the merged enterprise and installed policy and
+names the deciding layer (`deny bash (enterprise)`), so the offer and
+`kubic run` cannot disagree.
 
 ## models.json
 

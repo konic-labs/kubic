@@ -3,8 +3,15 @@
 // enforces, never mutates. Faux-only, zero network.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../../core/src/cli/theme.js';
-import { type EffectivePolicy, resolveEffectivePolicy } from './enterprise.js';
-import { runPolicyCommand } from './policy-cli.js';
+import {
+  type EffectivePolicy,
+  isToolAllowed,
+  resolveEffectivePolicy,
+} from './enterprise.js';
+import {
+  policyWithInstalledAllowlist,
+  runPolicyCommand,
+} from './policy-cli.js';
 import { REDACTED_SECRET } from './secret-shapes.js';
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
@@ -56,7 +63,7 @@ describe('kubic policy names unsupported levels (issue #166, §40.2)', () => {
       { resolvePolicy: allowBash, unsupported: () => unsupported, ...cap },
     );
     expect(code).toBe(0);
-    expect(cap.lines).toEqual(['allow bash']);
+    expect(cap.lines).toEqual(['allow bash (enterprise)']);
     expect(cap.errs).toEqual([
       "warn: network 'allowlist' is unsupported — enforced as 'none': no domain list can be supplied",
       "warn: filesystem 'full' is unsupported — enforced as 'workspace-write': no outside-workspace write tool exists",
@@ -80,6 +87,95 @@ describe('kubic policy names unsupported levels (issue #166, §40.2)', () => {
   });
 });
 
+describe('kubic policy names the deciding layer (issue #288)', () => {
+  it('reports deny (enterprise) under an enterprise deny', async () => {
+    const cap = capture();
+    const code = await runPolicyCommand(
+      { tool: 'bash' },
+      {
+        resolvePolicy: () =>
+          resolveEffectivePolicy([
+            { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+            {
+              layer: 'session',
+              policy: { tools: { allow: ['read', 'bash'] } },
+            },
+          ]).policy,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(code).toBe(0);
+    expect(cap.lines).toEqual(['deny bash (enterprise)']);
+  });
+
+  it('names the installed allowlist when it is what admits the tool', async () => {
+    const cap = capture();
+    await runPolicyCommand(
+      { tool: 'bash' },
+      {
+        resolvePolicy: () =>
+          policyWithInstalledAllowlist(emptyPolicy(), ['read', 'bash']),
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(cap.lines).toEqual(['allow bash (installed)']);
+  });
+
+  it('carries the source in the --json document', async () => {
+    const cap = capture();
+    await runPolicyCommand(
+      { tool: 'bash', json: true },
+      {
+        resolvePolicy: () =>
+          resolveEffectivePolicy([
+            { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+          ]).policy,
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(JSON.parse(cap.lines.join('\n'))).toEqual({
+      tool: 'bash',
+      decision: 'deny',
+      source: 'enterprise',
+    });
+  });
+});
+
+describe('policyWithInstalledAllowlist (issue #288)', () => {
+  it('intersects the installed allowlist with an enterprise allow, never widening', () => {
+    const enterprise = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { allow: ['read', 'bash'], deny: ['git_push'] } },
+      },
+    ]).policy;
+    const merged = policyWithInstalledAllowlist(enterprise, [
+      'read',
+      'bash',
+      'write',
+    ]);
+    expect(isToolAllowed(merged, 'read')).toBe(true);
+    // the installed allowlist offers write, the enterprise allow does not:
+    // the intersection is what a run from this cwd actually installs.
+    expect(isToolAllowed(merged, 'write')).toBe(false);
+    expect(isToolAllowed(merged, 'git_push')).toBe(false);
+    expect(merged.tools.allowSource).toBe('enterprise');
+  });
+
+  it('installs the installed allowlist when the enterprise layer names none', () => {
+    const enterprise = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    const merged = policyWithInstalledAllowlist(enterprise, ['read', 'bash']);
+    expect(isToolAllowed(merged, 'read')).toBe(true);
+    expect(isToolAllowed(merged, 'bash')).toBe(false);
+    expect(merged.tools.allowSource).toBe('session');
+  });
+});
+
 describe('kubic policy tool query (issue #79)', () => {
   it('denies by default with no enterprise allow', async () => {
     const cap = capture();
@@ -92,7 +188,7 @@ describe('kubic policy tool query (issue #79)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(cap.lines).toEqual(['deny bash']);
+    expect(cap.lines).toEqual(['deny bash (defaults)']);
   });
 
   it('offers allow for an allowlisted tool', async () => {
@@ -106,7 +202,7 @@ describe('kubic policy tool query (issue #79)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(cap.lines).toEqual(['allow bash']);
+    expect(cap.lines).toEqual(['allow bash (enterprise)']);
   });
 
   it('holds the enterprise denial against a lower-layer allow', async () => {
@@ -124,7 +220,7 @@ describe('kubic policy tool query (issue #79)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(cap.lines).toEqual(['deny bash']);
+    expect(cap.lines).toEqual(['deny bash (enterprise)']);
   });
 
   it('matches tool names case- and whitespace-insensitively', async () => {
@@ -138,7 +234,7 @@ describe('kubic policy tool query (issue #79)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(cap.lines).toEqual(['allow Bash']);
+    expect(cap.lines).toEqual(['allow Bash (enterprise)']);
   });
 });
 
@@ -157,6 +253,7 @@ describe('kubic policy --json (issue #79)', () => {
     expect(JSON.parse(cap.lines.join('\n'))).toEqual({
       tool: 'bash',
       decision: 'allow',
+      source: 'enterprise',
     });
   });
 });
@@ -202,7 +299,7 @@ describe('kubic policy colour', () => {
       },
     );
     expect(cap.lines[0]).toContain('\u001b[');
-    expect(cap.lines[0]).toMatch(/ bash$/);
+    expect(cap.lines[0]).toMatch(/ bash \(enterprise\)$/);
   });
 });
 
@@ -244,6 +341,7 @@ describe('kubic policy secret backstop (issue #79 fix cycle 1)', () => {
     expect(JSON.parse(text)).toEqual({
       tool: REDACTED_SECRET,
       decision: 'deny',
+      source: 'defaults',
     });
   });
 });

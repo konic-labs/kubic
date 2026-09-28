@@ -52,6 +52,11 @@ import {
   type AssembledModels,
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  type EffectivePolicy,
+  hasToolPolicy,
+  isToolAllowedByEnterprise,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
@@ -133,11 +138,14 @@ import {
   type OperationAdmissionResult,
   type TerminalStatus,
 } from '../../../packages/worker/src/pi-boundary.js';
-import type { runtimeLaneDeps } from './config-runtime.js';
+import {
+  type runtimeLaneDeps,
+  selectModelUnderPolicy,
+} from './config-runtime.js';
 import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
 import {
   hasExplicitModelSelection,
-  selectLaneModel,
+  roleModelSelection,
 } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 
@@ -364,6 +372,10 @@ export interface TuiRunOptions {
   // first-available; an explicit pin selects the model and makes a resumed
   // session switch (the #148 rule), absent means the default pick.
   model?: ModelSelection;
+  // §58 enterprise policy (issue #288): the same EffectivePolicy the
+  // headless runner gates with — the interactive lane is not the
+  // unprotected one.
+  modelPolicy?: EffectivePolicy;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -467,6 +479,14 @@ export async function bootTuiLane(
     // command shell to print) rather than silently booting a roleless
     // lane. Resolved BEFORE model selection: the role layer's model pin is
     // a selection input (issue #295).
+    // §58 enterprise policy (issue #288): the same gates the headless runner
+    // applies — role grants are checked and the model selection is gated.
+    const enterprisePolicy = options.modelPolicy;
+    const toolGate =
+      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
+        ? (tool: string): boolean =>
+            isToolAllowedByEnterprise(enterprisePolicy, tool)
+        : undefined;
     const selectedRole = (() => {
       if (options.role === undefined) return undefined;
       const rolesCwd = options.roles?.cwd ?? process.cwd();
@@ -478,6 +498,9 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { layers: options.roles.layers }),
+        ...(enterprisePolicy === undefined
+          ? {}
+          : { toolPolicy: enterprisePolicy }),
       });
       const promptText = rolePromptFor(
         selected.doc,
@@ -494,20 +517,27 @@ export async function bootTuiLane(
               ? {}
               : { toolAllowlist: selectedRole.resolved.tools }),
           };
-    // Issue #227 (§38.1): the ONE projection `kubic run` and `kubic tui`
-    // share — the runtime pin (cli `--model` > env > `[model]`) beats the
-    // role layer's model, which beats the first usable provider; the
-    // implicit pick never takes a keyless built-in (issue #221). The
-    // explicit-selection predicate is the #148 rule: any pin (faux, runtime
-    // or role) switches a resumed session whose stored model differs, the
-    // default pick never does.
-    const model = selectLaneModel({
-      models,
-      fauxPinned,
-      pin: options.model,
-      roleModel: selectedRole?.resolved.model,
-      fallbackProviders: assembled?.fallbackProviders,
-    });
+    // §38.1 (issues #227, #295): the ONE projection `kubic run` and
+    // `kubic tui` share — the runtime pin (cli `--model` > env > `[model]`)
+    // beats the role layer's model, which beats the first usable provider;
+    // the implicit pick never takes a keyless built-in (issue #221). The
+    // §58 enterprise policy (issue #288) gates the explicit/role selection
+    // and the provider pool. The explicit-selection predicate is the #148
+    // rule: any pin (faux, runtime or role) switches a resumed session
+    // whose stored model differs, the default pick never does.
+    const model = (() => {
+      const explicitSelection = fauxPinned
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : options.model;
+      const roleSelection = roleModelSelection(selectedRole?.resolved.model);
+      return selectModelUnderPolicy(
+        models,
+        explicitSelection,
+        roleSelection,
+        assembled?.fallbackProviders,
+        enterprisePolicy,
+      );
+    })();
     const explicitModel = hasExplicitModelSelection({
       fauxPinned,
       pin: options.model,
@@ -619,6 +649,9 @@ export async function bootTuiLane(
         ...(installed.contributions.length === 0
           ? {}
           : { contributions: installed.contributions }),
+        // §58 enterprise tool gate (issue #288): the same active-tools /
+        // prompt-tools intersection the headless lane installs.
+        ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
       },
     });
     // Issue #147 (§21): a turn a dead process left open would refuse every

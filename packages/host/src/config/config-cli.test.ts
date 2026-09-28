@@ -3,6 +3,7 @@
 // paths, trust, or env overrides of its own, and must fail closed with the
 // named reason instead of printing a default.
 import { describe, expect, it } from 'vitest';
+import { resolveEffectivePolicy } from '../policy/enterprise.js';
 import {
   CONFIG_EXIT_FAIL,
   CONFIG_EXIT_OK,
@@ -13,6 +14,7 @@ import type { RuntimeConfig } from './runtime.js';
 function runtime(): RuntimeConfig {
   return {
     config: { model: { provider: 'local', id: 'llama3' } },
+    policy: resolveEffectivePolicy([]).policy,
     model: { provider: 'local', id: 'llama3' },
     modelSource: 'global',
     approvals: {

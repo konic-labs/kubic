@@ -39,9 +39,10 @@ function fakeBridge(files: Record<string, string>): BridgePick {
 }
 
 describe('config layers (issue #38)', () => {
-  it('orders precedence Enterprise > Global > Project > Workspace > Session > Agent', () => {
+  it('orders precedence Enterprise > Product > Global > Project > Workspace > Session > Agent', () => {
     expect(CONFIG_LAYERS).toEqual([
       'enterprise',
+      'product',
       'global',
       'project',
       'workspace',
@@ -50,8 +51,16 @@ describe('config layers (issue #38)', () => {
     ]);
   });
 
+  it('gives the product layer the documented /etc/kubic/product.toml path', () => {
+    const paths = defaultLayerPaths({ home: '/home/u', projectRoot: '/repo' });
+    expect(paths.product).toBe('/etc/kubic/product.toml');
+    expect(paths.enterprise).toBe('/etc/kubic/config.toml');
+  });
+
   it('lets a higher layer win every pairwise contest', () => {
     const pairs: Array<[ConfigLayer, ConfigLayer]> = [
+      ['enterprise', 'product'],
+      ['product', 'global'],
       ['global', 'project'],
       ['project', 'workspace'],
       ['workspace', 'session'],
@@ -176,6 +185,134 @@ describe('canonical TOML example (issue #38)', () => {
     expect(() => parseTomlConfig('[telemetry]\nenabled = true\n')).toThrow(
       ConfigError,
     );
+  });
+});
+
+// §58 Enterprise Policy (issue #288): the documented `[policy]` section and
+// the `[[audit]]` array-of-tables must load verbatim — an admin who pastes
+// the design's example into /etc/kubic/config.toml gets enforcement, not a
+// refusal. Unknown keys stay fail-closed and are named.
+const S58_POLICY_EXAMPLE = `[policy]
+allowed_models = ["claude-sonnet-4-6", "local/*"]
+allowed_providers = ["anthropic", "local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = ["network_fetch"]
+
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+
+[[audit]]
+sink = "syslog"
+level = "privileged"
+`;
+
+describe('§58 [policy] + [[audit]] (issue #288)', () => {
+  it('parses the §58 example verbatim, keys normalized for the policy engine', () => {
+    const parsed = parseTomlConfig(S58_POLICY_EXAMPLE);
+    expect(parsed.policy?.allowedModels).toEqual([
+      'claude-sonnet-4-6',
+      'local/*',
+    ]);
+    expect(parsed.policy?.allowedProviders).toEqual(['anthropic', 'local']);
+    expect(parsed.policy?.allowedTools).toContain('bash');
+    expect(parsed.policy?.deniedTools).toEqual(['network_fetch']);
+    expect(parsed.policy?.networkPolicy).toBe('proxy');
+    expect(parsed.policy?.allowedDomains).toEqual([
+      'registry.npmjs.org',
+      'github.com',
+    ]);
+    expect(parsed.policy?.filesystemPolicy).toBe('workspace-only');
+    expect(parsed.policy?.requireCredentialBroker).toBe(true);
+    expect(parsed.policy?.denyLocalCredentials).toBe(true);
+    expect(parsed.policy?.dataPolicy).toBe('no-external-training');
+    expect(parsed.policy?.loggingPolicy).toBe('full-audit');
+    expect(parsed.policy?.agentPolicy).toEqual({
+      maxAgents: 2,
+      maxCostUsd: 5,
+    });
+    expect(parsed.audit).toEqual([{ sink: 'syslog', level: 'privileged' }]);
+  });
+
+  it('accepts the engine vocabulary for network and filesystem policy too', () => {
+    const parsed = parseTomlConfig(
+      '[policy]\nnetwork_policy = "none"\nfilesystem_policy = "read"\n',
+    );
+    expect(parsed.policy?.networkPolicy).toBe('none');
+    expect(parsed.policy?.filesystemPolicy).toBe('read');
+  });
+
+  it('refuses an unknown key inside [policy], naming it', () => {
+    expect(() => parseTomlConfig('[policy]\nbogus_key = 1\n')).toThrow(
+      /unknown key 'bogus_key'/,
+    );
+  });
+
+  it('refuses unknown keys and mistyped values inside agent_policy, by path', () => {
+    expect(() =>
+      parseTomlConfig(
+        '[policy]\nagent_policy = { max_agents = 1, bogus = 2 }\n',
+      ),
+    ).toThrow(/agent_policy.*bogus/);
+    expect(() =>
+      parseTomlConfig('[policy]\nagent_policy = { max_agents = -1 }\n'),
+    ).toThrow(/non-negative/);
+  });
+
+  it('refuses unknown network and filesystem policy values by name', () => {
+    expect(() => parseTomlConfig('[policy]\nnetwork_policy = "vpn"\n')).toThrow(
+      /'policy': 'network_policy' must be one of/,
+    );
+    expect(() =>
+      parseTomlConfig('[policy]\nfilesystem_policy = "everywhere"\n'),
+    ).toThrow(/'policy': 'filesystem_policy' must be one of/);
+  });
+
+  it('refuses a malformed [policy] value shape by name', () => {
+    expect(() =>
+      parseTomlConfig('[policy]\nallowed_models = "local/*"\n'),
+    ).toThrow(/string array/);
+    expect(() =>
+      parseTomlConfig('[policy]\nrequire_credential_broker = "yes"\n'),
+    ).toThrow(/must be a boolean/);
+  });
+
+  it('refuses unknown sink kinds, levels and keys in [[audit]], by name', () => {
+    expect(() =>
+      parseTomlConfig('[[audit]]\nsink = "carrier-pigeon"\n'),
+    ).toThrow(/sink/);
+    expect(() =>
+      parseTomlConfig('[[audit]]\nsink = "syslog"\nlevel = "secret"\n'),
+    ).toThrow(/level/);
+    expect(() => parseTomlConfig('[[audit]]\nsink = "syslog"\n')).toThrow(
+      /'level' must be a non-empty string/,
+    );
+    expect(() =>
+      parseTomlConfig('[[audit]]\nsink = "syslog"\nlevel = "all"\nbogus = 1\n'),
+    ).toThrow(/unknown key 'bogus'/);
+  });
+
+  it('keeps the audit list appendable across multiple [[audit]] tables', () => {
+    const parsed = parseTomlConfig(
+      '[[audit]]\nsink = "syslog"\nlevel = "privileged"\n\n[[audit]]\nsink = "file"\nlevel = "all"\ntarget = "/var/log/kubic.jsonl"\n',
+    );
+    expect(parsed.audit).toEqual([
+      { sink: 'syslog', level: 'privileged' },
+      { sink: 'file', level: 'all', target: '/var/log/kubic.jsonl' },
+    ]);
+  });
+
+  it('round-trips [policy] and [[audit]] through the serializer', () => {
+    const once = parseTomlConfig(S58_POLICY_EXAMPLE);
+    const twice = parseTomlConfig(serializeTomlConfig(once));
+    expect(twice).toEqual(once);
   });
 });
 

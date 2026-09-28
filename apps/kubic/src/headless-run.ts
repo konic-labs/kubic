@@ -30,6 +30,7 @@ import type {
 import {
   type InstalledSoloPolicy,
   installSoloPolicy,
+  orchestratedWorkerFromEnv,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import {
@@ -818,6 +819,17 @@ export async function runHeadlessPrompt(
         ...(approvalsSeat === undefined
           ? {}
           : { answer: approvalsSeat, maxPendingMs: workerBoundMs }),
+        // Issue #279: a worker child's §60 records are orchestrator records
+        // in the main repo ledger (seat-answered asks: the manager's).
+        ...((): {
+          orchestratedWorker?: {
+            workerId: string;
+            orchestratorSession: string;
+          };
+        } => {
+          const worker = orchestratedWorkerFromEnv(process.env);
+          return worker === undefined ? {} : { orchestratedWorker: worker };
+        })(),
       });
     const journal = new FileJournalStore(
       join(root, id, 'journal'),

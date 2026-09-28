@@ -1163,23 +1163,34 @@ Queries the audit trail, matching each supplied filter exactly.
 **Output.** Text mode prints a table with the columns `WHEN`, `MODE`,
 `POSTURE`, `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`.
 With no matching records it prints `no audit records` and exits 0.
-`--json` prints the full 14-field records.
+`--json` prints the full 14-field records. A ledger that exists but
+cannot be read (permission denied, I/O error) is not an empty trail: the
+command prints `error: cannot read the audit ledger <path>: …` on stderr
+and exits 1. Only a missing ledger reads as empty.
 
 **Redaction.** Every record is redacted before it is printed:
 secret-shaped values and listed-secret inventory values become
 `[redacted-secret]`, so credentials only ever appear as sentinels.
 
-**Where records come from.** The records are read from the repo's §60
-ledger, `.kubic/orchestrator/approvals/audit.jsonl` under the current
-directory, one record per line. The shipped runtime ignore rules cover
-this file.
+**Where records come from.** There is one §60 ledger per repository,
+`<repo>/.kubic/orchestrator/approvals/audit.jsonl`, one record per line.
+`<repo>` is the main checkout: from a subdirectory or from a linked
+worktree, every writer and `kubic audit` resolve the same file (the
+parent of git's common dir; outside git, the current directory). The
+shipped runtime ignore rules cover this file.
 
 - `kubic orchestrate` appends one record per approval decision:
   approved, denied, timed out, or a refused manager approve. The record
   has `--posture approvals` or `full-access`.
 - `kubic run` and `kubic tui` append one `mode: solo` record per
   resolved solo approval ask, approved or denied, with `posture`
-  `approvals` or `full-access`, to the workspace's ledger.
+  `approvals` or `full-access`. A run from `<repo>/sub` writes the repo
+  ledger, never `<repo>/sub/.kubic/`.
+- A worker child of `kubic orchestrate` writes no record for an ask the
+  manager answered (the manager's record is the one record). A decision
+  the child makes on its own (a latched answer, the route,
+  `autoApprove`, full access) is recorded once as `mode: orchestrator`
+  for that worker in the main repo ledger, never inside its worktree.
 - A failed ledger write never changes the decision.
 
 | Flag | Meaning |

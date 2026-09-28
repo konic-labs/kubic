@@ -22,7 +22,7 @@ import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
-  auditLedgerDir,
+  auditLedgerDirFor,
   soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
@@ -694,6 +694,28 @@ export interface SoloPolicyInput {
   model?: string;
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
+  /**
+   * Set when this lane is an orchestrator-managed worker child (issue #279;
+   * the composition root reads KUBIC_WORKER_ID / KUBIC_ORCHESTRATOR_SESSION).
+   * Decisions answered through the manager seat are recorded by the manager
+   * (worker-asks), so the child appends nothing for them; decisions the child
+   * makes locally (a latched answer, the route, autoApprove, full access, a
+   * refusal) are recorded ONCE, as mode 'orchestrator' for this worker, in
+   * the main repo ledger — never inside the worktree.
+   */
+  orchestratedWorker?: { workerId: string; orchestratorSession: string };
+}
+
+// The orchestrated-worker identity from a child's environment (issue #279):
+// both variables are set by `kubic orchestrate` on each worker child; either
+// missing means a plain solo lane.
+export function orchestratedWorkerFromEnv(
+  env: Record<string, string | undefined>,
+): { workerId: string; orchestratorSession: string } | undefined {
+  const workerId = env.KUBIC_WORKER_ID?.trim() ?? '';
+  const orchestratorSession = env.KUBIC_ORCHESTRATOR_SESSION?.trim() ?? '';
+  if (workerId === '' || orchestratorSession === '') return undefined;
+  return { workerId, orchestratorSession };
 }
 
 // The config `[approvals]` half of the install (issue #230): the one shape
@@ -833,10 +855,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     ...(input.answer === undefined ? {} : { awaitAnswer: input.answer }),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
-  // §60 audit ledger: every resolved ask appends one solo record under
-  // <workspace>/.kubic/orchestrator/approvals. Best-effort by contract — a
-  // failed write (or a malformed record) goes to onAuditError, never into
-  // the approval decision.
+  // §60 audit ledger: every resolved ask appends one record to the REPO
+  // ledger (issue #279): <main checkout>/.kubic/orchestrator/approvals,
+  // resolved once here with the same resolver `kubic audit` reads through,
+  // so a run from a subdirectory or a linked worktree writes where the
+  // reader looks. Best-effort by contract — a failed write (or a malformed
+  // record) goes to onAuditError, never into the approval decision.
+  const ledgerDir = auditLedgerDirFor(input.workspace);
+  const worker = input.orchestratedWorker;
   const auditSessionId =
     input.sessionId ??
     (input.sessionDir === undefined ? '' : basename(input.sessionDir));
@@ -851,7 +877,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     const onError = input.onAuditError ?? (() => undefined);
     try {
       appendToLedger(
-        auditLedgerDir(input.workspace),
+        ledgerDir,
         soloDecisionAudit({
           sessionId: auditSessionId,
           toolName,
@@ -865,6 +891,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
               : { by: decision.by }
             : { reason: decision.reason }),
           posture: fullAccess ? 'full-access' : 'approvals',
+          ...(worker === undefined
+            ? {}
+            : {
+                worker: {
+                  id: worker.workerId,
+                  orchestratorSession: worker.orchestratorSession,
+                },
+              }),
         }),
         onError,
       );
@@ -883,6 +917,16 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
   ): { approved: false; reason: string } => {
     denials.push({ capability, toolName, reason });
     audit(toolName, capability, { approved: false, reason }, false);
+    return { approved: false, reason };
+  };
+  // A refusal recorded by someone else (the manager, for a worker child's
+  // seat-answered ask): still a denial the run must end on, never a record.
+  const refuseUnaudited = (
+    capability: string,
+    toolName: string,
+    reason: string,
+  ): { approved: false; reason: string } => {
+    denials.push({ capability, toolName, reason });
     return { approved: false, reason };
   };
   const ask: ApprovalAsk = async (call) => {
@@ -966,15 +1010,21 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           toolName: call.toolName,
           summary: summarizeRequest(call.toolName, capability, call.args),
         });
+        // A worker child's seat IS the manager (issue #279): the manager's
+        // worker-asks record is the one §60 record for this decision.
         if (!verdict.approved) {
-          return deny(capability, call.toolName, verdict.reason);
+          return worker === undefined
+            ? deny(capability, call.toolName, verdict.reason)
+            : refuseUnaudited(capability, call.toolName, verdict.reason);
         }
-        audit(
-          call.toolName,
-          capability,
-          { approved: true, by: verdict.by },
-          false,
-        );
+        if (worker === undefined) {
+          audit(
+            call.toolName,
+            capability,
+            { approved: true, by: verdict.by },
+            false,
+          );
+        }
         continue;
       }
       // NO ANSWER SURFACE IS INSTALLED — `kubic run` has no TTY, and a `kubic

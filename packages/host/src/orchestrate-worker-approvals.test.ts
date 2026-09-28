@@ -21,7 +21,12 @@ import type {
   OrchestrateCommandDeps,
   ParsedBudgetSpec,
 } from './orchestrate-cli.js';
-import { parseBudgetSpec, runOrchestrateCommand } from './orchestrate-cli.js';
+import {
+  ORCHESTRATE_APPROVAL_BOUND_MS,
+  parseBudgetSpec,
+  runOrchestrateCommand,
+  workerApprovalBoundMs,
+} from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
 import {
   awaitWorkerAskAnswer,
@@ -489,5 +494,54 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     expect(freshCode).toBe(0);
     expect(fresh.raised).toHaveLength(1);
     expect(fresh.approvals.fullAccessGrant()).toBeUndefined();
+  });
+});
+
+describe('the worker-ask bound reads config maxPendingMs (issue #230)', () => {
+  it('builds the approvals run with the config snapshot bound', async () => {
+    const h = harness(() => ({ approved: true }), { agents: ['worker-1'] });
+    const bounds: number[] = [];
+    const build = h.deps.approvals;
+    if (build === undefined) throw new Error('harness has no approvals seam');
+    const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, {
+      ...h.deps,
+      approvalPolicy: {
+        route: 'ask-user',
+        autoApprove: [],
+        maxPendingMs: 4321,
+      },
+      approvals: (options) => {
+        bounds.push(options.maxPendingMs);
+        return build(options);
+      },
+    });
+    expect(code).toBe(0);
+    expect(bounds).toEqual([4321]);
+  });
+
+  it('falls back to the run-level default without a config snapshot', async () => {
+    const h = harness(() => ({ approved: true }), { agents: ['worker-1'] });
+    const bounds: number[] = [];
+    const build = h.deps.approvals;
+    if (build === undefined) throw new Error('harness has no approvals seam');
+    await runOrchestrateCommand(ORCHESTRATE_ARGS, {
+      ...h.deps,
+      approvals: (options) => {
+        bounds.push(options.maxPendingMs);
+        return build(options);
+      },
+    });
+    expect(bounds).toEqual([ORCHESTRATE_APPROVAL_BOUND_MS]);
+  });
+
+  it('keeps the child bound strictly below the manager bound', () => {
+    for (const manager of [2, 10, 500, 60_000, 600_000]) {
+      const child = workerApprovalBoundMs(manager);
+      expect(child).toBeGreaterThan(0);
+      expect(child).toBeLessThan(manager);
+    }
+    expect(workerApprovalBoundMs(60_000)).toBe(55_000);
+    expect(workerApprovalBoundMs(500)).toBe(450);
+    expect(workerApprovalBoundMs(1)).toBe(1);
   });
 });

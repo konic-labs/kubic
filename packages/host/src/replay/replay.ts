@@ -49,6 +49,7 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
+import type { SoloApprovalConfig } from '../approvals.js';
 import {
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -97,6 +98,8 @@ export interface ReplayRuntimeDeps {
   policyClasses?: PermissionClasses;
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
+  // Issue #230: the config `[approvals]` policy, as `kubic run` installs it.
+  approvals?: SoloApprovalConfig;
 }
 
 export interface ReplayCommandDeps {

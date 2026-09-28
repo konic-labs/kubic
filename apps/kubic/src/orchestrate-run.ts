@@ -32,7 +32,9 @@ import type {
 } from '../../../packages/host/src/orchestrate-cli.js';
 import {
   MergeConflictError,
+  ORCHESTRATE_APPROVAL_BOUND_MS,
   parseOrchestratorRunState,
+  workerApprovalBoundMs,
   workerSessionFor,
 } from '../../../packages/host/src/orchestrate-cli.js';
 // The shared timeout-reason marker (issue #129): the elapse denial below
@@ -655,6 +657,7 @@ export async function orchestrateDepsWithDefaults(
   const optionsSeat =
     options.approvalsSeat ?? workerSeatForRun(process.stdin.isTTY === true);
   let approvalsActive: WorkerApprovalsRun | undefined;
+  let approvalsBoundMs = ORCHESTRATE_APPROVAL_BOUND_MS;
   const shellForWorktree = (worktreePath: string): WorkerShell => {
     if (workerShell === undefined || workerShellRoot !== worktreePath) {
       workerShell = allowlistedShell(new NodeExecutionEnv(worktreePath).shell);
@@ -1067,6 +1070,7 @@ export async function orchestrateDepsWithDefaults(
         debug: (line) => debug(line),
       });
       approvalsActive = run;
+      approvalsBoundMs = options.maxPendingMs;
       return run;
     },
     createWorkerSession: async (input) => {
@@ -1175,6 +1179,10 @@ export async function orchestrateDepsWithDefaults(
               : {
                   KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
                   KUBIC_ORCHESTRATOR_SESSION: workerSession,
+                  // Issue #230: the child's bound, below the manager's.
+                  KUBIC_APPROVALS_BOUND_MS: String(
+                    workerApprovalBoundMs(approvalsBoundMs),
+                  ),
                 }),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,

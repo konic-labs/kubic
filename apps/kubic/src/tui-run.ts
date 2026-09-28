@@ -32,6 +32,7 @@ import {
   type ApprovalVerdict,
   type InstalledSoloPolicy,
   installSoloPolicy,
+  type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import {
   FAUX_FOOTER,
@@ -185,6 +186,9 @@ export interface TuiRunOptions {
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy — the same projection
+  // `kubic run` installs. Absent means the documented defaults.
+  approvals?: SoloApprovalConfig;
   // The installed-policy seat (issue #86): the same derivation the headless
   // runner installs. Absent means the shipped default (classes above +
   // destructive/network/confine guards + the approval ask); tests inject a
@@ -308,6 +312,7 @@ export async function bootTuiLane(
         workspace: env.cwd,
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
+        ...(options.approvals ?? {}),
         sessionDir: join(root, id),
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
@@ -421,6 +426,7 @@ export function tuiDepsWithDefaults(provided: {
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
   policySource?: 'config' | 'default';
+  approvals?: SoloApprovalConfig;
   policy?: InstalledSoloPolicy;
   // Issue #113 (§42.4): config journal retention, threaded from the same
   // runtimeRunDeps projection `kubic run` uses.
@@ -432,6 +438,7 @@ export function tuiDepsWithDefaults(provided: {
   const {
     classes,
     policySource,
+    approvals,
     policy,
     journalRetention,
     reconcileOutOfScope,
@@ -449,6 +456,7 @@ export function tuiDepsWithDefaults(provided: {
       bootTuiLane(sessionId, {
         ...(classes === undefined ? {} : { classes }),
         ...(policySource === undefined ? {} : { policySource }),
+        ...(approvals === undefined ? {} : { approvals }),
         ...(policy === undefined ? {} : { policy }),
         ...(answer === undefined ? {} : { answer }),
         ...(journalRetention === undefined ? {} : { journalRetention }),

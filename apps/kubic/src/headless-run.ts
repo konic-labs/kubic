@@ -30,6 +30,7 @@ import type {
 import {
   type InstalledSoloPolicy,
   installSoloPolicy,
+  type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import {
   FAUX_MODEL_ID,
@@ -147,6 +148,10 @@ export interface HeadlessRunDeps {
   // ('default' when nothing configured them). Absent means 'default' — the
   // documented safe default, never an assumed operator choice.
   policySource?: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy (route, maxPendingMs,
+  // autoApprove, requireJustification, sessionScoped). Absent means the
+  // documented defaults.
+  approvals?: SoloApprovalConfig;
   journalRetention?: JournalRetention;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
@@ -771,6 +776,13 @@ export async function runHeadlessPrompt(
     // the ask mailbox is. The seat published there is what turns a challenged
     // call into a question for the USER instead of a dead end.
     const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
+    // Issue #230: the manager hands its child a bound below its own config
+    // maxPendingMs; absent or malformed keeps the shipped child default.
+    const workerBoundRaw = process.env.KUBIC_APPROVALS_BOUND_MS;
+    const workerBoundMs =
+      workerBoundRaw !== undefined && /^[1-9]\d*$/.test(workerBoundRaw)
+        ? Number(workerBoundRaw)
+        : DEFAULT_WORKER_APPROVAL_BOUND_MS;
     const approvalsSeat =
       approvalMailboxDir === undefined || approvalMailboxDir.trim() === ''
         ? undefined
@@ -779,7 +791,7 @@ export async function runHeadlessPrompt(
             // The child's own bound. It sits BELOW the orchestration's bound on
             // purpose: the child denies closed with the named status rather
             // than outliving the run that would answer it.
-            maxPendingMs: DEFAULT_WORKER_APPROVAL_BOUND_MS,
+            maxPendingMs: workerBoundMs,
           });
     const installed =
       deps.policy ??
@@ -791,6 +803,8 @@ export async function runHeadlessPrompt(
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
+        // Issue #230: the configured approval policy, never the defaults.
+        ...(deps.approvals ?? {}),
         sessionDir: join(root, id),
         // §60 audit identity for the ledger record of each resolved ask.
         sessionId: id,
@@ -801,7 +815,9 @@ export async function runHeadlessPrompt(
         // through the manager instead of dying at "no approval surface". The
         // wait is bounded inside the seat, so a manager that never answers
         // denies closed rather than hanging the child's turn.
-        ...(approvalsSeat === undefined ? {} : { answer: approvalsSeat }),
+        ...(approvalsSeat === undefined
+          ? {}
+          : { answer: approvalsSeat, maxPendingMs: workerBoundMs }),
       });
     const journal = new FileJournalStore(
       join(root, id, 'journal'),

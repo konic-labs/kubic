@@ -661,6 +661,15 @@ export interface SoloPolicyInput {
   route?: 'ask-user' | 'deny';
   /** Stored decisions are scoped to one session (the shipped default). */
   sessionScoped?: boolean;
+  /**
+   * Config `[approvals] autoApprove` (issue #230): capabilities approved
+   * without an ask. Explicit-only — it arrives from config, never from the
+   * tool path — and it is consulted before the no-surface refusal, so a
+   * headless run honours it too.
+   */
+  autoApprove?: Capability[];
+  /** Config `[approvals] requireJustification` (issue #230). */
+  requireJustification?: boolean;
   /** Session dir carrying posture.json (session-scoped full access). */
   sessionDir?: string;
   /**
@@ -683,6 +692,18 @@ export interface SoloPolicyInput {
   onAuditError?: (message: string) => void;
 }
 
+// The config `[approvals]` half of the install (issue #230): the one shape
+// the composition root projects from the config load and every solo entry
+// point (run, tui, replay, doctor) spreads into installSoloPolicy.
+export type SoloApprovalConfig = Pick<
+  SoloPolicyInput,
+  | 'route'
+  | 'maxPendingMs'
+  | 'autoApprove'
+  | 'requireJustification'
+  | 'sessionScoped'
+>;
+
 // What the lane installed and what doctor must print, in ONE object.
 export interface InstalledPolicyPosture {
   source: 'config' | 'default';
@@ -692,6 +713,8 @@ export interface InstalledPolicyPosture {
   interceptors: string[];
   sessionScoped: boolean;
   maxPendingMs: number;
+  autoApprove: string[];
+  requireJustification: boolean;
   fullAccess: boolean;
 }
 
@@ -735,8 +758,24 @@ export function installedPolicyPosture(
       `installed policy contradicts itself: ${agreement.reason}`,
     );
   }
-  const route = input.route ?? 'ask-user';
-  const sessionScoped = input.sessionScoped ?? true;
+  // One validation for every approval knob (issue #230): the same
+  // validatePolicy the config load and the service use, so the posture
+  // doctor prints is exactly the policy the service enforces.
+  const policy = validatePolicy({
+    ...(input.route === undefined ? {} : { route: input.route }),
+    ...(input.maxPendingMs === undefined
+      ? {}
+      : { maxPendingMs: input.maxPendingMs }),
+    ...(input.autoApprove === undefined
+      ? {}
+      : { autoApprove: input.autoApprove }),
+    ...(input.sessionScoped === undefined
+      ? {}
+      : { sessionScoped: input.sessionScoped }),
+    ...(input.requireJustification === undefined
+      ? {}
+      : { requireJustification: input.requireJustification }),
+  });
   const fullAccess =
     input.sessionDir === undefined
       ? false
@@ -747,7 +786,7 @@ export function installedPolicyPosture(
     // source is never a guess about a config-less install.
     source:
       input.source ?? (input.classes === undefined ? 'default' : 'config'),
-    route,
+    route: policy.route,
     classes: { ...classes },
     allowlist: [...allowlist],
     // Named mechanisms, not adjectives: this is exactly what the lane
@@ -760,8 +799,10 @@ export function installedPolicyPosture(
       'confine-guard',
       'approval',
     ],
-    sessionScoped,
-    maxPendingMs: input.maxPendingMs ?? 60_000,
+    sessionScoped: policy.sessionScoped,
+    maxPendingMs: policy.maxPendingMs,
+    autoApprove: [...policy.autoApprove],
+    requireJustification: policy.requireJustification,
     fullAccess,
   };
 }
@@ -778,6 +819,8 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       route: posture.route,
       sessionScoped: posture.sessionScoped,
       maxPendingMs: posture.maxPendingMs,
+      autoApprove: posture.autoApprove,
+      requireJustification: posture.requireJustification,
     }),
     ...(store === undefined ? {} : { store }),
     // The seat's ask is the service's awaitAnswer: the service races it
@@ -859,7 +902,16 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       const key = approvalKey(call.toolName, capability, call.args);
       // A stored decision (a real answer, from a surface that has one) wins:
       // first-answer-latched, exactly like every other approval path.
-      const decided = service.decided(key);
+      // A stored approval granted without justification does not survive
+      // requireJustification (the service's own staleness rule): it
+      // re-enters the policy path below instead of being replayed.
+      const stored = service.decided(key);
+      const decided =
+        stored?.approved === true &&
+        posture.requireJustification &&
+        stored.justified !== true
+          ? undefined
+          : stored;
       if (decided !== undefined) {
         if (!decided.approved) {
           return deny(capability, call.toolName, decided.reason);
@@ -868,6 +920,28 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           call.toolName,
           capability,
           { approved: true, by: decided.by },
+          false,
+        );
+        continue;
+      }
+      // Config autoApprove (issue #230; §41.2): explicit-only, decided by
+      // the service (which also enforces requireJustification), and
+      // consulted BEFORE the route and the no-surface refusal, so a headless
+      // run honours it exactly like an interactive one.
+      if (posture.autoApprove.includes(capability)) {
+        const verdict = await service.request({
+          key,
+          capability,
+          toolName: call.toolName,
+          summary: summarizeRequest(call.toolName, capability, call.args),
+        });
+        if (!verdict.approved) {
+          return deny(capability, call.toolName, verdict.reason);
+        }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: verdict.by },
           false,
         );
         continue;

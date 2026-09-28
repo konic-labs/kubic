@@ -88,6 +88,7 @@ import {
   installedPolicyClasses,
   installedPolicyDeps,
   kubicConfigLoader,
+  runtimeApprovalDeps,
   runtimeLaneDeps,
   runtimeModelPin,
   runtimeRunDeps,
@@ -303,6 +304,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // must reach it here too.
           ...installedPolicyClasses(cliConfig),
           policySource: installedPolicyDeps(cliConfig).source,
+          // Issue #230: the config `[approvals]` policy, same as `kubic run`.
+          approvals: runtimeApprovalDeps(cliConfig),
           // Issue #113 (§42.4): the same journal retention projection `kubic
           // run` threads — a TUI session's journal age-prunes under config.
           journalRetention: runtimeRunDeps(cliConfig).journalRetention,

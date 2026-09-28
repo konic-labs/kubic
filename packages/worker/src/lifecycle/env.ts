@@ -31,6 +31,9 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // locations/identifiers — the same class as KUBIC_WORKER_ID.
   'KUBIC_APPROVALS_DIR',
   'KUBIC_ORCHESTRATOR_SESSION',
+  // The child's approval bound (issue #230): derived from the manager's
+  // config maxPendingMs and kept below it. A number, not a secret.
+  'KUBIC_APPROVALS_BOUND_MS',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

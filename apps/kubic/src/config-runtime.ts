@@ -24,6 +24,7 @@ import {
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
+import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
@@ -232,6 +233,27 @@ export function runtimeModelPin(
   return { provider: selection.provider, id: selection.id };
 }
 
+// The config `[approvals]` policy as the solo install consumes it (issue
+// #230; §41.2): route, maxPendingMs, autoApprove, requireJustification and
+// sessionScoped, projected ONCE here and spread into installSoloPolicy by
+// `kubic run`, `kubic tui`, replay and doctor's installed-policy line — so
+// what doctor prints and what every solo lane enforces are one derivation
+// (§40.3). A refused config contributes nothing (the command fails closed
+// first); absent means the documented defaults.
+export function runtimeApprovalDeps(
+  result: CliConfigResult,
+): SoloApprovalConfig {
+  const policy = result.runtime?.approvals.policy;
+  if (policy === undefined) return {};
+  return {
+    route: policy.route,
+    maxPendingMs: policy.maxPendingMs,
+    autoApprove: [...policy.autoApprove],
+    requireJustification: policy.requireJustification,
+    sessionScoped: policy.sessionScoped,
+  };
+}
+
 // The remaining `kubic run` projections (issue #90): the permission classes
 // the lane derives its tool allowlist from (§40) and the journal retention
 // bound enforced on every append (§42.4). A refused config contributes
@@ -249,10 +271,13 @@ export function runtimeRunDeps(result: CliConfigResult): {
   // that sets only, say, `[journal]` still runs the documented defaults and
   // must not be reported as operator-configured classes.
   policySource: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy the lane installs.
+  approvals?: SoloApprovalConfig;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return { policySource: 'default' };
   return {
+    approvals: runtimeApprovalDeps(result),
     policyClasses: { ...runtime.permissions.classes },
     policySource:
       runtime.permissions.source === 'defaults' ? 'default' : 'config',
@@ -357,13 +382,16 @@ export function approvalSnapshotFrom(runtime: RuntimeConfig): ApprovalSnapshot {
 export function installedPolicyDeps(result: CliConfigResult): {
   classes?: PermissionClasses;
   source: 'config' | 'default';
-} {
+} & SoloApprovalConfig {
   const { policyClasses, policySource } = runtimeRunDeps(result);
   return {
     ...(policySource === 'config' && policyClasses !== undefined
       ? { classes: policyClasses }
       : {}),
     source: policySource,
+    // Issue #230: the approval half of the same projection, so doctor's
+    // `policy:installed` line and the lane read one derivation.
+    ...runtimeApprovalDeps(result),
   };
 }
 

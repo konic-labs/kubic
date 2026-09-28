@@ -49,7 +49,9 @@ solo) — and `run` never delegates.
   spawn → wait → collect record — stays write-free. Merges are the only write
   the orchestrator performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
-  auto-approves; a headless run with no decider denies closed (exit 4).
+  auto-approves merges (and only merges — it never answers a worker ask,
+  issue #323); a headless run with no decider denies closed (exit 4). Each
+  merge decision is a §60 ledger row naming `--yes` or `user`.
 - **A worker's dangerous call goes to you too (issue #105).** Network,
   destructive-shell, outside-write, install and push calls a worker child
   raises are routed to the user through one approval router per run, over a

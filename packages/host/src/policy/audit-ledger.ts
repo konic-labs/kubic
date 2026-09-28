@@ -223,6 +223,44 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   };
 }
 
+// §60 record for one orchestrator MERGE-gate decision (issue #323). The
+// approval names who decided: `--yes` (the run's standing answer, which
+// covers merges only) or `user` (a decider answered, or none existed and
+// the gate denied closed) — never an inferred approval dressed as a user's.
+export interface MergeDecisionInput {
+  sessionId: string;
+  agentId: string;
+  branch: string;
+  workspace: string;
+  approved: boolean;
+  by: '--yes' | 'user';
+  reason?: string;
+  posture: string;
+}
+
+export function mergeDecisionAudit(input: MergeDecisionInput): AuditInput {
+  const { approval, result, reason } = verdictFields(
+    input.approved
+      ? { approved: true, by: input.by }
+      : { approved: false, reason: input.reason ?? 'denied' },
+  );
+  return {
+    who: `agent:${input.agentId || UNKNOWN}`,
+    what: `merge:${input.branch || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'manager' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: { permission: 'gate:merge', approval },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: input.posture,
+    result,
+    reason,
+  };
+}
+
 function redactLeaves(value: unknown): unknown {
   if (typeof value === 'string') return redactSecretShapes(value);
   if (Array.isArray(value)) return value.map(redactLeaves);

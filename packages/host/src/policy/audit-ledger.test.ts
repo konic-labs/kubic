@@ -12,6 +12,7 @@ import {
   appendToLedger,
   auditLedgerDir,
   auditLedgerDirFor,
+  mergeDecisionAudit,
   readAuditLedger,
   soloDecisionAudit,
 } from './audit-ledger.js';
@@ -89,6 +90,52 @@ describe('§60 audit ledger', () => {
     expect(readAuditLedger(dir)).toMatchObject([
       { mode: 'solo', result: 'deny', reason: 'user denied' },
     ]);
+  });
+
+  // Issue #323: a merge approved by the run's `--yes` standing answer is not
+  // a user decision; the ledger row says which one it was.
+  it('merge-gate rows tell a --yes approval apart from a user answer', () => {
+    const root = repo();
+    const dir = auditLedgerDir(root);
+    const base = {
+      sessionId: 'orch-1',
+      agentId: 'worker-1',
+      branch: 'kubic/worker-1',
+      workspace: root,
+      posture: 'approvals',
+    };
+    appendToLedger(
+      dir,
+      mergeDecisionAudit({ ...base, approved: true, by: '--yes' }),
+    );
+    appendToLedger(
+      dir,
+      mergeDecisionAudit({ ...base, approved: true, by: 'user' }),
+    );
+    appendToLedger(
+      dir,
+      mergeDecisionAudit({
+        ...base,
+        approved: false,
+        by: 'user',
+        reason: 'denied',
+      }),
+    );
+    const records = readAuditLedger(dir);
+    expect(records.map((record) => record.permission.approval)).toEqual([
+      'approved by --yes',
+      'approved by user',
+      'denied',
+    ]);
+    expect(records[0]).toMatchObject({
+      who: 'agent:worker-1',
+      what: 'merge:kubic/worker-1',
+      mode: 'orchestrator',
+      result: 'ok',
+      agent: { session: 'orch-1', role: 'manager' },
+      permission: { permission: 'gate:merge' },
+    });
+    expect(records[2]).toMatchObject({ result: 'deny', reason: 'denied' });
   });
 
   it('redacts a secret-shaped field instead of dropping the decision', () => {

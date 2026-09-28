@@ -41,6 +41,8 @@ import {
 import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/orchestrator/approvals/timeout-reason.js';
 import {
   createOrchestratorApprovalsRun,
+  POSTURE_APPROVALS,
+  POSTURE_FULL_ACCESS,
   type WorkerApprovalsRun,
   type WorkerAskSeat,
   workerSeatForRun,
@@ -63,6 +65,11 @@ import {
   pathForAgent,
 } from '../../../packages/host/src/orchestrator/worktree/naming.js';
 import { getWorktreeStatus } from '../../../packages/host/src/orchestrator/worktree/status.js';
+import {
+  appendToLedger,
+  auditLedgerDir,
+  mergeDecisionAudit,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
@@ -1040,7 +1047,6 @@ export async function orchestrateDepsWithDefaults(
     approvals: (options: {
       sessionId: string;
       maxPendingMs: number;
-      autoApprove: boolean;
       budget?: unknown;
       budgetForAgent?: (agentId: string) => unknown;
       fullAccess?: boolean;
@@ -1049,7 +1055,6 @@ export async function orchestrateDepsWithDefaults(
         dir: join(needRoot(), '.kubic', 'orchestrator'),
         sessionId: options.sessionId,
         maxPendingMs: options.maxPendingMs,
-        ...(options.autoApprove ? { autoApprove: true } : {}),
         ...(options.budget === undefined ? {} : { budget: options.budget }),
         // Per-spawn budget spec (§71, issue #105): the CLI decodes
         // `--budget <agent>:<dims>` and this hands it to the spawn's own gate,
@@ -1058,12 +1063,11 @@ export async function orchestrateDepsWithDefaults(
           ? {}
           : { budgetForAgent: options.budgetForAgent }),
         ...(options.fullAccess ? { fullAccess: true } : {}),
-        // The TTY seat when this run has a user attached; a run with `--yes`
-        // answers with the standing seat instead, and a run with neither
-        // denies closed on the router's own bound (never a silent hang).
-        ...(options.autoApprove || optionsSeat === undefined
-          ? {}
-          : { seat: optionsSeat }),
+        // The TTY seat when this run has a user attached; without one a
+        // worker ask denies closed on the router's own bound (never a silent
+        // hang). `--yes` never replaces it (issue #323): the standing answer
+        // is the merge gate's only.
+        ...(optionsSeat === undefined ? {} : { seat: optionsSeat }),
         debug: (line) => debug(line),
       });
       approvalsActive = run;
@@ -1605,6 +1609,23 @@ export async function orchestrateDepsWithDefaults(
               },
             )
         : undefined,
+    // Every settled merge decision lands in the §60 ledger (issue #323),
+    // naming who decided: `--yes` for the standing answer, `user` otherwise.
+    auditMerge: (record): void => {
+      const repo = needRoot();
+      appendToLedger(
+        auditLedgerDir(repo),
+        mergeDecisionAudit({
+          ...record,
+          workspace: repo,
+          posture:
+            approvalsActive?.fullAccessGrant() === undefined
+              ? POSTURE_APPROVALS
+              : POSTURE_FULL_ACCESS,
+        }),
+        (message) => debug(`audit: merge decision not recorded — ${message}`),
+      );
+    },
     loadState: (sessionId: string): OrchestratorRunState | undefined => {
       try {
         const repo = needRoot();

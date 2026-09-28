@@ -199,4 +199,53 @@ describe('built-in providers (issue #221)', () => {
     ).toBe(0);
     expect(lines.join('\n')).toContain('selected anthropic/claude-sonnet-4-6');
   });
+
+  it('`kubic models --json` carries a custom model cache cost and input modalities (issue #223)', async () => {
+    const cwd = tmpDir();
+    writeFileSync(
+      join(cwd, 'models.json'),
+      JSON.stringify({
+        providers: {
+          local: {
+            baseUrl: 'http://127.0.0.1:8000/v1',
+            api: 'openai-completions',
+            models: [
+              {
+                id: 'vision',
+                input: ['text', 'image'],
+                cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const assembled = await assembleModels(
+      cwd,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    const lines: string[] = [];
+    await runModelsCommand(
+      { json: true },
+      {
+        models: assembled.models,
+        providers: assembled.providers,
+        out: (l: string) => lines.push(l),
+      },
+    );
+    const catalog = JSON.parse(lines.join('\n')) as Array<{
+      id: string;
+      models: Array<Record<string, unknown>>;
+    }>;
+    const vision = catalog.find((p) => p.id === 'local')?.models[0];
+    expect(vision).toMatchObject({
+      id: 'vision',
+      input: ['text', 'image'],
+      inputCost: 1,
+      outputCost: 2,
+      cacheReadCost: 0.1,
+      cacheWriteCost: 1.25,
+    });
+  });
 });

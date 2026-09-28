@@ -368,6 +368,9 @@ export async function runModelsCommand(
         thinking: getSupportedThinkingLevels(m),
         inputCost: m.cost.input,
         outputCost: m.cost.output,
+        cacheReadCost: m.cost.cacheRead,
+        cacheWriteCost: m.cost.cacheWrite,
+        input: m.input,
       })),
     };
   });

@@ -265,6 +265,42 @@ or `invalid` (an invalid file fails the check), and `kubic run` prints a
 `models.json ignored: …` line on stderr (the `loaded` receipt only under
 `--debug`).
 
+### models.json schema
+
+The §38.5 shape — `providers` is an object keyed by provider id (an array
+of entries with their own `id` is accepted as an alias):
+
+```json
+{
+  "providers": {
+    "local": {
+      "baseUrl": "http://127.0.0.1:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "models": [
+        { "id": "qwen3-coder-27b", "contextWindow": 131072, "maxTokens": 16384 }
+      ]
+    }
+  }
+}
+```
+
+| Provider key | Meaning |
+| --- | --- |
+| `baseUrl` | `http(s)` endpoint (required). |
+| `api` | `openai-completions` or `openai-responses` (required). |
+| `apiKey` | A literal key (e.g. `not-needed` for a keyless local server). `$ENV`/`!command` references are refused — use `apiKeyEnv`. Not together with `apiKeyEnv`. |
+| `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
+| `name`, `headers` | Display name; static per-request headers (non-empty strings). |
+| `models` | Non-empty list of models (ids unique per provider). |
+
+| Model key | Meaning |
+| --- | --- |
+| `id`, `name`, `reasoning` | Model id (required), display name, reasoning support. |
+| `contextWindow`, `maxTokens` | Positive integers; `maxTokens` must be **less than** `contextWindow`, judged on the effective values (defaults `8192`/`2048`), so `contextWindow: 1024` alone is refused too. A `0` or fractional value is refused with the field named. |
+| `cost` | `{input, output, cacheRead, cacheWrite}` in USD per 1M tokens (§37.2); cache reads and writes are priced separately (§39) and reach `kubic models --json` as `cacheReadCost`/`cacheWriteCost`. The flat `inputCost`/`outputCost` keys still work — one place per field, never both. |
+| `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
+
 ## Secrets (never in config)
 
 Secrets live in `models.json` as **refs only**, resolved at request
@@ -312,7 +348,7 @@ not. The split, exactly as shipped:
   `GEMINI_API_KEY`, …) or its ambient credentials are set, and a keyless
   built-in is never selected implicitly (`kubic models` shows which are
   usable). Custom providers come from `models.json` (see
-  [models.json](#modelsjson) below). A model without `contextWindow`/`maxTokens` gets
+  [models.json](#modelsjson) above). A model without `contextWindow`/`maxTokens` gets
   fail-safe defaults `8192`/`2048` (small local servers overflow above
   them). The 16384-token compaction reserve is
   clamped to a quarter of the model's window (an 8192-token model reserves

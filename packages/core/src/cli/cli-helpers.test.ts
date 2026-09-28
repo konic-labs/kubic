@@ -9,13 +9,7 @@ import {
 } from './exit-codes.js';
 import { createLineLogger, createLogger, debugEnabled } from './logger.js';
 import { formatJson, outputModeFor } from './output.js';
-import {
-  canPrompt,
-  promptConfirm,
-  promptSelect,
-  promptText,
-  startSpinner,
-} from './prompt.js';
+import { promptConfirm } from './prompt.js';
 import { renderTable } from './table.js';
 import { createCliTheme, detectColorLevel } from './theme.js';
 
@@ -26,14 +20,7 @@ vi.mock('@clack/prompts', () => {
   return {
     isCancel: (value: unknown) => value === cancel,
     confirm: vi.fn(async () => true),
-    select: vi.fn(async () => cancel),
-    text: vi.fn(async () => 'typed'),
-    spinner: vi.fn(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-      error: vi.fn(),
-      message: vi.fn(),
-    })),
+    cancel,
   };
 });
 
@@ -222,6 +209,23 @@ describe('table', () => {
     expect(lines[2]).toBe('bb  x');
   });
 
+  it('measures terminal display width: wide CJK cells, combining marks', () => {
+    const out = renderTable(
+      [
+        ['张伟', 'first'],
+        ['Bob', 'second'],
+        ['e\u0301te\u0301', 'third'],
+      ],
+      [{ header: 'AUTHOR' }, { header: 'MESSAGE' }],
+    );
+    expect(out.split('\n')).toEqual([
+      'AUTHOR  MESSAGE',
+      '张伟    first',
+      'Bob     second',
+      'e\u0301te\u0301     third',
+    ]);
+  });
+
   it('pads a right-aligned last column', () => {
     expect(
       renderTable([['1'], ['100']], [{ header: 'N', align: 'right' }]),
@@ -241,16 +245,7 @@ describe('table', () => {
 });
 
 describe('prompts', () => {
-  it('canPrompt needs both TTYs and no --json', () => {
-    expect(canPrompt({ stdinTTY: true, stdoutTTY: true })).toBe(true);
-    expect(canPrompt({ stdinTTY: false, stdoutTTY: true })).toBe(false);
-    expect(canPrompt({ stdinTTY: true, stdoutTTY: false })).toBe(false);
-    expect(canPrompt({ stdinTTY: true, stdoutTTY: true, json: true })).toBe(
-      false,
-    );
-  });
-
-  it('non-interactive prompts answer the declared value without prompting', async () => {
+  it('a non-interactive confirm answers the declared value without prompting', async () => {
     const clack = await import('@clack/prompts');
     vi.mocked(clack.confirm).mockClear();
     expect(
@@ -260,25 +255,11 @@ describe('prompts', () => {
         nonInteractive: false,
       }),
     ).toBe(false);
-    expect(
-      await promptSelect({
-        message: 'q',
-        interactive: false,
-        nonInteractive: 'a',
-        choices: [{ value: 'a' }],
-      }),
-    ).toBe('a');
-    expect(
-      await promptText({
-        message: 'q',
-        interactive: false,
-        nonInteractive: '',
-      }),
-    ).toBe('');
     expect(clack.confirm).not.toHaveBeenCalled();
   });
 
-  it('interactive prompts return the answer, cancellation is null', async () => {
+  it('an interactive confirm returns the answer; cancellation is null', async () => {
+    const clack = await import('@clack/prompts');
     expect(
       await promptConfirm({
         message: 'q',
@@ -286,37 +267,15 @@ describe('prompts', () => {
         nonInteractive: false,
       }),
     ).toBe(true);
+    const cancel = (clack as unknown as { cancel: symbol }).cancel;
+    vi.mocked(clack.confirm).mockResolvedValueOnce(cancel as never);
     expect(
-      await promptSelect({
+      await promptConfirm({
         message: 'q',
         interactive: true,
-        nonInteractive: 'a',
-        choices: [{ value: 'a', label: 'A', hint: 'h' }, { value: 'b' }],
+        nonInteractive: false,
       }),
     ).toBeNull();
-    expect(
-      await promptText({
-        message: 'q',
-        interactive: true,
-        nonInteractive: '',
-        placeholder: 'p',
-      }),
-    ).toBe('typed');
-  });
-
-  it('a non-interactive spinner is a silent no-op', async () => {
-    const clack = await import('@clack/prompts');
-    vi.mocked(clack.spinner).mockClear();
-    const s = startSpinner('working', { interactive: false });
-    s.update('x');
-    s.stop('done');
-    s.fail('nope');
-    expect(clack.spinner).not.toHaveBeenCalled();
-    const live = startSpinner('working', { interactive: true });
-    live.update('y');
-    live.stop('ok');
-    live.fail('bad');
-    expect(clack.spinner).toHaveBeenCalledTimes(1);
   });
 });
 

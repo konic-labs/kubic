@@ -6,7 +6,7 @@
 // theme (unit tests) gets a colourless logger that writes to `out`, so its
 // lines stay capturable in one array.
 
-import { type CliLogger, createLogger } from '../../core/src/cli/logger.js';
+import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 
 export type Diagnostics = Pick<
@@ -28,9 +28,7 @@ const PLAIN = createCliTheme('none');
 
 export function diagnosticsOf(io: CliIo): Diagnostics {
   if (io.logger !== undefined) return io.logger;
-  return createLogger({
-    write: (chunk) => io.out(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk),
-  });
+  return createLineLogger(io.out);
 }
 
 export function themeOf(io: CliIo): CliTheme {

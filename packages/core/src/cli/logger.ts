@@ -5,7 +5,8 @@
 //   stdout stays pure JSON however chatty the logger is;
 // - one line per message, `<level>: <message>` — `error: …` is the same
 //   one-line shape the root catch-all prints (docs/cli/exit-codes.md);
-// - `debug` is silent unless `--debug` or KUBIC_DEBUG=1;
+// - `debug` is silent unless KUBIC_DEBUG=1 (or a command's own
+//   `--debug`, where it declares one: run, workers);
 // - the level prefix is coloured only when the theme is (a TTY without
 //   NO_COLOR and not `--json`); otherwise the reporter is plain text.
 

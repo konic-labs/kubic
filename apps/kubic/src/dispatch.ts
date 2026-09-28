@@ -78,11 +78,12 @@ const REGISTRARS: readonly CommandRegistrar[] = [
 ];
 
 export interface DispatchDeps {
-  // The process's stdout channel (console.log in prod): the usage lines,
-  // the refusal reason, and the version line all print through it.
+  // The process's stdout channel (console.log in prod): the usage lines
+  // and the version line print through it.
   readonly out: (line: string) => void;
   // The stderr channel (console.error in prod): commander's one-line parse
-  // errors and `error: …` lines from CliUsageError/CliExitError. Absent
+  // errors, the config refusal, and `error: …` lines from
+  // CliUsageError/CliExitError. Absent
   // means stdout (the fakes in dispatch.test.ts capture one channel).
   readonly err?: (line: string) => void;
   // One config load for the whole process, injected so the dispatch can be
@@ -127,7 +128,8 @@ export async function dispatchCommand(
   // `config` and `doctor` still run so the named reason can be reported.
   const refusalExit = configRefusalExit(cliConfig, command);
   if (refusalExit !== undefined) {
-    deps.out(`error: ${cliConfig.error ?? 'config refused'}`);
+    // A diagnostic, so stderr: a `--json` consumer's stdout stays empty.
+    (deps.err ?? deps.out)(`error: ${cliConfig.error ?? 'config refused'}`);
     return refusalExit;
   }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never

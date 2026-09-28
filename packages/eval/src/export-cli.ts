@@ -16,7 +16,13 @@
 // 2 usage/error (missing flags, unreadable/malformed files, refused
 // provenance — never an emitted record).
 
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
 import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import {
   parseTrajectoryExportJSON,
@@ -35,9 +41,9 @@ import { buildSftRecord, validateSftRecord } from './rl/sft.js';
 import { buildToolUseRecord, validateToolUseRecord } from './rl/tooluse.js';
 import { RlProvenanceError } from './rl/types.js';
 
-export const EXPORT_EXIT_OK = 0;
-export const EXPORT_EXIT_FAILED = 1;
-export const EXPORT_EXIT_USAGE = 2;
+export const EXPORT_EXIT_OK = EXIT_OK;
+export const EXPORT_EXIT_FAILED = EXIT_FAILED;
+export const EXPORT_EXIT_USAGE = EXIT_USAGE;
 
 export interface ExportCliDeps {
   readFile: (path: string) => string;
@@ -48,6 +54,9 @@ export interface ExportCliDeps {
   err: (line: string) => void;
   // Colours the diagnostic prefixes; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
 }
 
 // The parsed `kubic export` options (commander's `opts()`); `trajectory`
@@ -191,7 +200,7 @@ export async function runExportCommand(
   deps: ExportCliDeps,
 ): Promise<number> {
   const log: CliLogger = createLineLogger(deps.err, {
-    theme: options.json === true ? PLAIN : (deps.theme ?? PLAIN),
+    theme: options.json === true ? PLAIN : (deps.errTheme ?? PLAIN),
   });
   const parsed = normalize(options);
   if (typeof parsed === 'string') {
@@ -201,7 +210,7 @@ export async function runExportCommand(
   const fail = (code: string, message: string): number => {
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: EXPORT_EXIT_USAGE,
           error: { code, message },
@@ -220,7 +229,7 @@ export async function runExportCommand(
   if (parsed.type === undefined) {
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: true,
           exitCode: EXPORT_EXIT_OK,
           trajectory: describeJson(exported),
@@ -236,7 +245,7 @@ export async function runExportCommand(
   const emitRecord = (record: unknown): number => {
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: true,
           exitCode: EXPORT_EXIT_OK,
           type,
@@ -251,7 +260,7 @@ export async function runExportCommand(
   const emitExcluded = (excluded: unknown): number => {
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: true,
           exitCode: EXPORT_EXIT_OK,
           type,
@@ -269,7 +278,7 @@ export async function runExportCommand(
     const message = `record failed validation: ${errors.join('; ')}`;
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: EXPORT_EXIT_FAILED,
           error: { code: 'invalid-record', message },
@@ -333,7 +342,7 @@ export async function runExportCommand(
     const message = error instanceof Error ? error.message : String(error);
     if (parsed.json) {
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: EXPORT_EXIT_FAILED,
           error: { code: 'export-failed', message },

@@ -9,6 +9,12 @@
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import { CAPABILITIES, validatePolicy } from './approvals.js';
@@ -21,12 +27,12 @@ import {
   limitsDoctorExit,
 } from './limits/doctor-limits.js';
 
-export const DOCTOR_EXIT_OK = 0;
-export const DOCTOR_EXIT_FAIL = 1;
-export const DOCTOR_EXIT_USAGE = 2;
+export const DOCTOR_EXIT_OK = EXIT_OK;
+export const DOCTOR_EXIT_FAIL = EXIT_FAILED;
+export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
 // §78 provider-failure code, mirroring kubic run: a doctor matrix with a
 // provider-down failure exits 6 (see limitsDoctorExit).
-export const DOCTOR_EXIT_PROVIDER = 6;
+export const DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 // warn is informational only (issue #58 static §59.1 notices): it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.

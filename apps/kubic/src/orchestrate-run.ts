@@ -100,6 +100,8 @@ export interface OrchestrateRunOptions {
   err: (line: string) => void;
   // Report colours; the command wires the stdout theme (none under --json).
   theme?: CliTheme;
+  // Diagnostics colours; the command wires the stderr theme.
+  errTheme?: CliTheme;
   debug?: (line: string) => void;
   cwd?: string;
   /** Worker sessions root; defaults to the user sessions root (~/.kubic/sessions). */
@@ -921,6 +923,7 @@ export async function orchestrateDepsWithDefaults(
     out: options.out,
     err: options.err,
     ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(options.errTheme === undefined ? {} : { errTheme: options.errTheme }),
     debug,
     // Issue #133: the configured worker cap is the run's own admission
     // surface — the same scheduler the CLI would default to, constructed

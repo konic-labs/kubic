@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createLineLogger } from '../../core/src/cli/logger.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   createSession,
@@ -136,16 +137,19 @@ describe('sessions CLI (issue #14, slice F)', () => {
   it('fails cleanly for unknown sessions and unsafe ids', async () => {
     const root = tmpRoot();
     const o = out();
+    const e = out();
     expect(
       await runSessionsCommand(
         { command: 'attach', id: 'nope' },
         {
           sessionsRoot: root,
           out: o.write,
+          logger: createLineLogger(e.write),
         },
       ),
     ).toBe(1);
-    expect(o.lines.join('\n')).toContain('error:');
+    expect(e.lines.join('\n')).toContain('error:');
+    expect(o.lines.join('\n')).not.toContain('error:');
     // The id is a path segment: a traversal is refused before any store I/O.
     expect(
       await runSessionsCommand(

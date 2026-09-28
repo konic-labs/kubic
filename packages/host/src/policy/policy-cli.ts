@@ -30,6 +30,9 @@ export interface PolicyCommandDeps {
   err: (line: string) => void;
   // Colours the decision word; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
 }
 
 const PLAIN = createCliTheme('none');
@@ -54,7 +57,9 @@ export async function runPolicyCommand(
 ): Promise<number> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
-  const log = createLineLogger(deps.err, { theme });
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
   if (options.tool === undefined) {
     log.error("required option '--tool <name>' not specified");
     return EXIT_USAGE;

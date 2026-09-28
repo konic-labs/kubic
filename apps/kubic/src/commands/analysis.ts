@@ -49,7 +49,8 @@ export interface AnalysisRunners {
 }
 
 const JSON_HELP = 'print one JSON document on stdout';
-const ENVELOPE_HELP = 'print one JSON envelope on stdout (errors included)';
+const ENVELOPE_HELP =
+  'print one JSON envelope on stdout (runtime failures included; a usage error stays on stderr)';
 // eval and benchmark share the §48 provenance flags.
 const MODEL_HELP = 'provider/id of the run';
 const WORKTREE_HELP = 'where the run executed (provenance)';

@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createLineLogger } from '../../core/src/cli/logger.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -635,18 +636,22 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
 
   it('maps a non-Error run rejection to unassigned refs in text', async () => {
     const o = out();
+    const e = out();
     const exit = await runRunCommand(
       { prompt: 'hello' },
       {
         out: o.write,
+        // A separate stderr channel: the `error:` diagnostic must not
+        // land in the stdout report.
+        logger: createLineLogger(e.write),
         run: async () => {
           throw 'kaput';
         },
       },
     );
     expect(exit).toBe(1);
+    expect(e.lines).toEqual(['error: kaput']);
     expect(o.lines).toEqual([
-      'error: kaput',
       'result: kaput',
       'session: unassigned',
       'journal: journal:unassigned',

@@ -112,7 +112,9 @@ file that no longer exists, or when a row's file has become reachable
   `host/src/orchestrator/worktree/clean.ts` and `host/src/workers-cli.ts`
   (diagnostics via the consola logger, `--json` via `formatJson`, the
   `kubic workers` table, the report colours), so their rows are removed.
-  `prompt.ts` keeps its row: no migrated command prompts yet.
+  `prompt.ts` is reachable too: `sessions prune` asks through
+  `promptConfirm`, its only helper (the unused select/text/spinner helpers
+  were deleted rather than ledgered).
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |

@@ -10,7 +10,7 @@ hand-roll argv parsing, colours, tables, or prompts.
 | Colour | `chalk` | `packages/core/src/cli/theme.ts` |
 | Leveled logs | `consola` | `packages/core/src/cli/logger.ts` |
 | Tables | `cli-table3` | `packages/core/src/cli/table.ts` |
-| Prompts, spinners | `@clack/prompts` | `packages/core/src/cli/prompt.ts` |
+| Prompts | `@clack/prompts` | `packages/core/src/cli/prompt.ts` |
 | `--json` / output mode | — | `packages/core/src/cli/output.ts` |
 
 All six packages are exact-pinned in the root `package.json` (it owns the
@@ -67,7 +67,9 @@ the handler takes the parsed options, never argv. Update the command's
 
 The table is [docs/cli/exit-codes.md](cli/exit-codes.md); use the named
 constants (`EXIT_OK` 0, `EXIT_FAILED` 1, `EXIT_USAGE` 2, `EXIT_BUDGET` 3,
-`EXIT_APPROVAL` 4, `EXIT_WORKSPACE` 5, `EXIT_PROVIDER` 6).
+`EXIT_APPROVAL` 4, `EXIT_WORKSPACE` 5, `EXIT_PROVIDER` 6). A module's own
+named codes (`RUN_EXIT_*`, `EVAL_EXIT_*`, …) are aliases of these, never
+new literals.
 
 - commander parse failures (unknown option, missing value, bad argument,
   excess operands) exit **2** with commander's one `error: …` line on
@@ -85,22 +87,28 @@ constants (`EXIT_OK` 0, `EXIT_FAILED` 1, `EXIT_USAGE` 2, `EXIT_BUDGET` 3,
 
 - **stdout is data, stderr is diagnostics.** Reports, tables and JSON go
   through `ctx.out`; progress and warnings go through the logger
-  (`createLogger({ write, debug, theme })`), which writes every level to
-  stderr as `<level>: <message>`. `debug` shows only under `--debug` or
-  `KUBIC_DEBUG=1` (`debugEnabled`).
+  (`createLineLogger(err, { debug, theme })` over the stderr line channel),
+  which writes every level to stderr as `<level>: <message>`. `debug`
+  shows only under `KUBIC_DEBUG=1`, or a command's own `--debug` where it
+  declares one (`run`, `workers`) — there is no global `--debug`
+  (`debugEnabled`). Refusals such as a broken config are diagnostics too.
+- **Diagnostics colour follows stderr**: the logger's theme comes from
+  `themeFor(process.stderr)` (a handler's `errTheme`), never from the
+  stdout report theme, so a redirected stderr gets no ANSI escapes.
 - **`--json` prints exactly one document on stdout** via `formatJson`, and
-  nothing else there. Under `--json`: no colour, no tables, no spinners,
-  no prompts (`outputModeFor({ json, stdinTTY, stdoutTTY, colorEnabled })`
+  nothing else there. Under `--json`: no colour, no tables, no prompts (`outputModeFor({ json, stdinTTY, stdoutTTY, colorEnabled })`
   computes `interactive` and `fancy`).
 - **Colour** comes from `themeFor(stream)` / `createCliTheme(level)`: it
   honours `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`, and is off on a non-TTY.
   The palette is the Konic brand shared with the TUI (`#ff004d` accent).
 - **Tables**: `renderTable(rows, columns, { fancy, theme })` — box-drawn
-  when `fancy`, plain space-aligned text otherwise (pipes, CI, NO_COLOR).
-- **Prompts** (`promptConfirm`, `promptSelect`, `promptText`,
-  `startSpinner`) take an explicit `interactive` flag and a required
-  `nonInteractive` answer; they never prompt off a TTY or under `--json`.
-  A cancelled prompt resolves to `null`.
+  when `fancy`, plain space-aligned text otherwise (pipes, CI, NO_COLOR),
+  aligned by terminal display width (wide CJK cells count 2).
+- **Prompts** (`promptConfirm`) take an explicit `interactive` flag and a
+  required `nonInteractive` answer; they never prompt off a TTY or under
+  `--json`. A cancelled prompt resolves to `null`. `@clack/prompts` and
+  `cli-table3` load lazily (first prompt, first box-drawn table), so
+  scripted calls skip their import cost.
 
 ## Testing
 

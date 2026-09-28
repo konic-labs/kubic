@@ -15,8 +15,12 @@
 // exit 1).
 
 import { basename, dirname, join } from 'node:path';
-import { CliUsageError, EXIT_OK } from '../../core/src/cli/exit-codes.js';
-import { type CliLogger, createLogger } from '../../core/src/cli/logger.js';
+import {
+  CliUsageError,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
@@ -205,9 +209,7 @@ interface JournalRun {
 const PLAIN = createCliTheme('none');
 
 function loggerFor(deps: JournalCommandDeps): CliLogger {
-  const err = deps.err ?? deps.out;
-  return createLogger({
-    write: (chunk) => err(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk),
+  return createLineLogger(deps.err ?? deps.out, {
     theme: deps.errTheme ?? PLAIN,
   });
 }
@@ -352,7 +354,7 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   const kinds = result.skippedDetails.map((d) => skipKindOf(d.reason));
   // One JSON document (or the human report); the exit code is shared: 2
   // when a real run skipped anything, a dry run always 0.
-  const exit = !dryRun && result.skipped.length > 0 ? 2 : EXIT_OK;
+  const exit = !dryRun && result.skipped.length > 0 ? EXIT_USAGE : EXIT_OK;
   if (request.json === true) {
     deps.out(
       formatJson({

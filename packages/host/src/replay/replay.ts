@@ -40,6 +40,7 @@ import {
   type CliLogger,
   createLineLogger,
 } from '../../../core/src/cli/logger.js';
+import { formatJson } from '../../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../exec/src/journal.js';
@@ -107,6 +108,9 @@ export interface ReplayCommandDeps {
   err: (line: string) => void;
   // Colours the diagnostic prefixes; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   run: (
     request: ReplayRunRequest,
     runtime: ReplayRuntimeDeps,
@@ -193,7 +197,7 @@ function fail(
     changed: [],
     error: { code, message },
   };
-  if (options.json) deps.out(JSON.stringify(envelope));
+  if (options.json) deps.out(formatJson(envelope));
   else options.log.error(`[${code}] ${message}`);
   return exitCode;
 }
@@ -373,7 +377,7 @@ async function executeTierRun(
       : { experimental: params.experimental }),
   };
   if (options.json) {
-    deps.out(JSON.stringify(envelope));
+    deps.out(formatJson(envelope));
     return exitCode;
   }
   if (params.experimental.length > 0) {
@@ -524,7 +528,7 @@ export async function runReplayCommand(
 ): Promise<number> {
   const json = parsed.json === true;
   const log = createLineLogger(deps.err, {
-    theme: json ? PLAIN : (deps.theme ?? PLAIN),
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
   });
   const tier = resolveTier(parsed.tier);
   if (parsed.trajectory === undefined) {
@@ -608,7 +612,7 @@ export async function runReplayCommand(
       },
     };
     if (options.json) {
-      deps.out(JSON.stringify(envelope));
+      deps.out(formatJson(envelope));
       return RUN_EXIT_OK;
     }
     for (const line of describeRecorded(trajectory)) deps.out(line);
@@ -788,7 +792,7 @@ export async function runReplayCommand(
     regression,
   };
   if (options.json) {
-    deps.out(JSON.stringify(envelope));
+    deps.out(formatJson(envelope));
     return exitCode;
   }
   deps.out('tier: recorded');

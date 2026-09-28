@@ -7,10 +7,10 @@
 // touches processes, the filesystem, or the network.
 
 import type { TaskResources } from '../../agents/src/task.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable, type TableColumn } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import { lineLogger } from './orchestrator/cli-log.js';
 
 export interface WorkerListRow {
   workerId: string;
@@ -42,6 +42,9 @@ export interface WorkersCommandDeps {
   debug?: (line: string) => void;
   // Status colours and header accent; colourless when absent.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   // Box-drawn table (an interactive, coloured stdout); plain otherwise.
   fancy?: boolean;
 }
@@ -122,9 +125,9 @@ export async function runWorkersCommand(
     );
   } else if (rows.length === 0) {
     // stdout stays empty (scripts see no rows); the note is a diagnostic.
-    lineLogger(deps.err, { theme }).info(
-      'no orchestrator workers recorded in this repo',
-    );
+    createLineLogger(deps.err, {
+      theme: deps.errTheme ?? createCliTheme('none'),
+    }).info('no orchestrator workers recorded in this repo');
   } else {
     deps.out(
       renderTable(

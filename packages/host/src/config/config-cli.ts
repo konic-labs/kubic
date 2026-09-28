@@ -9,6 +9,7 @@
 // too — the operator sees the named reason, not a silent default); a usage
 // error is commander's (exit 2, apps/kubic/src/commands/solo.ts).
 
+import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { type CliIo, diagnosticsOf } from '../cli-io.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
@@ -18,8 +19,8 @@ import {
   renderEffectiveConfig,
 } from './runtime.js';
 
-export const CONFIG_EXIT_OK = 0;
-export const CONFIG_EXIT_FAIL = 1;
+export const CONFIG_EXIT_OK = EXIT_OK;
+export const CONFIG_EXIT_FAIL = EXIT_FAILED;
 
 export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives

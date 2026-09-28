@@ -12,13 +12,25 @@
 // - actions throwing CliUsageError / CliExitError print `error: <message>`
 //   and exit with the carried code; anything else propagates to the
 //   root's catch-all in ../main.ts (stack only under KUBIC_DEBUG=1).
+// - no "(Did you mean …?)" line: a usage error is exactly one stderr line.
+// - a value option never swallows a following `--flag` (or the `--`
+//   terminator) as its value: `--session --json` is a missing value
+//   (exit 2 before any runner), as the pre-commander parser had it. A
+//   value that starts with `--` is still accepted in the attached forms
+//   (`--session=--x`, `-p--x`).
 
-import { Command, CommanderError, Help } from '@commander-js/extra-typings';
+import {
+  Command,
+  CommanderError,
+  Help,
+  type Option,
+} from '@commander-js/extra-typings';
 import {
   CliExitError,
   CliUsageError,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
+import { shellQuote } from '../../../../packages/host/src/run-cli.js';
 import type { KubicProgram } from './context.js';
 
 export interface ProgramIo {
@@ -50,6 +62,7 @@ export function createKubicProgram(
     .helpCommand(false)
     .enablePositionalOptions()
     .exitOverride()
+    .showSuggestionAfterError(false)
     .configureOutput({
       writeOut: toLines(io.out),
       writeErr: toLines(io.err),
@@ -66,6 +79,43 @@ export function createKubicProgram(
   return program;
 }
 
+// A value rule over commander's binding, not a second parser: commander
+// already bound the next token to the option; this is the one program-wide
+// place that refuses a bound value that is really a flag (or `--`).
+const FLAG_LIKE = /^--/;
+
+// The first required-value option in `argv` whose value would be taken
+// from a separate token that starts with `--` (a flag, or the terminator).
+// Scanning stops at the first bare `--` that is not such a value: what
+// follows it is operands.
+function swallowedFlag(
+  command: { readonly options: readonly Option[] },
+  argv: readonly string[],
+): string | undefined {
+  const valued = command.options.filter((option) => option.required);
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === '--') return undefined;
+    const option = valued.find(
+      (candidate) => candidate.long === token || candidate.short === token,
+    );
+    if (option === undefined) continue;
+    const next = argv[i + 1];
+    if (next === undefined) return undefined;
+    if (FLAG_LIKE.test(next)) {
+      const base = `option '${option.flags}' argument missing`;
+      if (next === '--') return base;
+      const attached =
+        option.long === undefined
+          ? `${option.short}${next}`
+          : `${option.long}=${shellQuote(next)}`;
+      return `${base} (${JSON.stringify(next)} looks like a flag; write a value that starts with '--' as ${attached})`;
+    }
+    i += 1;
+  }
+  return undefined;
+}
+
 // Runs the program over `argv` (the arguments after `node kubic`) and
 // resolves the invocation's exit code.
 export async function runKubicProgram(
@@ -74,6 +124,10 @@ export async function runKubicProgram(
   io: ProgramIo,
   exit: { readonly code: () => number },
 ): Promise<number> {
+  program.hook('preAction', (_root, action) => {
+    const problem = swallowedFlag(action, argv);
+    if (problem !== undefined) throw new CliUsageError(problem);
+  });
   try {
     await program.parseAsync([...argv], { from: 'user' });
     return exit.code();

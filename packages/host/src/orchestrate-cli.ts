@@ -22,6 +22,7 @@ import {
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import {
@@ -29,7 +30,6 @@ import {
   type WorkerApprovalScope,
   type WorkerApprovalsRun,
 } from './orchestrator/approvals/worker-asks.js';
-import { lineLogger } from './orchestrator/cli-log.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,
@@ -408,6 +408,9 @@ export interface OrchestrateCommandDeps {
   err: (line: string) => void;
   // Colours the report labels; colourless when absent and under --json.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   debug?: (line: string) => void;
   now?: () => number;
   isGitRepo: () => boolean | Promise<boolean>;
@@ -811,7 +814,12 @@ export async function runOrchestrateCommand(
     parsed.json || deps.theme === undefined
       ? createCliTheme('none')
       : deps.theme;
-  const log = lineLogger(deps.err, { theme });
+  const log = createLineLogger(deps.err, {
+    theme:
+      parsed.json || deps.errTheme === undefined
+        ? createCliTheme('none')
+        : deps.errTheme,
+  });
   if (parsed.resume && parsed.sessionId === undefined) {
     log.error('--resume needs --session <id> (the run to re-attach to)');
     return RUN_EXIT_USAGE;

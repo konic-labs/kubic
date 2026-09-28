@@ -57,6 +57,9 @@ export interface PerfCommandDeps {
   err: (line: string) => void;
   // Colour and box drawing for the human report; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   fancy?: boolean;
   // Real-measurement hook (issue #98). Defaults to the live measurement
   // module (ops/perf/measure.ts) inside this file, so a real
@@ -154,7 +157,9 @@ export async function runPerfCommand(
 ): Promise<number> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
-  const log = createLineLogger(deps.err, { theme });
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
   const usageError = (message: string): number => {
     log.error(message);
     return EXIT_USAGE;

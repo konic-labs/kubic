@@ -9,15 +9,20 @@
 // double-failed here, it points at its owner. Faux-only: injected
 // values, no I/O.
 
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+} from '../../../core/src/cli/exit-codes.js';
 import { validatePolicy } from '../approvals.js';
 import type { DoctorCheck } from '../doctor.js';
 
 // §78 provider-failure code, mirroring kubic run (§78): a doctor matrix
 // with a provider-down failure exits 6. #29's command keeps its own
 // exit contract; this mapper is what the composition root adopts.
-export const LIMITS_DOCTOR_EXIT_OK = 0;
-export const LIMITS_DOCTOR_EXIT_FAIL = 1;
-export const LIMITS_DOCTOR_EXIT_PROVIDER = 6;
+export const LIMITS_DOCTOR_EXIT_OK = EXIT_OK;
+export const LIMITS_DOCTOR_EXIT_FAIL = EXIT_FAILED;
+export const LIMITS_DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 export interface LimitProviderProbe {
   id: string;

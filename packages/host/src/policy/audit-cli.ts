@@ -41,6 +41,9 @@ export interface AuditCommandDeps {
   err: (line: string) => void;
   // Colour and box drawing for the human table; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   fancy?: boolean;
 }
 
@@ -126,7 +129,9 @@ export async function runAuditCommand(
 ): Promise<number> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
-  const log = createLineLogger(deps.err, { theme });
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
   let mode: AuditMode | undefined;
   let result: AuditResult | undefined;
   if (options.mode !== undefined) {

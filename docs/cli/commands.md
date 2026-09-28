@@ -19,7 +19,12 @@ description, and examples where useful (the analysis commands share
 [these rules](#analysis-commands-shared-rules)). Usage *errors* keep their
 own exit codes (a bad flag is still an error; a help request is not): an
 unknown option, a missing value, a value the command's rules refuse, or a
-stray operand prints one `error: …` line on **stderr** and exits **2**.
+stray operand prints one `error: …` line on **stderr** and exits **2**
+(no `Did you mean …?` follow-up line). A value option never takes a
+following `--flag` or the `--` terminator as its value: `kubic diff
+--session --json` or `kubic orchestrate -p --yes` is a missing value
+(`option '…' argument missing`, exit 2, nothing runs). A value that really
+starts with `--` goes in the attached form (`--session=…`, `-p--…`).
 
 The **root dispatcher** follows the same convention (issue #128):
 `kubic --help` / `kubic -h` prints the top-level command listing — the
@@ -79,7 +84,8 @@ non-integer `--timeout`/`--max-turns` (or a `--timeout` above
 **Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>` and
 `-p<text>` all work. The typo guard stays: a separate-token value that
 starts with `--` is a mistyped flag, not a prompt — `kubic run -p --json`
-exits 2 with `looks like a flag, not a prompt` and the exact form to use.
+exits 2 with `argument missing ("--json" looks like a flag …)` and the
+exact attached form to use.
 A prompt that really begins with `--` is written in the attached form:
 
 ```console
@@ -450,7 +456,8 @@ status stay. `--session <id>` resumes into an existing session (same
 `[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before the lane
 boots). Usage errors (unknown option, missing value, any operand) exit 2
 on stderr before the screen opens. Lane boot failure exits 5 on a missing
-session, 6 with no provider available, 1 otherwise.
+session, 6 with no provider available, 1 otherwise, each with one
+`error: …` line on stderr (never stdout) before the screen opens.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,

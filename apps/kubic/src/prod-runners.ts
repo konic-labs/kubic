@@ -11,7 +11,8 @@
 // by dispatch.test.ts).
 
 import {
-  createLogger,
+  type CliLogger,
+  createLineLogger,
   debugEnabled,
 } from '../../../packages/core/src/cli/logger.js';
 import { outputModeFor } from '../../../packages/core/src/cli/output.js';
@@ -132,7 +133,7 @@ function presentation(
   json: boolean,
 ): {
   out: (line: string) => void;
-  logger: ReturnType<typeof createLogger>;
+  logger: CliLogger;
   theme: ReturnType<typeof createCliTheme>;
   fancy: boolean;
   interactive: boolean;
@@ -142,11 +143,7 @@ function presentation(
   const theme = createCliTheme(
     json ? 'none' : detectColorLevel(process.env, stdoutTTY),
   );
-  const logTheme = createCliTheme(
-    json
-      ? 'none'
-      : detectColorLevel(process.env, process.stderr.isTTY === true),
-  );
+  const logTheme = json ? PLAIN : stderrTheme();
   const mode = outputModeFor({
     json,
     stdinTTY,
@@ -155,9 +152,7 @@ function presentation(
   });
   return {
     out,
-    logger: createLogger({
-      write: (chunk) =>
-        diagnostics(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk),
+    logger: createLineLogger(diagnostics, {
       theme: logTheme,
       debug: debugEnabled({}),
     }),
@@ -172,6 +167,12 @@ function presentation(
 // --json).
 function stdoutTheme(): CliTheme {
   return themeFor(process.stdout);
+}
+
+// The diagnostics colours for stderr, decided from stderr's own TTY state
+// (the logger contract: colour only on a TTY) — never from stdout's.
+function stderrTheme(): CliTheme {
+  return themeFor(process.stderr);
 }
 
 const PLAIN = createCliTheme('none');
@@ -194,15 +195,16 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
-  // stderr (the `debug` channel), colour and box drawing from the real
-  // stdout (off on a pipe and under NO_COLOR; each handler also drops
-  // them under --json).
+  // stderr (the `debug` channel), report colour and box drawing from the
+  // real stdout, diagnostics colour from the real stderr (each off on a
+  // pipe and under NO_COLOR; each handler also drops them under --json).
   const report = () => {
     const theme = themeFor(process.stdout);
     return {
       out,
       err: debug,
       theme,
+      errTheme: stderrTheme(),
       fancy: outputModeFor({
         json: false,
         stdinTTY: process.stdin.isTTY === true,
@@ -254,7 +256,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       return runJournalCommand(request, {
         out,
         err: debug,
-        errTheme: request.json === true ? PLAIN : themeFor(process.stderr),
+        errTheme: request.json === true ? PLAIN : stderrTheme(),
         ...reportStyle(request.json === true),
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
@@ -294,6 +296,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         options,
         tuiDepsWithDefaults({
           out,
+          // `error:` lines (unknown session, no models) are diagnostics.
+          err: debug,
           // Same policy install as `kubic run` (issue #86; #90 classes): the
           // TUI drives the same solo lane, so a config that names classes
           // must reach it here too.
@@ -425,6 +429,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // Diagnostics (`error: … code=…`) share the stderr channel.
           err: debug,
           theme: stdoutTheme(),
+          errTheme: stderrTheme(),
           debug,
           ...(cliConfig.runtime === undefined
             ? {}
@@ -450,6 +455,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           out,
           err: debug,
           theme: stdoutTheme(),
+          errTheme: stderrTheme(),
           ...(cliConfig.runtime?.orchestrator.root === undefined
             ? {}
             : { worktreeRoot: cliConfig.runtime.orchestrator.root }),
@@ -525,6 +531,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           err: debug,
           debug,
           theme,
+          errTheme: stderrTheme(),
           fancy: mode.fancy,
         },
       );

@@ -8,18 +8,27 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
+import {
+  EXIT_APPROVAL,
+  EXIT_BUDGET,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+  EXIT_WORKSPACE,
+} from '../../core/src/cli/exit-codes.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import { settleTerminalStatus } from '../../worker/src/lane/settle.js';
 import type { TerminalStatus } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
-export const RUN_EXIT_OK = 0;
-export const RUN_EXIT_FAILED = 1;
-export const RUN_EXIT_USAGE = 2;
-export const RUN_EXIT_BUDGET = 3;
-export const RUN_EXIT_APPROVAL_DENIED = 4;
-export const RUN_EXIT_WORKSPACE_UNAVAILABLE = 5;
-export const RUN_EXIT_PROVIDER_PROBE_FAILED = 6;
+export const RUN_EXIT_OK = EXIT_OK;
+export const RUN_EXIT_FAILED = EXIT_FAILED;
+export const RUN_EXIT_USAGE = EXIT_USAGE;
+export const RUN_EXIT_BUDGET = EXIT_BUDGET;
+export const RUN_EXIT_APPROVAL_DENIED = EXIT_APPROVAL;
+export const RUN_EXIT_WORKSPACE_UNAVAILABLE = EXIT_WORKSPACE;
+export const RUN_EXIT_PROVIDER_PROBE_FAILED = EXIT_PROVIDER;
 
 export type RunTerminusKind =
   | 'completed'

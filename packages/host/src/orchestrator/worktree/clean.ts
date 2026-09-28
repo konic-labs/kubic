@@ -15,6 +15,12 @@
 // planned — and each mutation re-checks its own confinement.
 
 import { join } from 'node:path';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../../core/src/cli/exit-codes.js';
+import { createLineLogger } from '../../../../core/src/cli/logger.js';
 import { formatJson } from '../../../../core/src/cli/output.js';
 import {
   type CliTheme,
@@ -33,7 +39,6 @@ import {
 } from '../../../../worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
-import { lineLogger } from '../cli-log.js';
 import {
   isSpawnedWorktreePath,
   isSpawnedWorktreeShape,
@@ -56,12 +61,12 @@ import {
   removeWorktree,
 } from './remove.js';
 
-export const CLEAN_EXIT_OK = 0;
+export const CLEAN_EXIT_OK = EXIT_OK;
 
-export const CLEAN_EXIT_FAILURE = 1;
+export const CLEAN_EXIT_FAILURE = EXIT_FAILED;
 
 // §78: 2 is usage *and* the non-repo refusal (nothing is mutated either way).
-export const CLEAN_EXIT_USAGE = 2;
+export const CLEAN_EXIT_USAGE = EXIT_USAGE;
 
 export interface CleanOptions {
   dryRun?: boolean;
@@ -93,6 +98,9 @@ export interface CleanDeps {
   err: (line: string) => void;
   // Colours the report verbs; colourless when absent (and under --json).
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   repoRoot?: string;
   // The spawned set's parent, workspace-relative: `[orchestrator].root` when
   // the config sets one, `.kubic/wt` otherwise (issue #133). It is a config
@@ -251,6 +259,7 @@ export function cleanDepsWithDefaults(options: {
   out: (line: string) => void;
   err: (line: string) => void;
   theme?: CliTheme;
+  errTheme?: CliTheme;
   worktreeRoot?: string;
 }): CleanDeps {
   return {
@@ -258,6 +267,7 @@ export function cleanDepsWithDefaults(options: {
     out: options.out,
     err: options.err,
     ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(options.errTheme === undefined ? {} : { errTheme: options.errTheme }),
     ...(options.worktreeRoot === undefined
       ? {}
       : { worktreeRoot: options.worktreeRoot }),
@@ -317,7 +327,12 @@ export async function runCleanCommand(
     options.json === true || deps.theme === undefined
       ? createCliTheme('none')
       : deps.theme;
-  const log = lineLogger(deps.err, { theme });
+  const log = createLineLogger(deps.err, {
+    theme:
+      options.json === true || deps.errTheme === undefined
+        ? createCliTheme('none')
+        : deps.errTheme,
+  });
   // Defence in depth: the id names a state file under .kubic/orchestrator,
   // so a library caller cannot bypass the CLI's own --session check.
   if (

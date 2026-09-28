@@ -147,6 +147,9 @@ export interface TuiLaneBoot {
 
 export interface TuiRunDeps {
   out: (line: string) => void;
+  // stderr: the `error: …` lines of a refused id or a failed lane boot.
+  // Absent means stdout (library callers with one channel).
+  err?: (line: string) => void;
   createTerminal: () => Terminal;
   // `answer` is the seat the boot's installed policy must consult (issue
   // #96). It is an ARGUMENT rather than a deps field because the seat and the
@@ -413,6 +416,7 @@ export async function bootTuiLane(
 
 export function tuiDepsWithDefaults(provided: {
   out: (line: string) => void;
+  err?: (line: string) => void;
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -434,6 +438,7 @@ export function tuiDepsWithDefaults(provided: {
   } = provided;
   return {
     out: provided.out,
+    ...(provided.err === undefined ? {} : { err: provided.err }),
     createTerminal: () => new ProcessTerminal(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
     bootLane: (
@@ -695,7 +700,7 @@ export async function runTuiCommand(
   // commander validated the id already; re-checked because it becomes a
   // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
-    deps.out(
+    (deps.err ?? deps.out)(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
     );
     return RUN_EXIT_USAGE;
@@ -711,7 +716,7 @@ export async function runTuiCommand(
     boot = await deps.bootLane(sessionId, surface.seat, flags);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    deps.out(`error: ${message}`);
+    (deps.err ?? deps.out)(`error: ${message}`);
     if (error instanceof ModelSelectError)
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
     return mapCaughtErrorToTerminus(error) === 'workspace_unavailable'

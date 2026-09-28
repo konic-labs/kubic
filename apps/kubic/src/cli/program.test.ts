@@ -237,4 +237,87 @@ describe('command registry', () => {
       'replay',
     ]);
   });
+
+  describe('a value option never swallows a following flag', () => {
+    async function full(argv: readonly string[]) {
+      const { out, err, channels } = io();
+      const p = program(channels);
+      const calls: string[] = [];
+      const runners = new Proxy(
+        {},
+        {
+          get: (_target, key: string) => () => {
+            calls.push(key);
+            return 0;
+          },
+        },
+      ) as DispatchRunners;
+      const ctx: CommandContext = {
+        ...context(argv.slice(1)).ctx,
+        runners,
+      };
+      for (const register of [
+        registerSoloCommands,
+        registerOrchestratorCommands,
+        registerJournalCommands,
+        registerAnalysisCommands,
+      ]) {
+        register(p, ctx);
+      }
+      const code = await runKubicProgram(p, argv, channels, {
+        code: () => 0,
+      });
+      return { code, out, err, calls };
+    }
+
+    it.each([
+      [['orchestrate', '-p', '--json', '--yes'], "'-p, --prompt <text>'"],
+      [['orchestrate', '-p', '--help'], "'-p, --prompt <text>'"],
+      [['orchestrate', '-p', 'hi', '--session', '--json'], "'--session <id>'"],
+      [['diff', '--session', '--json'], "'--session <id>'"],
+      [['log', '--session', '--json'], "'--session <id>'"],
+      [['undo', '--session', '--json'], "'--session <id>'"],
+      [['diff', '--session', '--help'], "'--session <id>'"],
+      [['clean', '--session', '--json'], "'--session <id>'"],
+      [['cost', '--session', '--json'], "'--session <id>'"],
+      [['tui', '--session', '--json'], "'--session <id>'"],
+      [['policy', '--tool', '--json'], "'--tool <name>'"],
+      [['run', '-p', '--', '--json'], "'-p, --prompt <text>'"],
+      [['run', '-p', '--', 'x'], "'-p, --prompt <text>'"],
+      [['run', '-p', '--session', 's', 'x'], "'-p, --prompt <text>'"],
+    ])('%j exits 2 before any runner', async (argv, flag) => {
+      const result = await full(argv);
+      expect(result.code).toBe(2);
+      expect(result.calls).toEqual([]);
+      expect(result.out).toEqual([]);
+      expect(result.err).toHaveLength(1);
+      expect(result.err[0]).toContain(`error: option ${flag} argument missing`);
+    });
+
+    it('names the attached spelling for a flag-like value', async () => {
+      const { err } = await full(['diff', '--session', '--json']);
+      expect(err[0]).toContain('"--json" looks like a flag');
+      expect(err[0]).toContain("--session='--json'");
+    });
+
+    it('still accepts attached and single-dash values', async () => {
+      expect((await full(['run', '--prompt=--json'])).calls).toEqual(['run']);
+      expect((await full(['run', '-p', '- bullet'])).calls).toEqual(['run']);
+      expect(
+        (await full(['run', '-p', 'a', '--', '--session', '--json'])).code,
+      ).toBe(2);
+    });
+  });
+
+  it('an unknown option prints exactly one stderr line (no suggestion)', async () => {
+    const { err, channels } = io();
+    const p = program(channels);
+    p.command('demo')
+      .option('--json', 'json')
+      .action(() => {});
+    expect(
+      await runKubicProgram(p, ['demo', '--jsn'], channels, { code: () => 0 }),
+    ).toBe(2);
+    expect(err).toEqual(["error: unknown option '--jsn'"]);
+  });
 });

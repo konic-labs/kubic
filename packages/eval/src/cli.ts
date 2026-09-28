@@ -5,7 +5,13 @@
 // touches the network, the model, or the filesystem.
 // Exit codes: 0 pass/completed, 1 evaluated-and-failed, 2 usage/error.
 
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
 import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { EvalRecord } from './records.js';
@@ -18,9 +24,9 @@ import {
 } from './runner.js';
 import { EVAL_SUITES, findSuite } from './suites.js';
 
-export const EVAL_EXIT_OK = 0;
-export const EVAL_EXIT_FAILED = 1;
-export const EVAL_EXIT_USAGE = 2;
+export const EVAL_EXIT_OK = EXIT_OK;
+export const EVAL_EXIT_FAILED = EXIT_FAILED;
+export const EVAL_EXIT_USAGE = EXIT_USAGE;
 
 // The documented default model of a record (`--model` unset).
 export const EVAL_DEFAULT_MODEL = 'faux/faux';
@@ -33,6 +39,9 @@ export interface EvalCliDeps extends EvalTaskDeps {
   err: (line: string) => void;
   // Colour and box drawing for the human report; absent means plain.
   theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   fancy?: boolean;
 }
 
@@ -70,7 +79,7 @@ interface Parsed {
 const PLAIN = createCliTheme('none');
 
 function loggerFor(options: EvalOptions, deps: EvalCliDeps): CliLogger {
-  const theme = options.json === true ? PLAIN : (deps.theme ?? PLAIN);
+  const theme = options.json === true ? PLAIN : (deps.errTheme ?? PLAIN);
   return createLineLogger(deps.err, { theme });
 }
 
@@ -108,7 +117,7 @@ function emitRecord(
   json: boolean,
 ): void {
   if (json) {
-    out(JSON.stringify({ ok: true, exitCode: EVAL_EXIT_OK, record }));
+    out(formatJson({ ok: true, exitCode: EVAL_EXIT_OK, record }));
     return;
   }
   out(
@@ -125,7 +134,7 @@ function emitError(
   if (error instanceof EvalRunnerError) {
     if (json) {
       out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: EVAL_EXIT_USAGE,
           error: { code: error.code, message: error.message },
@@ -139,7 +148,7 @@ function emitError(
   const message = error instanceof Error ? error.message : String(error);
   if (json) {
     out(
-      JSON.stringify({
+      formatJson({
         ok: false,
         exitCode: EVAL_EXIT_FAILED,
         error: { code: 'eval-failed', message },
@@ -284,7 +293,7 @@ export async function runBenchmarkCommand(
       const message = error instanceof Error ? error.message : String(error);
       if (parsed.json) {
         deps.out(
-          JSON.stringify({
+          formatJson({
             ok: false,
             exitCode: EVAL_EXIT_USAGE,
             error: { code: 'eval-failed', message },
@@ -299,7 +308,7 @@ export async function runBenchmarkCommand(
   const allOk = results.filter((r) => !r.skipped).every((r) => r.success);
   const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   if (parsed.json) {
-    deps.out(JSON.stringify({ ok: allOk, exitCode: exit, results }));
+    deps.out(formatJson({ ok: allOk, exitCode: exit, results }));
     return exit;
   }
   const theme = deps.theme ?? PLAIN;

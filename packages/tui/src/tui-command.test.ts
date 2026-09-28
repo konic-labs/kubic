@@ -193,6 +193,35 @@ describe('kubic tui (issue #75)', () => {
     expect(lines.join('\n')).toContain('error: nope');
   });
 
+  it('puts the boot and session-id errors on stderr when given one', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const channels = {
+      out: (l: string) => out.push(l),
+      err: (l: string) => err.push(l),
+    };
+    const boom = await runTuiCommand(
+      {},
+      deps(fakeTerminal(100), {
+        ...channels,
+        bootLane: async () => {
+          throw new Error('unknown session: nope');
+        },
+      }),
+    );
+    expect(boom).toBe(1);
+    const bad = await runTuiCommand(
+      { session: '../evil' },
+      deps(fakeTerminal(100), channels),
+    );
+    expect(bad).toBe(2);
+    expect(out).toEqual([]);
+    expect(err).toEqual([
+      'error: unknown session: nope',
+      'error: invalid --session id "../evil" (use [A-Za-z0-9_-])',
+    ]);
+  });
+
   it('restores the screen and closes the lane when setup throws after start', async () => {
     let closed = 0;
     const terminal = fakeTerminal(100);

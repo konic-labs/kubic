@@ -57,7 +57,10 @@ permissions, journal retention and out-of-scope paths, modes, budgets).
 the same thing as one object — `values`: `{ key, value, layer }` per set
 key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
-instead of printing defaults.
+instead of printing defaults. The agent-executing commands (`run`,
+`orchestrate`, `tui`, `replay`) refuse a broken config the same way: one
+`error: <reason>` line on stderr, exit 1, stdout empty (so a `--json`
+consumer never parses the refusal as data).
 `kubic config --help` (or `-h`) prints the generated help and exits 0
 without loading anything; an unknown flag prints one `error: …` line on
 stderr and exits 2.

@@ -422,6 +422,15 @@ describe('config refusal (issue #90 policy, moved)', () => {
     }
   });
 
+  it('prints the refusal on stderr, keeping stdout for data', async () => {
+    const h = harness({ config: refusedConfig('unknown key [nope]') });
+    const errs: string[] = [];
+    const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+    expect(await dispatchCommand('run', ['-p', 'hi', '--json'], deps)).toBe(1);
+    expect(h.lines).toEqual([]);
+    expect(errs).toEqual(['error: unknown key [nope]']);
+  });
+
   it('a refused config short-circuits before the runtime-exclude step', async () => {
     const h = harness({ config: refusedConfig() });
     expect(await dispatchCommand('run', [], h.deps)).toBe(1);

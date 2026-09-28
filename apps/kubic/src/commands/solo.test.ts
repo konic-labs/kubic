@@ -220,7 +220,8 @@ describe('kubic run', () => {
 
   it('keeps the typo guard: -p --json is not a prompt', async () => {
     const text = await usageError(['run', '-p', '--json']);
-    expect(text).toContain('looks like a flag, not a prompt');
+    expect(text).toContain('argument missing');
+    expect(text).toContain('looks like a flag');
     expect(text).toContain("--prompt='--json'");
   });
 

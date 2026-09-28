@@ -165,6 +165,43 @@ describe('export command (issue #78)', () => {
     expect(envelope.excluded.tag).toBe('env-failure-excluded');
   });
 
+  it('--type dpo over mismatched prompts prints the exclusion, exit 0, no record (#269)', async () => {
+    const o = out();
+    const exit = await runExportCommand(
+      { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
+      {
+        readFile: files({
+          'chosen.json': passing({ promptText: 'task A' }),
+          'rej.json': failing({ promptText: 'task B' }),
+        }),
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines).toHaveLength(1);
+    expect(o.lines[0]).toMatch(/^excluded: prompt-mismatch-excluded — /);
+    expect(o.lines.join('\n')).not.toMatch(/dpo\/1/);
+  });
+
+  it('--type grpo over mismatched prompts is refused with exit 2 (#269)', async () => {
+    const o = out();
+    const exit = await runExportCommand(
+      { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
+      {
+        readFile: files({
+          'a.json': passing({ promptText: 'task A' }),
+          'b.json': failing({ promptText: 'task B' }),
+        }),
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines).toEqual([]);
+    expect(o.errs.join('\n')).toMatch(/different prompt or task/);
+  });
+
   it('exports a 2-candidate GRPO group from --trajectory + --against', async () => {
     const o = out();
     const exit = await runExportCommand(

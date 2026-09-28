@@ -67,14 +67,28 @@ function buildCandidate(exported: TrajectoryExport): GrpoCandidate {
   };
 }
 
+// A GRPO group compares several answers to ONE prompt (#269): a group of
+// one has no relative signal, and a candidate answering another prompt or
+// task corrupts the group's baseline — both are refused, never emitted.
 export function buildGrpoGroup(exports: TrajectoryExport[]): GrpoGroup {
-  if (exports.length === 0) {
+  if (exports.length < 2) {
     throw new RlProvenanceError(
-      'GRPO refused: at least one candidate is required',
+      `GRPO refused: a group needs at least two candidates (got ${exports.length})`,
     );
   }
   const candidates = exports.map(buildCandidate);
-  const prompt = candidates[0]?.prompt ?? '';
+  const first = exports[0] as TrajectoryExport;
+  for (const [index, exported] of exports.entries()) {
+    if (
+      exported.prompt.text !== first.prompt.text ||
+      exported.task?.taskId !== first.task?.taskId
+    ) {
+      throw new RlProvenanceError(
+        `GRPO refused: candidate ${index} answers a different prompt or task than candidate 0`,
+      );
+    }
+  }
+  const prompt = first.prompt.text;
   return { schema: GRPO_SCHEMA, prompt, candidates };
 }
 

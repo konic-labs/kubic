@@ -1083,10 +1083,21 @@ read:
 - a pair or group type without `--against`
 - `--against` on any other type
 
-Excluded pairs are env-failure or cross-boundary runs, which carry no
-capability signal. They print their exclusion tag and exit 0; they never
-produce a training record. Stripped provenance or failure labels refuse
-with exit 2.
+A pair ranks two answers to one prompt. A pair is excluded when:
+
+- the two files answer a different prompt text or task id
+  (`prompt-mismatch-excluded`, checked first)
+- either side is an env failure (`env-failure-excluded`)
+- the verifier does not prefer chosen over rejected
+  (`no-preference-signal-excluded`)
+- the runs cross a worktree or grant boundary (`cross-boundary-excluded`)
+
+An excluded pair prints `excluded: <tag> — <reason>` and exits 0; it
+never produces a training record. A DPO record carries both sides'
+`taskRef`, and a hand-built record whose task refs differ fails
+validation. `grpo` refuses with exit 2 when its candidates answer
+different prompts or tasks. Stripped provenance or failure labels also
+refuse with exit 2.
 
 Text mode prints the canonical record JSON. `--json` wraps it in
 `{ok, exitCode, type, record}`, or `{…, excluded}` for an excluded pair.

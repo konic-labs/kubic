@@ -34,6 +34,9 @@ export interface DpoRecord {
   };
   verifier: { chosen: VerifierVerdict; rejected: VerifierVerdict };
   grantRef: { chosen: string | null; rejected: string | null };
+  // The task each side answered (#269): validation refuses a record whose
+  // sides answer different tasks.
+  taskRef: { chosen: string; rejected: string };
   boundary: 'within';
 }
 
@@ -80,6 +83,10 @@ export function buildDpoRecord(
       grantRef: {
         chosen: pair.chosen.grantRef,
         rejected: pair.rejected.grantRef,
+      },
+      taskRef: {
+        chosen: pair.chosen.taskRef,
+        rejected: pair.rejected.taskRef,
       },
       boundary: 'within',
     },
@@ -160,6 +167,10 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     }
   }
   errors.push(...checkGrantRef(grantRef, 'grantRef'));
+  const taskRef = candidate.taskRef as Record<string, unknown> | undefined;
+  if (typeof taskRef !== 'object' || taskRef === null) {
+    errors.push('taskRef is required: carry both task refs (§74)');
+  }
   // Direct semantic checks (mirroring the pair build policy) so
   // hand-crafted records fail even before the projected pair check.
   if (
@@ -204,7 +215,8 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     errors.push('chosen and rejected cross a worktree/grant boundary');
   }
   // Reuse the pair-shape checks by projecting back onto a pair record
-  // with the real grant refs and verifier verdicts — never placeholders.
+  // with the real grant refs, task refs and verifier verdicts — never
+  // placeholders (a placeholder task ref let mismatched tasks validate).
   const projected = {
     schema: PAIR_SCHEMA,
     prompt: candidate.prompt,
@@ -214,7 +226,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
       provenance: provenance?.chosen,
       failureCategory: failureCategory?.chosen,
       verifier: verifier?.chosen,
-      taskRef: 'ref',
+      taskRef: taskRef?.chosen,
       worktreeRef: chosenWorktree ?? '',
       grantRef: chosenGrant,
     },
@@ -223,7 +235,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
       provenance: provenance?.rejected,
       failureCategory: failureCategory?.rejected,
       verifier: verifier?.rejected,
-      taskRef: 'ref',
+      taskRef: taskRef?.rejected,
       worktreeRef: rejectedWorktree ?? '',
       grantRef: rejectedGrant,
     },

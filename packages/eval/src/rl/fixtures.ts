@@ -15,14 +15,16 @@ export interface FixtureOverrides {
   transfer?: TrajectoryExport['transfer'];
   promptText?: string;
   summary?: string;
+  taskId?: string;
 }
 
 export function makeExport(overrides: FixtureOverrides = {}): TrajectoryExport {
   const worktree = overrides.worktree ?? '/wt/agent-1';
+  const taskId = overrides.taskId ?? 'task-1';
   return {
     schema_version: '1.0',
     task: {
-      taskId: 'task-1',
+      taskId,
       objective: 'fix the widget',
       role: 'implementer',
     },
@@ -36,7 +38,7 @@ export function makeExport(overrides: FixtureOverrides = {}): TrajectoryExport {
     prompt: { text: overrides.promptText ?? 'fix the widget', constraints: [] },
     resources: { skills: [], promptTemplates: [] },
     transfer: overrides.transfer ?? {
-      taskId: 'task-1',
+      taskId,
       worktree,
       grantRef: 'solo:exec',
     },

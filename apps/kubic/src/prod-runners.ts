@@ -43,6 +43,8 @@ import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
   assembleModels,
+  modelsSourcesProbe,
+  providerProbesOf,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
 import {
@@ -261,14 +263,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },
-    models: (options) => {
+    models: async (options) => {
       const view = presentation(out, debug, options.json === true);
-      const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) view.logger.info(assembled.note);
+      const assembled = await assembleModels(process.cwd());
+      for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       return runModelsCommand(options, {
         ...view,
         models: assembled.models,
+        providers: assembled.providers,
       });
     },
     run: (options, cliConfig) =>
@@ -321,8 +324,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // deps check the live node runtime, policy falls back to host
       // defaults until config-sourced policy lands.
       const view = presentation(out, debug, options.json === true);
-      const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) view.logger.info(assembled.note);
+      const assembled = await assembleModels(process.cwd());
+      for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       const [major = 0, minor = 0] = process.versions.node
         .split('.')
@@ -353,14 +356,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       }
       return runDoctorCommand(options, {
         ...view,
-        probeProviders: () =>
-          assembled.models.getProviders().map((provider) => ({
-            id: provider.id,
-            reachable: true,
-            models: assembled.models
-              .getModels(provider.id)
-              .map((model) => model.id),
-          })),
+        probeProviders: () => providerProbesOf(assembled),
         checkDeps: () => [
           {
             id: 'node',
@@ -372,6 +368,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // secret ref) and an incomplete runtime ignore split both fail
           // closed with the named reason instead of being silently ignored.
           doctorConfigProbe(cliConfig),
+          // Issue #322: which models.json files were found, their scope and
+          // trust state; an invalid file fails by name.
+          modelsSourcesProbe(assembled),
         ],
         // Config-sourced approval policy (issue #90): the route/autoApprove
         // come from the loaded layers, not a hardcoded default.

@@ -40,6 +40,9 @@ beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   vi.stubEnv('KUBIC_PROVIDER', '');
   vi.stubEnv('GW_API_KEY', SECRET);
+  // The project models.json is trust-gated (issue #322; §35.1); this suite
+  // covers a trusted file's key use, not the trust decision itself.
+  vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
 });
 
 afterEach(async () => {
@@ -241,10 +244,14 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     expect(debugLines.join('\n')).not.toContain(SECRET);
   });
 
-  it('assembleModels without a resolver keeps the plain env auth (no audit)', () => {
+  it('assembleModels without a resolver keeps the plain env auth (no audit)', async () => {
     const workspace = tmpRoot('ws-359-');
     writeModelsJson(workspace, 'http://127.0.0.1:9/v1');
-    const assembled = assembleModels(workspace, {});
+    // A trusted project file (issue #322) without a resolver: the plain
+    // env-key auth stays in place and nothing is audited.
+    const assembled = await assembleModels(workspace, {}, {
+      projectTrusted: true,
+    });
     expect(assembled.models.getProvider('gw')).toBeDefined();
     expect(readAuditLedger(auditLedgerDir(workspace))).toEqual([]);
   });

@@ -1,8 +1,10 @@
 // `kubic models` (issue #20, slice C; §17).
-// Catalog readout over an assembled models instance (built-ins plus
-// models.json customs registered by the caller). Presentation only.
+// Catalog readout over an assembled models instance: Pi's generated
+// built-in catalogue (issue #221) plus models.json customs. Presentation
+// only — nothing here dials a provider.
 
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -10,19 +12,118 @@ import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
   parseModelsJson,
   type RegisterCustomProvidersOptions,
+  refuseBuiltinCollisions,
   registerCustomProviders,
 } from '../../worker/src/models-config.js';
 import {
+  type AuthContext,
+  builtinProviders,
   createModels,
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import { fauxProviderActive, registerFauxProvider } from './faux-provider.js';
+import type { DepProbe, ProviderProbe } from './doctor.js';
+import {
+  FAUX_PROVIDER_ID,
+  fauxProviderActive,
+  registerFauxProvider,
+} from './faux-provider.js';
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+// Where a registered provider came from and whether its auth is configured.
+// `origin` is 'built-in' (Pi's generated catalogue), 'testing' (the faux
+// provider) or the models.json path that declared it.
+export interface ProviderInfo {
+  readonly origin: string;
+  readonly usable: boolean;
+  // The auth source Pi reported for a configured built-in (e.g. the env key).
+  readonly authSource?: string;
+}
+
+// One models.json location the assembly looked at (issue #322): the
+// user-global file is always trusted; the project file only after the
+// project-trust decision (§35.1).
+export interface ModelsSource {
+  readonly path: string;
+  readonly scope: 'global' | 'project';
+  readonly trusted: boolean;
+  readonly status: 'loaded' | 'untrusted' | 'invalid';
+  readonly providers: readonly string[];
+  readonly error?: string;
+}
+
+export interface AssembledModels {
+  readonly models: MutableModels;
+  // Receipt lines: `loaded models.json: …` / `models.json ignored: …`.
+  readonly notes: readonly string[];
+  readonly providers: ReadonlyMap<string, ProviderInfo>;
+  // Every models.json that exists at a looked-up location, in load order.
+  readonly sources: readonly ModelsSource[];
+  // The providers the implicit first-available pick may use, preferred
+  // first: the testing provider, models.json customs, then built-ins whose
+  // auth is configured. A keyless built-in is never on this list.
+  readonly fallbackProviders: readonly string[];
+}
+
+// Assembly options are also the provider-registration options (issue #359,
+// §36.1): a run passes its request-time key resolver here and it reaches
+// every registerCustomProviders call, so each models.json key use is
+// resolved per request and audited.
+export interface AssembleOptions extends RegisterCustomProvidersOptions {
+  // The home holding ~/.kubic/models/models.json; also what the auth
+  // context expands `~` against (tests pass a temp dir).
+  readonly home?: string;
+  // The caller's accepted trust decision for the project layer (§35.1);
+  // KUBIC_TRUST_PROJECT=1 in `env` also opts in.
+  readonly projectTrusted?: boolean;
+}
+
+// The user-global models.json (§35 global tree: ~/.kubic/models/).
+export function globalModelsPath(home: string): string {
+  return join(home, '.kubic', 'models', 'models.json');
+}
+
+// The project root the project models.json lives at (issue #222): the
+// nearest ancestor of `cwd` (itself included) holding a `.git` entry (a
+// repository or worktree top level) or a `.kubic` directory — never the home
+// directory, whose `.kubic` is the GLOBAL tree. No marker: `cwd` itself.
+export function findModelsProjectRoot(cwd: string, home: string): string {
+  const bridge = createNodeFileBridge('/');
+  const homeDir = resolve(home);
+  let dir = resolve(cwd);
+  for (;;) {
+    if (
+      bridge.exists(join(dir, '.git')) ||
+      (dir !== homeDir && bridge.exists(join(dir, '.kubic')))
+    ) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(cwd);
+    dir = parent;
+  }
+}
+
+// The project models.json candidates at a root, first present wins.
+function projectModelsPath(root: string): string {
+  const bridge = createNodeFileBridge('/');
+  const dotKubic = join(root, '.kubic', 'models.json');
+  return bridge.exists(dotKubic) ? dotKubic : join(root, 'models.json');
+}
+
+function envTrustsProject(env: Env): boolean {
+  const value = env.KUBIC_TRUST_PROJECT;
+  return value === '1' || value === 'true';
+}
 
 export interface ModelsCommandDeps extends CliIo {
   models: MutableModels;
+  // Origin + auth state per provider (from assembleModels). Without it every
+  // registered provider is listed as-is.
+  providers?: ReadonlyMap<string, ProviderInfo>;
 }
 
 // The parsed `kubic models` invocation (commander owns the argv:
@@ -32,43 +133,207 @@ export interface ModelsCommandOptions {
   readonly resolve?: string;
 }
 
-// Composition helper: fresh models plus models.json customs when present.
-// File access goes through the exec bridge (I/O confinement) — absent or
-// invalid models.json is reported, never thrown past the CLI. The faux
+// Pi's auth context over an explicit env (never the ambient one in tests):
+// built-in auth resolution reads env keys and ambient credential files
+// through it, both at the availability check and at request time.
+function authContextFor(env: Env, home: string): AuthContext {
+  return {
+    env: async (name) => {
+      const value = env[name];
+      return value === undefined || value === '' ? undefined : value;
+    },
+    fileExists: async (path) =>
+      createNodeFileBridge('/').exists(
+        path.startsWith('~') ? join(home, path.slice(1)) : path,
+      ),
+  };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// Composition helper: Pi's built-in providers, then models.json customs —
+// the user-global ~/.kubic/models/models.json (trusted), then the project
+// file, which is project-local configuration and loads only after project
+// trust (issue #322; §35.1): before trust it is never read, only named.
+// A project provider overrides a global one with the same id. File access
+// goes through the exec bridge (I/O confinement) — absent or invalid
+// models.json is reported, never thrown past the CLI. A custom provider may
+// not reuse a built-in id (refused by name, trusted or not). The faux
 // testing provider joins the catalog only under `KUBIC_PROVIDER=faux`.
-export function assembleModels(
+export async function assembleModels(
   cwd: string,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  options: RegisterCustomProvidersOptions = {},
-): {
-  models: MutableModels;
-  note: string | null;
-} {
-  const models = createModels({ credentials: new InMemoryCredentialStore() });
-  if (fauxProviderActive(env)) registerFauxProvider(models);
+  env: Env = process.env,
+  options: AssembleOptions = {},
+): Promise<AssembledModels> {
+  const home = options.home ?? homedir();
+  const projectTrusted =
+    options.projectTrusted === true || envTrustsProject(env);
+  const models = createModels({
+    credentials: new InMemoryCredentialStore(),
+    authContext: authContextFor(env, home),
+  });
   const bridge = createNodeFileBridge('/');
-  let raw: string;
-  try {
-    raw = bridge.readTextFile(join(cwd, 'models.json'));
-  } catch {
-    return { models, note: null };
+  const providers = new Map<string, ProviderInfo>();
+  const notes: string[] = [];
+  const sources: ModelsSource[] = [];
+  const customs: string[] = [];
+  if (fauxProviderActive(env)) {
+    registerFauxProvider(models);
+    providers.set(FAUX_PROVIDER_ID, { origin: 'testing', usable: true });
   }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    // A run passes its request-time key resolver (issue #359) so every
-    // provider-key use is resolved and audited per request.
-    const names = registerCustomProviders(
-      models,
-      parseModelsJson(parsed),
-      options,
-    );
-    return { models, note: `loaded models.json: ${names.join(', ')}` };
-  } catch (error) {
+  const builtins = builtinProviders();
+  for (const provider of builtins) models.setProvider(provider);
+  const builtinIds = new Set(builtins.map((provider) => provider.id));
+  const load = (
+    path: string,
+    scope: ModelsSource['scope'],
+    trusted: boolean,
+  ): void => {
+    if (!bridge.exists(path)) return;
+    const label = scope === 'global' ? 'global' : 'project';
+    if (!trusted) {
+      // Refused before the file is read: nothing in it reaches the catalog.
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'untrusted',
+        providers: [],
+      });
+      notes.push(
+        `models.json ignored: ${path} (${label}, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`,
+      );
+      return;
+    }
+    try {
+      const specs = parseModelsJson(
+        JSON.parse(bridge.readTextFile(path)) as unknown,
+      );
+      refuseBuiltinCollisions(specs, builtinIds);
+      // A run passes its request-time key resolver (issue #359) so every
+      // provider-key use is resolved and audited per request.
+      const names = registerCustomProviders(models, specs, options);
+      for (const name of names) {
+        const at = customs.indexOf(name);
+        if (at !== -1) customs.splice(at, 1);
+        customs.push(name);
+        providers.set(name, { origin: path, usable: true });
+      }
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'loaded',
+        providers: names,
+      });
+      notes.push(
+        `loaded models.json: ${path} (${scope === 'global' ? 'global' : 'project, trusted'}): ${names.join(', ')}`,
+      );
+    } catch (error) {
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'invalid',
+        providers: [],
+        error: errorText(error),
+      });
+      notes.push(`models.json ignored: ${path}: ${errorText(error)}`);
+    }
+  };
+  load(globalModelsPath(home), 'global', true);
+  // A worker child runs in its own worktree, which holds only tracked
+  // files: the orchestrator names the manager's root in KUBIC_MODELS_ROOT so
+  // the child resolves the same project file (issue #222).
+  const pinnedRoot = env.KUBIC_MODELS_ROOT;
+  const projectRoot =
+    pinnedRoot !== undefined && pinnedRoot !== ''
+      ? resolve(pinnedRoot)
+      : findModelsProjectRoot(cwd, home);
+  load(projectModelsPath(projectRoot), 'project', projectTrusted);
+  const checks = await Promise.all(
+    builtins.map(async (provider) => {
+      try {
+        return await models.checkAuth(provider.id);
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  const usableBuiltins: string[] = [];
+  builtins.forEach((provider, index) => {
+    const check = checks[index];
+    if (check !== undefined) usableBuiltins.push(provider.id);
+    providers.set(provider.id, {
+      origin: 'built-in',
+      usable: check !== undefined,
+      ...(check?.source === undefined ? {} : { authSource: check.source }),
+    });
+  });
+  const fallbackProviders = [
+    ...(providers.has(FAUX_PROVIDER_ID) ? [FAUX_PROVIDER_ID] : []),
+    ...customs,
+    ...usableBuiltins.filter((id) => !customs.includes(id)),
+  ];
+  return { models, notes, providers, sources, fallbackProviders };
+}
+
+// Doctor's models.json line (issue #322): each file found, its scope and
+// trust state. An invalid file fails the check by name (a refused config is
+// never silently ignored); an untrusted one is reported, not failed.
+export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
+  if (assembled.sources.length === 0) {
     return {
-      models,
-      note: `models.json ignored: ${error instanceof Error ? error.message : String(error)}`,
+      id: 'models-json',
+      ok: true,
+      detail: 'no models.json (built-in providers only)',
     };
   }
+  const parts = assembled.sources.map((source) => {
+    const where = `${source.path} (${source.scope})`;
+    if (source.status === 'loaded')
+      return `${where}: loaded ${source.providers.join(', ')}`;
+    if (source.status === 'untrusted')
+      return `${where}: ignored, untrusted (KUBIC_TRUST_PROJECT=1 to load)`;
+    return `${where}: invalid — ${source.error ?? 'unreadable'}`;
+  });
+  return {
+    id: 'models-json',
+    ok: assembled.sources.every((source) => source.status !== 'invalid'),
+    detail: parts.join('; '),
+  };
+}
+
+// Doctor's provider lines (issue #221): only the providers a run could use
+// — customs, the testing provider, built-ins with configured auth — each
+// naming where it came from. Keyless built-ins are not listed (they are not
+// available), so a machine with no key still reports no provider.
+export function providerProbesOf(assembled: AssembledModels): ProviderProbe[] {
+  return assembled.models
+    .getProviders()
+    .filter(
+      (provider) => assembled.providers.get(provider.id)?.usable !== false,
+    )
+    .map((provider) => {
+      const info = assembled.providers.get(provider.id);
+      const count = assembled.models.getModels(provider.id).length;
+      const from =
+        info === undefined
+          ? ''
+          : info.origin === 'built-in'
+            ? ` — built-in${info.authSource === undefined ? '' : `, auth from ${info.authSource}`}`
+            : ` — from ${info.origin}`;
+      return {
+        id: provider.id,
+        reachable: true,
+        models: assembled.models
+          .getModels(provider.id)
+          .map((model) => model.id),
+        detail: `listed, not dialled, ${count} model(s) registered${from}`,
+      };
+    });
 }
 
 export async function runModelsCommand(
@@ -85,53 +350,80 @@ export async function runModelsCommand(
       );
       return 0;
     } catch (error) {
-      log.error(error instanceof Error ? error.message : String(error));
+      log.error(errorText(error));
       return 1;
     }
   }
-  const catalog = deps.models.getProviders().map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    models: deps.models.getModels(provider.id).map((m) => ({
-      id: m.id,
-      name: m.name,
-      thinking: getSupportedThinkingLevels(m),
-      inputCost: m.cost.input,
-      outputCost: m.cost.output,
-    })),
-  }));
+  const info = deps.providers;
+  const catalog = deps.models.getProviders().map((provider) => {
+    const known = info?.get(provider.id);
+    return {
+      id: provider.id,
+      name: provider.name,
+      ...(known === undefined
+        ? {}
+        : {
+            source: known.origin,
+            usable: known.usable,
+            ...(known.authSource === undefined
+              ? {}
+              : { auth: known.authSource }),
+          }),
+      models: deps.models.getModels(provider.id).map((m) => ({
+        id: m.id,
+        name: m.name,
+        thinking: getSupportedThinkingLevels(m),
+        inputCost: m.cost.input,
+        outputCost: m.cost.output,
+        cacheReadCost: m.cost.cacheRead,
+        cacheWriteCost: m.cost.cacheWrite,
+        input: m.input,
+      })),
+    };
+  });
   if (options.json === true) {
     deps.out(formatJson(catalog));
     return 0;
   }
-  if (catalog.length === 0) {
+  // Text mode lists the usable providers in full; the (large) set of
+  // built-ins with no configured auth is summarised on one line.
+  const listed = catalog.filter((provider) => provider.usable !== false);
+  const unconfigured = catalog
+    .filter((provider) => provider.usable === false)
+    .map((provider) => provider.id);
+  if (listed.length === 0) {
     log.info(
-      'no providers registered (add models.json or set provider env keys)',
+      "no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)",
     );
-    return 0;
+  } else {
+    const theme = themeOf(deps);
+    const rows = listed.flatMap((provider) =>
+      provider.models.map((m) => [
+        theme.muted(provider.id),
+        theme.bold(m.id),
+        m.thinking.join(', ') || 'off only',
+        `$${m.inputCost}`,
+        `$${m.outputCost}`,
+      ]),
+    );
+    deps.out(
+      renderTable(
+        rows,
+        [
+          { header: 'PROVIDER' },
+          { header: 'MODEL' },
+          { header: 'THINKING' },
+          { header: 'IN $/1M', align: 'right' },
+          { header: 'OUT $/1M', align: 'right' },
+        ],
+        { fancy: deps.fancy === true, theme },
+      ),
+    );
   }
-  const theme = themeOf(deps);
-  const rows = catalog.flatMap((provider) =>
-    provider.models.map((m) => [
-      theme.muted(provider.id),
-      theme.bold(m.id),
-      m.thinking.join(', ') || 'off only',
-      `$${m.inputCost}`,
-      `$${m.outputCost}`,
-    ]),
-  );
-  deps.out(
-    renderTable(
-      rows,
-      [
-        { header: 'PROVIDER' },
-        { header: 'MODEL' },
-        { header: 'THINKING' },
-        { header: 'IN $/1M', align: 'right' },
-        { header: 'OUT $/1M', align: 'right' },
-      ],
-      { fancy: deps.fancy === true, theme },
-    ),
-  );
+  if (unconfigured.length > 0) {
+    log.info(
+      `${unconfigured.length} built-in providers not configured (set their env key): ${unconfigured.join(', ')}`,
+    );
+  }
   return 0;
 }

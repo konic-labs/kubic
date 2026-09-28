@@ -71,7 +71,7 @@ describe('kubic models (issue #20, slice C)', () => {
     );
     expect(code).toBe(0);
     expect(out).toEqual([]);
-    expect(info.join('\n')).toContain('no providers registered');
+    expect(info.join('\n')).toContain('no usable providers');
   });
 
   it('resolves --model provider/id through the selection chain', async () => {
@@ -125,21 +125,30 @@ describe('kubic models (issue #20, slice C)', () => {
       join(dir, 'models.json'),
       JSON.stringify(LOCAL_MODELS_EXAMPLE),
     );
-    const ok = assembleModels(dir);
+    const env = { KUBIC_TRUST_PROJECT: '1' };
+    const home = tmpDir();
+    const ok = await assembleModels(dir, env, { home });
     expect(ok.models.getProvider('local')?.id).toBe('local');
-    expect(ok.note).toContain('local');
-    const empty = assembleModels(tmpDir());
-    expect(empty.note).toBe(null);
+    expect(ok.notes.join('\n')).toContain('local');
+    const empty = await assembleModels(tmpDir(), env, { home });
+    expect(empty.notes).toEqual([]);
     const badDir = tmpDir();
     writeFileSync(join(badDir, 'models.json'), '{nope');
-    const bad = assembleModels(badDir);
-    expect(bad.note).toContain('ignored');
+    const bad = await assembleModels(badDir, env, { home });
+    expect(bad.notes.join('\n')).toContain('ignored');
   });
 
-  it('adds the faux testing provider only under KUBIC_PROVIDER=faux', () => {
+  it('adds the faux testing provider only under KUBIC_PROVIDER=faux', async () => {
     const dir = tmpDir();
-    expect(assembleModels(dir, {}).models.getProvider('faux')).toBe(undefined);
-    const faux = assembleModels(dir, { KUBIC_PROVIDER: 'faux' });
+    const home = tmpDir();
+    expect(
+      (await assembleModels(dir, {}, { home })).models.getProvider('faux'),
+    ).toBe(undefined);
+    const faux = await assembleModels(
+      dir,
+      { KUBIC_PROVIDER: 'faux' },
+      { home },
+    );
     expect(faux.models.getModel('faux', 'echo')?.id).toBe('echo');
   });
 });

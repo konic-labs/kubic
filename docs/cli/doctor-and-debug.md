@@ -19,16 +19,20 @@ go to stderr as `info:` lines, so stdout — and `--json` — carry only the
 report:
 
 ```
-PASS provider:local (ok): listed, not dialled, 1 model(s) registered
-FAIL provider:openai (provider-down): listed, not dialled — unreachable
-doctor: 3 pass, 6 warn, 1 fail, 0 skip
+PASS provider:local (ok): listed, not dialled, 1 model(s) registered — from /repo/models.json
+PASS provider:anthropic (ok): listed, not dialled, 23 model(s) registered — built-in, auth from ANTHROPIC_API_KEY
+doctor: 4 pass, 6 warn, 0 fail, 0 skip
 ```
 
 Provider lines are explicit about what was measured: `listed, not dialled`
 means the provider is registered in the catalog but nothing contacted it
 (the default probe — zero network). A probe that really dialled reports
 `dialled and reachable`; the line never claims reachability it did not
-observe.
+observe. Each line names where the provider came from (`built-in` with its
+auth source, or the `models.json` path). Only **usable** providers are
+listed: Pi's built-ins whose env key / ambient credentials are not set
+are left out (they are not available to a run — `kubic models` names
+them).
 
 `--json` emits `{ok, exitCode, checks}` with the same checks and the
 same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other
@@ -54,6 +58,7 @@ Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,
 | --- | --- | --- |
 | `provider:<id>` | Is the provider reachable, and how many models are registered? (`listed, not dialled` when nothing contacted it.) | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. |
 | `dep:<id>` | Is the dependency present? (Today: `node`, needs >= 22.19.) | `reason: deps-missing` → install/upgrade the dep; the detail line says what was found. |
+| `dep:models-json` | Which `models.json` files were found, their scope (`global`/`project`) and state: `loaded <ids>`, `ignored, untrusted` (a project file before `KUBIC_TRUST_PROJECT=1`) or `invalid — <reason>`. Fails only on an invalid file. | Fix or remove the named file — see [configuration](configuration.md#modelsjson). |
 | `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. | Your `[approvals]` config — see [configuration](configuration.md). |
 | `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented solo defaults otherwise. |
 | `session:overlap` | How many sessions are recorded against this cwd in the local session store? Two or more prints `warn` with the session ids (issue #118): concurrent **different**-session runs stay legal, but each run's end-of-run sweep compares against its own boot baseline, so a live sibling's in-flight changes are recorded as unattributed, non-reversible journal entries. The store lists sessions, so the note is a possible overlap, never a verified one. | Nothing to fix — the overlap is disclosed, not blocked (`warn` never flips the exit). If the journal accounting matters, run the sessions one at a time. |

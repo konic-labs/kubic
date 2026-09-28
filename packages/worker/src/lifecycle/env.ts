@@ -33,6 +33,13 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // locations/identifiers — the same class as KUBIC_WORKER_ID.
   'KUBIC_APPROVALS_DIR',
   'KUBIC_ORCHESTRATOR_SESSION',
+  // models.json lookup for workers (issue #222): the manager's project root
+  // (the worktree holds only tracked files, so an untracked models.json is
+  // not in it) and the operator's project-trust decision, which gates that
+  // file in the child exactly as it did in the manager. A location and a
+  // flag — neither is a secret.
+  'KUBIC_MODELS_ROOT',
+  'KUBIC_TRUST_PROJECT',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

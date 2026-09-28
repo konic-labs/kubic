@@ -4,10 +4,45 @@ import { describe, expect, it } from 'vitest';
 import { compactionThreshold, DEFAULT_RESERVE_TOKENS } from './compaction.js';
 import {
   LOCAL_MODELS_EXAMPLE,
+  ModelsJsonError,
   parseModelsJson,
   registerCustomProviders,
 } from './models-config.js';
 import { createModels } from './pi-boundary.js';
+
+describe('models.json apiKeyEnv allowlist (issue #322)', () => {
+  const withKeyEnv = (apiKeyEnv: string) => ({
+    providers: [
+      {
+        id: 'gw',
+        baseUrl: 'http://127.0.0.1:8000/v1',
+        api: 'openai-completions',
+        apiKeyEnv,
+        models: [{ id: 'm' }],
+      },
+    ],
+  });
+
+  it.each([
+    'AWS_SECRET_ACCESS_KEY',
+    'GITHUB_TOKEN',
+    'HOME',
+    'PATH',
+    'kubic_lower_api_key',
+  ])('refuses apiKeyEnv %s with a ModelsJsonError naming it', (name) => {
+    expect(() => parseModelsJson(withKeyEnv(name))).toThrow(ModelsJsonError);
+    expect(() => parseModelsJson(withKeyEnv(name))).toThrow(name);
+  });
+
+  it.each([
+    'KUBIC_API_KEY',
+    'KUBIC_GATEWAY_TOKEN',
+    'OPENROUTER_API_KEY',
+    'MY_GATEWAY_API_KEY',
+  ])('accepts apiKeyEnv %s', (name) => {
+    expect(parseModelsJson(withKeyEnv(name))[0]?.apiKeyEnv).toBe(name);
+  });
+});
 
 describe('models.json custom providers (issue #20, slice A)', () => {
   it('parses an Ollama-style local provider', () => {

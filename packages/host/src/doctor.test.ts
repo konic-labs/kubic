@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
-import { assembleModels } from './models-cli.js';
+import { assembleModels, providerProbesOf } from './models-cli.js';
 
 const made: string[] = [];
 
@@ -175,20 +175,17 @@ describe('runDoctorCommand', () => {
         ],
       }),
     );
-    const assembled = assembleModels(dir);
+    const assembled = await assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: dir },
+    );
     const lines: string[] = [];
     const code = await runDoctorCommand(
       {},
       {
         out: (line: string) => lines.push(line),
-        probeProviders: () =>
-          assembled.models.getProviders().map((provider) => ({
-            id: provider.id,
-            reachable: true,
-            models: assembled.models
-              .getModels(provider.id)
-              .map((model) => model.id),
-          })),
+        probeProviders: () => providerProbesOf(assembled),
         checkDeps: () => [{ id: 'node', ok: true, detail: 'test runtime' }],
         loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
       },

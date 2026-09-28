@@ -44,7 +44,10 @@ import {
   shouldEmitSoloNotice,
   soloTuiLine,
 } from '../../../packages/host/src/limits/solo-warning.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import {
+  type AssembledModels,
+  assembleModels,
+} from '../../../packages/host/src/models-cli.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
@@ -293,17 +296,23 @@ export async function bootTuiLane(
       role: 'root',
       sessionId: () => id,
     });
-    const assembled = assembleModels(process.cwd(), process.env, {
-      resolveApiKey: keyResolver.resolve,
-    });
-    const models = options.models ?? assembled.models;
+    const assembled =
+      options.models === undefined
+        ? await assembleModels(process.cwd(), process.env, {
+            resolveApiKey: keyResolver.resolve,
+          })
+        : undefined;
+    const models = options.models ?? (assembled as AssembledModels).models;
     // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
-    // picked implicitly; the footer names it (runTuiCommand).
+    // picked implicitly; the footer names it (runTuiCommand). The implicit
+    // pick never takes a keyless built-in (issue #221).
     const model = selectModel(
       models,
       options.models === undefined && fauxProviderActive(process.env)
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
         : undefined,
+      undefined,
+      assembled?.fallbackProviders,
     );
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as

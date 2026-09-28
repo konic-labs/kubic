@@ -1091,6 +1091,33 @@ export async function orchestrateDepsWithDefaults(
   // that wires no config) the resolver path is simply not delegated and the
   // conflict terminates exactly as it did before delegation existed.
   const approvalSnapshot = options.approvalPolicy;
+  // The interactive merge seat (issue #130, §41.2/§45.2): bounded by the
+  // same `approvalPolicy.maxPendingMs` snapshot the resolver path carries
+  // (issue #106) — the bound every other ask already uses. An elapse settles
+  // the TIMEOUT verdict (not a refusal), so a walked-away user never holds
+  // sessions, worktrees and the terminal open — and is never mislabelled as
+  // a decided no. A run that holds no snapshot has no bound to enforce: no
+  // seat is attached and the shipped deny-closed path (exit 4, "rerun with
+  // --yes") is what runs.
+  //
+  // Built as an IIFE so the async seat is a returned expression: Babel's
+  // TypeScript parser, which the mutation runner instruments with, rejects a
+  // type-annotated `async` arrow directly inside a conditional
+  // (`cond ? async (input: { … }) => … : undefined`).
+  const mergeApprovalSeat = ((): OrchestrateCommandDeps['requestApproval'] => {
+    if (process.stdin.isTTY !== true || approvalSnapshot === undefined) {
+      return undefined;
+    }
+    const snapshot = approvalSnapshot;
+    return async (input) =>
+      boundedAskUser(
+        `approve merge of '${input.agentId}' (${input.branch})? [y/N] `,
+        {
+          maxPendingMs: snapshot.maxPendingMs,
+          candidate: input.agentId,
+        },
+      );
+  })();
   return {
     out: options.out,
     err: options.err,
@@ -1877,28 +1904,7 @@ export async function orchestrateDepsWithDefaults(
       }
       debug(`reaped: ${agentId} (worktree + branch retained)`);
     },
-    // The interactive merge seat (issue #130, §41.2/§45.2): bounded by the
-    // same `approvalPolicy.maxPendingMs` snapshot the resolver path carries
-    // (issue #106) — the bound every other ask already uses. An elapse settles
-    // the TIMEOUT verdict (not a refusal), so a walked-away user never holds
-    // sessions, worktrees and the terminal open — and is never mislabelled as
-    // a decided no. A run that holds no snapshot has no bound to enforce: no
-    // seat is attached and the shipped deny-closed path (exit 4, "rerun with
-    // --yes") is what runs.
-    requestApproval:
-      process.stdin.isTTY === true && approvalSnapshot !== undefined
-        ? async (input: {
-            agentId: string;
-            branch: string;
-          }): Promise<MergeApprovalVerdict> =>
-            boundedAskUser(
-              `approve merge of '${input.agentId}' (${input.branch})? [y/N] `,
-              {
-                maxPendingMs: approvalSnapshot.maxPendingMs,
-                candidate: input.agentId,
-              },
-            )
-        : undefined,
+    requestApproval: mergeApprovalSeat,
     // Every settled merge decision lands in the §60 ledger (issue #323),
     // naming who decided: `--yes` for the standing answer, `user` otherwise.
     auditMerge: (record): void => {

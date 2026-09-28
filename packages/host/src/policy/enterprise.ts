@@ -858,6 +858,14 @@ export interface BrokeredEnv {
   sentinels: Record<string, string[]>;
 }
 
+// The only policy input brokering reads. Kept structurally narrow (issue
+// #200) so a caller that resolved one worker's credentials can broker them
+// without constructing a whole EnterprisePolicy — an EffectivePolicy still
+// satisfies it exactly.
+export interface CredentialBrokerPolicy {
+  readonly credentials: { readonly requireCredentialBroker: boolean };
+}
+
 // Credential broker (§36): when require_credential_broker holds, live
 // secret values never reach worker env — every occurrence is replaced by a
 // `broker:<ref>` sentinel that names the ref without carrying material.
@@ -869,7 +877,7 @@ export interface BrokeredEnv {
 export function buildBrokeredWorkerEnv(
   env: Record<string, string>,
   secrets: BrokerSecret[],
-  policy: EffectivePolicy,
+  policy: CredentialBrokerPolicy,
 ): BrokeredEnv {
   if (!policy.credentials.requireCredentialBroker) {
     return { env: { ...env }, sentinels: {} };

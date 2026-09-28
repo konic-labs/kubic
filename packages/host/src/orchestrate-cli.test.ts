@@ -11,6 +11,7 @@ import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
+  WorkerCredentialRequest,
   WorkerSessionRequest,
   WorkerSpawnInfo,
 } from './orchestrate-cli.js';
@@ -1459,5 +1460,108 @@ describe('per-worker §68 results reach the output (issue #185)', () => {
     };
     expect(envelope.workers[0]?.status).toBe('failed');
     expect(envelope.workers[0]?.error?.kind).toBe('provider');
+  });
+});
+
+describe('worker credential preflight (issue #200)', () => {
+  const rolePlan = {
+    assignments: [
+      {
+        agentId: 'alpha',
+        role: 'planner',
+        promptText: 'You are the planner.',
+        tools: ['read'],
+        modelRef: 'gw/m1',
+      },
+    ],
+    refused: [],
+  };
+
+  it('fails closed with exit 6 naming the provider before any worktree exists', async () => {
+    const seen: WorkerCredentialRequest[] = [];
+    const world = makeWorld({
+      loadWorkerRoles: () => rolePlan,
+      preflightWorkerCredentials: (requests) => {
+        seen.push(...requests);
+        return {
+          agentId: 'alpha',
+          role: 'planner',
+          provider: 'gw',
+          message:
+            "no credential for provider 'gw': $GW_API_KEY not set in the orchestrator's environment",
+        };
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true, session: 'creds' },
+      world.deps,
+    );
+    expect(code).toBe(6);
+    // Nothing created: no worktree, no worker session, no spawn.
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.create).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    // The hook saw the resolved role and its model pin, not a made-up one.
+    expect(seen).toEqual([
+      { agentId: 'alpha', role: 'planner', modelRef: 'gw/m1' },
+    ]);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/code=credential_unavailable/);
+    expect(text).toContain("provider 'gw'");
+  });
+
+  it('reports the same refusal in the --json envelope', async () => {
+    const world = makeWorld({
+      preflightWorkerCredentials: () => ({
+        agentId: 'alpha',
+        role: 'worker',
+        provider: 'gw',
+        message: "no credential for provider 'gw'",
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true, json: true },
+      world.deps,
+    );
+    expect(code).toBe(6);
+    const envelope = lastJsonLine(world.lines) as {
+      ok: boolean;
+      exitCode: number;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(6);
+    expect(envelope.error.code).toBe('credential_unavailable');
+    expect(envelope.error.message).toContain("provider 'gw'");
+  });
+
+  it('asks for the fallback worker role when no role document is assigned', async () => {
+    const seen: WorkerCredentialRequest[] = [];
+    const world = makeWorld({
+      preflightWorkerCredentials: (requests) => {
+        seen.push(...requests);
+        return undefined;
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(seen).toEqual([{ agentId: 'alpha', role: 'worker' }]);
+  });
+
+  it('proceeds with the run when the preflight delivers every credential', async () => {
+    const world = makeWorld({
+      loadWorkerRoles: () => rolePlan,
+      preflightWorkerCredentials: () => undefined,
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.ensure).toEqual(['alpha']);
+    expect(world.calls.run).toEqual(['alpha']);
   });
 });

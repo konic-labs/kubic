@@ -1,14 +1,11 @@
 // Request-time secrets, audit, ScopedToken, per-role env (issue #38) — RED first.
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_ENV_ALLOWLIST,
   assertNoPlaintextSecrets,
-  buildAgentEnv,
   containsPlaintextSecret,
   issueScopedToken,
   parseSecretRef,
   redactSecretValues,
-  resolveRoleCredentials,
   resolveSecretRef,
   revokeAllTokens,
   type SecretAuditEvent,
@@ -259,63 +256,6 @@ describe('ScopedToken (issue #38)', () => {
   });
 });
 
-describe('per-role injection (issue #38)', () => {
-  it('gives a worker only its own role creds', () => {
-    const reviewer = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_A },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    const implementer = resolveRoleCredentials(
-      'implementer',
-      { writeKey: FIXTURE_KEY_B },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    expect(Object.keys(reviewer.tokens)).toEqual(['readKey']);
-    expect(Object.keys(implementer.tokens)).toEqual(['writeKey']);
-  });
-
-  it('re-resolves on change instead of inheriting', () => {
-    const first = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_A },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    const second = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_B },
-      { version: 2, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    expect(second.version).toBe(2);
-    expect(useScopedToken(second.tokens.readKey, 'h', 2_000)).toBe(
-      FIXTURE_KEY_B,
-    );
-    expect(first.tokens.readKey).not.toBe(second.tokens.readKey);
-  });
-});
-
-describe('agent env allowlist (issue #38)', () => {
-  it('exposes allowlist ∪ role creds with no ambient leak', () => {
-    expect(AGENT_ENV_ALLOWLIST).toContain('PATH');
-    const env = buildAgentEnv(
-      {
-        PATH: '/usr/bin',
-        HOME: '/home/u',
-        KUBIC_AMBIENT_LEAK_PROBE: 'leak',
-        AWS_SECRET_ACCESS_KEY: '[REDACTED-fixture]',
-      },
-      AGENT_ENV_ALLOWLIST,
-      { KUBIC_ROLE_KEY: FIXTURE_KEY_A },
-    );
-    expect(env.PATH).toBe('/usr/bin');
-    expect(env.KUBIC_ROLE_KEY).toBe(FIXTURE_KEY_A);
-    expect('KUBIC_AMBIENT_LEAK_PROBE' in env).toBe(false);
-    expect('AWS_SECRET_ACCESS_KEY' in env).toBe(false);
-  });
-});
-
-// Secret-ref and redaction hardening (issue #69): every fail-closed branch
-// pins its exact error so a removed refusal fails a test.
 describe('secret ref hardening (issue #69)', () => {
   it('rejects empty !command refs', () => {
     expect(() => parseSecretRef('!')).toThrow(/empty !command/);
@@ -494,51 +434,5 @@ describe('ScopedToken hardening (issue #69)', () => {
 
   it('revokes zero tokens without throwing', () => {
     expect(() => revokeAllTokens([])).not.toThrow();
-  });
-
-  it('pins the exact allowlist contents', () => {
-    expect([...AGENT_ENV_ALLOWLIST]).toEqual([
-      'PATH',
-      'HOME',
-      'TERM',
-      'LANG',
-      'TZ',
-      'TMPDIR',
-    ]);
-  });
-
-  it('skips undefined allowlisted values and lets role creds win', () => {
-    const env = buildAgentEnv(
-      { PATH: undefined, HOME: '/home/u' },
-      AGENT_ENV_ALLOWLIST,
-      { PATH: '/role/bin' },
-    );
-    expect(env.PATH).toBe('/role/bin');
-    expect(env.HOME).toBe('/home/u');
-    // Without a role cred, an undefined allowlisted value is absent, not
-    // copied through as a key with an undefined value.
-    const bare = buildAgentEnv(
-      { PATH: undefined, HOME: '/home/u' },
-      AGENT_ENV_ALLOWLIST,
-      {},
-    );
-    expect(bare).toEqual({ HOME: '/home/u' });
-  });
-
-  it('isolates role credential sets by entries, not by reference', () => {
-    const opts = {
-      version: 3,
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 3,
-      now: 1_000,
-    };
-    const entries: Record<string, string> = { readKey: FIXTURE_KEY_A };
-    const set = resolveRoleCredentials('reviewer', entries, opts);
-    // A later change to the caller's entries never reaches an issued set.
-    entries.writeKey = FIXTURE_KEY_B;
-    expect(set).toMatchObject({ role: 'reviewer', version: 3 });
-    expect(Object.keys(set.tokens)).toEqual(['readKey']);
-    expect(resolveRoleCredentials('reviewer', {}, opts).tokens).toEqual({});
   });
 });

@@ -213,7 +213,3 @@ non-test caller nor a row below (issue #359).
 | `useScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
 | `substituteTokenHost` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 host substitution, not implemented (design drift item 22) |
 | `revokeAllTokens` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 settle/exit revocation, not implemented (design drift item 22) |
-| `RoleCredentialSet` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 per-role credentials, not implemented (design drift item 22) |
-| `resolveRoleCredentials` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 per-role credentials, not implemented (design drift item 22) |
-| `AGENT_ENV_ALLOWLIST` | `packages/host/src/config/secrets.ts` | #359 | keep: superseded in practice by `ENV_ALLOWLIST` (`packages/worker/src/lifecycle/env.ts`) |
-| `buildAgentEnv` | `packages/host/src/config/secrets.ts` | #359 | keep: superseded in practice by `buildSpawnEnv` (`packages/worker/src/lifecycle/env.ts`) |

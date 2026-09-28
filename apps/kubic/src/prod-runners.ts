@@ -34,7 +34,15 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
-import type { SessionOverlapProbe } from '../../../packages/host/src/doctor.js';
+import {
+  firstDeliverableProvider,
+  type WorkerCredentialRequest,
+  workerCredentialDoctorProbe,
+} from '../../../packages/host/src/config/role-credentials.js';
+import type {
+  DepProbe,
+  SessionOverlapProbe,
+} from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import {
   FAUX_NOTICE,
@@ -53,7 +61,10 @@ import {
   runCostCommand,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import { runPerfCommand } from '../../../packages/host/src/ops/perf/perf-cli.js';
-import { runOrchestrateCommand } from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  ORCHESTRATE_DEFAULT_AGENTS,
+  runOrchestrateCommand,
+} from '../../../packages/host/src/orchestrate-cli.js';
 import {
   cleanDepsWithDefaults,
   runCleanCommand,
@@ -72,6 +83,7 @@ import {
 } from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
+import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import {
   defaultSessionsRoot,
@@ -364,6 +376,55 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       } catch {
         sessionOverlapProbe = undefined;
       }
+      // §36.3 credential posture (issue #200): which provider each role's
+      // workers get credentials for — over the same default delegation set a
+      // bare `kubic orchestrate` assigns, through the same resolution the
+      // launch preflight uses, so doctor and the run cannot disagree. Provider
+      // NAMES only: no key name, no value.
+      const workerCredentialProbe = (): DepProbe => {
+        const cwd = process.cwd();
+        const plan = planWorkerRoles({
+          bridge: createNodeFileBridge(cwd),
+          cwd,
+          agents: ORCHESTRATE_DEFAULT_AGENTS,
+        });
+        const requests: WorkerCredentialRequest[] = plan.assignments.map(
+          (assignment) => ({
+            agentId: assignment.agentId,
+            role: assignment.role,
+            modelRef: assignment.modelRef,
+          }),
+        );
+        const pin = runtimeModelPin(cliConfig);
+        return {
+          id: 'credentials:roles',
+          ...workerCredentialDoctorProbe(requests, {
+            keyEnv: assembled.keyEnv,
+            env: process.env,
+            resolution: {
+              ...(process.env.KUBIC_MODEL === undefined ||
+              process.env.KUBIC_MODEL === ''
+                ? {}
+                : { envModel: process.env.KUBIC_MODEL }),
+              ...(pin === undefined
+                ? {}
+                : { managerModel: `${pin.provider}/${pin.id}` }),
+              ...(() => {
+                // Same rule as the run's preflight: only a fallback whose key
+                // this host can deliver is named; the rest are skipped, never
+                // reported as a credential failure (issue #200).
+                const fallback = firstDeliverableProvider(
+                  assembled.fallbackProviders,
+                  { keyEnv: assembled.keyEnv, env: process.env },
+                );
+                return fallback === undefined
+                  ? {}
+                  : { fallbackProvider: fallback };
+              })(),
+            },
+          }),
+        };
+      };
       return runDoctorCommand(options, {
         ...view,
         probeProviders: () => providerProbesOf(assembled),
@@ -381,6 +442,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // Issue #322: which models.json files were found, their scope and
           // trust state; an invalid file fails by name.
           modelsSourcesProbe(assembled),
+          // Issue #200: the provider each role's workers get credentials for.
+          workerCredentialProbe(),
         ],
         // Config-sourced approval policy (issue #90): the route/autoApprove
         // come from the loaded layers, not a hardcoded default.
@@ -431,6 +494,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // the run so a delegated conflict resolver is spawned under exactly
       // the policy the manager holds — the same config load this process
       // already consumed, never a second default.
+      const modelPin = runtimeModelPin(cliConfig);
       return runOrchestrateCommand(
         options,
         await orchestrateDepsWithDefaults({
@@ -440,6 +504,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           theme: stdoutTheme(),
           errTheme: stderrTheme(),
           debug,
+          // Issue #200: the model the manager itself would run decides which
+          // provider's key a worker with no role/operator pin is granted.
+          ...(modelPin === undefined
+            ? {}
+            : { model: { provider: modelPin.provider, id: modelPin.id } }),
           ...(cliConfig.runtime === undefined
             ? {}
             : { approvalPolicy: approvalSnapshotFrom(cliConfig.runtime) }),

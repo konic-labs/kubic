@@ -78,6 +78,26 @@ solo) — and `run` never delegates.
   registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
   do and which tools exist on its lane; a contradictory document refuses the
   run before anything spawns, and `kubic doctor` prints the same refusal.
+- **A worker's provider key travels as its role grant, not as ambient env
+  (issue [#200](https://github.com/konic-labs/kubic/issues/200); §36.3,
+  §58, §59).** A worker child starts behind the §3.8 allowlist, which carries
+  no provider key. Before anything spawns, the manager resolves which
+  provider each worker's role will use (the operator's `KUBIC_MODEL`, the
+  role's resolved model, the manager's `[model]` pin, or the first usable
+  provider) and grants exactly that provider's key environment variables —
+  delivered to the child as `KUBIC_ROLE_<ROLE>_<ENV_VAR>` and read back by
+  the child as the provider's apiKey auth. A worker never receives a sibling
+  role's provider key, a second provider's key, the key under its plain name,
+  or an unrelated parent secret. A `models.json` key is still resolved and
+  audited per request in the child's own run (§36.1 rules 3-4); a built-in
+  key keeps Pi's own env auth. The grant is redacted on every
+  spawn/log/export surface. When the key is missing from the orchestrator's
+  environment the run **fails closed with exit 6, naming the provider,
+  before creating any worktree**; a conflict resolver is spawned under the
+  same rule, and `kubic doctor` (`dep:credentials:roles`) lists the provider
+  each role gets credentials for — names only. Under §58
+  `require_credential_broker` the grant carries `broker:<ref>` sentinels
+  instead of values, so no secret material reaches the child env at all.
 - **A genuine conflict is delegated to a spawned resolver — the manager never
   resolves a conflict itself.** The manager cannot write file content by
   design, so when a merge reports a real conflict it builds the §45.2

@@ -8,6 +8,8 @@ import {
   filterSpawnEnv,
   redactEnvForLog,
   roleCredentialEnv,
+  roleGrantEnv,
+  withRoleGrant,
 } from './env.js';
 
 describe('spawn env allowlist §3.8 (issue #42)', () => {
@@ -95,5 +97,55 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     expect(() =>
       roleCredentialEnv('reviewer', { KUBIC_ROLE_OTHER_TOKEN: 'x' }),
     ).toThrow(/KUBIC_ROLE_OTHER_TOKEN/);
+  });
+});
+
+describe('role grant read-back on the child side (issue #200)', () => {
+  it("reads this role's own grant under the provider-key names the models layer asks for", () => {
+    const env = buildSpawnEnv({ PATH: '/bin' }, 'implementer', {
+      GW_API_KEY: 'granted',
+    });
+    expect(roleGrantEnv('implementer', env)).toEqual({
+      GW_API_KEY: 'granted',
+    });
+    expect(withRoleGrant(env, 'implementer')).toEqual({
+      PATH: '/bin',
+      KUBIC_ROLE_IMPLEMENTER_GW_API_KEY: 'granted',
+      GW_API_KEY: 'granted',
+    });
+  });
+
+  it("never exposes a sibling role's grant", () => {
+    const env = {
+      KUBIC_ROLE_PLANNER_GW_API_KEY: 'sibling',
+      KUBIC_ROLE_IMPLEMENTER_GW_API_KEY: 'mine',
+    };
+    expect(roleGrantEnv('implementer', env)).toEqual({
+      GW_API_KEY: 'mine',
+    });
+    expect(Object.values(roleGrantEnv('tester', env))).toEqual([]);
+  });
+
+  it('sanitizes the role the same way the grant namespace does', () => {
+    const env = buildSpawnEnv({}, 'security-review', { GW_API_KEY: 'v' });
+    expect(roleGrantEnv('security-review', env)).toEqual({
+      GW_API_KEY: 'v',
+    });
+    expect(roleGrantEnv('Security Review', env)).toEqual({
+      GW_API_KEY: 'v',
+    });
+  });
+
+  it('leaves the base env untouched when the child holds no grant', () => {
+    expect(roleGrantEnv('implementer', { PATH: '/bin' })).toEqual({});
+    expect(withRoleGrant({ PATH: '/bin' }, 'implementer')).toEqual({
+      PATH: '/bin',
+    });
+  });
+
+  it('ignores an empty grant name instead of minting an empty-key overlay', () => {
+    expect(
+      roleGrantEnv('implementer', { KUBIC_ROLE_IMPLEMENTER_: 'v' }),
+    ).toEqual({});
   });
 });

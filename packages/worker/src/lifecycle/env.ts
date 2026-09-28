@@ -68,6 +68,10 @@ export function filterSpawnEnv(
   return out;
 }
 
+function grantPrefix(role: string): string {
+  return `KUBIC_ROLE_${role.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_`;
+}
+
 // Namespaces a role grant under KUBIC_ROLE_<ROLE>_. The `role` value
 // is trusted as-is: this function mints whatever sibling-prefixed
 // namespace the caller names and performs NO authorization. The
@@ -79,7 +83,7 @@ export function roleCredentialEnv(
   role: string,
   grant: Record<string, string>,
 ): Record<string, string> {
-  const prefix = `KUBIC_ROLE_${role.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_`;
+  const prefix = grantPrefix(role);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(grant)) {
     if (key.toUpperCase().startsWith(KUBIC_PREFIX)) {
@@ -91,6 +95,38 @@ export function roleCredentialEnv(
     out[`${prefix}${name}`] = value;
   }
   return out;
+}
+
+// The child-side read of its own role grant (issue #200): the inverse of
+// roleCredentialEnv for the ONE role this process was launched as. The
+// grant becomes visible under the provider-key names the models layer asks
+// for; a sibling role's prefix never matches, so a grant the host minted
+// for another role stays invisible even if it somehow reached this env.
+export function roleGrantEnv(
+  role: string,
+  env: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const prefix = grantPrefix(role);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith(prefix)) continue;
+    const name = key.slice(prefix.length);
+    if (name === '') continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+// The env view the models assembly reads: the process env exactly as the
+// child got it, with this role's grant exposed under the plain names a
+// provider's `apiKeyEnv` (or a built-in's own auth) looks up. The plain
+// names exist only in the returned view — never in the child's own
+// process env, and never written anywhere.
+export function withRoleGrant(
+  env: Readonly<Record<string, string>>,
+  role: string,
+): Record<string, string> {
+  return { ...env, ...roleGrantEnv(role, env) };
 }
 
 export function buildSpawnEnv(

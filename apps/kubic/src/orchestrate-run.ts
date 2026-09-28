@@ -21,8 +21,19 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
+import {
+  firstDeliverableProvider,
+  type ProviderGrantResult,
+  resolveProviderGrant,
+  resolveWorkerProvider,
+  type WorkerCredentialRefusal,
+} from '../../../packages/host/src/config/role-credentials.js';
 import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
 import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
+import {
+  type AssembledModels,
+  assembleModels,
+} from '../../../packages/host/src/models-cli.js';
 import type {
   MergeApprovalVerdict,
   OrchestrateCommandDeps,
@@ -195,6 +206,24 @@ export interface OrchestrateRunOptions {
    * the test runner itself is never signalled.
    */
   signals?: OrchestrateSignals;
+  /**
+   * The manager's own effective model pin (config `[model]` / KUBIC_MODEL,
+   * issue #200). A worker with no role/operator pin resolves this same
+   * model, so it decides which provider's key the worker is granted.
+   */
+  model?: { provider: string; id: string };
+  /**
+   * The manager's assembled models (issue #200): the provider key-env index
+   * and the first usable provider the workers fall back to. Tests inject;
+   * prod leaves it unset and the run assembles over its own root/env.
+   */
+  models?: AssembledModels;
+  /**
+   * §58 `require_credential_broker`: worker grants carry `broker:<ref>`
+   * sentinels instead of live values, so no secret material reaches a child
+   * env. Absent means the shipped default (no broker configured).
+   */
+  requireCredentialBroker?: boolean;
 }
 
 export type OrchestrateSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -1134,6 +1163,84 @@ export async function orchestrateDepsWithDefaults(
         },
       );
   })();
+
+  // §36.3 worker provider credentials (issue #200). The manager's models are
+  // assembled ONCE — provider key env names plus the first usable provider
+  // the workers fall back to — and every worker/resolver grant is resolved
+  // from that same view. The preflight below and the launches share one
+  // memoized lookup, so what the preflight approves is exactly what a launch
+  // delivers. Values never leave this closure except through the role grant
+  // (redacted on every log surface by key provenance).
+  const assembledModels =
+    options.models ?? (await assembleModels(root ?? cwd, process.env, {}));
+  for (const note of assembledModels.notes) debug(note);
+  const credentialBrokerOption =
+    options.requireCredentialBroker === true
+      ? { requireCredentialBroker: true as const }
+      : {};
+  // The fallback the workers land on must be one whose credential this host
+  // can actually deliver (issue #200). A fallback candidate whose key is not
+  // in this environment is SKIPPED rather than turned into a pre-run refusal:
+  // the host only GUESSES the child's implicit pick here, and refusing a run
+  // on a guess is worse than the child naming the provider it really picked.
+  // Explicit pins (the operator's KUBIC_MODEL, the role's resolved model, the
+  // manager's `[model]`) are not guesses — their undeliverable credential IS
+  // a preflight refusal.
+  const fallbackProvider = firstDeliverableProvider(
+    assembledModels.fallbackProviders,
+    {
+      keyEnv: assembledModels.keyEnv,
+      env: process.env,
+      ...credentialBrokerOption,
+    },
+  );
+  const credentialResolution = {
+    ...(process.env.KUBIC_MODEL === undefined || process.env.KUBIC_MODEL === ''
+      ? {}
+      : { envModel: process.env.KUBIC_MODEL }),
+    ...(options.model === undefined
+      ? {}
+      : { managerModel: `${options.model.provider}/${options.model.id}` }),
+    ...(fallbackProvider === undefined ? {} : { fallbackProvider }),
+  };
+  const credentialCache = new Map<string, ProviderGrantResult>();
+  const workerGrant = (
+    agentId: string,
+    role: string,
+    modelRef: string | undefined,
+  ):
+    | { grant: Record<string, string>; refusal: undefined }
+    | {
+        grant: undefined;
+        refusal: WorkerCredentialRefusal;
+      } => {
+    const cacheKey = `${agentId}|${modelRef ?? ''}`;
+    let resolved = credentialCache.get(cacheKey);
+    if (resolved === undefined) {
+      const provider = resolveWorkerProvider({
+        ...credentialResolution,
+        ...(modelRef === undefined ? {} : { modelRef }),
+      });
+      resolved = resolveProviderGrant(provider, {
+        keyEnv: assembledModels.keyEnv,
+        env: process.env,
+        ...credentialBrokerOption,
+      });
+      credentialCache.set(cacheKey, resolved);
+    }
+    if (resolved.kind === 'refusal') {
+      return {
+        grant: undefined,
+        refusal: {
+          agentId,
+          role,
+          provider: resolved.provider,
+          message: resolved.message,
+        },
+      };
+    }
+    return { grant: resolved.grant, refusal: undefined };
+  };
   return {
     out: options.out,
     err: options.err,
@@ -1209,6 +1316,22 @@ export async function orchestrateDepsWithDefaults(
         cwd,
         agents,
       });
+    },
+    // §36.3 credential preflight (issue #200): the same memoized lookup the
+    // launches use, so an approved plan is exactly the delivered grant. The
+    // CLI fails the run closed (exit 6, provider named) before any state
+    // write, worktree or session when this returns a refusal.
+    preflightWorkerCredentials: (requests) => {
+      let refusal: WorkerCredentialRefusal | undefined;
+      for (const request of requests) {
+        const resolved = workerGrant(
+          request.agentId,
+          request.role,
+          request.modelRef,
+        );
+        refusal ??= resolved.refusal;
+      }
+      return refusal;
     },
     ensureWorktree: async (
       agentId: string,
@@ -1412,6 +1535,23 @@ export async function orchestrateDepsWithDefaults(
       // child env handoff and the host's wall-clock watchdog. Read once so
       // the two can never disagree about which spec is in force.
       const budgetForSpawn = approvalsActive?.budgetFor(agentId);
+      // §36.3 (issue #200): the worker's provider credential is the grant the
+      // preflight approved — computed from the SAME role model pin the child
+      // is told (`info.role`/`info.modelRef`), keyed under the role the child
+      // reads back (its `--role`, or the 'worker' fallback when unassigned).
+      const credentialGrant = workerGrant(
+        agentId,
+        info?.role ?? 'worker',
+        info?.modelRef,
+      );
+      if (credentialGrant.refusal !== undefined) {
+        // Defence in depth: the preflight checks this same memoized lookup
+        // for every pending agent before any worktree exists, so reaching
+        // here means the plan changed under the run — fail closed anyway.
+        throw new Error(
+          `worker '${agentId}': ${credentialGrant.refusal.message}`,
+        );
+      }
       const launched = launchWorker(
         {
           workerId: agentId,
@@ -1422,6 +1562,11 @@ export async function orchestrateDepsWithDefaults(
           // registered (absence, not approval). The lifecycle row keeps the
           // role name too (§50: who started, as what).
           role: info?.role ?? 'worker',
+          // §36.3 (issue #200): the grant is namespaced under the role the
+          // child can read itself; `--role` is passed exactly when the role
+          // is defined above, so the two agree by construction.
+          grantRole: info?.role ?? 'worker',
+          credentials: credentialGrant.grant,
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
           // allowlist inside the layer — never inherited wholesale. Two
@@ -1816,11 +1961,28 @@ export async function orchestrateDepsWithDefaults(
         );
       }
       throwIfCancelled(request.agentId);
+      // §36.3 (issue #200): the resolver is a child like any other, so it
+      // needs the same provider credential its role resolves to. The resolver
+      // carries no role model pin (nothing injects KUBIC_MODEL into it), so
+      // its provider follows the operator/manager pin or the manager's
+      // fallback — and the grant is namespaced under the role the child is
+      // TOLD: its spec role only when the document exists (`--role`), the
+      // 'worker' default otherwise, never a namespace the child cannot read.
+      const resolverGrant = workerGrant(
+        request.agentId,
+        request.spec.role,
+        undefined,
+      );
+      if (resolverGrant.refusal !== undefined) {
+        return { resolved: false, reason: resolverGrant.refusal.message };
+      }
       const launched = launchWorker(
         {
           workerId: request.agentId,
           sessionId: workerSession,
           role: request.spec.role,
+          grantRole: roleDocPresent ? request.spec.role : 'worker',
+          credentials: resolverGrant.grant,
           owner: `orchestrate:${sessionId}`,
           baseEnv: {
             ...Object.fromEntries(

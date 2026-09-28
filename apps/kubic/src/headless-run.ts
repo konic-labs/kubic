@@ -109,6 +109,7 @@ import {
   type SettledDrive,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
+import { withRoleGrant } from '../../../packages/worker/src/lifecycle/env.js';
 import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
@@ -948,9 +949,23 @@ async function runHeadlessPromptImpl(
           debug?.(`[session] credential use not audited: ${message}`),
       });
       liveSecrets = keyResolver.live;
+      // Worker role credentials (issue #200; §36.3): when this process IS an
+      // orchestrator worker, its provider key travelled as a
+      // KUBIC_ROLE_<role>_* grant. The models assembly reads the grant back
+      // under the provider-key names its auth resolution asks for; the plain
+      // names exist only in this view, never in the child's process env. A
+      // plain `kubic run` holds no grant, so the view is the identity.
+      const modelsEnv = withRoleGrant(
+        Object.fromEntries(
+          Object.entries(process.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
+        options.role ?? 'worker',
+      );
       const assembled = await assembleModels(
         deps.modelsCwd ?? process.cwd(),
-        process.env,
+        modelsEnv,
         { resolveApiKey: keyResolver.resolve },
       );
       for (const note of assembled.notes) {

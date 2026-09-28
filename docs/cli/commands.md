@@ -51,14 +51,14 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
-| `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
+| `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
 | `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
 | `--role <name>` | Boot as the role document `.kubic/roles/<name>.md` (prompt text, tool set, model pin). |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, `model` — the `provider/id` the lane actually ran, present once a lane booted — and optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` (e.g. an orchestrator
 stopping a worker) and `SIGHUP` during a run are handled like the
@@ -479,7 +479,11 @@ status stay. `--session <id>` resumes into an existing session (same
 boots). Usage errors (unknown option, missing value, any operand) exit 2
 on stderr before the screen opens. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
-`error: …` line on stderr (never stdout) before the screen opens. A session left with a pending operation
+`error: …` line on stderr (never stdout) before the screen opens. The
+`--session` model rule is the same as `kubic run`'s (issue #148; the TUI's
+only pin is `KUBIC_PROVIDER=faux`): the status bar and usage rows name the
+model the lane actually runs, and a kept or switched model is named in the
+first footer. A session left with a pending operation
 by a crashed run (issue #147) has it durably aborted at boot — its
 approvals would need the overlay, which is not on screen yet, and the
 operator is present to re-send — and the editor footer names the outcome

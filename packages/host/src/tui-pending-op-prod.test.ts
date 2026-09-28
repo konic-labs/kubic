@@ -171,12 +171,17 @@ describe('kubic tui --session after a crash (issue #147)', () => {
           sessionId: 's1',
           model: 'faux/test',
           pendingNotice: 'pending operation op-1 (run, started x) aborted',
+          modelNotice: "model: session keeps its own model 'faux/a'",
         }),
       },
     );
     await waitFor(() => fake.started() === 1);
     expect(fake.writes.join('')).toContain(
       'pending operation op-1 (run, started x) aborted',
+    );
+    // Issue #148: the model reconciliation line shares the first footer.
+    expect(fake.writes.join('')).toContain(
+      "model: session keeps its own model 'faux/a'",
     );
     fake.feed('\x03');
     expect(await pending).toBe(0);

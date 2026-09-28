@@ -89,6 +89,9 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // The model the lane actually ran, `provider/id` (issue #148). Absent
+  // when no lane booted (usage errors, store/attach failures).
+  model?: string;
 }
 
 export interface RunEnvelope {
@@ -100,6 +103,7 @@ export interface RunEnvelope {
   journal: { ref: string };
   usage: { ref: string };
   trajectory: { ref: string };
+  model?: string;
   error?: { kind: string; message: string };
 }
 
@@ -116,6 +120,7 @@ export function buildRunEnvelope(
     journal: { ref: result.journalRef },
     usage: { ref: result.usageRef },
     trajectory: { ref: result.trajectoryRef },
+    ...(result.model === undefined ? {} : { model: result.model }),
     ...(result.error === undefined ? {} : { error: result.error }),
   };
 }

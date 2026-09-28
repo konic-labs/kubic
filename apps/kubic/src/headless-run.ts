@@ -449,6 +449,21 @@ export async function runHeadlessPrompt(
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
+  // Issue #148: every result after the lane booted names the model the
+  // lane actually ran (the live lane model, never the bare selection).
+  const report: { model?: string } = {};
+  const result = await runHeadlessPromptImpl(prompt, options, deps, report);
+  return report.model === undefined
+    ? result
+    : { ...result, model: report.model };
+}
+
+async function runHeadlessPromptImpl(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps,
+  report: { model?: string },
+): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
   // before any store attach or path join can see them.
@@ -901,36 +916,64 @@ export async function runHeadlessPrompt(
     }
     const beforeBoot = bootInterrupted();
     if (beforeBoot !== undefined) return beforeBoot;
-    solo = await bootSoloLane({
-      session,
-      models,
-      model,
-      env,
-      sessionId: id,
-      agentId: deps.agentId ?? 'root',
-      journal,
-      ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
-      ...(role === undefined
-        ? {}
-        : {
-            rolePrompt: role.prompt,
-            ...(role.resolved.tools.length === 0
-              ? {}
-              : { toolAllowlist: role.resolved.tools }),
-          }),
-      // One policy object carrying all three mechanisms (#86 + #90 + #93):
-      // the classes come from the config layer when it supplies them and
-      // from the documented safe default otherwise, the interceptors are
-      // always installed, and the extension facet composes as a tool-wrap
-      // contribution on the same stack. SoloPolicyOptions has three
-      // independent fields, so this is a union, not a choice.
-      policy: {
-        classes: installed.classes,
-        interceptors: installed.interceptors,
-        ...(contributions.length === 0 ? {} : { contributions }),
-      },
-    });
+    // Issue #148 (§26.1): a pin (the faux pin, the `[model]`/env pin, or
+    // the role's model) is an explicit selection and switches a resumed
+    // session whose stored model differs; the default pick never does —
+    // the session keeps its own model. Either way it is named on stderr.
+    const notice = deps.notice ?? ((line: string) => console.error(line));
+    const explicitModel =
+      fauxPinned ||
+      deps.model !== undefined ||
+      roleModelSelection(role?.resolved.model) !== undefined;
+    try {
+      solo = await bootSoloLane({
+        session,
+        models,
+        model,
+        modelPolicy: explicitModel ? 'selected' : 'stored',
+        onModelNotice: notice,
+        env,
+        sessionId: id,
+        agentId: deps.agentId ?? 'root',
+        journal,
+        ...(skills.block === undefined
+          ? {}
+          : { promptSections: [skills.block] }),
+        ...(role === undefined
+          ? {}
+          : {
+              rolePrompt: role.prompt,
+              ...(role.resolved.tools.length === 0
+                ? {}
+                : { toolAllowlist: role.resolved.tools }),
+            }),
+        // One policy object carrying all three mechanisms (#86 + #90 + #93):
+        // the classes come from the config layer when it supplies them and
+        // from the documented safe default otherwise, the interceptors are
+        // always installed, and the extension facet composes as a tool-wrap
+        // contribution on the same stack. SoloPolicyOptions has three
+        // independent fields, so this is a union, not a choice.
+        policy: {
+          classes: installed.classes,
+          interceptors: installed.interceptors,
+          ...(contributions.length === 0 ? {} : { contributions }),
+        },
+      });
+    } catch (error) {
+      // A stored session model that is no longer registered (issue #148)
+      // is the same terminus as an unknown selection: exit 6, named.
+      if (error instanceof ModelSelectError) {
+        return finished(
+          id,
+          'provider_probe_failed',
+          error.message,
+          error.message,
+        );
+      }
+      throw error;
+    }
     const { harness, lane } = solo;
+    report.model = await liveModelId(solo, context);
     // Tool spans come from the harness's own hook registry, so they cover
     // every tool the lane actually executes (issue #98). Detached in the
     // finally below. A lane booted without a harness (unit stubs, future
@@ -949,7 +992,6 @@ export async function runHeadlessPrompt(
       // guards and then this prompt is accepted; a resume that cannot
       // settle (guard fired, approval with no TTY) is durably aborted. Each
       // choice is named on stderr.
-      const notice = deps.notice ?? ((line: string) => console.error(line));
       let resumedOperationId: string | undefined;
       const open = solo.open ?? [];
       if (open.length > 0) {
@@ -1144,6 +1186,23 @@ export async function runHeadlessPrompt(
       // Intentionally swallowed — the mapped result stands.
     }
   }
+}
+
+// The `provider/id` the lane actually runs (issue #148): the live lane
+// model, else the boot's effective model. Tolerant of stub lanes (unit
+// boots without getModel/model), which report nothing rather than fail.
+async function liveModelId(
+  solo: SoloLane,
+  context: Context,
+): Promise<string | undefined> {
+  const live =
+    typeof solo.lane.getModel === 'function'
+      ? await solo.lane.getModel(context)
+      : undefined;
+  const running = live ?? (solo.model as SoloLane['model'] | undefined);
+  return running === undefined
+    ? undefined
+    : `${running.provider}/${running.id}`;
 }
 
 // The harness hook registry for tool spans, tolerant of a harness-less lane

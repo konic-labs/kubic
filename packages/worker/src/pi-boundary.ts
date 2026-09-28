@@ -78,12 +78,23 @@ export type {
 //   why Pi has no alternative: session durability is a harness concern (§21 —
 //     SessionRepo.open + lane.resume); JSONL backing lands with issue #14
 //   review: issue #11
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-agent-core#laneConfig (public session value
+//     address for a lane's persisted configuration)
+//   used by: packages/worker/src/lane/solo.ts (issue #148 — read the model a
+//     resumed lane will restore BEFORE the harness boots, so the prompt
+//     metadata, reserve clamp and reports name the model the lane runs)
+//   why Pi has no alternative: Pi restores the stored model inside
+//     harness.lane(); the public value address is the only read of it that
+//     happens before the system prompt is fixed
+//   review: issue #148
 export {
   AgentHarness,
   BACKGROUND_CONTEXT,
   err,
   FileError,
   JsonlSessionRepo,
+  laneConfig,
   MemorySessionRepo,
   ok,
 } from '@earendil-works/pi-agent-core';

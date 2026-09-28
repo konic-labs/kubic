@@ -151,6 +151,10 @@ export interface TuiLaneBoot {
   // this session (durably aborted at boot). Shown in the editor footer from
   // the first render; absent when nothing was pending.
   pendingNotice?: string;
+  // Issue #148: the model reconciliation line for a resumed session whose
+  // stored model differs from the selection (kept or switched). Shown in
+  // the footer from the first render alongside any pending-op notice.
+  modelNotice?: string;
 }
 
 export interface TuiRunDeps {
@@ -298,9 +302,11 @@ export async function bootTuiLane(
     const models = options.models ?? assembled.models;
     // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
     // picked implicitly; the footer names it (runTuiCommand).
+    const fauxPinned =
+      options.models === undefined && fauxProviderActive(process.env);
     const model = selectModel(
       models,
-      options.models === undefined && fauxProviderActive(process.env)
+      fauxPinned
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
         : undefined,
     );
@@ -323,10 +329,16 @@ export async function bootTuiLane(
         // (tests, and any caller that supplies its own) keep their own seat.
         ...(options.answer === undefined ? {} : { answer: options.answer }),
       });
+    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (the faux
+    // pin is the TUI's only one) switches a resumed session whose stored
+    // model differs; the default pick keeps the session's own model.
+    const modelNotices: string[] = [];
     const solo = await bootSoloLane({
       session,
       models,
       model,
+      modelPolicy: fauxPinned ? 'selected' : 'stored',
+      onModelNotice: (line) => modelNotices.push(line),
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
@@ -412,8 +424,17 @@ export async function bootTuiLane(
     }
     return {
       sessionId: id,
-      model: `${model.provider}/${model.id}`,
+      // The model the lane actually runs (issue #148): the status bar and
+      // the usage rows the turn runner records both read this.
+      model: await (async () => {
+        const live = await solo.lane.getModel(context);
+        const running = live ?? solo.model;
+        return `${running.provider}/${running.id}`;
+      })(),
       journal,
+      ...(modelNotices.length === 0
+        ? {}
+        : { modelNotice: modelNotices.join('; ') }),
       ...(pendingNotices.length === 0
         ? {}
         : { pendingNotice: pendingNotices.join('; ') }),
@@ -849,7 +870,11 @@ export async function runTuiCommand(
     // first frame carries it. Empty when suppressed.
     // Issue #147: a pending operation settled at boot is reported first;
     // the trust statement returns as the idle footer after the next turn.
-    app.setEditorFooter(boot.pendingNotice ?? notice);
+    app.setEditorFooter(
+      [boot.pendingNotice, boot.modelNotice]
+        .filter((line): line is string => line !== undefined)
+        .join(' · ') || notice,
+    );
     booted.render();
     process.once('SIGINT', onSigint);
     stdin?.once('end', onStdinEnd);

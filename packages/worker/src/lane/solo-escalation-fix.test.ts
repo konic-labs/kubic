@@ -164,11 +164,15 @@ describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)',
     expect(first.binding?.modelId).toBe('faux/a');
     const modelB = faux.getModel('b');
     if (modelB === undefined) throw new Error("faux model 'b' missing");
+    // Issue #148: only an EXPLICIT selection moves a resumed lane off its
+    // stored model — an unpinned re-boot keeps 'faux/a', which is exactly
+    // the bound model. The explicit switch is the re-boot that must refuse.
     await expect(
       bootSoloLane({
         session,
         models,
         model: modelB,
+        modelPolicy: 'selected',
         env,
         sessionId: session.metadata.id,
         agentId: 'root',

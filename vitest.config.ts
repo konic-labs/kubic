@@ -6,6 +6,10 @@ export default defineConfig({
     // dispatch seam is a testable surface, not a silently-unrun directory.
     include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
     environment: 'node',
+    // Hermetic env (issue #377): temp HOME, no ambient KUBIC_* variables,
+    // TCP connects refused — see test/hermetic-env.ts.
+    globalSetup: ['./test/vitest-global-setup.ts'],
+    setupFiles: ['./test/vitest-setup.ts'],
     // Half the cores, not vitest's cores-1 default: several coding agents
     // often run the suite at once on one laptop. The suite is ~10s either way.
     maxWorkers: '50%',

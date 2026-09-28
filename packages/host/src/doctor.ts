@@ -9,10 +9,16 @@
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import { CAPABILITIES, validatePolicy } from './approvals.js';
+import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
@@ -21,14 +27,12 @@ import {
   limitsDoctorExit,
 } from './limits/doctor-limits.js';
 
-export const DOCTOR_EXIT_OK = 0;
-export const DOCTOR_EXIT_FAIL = 1;
-export const DOCTOR_EXIT_USAGE = 2;
+export const DOCTOR_EXIT_OK = EXIT_OK;
+export const DOCTOR_EXIT_FAIL = EXIT_FAILED;
+export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
 // §78 provider-failure code, mirroring kubic run: a doctor matrix with a
 // provider-down failure exits 6 (see limitsDoctorExit).
-export const DOCTOR_EXIT_PROVIDER = 6;
-
-const DOCTOR_USAGE = 'usage: kubic doctor [--skip <id[,id…]>] [--json]';
+export const DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 // warn is informational only (issue #58 static §59.1 notices): it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
@@ -77,8 +81,7 @@ export interface DepProbe {
   detail?: string;
 }
 
-export interface DoctorDeps {
-  out: (line: string) => void;
+export interface DoctorDeps extends CliIo {
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
@@ -511,53 +514,48 @@ function summarize(checks: DoctorCheck[]): string {
   return `doctor: ${pass} pass, ${warn} warn, ${fail} fail, ${skip} skip`;
 }
 
-// Issue #127: the shared parser replaces the hand-rolled loop. `--skip`
-// stays repeatable (comma-splitting is this command's semantics); unknown
-// tokens and stray operands keep the pre-migration refusal line.
-const DOCTOR_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--skip', takes: 'value', repeat: true },
-  { name: '--json', takes: 'boolean' },
-];
+// The parsed `kubic doctor` invocation (commander owns the argv:
+// apps/kubic/src/commands/solo.ts). Each `skip` entry may list several
+// comma-separated check ids.
+export interface DoctorCommandOptions {
+  readonly skip?: readonly string[];
+  readonly json?: boolean;
+}
 
 export async function runDoctorCommand(
-  args: string[],
+  options: DoctorCommandOptions,
   deps: DoctorDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, DOCTOR_USAGE);
-  if (help !== null) return help;
-  const flags = parseFlagArgs(args, DOCTOR_FLAG_SPEC);
-  if (flags.missing.length > 0) {
-    deps.out(`error: ${flags.missing[0]} needs a value`);
-    return DOCTOR_EXIT_USAGE;
-  }
-  const stray = flags.unknown[0] ?? flags.positional[0];
-  if (stray !== undefined) {
-    deps.out(`error: unknown flag ${stray}`);
-    return DOCTOR_EXIT_USAGE;
-  }
-  const skip = ((flags.values['--skip'] as string[] | undefined) ?? []).flatMap(
-    (value) => value.split(',').map((part) => part.trim()),
-  );
-  const json = flags.values['--json'] === true;
+  const skip = (options.skip ?? [])
+    .flatMap((value) => value.split(','))
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
   const checks = collectDoctorChecks(deps, skip);
   const known = new Set(checks.map((check) => check.id));
   const unknownSkip = skip.find((id) => !known.has(id));
   if (unknownSkip !== undefined) {
-    deps.out(`error: unknown check ${JSON.stringify(unknownSkip)}`);
+    diagnosticsOf(deps).error(`unknown check ${JSON.stringify(unknownSkip)}`);
     return DOCTOR_EXIT_USAGE;
   }
   const exitCode = limitsDoctorExit(checks);
   const failed = exitCode !== DOCTOR_EXIT_OK;
-  if (json) {
-    deps.out(JSON.stringify({ ok: !failed, exitCode, checks }, null, 2));
+  if (options.json === true) {
+    deps.out(formatJson({ ok: !failed, exitCode, checks }));
     return exitCode;
   }
+  const theme = themeOf(deps);
+  const paint: Record<DoctorStatus, (text: string) => string> = {
+    pass: theme.success,
+    warn: theme.warning,
+    fail: theme.error,
+    skip: theme.muted,
+  };
   for (const check of checks) {
     deps.out(
-      `${check.status.toUpperCase()} ${check.id} (${check.reason}): ${check.detail}`,
+      `${paint[check.status](check.status.toUpperCase())} ${theme.bold(check.id)} ${theme.muted(`(${check.reason})`)}: ${check.detail}`,
     );
   }
-  deps.out(summarize(checks));
+  const summary = summarize(checks);
+  deps.out(failed ? theme.error(summary) : theme.success(summary));
   return exitCode;
 }

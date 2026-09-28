@@ -1,6 +1,7 @@
 // Slice A: models.json custom/local providers (issue #20; §37).
 // RED: parseModelsJson/registerCustomProviders do not exist yet.
 import { describe, expect, it } from 'vitest';
+import { compactionThreshold, DEFAULT_RESERVE_TOKENS } from './compaction.js';
 import {
   LOCAL_MODELS_EXAMPLE,
   parseModelsJson,
@@ -147,5 +148,32 @@ describe('models.json custom providers (issue #20, slice A)', () => {
         ],
       }),
     ).toThrow(/headers/);
+  });
+});
+
+describe('models.json defaults (compaction headroom)', () => {
+  it('keeps the fail-safe 8192/2048 defaults and still leaves compaction headroom', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson({
+        providers: [
+          {
+            id: 'fake',
+            baseUrl: 'http://127.0.0.1:1/v1',
+            api: 'openai-completions',
+            models: [{ id: 'm' }],
+          },
+        ],
+      }),
+    );
+    const model = models.getModels('fake')[0];
+    expect(model?.contextWindow).toBe(8192);
+    expect(model?.maxTokens).toBe(2048);
+    // The reserve clamp keeps the threshold positive for the small default
+    // window (otherwise every turn compacts: one extra model call each).
+    expect(
+      compactionThreshold(model?.contextWindow ?? 0, DEFAULT_RESERVE_TOKENS),
+    ).toBeGreaterThan(0);
   });
 });

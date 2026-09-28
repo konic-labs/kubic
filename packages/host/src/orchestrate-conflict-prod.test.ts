@@ -43,6 +43,7 @@ const touch = /TOUCH=(\\S+)/.exec(prompt)?.[1];
 writeFileSync('shared.txt', 'shared\\nline-by-' + (process.env.KUBIC_WORKER_ID ?? 'worker') + '\\n');
 if (touch !== undefined) writeFileSync(touch, 'left by the worker\\n');
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 
@@ -74,6 +75,7 @@ execFileSync('git', [
   'resolver: settle conflict',
 ]);
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 
@@ -148,6 +150,7 @@ async function harness(
   const debugLines: string[] = [];
   const deps = await orchestrateDepsWithDefaults({
     out: (line) => lines.push(line),
+    err: (line) => lines.push(line),
     debug: (line) => debugLines.push(line),
     cwd: root,
     sessionsRoot,
@@ -168,15 +171,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // which is why the fixture parses nothing and the assertions below read
     // what the run actually handed it.
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'edit shared.txt in every worktree',
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'iss106',
-        '--yes',
-      ],
+      {
+        prompt: 'edit shared.txt in every worktree',
+        agents: ['alpha', 'beta'],
+        session: 'iss106',
+        yes: true,
+      },
       h.deps,
     );
     expect(code).toBe(0);
@@ -210,15 +210,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
   it('stops the queue exactly as today when the real resolver fails', async () => {
     const h = await harness(RESOLVER_FAIL);
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'edit shared.txt in every worktree',
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'iss106',
-        '--yes',
-      ],
+      {
+        prompt: 'edit shared.txt in every worktree',
+        agents: ['alpha', 'beta'],
+        session: 'iss106',
+        yes: true,
+      },
       h.deps,
     );
     expect(code).toBe(1);
@@ -238,15 +235,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     const depsWithout = { ...h.deps };
     depsWithout.approvalPolicy = undefined;
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'edit shared.txt',
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'iss106',
-        '--yes',
-      ],
+      {
+        prompt: 'edit shared.txt',
+        agents: ['alpha', 'beta'],
+        session: 'iss106',
+        yes: true,
+      },
       depsWithout,
     );
     expect(code).toBe(1);
@@ -265,15 +259,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // Two clean workers retain clean worktrees; then dirty ONE of them for
     // real, and read the status through the composition root's own seam.
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'edit shared.txt in this worktree',
-        '--agents',
-        'alpha',
-        '--session',
-        'iss106',
-        '--yes',
-      ],
+      {
+        prompt: 'edit shared.txt in this worktree',
+        agents: ['alpha'],
+        session: 'iss106',
+        yes: true,
+      },
       h.deps,
     );
     expect(code).toBe(0);

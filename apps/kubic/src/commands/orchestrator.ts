@@ -1,0 +1,182 @@
+// Orchestrator-mode commands (delegation is a mode): orchestrate, clean,
+// workers. Registered on the root program by ../dispatch.ts.
+//
+// commander owns the argv: every flag is declared here, `--help` is the
+// generated help, and every syntax or value problem (unknown flag, missing
+// value, stray operand, malformed `--agents` / `--budget` / `--session` /
+// retention bound, `--all` with `--session`) exits 2 with one `error: …`
+// line on stderr before a handler runs (§78). The handlers
+// (packages/host) receive typed options and own the run itself.
+
+import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
+import {
+  BUDGET_DIMENSIONS,
+  type ParsedBudgetSpec,
+  parseAgentList,
+  parseBudgetSpec,
+} from '../../../../packages/host/src/orchestrate-cli.js';
+import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
+import { SESSION_ID_PATTERN } from '../../../../packages/host/src/run-cli.js';
+import type { CommandRegistrar } from '../cli/context.js';
+
+// Value parsers: commander calls them with the raw option value and turns
+// an InvalidArgumentError into `error: option '<flag>' argument '<v>' is
+// invalid. <reason>` (exit 2).
+function sessionId(raw: string): string {
+  if (!SESSION_ID_PATTERN.test(raw)) {
+    throw new InvalidArgumentError('Session ids use only [A-Za-z0-9_-].');
+  }
+  return raw;
+}
+
+function agentList(raw: string): string[] {
+  const agents = parseAgentList(raw);
+  if (agents === undefined) {
+    throw new InvalidArgumentError(
+      'Use unique comma-separated worker ids of [A-Za-z0-9_-].',
+    );
+  }
+  return agents;
+}
+
+function budgetSpec(raw: string): ParsedBudgetSpec {
+  const spec = parseBudgetSpec(raw);
+  if (spec === undefined) {
+    throw new InvalidArgumentError(
+      `Use <dim>=<n>[,…] or <agent>:<dim>=<n>[;…] with positive numbers; dims: ${BUDGET_DIMENSIONS.join(', ')}.`,
+    );
+  }
+  return spec;
+}
+
+function positiveInt(raw: string): number {
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1) {
+    throw new InvalidArgumentError('Needs a positive integer.');
+  }
+  return value;
+}
+
+const ORCHESTRATE_EXAMPLES = `
+Examples:
+  kubic orchestrate -p "add input validation" --agents api,ui
+  kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
+  kubic orchestrate --resume --session orch-1790000000000
+  kubic orchestrate -p "refactor" --json
+
+Needs a git repository (it never falls back to solo). Exit codes: 0 ok,
+1 run failure, 2 usage or not a git repo, 3 budget exhausted, 4 approval
+denied or timed out.`;
+
+const CLEAN_EXAMPLES = `
+Examples:
+  kubic clean --dry-run
+  kubic clean --session orch-1790000000000
+  kubic clean --journal --max-age-ms 604800000
+
+Removes only Kubic's own retained worktrees (under the orchestrator root, on
+a kubic/<agent> branch) and kubic/<agent> branches. Exit codes: 0 ok (also a
+dry run), 1 a hard failure, 2 usage or not a git repo.`;
+
+export const registerOrchestratorCommands: CommandRegistrar = (
+  program,
+  ctx,
+) => {
+  const { runners, config } = ctx;
+
+  program
+    .command('orchestrate')
+    .description(
+      'run a manager with one worker process and git worktree per subagent (opt-in)',
+    )
+    .option(
+      '-p, --prompt <text>',
+      'the objective; each worker runs its own plan step (required unless --resume)',
+    )
+    .option(
+      '--agents <ids>',
+      'comma-separated worker ids (default: worker-1,worker-2)',
+      agentList,
+    )
+    .option(
+      '--session <id>',
+      'orchestrator session id (default: orch-<now>)',
+      sessionId,
+    )
+    .option(
+      '--resume',
+      're-attach to a killed run and merge its pending workers (needs --session)',
+    )
+    .option('--yes', 'auto-approve every merge (non-interactive)')
+    .option(
+      '--budget <dims>',
+      'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000',
+      budgetSpec,
+    )
+    .option(
+      '--full-access',
+      'skip approvals for this session only (indicated and recorded)',
+    )
+    .option('--json', 'print one JSON envelope on stdout')
+    .addHelpText('after', ORCHESTRATE_EXAMPLES)
+    .action(async (options) => {
+      ctx.setExitCode(await runners.orchestrate(options, config));
+    });
+
+  program
+    .command('clean')
+    .description(
+      'remove retained orchestrator worktrees, kubic/<agent> branches and old journal entries',
+    )
+    .addOption(
+      new Option(
+        '--all',
+        'every retained worktree and branch (the default)',
+      ).conflicts('session'),
+    )
+    .option(
+      '--session <id>',
+      'only the worktrees of one orchestrate run (from <repo>/.kubic/orchestrator/<id>.json)',
+      sessionId,
+    )
+    .option('--dry-run', 'print what would be removed; change nothing')
+    .option(
+      '--force',
+      'remove dirty worktrees and stop still-live workers first',
+    )
+    .option(
+      '--journal',
+      'also prune the journal (to the default byte bound unless a bound is given)',
+    )
+    .option(
+      '--max-age-ms <n>',
+      'journal retention: drop entries older than n ms',
+      positiveInt,
+    )
+    .option(
+      '--max-bytes <n>',
+      'journal retention: keep at most n bytes',
+      positiveInt,
+    )
+    .option('--json', 'print one JSON envelope on stdout')
+    .addHelpText('after', CLEAN_EXAMPLES)
+    .action(async ({ session, ...rest }) => {
+      const options: CleanOptions = {
+        ...rest,
+        ...(session === undefined ? {} : { sessionId: session }),
+      };
+      ctx.setExitCode(await runners.clean(options, config));
+    });
+
+  program
+    .command('workers')
+    .description('list orchestrator workers from the repo record')
+    .option('--json', 'print the rows as one JSON array')
+    .option(
+      '--debug',
+      'also print §50 spawn/exit lines on stderr (or KUBIC_DEBUG=1)',
+    )
+    .action(async (options) => {
+      ctx.setExitCode(await runners.workers(options, config));
+    });
+};

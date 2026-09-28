@@ -10,7 +10,7 @@ import {
   createNodeFileBridge,
   type FileBridge,
 } from './file-bridge.js';
-import type { FileJournalStore } from './journal.js';
+import { type FileJournalStore, isUndoableCreate } from './journal.js';
 
 export function renderLog(store: FileJournalStore): string[] {
   return store.entries().map((e) => {
@@ -138,14 +138,18 @@ export function journalStatus(
   let corrupt = 0;
   for (const e of entries) {
     const before = store.readBefore(e);
-    if (before !== null) reversible++;
+    // An agent create reverts by removal: its pre-state is "absent".
+    if (before !== null || isUndoableCreate(e)) reversible++;
     if (e.unattributed === true) unattributed++;
     // Same corruption predicate as diffEntries (issue #111): content
     // unexpectedly null while its hash is recorded. An unattributed entry's
     // hash-only pre-image is a designed absence, never corruption — nor is
     // the sweep's hash-only after-side (issue #120).
     const beforeLost =
-      e.beforeHash !== null && before === null && e.unattributed !== true;
+      e.beforeHash !== null &&
+      before === null &&
+      e.unattributed !== true &&
+      e.beforeOmitted !== true;
     const afterLost =
       e.afterHash !== null &&
       store.readAfter(e) === null &&

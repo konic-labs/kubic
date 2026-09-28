@@ -17,8 +17,8 @@ escapes, not a sandbox boundary.
 
 | Module | Exports |
 | --- | --- |
-| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS` |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
+| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
@@ -52,7 +52,7 @@ Supporting shapes, field-for-field:
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
 | `SpawnOptions` | `provenance: Provenance`, `onUpdate?: UpdateCallback`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
-| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` |
+| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` — SIGTERM to the whole process group, escalating to SIGKILL after `killGraceMs` (default `KILL_GRACE_MS`, 2 s) if the child has not settled, so a child that traps SIGTERM can never leave `wait()` hanging |
 | `Shell` | `spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle` |
 
 `ROOT_PROVENANCE` is `{ sessionId: '', agentId: '', toolCallId: 'root',
@@ -121,6 +121,12 @@ also preserves the target's existing mode across its tmp+rename (a
 tmp 0600 so crash residue is never world-readable, and sweeps stale
 `<target>.kubic-restore-*.tmp` siblings best-effort after a successful
 restore.
+An agent-authored create (`op: 'create'`, no before-hash, not
+`unattributed`) is reversible by removal (`isUndoableCreate`,
+`removeCreatedEntry`, same containment guards as `restoreEntry`): undo
+removes the file when its content still matches the recorded after-hash,
+reports `already undone` when it is already absent, and journals a
+`kubic-undo` delete carrying the removed content so `--step` redoes it.
 
 Baseline walk ignores (issue #116): `captureBaseline` honors every
 `.gitignore` on the way down, not just the root's. Rules accumulate per

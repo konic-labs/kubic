@@ -29,6 +29,7 @@
 //   Ctrl-T           toggle the tree
 //   Ctrl-O           toggle the diff panel (this run's changes)
 //   Ctrl-R           toggle the journal panel (the whole session)
+//   Ctrl-X           expand / collapse every tool output block
 //   Ctrl-C           cancel the in-flight turn; quit when idle (a second
 //                    Ctrl-C during a turn also quits)
 //   Esc              quit
@@ -47,17 +48,38 @@ import type {
 } from './approval-view.js';
 import { ApprovalView, showApprovalOverlay } from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
-import { entriesToCells, type LaneEntryLike } from './lane-cells.js';
+import {
+  entriesToCells,
+  type LaneEntryLike,
+  sanitizeLaneText,
+} from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
 import {
   StatusBar,
   type StatusBarState,
   type StatusUsageRow,
 } from './status-bar.js';
+import {
+  formatElapsed,
+  spinnerFrame,
+  tuiTheme,
+  WORDMARK_GLYPH,
+  WORDMARK_NAME,
+  WORDMARK_TAGLINE,
+} from './theme.js';
 import { createTranscriptView, type TranscriptView } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
-import { parseKey } from './tui-boundary.js';
+import {
+  parseKey,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from './tui-boundary.js';
+
+// The editor footer wraps to at most this many rows.
+export const FOOTER_MAX_ROWS = 2;
+
 import {
   DiffPanel,
   type JournalChangeLike,
@@ -146,6 +168,14 @@ export interface TuiApp {
   setBusy(busy: boolean): void;
   isBusy(): boolean;
   setEditorFooter(text: string): void;
+  // TUI polish: the solo notice lives in the welcome block (wrapped in
+  // full) instead of a truncated footer line.
+  setNotice(text: string): void;
+  // Ms since the in-flight turn started (undefined when idle); the root's
+  // spinner timer re-renders while this is defined.
+  busyElapsedMs(now?: number): number | undefined;
+  // Ctrl-X: expand / collapse tool output blocks.
+  toggleToolOutput(): boolean;
   // Issue #96: the §17 inspectable pair.
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
@@ -168,30 +198,137 @@ export interface JournalFilterLike {
   readonly agent?: string;
 }
 
+// The key hints shown under the editor while idle.
+export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
+  ['enter', 'send'],
+  ['ctrl+j', 'newline'],
+  ['ctrl+x', 'expand output'],
+  ['ctrl+o', 'diff'],
+  ['ctrl+r', 'journal'],
+  ['ctrl+t', 'tree'],
+  ['esc', 'quit'],
+];
+
+export function renderKeyHints(
+  width: number,
+  hints: ReadonlyArray<readonly [string, string]> = KEY_HINTS,
+): string {
+  const theme = tuiTheme();
+  let line = '';
+  let plain = 0;
+  for (const [key, action] of hints) {
+    const sep = line === '' ? '' : theme.muted(' · ');
+    const piece = `${sep}${theme.bold(key)} ${theme.muted(action)}`;
+    const pieceWidth = (line === '' ? 0 : 3) + key.length + 1 + action.length;
+    if (plain + pieceWidth > width) break;
+    line += piece;
+    plain += pieceWidth;
+  }
+  return line;
+}
+
+// The working indicator: spinner, elapsed time and the cancel key.
+export function renderWorkingLine(elapsedMs: number, width: number): string {
+  const theme = tuiTheme();
+  const line = `${theme.warm(spinnerFrame(elapsedMs))} ${theme.warm('working…')} ${theme.muted(`${formatElapsed(elapsedMs)} · ctrl+c cancels`)}`;
+  return truncateToWidth(line, Math.max(0, width), '…');
+}
+
+// The one-line brand header: the Konic mark and wordmark on the left, the
+// mode and model on the right.
+export function renderHeader(
+  width: number,
+  info: { mode: string; model: string; cwd?: string },
+): string {
+  const theme = tuiTheme();
+  const left = `${theme.accentBold(`${WORDMARK_GLYPH} ${WORDMARK_NAME}`)} ${theme.muted(WORDMARK_TAGLINE)}`;
+  const leftWidth = visibleWidth(
+    `${WORDMARK_GLYPH} ${WORDMARK_NAME} ${WORDMARK_TAGLINE}`,
+  );
+  const rightPlain = `${info.mode} · ${info.model}`;
+  const right = `${theme.accent(info.mode)} ${theme.muted('·')} ${info.model}`;
+  const room = width - leftWidth - 2;
+  if (room >= visibleWidth(rightPlain)) {
+    return `${left}${' '.repeat(width - leftWidth - visibleWidth(rightPlain))}${right}`;
+  }
+  return truncateToWidth(left, Math.max(0, width), '…');
+}
+
+// The welcome block at the top of the transcript: what this is, where it
+// runs, and the solo notice in full.
+export function welcomeLines(info: {
+  sessionId: string;
+  model: string;
+  notice?: string;
+}): string[] {
+  const theme = tuiTheme();
+  const lines = [
+    '',
+    `${theme.accentBold(WORDMARK_GLYPH)} ${theme.bold('Kubic')} ${theme.muted('— terminal coding agent by Konic')}`,
+    `  ${theme.muted(`model ${info.model}`)}`,
+  ];
+  if (info.notice !== undefined && info.notice !== '') {
+    lines.push(`  ${theme.warning('!')} ${theme.muted(info.notice)}`);
+  }
+  lines.push('', `  ${theme.muted('Type a task and press enter.')}`);
+  const half = Math.ceil(KEY_HINTS.length / 2);
+  lines.push(
+    `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(0, half))}`,
+  );
+  lines.push(
+    `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(half))}`,
+  );
+  return lines;
+}
+
 // The layout's fourth row is one component (issue #22 owns arrangement
 // only), so the editor and its one-line hint slot are composed here rather
-// than widening the layout.
+// than widening the layout. The slot shows, in order of precedence: an
+// explicit footer (outcome / error / cancelling), the working indicator
+// while a turn runs, else the key hints.
 class EditorRow implements Component {
   private readonly editor: PromptEditor;
   private footer: string;
+  busySince: number | undefined;
 
   constructor(editor: PromptEditor) {
     this.editor = editor;
     this.footer = '';
+    this.busySince = undefined;
   }
 
   setFooter(text: string): void {
-    this.footer = text;
+    this.footer = sanitizeLaneText(text);
   }
 
   render(width: number): string[] {
     const lines = this.editor.render(width);
-    if (this.footer === '') return lines;
-    const hint =
-      this.footer.length <= width
-        ? this.footer
-        : `${this.footer.slice(0, Math.max(0, width - 1))}…`;
-    return [...lines, hint];
+    const theme = tuiTheme();
+    if (this.footer !== '') {
+      const styled = this.footer.startsWith('error')
+        ? theme.error(this.footer)
+        : theme.muted(this.footer);
+      // Wrapped, not cut: the trust statement and error reports are the
+      // text an operator most needs whole. Capped at two rows.
+      const wrapped = wrapTextWithAnsi(styled, Math.max(1, width));
+      const shown = wrapped.slice(0, FOOTER_MAX_ROWS);
+      if (wrapped.length > FOOTER_MAX_ROWS) {
+        const last = shown.length - 1;
+        shown[last] = truncateToWidth(
+          `${shown[last] ?? ''} …`,
+          Math.max(0, width),
+          '…',
+        );
+      }
+      return [
+        ...lines,
+        ...shown.map((line) => truncateToWidth(line, Math.max(0, width), '…')),
+      ];
+    }
+    if (this.busySince !== undefined) {
+      return [...lines, renderWorkingLine(Date.now() - this.busySince, width)];
+    }
+    return [...lines, renderKeyHints(width)];
   }
 
   invalidate(): void {
@@ -199,14 +336,36 @@ class EditorRow implements Component {
   }
 }
 
+// A single-line component over a render function.
+function lineComponent(render: (width: number) => string): Component {
+  return {
+    render: (width: number): string[] => [render(width)],
+    invalidate: (): void => {},
+  };
+}
+
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const tree = new AgentTreeView(undefined, { label: seed.label ?? 'solo' });
-  const transcript = createTranscriptView();
-  transcript.appendDelta({
-    id: 'session',
-    kind: 'text',
-    append: `session ${seed.sessionId} · model ${seed.model}`,
+  // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
+  // overlay cannot be composited (Pi's visible() gate refuses), so the
+  // request renders in the transcript's own document. The document decides
+  // for ITSELF at render time: the live alt-screen renders `root`, and the
+  // transcript row must stay the ScrollView itself so the layout engine
+  // sizes it (follow-end only works when the ScrollView is the row).
+  const transcript = createTranscriptView({
+    inline: (width: number): string[] | undefined =>
+      approvalSurface.pending() !== undefined &&
+      approvalSurface.usesInlineFallback(width)
+        ? approvalSurface.renderInline(width)
+        : undefined,
   });
+  let notice = '';
+  const refreshWelcome = (): void => {
+    transcript.setWelcome(
+      welcomeLines({ sessionId: seed.sessionId, model: seed.model, notice }),
+    );
+  };
+  refreshWelcome();
   const barState: StatusBarState = {
     model: seed.model,
     thinking: seed.thinking ?? 'off',
@@ -218,23 +377,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const status = new StatusBar(barState);
   const editor = new PromptEditor();
   const editorRow = new EditorRow(editor);
-  // Issue #96 — the approval's inline slot. Below APPROVAL_MIN_WIDTH the
-  // overlay cannot be composited (Pi's visible() gate refuses), so the
-  // request renders here, in the transcript's own row. The slot decides for
-  // ITSELF at render time rather than reading a field the caller sets: the
-  // live alt-screen renders `root` (not the app's own render()), so a body
-  // computed outside the slot would never appear on the real path — the bug
-  // the end-to-end narrow test caught.
-  const transcriptSlot: Component = {
-    render: (width: number): string[] =>
-      approvalSurface.pending() !== undefined &&
-      approvalSurface.usesInlineFallback(width)
-        ? approvalSurface.renderInline(width)
-        : transcript.render(width),
-    invalidate: (): void => {
-      transcript.component.invalidate();
-    },
-  };
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -251,7 +393,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   const root = buildLayoutRoot({
     tree,
-    transcript: transcriptSlot,
+    header: lineComponent((width) =>
+      renderHeader(width, { mode: 'solo', model: seed.model }),
+    ),
+    transcript: transcript.component,
     status,
     editor: editorRow,
     panel: { component: panelBody, isOpen: () => mode !== 'closed' },
@@ -259,8 +404,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   let busy = false;
   let revision = 0;
   let submitHandler: ((prompt: string) => void) | undefined;
+  let pendingPrompt: string | undefined;
+  let promptCells = 0;
+  let promptCellsAtSubmit = 0;
   editor.onSubmit = (prompt: string): void => {
-    submitHandler?.(prompt);
+    if (submitHandler === undefined) return;
+    // Echo the prompt at once: the lane commits it asynchronously, and a
+    // prompt that vanishes until the turn ends reads as a dropped key.
+    pendingPrompt = sanitizeLaneText(prompt);
+    promptCellsAtSubmit = promptCells;
+    transcript.setPendingPrompt(pendingPrompt);
+    transcript.rePin();
+    submitHandler(prompt);
   };
   const quit = (): TuiInputResult => ({
     quit: true,
@@ -388,6 +543,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         mode = mode === 'journal' ? 'closed' : 'journal';
         return { quit: false, consumed: true, cancel: false };
       }
+      if (keyId === 'ctrl+x') {
+        transcript.toggleExpanded();
+        return { quit: false, consumed: true, cancel: false };
+      }
       editor.handleInput(data);
       return { quit: false, consumed: true, cancel: false };
     },
@@ -408,11 +567,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // The revision counter makes every apply a fresh snapshot: the
       // transcript replaces its cells instead of appending duplicates.
       revision += 1;
-      transcript.applyLaneSnapshot(
-        { laneId: seed.sessionId },
-        entriesToCells(entries),
-        revision,
-      );
+      const cells = entriesToCells(entries);
+      transcript.applyLaneSnapshot({ laneId: seed.sessionId }, cells, revision);
+      // The echoed prompt is dropped once the lane has committed a NEW
+      // prompt cell (counted, not matched by text: an identical resubmit
+      // must not clear on the previous turn's cell).
+      promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
+      if (pendingPrompt !== undefined && promptCells > promptCellsAtSubmit) {
+        pendingPrompt = undefined;
+        transcript.setPendingPrompt(undefined);
+      }
     },
     setUsage: (rows: ReadonlyArray<StatusUsageRow>): void => {
       status.setRows(rows);
@@ -425,7 +589,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Submit is disabled for the duration of a turn: the lane refuses a
       // second concurrent accept, so the loop never offers one.
       editor.setDisabled(next);
-      editorRow.setFooter(next ? 'working… Ctrl-C cancels' : '');
+      editorRow.busySince = next ? Date.now() : undefined;
+      editorRow.setFooter('');
+      if (!next && pendingPrompt !== undefined) {
+        pendingPrompt = undefined;
+        transcript.setPendingPrompt(undefined);
+      }
+    },
+    busyElapsedMs: (now: number = Date.now()): number | undefined =>
+      editorRow.busySince === undefined
+        ? undefined
+        : Math.max(0, now - editorRow.busySince),
+    toggleToolOutput: (): boolean => transcript.toggleExpanded(),
+    setNotice: (text: string): void => {
+      notice = sanitizeLaneText(text);
+      refreshWelcome();
     },
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {

@@ -187,16 +187,19 @@ describe('kubic doctor prints the role refusal the run fails closed with (#104)'
       `---\nrole: planner\ntools: [read, write]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nYou claim to be read-only.\n`,
     );
     const lines: string[] = [];
-    const code = await runDoctorCommand(['--json'], {
-      out: (line) => lines.push(line),
-      probeProviders: () => [
-        { id: 'faux', reachable: true, dialled: true, models: ['faux-1'] },
-      ],
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      probeRoles: () =>
-        rolesDoctorProbe({ cwd, bridge: createNodeFileBridge(cwd) }),
-    });
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        out: (line) => lines.push(line),
+        probeProviders: () => [
+          { id: 'faux', reachable: true, dialled: true, models: ['faux-1'] },
+        ],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        probeRoles: () =>
+          rolesDoctorProbe({ cwd, bridge: createNodeFileBridge(cwd) }),
+      },
+    );
     const report = JSON.parse(lines.join('\n')) as {
       ok: boolean;
       checks: Array<{ id: string; status: string; detail?: string }>;

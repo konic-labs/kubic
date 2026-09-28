@@ -13,9 +13,11 @@ describe('tui app root (issue #75)', () => {
   it('orders tree / transcript / status top to bottom at 100 cols', () => {
     const app = createTuiApp({ sessionId: SESSION, model: MODEL });
     const doc = app.render(100).join('\n');
-    const order = ['◌ solo', `session ${SESSION}`, 'approvals:on'].map(
-      (marker) => doc.indexOf(marker),
-    );
+    const order = [
+      '◌ solo',
+      'Kubic — terminal coding agent',
+      'approvals:on',
+    ].map((marker) => doc.indexOf(marker));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

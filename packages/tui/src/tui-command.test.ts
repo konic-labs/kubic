@@ -88,7 +88,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      [],
+      {},
       deps(terminal, { out: (l) => lines.push(l) }),
     );
     await waitFor(() => terminal.started === 1);
@@ -106,9 +106,11 @@ describe('kubic tui (issue #75)', () => {
     );
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
-    const order = ['◌ solo', 'session s1', 'approvals:on'].map((m) =>
-      doc.indexOf(m),
-    );
+    const order = [
+      '◌ solo',
+      'Kubic — terminal coding agent',
+      'approvals:on',
+    ].map((m) => doc.indexOf(m));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -120,7 +122,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      ['--session', 'abc'],
+      { session: 'abc' },
       deps(terminal, {
         bootLane: async (sessionId?: string) => {
           seen.push(sessionId);
@@ -141,7 +143,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      [],
+      {},
       deps(terminal, { out: (l) => lines.push(l) }),
     );
     await waitFor(() => terminal.started === 1);
@@ -153,23 +155,11 @@ describe('kubic tui (issue #75)', () => {
     expect(doc).toContain('approvals:on');
   });
 
-  it('rejects unknown flags without opening the screen', async () => {
-    const lines: string[] = [];
-    const terminal = fakeTerminal(100);
-    const code = await runTuiCommand(
-      ['--bogus'],
-      deps(terminal, { out: (l) => lines.push(l) }),
-    );
-    expect(code).toBe(2);
-    expect(terminal.started).toBe(0);
-    expect(lines.join('\n')).toContain('error: unknown flag --bogus');
-  });
-
   it('rejects path-unsafe --session ids before the lane boots', async () => {
     let booted = 0;
     const terminal = fakeTerminal(100);
     const code = await runTuiCommand(
-      ['--session', '../evil'],
+      { session: '../evil' },
       deps(terminal, {
         bootLane: async (sessionId?: string) => {
           booted++;
@@ -190,7 +180,7 @@ describe('kubic tui (issue #75)', () => {
     const lines: string[] = [];
     const terminal = fakeTerminal(100);
     const code = await runTuiCommand(
-      [],
+      {},
       deps(terminal, {
         out: (l) => lines.push(l),
         bootLane: async () => {
@@ -203,6 +193,35 @@ describe('kubic tui (issue #75)', () => {
     expect(lines.join('\n')).toContain('error: nope');
   });
 
+  it('puts the boot and session-id errors on stderr when given one', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const channels = {
+      out: (l: string) => out.push(l),
+      err: (l: string) => err.push(l),
+    };
+    const boom = await runTuiCommand(
+      {},
+      deps(fakeTerminal(100), {
+        ...channels,
+        bootLane: async () => {
+          throw new Error('unknown session: nope');
+        },
+      }),
+    );
+    expect(boom).toBe(1);
+    const bad = await runTuiCommand(
+      { session: '../evil' },
+      deps(fakeTerminal(100), channels),
+    );
+    expect(bad).toBe(2);
+    expect(out).toEqual([]);
+    expect(err).toEqual([
+      'error: unknown session: nope',
+      'error: invalid --session id "../evil" (use [A-Za-z0-9_-])',
+    ]);
+  });
+
   it('restores the screen and closes the lane when setup throws after start', async () => {
     let closed = 0;
     const terminal = fakeTerminal(100);
@@ -211,7 +230,7 @@ describe('kubic tui (issue #75)', () => {
     };
     await expect(
       runTuiCommand(
-        [],
+        {},
         deps(terminal, {
           bootLane: async (sessionId?: string) => ({
             sessionId: sessionId ?? 's1',

@@ -9,6 +9,7 @@ import {
   MemoryCheckpointStore,
   NodeExecutionEnv,
   ROOT_PROVENANCE,
+  toolSpawnEnv,
 } from './env.js';
 
 const PROV: Provenance = {
@@ -286,6 +287,50 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
       }
     },
   );
+
+  it.runIf(process.platform !== 'win32')(
+    'kill escalates to SIGKILL when the group ignores SIGTERM',
+    async () => {
+      const { env } = makeNodeEnv();
+      let stdout = '';
+      // A child that traps SIGTERM (a shell `trap '' TERM`, a server with a
+      // shutdown handler that hangs) must still die: kill() is the abort/
+      // timeout path, and a SIGTERM-only kill leaves wait() hung forever.
+      const handle = env.shell.spawn(
+        process.execPath,
+        [
+          '-e',
+          "process.on('SIGTERM',()=>{});process.stdout.write('ready');setInterval(()=>{},1000)",
+        ],
+        {
+          provenance: PROV,
+          killGraceMs: 50,
+          onUpdate: (snap) => (stdout = snap.stdout),
+        },
+      );
+      const groupId = handle.pid as number;
+      try {
+        await vi.waitFor(
+          () => {
+            if (stdout !== 'ready') throw new Error('not ready');
+          },
+          { timeout: 5000, interval: 5 },
+        );
+        handle.kill();
+        const settled = await Promise.race([
+          handle.wait().then(() => 'settled'),
+          new Promise((r) => setTimeout(() => r('hung'), 3000)),
+        ]);
+        expect(settled).toBe('settled');
+      } finally {
+        try {
+          process.kill(-groupId, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+    },
+  );
 });
 
 describe('execution env spawn failures (issue #85)', () => {
@@ -471,4 +516,138 @@ describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('ok\uFFFD');
   });
+});
+
+// §3.8: tool processes never inherit ambient authority. A provider key in
+// kubic's own environment must not reach a spawned child.
+describe('tool child env allowlist (§3.8)', () => {
+  const planted = [
+    'FAKE_PROVIDER_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'GITHUB_TOKEN',
+    'AWS_SECRET_ACCESS_KEY',
+    'LC_SECRET_KEY',
+  ];
+  const saved = new Map<string, string | undefined>();
+
+  afterEach(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    saved.clear();
+  });
+
+  it('a spawned child sees the allowlisted base, never credentials', async () => {
+    for (const k of [...planted, 'LC_TIME']) saved.set(k, process.env[k]);
+    for (const k of planted) process.env[k] = 'sk-leak';
+    process.env.LC_TIME = 'C';
+    const { env } = makeNodeEnv();
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', 'process.stdout.write(JSON.stringify(process.env))'],
+      { provenance: PROV },
+    );
+    const result = await handle.wait();
+    const childEnv = JSON.parse(result.stdout) as Record<string, string>;
+    for (const k of planted) expect(childEnv[k]).toBeUndefined();
+    expect(JSON.stringify(childEnv)).not.toContain('sk-leak');
+    expect(childEnv.PATH).toBe(process.env.PATH);
+    expect(childEnv.LC_TIME).toBe('C');
+    if (process.env.HOME !== undefined)
+      expect(childEnv.HOME).toBe(process.env.HOME);
+  });
+});
+
+describe('toolSpawnEnv allowlist coverage', () => {
+  it('passes proxy, CA and XDG settings; secret suffixes still win', () => {
+    const out = toolSpawnEnv({
+      HTTP_PROXY: 'h',
+      https_proxy: 'h2',
+      NO_PROXY: 'n',
+      no_proxy: 'n2',
+      NODE_EXTRA_CA_CERTS: 'ca',
+      SSL_CERT_FILE: 'f',
+      SSL_CERT_DIR: 'd',
+      XDG_CONFIG_HOME: 'x',
+      XDG_SECRET_KEY: 'leak',
+      OPENAI_API_KEY: 'leak',
+    });
+    expect(out).toEqual({
+      HTTP_PROXY: 'h',
+      https_proxy: 'h2',
+      NO_PROXY: 'n',
+      no_proxy: 'n2',
+      NODE_EXTRA_CA_CERTS: 'ca',
+      SSL_CERT_FILE: 'f',
+      SSL_CERT_DIR: 'd',
+      XDG_CONFIG_HOME: 'x',
+    });
+  });
+});
+
+describe('kill escalation reaches the whole group', () => {
+  it.runIf(process.platform !== 'win32')(
+    'SIGKILLs group members that ignore SIGTERM even after the leader exits',
+    async () => {
+      const { env, cwd } = makeNodeEnv();
+      let stdout = '';
+      // Leader dies on SIGTERM; its grandchild ignores SIGTERM and has its
+      // stdio detached, so the leader's close settles the handle early.
+      const handle = env.shell.spawn(
+        process.execPath,
+        [
+          '-e',
+          "const c=require('child_process').spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});require('fs').writeFileSync('gc-ready','');setInterval(()=>{},1000)\"],{stdio:'ignore'});process.stdout.write(String(c.pid));setInterval(()=>{},1000)",
+        ],
+        {
+          provenance: PROV,
+          killGraceMs: 50,
+          onUpdate: (snap) => (stdout = snap.stdout),
+        },
+      );
+      const groupId = handle.pid as number;
+      const alive = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      try {
+        const grandchild = await vi.waitFor(
+          () => {
+            const pid = Number(stdout);
+            if (!(pid > 0)) throw new Error('no pid yet');
+            return pid;
+          },
+          { timeout: 5000, interval: 5 },
+        );
+        // The grandchild's SIGTERM handler is installed before the kill.
+        await vi.waitFor(
+          () => {
+            if (!existsSync(join(cwd, 'gc-ready')))
+              throw new Error('not ready');
+          },
+          { timeout: 5000, interval: 5 },
+        );
+        expect(alive(grandchild)).toBe(true);
+        handle.kill();
+        await handle.wait();
+        await vi.waitFor(
+          () => {
+            if (alive(grandchild)) throw new Error('grandchild survived');
+          },
+          { timeout: 3000, interval: 20 },
+        );
+      } finally {
+        try {
+          process.kill(-groupId, 'SIGKILL');
+        } catch {
+          // Gone.
+        }
+      }
+    },
+  );
 });

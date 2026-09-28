@@ -221,10 +221,13 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   it('prints the named non-answer instead of echoing the prompt (text)', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(['-p', PROMPT_FIXTURE], {
-      out: o.write,
-      run: emptySummaryRun(root),
-    });
+    const exit = await runRunCommand(
+      { prompt: PROMPT_FIXTURE },
+      {
+        out: o.write,
+        run: emptySummaryRun(root),
+      },
+    );
     expect(exit).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain(`result: ${NON_ANSWER}`);
@@ -235,10 +238,13 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   it('carries the same named non-answer in the --json envelope', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(['-p', PROMPT_FIXTURE, '--json'], {
-      out: o.write,
-      run: emptySummaryRun(root),
-    });
+    const exit = await runRunCommand(
+      { prompt: PROMPT_FIXTURE, json: true },
+      {
+        out: o.write,
+        run: emptySummaryRun(root),
+      },
+    );
     expect(exit).toBe(0);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {

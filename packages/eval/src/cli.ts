@@ -1,11 +1,19 @@
 // `kubic eval` / `kubic benchmark` command surface (issue #53).
-// Presentation only: argv in, exit code out. Suite execution and worktree
+// Presentation only: parsed options in (commander, apps/kubic/src/
+// commands/analysis.ts), exit code out. Suite execution and worktree
 // checks arrive through injected deps (faux in tests); the CLI never
 // touches the network, the model, or the filesystem.
 // Exit codes: 0 pass/completed, 1 evaluated-and-failed, 2 usage/error.
 
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { renderTable } from '../../core/src/cli/table.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { EvalRecord } from './records.js';
 import {
   EvalRunnerError,
@@ -16,12 +24,43 @@ import {
 } from './runner.js';
 import { EVAL_SUITES, findSuite } from './suites.js';
 
-export const EVAL_EXIT_OK = 0;
-export const EVAL_EXIT_FAILED = 1;
-export const EVAL_EXIT_USAGE = 2;
+export const EVAL_EXIT_OK = EXIT_OK;
+export const EVAL_EXIT_FAILED = EXIT_FAILED;
+export const EVAL_EXIT_USAGE = EXIT_USAGE;
+
+// The documented default model of a record (`--model` unset).
+export const EVAL_DEFAULT_MODEL = 'faux/faux';
 
 export interface EvalCliDeps extends EvalTaskDeps {
+  // stdout: the record line / matrix table, or the one `--json` envelope.
   out: (line: string) => void;
+  // stderr: diagnostics — usage refusals and, off --json, runner errors as
+  // `error: [code] message` (core/cli/logger).
+  err: (line: string) => void;
+  // Colour and box drawing for the human report; absent means plain.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
+  fancy?: boolean;
+}
+
+// The parsed `kubic eval` / `kubic benchmark` options (commander's
+// `opts()`): raw strings, so the semantics (the workspace vocabulary, the
+// integer generation, inline trajectory JSON) stay this module's, reported
+// with this module's exit codes. commander owns the syntax: unknown flags,
+// missing values, the required options, `--help`.
+export interface EvalOptions {
+  readonly suite?: string;
+  readonly task?: string;
+  readonly trajectory?: string;
+  readonly workspace?: string;
+  readonly model?: string;
+  readonly thinking?: string;
+  readonly worktree?: string;
+  readonly generation?: string;
+  readonly tier?: string;
+  readonly json?: boolean;
 }
 
 interface Parsed {
@@ -29,60 +68,47 @@ interface Parsed {
   task: string | undefined;
   trajectory: string | undefined;
   workspace: EvalWorkspace;
-  workspaceInvalid: boolean;
   model: string;
   thinking: string | null;
   worktree: string;
-  generation: number | undefined;
+  generation: number;
   tier: string;
   json: boolean;
 }
 
-// Issue #127: the shared parser's spec. `eval` is the permissive surface —
-// unknown tokens are ignored (they always were) and a value flag with no
-// value leaves its default in place.
-const EVAL_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--suite', takes: 'value' },
-  { name: '--task', takes: 'value' },
-  { name: '--trajectory', takes: 'value' },
-  { name: '--workspace', takes: 'value' },
-  { name: '--model', takes: 'value' },
-  { name: '--thinking', takes: 'value' },
-  { name: '--worktree', takes: 'value' },
-  { name: '--generation', takes: 'value' },
-  { name: '--tier', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
+const PLAIN = createCliTheme('none');
 
-function parseArgs(args: string[]): Parsed {
-  const flags = parseFlagArgs(args, EVAL_FLAG_SPEC);
-  const parsed: Parsed = {
-    suite: flags.values['--suite'] as string | undefined,
-    task: flags.values['--task'] as string | undefined,
-    trajectory: flags.values['--trajectory'] as string | undefined,
-    workspace: 'inline',
-    workspaceInvalid: false,
-    model: (flags.values['--model'] as string | undefined) ?? 'faux/faux',
-    thinking: (flags.values['--thinking'] as string | undefined) ?? null,
-    worktree: (flags.values['--worktree'] as string | undefined) ?? '',
-    generation: undefined,
-    tier: (flags.values['--tier'] as string | undefined) ?? '',
-    json: flags.values['--json'] === true,
+function loggerFor(options: EvalOptions, deps: EvalCliDeps): CliLogger {
+  const theme = options.json === true ? PLAIN : (deps.errTheme ?? PLAIN);
+  return createLineLogger(deps.err, { theme });
+}
+
+// Semantic validation shared by eval and benchmark: a usage message on
+// failure (the caller logs it and exits 2), the normalized options else.
+function normalize(options: EvalOptions): Parsed | string {
+  const workspace = options.workspace ?? 'inline';
+  if (workspace !== 'inline' && workspace !== 'worktree') {
+    return '--workspace must be one of inline|worktree';
+  }
+  if (options.generation === undefined) {
+    return "required option '--generation <n>' not specified";
+  }
+  const generation = Number(options.generation);
+  if (options.generation.trim() === '' || !Number.isInteger(generation)) {
+    return '--generation needs an integer';
+  }
+  return {
+    suite: options.suite,
+    task: options.task,
+    trajectory: options.trajectory,
+    workspace,
+    model: options.model ?? EVAL_DEFAULT_MODEL,
+    thinking: options.thinking ?? null,
+    worktree: options.worktree ?? '',
+    generation,
+    tier: options.tier ?? '',
+    json: options.json === true,
   };
-  const workspace = flags.values['--workspace'] as string | undefined;
-  if (workspace !== undefined) {
-    if (workspace === 'inline' || workspace === 'worktree') {
-      parsed.workspace = workspace;
-    } else {
-      parsed.workspaceInvalid = true;
-    }
-  }
-  const generation = flags.values['--generation'] as string | undefined;
-  if (generation !== undefined) {
-    const n = Number(generation);
-    parsed.generation = Number.isInteger(n) ? n : undefined;
-  }
-  return parsed;
 }
 
 function emitRecord(
@@ -91,7 +117,7 @@ function emitRecord(
   json: boolean,
 ): void {
   if (json) {
-    out(JSON.stringify({ ok: true, exitCode: EVAL_EXIT_OK, record }));
+    out(formatJson({ ok: true, exitCode: EVAL_EXIT_OK, record }));
     return;
   }
   out(
@@ -101,76 +127,66 @@ function emitRecord(
 
 function emitError(
   out: (line: string) => void,
+  log: CliLogger,
   error: unknown,
   json: boolean,
 ): number {
   if (error instanceof EvalRunnerError) {
     if (json) {
       out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: EVAL_EXIT_USAGE,
           error: { code: error.code, message: error.message },
         }),
       );
     } else {
-      out(`eval error [${error.code}]: ${error.message}`);
+      log.error(`[${error.code}] ${error.message}`);
     }
     return EVAL_EXIT_USAGE;
   }
   const message = error instanceof Error ? error.message : String(error);
   if (json) {
     out(
-      JSON.stringify({
+      formatJson({
         ok: false,
         exitCode: EVAL_EXIT_FAILED,
         error: { code: 'eval-failed', message },
       }),
     );
   } else {
-    out(`eval error: ${message}`);
+    log.error(message);
   }
   return EVAL_EXIT_FAILED;
 }
 
-const EVAL_USAGE =
-  'usage: kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]';
-
-const BENCHMARK_USAGE =
-  'usage: kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(EVAL_USAGE);
-  return EVAL_EXIT_USAGE;
-}
-
 // kubic eval --task ... | --trajectory ... (design §48).
 export async function runEvalCommand(
-  args: string[],
+  options: EvalOptions,
   deps: EvalCliDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, EVAL_USAGE);
-  if (help !== null) return help;
-  const parsed = parseArgs(args);
-  if (parsed.workspaceInvalid) {
-    deps.out('usage: --workspace must be one of inline|worktree');
+  const log = loggerFor(options, deps);
+  const parsed = normalize(options);
+  if (typeof parsed === 'string') {
+    log.error(parsed);
     return EVAL_EXIT_USAGE;
   }
-  if (
-    parsed.suite === undefined ||
-    (parsed.task === undefined && parsed.trajectory === undefined) ||
-    parsed.generation === undefined
-  ) {
-    return usage(deps.out);
+  if (parsed.suite === undefined) {
+    log.error("required option '--suite <id>' not specified");
+    return EVAL_EXIT_USAGE;
+  }
+  if (parsed.task === undefined && parsed.trajectory === undefined) {
+    log.error('one of --task <prompt> or --trajectory <json> is required');
+    return EVAL_EXIT_USAGE;
   }
   try {
     if (parsed.trajectory !== undefined) {
-      let payload: unknown = parsed.trajectory;
+      let payload: unknown;
       try {
         payload = JSON.parse(parsed.trajectory) as unknown;
       } catch {
-        return usage(deps.out);
+        log.error('--trajectory needs inline trajectory export JSON');
+        return EVAL_EXIT_USAGE;
       }
       const record = await runEvalTrajectory({
         suite: parsed.suite,
@@ -200,7 +216,7 @@ export async function runEvalCommand(
     emitRecord(deps.out, record, parsed.json);
     return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   } catch (error) {
-    return emitError(deps.out, error, parsed.json);
+    return emitError(deps.out, log, error, parsed.json);
   }
 }
 
@@ -217,19 +233,13 @@ export interface BenchmarkResult {
 // as passing work); exit 0 iff every executed suite succeeded — skipped
 // stubs never count toward the verdict either way.
 export async function runBenchmarkCommand(
-  args: string[],
+  options: EvalOptions,
   deps: EvalCliDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, BENCHMARK_USAGE);
-  if (help !== null) return help;
-  const parsed = parseArgs(args);
-  if (parsed.workspaceInvalid) {
-    deps.out('usage: --workspace must be one of inline|worktree');
-    return EVAL_EXIT_USAGE;
-  }
-  if (parsed.generation === undefined) {
-    deps.out(BENCHMARK_USAGE);
+  const log = loggerFor(options, deps);
+  const parsed = normalize(options);
+  if (typeof parsed === 'string') {
+    log.error(parsed);
     return EVAL_EXIT_USAGE;
   }
   const selected =
@@ -238,8 +248,8 @@ export async function runBenchmarkCommand(
       : (() => {
           const one = findSuite(parsed.suite);
           if (one === undefined) {
-            deps.out(
-              `benchmark error [unknown-suite]: unknown suite ${JSON.stringify(parsed.suite)}`,
+            log.error(
+              `[unknown-suite] unknown suite ${JSON.stringify(parsed.suite)}`,
             );
             return null;
           }
@@ -283,14 +293,14 @@ export async function runBenchmarkCommand(
       const message = error instanceof Error ? error.message : String(error);
       if (parsed.json) {
         deps.out(
-          JSON.stringify({
+          formatJson({
             ok: false,
             exitCode: EVAL_EXIT_USAGE,
             error: { code: 'eval-failed', message },
           }),
         );
       } else {
-        deps.out(`benchmark error: ${message}`);
+        log.error(message);
       }
       return EVAL_EXIT_USAGE;
     }
@@ -298,16 +308,25 @@ export async function runBenchmarkCommand(
   const allOk = results.filter((r) => !r.skipped).every((r) => r.success);
   const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   if (parsed.json) {
-    deps.out(JSON.stringify({ ok: allOk, exitCode: exit, results }));
-  } else {
-    for (const r of results) {
-      deps.out(
-        `benchmark ${r.skipped ? 'skipped (stub)' : r.success ? 'pass' : 'FAIL'}: ${r.suite} [${r.category}]`,
-      );
-    }
-    deps.out(
-      `benchmark ${allOk ? 'ok' : 'FAILED'}: ${results.filter((r) => !r.skipped && r.success).length}/${results.filter((r) => !r.skipped).length} suites passed, ${results.filter((r) => r.skipped).length} stub(s) skipped`,
-    );
+    deps.out(formatJson({ ok: allOk, exitCode: exit, results }));
+    return exit;
   }
+  const theme = deps.theme ?? PLAIN;
+  const status = (r: BenchmarkResult): string =>
+    r.skipped
+      ? theme.muted('skipped (stub)')
+      : r.success
+        ? theme.success('pass')
+        : theme.error('FAIL');
+  deps.out(
+    renderTable(
+      results.map((r) => [r.suite, r.category, status(r)]),
+      [{ header: 'SUITE' }, { header: 'CATEGORY' }, { header: 'STATUS' }],
+      { fancy: deps.fancy === true, theme },
+    ),
+  );
+  const executed = results.filter((r) => !r.skipped);
+  const verdict = `benchmark ${allOk ? 'ok' : 'FAILED'}: ${executed.filter((r) => r.success).length}/${executed.length} suites passed, ${results.length - executed.length} stub(s) skipped`;
+  deps.out(allOk ? theme.success(verdict) : theme.error(verdict));
   return exit;
 }

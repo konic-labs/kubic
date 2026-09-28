@@ -350,15 +350,11 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
       },
     };
     const pending = runTuiCommand(
-      [
-        '--role',
-        'planner',
-        '--no-skills',
-        '--skill',
-        '/tmp/one.md',
-        '--skill',
-        '/tmp/two.md',
-      ],
+      {
+        role: 'planner',
+        noSkills: true,
+        skills: ['/tmp/one.md', '/tmp/two.md'],
+      },
       deps,
     );
     await waitFor(() => fake.counts.started === 1);
@@ -369,30 +365,6 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
       noSkills: true,
       skillsList: ['/tmp/one.md', '/tmp/two.md'],
     });
-  });
-
-  it('rejects the parity flags without values, and the usage line names them', async () => {
-    const lines: string[] = [];
-    const deps: TuiRunDeps = {
-      out: (line) => lines.push(line),
-      createTerminal: () => fakeTerminal().terminal,
-      bootLane: async () => ({ sessionId: 's1', model: 'faux/test' }),
-    };
-    expect(await runTuiCommand(['--role'], deps)).toBe(2);
-    expect(await runTuiCommand(['--skill'], deps)).toBe(2);
-    // Each refusal names its own flag, not a generic failure.
-    expect(lines).toContain('error: --role needs a value');
-    expect(lines).toContain('error: --skill needs a value');
-    const usage: string[] = [];
-    expect(
-      await runTuiCommand(['--help'], {
-        ...deps,
-        out: (line) => usage.push(line),
-      }),
-    ).toBe(0);
-    expect(usage.join('\n')).toContain('--role <name>');
-    expect(usage.join('\n')).toContain('[--skill <path>]');
-    expect(usage.join('\n')).toContain('--no-skills');
   });
 });
 

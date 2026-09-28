@@ -1,13 +1,17 @@
 // `kubic audit [--mode m] [--posture p] [--result r] [--json]`
 // (issue #79; §60). Query entry over org audit records: exact match on
-// each supplied dimension, full 14-field records out. Records arrive
+// each supplied dimension; a table of the scanned fields for humans, the
+// full 14-field records under --json. Records arrive
 // injected (faux in tests — no audit persistence is wired yet); every
 // printed record is redacted first, so query output never carries
 // secret-shaped values or listed-secret inventory values — credentials
 // stay sentinel-only.
 
-import { answerHelp } from '../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
+import { EXIT_OK, EXIT_USAGE } from '../../../core/src/cli/exit-codes.js';
+import { createLineLogger } from '../../../core/src/cli/logger.js';
+import { formatJson } from '../../../core/src/cli/output.js';
+import { renderTable } from '../../../core/src/cli/table.js';
+import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
 import {
   type AuditMode,
   type AuditResult,
@@ -16,8 +20,13 @@ import {
 } from './audit.js';
 import { REDACTED_SECRET, redactSecretShapes } from './secret-shapes.js';
 
-export const AUDIT_EXIT_OK = 0;
-export const AUDIT_EXIT_USAGE = 2;
+// The parsed `kubic audit` options (commander's `opts()`).
+export interface AuditOptions {
+  readonly mode?: string;
+  readonly posture?: string;
+  readonly result?: string;
+  readonly json?: boolean;
+}
 
 export interface AuditCommandDeps {
   loadRecords: () => OrgAuditRecord[] | Promise<OrgAuditRecord[]>;
@@ -26,8 +35,19 @@ export interface AuditCommandDeps {
   // here so the listed inventory reaches redaction end-to-end (fail-open
   // guard — omitting the inventory must never mean passthrough).
   loadSecrets?: () => readonly string[] | Promise<readonly string[]>;
+  // stdout: the record table or the one `--json` document.
   out: (line: string) => void;
+  // stderr: diagnostics, one `error: …` line each (core/cli/logger).
+  err: (line: string) => void;
+  // Colour and box drawing for the human table; absent means plain.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
+  fancy?: boolean;
 }
+
+const PLAIN = createCliTheme('none');
 
 // Prod listed-secret inventory (issue #79). Audit persistence is not wired
 // yet, so this returns no values today; when persistence lands, return the
@@ -35,14 +55,6 @@ export interface AuditCommandDeps {
 // prod path cannot forget it.
 export function loadProdAuditSecrets(): readonly string[] {
   return [];
-}
-
-export const AUDIT_USAGE =
-  'usage: kubic audit [--mode <solo|orchestrator>] [--posture <name>] [--result <ok|deny|error>] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(AUDIT_USAGE);
-  return AUDIT_EXIT_USAGE;
 }
 
 function isAuditMode(value: string): value is AuditMode {
@@ -69,58 +81,81 @@ export function redactAuditRecord(
   return JSON.parse(text) as OrgAuditRecord;
 }
 
-// Issue #127: the shared parser replaces the hand-rolled loop. Missing
-// values keep their `error: <flag> needs a value` line; unknown flags and
-// stray operands keep the bare usage exit; mode/result validation stays
-// this command's semantics (with the fail-closed secret-shaped echo).
-const AUDIT_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-  { name: '--mode', takes: 'value' },
-  { name: '--posture', takes: 'value' },
-  { name: '--result', takes: 'value' },
-];
+// The human view: one table row per (already redacted) record over the
+// fields an operator scans for; `--json` carries all 14 fields.
+function auditTable(
+  records: readonly OrgAuditRecord[],
+  deps: AuditCommandDeps,
+  theme: CliTheme,
+): string {
+  const resultCell = (result: AuditResult): string =>
+    result === 'ok'
+      ? theme.success(result)
+      : result === 'deny'
+        ? theme.warning(result)
+        : theme.error(result);
+  return renderTable(
+    records.map((record) => [
+      record.when,
+      record.mode,
+      record.posture,
+      resultCell(record.result),
+      record.what,
+      record.permission.permission,
+      record.permission.approval,
+      record.reason,
+    ]),
+    [
+      { header: 'WHEN' },
+      { header: 'MODE' },
+      { header: 'POSTURE' },
+      { header: 'RESULT' },
+      { header: 'WHAT' },
+      { header: 'PERMISSION' },
+      { header: 'APPROVAL' },
+      { header: 'REASON' },
+    ],
+    { fancy: deps.fancy === true, theme },
+  );
+}
 
+// `kubic audit` over parsed options: commander (apps/kubic/src/commands/
+// analysis.ts) owns argv syntax — unknown flags, missing filter values,
+// `--help`; this handler owns mode/result validation (with the fail-closed
+// secret-shaped echo) and the redacted query.
 export async function runAuditCommand(
-  args: string[],
+  options: AuditOptions,
   deps: AuditCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, AUDIT_USAGE);
-  if (help !== null) return help;
-  const flags = parseFlagArgs(args, AUDIT_FLAG_SPEC);
-  for (const flag of flags.missing) {
-    deps.out(`error: ${flag} needs a value`);
-    return usage(deps.out);
-  }
-  if (flags.unknown.length > 0 || flags.positional.length > 0) {
-    return usage(deps.out);
-  }
-  const json = flags.values['--json'] === true;
+  const json = options.json === true;
+  const theme = json ? PLAIN : (deps.theme ?? PLAIN);
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
   let mode: AuditMode | undefined;
   let result: AuditResult | undefined;
-  const modeRaw = flags.values['--mode'] as string | undefined;
-  if (modeRaw !== undefined) {
-    if (!isAuditMode(modeRaw)) {
-      deps.out(
-        redactSecretShapes(`error: unknown mode ${JSON.stringify(modeRaw)}`),
-      );
-      return usage(deps.out);
-    }
-    mode = modeRaw;
-  }
-  const resultRaw = flags.values['--result'] as string | undefined;
-  if (resultRaw !== undefined) {
-    if (!isAuditResult(resultRaw)) {
-      deps.out(
+  if (options.mode !== undefined) {
+    if (!isAuditMode(options.mode)) {
+      log.error(
         redactSecretShapes(
-          `error: unknown result ${JSON.stringify(resultRaw)}`,
+          `unknown mode ${JSON.stringify(options.mode)} (want solo|orchestrator)`,
         ),
       );
-      return usage(deps.out);
+      return EXIT_USAGE;
     }
-    result = resultRaw;
+    mode = options.mode;
   }
-  const posture = flags.values['--posture'] as string | undefined;
+  if (options.result !== undefined) {
+    if (!isAuditResult(options.result)) {
+      log.error(
+        redactSecretShapes(
+          `unknown result ${JSON.stringify(options.result)} (want ok|deny|error)`,
+        ),
+      );
+      return EXIT_USAGE;
+    }
+    result = options.result;
+  }
   const records = await deps.loadRecords();
   // Union of both inventory channels: an explicit list plus whatever the
   // injected loader returns — either source alone redacts.
@@ -128,18 +163,20 @@ export async function runAuditCommand(
     ...(deps.secrets ?? []),
     ...((await deps.loadSecrets?.()) ?? []),
   ];
-  const filtered = queryAudits(records, { mode, posture, result });
+  const filtered = queryAudits(records, {
+    mode,
+    posture: options.posture,
+    result,
+  });
   const redacted = filtered.map((record) => redactAuditRecord(record, secrets));
   if (json) {
-    deps.out(JSON.stringify(redacted, null, 2));
-    return AUDIT_EXIT_OK;
+    deps.out(formatJson(redacted));
+    return EXIT_OK;
   }
   if (redacted.length === 0) {
     deps.out('no audit records');
-    return AUDIT_EXIT_OK;
+    return EXIT_OK;
   }
-  for (const record of redacted) {
-    deps.out(JSON.stringify(record));
-  }
-  return AUDIT_EXIT_OK;
+  deps.out(auditTable(redacted, deps, theme));
+  return EXIT_OK;
 }

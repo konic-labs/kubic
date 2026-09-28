@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -72,19 +73,35 @@ import {
 } from '../../../packages/worker/src/lane/session-store.js';
 import type { WorkerFailure } from '../../../packages/worker/src/lifecycle/launch.js';
 import { launchWorker } from '../../../packages/worker/src/lifecycle/launch.js';
+import {
+  killProcessGroup,
+  pidAlive,
+  reconcileWorkerRows,
+} from '../../../packages/worker/src/lifecycle/orphans.js';
 import { WorkerRegistry } from '../../../packages/worker/src/lifecycle/registry.js';
 import {
-  persistWorkerRows,
+  readWorkerRows,
+  updateWorkerRowsFile,
   WORKER_ROWS_FILE,
+  workerRowsPath,
 } from '../../../packages/worker/src/lifecycle/rows.js';
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
+import { TERMINAL_STATUSES } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import type { AgentResult } from '../../../packages/worker/src/result.js';
+import { validateAgentResult } from '../../../packages/worker/src/result.js';
 import { runtimeExcludeEntriesFor } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 
 export interface OrchestrateRunOptions {
+  // stdout (the report or the --json envelope) and stderr (diagnostics).
   out: (line: string) => void;
+  err: (line: string) => void;
+  // Report colours; the command wires the stdout theme (none under --json).
+  theme?: CliTheme;
+  // Diagnostics colours; the command wires the stderr theme.
+  errTheme?: CliTheme;
   debug?: (line: string) => void;
   cwd?: string;
   /** Worker sessions root; defaults to the user sessions root (~/.kubic/sessions). */
@@ -140,6 +157,102 @@ export interface OrchestrateRunOptions {
    * absent). One projection, two consumers — never a second config read.
    */
   orchestrator?: RuntimeOrchestrator;
+  /**
+   * The process-signal seam the live-worker guard hangs off. Prod uses the
+   * real process (SIGINT/SIGTERM/SIGHUP + 'exit'); tests inject a fake so
+   * the test runner itself is never signalled.
+   */
+  signals?: OrchestrateSignals;
+}
+
+export type OrchestrateSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+
+export interface OrchestrateSignals {
+  /** Install `handler` for the termination signals and process 'exit';
+   *  returns the remover. */
+  install: (
+    handler: (signal: OrchestrateSignal | 'exit') => void,
+  ) => () => void;
+  /** Re-deliver `signal` with its default disposition once our handler is
+   *  gone, so the manager still terminates the way the user asked. */
+  reraise: (signal: OrchestrateSignal) => void;
+}
+
+const TERMINATION_SIGNALS: readonly OrchestrateSignal[] = [
+  'SIGINT',
+  'SIGTERM',
+  'SIGHUP',
+];
+
+export const processSignals: OrchestrateSignals = {
+  install: (handler) => {
+    const bySignal = TERMINATION_SIGNALS.map((signal) => {
+      const listener = (): void => handler(signal);
+      process.on(signal, listener);
+      return [signal, listener] as const;
+    });
+    const onExit = (): void => handler('exit');
+    process.on('exit', onExit);
+    return () => {
+      for (const [signal, listener] of bySignal) {
+        process.removeListener(signal, listener);
+      }
+      process.removeListener('exit', onExit);
+    };
+  },
+  reraise: (signal) => {
+    // Another listener (e.g. a TUI) owns the signal: leave it to them.
+    if (process.listenerCount(signal) > 0) return;
+    process.kill(process.pid, signal);
+  },
+};
+
+// Live-worker guard (§51, §61): every worker child runs in its OWN process
+// group (exec's detached spawn, so a kill reaches grandchildren) — which
+// also means a terminal Ctrl-C never reaches it. Without this guard a
+// SIGINT/SIGTERM/SIGHUP to the manager orphaned every running child. The
+// handlers are installed while at least one worker is live and removed
+// when the last one settles, so an idle process carries no listeners.
+function liveWorkerGuard(signals: OrchestrateSignals): {
+  track: (kill: () => void) => () => void;
+  cancelledBy: () => OrchestrateSignal | undefined;
+} {
+  let cancelled: OrchestrateSignal | undefined;
+  const live = new Set<() => void>();
+  let remove: (() => void) | undefined;
+  const killAll = (): void => {
+    for (const kill of [...live]) {
+      try {
+        kill();
+      } catch {
+        // Already gone — the next one still gets its signal.
+      }
+    }
+    live.clear();
+  };
+  const handler = (signal: OrchestrateSignal | 'exit'): void => {
+    // Recorded BEFORE the kill: the run stops on its own even when another
+    // listener (a TUI) owns the signal and the re-raise is a no-op.
+    if (signal !== 'exit') cancelled = signal;
+    killAll();
+    remove?.();
+    remove = undefined;
+    if (signal !== 'exit') signals.reraise(signal);
+  };
+  return {
+    cancelledBy: () => cancelled,
+    track: (kill) => {
+      live.add(kill);
+      if (remove === undefined) remove = signals.install(handler);
+      return () => {
+        live.delete(kill);
+        if (live.size === 0 && remove !== undefined) {
+          remove();
+          remove = undefined;
+        }
+      };
+    },
+  };
 }
 
 export interface OrchestrateWorkerLaunches {
@@ -213,7 +326,11 @@ const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 // handshake times the real startup instead of prompt construction.
 
 export class WorkerRunFailure extends Error {
-  readonly code: 'spawn_failed' | 'worker_failed';
+  readonly code:
+    | 'spawn_failed'
+    | 'worker_failed'
+    | 'result_invalid'
+    | 'cancelled';
   /**
    * The approval-layer terminus the child declared for itself (issue #105).
    * A worker child denies closed on its own bounded wait or on a configured
@@ -224,7 +341,7 @@ export class WorkerRunFailure extends Error {
   readonly approval?: { code: string; exitCode: number };
 
   constructor(
-    code: 'spawn_failed' | 'worker_failed',
+    code: 'spawn_failed' | 'worker_failed' | 'result_invalid' | 'cancelled',
     message: string,
     approval?: { code: string; exitCode: number },
   ) {
@@ -259,6 +376,70 @@ function approvalTerminusOf(
 // is `spawn_failed` (the worker never started); a worker that ran and
 // reported a failure keeps `worker_failed`, with the §52 code named in
 // the message so the taxonomy stays visible.
+// §68 on the prod path: a child that exited 0 is only a success once its
+// own `--json` report is read and the AgentResult built from it passes the
+// closed-world validator. The report must be the child's LAST stdout line,
+// ok, completed, for THIS worker's session, with a non-empty summary —
+// anything else is a typed `result_invalid`, never a silent success.
+export function workerResultFromRun(
+  agentId: string,
+  workerSession: string,
+  done: { exitCode: number; stdout: string; stderr: string },
+  observed: { filesChanged: string[]; wallMs: number; latencyMs: number },
+):
+  | { ok: true; result: AgentResult }
+  | { ok: false; error: { code: 'result_invalid'; message: string } } {
+  const invalid = (why: string) => ({
+    ok: false as const,
+    error: {
+      code: 'result_invalid' as const,
+      message: `worker '${agentId}' result violates the §68 contract: ${why}`,
+    },
+  });
+  const last = done.stdout.trim().split('\n').pop()?.trim() ?? '';
+  if (last.length === 0) return invalid('the child printed no result report');
+  let report: {
+    ok?: unknown;
+    status?: unknown;
+    sessionId?: unknown;
+    result?: { summary?: unknown };
+  };
+  try {
+    report = JSON.parse(last) as typeof report;
+  } catch {
+    return invalid(
+      `the last output line is not a JSON report: ${last.slice(0, 120)}`,
+    );
+  }
+  if (report === null || typeof report !== 'object')
+    return invalid('the report is not an object');
+  if (report.ok !== true || report.status !== 'completed')
+    return invalid(
+      `the report is not a completed run (status ${String(report.status)})`,
+    );
+  if (report.sessionId !== workerSession)
+    return invalid(
+      `the report names session '${String(report.sessionId)}', not '${workerSession}'`,
+    );
+  const built = {
+    status: 'completed',
+    summary: report.result?.summary,
+    filesChanged: observed.filesChanged,
+    provenance: { workerId: agentId },
+    metrics: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      toolCalls: 0,
+      latencyMs: observed.latencyMs,
+      wallMs: observed.wallMs,
+    },
+  };
+  const validation = validateAgentResult(built);
+  if (!validation.valid) return invalid(validation.errors.join('; '));
+  return { ok: true, result: validation.task };
+}
+
 function workerRunError(
   agentId: string,
   done: { exitCode: number; stdout: string; stderr: string },
@@ -482,6 +663,22 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  const guard = liveWorkerGuard(options.signals ?? processSignals);
+  const throwIfCancelled = (agentId: string): void => {
+    const signal = guard.cancelledBy();
+    if (signal !== undefined) {
+      throw new WorkerRunFailure(
+        'cancelled',
+        `worker '${agentId}' cancelled by ${signal}`,
+      );
+    }
+  };
+  // reap() kills synchronously before it awaits, so this is safe to call
+  // from a process 'exit' handler.
+  const trackLive = (launched: ReturnType<typeof launchWorker>): (() => void) =>
+    guard.track(() => {
+      void launched.reap().catch(() => undefined);
+    });
   // The orchestrator session this process is running (issue #106): the CLI
   // creates every worker session through `createWorkerSession`, so the session
   // id it carries is the run's own. The resolver seam below derives its own
@@ -531,6 +728,64 @@ export async function orchestrateDepsWithDefaults(
     }
   }
 
+  // Crash recovery (§51): a previous manager that died hard (SIGKILL,
+  // crash past the signal guard) left rows claiming live workers. Reconcile
+  // them before this run spawns anything: an orphan still running under
+  // its own `--session` is killed, a dead one is marked crashed.
+  if (root !== undefined) {
+    try {
+      const bridge = createNodeFileBridge(join(root, '.kubic', 'orchestrator'));
+      const stale = readWorkerRows(bridge, WORKER_ROWS_FILE);
+      if (stale.length > 0) {
+        const reconciled = await reconcileWorkerRows(stale, {
+          alive: pidAlive,
+          killGroup: killProcessGroup,
+          command: async (pid) => {
+            const ps = await new NodeExecutionEnv(root).shell
+              .spawn('ps', ['-ww', '-o', 'command=', '-p', String(pid)], {
+                provenance: provenanceFor('cli', 'manager', 'orphan-probe'),
+              })
+              .wait();
+            return ps.exitCode === 0 ? ps.stdout.trim() : undefined;
+          },
+        });
+        for (const id of reconciled.reaped) {
+          debug(
+            `workers: killed orphaned worker '${id}' left by a dead manager`,
+          );
+        }
+        for (const id of reconciled.marked) {
+          debug(`workers: marked '${id}' crashed (its manager is gone)`);
+        }
+        if (reconciled.reaped.length + reconciled.marked.length > 0) {
+          // Re-read at write time (the `ps` awaits above can interleave with
+          // another run): only rows still exactly as we judged them change.
+          const judged = new Map(
+            reconciled.rows.map((row) => [
+              `${row.workerId}:${row.generation}:${row.pid ?? '-'}`,
+              row,
+            ]),
+          );
+          updateWorkerRowsFile(workerRowsPath(root), (current) =>
+            current.map((row) => {
+              const next = judged.get(
+                `${row.workerId}:${row.generation}:${row.pid ?? '-'}`,
+              );
+              return next !== undefined &&
+                !TERMINAL_STATUSES.includes(row.status)
+                ? next
+                : row;
+            }),
+          );
+        }
+      }
+    } catch (error) {
+      debug(
+        `workers: orphan reconciliation skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   // The session branch at start is the merge target and the hunk base.
   // Resolved lazily (only inside a repo) and cached per process.
   let baseRef: string | undefined;
@@ -569,11 +824,16 @@ export async function orchestrateDepsWithDefaults(
   const persistWorkerRowsNow = (): void => {
     if (root === undefined) return;
     try {
-      persistWorkerRows(
-        createNodeFileBridge(join(root, '.kubic', 'orchestrator')),
-        WORKER_ROWS_FILE,
-        workerRegistry.list(),
-      );
+      const ours = workerRegistry
+        .list()
+        .map((row) => ({ ...row, managerPid: process.pid }));
+      const mine = new Set(ours.map((row) => row.workerId));
+      // Locked read-modify-write against the file AS IT IS NOW: rows another
+      // run wrote stay in the record (never clobbered), atomically.
+      updateWorkerRowsFile(workerRowsPath(root), (current) => [
+        ...current.filter((row) => !mine.has(row.workerId)),
+        ...ours,
+      ]);
     } catch (error) {
       // Best-effort: a status listing must never fail a run.
       debug(
@@ -661,6 +921,9 @@ export async function orchestrateDepsWithDefaults(
   const approvalSnapshot = options.approvalPolicy;
   return {
     out: options.out,
+    err: options.err,
+    ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(options.errTheme === undefined ? {} : { errTheme: options.errTheme }),
     debug,
     // Issue #133: the configured worker cap is the run's own admission
     // surface — the same scheduler the CLI would default to, constructed
@@ -875,6 +1138,7 @@ export async function orchestrateDepsWithDefaults(
       // timeout (a silent child is terminal SPAWN_FAILED, not a raw exit
       // code), records the §61 startup latency, and classifies a failed
       // child through the §52 codes.
+      throwIfCancelled(agentId);
       const launched = launchWorker(
         {
           workerId: agentId,
@@ -942,6 +1206,8 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
+      const launchedAt = Date.now();
+      const untrack = trackLive(launched);
       // The row is written out the moment the worker is registered, so a
       // concurrent/next `kubic workers` invocation lists it (§50) even if
       // this launch later fails.
@@ -954,7 +1220,10 @@ export async function orchestrateDepsWithDefaults(
       } catch (error) {
         persistWorkerRowsNow();
         throw error;
+      } finally {
+        untrack();
       }
+      throwIfCancelled(agentId);
       if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
         persistWorkerRowsNow();
         throw workerRunError(agentId, done, launched.failure());
@@ -1028,6 +1297,17 @@ export async function orchestrateDepsWithDefaults(
           'worker-hunk',
         );
         hunks.push({ path, hunk: diff.stdout });
+      }
+      // §68: the exit code alone never settles a worker — its own report
+      // must build a valid AgentResult, or the run fails typed.
+      const contract = workerResultFromRun(agentId, workerSession, done, {
+        filesChanged: hunks.map((hunk) => hunk.path),
+        wallMs: Math.max(0, Date.now() - launchedAt),
+        latencyMs: launched.perf().sample.startupMs ?? 0,
+      });
+      if (!contract.ok) {
+        debug(contract.error.message);
+        throw new WorkerRunFailure(contract.error.code, contract.error.message);
       }
       return hunks;
     },
@@ -1154,6 +1434,7 @@ export async function orchestrateDepsWithDefaults(
           `gap: resolver '${request.agentId}' runs without --role (${roleDoc} is absent) — the child uses its default writer tool set`,
         );
       }
+      throwIfCancelled(request.agentId);
       const launched = launchWorker(
         {
           workerId: request.agentId,
@@ -1197,7 +1478,16 @@ export async function orchestrateDepsWithDefaults(
           debug: (line) => debug(line),
         },
       );
-      const done = await launched.wait();
+      const untrack = trackLive(launched);
+      persistWorkerRowsNow();
+      let done: { exitCode: number; stdout: string; stderr: string };
+      try {
+        done = await launched.wait();
+      } finally {
+        untrack();
+        persistWorkerRowsNow();
+      }
+      throwIfCancelled(request.agentId);
       if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
         const failure = launched.failure();
         return {

@@ -374,3 +374,36 @@ describe('solo model escalation through the lane path (issue #82, rule 6)', () =
     ).toEqual({ provider: 'faux', modelId: 'b' });
   });
 });
+
+describe('solo boot clamps the compaction reserve to the model window', () => {
+  it('hands a small-window model a reserve of at most a quarter of its window', async () => {
+    const { MemorySessionRepo } = await import('../pi-boundary.js');
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    try {
+      const env = new FakeExecutionEnv({});
+      const repo = new MemorySessionRepo();
+      const session = await repo.create({}, BACKGROUND_CONTEXT);
+      openSessions.push(session);
+      const faux = fauxProvider();
+      const models = createModels();
+      models.setProvider(faux.provider);
+      faux.setResponses([fauxAssistantMessage('hi')]);
+      await bootSoloLane({
+        session,
+        models,
+        model: { ...faux.getModel(), contextWindow: 8192 },
+        env,
+        sessionId: session.metadata.id,
+        agentId: 'root',
+      });
+      const handed = (
+        createSpy.mock.calls[0] as unknown as Array<{
+          compaction: { reserveTokens: number };
+        }>
+      )[0].compaction;
+      expect(handed.reserveTokens).toBe(2048);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+});

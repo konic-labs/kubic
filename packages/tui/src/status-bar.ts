@@ -14,6 +14,7 @@
 // TTFT/latency choice: last-wins. The bar shows the LIVE reading, so
 // the latest row reporting ttftMs/latencyMs wins (a silent row never
 // clears a previous reading).
+import { tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
 
 export interface StatusUsageCost {
@@ -239,7 +240,23 @@ class StatusBody implements Component {
   }
 
   render(width: number): string[] {
-    return renderStatusLines(this.barState, width, this.theme);
+    const lines = renderStatusLines(this.barState, width, this.theme);
+    const palette = tuiTheme();
+    if (palette.level === 'none') return lines;
+    // Colour over the already width-fitted plain rows: the model in bold,
+    // the rest secondary; row 2 keeps its own warning styling when
+    // approvals are off.
+    const [row1 = '', row2 = ''] = lines;
+    const model = this.barState.model;
+    const styled1 = row1.startsWith(model)
+      ? `${palette.bold(model)}${palette.muted(row1.slice(model.length))}`
+      : palette.muted(row1);
+    const styled2 = this.barState.approvalsSkipped
+      ? row2
+      : row2.startsWith(this.barState.mode)
+        ? `${palette.accent(this.barState.mode)}${palette.muted(row2.slice(this.barState.mode.length))}`
+        : palette.muted(row2);
+    return [styled1, styled2];
   }
 
   invalidate(): void {}

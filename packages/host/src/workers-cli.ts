@@ -1,13 +1,16 @@
 // `kubic workers [--json] [--debug]` (issue #42; §50, §49.3, §13).
 // Presentation only: live procs with age/owner/resources (§50), the
-// §13 status verbatim, startup span ms (§49.3) per row, and --debug
-// spawn + clean-exit lines in the §50 vocabulary. Rows arrive injected
+// §13 status verbatim, startup span ms (§49.3) per row — one table row
+// per worker — and --debug spawn + clean-exit lines in the §50
+// vocabulary. Rows arrive injected
 // (the registry lives in @kubic/worker lifecycle) — this module never
 // touches processes, the filesystem, or the network.
 
 import type { TaskResources } from '../../agents/src/task.js';
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { renderTable, type TableColumn } from '../../core/src/cli/table.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 
 export interface WorkerListRow {
   workerId: string;
@@ -21,11 +24,29 @@ export interface WorkerListRow {
   startupMs?: number;
 }
 
+// The parsed `kubic workers` options (commander owns the argv:
+// apps/kubic/src/commands/orchestrator.ts).
+export interface WorkersCliOptions {
+  readonly json?: boolean;
+  readonly debug?: boolean;
+}
+
 export interface WorkersCommandDeps {
   list: () => WorkerListRow[] | Promise<WorkerListRow[]>;
   now?: () => number;
+  // stdout: the table or the `--json` document.
   out: (line: string) => void;
+  // stderr: logger diagnostics (`info: …`).
+  err: (line: string) => void;
+  // stderr: the §50 `--debug` spawn/exit lines.
   debug?: (line: string) => void;
+  // Status colours and header accent; colourless when absent.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
+  // Box-drawn table (an interactive, coloured stdout); plain otherwise.
+  fancy?: boolean;
 }
 
 function formatAge(ageMs: number): string {
@@ -52,38 +73,43 @@ function formatResources(resources: TaskResources | undefined): string {
   return parts.length > 0 ? parts.join(' ') : '-';
 }
 
-const WORKERS_USAGE = 'usage: kubic workers [--json] [--debug]';
+// §13 statuses by tone: the run is fine, still settling, or ended badly.
+const GOOD_STATUSES: ReadonlySet<string> = new Set(['running', 'completed']);
+const BAD_STATUSES: ReadonlySet<string> = new Set([
+  'spawn_failed',
+  'crashed',
+  'timeout',
+  'budget_exhausted',
+]);
 
-// Issue #127: the shared parser replaces the args.filter/includes pair.
-// Fail-closed posture kept: an unknown `--x`, a stray operand, or the
-// equals form on a boolean (`--json=1`) all keep the usage exit.
-const WORKERS_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-  { name: '--debug', takes: 'boolean' },
-];
-
-function usage(out: (line: string) => void): number {
-  out(WORKERS_USAGE);
-  return 1;
+function styleStatus(status: string, theme: CliTheme): string {
+  if (GOOD_STATUSES.has(status)) return theme.success(status);
+  if (BAD_STATUSES.has(status)) return theme.error(status);
+  if (status === 'cancelled') return theme.warning(status);
+  return theme.muted(status);
 }
 
+const COLUMNS: readonly TableColumn[] = [
+  { header: 'WORKER' },
+  { header: 'STATUS' },
+  { header: 'GEN', align: 'right' },
+  { header: 'AGE' },
+  { header: 'OWNER' },
+  { header: 'PID', align: 'right' },
+  { header: 'STARTUP', align: 'right' },
+  { header: 'RESOURCES' },
+];
+
 export async function runWorkersCommand(
-  args: string[],
+  options: WorkersCliOptions,
   deps: WorkersCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, WORKERS_USAGE);
-  if (help !== null) return help;
-  const parsed = parseFlagArgs(args, WORKERS_FLAG_SPEC);
-  const stray = parsed.unknown[0] ?? parsed.positional[0];
-  if (stray !== undefined) return usage(deps.out);
-  const json = parsed.values['--json'] === true;
-  const debug = parsed.values['--debug'] === true;
+  const theme = deps.theme ?? createCliTheme('none');
   const now = deps.now?.() ?? Date.now();
   const rows = await deps.list();
-  if (json) {
+  if (options.json === true) {
     deps.out(
-      JSON.stringify(
+      formatJson(
         rows.map((row) => ({
           workerId: row.workerId,
           sessionId: row.sessionId,
@@ -95,18 +121,32 @@ export async function runWorkersCommand(
           pid: row.pid,
           startupMs: row.startupMs,
         })),
-        null,
-        2,
       ),
     );
+  } else if (rows.length === 0) {
+    // stdout stays empty (scripts see no rows); the note is a diagnostic.
+    createLineLogger(deps.err, {
+      theme: deps.errTheme ?? createCliTheme('none'),
+    }).info('no orchestrator workers recorded in this repo');
   } else {
-    for (const row of rows) {
-      deps.out(
-        `${row.workerId}  ${row.status}  gen=${row.generation}  age=${formatAge(now - row.startedAtMs)}  owner=${row.owner}  pid=${row.pid ?? '-'}  startup=${row.startupMs === undefined ? '-' : `${row.startupMs}ms`}  resources=${formatResources(row.resources)}`,
-      );
-    }
+    deps.out(
+      renderTable(
+        rows.map((row) => [
+          row.workerId,
+          styleStatus(row.status, theme),
+          String(row.generation),
+          formatAge(now - row.startedAtMs),
+          row.owner,
+          row.pid === undefined ? '-' : String(row.pid),
+          row.startupMs === undefined ? '-' : `${row.startupMs}ms`,
+          formatResources(row.resources),
+        ]),
+        COLUMNS,
+        { fancy: deps.fancy === true, theme },
+      ),
+    );
   }
-  if (debug && deps.debug !== undefined) {
+  if (options.debug === true && deps.debug !== undefined) {
     for (const row of rows) {
       const startup = row.startupMs === undefined ? '-' : `${row.startupMs}ms`;
       deps.debug(

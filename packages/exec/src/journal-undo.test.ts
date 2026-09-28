@@ -1,10 +1,18 @@
 // Slice B: undo core — reverse-chronological restore (issue #18; §42.2).
 // RED: planUndo/applyUndo do not exist yet.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileJournalStore } from './journal.js';
+import { diffEntries } from './journal-diff.js';
+import { journalStatus } from './journal-status.js';
 import { applyUndo, planUndo } from './journal-undo.js';
 
 const roots: string[] = [];
@@ -495,5 +503,168 @@ describe('undo staleness safety (issue #108)', () => {
     // Force changes the verdict, never the dry-run contract: disk untouched.
     expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v3\n');
     expect(store.entries()).toHaveLength(1);
+  });
+});
+
+// §42.2 "kubic undo reverts the run": a file the agent CREATED has no
+// pre-image by definition — its pre-state is "absent". Reverting the run
+// removes it; reporting it non-reversible leaves the agent's new files
+// behind after every undo.
+describe('undo of an agent-created file', () => {
+  function seedCreate(): { store: FileJournalStore; root: string } {
+    const { store, root } = seedStale();
+    writeFileSync(join(root, 'new.txt'), 'fresh\n');
+    store.append({
+      path: 'new.txt',
+      op: 'create',
+      before: null,
+      after: 'fresh\n',
+      ...ENTRY_BASE,
+    });
+    return { store, root };
+  }
+
+  it('plans the create as reversible and removes the file', () => {
+    const { store, root } = seedCreate();
+    const plan = planUndo(store, {}, root);
+    expect(plan.reversible).toBe(1);
+    expect(plan.nonReversible).toEqual([]);
+    const result = applyUndo(store, plan, root, { now: () => 500 });
+    expect(result.restored).toEqual(['new.txt']);
+    expect(result.skipped).toEqual([]);
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+    // The removal is journaled as a delete whose before is the removed content.
+    const last = store.entries().at(-1);
+    expect(last?.op).toBe('delete');
+    expect(last?.agentId).toBe('kubic-undo');
+    expect(last?.afterHash).toBeNull();
+    expect(last === undefined ? null : store.readBefore(last)).toBe('fresh\n');
+  });
+
+  it('redo (--step) brings the removed file back', () => {
+    const { store, root } = seedCreate();
+    applyUndo(store, planUndo(store, {}, root), root, {});
+    const redo = applyUndo(
+      store,
+      planUndo(store, { step: true }, root),
+      root,
+      {},
+    );
+    expect(redo.restored).toEqual(['new.txt']);
+    expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('fresh\n');
+  });
+
+  it('a repeated plain undo reports already undone and appends nothing', () => {
+    const { store, root } = seedCreate();
+    applyUndo(store, planUndo(store, {}, root), root, {});
+    const count = store.entries().length;
+    const again = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(again.restored).toEqual([]);
+    expect(again.skippedDetails[0]?.reason).toMatch(/already undone/);
+    expect(store.entries()).toHaveLength(count);
+  });
+
+  it('refuses to remove a created file edited after the entry (stale), --force removes it', () => {
+    const { store, root } = seedCreate();
+    writeFileSync(join(root, 'new.txt'), 'user work\n');
+    const plan = planUndo(store, {}, root);
+    expect(plan.stalePaths).toEqual(['new.txt']);
+    const result = applyUndo(store, plan, root, {});
+    expect(result.restored).toEqual([]);
+    expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('user work\n');
+    const forced = applyUndo(store, planUndo(store, {}, root), root, {
+      force: true,
+    });
+    expect(forced.restored).toEqual(['new.txt']);
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+  });
+
+  it('dry-run reports the removal without touching disk', () => {
+    const { store, root } = seedCreate();
+    const dry = applyUndo(store, planUndo(store, {}, root), root, {
+      dryRun: true,
+    });
+    expect(dry.restored).toEqual(['new.txt']);
+    expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('fresh\n');
+    expect(store.entries()).toHaveLength(1);
+  });
+
+  it('unwinds create-then-edit in order, ending with the file removed', () => {
+    const { store, root } = seedCreate();
+    writeFileSync(join(root, 'new.txt'), 'edited\n');
+    store.append({
+      path: 'new.txt',
+      op: 'edit',
+      before: 'fresh\n',
+      after: 'edited\n',
+      ...ENTRY_BASE,
+    });
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(result.restored).toEqual(['new.txt', 'new.txt']);
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+  });
+
+  it('status and diff count the create as reversible', () => {
+    const { store, root } = seedCreate();
+    const status = journalStatus(store, root);
+    expect(status.reversible).toBe(1);
+    expect(status.nonReversible).toBe(0);
+    expect(diffEntries(store, {})[0]?.reversible).toBe(true);
+  });
+
+  it('delete-then-create unwinds to the original file (a later create never masks an earlier delete)', () => {
+    const { store, root } = seedStale();
+    // foo existed; the agent removed it (journaled with content), then
+    // wrote a new foo (a create).
+    store.append({
+      path: 'foo',
+      op: 'delete',
+      before: 'original\n',
+      after: null,
+      ...ENTRY_BASE,
+    });
+    writeFileSync(join(root, 'foo'), 'new\n');
+    store.append({
+      path: 'foo',
+      op: 'create',
+      before: null,
+      after: 'new\n',
+      ...ENTRY_BASE,
+    });
+    const plan = planUndo(store, {}, root);
+    expect(plan.stalePaths).toEqual([]);
+    const dry = applyUndo(store, plan, root, { dryRun: true });
+    expect(dry.restored).toEqual(['foo', 'foo']);
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(result.restored).toEqual(['foo', 'foo']);
+    expect(readFileSync(join(root, 'foo'), 'utf8')).toBe('original\n');
+  });
+
+  it('warns when a forced removal cannot record the removed content (binary), so it cannot be redone', () => {
+    const { store, root } = seedCreate();
+    writeFileSync(join(root, 'new.txt'), Buffer.from([0xff, 0xfe, 0x00]));
+    const result = applyUndo(store, planUndo(store, {}, root), root, {
+      force: true,
+    });
+    expect(result.restored).toEqual(['new.txt']);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/new\.txt.*cannot be redone/);
+  });
+
+  it('keeps an unattributed reconciliation create non-reversible', () => {
+    const { store, root } = seedStale();
+    writeFileSync(join(root, 'built.js'), 'x\n');
+    store.append({
+      path: 'built.js',
+      op: 'create',
+      before: null,
+      after: 'x\n',
+      ...ENTRY_BASE,
+      toolCallId: null,
+      unattributed: true,
+    });
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(result.restored).toEqual([]);
+    expect(existsSync(join(root, 'built.js'))).toBe(true);
   });
 });

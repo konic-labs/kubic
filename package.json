@@ -24,9 +24,9 @@
     "lint:deps": "node scripts/dep-lint.mjs",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
-    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/flag-parser-gate.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs scripts/patch-vitest-runner.test.mjs scripts/build-contract.test.mjs scripts/binary-contract.test.mjs scripts/reachability.test.mjs scripts/runtime-exclude.test.mjs",
+    "test": "node --test scripts/dep-lint.test.mjs scripts/erasable.test.mjs scripts/pi-boundary.test.mjs scripts/license.test.mjs scripts/check-docs-links.test.mjs scripts/flag-parser-gate.test.mjs scripts/mutation-scope.test.mjs scripts/mutation-check.test.mjs scripts/patch-vitest-runner.test.mjs scripts/build-contract.test.mjs scripts/binary-contract.test.mjs scripts/reachability.test.mjs scripts/runtime-exclude.test.mjs scripts/faux-smoke.test.mjs",
     "docs:check": "node scripts/check-docs-links.mjs",
-    "test:binary-contract": "node scripts/binary-contract.mjs",
+    "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
     "surface:check": "node scripts/reachability.mjs",
     "test:mutation:vitest": "stryker run",
     "test:mutation:tap": "stryker run stryker.tap.conf.json",
@@ -40,5 +40,13 @@
     "@types/node": "26.6.2",
     "typescript": "7.0.2",
     "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "@commander-js/extra-typings": "15.0.0",
+    "chalk": "6.0.0",
+    "cli-table3": "0.6.5",
+    "commander": "15.0.0",
+    "consola": "3.4.2"
   }
 }

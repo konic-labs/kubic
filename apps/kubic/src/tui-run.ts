@@ -17,11 +17,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
-import { answerHelp } from '../../../packages/core/src/cli-help.js';
-import {
-  type FlagSpec,
-  parseFlagArgs,
-} from '../../../packages/core/src/flags.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -38,6 +33,12 @@ import {
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
+import {
+  FAUX_FOOTER,
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+  fauxProviderActive,
+} from '../../../packages/host/src/faux-provider.js';
 import {
   shouldEmitSoloNotice,
   soloTuiLine,
@@ -64,6 +65,11 @@ import { createApprovalSurface } from '../../../packages/tui/src/approval-surfac
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
+import {
+  createTuiTheme,
+  detectColorLevel,
+  setTuiTheme,
+} from '../../../packages/tui/src/theme.js';
 import {
   createTuiApp,
   type TuiApp,
@@ -141,6 +147,9 @@ export interface TuiLaneBoot {
 
 export interface TuiRunDeps {
   out: (line: string) => void;
+  // stderr: the `error: …` lines of a refused id or a failed lane boot.
+  // Absent means stdout (library callers with one channel).
+  err?: (line: string) => void;
   createTerminal: () => Terminal;
   // `answer` is the seat the boot's installed policy must consult (issue
   // #96). It is an ARGUMENT rather than a deps field because the seat and the
@@ -279,7 +288,14 @@ export async function bootTuiLane(
     }
     const assembled = assembleModels(process.cwd());
     const models = options.models ?? assembled.models;
-    const model = selectModel(models);
+    // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
+    // picked implicitly; the footer names it (runTuiCommand).
+    const model = selectModel(
+      models,
+      options.models === undefined && fauxProviderActive(process.env)
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : undefined,
+    );
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -400,6 +416,7 @@ export async function bootTuiLane(
 
 export function tuiDepsWithDefaults(provided: {
   out: (line: string) => void;
+  err?: (line: string) => void;
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -421,6 +438,7 @@ export function tuiDepsWithDefaults(provided: {
   } = provided;
   return {
     out: provided.out,
+    ...(provided.err === undefined ? {} : { err: provided.err }),
     createTerminal: () => new ProcessTerminal(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
     bootLane: (
@@ -473,10 +491,45 @@ export class TuiTurnRunner {
   private starting = false;
   private aborted = false;
 
-  constructor(app: TuiApp, loop: TuiLaneLoop, model: string) {
+  // Called after a mid-turn transcript refresh lands (the root repaints).
+  private readonly onUpdate: (() => void) | undefined;
+  private refreshing = false;
+  private refreshAgain = false;
+
+  constructor(
+    app: TuiApp,
+    loop: TuiLaneLoop,
+    model: string,
+    onUpdate?: () => void,
+  ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
+    this.onUpdate = onUpdate;
+  }
+
+  // TUI polish: the transcript follows the turn instead of appearing only
+  // at settlement. Every lane event (tool start/end, usage = one model
+  // step) re-reads the committed entries; refreshes never overlap, and a
+  // burst of events collapses into one trailing refresh.
+  private scheduleRefresh(): void {
+    if (this.refreshing) {
+      this.refreshAgain = true;
+      return;
+    }
+    this.refreshing = true;
+    void this.refreshTranscript()
+      .catch(() => {
+        // A mid-turn read failure is not fatal: settlement refreshes again.
+      })
+      .finally(() => {
+        this.refreshing = false;
+        this.onUpdate?.();
+        if (this.refreshAgain) {
+          this.refreshAgain = false;
+          this.scheduleRefresh();
+        }
+      });
   }
 
   get operationId(): string | undefined {
@@ -496,6 +549,7 @@ export class TuiTurnRunner {
   // with no model field of their own) so the bar can group them.
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     this.app.applyLaneEvent(event);
+    if (event.type !== 'run-start') this.scheduleRefresh();
     if (event.type === 'usage') {
       this.usageRows.push({
         model: this.model,
@@ -607,65 +661,46 @@ export class TuiTurnRunner {
     return true;
   }
 
+  // Reads are tagged in issue order: a background refresh that resolves
+  // after a newer one (e.g. the settlement refresh) is dropped instead of
+  // overwriting the fresher transcript.
+  private readSeq = 0;
+  private appliedSeq = 0;
+
   async refreshTranscript(): Promise<void> {
+    this.readSeq += 1;
+    const seq = this.readSeq;
     const entries = await this.loop.findEntries(undefined, this.loop.context);
+    if (seq < this.appliedSeq) return;
+    this.appliedSeq = seq;
     this.app.applyLaneEntries(entries);
   }
 }
 
-export const TUI_USAGE =
-  'usage: kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]';
-
-// Issue #127: the shared parser replaces the hand-rolled loop. `kubic tui`
-// takes no operands, so an unconsumed positional is refused exactly like an
-// unknown flag (the pre-migration posture).
-const TUI_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--session', takes: 'value' },
-  { name: '--role', takes: 'value' },
-  { name: '--skill', takes: 'value', repeat: true },
-  { name: '--no-skills', takes: 'boolean' },
-];
-
-const TUI_MISSING_VALUE_MESSAGES: Readonly<Record<string, string>> = {
-  '--session': 'error: --session needs a value',
-  '--role': 'error: --role needs a value',
-  '--skill': 'error: --skill needs a value',
-};
+// The parsed `kubic tui` invocation (commander owns the argv:
+// ./commands/solo.ts). The parity flags (issue #113) carry the same names
+// and value rules as their `kubic run` counterparts.
+export interface TuiCommandOptions {
+  readonly session?: string;
+  readonly role?: string;
+  readonly skills?: readonly string[];
+  readonly noSkills?: boolean;
+}
 
 export async function runTuiCommand(
-  args: string[],
+  options: TuiCommandOptions,
   deps: TuiRunDeps,
 ): Promise<number> {
-  const help = answerHelp(args, deps.out, TUI_USAGE);
-  if (help !== null) return help;
-  // Issue #113: the parity flags, parsed with the same discipline as
-  // `kubic run` — a value flag without a value is a usage error, an unknown
-  // flag is refused by name.
-  const parsed = parseFlagArgs(args, TUI_FLAG_SPEC);
-  const operands = [...parsed.positional];
-  for (const flag of parsed.missing) {
-    deps.out(
-      TUI_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
-    );
-    return RUN_EXIT_USAGE;
-  }
-  if (parsed.unknown.length > 0) {
-    deps.out(`error: unknown flag ${parsed.unknown[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  if (operands.length > 0) {
-    deps.out(`error: unknown flag ${operands[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  const sessionId = parsed.values['--session'] as string | undefined;
-  const role = parsed.values['--role'] as string | undefined;
-  const skillsList = (parsed.values['--skill'] as string[] | undefined) ?? [];
+  const sessionId = options.session;
   const flags: TuiBootFlags = {};
-  if (role !== undefined) flags.role = role;
-  if (parsed.values['--no-skills'] === true) flags.noSkills = true;
-  if (skillsList.length > 0) flags.skillsList = skillsList;
+  if (options.role !== undefined) flags.role = options.role;
+  if (options.noSkills === true) flags.noSkills = true;
+  const skillsList = options.skills ?? [];
+  if (skillsList.length > 0) flags.skillsList = [...skillsList];
+  // commander validated the id already; re-checked because it becomes a
+  // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
-    deps.out(
+    (deps.err ?? deps.out)(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
     );
     return RUN_EXIT_USAGE;
@@ -681,13 +716,19 @@ export async function runTuiCommand(
     boot = await deps.bootLane(sessionId, surface.seat, flags);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    deps.out(`error: ${message}`);
+    (deps.err ?? deps.out)(`error: ${message}`);
     if (error instanceof ModelSelectError)
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
     return mapCaughtErrorToTerminus(error) === 'workspace_unavailable'
       ? RUN_EXIT_WORKSPACE_UNAVAILABLE
       : RUN_EXIT_FAILED;
   }
+  // Colour only for a real terminal; NO_COLOR / FORCE_COLOR honoured.
+  setTuiTheme(
+    createTuiTheme(
+      detectColorLevel(process.env, process.stdout.isTTY === true),
+    ),
+  );
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -700,11 +741,36 @@ export async function runTuiCommand(
   // own to report. Suppressed for orchestrator-managed children
   // (KUBIC_WORKER_ID set) and for the documented KUBIC_NO_NOTICE opt-out;
   // the text is solo-warning.ts's, never re-worded here.
-  const notice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  // The faux testing provider is never silent: while it answers, the
+  // footer says so next to (or instead of) the solo notice.
+  const notice =
+    boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
+      ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
+      : soloNotice;
   const turn =
     boot.loop === undefined
       ? undefined
-      : new TuiTurnRunner(app, boot.loop, boot.model);
+      : new TuiTurnRunner(app, boot.loop, boot.model, () => {
+          if (!stopped) screen?.update();
+        });
+  // The working indicator animates while a turn runs.
+  let spinner: ReturnType<typeof setInterval> | undefined;
+  const stopSpinner = (): void => {
+    if (spinner !== undefined) clearInterval(spinner);
+    spinner = undefined;
+  };
+  const startSpinner = (): void => {
+    stopSpinner();
+    spinner = setInterval(() => {
+      if (stopped || app.busyElapsedMs() === undefined) {
+        stopSpinner();
+        return;
+      }
+      screen?.update();
+    }, 100);
+    spinner.unref?.();
+  };
   let screen: Screen | undefined;
   let stopped = false;
   let resolveExit: () => void = () => {};
@@ -725,6 +791,7 @@ export async function runTuiCommand(
   const shutdown = (): void => {
     if (stopped) return;
     stopped = true;
+    stopSpinner();
     // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
     // settle a pending approval as a deny — the turn that is waiting on it
     // would otherwise sit until the lane's timeout, and the operator gets no
@@ -806,12 +873,13 @@ export async function runTuiCommand(
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
         app.setBusy(true);
-        app.setEditorFooter('working… Ctrl-C cancels');
+        startSpinner();
         screen?.render();
         void turn
           .run(prompt)
           .then((outcome) => {
             app.setBusy(false);
+            stopSpinner();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the trust statement instead of going blank
             // (issue #89) — a cancelled/failed turn keeps its own report.
@@ -820,6 +888,7 @@ export async function runTuiCommand(
           })
           .catch((error: unknown) => {
             app.setBusy(false);
+            stopSpinner();
             const message =
               error instanceof Error ? error.message : String(error);
             app.setEditorFooter(`error: ${message}`);

@@ -9,10 +9,14 @@
 ## Running it
 
 ```
-kubic doctor [--skip <id[,id…]>] [--json]
+kubic doctor [--skip <id[,id…]>]... [--json]
 ```
 
-Each check prints one human line:
+`kubic doctor --help` prints the generated help. Each check prints one
+human line on stdout (the status word coloured on a colour terminal;
+plain text under a pipe or `NO_COLOR`); notes such as a `models.json` load
+go to stderr as `info:` lines, so stdout — and `--json` — carry only the
+report:
 
 ```
 PASS provider:local (ok): listed, not dialled, 1 model(s) registered
@@ -30,6 +34,10 @@ observe.
 same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other
 fail, 2 usage error — full table on the
 [exit-codes page](exit-codes.md).
+
+Under `KUBIC_PROVIDER=faux` the `faux` testing provider is listed like
+any other and a `warn:` line on stderr names it — a clean doctor under the
+switch says nothing about a real provider.
 
 On a fresh clone with no provider configured, doctor exits 6 with
 exactly one failure — `FAIL limit:provider-availability (provider-down)` —

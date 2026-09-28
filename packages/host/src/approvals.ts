@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { PermissionClasses } from '../../agents/src/policy.js';
 import {
   checkAgreement,
@@ -20,6 +20,11 @@ import {
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
+import {
+  appendToLedger,
+  auditLedgerDir,
+  soloDecisionAudit,
+} from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -670,6 +675,12 @@ export interface SoloPolicyInput {
   /** Trigger sink (debug/trajectory), never consulted for the decision. */
   onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
+  /** §60 audit identity: the session (absent: sessionDir's basename). */
+  sessionId?: string;
+  /** §60 audit identity: the `provider/id` the lane runs on. */
+  model?: string;
+  /** A failed ledger append lands here; it never reaches the approval. */
+  onAuditError?: (message: string) => void;
 }
 
 // What the lane installed and what doctor must print, in ONE object.
@@ -775,9 +786,67 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     ...(input.answer === undefined ? {} : { awaitAnswer: input.answer }),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
+  // §60 audit ledger: every resolved ask appends one solo record under
+  // <workspace>/.kubic/orchestrator/approvals. Best-effort by contract — a
+  // failed write (or a malformed record) goes to onAuditError, never into
+  // the approval decision.
+  const auditSessionId =
+    input.sessionId ??
+    (input.sessionDir === undefined ? '' : basename(input.sessionDir));
+  const audit = (
+    toolName: string,
+    trigger: string,
+    decision:
+      | { approved: true; by?: string }
+      | { approved: false; reason: string },
+    fullAccess: boolean,
+  ): void => {
+    const onError = input.onAuditError ?? (() => undefined);
+    try {
+      appendToLedger(
+        auditLedgerDir(input.workspace),
+        soloDecisionAudit({
+          sessionId: auditSessionId,
+          toolName,
+          trigger,
+          workspace: input.workspace,
+          ...(input.model === undefined ? {} : { model: input.model }),
+          approved: decision.approved,
+          ...(decision.approved
+            ? decision.by === undefined
+              ? {}
+              : { by: decision.by }
+            : { reason: decision.reason }),
+          posture: fullAccess ? 'full-access' : 'approvals',
+        }),
+        onError,
+      );
+    } catch (error) {
+      try {
+        onError(error instanceof Error ? error.message : String(error));
+      } catch {
+        // A throwing error sink must not reach the approval either.
+      }
+    }
+  };
+  const deny = (
+    capability: string,
+    toolName: string,
+    reason: string,
+  ): { approved: false; reason: string } => {
+    denials.push({ capability, toolName, reason });
+    audit(toolName, capability, { approved: false, reason }, false);
+    return { approved: false, reason };
+  };
   const ask: ApprovalAsk = async (call) => {
     if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
       // Explicit, session-scoped full access — recorded, never implied.
+      audit(
+        call.toolName,
+        'full-access',
+        { approved: true, by: 'full-access' },
+        true,
+      );
       return { approved: true, challenged: true };
     }
     const capabilities = detectTriggers(
@@ -793,20 +862,20 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       const decided = service.decided(key);
       if (decided !== undefined) {
         if (!decided.approved) {
-          denials.push({
-            capability,
-            toolName: call.toolName,
-            reason: decided.reason,
-          });
-          return { approved: false, reason: decided.reason };
+          return deny(capability, call.toolName, decided.reason);
         }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: decided.by },
+          false,
+        );
         continue;
       }
       if (posture.route === 'deny') {
         // Configured refusal: named as the route, never as a timeout.
         const reason = `denied by policy route (capability: ${capability})`;
-        denials.push({ capability, toolName: call.toolName, reason });
-        return { approved: false, reason };
+        return deny(capability, call.toolName, reason);
       }
       // An answer seat is attached (issue #96): the TUI is a command with a
       // user attached, so the verdict can be collected instead of refused.
@@ -820,13 +889,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           summary: summarizeRequest(call.toolName, capability, call.args),
         });
         if (!verdict.approved) {
-          denials.push({
-            capability,
-            toolName: call.toolName,
-            reason: verdict.reason,
-          });
-          return { approved: false, reason: verdict.reason };
+          return deny(capability, call.toolName, verdict.reason);
         }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: verdict.by },
+          false,
+        );
         continue;
       }
       // NO ANSWER SURFACE IS INSTALLED — `kubic run` has no TTY, and a `kubic
@@ -840,8 +910,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       // persisted: it is a missing surface, not a user decision, and a later
       // overlay must still be able to ask about the same operation.
       const reason = `${NO_ANSWER_SURFACE_REASON} (capability: ${capability})`;
-      denials.push({ capability, toolName: call.toolName, reason });
-      return { approved: false, reason };
+      return deny(capability, call.toolName, reason);
     }
     return { approved: true, challenged: true };
   };

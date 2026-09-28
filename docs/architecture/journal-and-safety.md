@@ -62,6 +62,21 @@ default) or to deny. The rules are fail-closed:
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
 
+## Tool process environment (§3.8)
+
+Every child the exec seam spawns — the bash tool, host `git` calls —
+starts from an explicit allowlist (`TOOL_ENV_ALLOWLIST` in
+`packages/exec/src/env.ts`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TERM`, `LANG`, `LC_*`, `XDG_*`, `TMPDIR`, `TZ`, `CI`, `NO_COLOR`, `CLICOLOR`,
+proxy vars (`HTTP(S)_PROXY`, `NO_PROXY`, either case), trust roots
+(`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), plus Windows
+process basics, matched case-insensitively there), never kubic's inherited environment. Any
+secret-shaped name (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
+`*_CREDENTIALS`) is dropped even when it matches, so a provider API key
+in kubic's environment never reaches a tool. `SSH_AUTH_SOCK` and
+credential helpers' variables are not passed either. Worker processes
+use their own launch allowlist plus role-scoped grants.
+
 ## What the model does and does not promise (§59.1)
 
 It promises: every edit recorded and reversible by default, every

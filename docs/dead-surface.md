@@ -106,6 +106,15 @@ file that no longer exists, or when a row's file has become reachable
   reports its measured dirtiness after the run, naming the files when it is
   dirty and `clean=unknown` when the status cannot be read). All three are
   reachable from the binary now, so their rows are removed rather than kept.
+- The orchestrator-group commander migration (orchestrate, clean, workers)
+  **wired** four cli-foundation rows: `packages/core/src/cli/{logger,output,table,theme}.ts`
+  are reachable from the binary through `host/src/orchestrate-cli.ts`,
+  `host/src/orchestrator/worktree/clean.ts` and `host/src/workers-cli.ts`
+  (diagnostics via the consola logger, `--json` via `formatJson`, the
+  `kubic workers` table, the report colours), so their rows are removed.
+  `prompt.ts` is reachable too: `sessions prune` asks through
+  `promptConfirm`, its only helper (the unused select/text/spinner helpers
+  were deleted rather than ledgered).
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -147,6 +156,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 58 | `apps/kubic/src/cli/context.ts` | cli-foundation | keep: type-only registry contract (`CommandContext`, `CommandRegistrar`, `DispatchRunners`) consumed through `import type` by `dispatch.ts`, `cli/program.ts` and every `commands/*.ts` module — a types-only module is never `reachable` by the value-import rule |
 
 ## Executed by #98 (the `ops/cost/*` + `ops/perf/*` cluster)
 

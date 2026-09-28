@@ -32,6 +32,13 @@ import {
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
 import {
+  FAUX_MODEL_ID,
+  FAUX_NOTICE,
+  FAUX_PROVIDER_ID,
+  invalidProviderMessage,
+  providerOverrideFromEnv,
+} from '../../../packages/host/src/faux-provider.js';
+import {
   emitSoloWarning,
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
@@ -172,7 +179,30 @@ export interface HeadlessRunDeps {
     cwd?: string;
     layers?: RoleLayerInput[];
   };
+  // Interrupt source (Ctrl-C, a supervisor SIGTERM, a closed terminal SIGHUP). Absent means the
+  // real process. Tool children run in detached process groups, so a
+  // terminal SIGINT never reaches them: without this seam the run died on
+  // the default handler and orphaned them, skipping the drain, the sweep and
+  // the session close. Tests inject an emitter.
+  signals?: SignalSource;
+  // Where models.json is read from (tests); absent means process.cwd().
+  modelsCwd?: string;
+  // User-facing warnings that must show without --debug (a refused
+  // models.json). Absent means stderr — stdout stays consumable.
+  warn?: (line: string) => void;
 }
+
+export interface SignalSource {
+  on(event: InterruptSignal, listener: (signal: string) => void): unknown;
+  off(event: InterruptSignal, listener: (signal: string) => void): unknown;
+}
+
+type InterruptSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
+  'SIGINT',
+  'SIGTERM',
+  'SIGHUP',
+];
 
 // The bounded wait a worker CHILD gives the manager for an answer to a
 // challenged call (issue #105, §41.2): long enough for a human to read the
@@ -195,6 +225,15 @@ class WallClockError extends Error {
   constructor(ms: number) {
     super(`run timed out after ${ms}ms`);
     this.ms = ms;
+  }
+}
+
+// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the drive like a guard does: control
+// flow, mapped to `failed` (exit 1) after the drain — §78 has no separate
+// interrupt code.
+class InterruptedError extends Error {
+  constructor(signal: string) {
+    super(`run interrupted by ${signal}`);
   }
 }
 
@@ -283,6 +322,7 @@ async function driveWithGuard(
   context: Context,
   boundMs: number,
   maxTurns: number | undefined,
+  interrupted: Promise<never>,
 ): Promise<SettledDrive> {
   let turns = 0;
   const counting: LaneDriver = {
@@ -298,6 +338,7 @@ async function driveWithGuard(
   try {
     return await Promise.race([
       driveToSettled(counting, operationId, context),
+      interrupted,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new WallClockError(boundMs)), boundMs);
       }),
@@ -437,6 +478,23 @@ export async function runHeadlessPrompt(
   }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
+  // §50 debug channel: `--debug` routes the span lines AND the run's
+  // diagnostics (extension receipt, reconcile/overlap notices, skill-load
+  // reports, drain failures) to one sink. An injected deps.debug still wins;
+  // without either, the diagnostics are off — the prod `kubic run` wires
+  // only the flag, so these lines were unreachable before.
+  const debugSink: DebugSink | undefined =
+    options.debug === true
+      ? (deps.debugSink ?? ((line: string) => console.error(line)))
+      : undefined;
+  // The §50 vocabulary is closed: a diagnostic without its own class rides
+  // the sink as `[session]`.
+  const debug: ((line: string) => void) | undefined =
+    deps.debug ??
+    (debugSink === undefined
+      ? undefined
+      : (line: string) =>
+          debugSink(/^\[[a-z]+\]/.test(line) ? line : `[session] ${line}`));
   // Extension startup (issue #93): the solo lane loads the first-party
   // bundle set through the trust gates BEFORE any store or lane exists — a
   // missing/refused bundle fails this run closed (ExtensionStartupError maps
@@ -447,7 +505,7 @@ export async function runHeadlessPrompt(
     extensions =
       deps.extensions ??
       (await loadExtensionStartup('run', process.cwd(), {
-        receipt: (line) => deps.debug?.(line),
+        receipt: (line) => debug?.(line),
         ...(deps.extensionOptions === undefined
           ? {}
           : { options: deps.extensionOptions }),
@@ -460,12 +518,7 @@ export async function runHeadlessPrompt(
   // and persisted to <root>/<id>/spans.jsonl when the run settles. The
   // recorder is created before the store so a store failure still leaves a
   // (run-only) trace behind.
-  const spans = new RunSpans(
-    Date.now,
-    options.debug === true
-      ? (deps.debugSink ?? ((line: string) => console.error(line)))
-      : undefined,
-  );
+  const spans = new RunSpans(Date.now, debugSink);
   const runSpan = spans.startRun();
   const bridge = createNodeFileBridge(root);
   const store = openSessionStore(root, bridge);
@@ -498,7 +551,7 @@ export async function runHeadlessPrompt(
     try {
       await solo.lane.requestAbort(activeOperationId, context);
     } catch (error) {
-      deps.debug?.(
+      debug?.(
         `guard: requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -509,6 +562,53 @@ export async function runHeadlessPrompt(
         // Already exited — the kill registry drains every entry regardless.
       }
     }
+  };
+  // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally has
+  // drained, so the default handler can no longer kill the run past its own
+  // cleanup. The first signal kills the admitted operation's children
+  // synchronously (they sit in their own process groups and never saw the
+  // signal) and ends the drive; the listeners detach at once, so a second
+  // Ctrl-C force-quits through the default handler.
+  const signals = deps.signals ?? process;
+  let rejectInterrupt: ((error: Error) => void) | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    rejectInterrupt = reject;
+  });
+  // Observed here so a signal outside the drive race is not an unhandled
+  // rejection; the race still sees the rejected promise.
+  interrupted.catch(() => undefined);
+  let signalsAttached = false;
+  // Set by the first signal. Boot checks it before each expensive step (and
+  // before admission), so a pre-admission Ctrl-C cancels the boot instead
+  // of letting it run on unseen.
+  let interruptedBy: string | undefined;
+  const detachSignals = (): void => {
+    if (!signalsAttached) return;
+    signalsAttached = false;
+    for (const name of INTERRUPT_SIGNALS) signals.off(name, onSignal);
+  };
+  function onSignal(signal: string): void {
+    detachSignals();
+    interruptedBy ??= signal;
+    if (solo !== undefined && activeOperationId !== undefined) {
+      for (const kill of solo.kills.drain(activeOperationId)) {
+        try {
+          kill();
+        } catch {
+          // Already exited.
+        }
+      }
+    }
+    rejectInterrupt?.(new InterruptedError(signal));
+  }
+  const attachSignals = (): void => {
+    signalsAttached = true;
+    for (const name of INTERRUPT_SIGNALS) signals.on(name, onSignal);
+  };
+  const bootInterrupted = (): HeadlessRunResult | undefined => {
+    if (interruptedBy === undefined) return undefined;
+    const message = new InterruptedError(interruptedBy).message;
+    return finished(id, 'failed', message, message);
   };
   // The span artifact is the durable half of criterion 1: written on every
   // exit path (success or mapped failure) next to the session journal.
@@ -534,8 +634,12 @@ export async function runHeadlessPrompt(
     emitSoloWarning((line) => process.stderr.write(`${line}\n`));
   }
   try {
+    // Attached inside the try: the finally below always detaches them.
+    attachSignals();
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);
+    const afterPrompt = bootInterrupted();
+    if (afterPrompt !== undefined) return afterPrompt;
     // Readiness handshake (issue #94; §13): when this process IS a worker
     // (`kubic orchestrate` launches it with KUBIC_WORKER_ID in the §3.8
     // allowlist), announce that the worker is up the moment its session is
@@ -589,13 +693,46 @@ export async function runHeadlessPrompt(
         const message = error instanceof Error ? error.message : String(error);
         return finished(id, 'failed', message, message);
       }
-      deps.debug?.(
+      debug?.(
         `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
       );
       role = { resolved: selected.resolved, prompt: promptText };
     }
-    const assembled = assembleModels(process.cwd());
-    const models = deps.models ?? assembled.models;
+    // A refused models.json is a config error the user must see: it goes
+    // to the warning channel unconditionally; a successful load is a
+    // receipt for the debug channel only.
+    let models: MutableModels;
+    if (deps.models === undefined) {
+      const assembled = assembleModels(deps.modelsCwd ?? process.cwd());
+      if (assembled.note !== null) {
+        if (assembled.note.startsWith('models.json ignored:')) {
+          (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+            assembled.note,
+          );
+        } else {
+          debug?.(assembled.note);
+        }
+      }
+      models = assembled.models;
+    } else {
+      models = deps.models;
+    }
+    // The faux testing provider (`KUBIC_PROVIDER=faux`): registered by
+    // assembleModels and pinned here, so it is the model that answers —
+    // announced on the warning channel before the first turn (never
+    // silent). Any other KUBIC_PROVIDER value is refused by name.
+    const providerOverride = providerOverrideFromEnv(process.env);
+    if (providerOverride.kind === 'invalid') {
+      const message = invalidProviderMessage(providerOverride.value);
+      return finished(id, 'provider_probe_failed', message, message);
+    }
+    const fauxPinned =
+      providerOverride.kind === 'faux' && deps.models === undefined;
+    if (fauxPinned) {
+      (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+        FAUX_NOTICE,
+      );
+    }
     let model: ReturnType<typeof selectModel>;
     try {
       // An explicit pin (replay re-execution at the declared model, or the
@@ -605,7 +742,9 @@ export async function runHeadlessPrompt(
       // first-registered-provider pick.
       model = selectModel(
         models,
-        deps.model,
+        fauxPinned
+          ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+          : deps.model,
         roleModelSelection(role?.resolved.model),
       );
     } catch (error) {
@@ -653,6 +792,9 @@ export async function runHeadlessPrompt(
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
+        // §60 audit identity for the ledger record of each resolved ask.
+        sessionId: id,
+        model: `${model.provider}/${model.id}`,
         // Per-worker approvals (issue #105): an orchestrator-managed child
         // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
         // seat, so a challenged call it cannot answer itself reaches the USER
@@ -680,13 +822,13 @@ export async function runHeadlessPrompt(
         // #107 review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
-        onNotice: (detail: string) => deps.debug?.(`reconcile: ${detail}`),
+        onNotice: (detail: string) => debug?.(`reconcile: ${detail}`),
         ...(deps.reconcileOutOfScope === undefined
           ? {}
           : { outOfScope: deps.reconcileOutOfScope }),
       });
     } catch (error) {
-      deps.debug?.(
+      debug?.(
         `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -702,12 +844,12 @@ export async function runHeadlessPrompt(
       const touching = await sessionsTouchingWorkspace(store, env.cwd, context);
       const others = touching.filter((sessionId) => sessionId !== id);
       if (others.length > 0) {
-        deps.debug?.(
+        debug?.(
           `reconcile: another run may be live in this workspace — its in-progress changes will be recorded as unattributed (sessions: ${others.join(', ')})`,
         );
       }
     } catch (error) {
-      deps.debug?.(
+      debug?.(
         `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -738,15 +880,17 @@ export async function runHeadlessPrompt(
           process.env.KUBIC_TRUST_PROJECT === 'true'),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
-      log: (line) => deps.debug?.(`skills: ${line}`),
+      log: (line) => debug?.(`skills: ${line}`),
     });
     if (skills.skills.length > 0) {
-      deps.debug?.(
+      debug?.(
         `skills: ${skills.skills.length} loaded (${skills.skills
           .map((skill) => `${skill.name}@${skill.source}`)
           .join(', ')})`,
       );
     }
+    const beforeBoot = bootInterrupted();
+    if (beforeBoot !== undefined) return beforeBoot;
     solo = await bootSoloLane({
       session,
       models,
@@ -784,6 +928,8 @@ export async function runHeadlessPrompt(
     // never fails the run.
     const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
     try {
+      const beforeAccept = bootInterrupted();
+      if (beforeAccept !== undefined) return beforeAccept;
       const acceptSpan = spans.startLane('accept');
       const admission = await lane.accept({ kind: 'prompt', prompt }, context);
       if (!admission.ok) {
@@ -805,10 +951,15 @@ export async function runHeadlessPrompt(
           context,
           options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
           options.maxTurns,
+          interrupted,
         );
       } catch (error) {
-        // Guard exhaustion only: any other throw re-enters the outer
-        // storeFailure path below.
+        // Guard exhaustion or an interrupt only: any other throw re-enters
+        // the outer storeFailure path below.
+        if (error instanceof InterruptedError) {
+          spans.endLane(driveSpan, error.message);
+          return finished(id, 'failed', error.message, error.message);
+        }
         if (
           error instanceof TurnBudgetError ||
           error instanceof WallClockError
@@ -893,13 +1044,15 @@ export async function runHeadlessPrompt(
       await drainInFlight();
     } catch (error) {
       try {
-        deps.debug?.(
+        debug?.(
           `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       } catch {
         // A throwing debug sink must not mask the mapped result either.
       }
     }
+    // In-flight work is dead: a later signal takes the default path again.
+    detachSignals();
     // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close
@@ -909,7 +1062,7 @@ export async function runHeadlessPrompt(
       reconciliation?.sweep();
     } catch (error) {
       try {
-        deps.debug?.(
+        debug?.(
           `reconcile: sweep failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       } catch {

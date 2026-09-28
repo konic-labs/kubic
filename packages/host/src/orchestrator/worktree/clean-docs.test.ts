@@ -24,6 +24,15 @@ const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
 // wiring; main.ts is the thin entry now.
 const DISPATCH = join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts');
 const PROD_RUNNERS = join(ROOT, 'apps', 'kubic', 'src', 'prod-runners.ts');
+// The commander registry: `clean` is registered by the orchestrator group.
+const ORCHESTRATOR_COMMANDS = join(
+  ROOT,
+  'apps',
+  'kubic',
+  'src',
+  'commands',
+  'orchestrator.ts',
+);
 const CLEAN = join(
   ROOT,
   'packages',
@@ -129,33 +138,17 @@ describe('clean is documented and dispatched (issue #92)', () => {
         'packages/host/src/orchestrator/worktree/clean.ts',
         'packages/host/src/orchestrator/worktree/remove.ts',
       ]);
-      // The route is pinned in the dispatch (issue #135), the runCleanCommand
-      // wiring in the production runners.
-      const dispatch = readFileSync(DISPATCH, 'utf8');
-      expect(dispatch).toContain("command === 'clean'");
+      // The route is pinned in the commander registry (the orchestrator
+      // group module), the runCleanCommand wiring in the production runners.
+      const registry = readFileSync(ORCHESTRATOR_COMMANDS, 'utf8');
+      expect(registry).toContain("'clean'");
+      expect(registry).toContain('runners.clean(');
       const wiring = readFileSync(PROD_RUNNERS, 'utf8');
       expect(wiring).toContain('runCleanCommand');
     },
   );
 
-  it('shows every accepted flag in the clean usage line', async () => {
-    // A flag the parser accepts but the usage line omits is undiscoverable —
-    // `--dry-run` and `--all` are exactly what a user reaches for first.
-    const { parseCleanArgs } = await import('./clean.js');
-    const clean = readFileSync(CLEAN, 'utf8');
-    const usage = clean.slice(clean.indexOf('usage: kubic clean'));
-    const usageLine = usage.slice(0, usage.indexOf('\n'));
-    for (const flag of SHIPPED_FLAGS) {
-      expect(usageLine, `usage line omits ${flag}`).toContain(flag);
-      // Value flags need a value to be a valid invocation; the boolean ones
-      // are valid alone.
-      const probe =
-        flag.startsWith('--m') || flag === '--session'
-          ? [flag, flag === '--session' ? 'orch-1' : '1']
-          : [flag];
-      expect(parseCleanArgs(probe), `${flag} must parse`).toMatchObject({
-        valid: true,
-      });
-    }
-  });
+  // Every SHIPPED_FLAGS entry is also declared on the commander command and
+  // listed by `kubic clean --help`: pinned behaviourally where the parser
+  // lives (apps/kubic/src/commands/orchestrator.test.ts).
 });

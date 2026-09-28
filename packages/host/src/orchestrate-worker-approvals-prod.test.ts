@@ -134,6 +134,7 @@ writeFileSync(
   JSON.stringify({ key: published.request.key, answer }),
 );
 console.log(JSON.stringify({ key: published.request.key, answer }));
+if ((answer.approved ? 0 : 4) === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(answer.approved ? 0 : 4);
 `;
 
@@ -260,6 +261,7 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     const injected: OrchestratorApprovalRequest[] = [];
     const deps = await orchestrateDepsWithDefaults({
       out: (line) => h.lines.push(line),
+      err: (line) => h.lines.push(line),
       debug: () => undefined,
       cwd: h.root,
       sessionsRoot: h.sessionsRoot,
@@ -278,7 +280,7 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'do the work', '--session', 'orch-105', '--agents', 'worker-1'],
+      { prompt: 'do the work', session: 'orch-105', agents: ['worker-1'] },
       deps,
     );
     // The injected seat was consulted (not bypassed in favour of the TTY
@@ -333,6 +335,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     const h = await prodHarness();
     const deps = await orchestrateDepsWithDefaults({
       out: (line) => h.lines.push(line),
+      err: (line) => h.lines.push(line),
       debug: (line) => h.debugLines.push(line),
       cwd: h.root,
       sessionsRoot: h.sessionsRoot,
@@ -356,7 +359,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
       // the seat, so the run keeps the interactive posture. (The merge that
       // follows still denies closed headless, which is the already-shipped
       // merge contract and is asserted below.)
-      ['-p', 'do the work', '--session', 'orch-105', '--agents', 'worker-1'],
+      { prompt: 'do the work', session: 'orch-105', agents: ['worker-1'] },
       deps,
     );
 
@@ -392,6 +395,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     const h = await prodHarness(100);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       debug: () => undefined,
       cwd: h.root,
       sessionsRoot: h.sessionsRoot,
@@ -408,7 +412,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     });
     const started = Date.now();
     const code = await runOrchestrateCommand(
-      ['-p', 'do the work', '--session', 'orch-105', '--agents', 'worker-1'],
+      { prompt: 'do the work', session: 'orch-105', agents: ['worker-1'] },
       deps,
     );
     const elapsed = Date.now() - started;

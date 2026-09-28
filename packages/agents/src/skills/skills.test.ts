@@ -12,7 +12,6 @@ import {
   formatSkillsForSystemPrompt,
   gateSkills,
   invokeSkill,
-  parseSkillArgs,
   parseSkillFile,
   resolveTaskSkillRefs,
 } from './skills.js';
@@ -426,19 +425,6 @@ describe('role scoping and capability gating (issue #36)', () => {
 });
 
 describe('skill CLI flags (issue #36)', () => {
-  it('parses repeatable --skill with --no-skills', () => {
-    expect(
-      parseSkillArgs(['--no-skills', '--skill', 'a', '--skill', 'b']),
-    ).toEqual({ noSkills: true, skills: ['a', 'b'] });
-  });
-
-  it('rejects fetcher/install flags: skills never fetch', () => {
-    for (const flag of ['--fetch-skills', '--install-skill', '--skill-fetch']) {
-      expect(() => parseSkillArgs([flag])).toThrow(/never fetch/i);
-    }
-    expect(() => parseSkillArgs(['--skill'])).toThrow(/needs a value/);
-  });
-
   it('ships no fetcher module or flag', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const names = readdirSync(here);
@@ -695,15 +681,5 @@ describe('skill gating and invocation hardening (issue #69)', () => {
     expect(resolved.withheld).toEqual([
       { name: 'ghost', reason: "unknown skill 'ghost'" },
     ]);
-  });
-
-  it('rejects valueless --skill and ignores non-flag args', () => {
-    expect(() => parseSkillArgs(['--skill', '--no-skills'])).toThrow(
-      /needs a value/,
-    );
-    expect(parseSkillArgs(['positional', '--unknown-ok'])).toEqual({
-      noSkills: false,
-      skills: [],
-    });
   });
 });

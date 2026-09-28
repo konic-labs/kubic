@@ -3,6 +3,7 @@
 // refuses ambiguous matches instead of guessing. Atomic via tmp+rename.
 // replay:"never" — edits are effects, never re-executed on replay.
 
+import { readPreImage, replaceFile } from './atomic-file.js';
 import { sha256Hex } from './hash.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
@@ -111,12 +112,19 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: ${args.path} is ${size}B — above the ${EDIT_MAX_BYTES}B edit bound; use targeted shell tooling instead`,
       );
     }
-    let current: string;
-    try {
-      current = ctx.env.fs.readFile(args.path);
-    } catch {
+    const pre = readPreImage(ctx, args.path);
+    if (!pre.exists) {
       throw new OpError('not_found', `edit: no such file: ${args.path}`);
     }
+    if (pre.text === null) {
+      // Text replacement over a lossy decode would rewrite every invalid
+      // byte as U+FFFD — refuse instead of corrupting a binary file.
+      throw new OpError(
+        'invalid_args',
+        `edit: ${args.path} is not valid utf-8 text (binary content) — refusing to rewrite it`,
+      );
+    }
+    const current = pre.text;
     const expected = args.expectCount ?? 1;
     const found = countOccurrences(current, args.oldText);
     if (found === 0) {
@@ -130,9 +138,6 @@ export const editOperation: Operation<EditArgs, EditResult> = {
     }
     const updated = current.split(args.oldText).join(args.newText);
     const beforeHash = sha256Hex(current);
-    const tmp = `${args.path}.kubic-tmp`;
-    ctx.env.fs.writeFile(tmp, updated);
-    ctx.env.fs.rename(tmp, args.path);
     const result = {
       path: args.path,
       replacements: found,
@@ -141,26 +146,12 @@ export const editOperation: Operation<EditArgs, EditResult> = {
       bytesDelta:
         Buffer.byteLength(updated, 'utf8') - Buffer.byteLength(current, 'utf8'),
     };
-    if (ctx.journal !== undefined) {
-      try {
-        ctx.journal.append({
-          path: args.path,
-          op: 'edit',
-          before: current,
-          after: updated,
-          bytesDelta: result.bytesDelta,
-          sessionId: ctx.sessionId,
-          agentId: ctx.agentId,
-          toolCallId: ctx.toolCallId ?? null,
-          timestamp: Date.now(),
-        });
-      } catch (error) {
-        throw new OpError(
-          'journal_failed',
-          `edit applied but journal record failed: ${(error as Error).message}`,
-        );
-      }
-    }
+    replaceFile(ctx, 'edit', args.path, updated, pre, {
+      op: 'edit',
+      before: current,
+      after: updated,
+      bytesDelta: result.bytesDelta,
+    });
     return result;
   },
 };

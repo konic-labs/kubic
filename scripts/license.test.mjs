@@ -88,4 +88,68 @@ describe('LICENSE (issue #59)', () => {
     assert.match(text, /@earendil-works/);
     assert.match(text, /MIT/);
   });
+
+  it('NOTICE.md lists every direct third-party CLI dependency', () => {
+    const text = readFileSync(join(ROOT, 'NOTICE.md'), 'utf8');
+    const root = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    const direct = Object.keys(root.dependencies ?? {});
+    assert.ok(direct.length >= 6, `expected the CLI stack, saw ${direct}`);
+    for (const dep of direct) {
+      assert.ok(text.includes(`\`${dep}\``), `NOTICE.md must list ${dep}`);
+    }
+  });
+
+  it('every runtime package in the lockfile carries a permissive license', () => {
+    const lock = JSON.parse(
+      readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
+    );
+    const offenders = runtimeLicenseOffenders(lock);
+    assert.deepEqual(offenders, [], 'non-permissive runtime dependency');
+    const runtime = Object.entries(lock.packages).filter(
+      ([path, entry]) => path.includes('node_modules/') && entry.dev !== true,
+    );
+    assert.ok(
+      runtime.length >= 10,
+      `expected a runtime tree, saw ${runtime.length}`,
+    );
+  });
+
+  it('the runtime license check flags copyleft, missing, and ignores dev', () => {
+    assert.deepEqual(
+      runtimeLicenseOffenders({
+        packages: {
+          '': { license: 'MIT' },
+          'node_modules/ok': { license: 'Apache-2.0' },
+          'node_modules/gpl': { license: 'GPL-3.0' },
+          'node_modules/none': {},
+          'node_modules/devonly': { license: 'AGPL-3.0', dev: true },
+          'packages/core': { license: 'MIT' },
+        },
+      }),
+      ['node_modules/gpl: GPL-3.0', 'node_modules/none: undefined'],
+    );
+  });
 });
+
+// Licences a shipped (non-dev) dependency may carry: permissive only.
+const PERMISSIVE = new Set([
+  'MIT',
+  'ISC',
+  'Apache-2.0',
+  'BSD-2-Clause',
+  'BSD-3-Clause',
+  '0BSD',
+  'Unlicense',
+]);
+
+function runtimeLicenseOffenders(lock) {
+  const offenders = [];
+  for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+    if (!path.includes('node_modules/') || entry.dev === true) continue;
+    if (entry.link === true) continue;
+    if (!PERMISSIVE.has(entry.license)) {
+      offenders.push(`${path}: ${entry.license}`);
+    }
+  }
+  return offenders.sort();
+}

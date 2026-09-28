@@ -5,7 +5,12 @@
 // coarse cells — no token deltas (Pi keeps those; §15 routes no message
 // events). Pure: entries in, cells out, no I/O.
 import { describe, expect, it } from 'vitest';
-import { entriesToCells, TOOL_RESULT_MAX_CHARS } from './lane-cells.js';
+import {
+  entriesToCells,
+  summarizeToolArguments,
+  TOOL_DETAIL_MAX_CHARS,
+  TOOL_RESULT_MAX_CHARS,
+} from './lane-cells.js';
 
 function userEntry(id: string, seq: number, text: string) {
   return {
@@ -50,12 +55,17 @@ describe('lane entries to transcript cells (issue #88)', () => {
     ]);
     expect(cells).toEqual([
       { id: 'a1:text', kind: 'text', markdown: 'reading foo' },
-      { id: 'a1:tool:1', kind: 'tool', markdown: 'tool read' },
+      {
+        id: 'a1:tool:1',
+        kind: 'tool',
+        markdown: 'tool read',
+        toolCallId: 'tool:1',
+      },
     ]);
   });
 
-  it('renders tool results as truncated output cells', () => {
-    const long = `line one\n${'x'.repeat(500)}`;
+  it('keeps tool results multi-line, bounded, and paired to their call', () => {
+    const long = `line one\n${'x'.repeat(TOOL_RESULT_MAX_CHARS + 50)}`;
     const cells = entriesToCells([
       {
         id: 'r1',
@@ -63,19 +73,61 @@ describe('lane entries to transcript cells (issue #88)', () => {
         type: 'message',
         message: {
           role: 'toolResult',
+          toolCallId: 'call-1',
+          isError: true,
           content: [{ type: 'text', text: long }],
         },
       },
     ]);
-    // Collapsed to one line, cut at the bound, and marked with an ellipsis.
-    const oneLine = `line one ${'x'.repeat(500)}`;
+    // Lines survive (the view collapses them); the char bound still holds.
     expect(cells).toEqual([
       {
         id: 'r1:result',
         kind: 'output',
-        markdown: `${oneLine.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`,
+        markdown: `${long.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`,
+        isError: true,
+        toolCallId: 'call-1',
       },
     ]);
+  });
+
+  it('unpacks a shell JSON record into its stdout and exit code', () => {
+    const record = JSON.stringify({
+      command: 'false',
+      exitCode: 2,
+      stdout: 'a\nb\n',
+      stderr: 'boom\n',
+    });
+    const cells = entriesToCells([
+      {
+        id: 'r2',
+        seq: 1,
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          content: [{ type: 'text', text: record }],
+        },
+      },
+    ]);
+    expect(cells[0]?.markdown).toBe('a\nb\nboom\nexit 2');
+  });
+
+  it('summarizes tool call arguments by their primary field', () => {
+    const cells = entriesToCells([
+      assistantEntry('a3', 1, [
+        {
+          type: 'toolCall',
+          id: 'c1',
+          name: 'bash',
+          arguments: { command: 'ls\n-la' },
+        },
+        { type: 'toolCall', id: 'c2', name: 'x', arguments: { n: 1 } },
+      ]),
+    ]);
+    expect(cells.map((cell) => cell.detail)).toEqual(['ls -la', '{"n":1}']);
+    expect(summarizeToolArguments({ path: 'a'.repeat(200) }).length).toBe(
+      TOOL_DETAIL_MAX_CHARS,
+    );
   });
 
   it('skips entries it cannot render and keeps ids unique', () => {

@@ -56,6 +56,9 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): FakeWorld {
     out: (line: string) => {
       lines.push(line);
     },
+    err: (line: string) => {
+      lines.push(line);
+    },
     debug: (line: string) => {
       debugLines.push(line);
     },
@@ -92,7 +95,12 @@ describe('orchestrate retained-worktree status (issue #106, §44.1)', () => {
           : statusOf(path, {}),
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -111,7 +119,12 @@ describe('orchestrate retained-worktree status (issue #106, §44.1)', () => {
       worktreeStatus: (path) => statusOf(path, {}),
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -138,7 +151,12 @@ describe('orchestrate retained-worktree status (issue #106, §44.1)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     // An unreadable status is not a run failure — the run settled — but it is
@@ -152,7 +170,12 @@ describe('orchestrate retained-worktree status (issue #106, §44.1)', () => {
   it('omits the retained lines entirely when no status reader is wired', async () => {
     const world = makeWorld({ worktreeStatus: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);

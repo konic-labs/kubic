@@ -12,6 +12,7 @@ export type {
   Component,
   EditorTheme,
   Focusable,
+  MarkdownTheme,
   MouseRegionHandler,
   SelectListTheme,
   StackEntryOptions,
@@ -29,5 +30,8 @@ export {
   ScrollView,
   Text,
   TuiAltScreen,
+  truncateToWidth,
   VStack,
+  visibleWidth,
+  wrapTextWithAnsi,
 } from '@earendil-works/pi-tui';

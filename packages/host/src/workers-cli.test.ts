@@ -1,66 +1,128 @@
-// `kubic workers [--json]` (issue #42; §50, §49.3, §13): live procs
-// with age/owner/resources, startup span surfaced, --debug spawn +
-// clean-exit lines. Presentation only — rows arrive injected.
+// `kubic workers [--json] [--debug]` (issue #42; §50, §49.3, §13): live
+// procs with age/owner/resources, startup span surfaced, --debug spawn +
+// clean-exit lines. Presentation only — rows arrive injected, and the
+// options arrive already parsed (argv, `--help` and unknown flags are the
+// commander program's job: apps/kubic/src/commands/orchestrator.test.ts).
 import { describe, expect, it } from 'vitest';
-import { runWorkersCommand, type WorkersCommandDeps } from './workers-cli.js';
+import { createCliTheme } from '../../core/src/cli/theme.js';
+import {
+  runWorkersCommand,
+  type WorkerListRow,
+  type WorkersCommandDeps,
+} from './workers-cli.js';
 
-function deps(lines: string[]): WorkersCommandDeps {
+const ROW: WorkerListRow = {
+  workerId: 'w-1',
+  sessionId: 's-1',
+  generation: 2,
+  status: 'running',
+  startedAtMs: 90_000,
+  owner: 'parent-session',
+  resources: { skills: ['review'] },
+  pid: 4242,
+  startupMs: 40,
+};
+
+function deps(
+  lines: string[],
+  rows: WorkerListRow[] = [ROW],
+  errs: string[] = [],
+): WorkersCommandDeps {
   return {
-    list: () => [
+    list: () => rows,
+    now: () => 100_000,
+    out: (line: string) => lines.push(line),
+    err: (line: string) => errs.push(line),
+  };
+}
+
+describe('kubic workers (issue #42)', () => {
+  it('shows live procs with age/owner/resources as an aligned table', async () => {
+    const lines: string[] = [];
+    const code = await runWorkersCommand({}, deps(lines));
+    expect(code).toBe(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.split('\n')).toEqual([
+      'WORKER  STATUS   GEN  AGE  OWNER            PID  STARTUP  RESOURCES',
+      'w-1     running    2  10s  parent-session  4242     40ms  skills=review',
+    ]);
+  });
+
+  it('renders placeholders for a row with no pid, startup span or resources', async () => {
+    const lines: string[] = [];
+    const bare: WorkerListRow = {
+      workerId: 'w-2',
+      sessionId: 's-1',
+      generation: 1,
+      status: 'crashed',
+      startedAtMs: 100_000 - 3 * 60 * 60 * 1000,
+      owner: 'o',
+    };
+    await runWorkersCommand({}, deps(lines, [bare]));
+    expect(lines[0]?.split('\n')[1]).toBe(
+      'w-2     crashed    1  3h   o        -        -  -',
+    );
+  });
+
+  it('colours the status through the theme and boxes the table when fancy', async () => {
+    const lines: string[] = [];
+    const theme = createCliTheme('16');
+    await runWorkersCommand({}, { ...deps(lines), theme, fancy: true });
+    const text = lines.join('\n');
+    expect(text).toContain('┌');
+    expect(text).toContain(theme.success('running'));
+  });
+
+  it('prints --json rows carrying the §13 status and startup span ms', async () => {
+    const lines: string[] = [];
+    const code = await runWorkersCommand({ json: true }, deps(lines));
+    expect(code).toBe(0);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '')).toEqual([
       {
         workerId: 'w-1',
         sessionId: 's-1',
         generation: 2,
         status: 'running',
-        startedAtMs: 90_000,
+        ageMs: 10_000,
         owner: 'parent-session',
         resources: { skills: ['review'] },
         pid: 4242,
         startupMs: 40,
       },
-    ],
-    now: () => 100_000,
-    out: (line: string) => lines.push(line),
-  };
-}
-
-describe('kubic workers (issue #42)', () => {
-  it('shows live procs with age/owner/resources', async () => {
-    const lines: string[] = [];
-    const code = await runWorkersCommand([], deps(lines));
-    expect(code).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toMatch(/w-1/);
-    expect(text).toMatch(/running/);
-    expect(text).toMatch(/10s/);
-    expect(text).toMatch(/parent-session/);
-    expect(text).toMatch(/review/);
-    // The §49.3 startup span is surfaced on the text row too.
-    expect(text).toMatch(/startup=40ms/);
+    ]);
+    // Two-space indented: the one `formatJson` serializer.
+    expect(lines[0]).toContain('[\n  {\n    "workerId": "w-1"');
   });
 
-  it('prints --json rows carrying the §13 status and startup span ms', async () => {
+  it('an empty record prints nothing on stdout (`[]` under --json) and says so on stderr', async () => {
     const lines: string[] = [];
-    const code = await runWorkersCommand(['--json'], deps(lines));
-    expect(code).toBe(0);
-    const rows = JSON.parse(lines.join('\n')) as Array<{
-      status: string;
-      startupMs: number;
-      generation: number;
-    }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe('running');
-    expect(rows[0]?.startupMs).toBe(40);
-    expect(rows[0]?.generation).toBe(2);
+    const errs: string[] = [];
+    expect(await runWorkersCommand({}, deps(lines, [], errs))).toBe(0);
+    expect(lines).toEqual([]);
+    expect(errs).toEqual([
+      'info: no orchestrator workers recorded in this repo',
+    ]);
+
+    const json: string[] = [];
+    const jsonErrs: string[] = [];
+    expect(
+      await runWorkersCommand({ json: true }, deps(json, [], jsonErrs)),
+    ).toBe(0);
+    expect(json).toEqual(['[]']);
+    expect(jsonErrs).toEqual([]);
   });
 
   it('--debug emits spawn and clean-exit lines per §50', async () => {
     const lines: string[] = [];
     const debug: string[] = [];
-    const code = await runWorkersCommand(['--debug'], {
-      ...deps(lines),
-      debug: (line: string) => debug.push(line),
-    });
+    const code = await runWorkersCommand(
+      { debug: true },
+      {
+        ...deps(lines),
+        debug: (line: string) => debug.push(line),
+      },
+    );
     expect(code).toBe(0);
     expect(debug).toEqual([
       '[worker] spawn id=w-1 session=s-1 gen=2 pid=4242 startup=40ms',
@@ -68,25 +130,12 @@ describe('kubic workers (issue #42)', () => {
     ]);
   });
 
-  it('rejects unknown flags with usage', async () => {
-    const lines: string[] = [];
-    const code = await runWorkersCommand(['--nope'], deps(lines));
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toMatch(/usage/);
-  });
-
-  // Issue #127: `workers` parses through the shared flag parser now.
-  it('refuses a stray operand with usage', async () => {
-    const lines: string[] = [];
-    const code = await runWorkersCommand(['extra'], deps(lines));
-    expect(code).toBe(1);
-    expect(lines.join('\n')).toMatch(/usage: kubic workers/);
-  });
-
-  it('accepts the -- end-of-flags terminator like every migrated command', async () => {
-    const lines: string[] = [];
-    const code = await runWorkersCommand(['--'], deps(lines));
-    expect(code).toBe(0);
-    expect(lines.join('\n')).toMatch(/w-1/);
+  it('without --debug the debug channel stays silent', async () => {
+    const debug: string[] = [];
+    await runWorkersCommand(
+      {},
+      { ...deps([]), debug: (line: string) => debug.push(line) },
+    );
+    expect(debug).toEqual([]);
   });
 });

@@ -1,0 +1,258 @@
+// The durable §60 audit ledger: ONE record format (OrgAuditRecord, the 14
+// section-60 fields) in ONE append-only JSONL file per repo, written through
+// emitAudit's validation and read back by `kubic audit`.
+//
+// Location: <repo>/.kubic/orchestrator/approvals/audit.jsonl — the path the
+// orchestrator's approval layer already owned, and one the shipped runtime
+// ignore rules (`.kubic/orchestrator/`) keep out of the user's commit path.
+// Solo approval decisions append to the same ledger (same file, same shape),
+// so `kubic audit --mode solo|orchestrator` slices one trail.
+//
+// File access goes through the exec FileBridge (I/O confinement, §9).
+
+import { dirname, join, resolve } from 'node:path';
+import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import type { OrchestratorApprovalRequest } from '../orchestrator/approvals/request.js';
+import type { OrchestratorVerdict } from '../orchestrator/approvals/routing.js';
+import {
+  type AuditInput,
+  type AuditSink,
+  emitAudit,
+  type OrgAuditRecord,
+} from './audit.js';
+import { redactSecretShapes } from './secret-shapes.js';
+
+export const AUDIT_LEDGER_FILE = 'audit.jsonl';
+
+// The ledger's directory for a repo root (the orchestrator approvals dir).
+export function auditLedgerDir(repoRoot: string): string {
+  return join(repoRoot, '.kubic', 'orchestrator', 'approvals');
+}
+
+// The ledger dir for a working directory: the nearest ancestor holding a
+// `.git` entry (a directory, or the `.git` file of a linked worktree) — the
+// same root `git rev-parse --show-toplevel` names, which is where
+// `kubic orchestrate` writes. Outside a repository, the directory itself.
+export function auditLedgerDirFor(cwd: string): string {
+  const bridge = createNodeFileBridge('/');
+  let dir = resolve(cwd);
+  for (;;) {
+    try {
+      if (bridge.exists(join(dir, '.git'))) return auditLedgerDir(dir);
+    } catch {
+      // Unreadable ancestor: keep walking.
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return auditLedgerDir(resolve(cwd));
+    dir = parent;
+  }
+}
+
+// A synchronous file sink: one validated record per line. appendAudit
+// refuses async sinks, so the append completes before emitAudit returns.
+export function createLedgerSink(dir: string): AuditSink {
+  const bridge = createNodeFileBridge(dir);
+  return {
+    name: `file:${join(dir, AUDIT_LEDGER_FILE)}`,
+    kind: 'file',
+    write: (record: OrgAuditRecord): void => {
+      if (!bridge.exists('.')) bridge.createDir('.', true);
+      const line = `${JSON.stringify(record)}\n`;
+      // Durable append (fsync) where the bridge offers it — the journal's
+      // own primitive — so a crash cannot lose an acknowledged record.
+      if (bridge.appendDurably !== undefined) {
+        bridge.appendDurably(AUDIT_LEDGER_FILE, line);
+      } else {
+        bridge.appendFile(AUDIT_LEDGER_FILE, line);
+      }
+    },
+  };
+}
+
+function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.who === 'string' &&
+    typeof record.what === 'string' &&
+    typeof record.when === 'string' &&
+    (record.mode === 'solo' || record.mode === 'orchestrator') &&
+    typeof record.posture === 'string' &&
+    (record.result === 'ok' ||
+      record.result === 'deny' ||
+      record.result === 'error')
+  );
+}
+
+// Every §60 record in the ledger, oldest first. A missing ledger is an empty
+// trail; a torn or foreign line (e.g. a pre-unification router event) is
+// skipped, never guessed into a record.
+export function readAuditLedger(dir: string): OrgAuditRecord[] {
+  const bridge = createNodeFileBridge(dir);
+  let text: string;
+  try {
+    if (!bridge.exists(AUDIT_LEDGER_FILE)) return [];
+    text = bridge.readTextFile(AUDIT_LEDGER_FILE);
+  } catch {
+    return [];
+  }
+  const records: OrgAuditRecord[] = [];
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (isOrgAuditRecord(parsed)) records.push(parsed);
+    } catch {
+      // Torn line: skipped.
+    }
+  }
+  return records;
+}
+
+// Placeholder for a §60 field the recording site genuinely does not know.
+// The record stays honest: it says "unknown", it never invents a value.
+const UNKNOWN = 'unknown';
+
+// No network, no credential: an approval decision is not a network action.
+const NO_NETWORK = {
+  host: 'none',
+  port: 0,
+  decision: 'deny',
+  bytes: 0,
+} as const;
+
+function parseModel(model: string | undefined): {
+  provider: string;
+  id: string;
+} {
+  if (model === undefined || model === '') {
+    return { provider: UNKNOWN, id: UNKNOWN };
+  }
+  const slash = model.indexOf('/');
+  return slash > 0
+    ? { provider: model.slice(0, slash), id: model.slice(slash + 1) }
+    : { provider: UNKNOWN, id: model };
+}
+
+function verdictFields(verdict: OrchestratorVerdict): {
+  approval: string;
+  result: 'ok' | 'deny';
+  reason: string;
+} {
+  return verdict.approved
+    ? {
+        approval: `approved by ${verdict.by}`,
+        result: 'ok',
+        reason: 'approved',
+      }
+    : {
+        approval: 'denied',
+        result: 'deny',
+        reason: verdict.reason || 'denied',
+      };
+}
+
+// §60 record for an orchestrator worker's approval decision.
+export function orchestratorDecisionAudit(
+  request: OrchestratorApprovalRequest,
+  verdict: OrchestratorVerdict,
+  options: { posture: string; pid?: number; generation?: number },
+): AuditInput {
+  const { approval, result, reason } = verdictFields(verdict);
+  return {
+    who: `agent:${request.agentId || UNKNOWN}`,
+    what: `tool:${request.toolName || UNKNOWN}`,
+    agent: {
+      session: request.sessionId || UNKNOWN,
+      role: request.role || UNKNOWN,
+      ...(request.provenance?.parentSessionId
+        ? { parent: request.provenance.parentSessionId }
+        : {}),
+    },
+    model: { ...parseModel(request.provenance?.model), thinking: UNKNOWN },
+    worker: {
+      pid: options.pid ?? 0,
+      generation: options.generation ?? 0,
+      role: request.role || UNKNOWN,
+    },
+    workspace: { path: request.worktree || UNKNOWN, base: UNKNOWN },
+    permission: { permission: `trigger:${request.trigger}`, approval },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: options.posture,
+    result,
+    reason,
+  };
+}
+
+// §60 record for a solo approval decision (the in-process lane's ask).
+export interface SoloDecisionInput {
+  sessionId: string;
+  toolName: string;
+  trigger: string;
+  workspace: string;
+  model?: string;
+  thinking?: string;
+  approved: boolean;
+  by?: string;
+  reason?: string;
+  posture: string;
+}
+
+export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
+  const { approval, result, reason } = verdictFields(
+    input.approved
+      ? { approved: true, by: input.by ?? 'user' }
+      : { approved: false, reason: input.reason ?? 'denied' },
+  );
+  return {
+    who: 'agent:root',
+    what: `tool:${input.toolName || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'root' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: { permission: `trigger:${input.trigger || UNKNOWN}`, approval },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'solo',
+    posture: input.posture,
+    result,
+    reason,
+  };
+}
+
+function redactLeaves(value: unknown): unknown {
+  if (typeof value === 'string') return redactSecretShapes(value);
+  if (Array.isArray(value)) return value.map(redactLeaves);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, leaf]) => [key, redactLeaves(leaf)]),
+    );
+  }
+  return value;
+}
+
+function redactInput(input: AuditInput): AuditInput {
+  return redactLeaves(input) as AuditInput;
+}
+
+// Emit one record to the repo ledger. An audit failure never decides the
+// action (the decision already happened); it is reported on `onError`.
+export function appendToLedger(
+  dir: string,
+  input: AuditInput,
+  onError: (message: string) => void = () => undefined,
+): OrgAuditRecord | undefined {
+  try {
+    // emitAudit refuses a record carrying secret-shaped material. A decision
+    // must not vanish because a free-text field (a deny reason echoing a
+    // command) looked like a secret, so every string leaf is redacted first:
+    // the record survives, the material never reaches the ledger.
+    return emitAudit([createLedgerSink(dir)], redactInput(input));
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
+    return undefined;
+  }
+}

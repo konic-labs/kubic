@@ -16,6 +16,7 @@
 
 import { spawn } from 'node:child_process';
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
@@ -49,6 +50,8 @@ export interface StatInfo {
   isFile: boolean;
   isDirectory: boolean;
   size: number;
+  /** Permission bits (`st_mode & 0o7777`); absent on seams without modes. */
+  mode?: number;
 }
 
 export interface FileSystem {
@@ -64,6 +67,12 @@ export interface FileSystem {
    * windowing is bounded.
    */
   readFileRange?(path: string, start: number, end: number): Uint8Array;
+  /**
+   * Set permission bits. Optional (test doubles have no modes): tmp+rename
+   * writers copy the replaced file's mode onto the tmp, so an overwrite
+   * never strips a script's exec bit or widens a 0600 secret.
+   */
+  chmod?(path: string, mode: number): void;
 }
 
 export interface ShellResult {
@@ -102,6 +111,13 @@ export interface SpawnOptions {
    * a chatty child (`yes`, a verbose build) must not OOM the run.
    */
   maxOutputBytes?: number;
+  /**
+   * Grace period between kill()'s SIGTERM and the SIGKILL escalation, in
+   * milliseconds. A group that traps or ignores SIGTERM must still die —
+   * kill() is the abort/timeout path, and without escalation wait() never
+   * settles. Default: KILL_GRACE_MS.
+   */
+  killGraceMs?: number;
 }
 
 export interface ProcessHandle {
@@ -165,7 +181,12 @@ class NodeFileSystem implements FileSystem {
       isFile: st.isFile(),
       isDirectory: st.isDirectory(),
       size: st.size,
+      mode: st.mode & 0o7777,
     };
+  }
+
+  chmod(path: string, mode: number): void {
+    chmodSync(confine(this.cwd, path), mode);
   }
 
   // Range read (issue #122): same openSync/readSync/closeSync + confine()
@@ -244,6 +265,87 @@ export class MemoryCheckpointStore implements CheckpointStore {
 // cap bounds, so the run can never hold a child's whole output in memory.
 export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 
+// SIGTERM → SIGKILL escalation window for kill(): long enough for a
+// well-behaved child to flush and exit, short enough that an abort never
+// hangs on a child that ignores SIGTERM.
+export const KILL_GRACE_MS = 2000;
+
+// §3.8 "never inherit ambient authority": every child the exec seam spawns
+// (the bash tool, host git calls) starts from this allowlist, never from
+// kubic's whole environment — a provider API key in the parent must not be
+// one `echo $X` away from the model. Aligned with the worker launch
+// allowlist (packages/worker/src/lifecycle/env.ts), plus the POSIX session
+// basics a shell tool needs. No SSH_AUTH_SOCK / credential helpers: those
+// are authority, not environment.
+export const TOOL_ENV_ALLOWLIST: readonly string[] = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'TMPDIR',
+  'TZ',
+  'CI',
+  'NO_COLOR',
+  'CLICOLOR',
+  // Network reachability and trust roots (not credentials): tools behind
+  // a corporate proxy or custom CA must keep working. Both spellings of
+  // the proxy vars are conventional.
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  // Windows process basics (keys compared case-insensitively there).
+  'SYSTEMROOT',
+  'COMSPEC',
+  'PATHEXT',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'WINDIR',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+];
+
+const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
+
+const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
+
+function looksSecret(upper: string): boolean {
+  return SECRET_SUFFIXES.some(
+    (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
+  );
+}
+
+// Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
+// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY).
+export function toolSpawnEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined) continue;
+    const upper = key.toUpperCase();
+    const allowed =
+      (process.platform === 'win32'
+        ? ALLOWED_UPPER.has(upper)
+        : TOOL_ENV_ALLOWLIST.includes(key)) ||
+      key.startsWith('LC_') ||
+      key.startsWith('XDG_');
+    if (allowed && !looksSecret(upper)) out[key] = value;
+  }
+  return out;
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -257,6 +359,8 @@ class NodeShell implements Shell {
     const child = spawn(cmd, args, {
       cwd: this.cwd,
       detached: process.platform !== 'win32',
+      // §3.8: an explicit allowlisted env, never the inherited one.
+      env: toolSpawnEnv(),
     });
     // Issue #121: capped accumulation. The tail is kept — endings carry
     // the error — and the final result names exactly what was dropped.
@@ -379,17 +483,37 @@ class NodeShell implements Shell {
       pid: child.pid,
       wait: () => done,
       kill: () => {
-        if (child.pid === undefined) return;
-        try {
-          if (process.platform !== 'win32') process.kill(-child.pid);
-          else child.kill();
-        } catch {
+        const pid = child.pid;
+        if (pid === undefined) return;
+        const signal = (sig: NodeJS.Signals): void => {
           try {
-            child.kill();
+            if (process.platform !== 'win32') process.kill(-pid, sig);
+            else child.kill(sig);
           } catch {
-            // Already exited — nothing to kill.
+            try {
+              child.kill(sig);
+            } catch {
+              // Already exited — nothing to kill.
+            }
           }
-        }
+        };
+        signal('SIGTERM');
+        // Escalate: a group that traps or ignores SIGTERM would otherwise
+        // keep wait() pending forever. The timer is unref'd so it never
+        // holds the event loop open, and it is a no-op once settled.
+        // The group, not just the leader: a leader that exits on SIGTERM
+        // settles the handle while group members that ignore it live on,
+        // so the group SIGKILL is unconditional (ESRCH = group gone).
+        const timer = setTimeout(() => {
+          if (process.platform !== 'win32') {
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              // ESRCH: the whole group already exited.
+            }
+          } else if (!settled) signal('SIGKILL');
+        }, options.killGraceMs ?? KILL_GRACE_MS);
+        timer.unref();
       },
     };
   }

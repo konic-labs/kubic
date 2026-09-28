@@ -11,6 +11,19 @@
 // by dispatch.test.ts).
 
 import {
+  type CliLogger,
+  createLineLogger,
+  debugEnabled,
+} from '../../../packages/core/src/cli/logger.js';
+import { outputModeFor } from '../../../packages/core/src/cli/output.js';
+import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
+import {
+  type CliTheme,
+  createCliTheme,
+  detectColorLevel,
+  themeFor,
+} from '../../../packages/core/src/cli/theme.js';
+import {
   runBenchmarkCommand,
   runEvalCommand,
 } from '../../../packages/eval/src/cli.js';
@@ -22,6 +35,10 @@ import { installedPolicyPosture } from '../../../packages/host/src/approvals.js'
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import type { SessionOverlapProbe } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
+import {
+  FAUX_NOTICE,
+  fauxProviderActive,
+} from '../../../packages/host/src/faux-provider.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
@@ -42,8 +59,14 @@ import {
   loadProdAuditSecrets,
   runAuditCommand,
 } from '../../../packages/host/src/policy/audit-cli.js';
-import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
-import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
+import {
+  auditLedgerDirFor,
+  readAuditLedger,
+} from '../../../packages/host/src/policy/audit-ledger.js';
+import {
+  policyFromInstalledAllowlist,
+  runPolicyCommand,
+} from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
@@ -99,46 +122,158 @@ async function refuseLiveSuite(): Promise<never> {
   throw new Error(LIVE_SUITE_REFUSAL);
 }
 
+// The presentation seams of one solo-command invocation, derived once from
+// the real streams: colour for stdout data (none off a TTY, under NO_COLOR,
+// or for --json), the stderr diagnostics logger (debug lines under
+// KUBIC_DEBUG=1), box-drawn tables and prompts only on an interactive
+// terminal. `--json` keeps stdout to exactly one document.
+function presentation(
+  out: (line: string) => void,
+  diagnostics: (line: string) => void,
+  json: boolean,
+): {
+  out: (line: string) => void;
+  logger: CliLogger;
+  theme: ReturnType<typeof createCliTheme>;
+  fancy: boolean;
+  interactive: boolean;
+} {
+  const stdoutTTY = process.stdout.isTTY === true;
+  const stdinTTY = process.stdin.isTTY === true;
+  const theme = createCliTheme(
+    json ? 'none' : detectColorLevel(process.env, stdoutTTY),
+  );
+  const logTheme = json ? PLAIN : stderrTheme();
+  const mode = outputModeFor({
+    json,
+    stdinTTY,
+    stdoutTTY,
+    colorEnabled: theme.enabled,
+  });
+  return {
+    out,
+    logger: createLineLogger(diagnostics, {
+      theme: logTheme,
+      debug: debugEnabled({}),
+    }),
+    theme,
+    fancy: mode.fancy,
+    interactive: mode.interactive,
+  };
+}
+
+// The report colours for stdout: NO_COLOR / FORCE_COLOR / TERM=dumb and a
+// non-TTY stdout all turn them off (the handlers also drop them under
+// --json).
+function stdoutTheme(): CliTheme {
+  return themeFor(process.stdout);
+}
+
+// The diagnostics colours for stderr, decided from stderr's own TTY state
+// (the logger contract: colour only on a TTY) — never from stdout's.
+function stderrTheme(): CliTheme {
+  return themeFor(process.stderr);
+}
+
+const PLAIN = createCliTheme('none');
+
+// Report colours and table style for a migrated command, decided once from
+// the real stdout: colour only on a TTY that allows it (NO_COLOR,
+// FORCE_COLOR, TERM=dumb honoured), box-drawn tables only there too, and
+// neither under `--json`.
+function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
+  const theme = json ? PLAIN : themeFor(process.stdout);
+  const mode = outputModeFor({
+    json,
+    stdinTTY: process.stdin.isTTY === true,
+    stdoutTTY: process.stdout.isTTY === true,
+    colorEnabled: theme.enabled,
+  });
+  return { theme, fancy: mode.fancy };
+}
+
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
+  // The analysis handlers' channels: the report on stdout, diagnostics on
+  // stderr (the `debug` channel), report colour and box drawing from the
+  // real stdout, diagnostics colour from the real stderr (each off on a
+  // pipe and under NO_COLOR; each handler also drops them under --json).
+  const report = () => {
+    const theme = themeFor(process.stdout);
+    return {
+      out,
+      err: debug,
+      theme,
+      errTheme: stderrTheme(),
+      fancy: outputModeFor({
+        json: false,
+        stdinTTY: process.stdin.isTTY === true,
+        stdoutTTY: process.stdout.isTTY === true,
+        colorEnabled: theme.enabled,
+      }).fancy,
+    };
+  };
   return {
-    sessions: (rest, cliConfig) => {
+    sessions: (invocation, cliConfig) => {
       // Issue #119: `sessions prune`'s default keep-window comes from config
       // when it sets one; with none, prune demands an explicit --keep-days
       // rather than inventing a window.
       const retentionDays = sessionRetentionDays(cliConfig);
-      return runSessionsCommand([...rest], {
+      const view = presentation(
         out,
+        debug,
+        invocation.command === 'list' && invocation.json === true,
+      );
+      return runSessionsCommand(invocation, {
+        ...view,
         ...(retentionDays === undefined ? {} : { retentionDays }),
+        // A prune with neither --yes nor --dry-run asks on a TTY; off a
+        // TTY it stays the documented dry run.
+        ...(view.interactive
+          ? {
+              confirm: (message: string) =>
+                promptConfirm({
+                  message,
+                  interactive: true,
+                  nonInteractive: false,
+                }),
+            }
+          : {}),
       });
     },
-    git: (rest) =>
-      runGitCommand([...rest], {
+    git: (request) =>
+      runGitCommand(request, {
         env: new NodeExecutionEnv(process.cwd()),
         out,
+        ...reportStyle(request.json === true),
       }),
-    journal: (args, cliConfig) => {
+    journal: (request, cliConfig) => {
       // Issue #119: the same `session.retentionDays` projection `sessions
       // prune` reads — `log` self-heals aged entries of a session journal at
       // read time under it. Unset (or a refused config) leaves the read path
       // without a window: it then writes nothing.
       const retentionDays = sessionRetentionDays(cliConfig);
-      return runJournalCommand([...args], {
+      return runJournalCommand(request, {
         out,
+        err: debug,
+        errTheme: request.json === true ? PLAIN : stderrTheme(),
+        ...reportStyle(request.json === true),
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },
-    models: (rest) => {
+    models: (options) => {
+      const view = presentation(out, debug, options.json === true);
       const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) out(assembled.note);
-      return runModelsCommand([...rest], {
+      if (assembled.note !== null) view.logger.info(assembled.note);
+      if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
+      return runModelsCommand(options, {
+        ...view,
         models: assembled.models,
-        out,
       });
     },
-    run: (rest, cliConfig) =>
-      runRunCommand([...rest], {
-        out,
+    run: (options, cliConfig) =>
+      runRunCommand(options, {
+        ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, {
             model: runtimeModelPin(cliConfig),
@@ -149,7 +284,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             ...runtimeLaneDeps(cliConfig),
           }),
       }),
-    tui: async (rest, cliConfig) => {
+    tui: async (options, cliConfig) => {
       // Extension startup (issue #93): the TUI lane loads the first-party
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
@@ -158,9 +293,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         receipt: debug,
       });
       return runTuiCommand(
-        [...rest],
+        options,
         tuiDepsWithDefaults({
           out,
+          // `error:` lines (unknown session, no models) are diagnostics.
+          err: debug,
           // Same policy install as `kubic run` (issue #86; #90 classes): the
           // TUI drives the same solo lane, so a config that names classes
           // must reach it here too.
@@ -179,12 +316,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         }),
       );
     },
-    doctor: async (rest, cliConfig) => {
+    doctor: async (options, cliConfig) => {
       // Default probes are faux-only: providers are listed (never dialed),
       // deps check the live node runtime, policy falls back to host
       // defaults until config-sourced policy lands.
+      const view = presentation(out, debug, options.json === true);
       const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) out(assembled.note);
+      if (assembled.note !== null) view.logger.info(assembled.note);
+      if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       const [major = 0, minor = 0] = process.versions.node
         .split('.')
         .map((part) => Number(part));
@@ -212,8 +351,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       } catch {
         sessionOverlapProbe = undefined;
       }
-      return runDoctorCommand([...rest], {
-        out,
+      return runDoctorCommand(options, {
+        ...view,
         probeProviders: () =>
           assembled.models.getProviders().map((provider) => ({
             id: provider.id,
@@ -275,7 +414,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           : { probeSessionOverlap: sessionOverlapProbe }),
       });
     },
-    orchestrate: async (rest, cliConfig) => {
+    orchestrate: async (options, cliConfig) => {
       // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager
       // lane, worker lifecycle, merge queue, approvals, worktrees) executes
       // for real. Solo stays the default — `run` never enters this path.
@@ -284,9 +423,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // the policy the manager holds — the same config load this process
       // already consumed, never a second default.
       return runOrchestrateCommand(
-        [...rest],
+        options,
         await orchestrateDepsWithDefaults({
           out,
+          // Diagnostics (`error: … code=…`) share the stderr channel.
+          err: debug,
+          theme: stdoutTheme(),
+          errTheme: stderrTheme(),
           debug,
           ...(cliConfig.runtime === undefined
             ? {}
@@ -300,110 +443,138 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         }),
       );
     },
-    clean: (rest, cliConfig) =>
+    clean: (options, cliConfig) =>
       // Explicit-only disposer for retained orchestrator worktrees/branches
       // (issue #92, §42.4/§44.1/§78): the library path owns planning and
       // git. Issue #133: the spawned set's parent comes from the same
       // config load, so `kubic clean` finds what orchestrate created.
       runCleanCommand(
-        [...rest],
+        options,
         cleanDepsWithDefaults({
           env: new NodeExecutionEnv(process.cwd()),
           out,
+          err: debug,
+          theme: stdoutTheme(),
+          errTheme: stderrTheme(),
           ...(cliConfig.runtime?.orchestrator.root === undefined
             ? {}
             : { worktreeRoot: cliConfig.runtime.orchestrator.root }),
         }),
       ),
-    cost: (rest) =>
+    cost: (options) =>
       // Per-agent cost over real session stats (one aggregate row per
       // session); the task total is Σ(rows) by construction (issue #79).
-      runCostCommand([...rest], {
+      runCostCommand(options, {
         loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
-        out,
+        ...report(),
       }),
-    perf: (rest) =>
-      // Perf-budget evaluation over argv samples (faux-only, issue #79).
-      runPerfCommand([...rest], { out }),
-    policy: (rest) =>
-      // Routing offer over the enterprise default (deny-by-default): the
-      // enterprise policy engine is its own surface — the config-sourced
-      // APPROVAL policy (route/autoApprove) is reported by `kubic config`.
-      runPolicyCommand([...rest], {
-        resolvePolicy: () => resolveEffectivePolicy([]).policy,
-        out,
+    perf: (options) =>
+      // Perf-budget evaluation over measured or supplied samples (#79, #98).
+      runPerfCommand(options, report()),
+    policy: (options, cliConfig) =>
+      // The tool policy a run from THIS cwd actually installs — the same
+      // derivation (host/approvals.installedPolicyPosture) over the same
+      // config load `kubic run` boots with and `kubic doctor` reports — so
+      // the three surfaces cannot disagree. Deny-by-default still holds:
+      // a tool outside the installed allowlist answers `deny`.
+      runPolicyCommand(options, {
+        resolvePolicy: () =>
+          policyFromInstalledAllowlist(
+            installedPolicyPosture({
+              workspace: process.cwd(),
+              ...installedPolicyDeps(cliConfig),
+            }).allowlist,
+          ),
+        ...report(),
       }),
-    config: (rest, cliConfig) =>
+    config: (options, cliConfig) =>
       // Effective configuration with the layer each value came from (issue
       // #90): human lines, or --json for machines. Fails closed on a broken
       // config instead of printing defaults.
-      runConfigCommand([...rest], {
+      runConfigCommand(options, {
+        ...presentation(out, debug, options.json === true),
         load: kubicConfigLoader(cliConfig),
-        out,
       }),
-    audit: (rest) =>
-      // Audit query over the record source (no audit persistence is wired
-      // yet, so the one-shot CLI reads zero rows — filters and the
-      // sentinel-only redaction are live, issue #79). loadSecrets is the
-      // prod inventory hook (empty until persistence lands): wired
-      // end-to-end now so persistence cannot forget it — without it a
-      // non-shaped listed value would echo unredacted through --json.
-      runAuditCommand([...rest], {
-        loadRecords: () => [],
+    audit: (options) =>
+      // Audit query over the repo-root §60 ledger (one OrgAuditRecord per
+      // line, <repo>/.kubic/orchestrator/approvals/audit.jsonl): the
+      // orchestrator approval layer writes every decision there through
+      // emitAudit, and solo decisions share the file and the format.
+      // loadSecrets is the prod inventory hook: every printed record is
+      // redacted against it, so a listed value never echoes via --json.
+      runAuditCommand(options, {
+        loadRecords: () => readAuditLedger(auditLedgerDirFor(process.cwd())),
         loadSecrets: loadProdAuditSecrets,
-        out,
+        ...report(),
       }),
-    workers: async (rest) => {
+    workers: async (options) => {
       // Issue #94: the rows come from the SHARED durable record the
       // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`).
       // The in-process WorkerRegistry is the orchestrator run's own view —
       // a fresh CLI process's registry is always empty, so a registry
       // branch here could only ever be dead (issue #94's finding, finished
-      // in #132): the CLI reads the durable record directly. The §78 usage
-      // remap (1 → 2) lives in the dispatch, after this runner returns.
-      return runWorkersCommand([...rest], {
-        list: () => workersListFromRepo(process.cwd()),
-        out,
-        debug,
+      // in #132): the CLI reads the durable record directly. The table is
+      // box-drawn only on an interactive, coloured stdout; `--debug` (or
+      // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
+      const theme = stdoutTheme();
+      const mode = outputModeFor({
+        json: options.json === true,
+        stdinTTY: process.stdin.isTTY === true,
+        stdoutTTY: process.stdout.isTTY === true,
+        colorEnabled: theme.enabled,
       });
+      return runWorkersCommand(
+        { ...options, debug: debugEnabled(options) },
+        {
+          list: () => workersListFromRepo(process.cwd()),
+          out,
+          err: debug,
+          debug,
+          theme,
+          errTheme: stderrTheme(),
+          fancy: mode.fancy,
+        },
+      );
     },
-    eval: (rest) =>
+    eval: (options) =>
       // Analysis surfaces (issue #78): the eval/benchmark presentation
       // layer is library-owned (packages/eval/src/cli.ts, read-only); the
       // root only supplies prod deps. Worktree cleanliness is a real git
       // probe (packages/exec).
-      runEvalCommand([...rest], {
+      runEvalCommand(options, {
         runSuite: refuseLiveSuite,
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
-        out,
+        ...report(),
       }),
-    benchmark: (rest) =>
-      runBenchmarkCommand([...rest], {
+    benchmark: (options) =>
+      runBenchmarkCommand(options, {
         runSuite: refuseLiveSuite,
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
-        out,
+        ...report(),
       }),
-    replay: (rest, cliConfig) =>
+    replay: (options, cliConfig) =>
       // Replay at a declared tier (issue #78): recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
       runReplayCommand(
-        [...rest],
+        options,
         {
-          out,
+          ...report(),
           run: (request, runtime) => runProdReplay(request, runtime),
         },
         // Issue #114: the re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
         runtimeRunDeps(cliConfig),
       ),
-    export: (rest) =>
+    export: (options) =>
       // Trajectory inspection + RL dataset export (issue #78): reads
       // trajectory export file(s) through the exec FileBridge.
-      runTrajectoryExportCommand([...rest], {
+      runTrajectoryExportCommand(options, {
+        // Relative to the user's working directory (a '/'-rooted bridge
+        // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
-          createNodeFileBridge('/').readTextFile(path),
-        out,
+          createNodeFileBridge(process.cwd()).readTextFile(path),
+        ...report(),
       }),
   };
 }

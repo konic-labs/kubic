@@ -102,7 +102,7 @@ export async function runGitCommand(
         return EXIT_OK;
       }
       deps.out(
-        `branch ${theme.bold(s.branch)}${s.ahead > 0 ? ` (ahead ${s.ahead})` : ''}${s.behind > 0 ? ` (behind ${s.behind})` : ''}`,
+        `branch ${theme.bold(s.branch ?? '(detached HEAD)')}${s.ahead > 0 ? ` (ahead ${s.ahead})` : ''}${s.behind > 0 ? ` (behind ${s.behind})` : ''}`,
       );
       for (const p of s.staged) deps.out(`${theme.success('staged:')} ${p}`);
       for (const p of s.unstaged) {

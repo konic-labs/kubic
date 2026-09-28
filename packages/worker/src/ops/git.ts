@@ -41,49 +41,103 @@ export function notARepoError(op: string, stderr: string): OpError {
   );
 }
 
+export interface GitRename {
+  /** The file's current (new) path. */
+  path: string;
+  /** The path it came from; omitted when git records no original. */
+  oldPath?: string;
+  /** True when the rename/copy is recorded in the index (staged). */
+  staged: boolean;
+}
+
 export interface GitStatus {
-  branch: string;
+  /** Current branch, or null when HEAD is detached. */
+  branch: string | null;
   ahead: number;
   behind: number;
   staged: string[];
   unstaged: string[];
   untracked: string[];
+  /** Rename/copy records: the new path plus the optional old path. */
+  renames: GitRename[];
   clean: boolean;
 }
 
+// Input is always `git status --porcelain=v2 -z -b`: NUL-delimited records
+// mean git never quotes paths, so non-ASCII, whitespace and quote
+// characters round-trip verbatim; type-2 records spell renames and copies
+// out as new path + original path instead of v1's `old -> new` string; and
+// the branch headers separate a detached HEAD (`# branch.head (detached)`)
+// from a branch name — never guessed from one — while an unborn branch is
+// just a name next to `# branch.oid (initial)`.
 function parsePorcelainStatus(out: string): GitStatus {
   const staged: string[] = [];
   const unstaged: string[] = [];
   const untracked: string[] = [];
-  let branch = '(unknown)';
+  const renames: GitRename[] = [];
+  let branch: string | null = '(unknown)';
   let ahead = 0;
   let behind = 0;
-  for (const line of out.split('\n')) {
-    if (line.startsWith('## ')) {
-      const head = line.slice(3);
-      const branchPart = head.split('...')[0] ?? head;
-      branch =
-        branchPart === 'No commits yet on' ||
-        branchPart.startsWith('No commits yet')
-          ? (head.split(' ').pop() ?? '(unknown)')
-          : branchPart;
-      const aheadMatch = /ahead (\d+)/.exec(head);
-      const behindMatch = /behind (\d+)/.exec(head);
-      if (aheadMatch?.[1] !== undefined) ahead = Number(aheadMatch[1]);
-      if (behindMatch?.[1] !== undefined) behind = Number(behindMatch[1]);
+
+  const pushChange = (xy: string, path: string, oldPath?: string): void => {
+    if (path === '') return;
+    const x = xy[0] ?? '';
+    const y = xy[1] ?? '';
+    if (x !== '' && x !== '.') staged.push(path);
+    if (y !== '' && y !== '.') unstaged.push(path);
+    if (oldPath !== undefined && oldPath !== '') {
+      renames.push({ path, oldPath, staged: x === 'R' || x === 'C' });
+    }
+  };
+
+  const records = out.split('\0');
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? '';
+    if (record === '') continue;
+    if (record.startsWith('# ')) {
+      const header = record.slice(2);
+      if (header.startsWith('branch.head ')) {
+        const head = header.slice('branch.head '.length).trim();
+        branch =
+          head === '(detached)' ? null : head === '' ? '(unknown)' : head;
+      } else if (header.startsWith('branch.ab ')) {
+        const counts = /^branch\.ab \+(\d+) -(\d+)$/.exec(header);
+        if (counts !== null) {
+          ahead = Number(counts[1]);
+          behind = Number(counts[2]);
+        }
+      }
       continue;
     }
-    if (line.length < 4) continue;
-    const x = line[0];
-    const y = line[1];
-    const path = line.slice(3).trim();
-    if (x === '?' && y === '?') {
-      untracked.push(path);
+    const kind = record[0];
+    if (kind === '1' || kind === 'u') {
+      // Path is the last field and may contain spaces: only the fixed
+      // fields before it are single-space separated.
+      const fields = record.split(' ');
+      pushChange(
+        fields[1] ?? '',
+        fields.slice(kind === '1' ? 8 : 10).join(' '),
+      );
       continue;
     }
-    if (x !== undefined && x !== ' ' && path !== '') staged.push(path);
-    if (y !== undefined && y !== ' ' && path !== '') unstaged.push(path);
+    if (kind === '2') {
+      // A type-2 record's original path is the next NUL-delimited field,
+      // not a record of its own.
+      const fields = record.split(' ');
+      const path = fields.slice(9).join(' ');
+      const oldPath = records[index + 1] ?? '';
+      index += 1;
+      pushChange(fields[1] ?? '', path, oldPath);
+      continue;
+    }
+    if (kind === '?') {
+      const path = record.slice(2);
+      if (path !== '') untracked.push(path);
+    }
+    // `!` (ignored) is not requested by `--porcelain=v2`; nothing else can
+    // appear in this format.
   }
+
   return {
     branch,
     ahead,
@@ -91,6 +145,7 @@ function parsePorcelainStatus(out: string): GitStatus {
     staged,
     unstaged,
     untracked,
+    renames,
     clean:
       staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
   };
@@ -104,7 +159,7 @@ export const gitStatusOperation: Operation<
 > = {
   name: 'git_status',
   description:
-    'Structured working-tree status (branch, ahead/behind, staged/unstaged/untracked)',
+    'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
   replay: 'safe',
   validateArgs: (raw: unknown) => {
     if (typeof raw !== 'object' || raw === null)
@@ -117,13 +172,17 @@ export const gitStatusOperation: Operation<
     _args: Record<string, never>,
     ctx: OpContext,
   ): Promise<GitStatusResult> => {
-    const run = await runGit(ctx.env, ['status', '--porcelain=v1', '-b'], {
-      sessionId: ctx.sessionId,
-      agentId: ctx.agentId,
-      toolCallId: inv.invocationId,
-      turnId: 0,
-      operation: 'git_status',
-    });
+    const run = await runGit(
+      ctx.env,
+      ['status', '--porcelain=v2', '-z', '-b'],
+      {
+        sessionId: ctx.sessionId,
+        agentId: ctx.agentId,
+        toolCallId: inv.invocationId,
+        turnId: 0,
+        operation: 'git_status',
+      },
+    );
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_status', run.stderr);
       throw new OpError(
@@ -538,15 +597,14 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
       );
     const files = await runGit(
       ctx.env,
-      ['show', '--name-only', '--format=', sha],
+      ['show', '-z', '--name-only', '--format=', sha],
       gitEffectProvenance(inv, ctx, 'git_commit'),
     );
+    // `-z` means NUL-separated and never quoted: non-ASCII and newline
+    // paths come back exactly as committed (same parity as git_status).
     return {
       sha,
-      files: files.stdout
-        .split('\n')
-        .map((f) => f.trim())
-        .filter((f) => f !== ''),
+      files: files.stdout.split('\0').filter((f) => f !== ''),
     };
   },
 };
@@ -590,10 +648,12 @@ export const gitCheckpointOperation: Operation<
   ): Promise<GitCheckpointResult> => {
     // `stash create` writes a stash commit object but no ref and leaves the
     // working tree alone — the checkpoint is restorable (stash apply <sha>)
-    // without the checkpoint itself destroying work.
+    // without the checkpoint itself destroying work. The message is the
+    // positional argument `stash create [<message>]` takes; `-m` is a
+    // `stash push` option and would become part of the subject here.
     const run = await runGit(
       ctx.env,
-      ['stash', 'create', '-m', args.message],
+      ['stash', 'create', args.message],
       gitEffectProvenance(inv, ctx, 'git_checkpoint'),
     );
     if (run.exitCode !== 0) {

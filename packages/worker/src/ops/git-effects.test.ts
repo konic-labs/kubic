@@ -101,9 +101,9 @@ describe('git effects (issue #19, slice C)', () => {
         stdout: 'abc1234567890\n',
         stderr: '',
       },
-      'git show --name-only --format= abc1234567890': {
+      'git show -z --name-only --format= abc1234567890': {
         exitCode: 0,
-        stdout: 'a.txt\nb.txt\n',
+        stdout: 'a.txt\0b.txt\0',
         stderr: '',
       },
     };
@@ -126,7 +126,7 @@ describe('git effects (issue #19, slice C)', () => {
       { message: 'before risky edit' },
       inv('c4'),
       ctx({
-        'git stash create -m before risky edit': {
+        'git stash create before risky edit': {
           exitCode: 0,
           stdout: 'deadbeef\n',
           stderr: '',

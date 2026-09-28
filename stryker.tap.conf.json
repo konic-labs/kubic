@@ -11,15 +11,23 @@
   "jsonReporter": { "fileName": "reports/mutation-tap/mutation.json" },
   "htmlReporter": { "fileName": "reports/mutation-tap/index.html" },
   "thresholds": { "high": 80, "low": 60, "break": 80 },
-  "incremental": true,
+  "incremental": false,
   "incrementalFile": "reports/stryker-tap-incremental.json",
-  "concurrency": 4,
+  "concurrency": "50%",
   "timeoutMS": 60000,
   "timeoutFactor": 2,
   "disableBail": false,
   "ignoreStatic": false,
   "mutate": ["scripts/dep-lint.mjs", "scripts/check-pinned-deps.mjs"],
-  "ignorePatterns": ["pi/**", "docs/design/**"],
+  "ignorePatterns": [
+    "pi/**",
+    "docs/design/**",
+    "dist/**",
+    "reports/**",
+    ".beads/**",
+    ".serena/**",
+    ".claude/**"
+  ],
   "plugins": ["@stryker-mutator/tap-runner"],
   "dryRunTimeoutMinutes": 5
 }

@@ -50,7 +50,7 @@ function fakeGitCli(statusOut: string): {
     string,
     { exitCode: number; stdout: string; stderr: string }
   > = {
-    'git status --porcelain=v1 -b': {
+    'git status --porcelain=v2 -z -b': {
       exitCode: 0,
       stdout: statusOut,
       stderr: '',
@@ -78,7 +78,14 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
 
   it('kubic git status renders the structured state', async () => {
     const { lines, deps } = fakeGitCli(
-      '## main...origin/main [ahead 1]\nM  staged.txt\n?? new.txt\n',
+      [
+        '# branch.oid abc1234\0',
+        '# branch.head main\0',
+        '# branch.upstream origin/main\0',
+        '# branch.ab +1 -0\0',
+        '1 M. N... 100644 100644 100644 1111111 2222222 staged.txt\0',
+        '? new.txt\0',
+      ].join(''),
     );
     expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
     expect(lines).toContain('branch main (ahead 1)');
@@ -86,11 +93,19 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
     expect(lines).toContain('untracked: new.txt');
   });
 
+  it('kubic git status prints a detached HEAD instead of a null branch', async () => {
+    const { lines, deps } = fakeGitCli(
+      '# branch.oid abc1234\0# branch.head (detached)\0',
+    );
+    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect(lines).toContain('branch (detached HEAD)');
+  });
+
   it('kubic git outside a repo explains itself and exits 1', async () => {
     const lines: string[] = [];
     const deps: Parameters<typeof runGitCommand>[1] = {
       env: new FakeExecutionEnv({
-        'git status --porcelain=v1 -b': {
+        'git status --porcelain=v2 -z -b': {
           exitCode: 128,
           stdout: '',
           stderr: 'fatal: not a git repository',

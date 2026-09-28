@@ -126,7 +126,7 @@ describe('git effects (issue #19, slice C)', () => {
       { message: 'before risky edit' },
       inv('c4'),
       ctx({
-        'git stash create -m before risky edit': {
+        'git stash create before risky edit': {
           exitCode: 0,
           stdout: 'deadbeef\n',
           stderr: '',

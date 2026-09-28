@@ -38,7 +38,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_status: {
     description:
-      'Structured working-tree status (branch, ahead/behind, staged/unstaged/untracked)',
+      'Structured working-tree status (branch or detached HEAD, ahead/behind, staged/unstaged/untracked, renames)',
     replay: 'safe',
   },
   git_diff: {

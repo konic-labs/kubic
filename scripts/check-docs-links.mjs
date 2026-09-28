@@ -252,7 +252,7 @@ export function checkDocsDeps(rootDir) {
   return { edges: prodEdges.length, mismatches };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const result = checkDocsLinks(root);
   if (result.broken.length > 0) {
     for (const bad of result.broken) console.error(`dangling link: ${bad}`);

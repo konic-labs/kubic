@@ -16,13 +16,7 @@
 //   node scripts/reachability.mjs            # check against the ledger
 //   node scripts/reachability.mjs --report   # print dead files + LOC, no gate
 //   node scripts/reachability.mjs --json     # machine-readable report
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -271,24 +265,10 @@ function main() {
   return 0;
 }
 
-// Main-module guard: canonicalise BOTH sides with realpathSync — never the
-// raw `import.meta.url.pathname` against a hand-built `file://` string
-// (percent-encoding) and never a plain resolve()/spelling comparison. The
-// same file can be spelled `/var/...` (argv, as node was invoked) and
-// `/private/var/...` (import.meta.url), and resolve() only normalises
-// lexically, so a spelling comparison silently makes the guard false and the
-// gate exits 0 without checking anything.
-const isMain = (() => {
-  try {
-    if (process.argv[1] === undefined) return false;
-    return (
-      realpathSync(process.argv[1]) ===
-      realpathSync(fileURLToPath(import.meta.url))
-    );
-  } catch {
-    return false;
-  }
-})();
+// Main-module guard: import.meta.main is spelling-proof (symlinks,
+// /var vs /private/var, percent-encoded spaces) — a false guard would make
+// the gate exit 0 without checking anything.
+const isMain = import.meta.main;
 
 if (isMain) {
   process.exit(main());

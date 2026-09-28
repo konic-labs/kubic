@@ -442,7 +442,7 @@ function nodeStubPreload() {
   ].join('\n');
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const scratch = mkdtempSync(join(tmpdir(), 'kubic-binary-contract-'));
   try {

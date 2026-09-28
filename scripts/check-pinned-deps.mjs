@@ -83,7 +83,7 @@ export function checkPinned(root) {
   return violations;
 }
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+const isMain = import.meta.main;
 if (isMain) {
   const root =
     process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '..');

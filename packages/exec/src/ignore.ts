@@ -4,53 +4,96 @@
 // the journal walk cannot drift into two different notions of "ignored": a
 // path that is out of scope for `kubic diff`/`undo` must not be searched
 // repo-wide either. The subset is deliberately small and documented in
-// docs/packages/exec.md: `*`, `?`, `**`, `dir/` prefixes, `!` negation,
-// last match wins. Exotic forms (character classes beyond `?`, rooted
-// mid-pattern `**`) are not covered — anything missed only widens the set of
-// walked paths, never narrows it.
+// docs/packages/exec.md: `*`, `?`, `**` (a leading `**/` matches zero or more
+// directories), `dir/` prefixes, `!` negation, last match wins. Exotic forms
+// (character classes beyond `?`, rooted mid-pattern `**`) are not covered —
+// anything missed only widens the set of walked paths, never narrows it.
+//
+// Matching is a linear DP over compiled tokens, never a backtracking regex
+// (#172 review): a hostile `*a*a*a*a*a*` line in a `.gitignore` must cost
+// O(pattern x path) per entry, not exponential time on every walked path.
 
-function globToRegExp(glob: string): RegExp {
-  const escapable = new Set([
-    '+',
-    '.',
-    '^',
-    '$',
-    '{',
-    '}',
-    '(',
-    ')',
-    '|',
-    '[',
-    ']',
-    '\\',
-  ]);
-  let out = '';
-  for (let i = 0; i < glob.length; i++) {
+type GlobToken =
+  | { kind: 'char'; value: string } // a literal character
+  | { kind: 'any' } // ? — exactly one char, never '/'
+  | { kind: 'star' } // * — zero+ chars, never '/'
+  | { kind: 'globstar' } // ** — zero+ chars, '/' included
+  | { kind: 'leading-globstar' }; // **/ — '' or any run ending in '/'
+
+// Compile one glob to its tokens. `**/` at the START additionally matches
+// zero leading directories: git matches `**/foo` at the root, which a plain
+// `.*\/` cannot (it demands a slash). Mid-pattern `**` stays the documented
+// globstar (the subset does not model the rooted `a/**/b` form).
+function compileGlob(glob: string): (text: string) => boolean {
+  const tokens: GlobToken[] = [];
+  let i = 0;
+  if (glob.startsWith('**/')) {
+    tokens.push({ kind: 'leading-globstar' });
+    i = 3;
+  }
+  for (; i < glob.length; i += 1) {
     const c = glob[i] ?? '';
     if (c === '*') {
       if (glob[i + 1] === '*') {
-        out += '.*';
-        i++;
+        tokens.push({ kind: 'globstar' });
+        i += 1;
       } else {
-        out += '[^/]*';
+        tokens.push({ kind: 'star' });
       }
     } else if (c === '?') {
-      out += '[^/]';
-    } else if (escapable.has(c)) {
-      out += `\\${c}`;
+      tokens.push({ kind: 'any' });
     } else {
-      out += c;
+      tokens.push({ kind: 'char', value: c });
     }
   }
-  return new RegExp(`^${out}$`);
+  return (text: string) => globMatches(tokens, text);
+}
+
+// Iterative row DP, O(tokens x text), no backtracking: row[i] means the
+// token prefix so far matches text[0..i). Each token advances one row.
+function globMatches(tokens: GlobToken[], text: string): boolean {
+  const n = text.length;
+  let row = new Uint8Array(n + 1);
+  row[0] = 1;
+  for (const token of tokens) {
+    const next = new Uint8Array(n + 1);
+    if (token.kind === 'star' || token.kind === 'globstar') {
+      const slashless = token.kind === 'star';
+      let reachable = false;
+      for (let i = 0; i <= n; i += 1) {
+        if (row[i] === 1) reachable = true;
+        if (reachable) next[i] = 1;
+        // Consuming text[i] is what reaches i + 1, so a '/' blocks a
+        // slashless star from there on.
+        if (slashless && i < n && text[i] === '/') reachable = false;
+      }
+    } else if (token.kind === 'leading-globstar') {
+      let seen = false;
+      for (let i = 0; i <= n; i += 1) {
+        if (row[i] === 1) seen = true;
+        if (row[i] === 1 || (seen && i > 0 && text[i - 1] === '/')) {
+          next[i] = 1;
+        }
+      }
+    } else {
+      for (let i = 0; i < n; i += 1) {
+        if (row[i] !== 1) continue;
+        const ch = text[i] as string;
+        if (token.kind === 'any' ? ch !== '/' : ch === token.value) {
+          next[i + 1] = 1;
+        }
+      }
+    }
+    row = next;
+  }
+  return row[n] === 1;
 }
 
 export interface IgnoreRule {
   negate: boolean;
   dirOnly: boolean;
   anchored: boolean;
-  match: RegExp;
-  prefix: string;
+  match: (text: string) => boolean;
 }
 
 export function parseIgnoreFile(content: string): IgnoreRule[] {
@@ -68,14 +111,9 @@ export function parseIgnoreFile(content: string): IgnoreRule[] {
       negate,
       dirOnly,
       anchored,
-      match: globToRegExp(
+      match: compileGlob(
         anchored ? pattern : (pattern.split('/').pop() ?? pattern),
       ),
-      // `prefix` is compared against a walk-root-relative path in
-      // `isIgnored`, and those never carry a leading `/` — so the anchored
-      // form (`/pi/`) must drop it here or the rule can never match. Keep
-      // this in step with the `pattern` derivation above.
-      prefix: pattern,
     });
   }
   return rules;
@@ -107,17 +145,24 @@ export function isIgnored(
   for (const rule of rules) {
     let hit = false;
     if (rule.dirOnly) {
-      hit =
-        relPath === rule.prefix ||
-        relPath.startsWith(`${rule.prefix}/`) ||
-        (!rule.anchored && relPath.split('/').includes(rule.prefix));
+      // git's trailing slash matches DIRECTORIES only: a file named like the
+      // directory stays in scope, while anything under an ignored directory
+      // is ignored by that ancestor — which is a directory by construction.
+      // Test every directory prefix of relPath (the path itself when it is a
+      // directory, its ancestors otherwise).
+      const parts = relPath.split('/');
+      const dirCount = isDir ? parts.length : parts.length - 1;
+      for (let end = 1; end <= dirCount && !hit; end += 1) {
+        hit = rule.anchored
+          ? rule.match(parts.slice(0, end).join('/'))
+          : rule.match(parts[end - 1] ?? '');
+      }
     } else if (rule.anchored) {
-      hit = rule.match.test(relPath);
+      hit = rule.match(relPath);
     } else {
-      hit = rule.match.test(name);
+      hit = rule.match(name);
     }
     if (hit) ignored = !rule.negate;
-    void isDir;
   }
   return ignored;
 }

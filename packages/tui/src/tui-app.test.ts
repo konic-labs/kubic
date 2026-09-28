@@ -371,4 +371,51 @@ describe('lane snapshot feed (issue #88)', () => {
     const occurrences = app.render(100).join('\n').split('only once').length;
     expect(occurrences).toBe(2);
   });
+
+  // Issue #227: a `/model` switch lands on every surface that names the
+  // model — header, welcome block and status bar — through one call, so the
+  // three cannot drift apart.
+  it('updates header, welcome and status bar on a model switch', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      thinking: 'high',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    expect(app.status.getState().model).toBe(MODEL);
+    expect(app.status.getState().thinking).toBe('high');
+    const before = app.render(100).join('\n');
+    expect(before).toContain(MODEL);
+    expect(before).toContain(`model ${MODEL}`);
+    expect(
+      before.split('\n').some((l) => l.includes('solo') && l.includes(MODEL)),
+    ).toBe(true);
+
+    app.setModel('alt/m1', 'medium');
+
+    expect(app.status.getState().model).toBe('alt/m1');
+    expect(app.status.getState().thinking).toBe('medium');
+    const doc = app.render(100).join('\n');
+    expect(doc).toContain('alt/m1');
+    expect(doc).toContain('model alt/m1');
+    expect(
+      doc.split('\n').some((l) => l.includes('solo') && l.includes('alt/m1')),
+    ).toBe(true);
+    expect(app.status.render(100).join('\n')).toContain('alt/m1');
+    expect(doc).not.toContain(MODEL);
+  });
+
+  it('keeps the thinking level when a switch does not carry one', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    expect(app.status.getState().thinking).toBe('off');
+    app.setModel('alt/m1');
+    expect(app.status.getState().model).toBe('alt/m1');
+    expect(app.status.getState().thinking).toBe('off');
+  });
 });

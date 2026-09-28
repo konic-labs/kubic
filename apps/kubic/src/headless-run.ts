@@ -38,9 +38,7 @@ import {
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import { redactSecretValues } from '../../../packages/host/src/config/secrets.js';
 import {
-  FAUX_MODEL_ID,
   FAUX_NOTICE,
-  FAUX_PROVIDER_ID,
   invalidProviderMessage,
   providerOverrideFromEnv,
 } from '../../../packages/host/src/faux-provider.js';
@@ -107,7 +105,6 @@ import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
   type ModelSelection,
-  selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
   BACKGROUND_CONTEXT,
@@ -117,6 +114,10 @@ import {
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
 import { loadExtensionStartup } from './extension-startup.js';
+import {
+  hasExplicitModelSelection,
+  selectLaneModel,
+} from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 
 export interface HeadlessRunOptions {
@@ -942,21 +943,22 @@ async function runHeadlessPromptImpl(
         FAUX_NOTICE,
       );
     }
-    let model: ReturnType<typeof selectModel>;
+    let model: ReturnType<typeof selectLaneModel>;
     try {
       // An explicit pin (replay re-execution at the declared model, or the
-      // `[model]`/env pin runtimeModelPin projects) wins over default
+      // `[model]`/env/cli pin runtimeModelPin projects) wins over default
       // selection; the role layer's own `provider/id` pin (issue #133) is
-      // the next default, and `kubic run` with neither takes the first
-      // usable provider (customs first; never a keyless built-in).
-      model = selectModel(
+      // the next default, and a run with neither takes the first usable
+      // provider (customs first; never a keyless built-in). The projection
+      // is shared with `kubic tui` (issue #227), so both boots answer
+      // identically for the same config.
+      model = selectLaneModel({
         models,
-        fauxPinned
-          ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-          : deps.model,
-        roleModelSelection(role?.resolved.model),
+        fauxPinned,
+        pin: deps.model,
+        roleModel: role?.resolved.model,
         fallbackProviders,
-      );
+      });
     } catch (error) {
       if (error instanceof ModelSelectError) {
         return finished(
@@ -1158,10 +1160,11 @@ async function runHeadlessPromptImpl(
     // session whose stored model differs; the default pick never does —
     // the session keeps its own model. Either way it is named on stderr.
     const notice = deps.notice ?? ((line: string) => console.error(line));
-    const explicitModel =
-      fauxPinned ||
-      deps.model !== undefined ||
-      roleModelSelection(role?.resolved.model) !== undefined;
+    const explicitModel = hasExplicitModelSelection({
+      fauxPinned,
+      pin: deps.model,
+      roleModel: role?.resolved.model,
+    });
     try {
       solo = await bootSoloLane({
         session,
@@ -1479,21 +1482,3 @@ function toolHooksOf(
 }
 
 const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };
-
-// The role layer's `provider/id` pin as a selection (issue #133). The config
-// load refuses a malformed ref by name (checkRoleModelRef) before it can
-// reach here; this stays fail-closed for a programmatic layer, and an absent
-// pin means "no default" — the caller's own selection stands. Shared with
-// the TUI boot (issue #295), so both solo entry points apply one rule.
-export function roleModelSelection(
-  ref: string | undefined,
-): ModelSelection | undefined {
-  if (ref === undefined) return undefined;
-  const slash = ref.indexOf('/');
-  if (slash <= 0 || slash === ref.length - 1) {
-    throw new ModelSelectError(
-      `[roles.<name>].model must be 'provider/id' (got ${JSON.stringify(ref)})`,
-    );
-  }
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
-}

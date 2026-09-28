@@ -23,6 +23,13 @@ import {
 import { parseModelFlag } from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
+// The `--model` help (issue #227; §38.1): one sentence per behaviour the
+// flag actually has, no promise the cli layer does not keep.
+const MODEL_FLAG_HELP =
+  'override the model for this invocation (provider/id; beats env and file, never a frozen enterprise key)';
+const MODEL_FLAG_HELP_REPORT =
+  'report the config as if this model were passed (provider/id; the cli layer)';
+
 // A host value rule as a commander argument parser: its refusal becomes
 // commander's `option '…' argument '…' is invalid. <reason>` (exit 2).
 function rule<T>(parse: (value: string) => T): (value: string) => T {
@@ -86,6 +93,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'turn bound (positive integer)',
       rule(parseRunMaxTurns),
     )
+    .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
     .option(
       '--skill <path>',
@@ -172,6 +180,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
       'resume into an existing session ([A-Za-z0-9_-])',
       rule(parseSessionIdArg),
     )
+    .option('--model <provider/id>', MODEL_FLAG_HELP, rule(parseModelFlag))
     .option('--role <name>', 'boot as the role in .kubic/roles/<name>.md')
     .option(
       '--skill <path>',
@@ -180,11 +189,6 @@ function registerTui(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
-    .option(
-      '--model <provider/id>',
-      'pin the model (beats [model]/KUBIC_MODEL and the role model)',
-      rule(parseModelFlag),
-    )
     .option(
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
@@ -280,6 +284,11 @@ function registerConfig(program: Command, ctx: CommandContext): void {
       'show the effective configuration and where each value came from',
     )
     .option('--json', 'print the effective configuration as JSON')
+    .option(
+      '--model <provider/id>',
+      MODEL_FLAG_HELP_REPORT,
+      rule(parseModelFlag),
+    )
     .action(async (opts) => {
       ctx.setExitCode(
         await ctx.runners.config(

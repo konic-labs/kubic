@@ -204,6 +204,45 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
     expect(promptOf(createSpy)).toContain('agent=root');
   });
 
+  // Issue #227: the role's `[roles.<name>].model` is the selection default
+  // for BOTH boots (the shared projection), which is why the TUI resolves
+  // the role BEFORE selectModel.
+  it('a role model layer selects the pinned model on the TUI lane', async () => {
+    const cwd = tmpRoot('tui-role-model-cwd-');
+    writeRole(
+      cwd,
+      'reviewer',
+      'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
+      'You are the reviewer. Report findings.',
+    );
+    const models = fauxModels(['done']);
+    const alt = fauxProvider({
+      provider: 'alt',
+      models: [{ id: 'm1', contextWindow: 100000 }],
+    });
+    alt.setResponses([fauxAssistantMessage('from alt')]);
+    models.setProvider(alt.provider);
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('tui-role-model-sessions-'),
+      models,
+      env: new FakeExecutionEnv({}),
+      role: 'reviewer',
+      roles: {
+        cwd,
+        layers: [
+          { layer: 'project', roles: { reviewer: { model: 'alt/m1' } } },
+        ],
+      },
+    });
+    try {
+      // The default pick would be faux/echo (first registered); the role's
+      // layer pin is the selection default, so alt/m1 answers.
+      expect(boot.model).toBe('alt/m1');
+    } finally {
+      await boot.close?.();
+    }
+  });
+
   it('layers [roles.<name>] tools under the role document on --role', async () => {
     const cwd = tmpRoot('tui-layers-cwd-');
     writeRole(

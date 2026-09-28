@@ -123,6 +123,7 @@ import {
 import {
   ModelSelectError,
   type ModelSelection,
+  parseModelFlag,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
@@ -133,11 +134,11 @@ import {
   type TerminalStatus,
 } from '../../../packages/worker/src/pi-boundary.js';
 import type { runtimeLaneDeps } from './config-runtime.js';
+import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
 import {
-  assistantSummary,
-  NO_ASSISTANT_TEXT_SUMMARY,
-  roleModelSelection,
-} from './headless-run.js';
+  hasExplicitModelSelection,
+  selectLaneModel,
+} from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
@@ -153,6 +154,18 @@ export type TuiApprovalSeat = (
 export interface TuiLaneLoop {
   accept(prompt: string, context: Context): Promise<OperationAdmissionResult>;
   lane: LaneDriver;
+  /**
+   * Issue #227: the live model switch (`/model`). The prod boot resolves
+   * the id against the live catalog (selectModel — an unknown provider or
+   * model fails by name), calls lane.setModel, which commits the
+   * config_update to the session, and returns the model the lane reports.
+   * A viewer-shell stub may omit it; `/model` then says so instead of
+   * pretending to switch.
+   */
+  switchModel?: (
+    model: { provider: string; modelId: string },
+    context: Context,
+  ) => Promise<string>;
   requestAbort: LaneAborter['requestAbort'];
   findEntries(
     query: undefined,
@@ -345,9 +358,11 @@ export interface TuiRunOptions {
   // §41.4 (issue #308): enable full access for the booted session through
   // the one host enable path before the policy is installed.
   dangerouslySkipApprovals?: boolean;
-  // Issue #295 (§38.1): the explicit model pin — `--model`, else the
-  // `[model]`/KUBIC_MODEL projection runtimeModelPin makes for `kubic run`.
-  // It beats the role layer's model, which beats first-available.
+  // Issue #295 with #227 (§38.1): the runtime pin the config load projected
+  // (cli `--model` > `KUBIC_MODEL` > `[model]`), from the SAME runtimeModelPin
+  // seam `kubic run` consumes. It beats the role layer's model, which beats
+  // first-available; an explicit pin selects the model and makes a resumed
+  // session switch (the #148 rule), absent means the default pick.
   model?: ModelSelection;
 }
 
@@ -479,21 +494,25 @@ export async function bootTuiLane(
               ? {}
               : { toolAllowlist: selectedRole.resolved.tools }),
           };
-    // Issue #295 (§38.1): the same precedence as `kubic run` — the explicit
-    // pin (`--model`, `[model]`, KUBIC_MODEL), then the role layer's model,
-    // then first-available. The faux testing provider (`KUBIC_PROVIDER=faux`)
-    // is pinned, never picked implicitly; the footer names it
-    // (runTuiCommand). A ModelSelectError propagates to runTuiCommand, which
-    // reports it as exit 6 before the alt-screen opens.
-
-    const model = selectModel(
+    // Issue #227 (§38.1): the ONE projection `kubic run` and `kubic tui`
+    // share — the runtime pin (cli `--model` > env > `[model]`) beats the
+    // role layer's model, which beats the first usable provider; the
+    // implicit pick never takes a keyless built-in (issue #221). The
+    // explicit-selection predicate is the #148 rule: any pin (faux, runtime
+    // or role) switches a resumed session whose stored model differs, the
+    // default pick never does.
+    const model = selectLaneModel({
       models,
-      fauxPinned
-        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : options.model,
-      roleModelSelection(selectedRole?.resolved.model),
-      assembled?.fallbackProviders,
-    );
+      fauxPinned,
+      pin: options.model,
+      roleModel: selectedRole?.resolved.model,
+      fallbackProviders: assembled?.fallbackProviders,
+    });
+    const explicitModel = hasExplicitModelSelection({
+      fauxPinned,
+      pin: options.model,
+      roleModel: selectedRole?.resolved.model,
+    });
     const modelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // The loaded skill names, for the §46 trajectory's resources (#383).
@@ -528,22 +547,21 @@ export async function bootTuiLane(
         // session and the model the lane runs on, like `kubic run`'s.
         sessionId: id,
         model: modelRef,
-
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
         // (tests, and any caller that supplies its own) keep their own seat.
         ...(options.answer === undefined ? {} : { answer: options.answer }),
       });
-    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (the faux
-    // pin is the TUI's only one) switches a resumed session whose stored
-    // model differs; the default pick keeps the session's own model.
+    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (faux,
+    // runtime, or the role's default) switches a resumed session whose
+    // stored model differs; the default pick keeps the session's own model.
     const modelNotices: string[] = [];
     const solo = await bootSoloLane({
       session,
       models,
       model,
-      modelPolicy: fauxPinned ? 'selected' : 'stored',
+      modelPolicy: explicitModel ? 'selected' : 'stored',
       onModelNotice: (line) => modelNotices.push(line),
       env,
       sessionId: id,
@@ -588,6 +606,10 @@ export async function bootTuiLane(
             : { skillReadRoots: skills.readRoots }),
         };
       })(),
+      // Issue #113 (§12.1): `--role` derives both halves of the boot from
+      // the role document — prompt text and tool allowlist — resolved above,
+      // before model selection, with the same fail-closed refusals as
+      // `kubic run`.
       ...roleBoot,
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
@@ -641,6 +663,23 @@ export async function bootTuiLane(
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
         lane: solo.lane,
+        // Issue #227: resolve against the live catalog before touching the
+        // lane, so `/model typo/nope` fails by name and the lane keeps the
+        // model it had; setModel then records the config_update in the
+        // session, and the read-back is the label every surface shows.
+        switchModel: async (selection, loopContext) => {
+          const resolved = selectModel(models, {
+            provider: selection.provider,
+            id: selection.modelId,
+          });
+          await solo.lane.setModel(
+            { provider: resolved.provider, modelId: resolved.id },
+            loopContext,
+          );
+          // Pi stores exactly the identity it is given, so the resolved id
+          // IS the live label — no read-back branch to keep honest.
+          return `${resolved.provider}/${resolved.id}`;
+        },
         requestAbort: (operationId, loopContext) =>
           solo.lane.requestAbort(operationId, loopContext),
         findEntries: (query, loopContext) =>
@@ -652,6 +691,10 @@ export async function bootTuiLane(
         // `kubic run` writes, holding the session's latest settled turn.
         recordTurn: async (turn) => {
           const entries = await solo.lane.findEntries(undefined, context);
+          // The live model can have moved since boot (`/model`), so the
+          // trajectory records what the lane actually runs — the same read
+          // the returned `model` and the status bar use.
+          const live = (await solo.lane.getModel(context)) ?? solo.model;
           persistRunTrajectory({
             sessionsRoot: root,
             sessionId: id,
@@ -659,7 +702,7 @@ export async function bootTuiLane(
             role: options.role ?? 'solo',
             prompt: turn.prompt,
             entries,
-            model: { provider: model.provider, id: model.id },
+            model: { provider: live.provider, id: live.id },
             cwd: env.cwd,
             skills: skillNames,
             startedAt: turn.startedAt,
@@ -705,11 +748,18 @@ export function tuiTurnOutcome(
   return { terminus, summary, lane };
 }
 
+// The channels `tuiDepsWithDefaults` adds to, plus every config projection;
+// `tuiBootOptions` projects the pair into the boot options.
+export type TuiDepsInput = {
+  out: (line: string) => void;
+  err?: (line: string) => void;
+} & TuiConfigProjection;
+
 // The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
 // #133). The lane half is `runtimeLaneDeps`' own return type BY NAME
 // (issue #294): a key that projection gains can never be silently dropped
-// here, because the forwarding table in tuiDepsWithDefaults must name
-// every key of this type.
+// here, because the forwarding table in tuiBootOptions must name every key
+// of this type.
 export type TuiConfigProjection = {
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
@@ -723,7 +773,10 @@ export type TuiConfigProjection = {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
-  // Issue #295: the `[model]`/KUBIC_MODEL pin (runtimeModelPin).
+  // Issue #295 with #227: the runtime model pin the config load projected
+  // (cli `--model` > `KUBIC_MODEL` > `[model]`), from the SAME runtimeModelPin
+  // projection `kubic run` consumes, so the interactive boot selects what the
+  // headless one selects.
   model?: ModelSelection;
 } & ReturnType<typeof runtimeLaneDeps>;
 
@@ -738,17 +791,17 @@ function definedOnly<T extends object>(
   return out;
 }
 
-export function tuiDepsWithDefaults(
-  provided: {
-    out: (line: string) => void;
-    err?: (line: string) => void;
-  } & TuiConfigProjection,
-  // The boot the deps drive. Absent means the prod bootTuiLane; tests pass a
-  // wrapper to observe (or re-root) exactly what the projection forwards.
-  boot: typeof bootTuiLane = bootTuiLane,
-): TuiRunDeps {
-  // Every projection key must appear (possibly undefined): the `satisfies`
-  // makes omitting one a compile error (issue #294).
+// The boot options `tuiDepsWithDefaults` hands `bootTuiLane`, projected from
+// the config deps plus the parsed parity flags. Pure and exported (issue
+// #227) so the prod wiring — including the model pin — is testable without
+// opening a terminal. The #294 forwarding table lives here: every
+// TuiConfigProjection key must appear (possibly undefined), so omitting one
+// is a compile error.
+export function tuiBootOptions(
+  provided: TuiDepsInput,
+  flags: TuiBootFlags | undefined,
+  answer: TuiApprovalSeat | undefined,
+): TuiRunOptions {
   const forwarded = {
     classes: provided.classes,
     approvals: provided.approvals,
@@ -763,7 +816,28 @@ export function tuiDepsWithDefaults(
     model: provided.model,
   } satisfies Record<keyof TuiConfigProjection, unknown>;
   const projection = definedOnly(forwarded);
+  return {
+    ...projection,
+    ...(answer === undefined ? {} : { answer }),
+    ...(flags?.role === undefined ? {} : { role: flags.role }),
+    ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
+    ...(flags?.skillsList === undefined || flags.skillsList.length === 0
+      ? {}
+      : { skillsList: flags.skillsList }),
+    ...(flags?.dangerouslySkipApprovals === true
+      ? { dangerouslySkipApprovals: true }
+      : {}),
+    // `--model` beats the config pin (§38.1: CLI over config).
+    ...(flags?.model === undefined ? {} : { model: flags.model }),
+  };
+}
 
+export function tuiDepsWithDefaults(
+  provided: TuiDepsInput,
+  // The boot the deps drive. Absent means the prod bootTuiLane; tests pass a
+  // wrapper to observe (or re-root) exactly what the projection forwards.
+  boot: typeof bootTuiLane = bootTuiLane,
+): TuiRunDeps {
   return {
     out: provided.out,
     ...(provided.err === undefined ? {} : { err: provided.err }),
@@ -773,22 +847,7 @@ export function tuiDepsWithDefaults(
       sessionId?: string,
       answer?: TuiApprovalSeat,
       flags?: TuiBootFlags,
-    ) =>
-      boot(sessionId, {
-        ...projection,
-
-        ...(answer === undefined ? {} : { answer }),
-        ...(flags?.role === undefined ? {} : { role: flags.role }),
-        ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
-        ...(flags?.skillsList === undefined || flags.skillsList.length === 0
-          ? {}
-          : { skillsList: flags.skillsList }),
-        ...(flags?.dangerouslySkipApprovals === true
-          ? { dangerouslySkipApprovals: true }
-          : {}),
-        // `--model` beats the config pin (§38.1: CLI over config).
-        ...(flags?.model === undefined ? {} : { model: flags.model }),
-      }),
+    ) => boot(sessionId, tuiBootOptions(provided, flags, answer)),
   };
 }
 
@@ -884,7 +943,7 @@ export function footerForOutcome(outcome: TuiTurnOutcome): string {
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
-  private readonly model: string;
+  private model: string;
   private activeOperationId: string | undefined;
   private detach: (() => void) | undefined;
   private starting = false;
@@ -939,6 +998,29 @@ export class TuiTurnRunner {
 
   get operationId(): string | undefined {
     return this.activeOperationId;
+  }
+
+  // Issue #227: the live model label (updated by a `/model` switch), so the
+  // `/model` report and the headers never read a stale boot snapshot.
+  get modelRef(): string {
+    return this.model;
+  }
+
+  // Issue #227: `/model provider/id`. The loop owns the lane-side switch
+  // (catalog resolution, setModel, read-back); this runner keeps the model
+  // every later usage row and the app's status bar name on the live one.
+  async switchModel(selection: ModelSelection): Promise<string> {
+    const switchModel = this.loop.switchModel;
+    if (switchModel === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    const label = await switchModel(
+      { provider: selection.provider, modelId: selection.id },
+      this.loop.context,
+    );
+    this.model = label;
+    this.app.setModel(label);
+    return label;
   }
 
   // Busy from the moment a submit is accepted by the loop — not from the
@@ -1147,6 +1229,30 @@ export class TuiTurnRunner {
     if (seq < this.appliedSeq) return;
     this.appliedSeq = seq;
     this.app.applyLaneEntries(entries);
+  }
+}
+
+// The `/model` command of the interactive loop (issue #227; §38.1). One
+// parser for the three forms the loop acts on — report, switch, invalid —
+// so the submit path and its tests agree on what is a command and what is a
+// prompt handed to the lane.
+export type TuiModelCommand =
+  | { kind: 'report' }
+  | { kind: 'switch'; selection: ModelSelection }
+  | { kind: 'invalid'; message: string };
+
+export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
+  if (prompt !== '/model' && !prompt.startsWith('/model ')) return undefined;
+  const argument =
+    prompt === '/model' ? '' : prompt.slice('/model '.length).trim();
+  if (argument === '') return { kind: 'report' };
+  try {
+    return { kind: 'switch', selection: parseModelFlag(argument) };
+  } catch (error) {
+    return {
+      kind: 'invalid',
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -1554,8 +1660,47 @@ export async function runTuiCommand(
       return undefined;
     };
     if (turn !== undefined) {
+      // Issue #227: `/model` never reaches the lane as a prompt. The report
+      // and the refusal are footer lines (the editor row's always-visible
+      // status surface); a successful switch updates the app's model label
+      // and leaves a confirmation behind.
+      const handleModelCommand = (command: TuiModelCommand): void => {
+        if (command.kind === 'report') {
+          app.setEditorFooter(`model: ${turn.modelRef}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        if (command.kind === 'invalid') {
+          app.setEditorFooter(`model switch failed: ${command.message}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        app.setEditorFooter(
+          `switching model to ${command.selection.provider}/${command.selection.id}…`,
+        );
+        if (!stopped) screen?.render();
+        void turn
+          .switchModel(command.selection)
+          .then((label) => {
+            if (stopped) return;
+            app.setEditorFooter(`model: ${label} (switched)`);
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `model switch failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
+        const modelCommand = parseModelCommand(prompt);
+        if (modelCommand !== undefined) {
+          handleModelCommand(modelCommand);
+          return;
+        }
         app.setBusy(true);
         startSpinner();
         screen?.render();

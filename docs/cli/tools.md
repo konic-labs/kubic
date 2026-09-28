@@ -56,7 +56,7 @@ an exact-match `edit`):
 [read src/app.ts: lines 1-120 of 480; more: offset=121]
 <raw lines 1-120>
 
-[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' 'min.js' | head -c 51200]
+[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' < 'min.js' | head -c 51200]
 
 [read logo.png: binary file (4096B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]
 

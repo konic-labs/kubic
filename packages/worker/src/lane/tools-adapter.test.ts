@@ -152,7 +152,7 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('min.js', 'x'.repeat(3 * 1024 * 1024));
     expect(await text('read', { path: 'min.js' }, context(env))).toBe(
-      "[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' 'min.js' | head -c 51200]\n",
+      "[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' < 'min.js' | head -c 51200]\n",
     );
   });
 

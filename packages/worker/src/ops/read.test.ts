@@ -59,8 +59,19 @@ describe('read output byte cap (issue #176)', () => {
     writeFileSync(join(dir, name), 'x'.repeat(3 * MIB));
     const out = await readOperation.execute(inv(), { path: name }, ctx());
     expect(out.notice).toContain(
-      "sed -n '1p' 'it'\\''s min.js' | head -c 51200",
+      "sed -n '1p' < 'it'\\''s min.js' | head -c 51200",
     );
+  });
+
+  it('never hands a leading-dash path to sed as an operand', async () => {
+    // GNU sed permutes options, so `sed -n '1p' '-e1e touch pwned'` would run
+    // `touch pwned` as sed script text (r/-f/w variants too). The suggestion
+    // feeds the file through stdin, so the name is never an operand.
+    const name = '-e1e touch pwned';
+    writeFileSync(join(dir, name), 'x'.repeat(3 * MIB));
+    const out = await readOperation.execute(inv(), { path: name }, ctx());
+    expect(out.notice).toContain("sed -n '1p' < '-e1e touch pwned'");
+    expect(out.notice).not.toContain("sed -n '1p' '-e");
   });
 
   it('points at the next line when the offset line is too large to carry', async () => {
@@ -94,6 +105,40 @@ describe('read output byte cap (issue #176)', () => {
     );
     // 506 lines × (100 bytes + '\n') = 51106 — the 507th would pass the cap.
     expect(out.content.split('\n')).toHaveLength(507);
+    expect(out.notice).toBe(`output clipped at ${READ_RESULT_MAX_BYTES}B`);
+  });
+
+  it('keeps a window whose total content is exactly the cap', async () => {
+    // 512 lines × 99 bytes + 511 joins + the trailing '\n' = 51200 exactly.
+    // The newline is part of the content, so it must fit, not clip.
+    const line = 'z'.repeat(99);
+    writeFileSync(
+      join(dir, 'exact.txt'),
+      `${Array.from({ length: 512 }, () => line).join('\n')}\n`,
+    );
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'exact.txt' },
+      ctx(),
+    );
+    expect(Buffer.byteLength(out.content, 'utf8')).toBe(READ_RESULT_MAX_BYTES);
+    expect(out.truncated).toBe(false);
+    expect(out.notice).toBeUndefined();
+  });
+
+  it('clips a window whose body is exactly the cap, where the trailing newline would cross it', async () => {
+    // 511 × 99 + one 100-byte line + 512 joins = 51201 bytes of content:
+    // the body is exactly 51200, but body + '\n' is over the cap.
+    const line = 'z'.repeat(99);
+    writeFileSync(
+      join(dir, 'over.txt'),
+      `${Array.from({ length: 511 }, () => line).join('\n')}\n${'z'.repeat(100)}\n`,
+    );
+    const out = await readOperation.execute(inv(), { path: 'over.txt' }, ctx());
+    expect(Buffer.byteLength(out.content, 'utf8')).toBeLessThanOrEqual(
+      READ_RESULT_MAX_BYTES,
+    );
+    expect(out.truncated).toBe(true);
     expect(out.notice).toBe(`output clipped at ${READ_RESULT_MAX_BYTES}B`);
   });
 });
@@ -209,5 +254,15 @@ describe('offset past EOF (issue #176)', () => {
     expect(out.content).toBe('');
     expect(out.totalLines).toBe(2);
     expect(out.notice).toBe('offset 3 is past the last line (2 lines total)');
+  });
+
+  it('singularizes the line count for a one-line file', async () => {
+    writeFileSync(join(dir, 'one.txt'), 'only\n');
+    const out = await readOperation.execute(
+      inv(),
+      { path: 'one.txt', offset: 2 },
+      ctx(),
+    );
+    expect(out.notice).toBe('offset 2 is past the last line (1 line total)');
   });
 });

@@ -105,8 +105,9 @@ Two hard bounds keep one tool call from costing the whole file in memory
   started does not. That is distinct from an offset whose line lies beyond
   the budget — the empty-region case, which returns empty content with
   `truncated: true`. When the scan did reach EOF, `truncated` reflects
-  only output cutting (the line window and `READ_MAX_LINES`) — an explicit
-  `limit` is the requested region, not truncation. `readWindowed` calls
+  only output cutting (the line window, `READ_MAX_LINES`, and the 51200B
+  output cap) — an explicit `limit` is the requested region, not
+  truncation. `readWindowed` calls
   `fs.readFileRange` as a method (the real `NodeFileSystem` reads
   `this.cwd`; #199), and `read` names the actual failure: a missing path
   is `not_found`, a directory `is_directory`, an unreadable file
@@ -123,8 +124,10 @@ Two hard bounds keep one tool call from costing the whole file in memory
   `output clipped at 51200B` (the last kept line still drives
   `more: offset=`); a line that alone exceeds the cap is left out whole —
   a partial line could poison an exact-match `edit` — with a
-  `line K is NB …` notice carrying a shell-quoted `sed -n 'Kp' … | head -c
-  51200` continuation and `more: offset=K+1` when further lines exist. An
+  `line K is NB …` notice carrying a shell-quoted `sed -n 'Kp' < … | head
+  -c 51200` continuation (the path goes through stdin, never an operand:
+  GNU sed would read a leading-dash name as `-e`/`-f`/`-w` options) and
+  `more: offset=K+1` when further lines exist. An
   offset past the last line, known exactly only when the scan reached EOF,
   carries `offset K is past the last line (N lines total)`; when the budget
   stopped the scan instead, the offset is only past the CONFIRMED lines and

@@ -133,8 +133,9 @@ function shellQuote(text: string): string {
 // The output window under the byte cap (issue #176): whole lines only.
 // `used` counts each kept line plus the '\n' that will follow it, so the
 // assembled content (trailing newline included) never exceeds
-// READ_RESULT_MAX_BYTES. The caller only calls this when the body is over
-// the cap, so at least one line is always left out.
+// READ_RESULT_MAX_BYTES. The caller only calls this when the assembled
+// content (body plus its trailing newline) would exceed the cap, so at
+// least one line is always left out.
 function clipOutputLines(
   lines: string[],
   path: string,
@@ -155,9 +156,13 @@ function clipOutputLines(
       notice: `output clipped at ${READ_RESULT_MAX_BYTES}B`,
     };
   }
+  // The path goes through stdin, never as a sed operand (issue #176 review):
+  // GNU sed permutes options, so an operand named `-e1e touch pwned` (or
+  // r/-f/w variants) would run as sed script text when the suggestion is
+  // pasted into a shell.
   return {
     lines: kept,
-    notice: `line ${offset} is ${utf8Bytes(first)}B — above the ${READ_RESULT_MAX_BYTES}B output cap; read it with bash: sed -n '${offset}p' ${shellQuote(path)} | head -c ${READ_RESULT_MAX_BYTES}`,
+    notice: `line ${offset} is ${utf8Bytes(first)}B — above the ${READ_RESULT_MAX_BYTES}B output cap; read it with bash: sed -n '${offset}p' < ${shellQuote(path)} | head -c ${READ_RESULT_MAX_BYTES}`,
   };
 }
 
@@ -404,7 +409,8 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
     let notice: string | undefined;
     let byteClipped = false;
     let emptiedByClip = false;
-    if (utf8Bytes(body) > READ_RESULT_MAX_BYTES) {
+    // The cap bounds the CONTENT, which is body plus its trailing '\n'.
+    if (utf8Bytes(body) + 1 > READ_RESULT_MAX_BYTES) {
       const clipped = clipOutputLines(
         window.slice(0, READ_MAX_LINES),
         args.path,
@@ -435,7 +441,8 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
       // the scan instead, the offset is only past the CONFIRMED lines and
       // the header's "no lines at offset K (file has at least N lines)"
       // stays honest — no notice.
-      notice = `offset ${offset} is past the last line (${view.totalLines} lines total)`;
+      const total = view.totalLines === 1 ? 'line' : 'lines';
+      notice = `offset ${offset} is past the last line (${view.totalLines} ${total} total)`;
     }
     // truncated is honest (issue #122): true whenever the scan stopped
     // before EOF — totalLines is then only a lower bound — or the output

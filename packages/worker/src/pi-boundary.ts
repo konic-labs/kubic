@@ -24,7 +24,9 @@
 //   used by: packages/worker/src/lane/* (adapter + drive wrapper typings)
 //   why Pi has no alternative: these types ARE the harness contract (§15 —
 //     Kubic defines no parallel event vocabulary)
-//   review: issue #11
+//   review: issue #11 (OpenOperation: issue #147 — the open operations Pi
+//     restores on attach, which bootSoloLane surfaces so a crashed turn is
+//     resumed or aborted instead of refusing every prompt with LaneBusy)
 export type {
   AbortRequestResult,
   AgentHarness as AgentHarnessApi,
@@ -46,6 +48,7 @@ export type {
   Hooks,
   JsonValue,
   LaneSnapshot,
+  OpenOperation,
   OperationAdmissionResult,
   OperationError,
   OperationRequest,

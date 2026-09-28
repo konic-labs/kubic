@@ -126,6 +126,25 @@ deliberately, record session-scoped full access first
 (`kubic sessions create --dangerously-skip-approvals`, or a prior
 `kubic sessions attach` decision) — it is never implied.
 
+**Attaching a session with a pending operation** (issue #147). A run
+that died mid-turn (SIGKILL, OOM, power loss, orphan reaping) leaves its
+operation open in the session, and an open operation refuses every new
+prompt. `kubic run --session X` therefore settles it first and names the
+choice on stderr: when the pending run carries **this same prompt** (an
+orchestrator worker re-launched on its reattached session, a retried
+script) it is resumed *as* this run — never re-prompted
+(`pending operation <id> (run, started <iso>) carries this prompt:
+resuming it instead of re-prompting`); otherwise it is resumed to
+settlement under this run's `--timeout`/`--max-turns` guards and the new
+prompt is accepted afterwards (`… resumed after an interrupted run:
+<status>`). A resume that cannot settle — a guard fires, or it waits on an
+approval that cannot arrive without a TTY — is durably aborted instead
+(`… aborted after an interrupted run (resume could not settle: <why>)`).
+A never-replay tool (bash, write, edit, VCS mutations) the dead process
+was running is never executed again: the resumed turn sees it as
+interrupted. `kubic sessions attach X` prints `pending operation: <id>
+(<kind>, started <iso>)` for such a session.
+
 **Concurrent runs in one workspace** (issue #118). A run drives one
 session, and a session takes one live attachment. `kubic run --session X`
 while X is held ends `workspace_unavailable` (exit 5) with the holder's pid
@@ -351,7 +370,10 @@ Without the session the child would die at attach (exit 5,
 `unknown session`); if creation fails, or a worktree vanished while its
 branch survived, the run fails closed as `spawn_failed` before spawning
 anything. `--resume` re-attaches an existing worker session instead of
-recreating it, so a killed run keeps one chain per worker.
+recreating it, so a killed run keeps one chain per worker; a turn the
+killed worker left open is resumed by the re-launched child (its plan-step
+prompt is the pending one), never appended as a duplicate prompt, and the
+`--debug` reuse line names it.
 
 | Flag | Meaning |
 | --- | --- |
@@ -457,7 +479,12 @@ status stay. `--session <id>` resumes into an existing session (same
 boots). Usage errors (unknown option, missing value, any operand) exit 2
 on stderr before the screen opens. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
-`error: …` line on stderr (never stdout) before the screen opens.
+`error: …` line on stderr (never stdout) before the screen opens. A session left with a pending operation
+by a crashed run (issue #147) has it durably aborted at boot — its
+approvals would need the overlay, which is not on screen yet, and the
+operator is present to re-send — and the editor footer names the outcome
+(`pending operation <id> (run, started <iso>) aborted after an
+interrupted run`) from the first render.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
@@ -564,7 +591,7 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 | `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. |
-| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
+| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then a `pending operation: <id> (<kind>, started <iso>)` line for each operation a crashed run left open (settled by the next `run`/`tui --session`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
 Usage errors exit 2 on stderr: a missing subcommand (commander prints the

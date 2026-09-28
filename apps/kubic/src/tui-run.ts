@@ -88,6 +88,10 @@ import type {
 } from '../../../packages/worker/src/lane/events.js';
 import { attachLaneEvents } from '../../../packages/worker/src/lane/events.js';
 import {
+  describeSettlement,
+  settlePendingOperation,
+} from '../../../packages/worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   openSessionStore,
@@ -143,6 +147,10 @@ export interface TuiLaneBoot {
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
   loop?: TuiLaneLoop;
+  // Issue #147: the outcome line for a turn a crashed process left open on
+  // this session (durably aborted at boot). Shown in the editor footer from
+  // the first render; absent when nothing was pending.
+  pendingNotice?: string;
 }
 
 export interface TuiRunDeps {
@@ -390,10 +398,25 @@ export async function bootTuiLane(
           : { contributions: installed.contributions }),
       },
     });
+    // Issue #147 (§21): a turn a dead process left open would refuse every
+    // prompt with LaneBusy. The interactive policy is the durable abort: its
+    // approvals would need the overlay, which is not on screen yet, and the
+    // operator is present to re-send. The outcome is named in the footer.
+    const pendingNotices: string[] = [];
+    for (const op of solo.open ?? []) {
+      pendingNotices.push(
+        describeSettlement(
+          await settlePendingOperation(solo, op, 'abort', context),
+        ),
+      );
+    }
     return {
       sessionId: id,
       model: `${model.provider}/${model.id}`,
       journal,
+      ...(pendingNotices.length === 0
+        ? {}
+        : { pendingNotice: pendingNotices.join('; ') }),
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -824,7 +847,9 @@ export async function runTuiCommand(
     // The trust statement is on screen before the operator types anything
     // (issue #89): the footer is set before the first render, so the very
     // first frame carries it. Empty when suppressed.
-    app.setEditorFooter(notice);
+    // Issue #147: a pending operation settled at boot is reported first;
+    // the trust statement returns as the idle footer after the next turn.
+    app.setEditorFooter(boot.pendingNotice ?? notice);
     booted.render();
     process.once('SIGINT', onSigint);
     stdin?.once('end', onStdinEnd);

@@ -32,6 +32,7 @@ import {
   type Context,
   type DeferredHandle,
   type Model,
+  type OpenOperation,
   type Session,
 } from '../pi-boundary.js';
 import {
@@ -196,6 +197,9 @@ export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
   kills: OperationKillRegistry;
+  // Issue #147: operations Pi restored open on this lane at boot (a turn a
+  // dead process left mid-flight). Absent on stub lanes.
+  open?: OpenOperation[];
   sessionId: string;
   binding?: LaneBinding;
   affinity?: TaskAffinity;
@@ -397,7 +401,7 @@ export async function bootSoloLane(
       : classAllowed === undefined
         ? [...options.toolAllowlist]
         : options.toolAllowlist.filter((tool) => classAllowed.includes(tool));
-  const { harness } = await AgentHarness.create(
+  const { harness, open } = await AgentHarness.create(
     {
       session: options.session,
       models: options.models,
@@ -505,6 +509,10 @@ export async function bootSoloLane(
     harness,
     lane,
     kills,
+    // Issue #147 (§21): the operations Pi restored open on this lane — a
+    // turn a dead process left mid-flight. Callers settle them (resume or
+    // durable abort, lane/pending.ts) before admitting a new prompt.
+    open: open.filter((op) => op.lane === SOLO_LANE_NAME),
     sessionId: options.sessionId,
     configuredReserveTokens:
       options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,

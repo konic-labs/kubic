@@ -9,6 +9,10 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
+  describePendingOperation,
+  inspectOpenOperations,
+} from '../../worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   listSessions,
@@ -262,6 +266,15 @@ export async function runSessionsCommand(
           ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
           : 'posture: approvals enforced',
       );
+      // Issue #147 (§21): a turn a crashed process left open is named, so
+      // the operator knows the next `kubic run --session` / `kubic tui
+      // --session` settles it before taking a new prompt.
+      for (const op of await inspectOpenOperations(
+        session,
+        BACKGROUND_CONTEXT,
+      )) {
+        deps.out(describePendingOperation(op));
+      }
       const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
       const last = entries.slice(Math.max(0, entries.length - tail));
       for (const entry of last) {

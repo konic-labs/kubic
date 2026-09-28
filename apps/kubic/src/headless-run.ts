@@ -75,6 +75,12 @@ import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js'
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import {
+  describeSettlement,
+  lastUserPromptText,
+  pendingHead,
+  settlePendingOperation,
+} from '../../../packages/worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   openSessionStore,
@@ -163,6 +169,10 @@ export interface HeadlessRunDeps {
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
+  // Operator notices (issue #147): the line naming what happened to a
+  // pending operation a crashed run left open. Defaults to stderr; tests
+  // inject a collector.
+  notice?: (line: string) => void;
   // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
   // real home directory, this process's cwd, and the documented trust
   // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
@@ -930,26 +940,82 @@ export async function runHeadlessPrompt(
     try {
       const beforeAccept = bootInterrupted();
       if (beforeAccept !== undefined) return beforeAccept;
-      const acceptSpan = spans.startLane('accept');
-      const admission = await lane.accept({ kind: 'prompt', prompt }, context);
-      if (!admission.ok) {
-        const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
-        spans.endLane(acceptSpan, message);
-        return finished(id, 'failed', message, message);
+      const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+      // Issue #147 (§21): a turn a dead process left open would refuse this
+      // prompt with LaneBusy. The documented policy: when the pending run
+      // carries this very prompt (an orchestrator worker re-launched on its
+      // reattached session, a retried script), it is resumed AS this run —
+      // never re-prompted. Otherwise it is resumed first under the same
+      // guards and then this prompt is accepted; a resume that cannot
+      // settle (guard fired, approval with no TTY) is durably aborted. Each
+      // choice is named on stderr.
+      const notice = deps.notice ?? ((line: string) => console.error(line));
+      let resumedOperationId: string | undefined;
+      const open = solo.open ?? [];
+      if (open.length > 0) {
+        const pendingPrompt = lastUserPromptText(
+          await lane.findEntries(undefined, context),
+        );
+        for (const op of open) {
+          if (
+            resumedOperationId === undefined &&
+            op.kind === 'run' &&
+            op.aborting !== true &&
+            pendingPrompt === prompt
+          ) {
+            resumedOperationId = op.operationId;
+            notice(
+              `${pendingHead(op)} carries this prompt: resuming it instead of re-prompting`,
+            );
+            continue;
+          }
+          const settled = await settlePendingOperation(
+            solo,
+            op,
+            'resume',
+            context,
+            (operationId) =>
+              driveWithGuard(
+                lane,
+                operationId,
+                context,
+                boundMs,
+                options.maxTurns,
+                interrupted,
+              ),
+          );
+          notice(describeSettlement(settled));
+        }
       }
-      spans.endLane(acceptSpan);
+      let operationId: string;
+      if (resumedOperationId !== undefined) {
+        operationId = resumedOperationId;
+      } else {
+        const acceptSpan = spans.startLane('accept');
+        const admission = await lane.accept(
+          { kind: 'prompt', prompt },
+          context,
+        );
+        if (!admission.ok) {
+          const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
+          spans.endLane(acceptSpan, message);
+          return finished(id, 'failed', message, message);
+        }
+        spans.endLane(acceptSpan);
+        operationId = admission.value.operationId;
+      }
       // Issue #109: record the admitted operation for the finally drain — a
       // guard firing mid-drive (or any later exit path) aborts and kills
       // exactly this operation's in-flight work before the sweep.
-      activeOperationId = admission.value.operationId;
+      activeOperationId = operationId;
       let driven: SettledDrive;
       const driveSpan = spans.startLane('drive');
       try {
         driven = await driveWithGuard(
           lane,
-          admission.value.operationId,
+          operationId,
           context,
-          options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+          boundMs,
           options.maxTurns,
           interrupted,
         );

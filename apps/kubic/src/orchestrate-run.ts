@@ -66,6 +66,10 @@ import { getWorktreeStatus } from '../../../packages/host/src/orchestrator/workt
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
+  inspectOpenOperations,
+  pendingHead,
+} from '../../../packages/worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   openSessionStore,
@@ -1089,14 +1093,29 @@ export async function orchestrateDepsWithDefaults(
         // re-pointed id, a worktree moved and re-added) would silently
         // journal somewhere else. Fail closed rather than misuse it.
         const recorded = existing.metadata.cwd;
-        await existing.close(BACKGROUND_CONTEXT);
+        // Issue #147 (§21): a turn the killed worker left open is resumed by
+        // the child itself — its `kubic run -p` carries the same plan-step
+        // prompt, so the pending run is resumed AS this run, never
+        // re-prompted. Named here so the resume is observable.
+        let pending: string[] = [];
+        try {
+          pending = (
+            await inspectOpenOperations(existing, BACKGROUND_CONTEXT)
+          ).map((op) => pendingHead(op));
+        } finally {
+          await existing.close(BACKGROUND_CONTEXT);
+        }
         if (recorded !== input.worktree.path) {
           throw new Error(
             `session '${input.workerSessionId}' belongs to ${recorded ?? '(no cwd)'}, not the worker worktree ${input.worktree.path}`,
           );
         }
         debug(
-          `session: reusing '${input.workerSessionId}' from the killed run`,
+          `session: reusing '${input.workerSessionId}' from the killed run${
+            pending.length === 0
+              ? ''
+              : ` (${pending.join('; ')} will be resumed by the worker)`
+          }`,
         );
         return { sessionId: input.workerSessionId };
       } catch (error) {

@@ -28,6 +28,7 @@ diff touching the boundary for maintainer review.
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
+| `lane/pending.ts` | `PendingPolicy`, `PendingSettlement`, `PendingLane`, `PendingDriver`, `settlePendingOperation`, `pendingHead`, `describePendingOperation`, `describeSettlement`, `inspectOpenOperations`, `lastUserPromptText` — settle a turn a crashed process left open (#147: resume or durable abort) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |

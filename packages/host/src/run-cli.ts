@@ -238,6 +238,9 @@ export function checkPromptValue(value: string, attached: boolean): string {
 // workspace-flavored failure (attach of a missing session, ENOENT/EACCES
 // on the sessions root, worktree problems) maps to workspace_unavailable
 // (5); everything else maps to failed (1).
+// Any whitespace/quote-delimited token containing a path separator.
+const PATH_TOKEN = /[^\s'"`]*[/\\][^\s'"`]*/g;
+
 function isWorkspaceFailure(error: unknown): boolean {
   const record = error as { name?: unknown; code?: unknown };
   if (record.name === 'SessionAttachError') return true;
@@ -245,13 +248,17 @@ function isWorkspaceFailure(error: unknown): boolean {
   // missing session: the workspace cannot host this run right now — the
   // named SessionLockError message carries the holder pid.
   if (record.name === 'SessionLockError') return true;
+  const message = String(
+    (error instanceof Error ? error.message : error) ?? '',
+  );
   const haystack = [
-    record.code,
-    record.name,
-    error instanceof Error ? error.message : error,
-  ]
-    .map((part) => String(part ?? ''))
-    .join(' ');
+    String(record.code ?? ''),
+    String(record.name ?? ''),
+    // A path is data, not a diagnosis: a cwd under `.claude/worktrees/` or
+    // a dir named `workspace` must not turn an unrelated failure into exit
+    // 5, so path-like tokens are dropped before the keyword match.
+    message.replace(PATH_TOKEN, ' '),
+  ].join(' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

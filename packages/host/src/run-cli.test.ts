@@ -318,6 +318,30 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  it('ignores workspace words that only appear inside a path', () => {
+    // A cwd under `.claude/worktrees/` (or any dir named workspace) must
+    // not turn an unrelated failure into exit 5.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: /repo/.claude/worktrees/wf-1/skills/budget missing',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('boom in C:\\workspace\\kubic\\a.ts')),
+    ).toBe('failed');
+    // The errno or the word outside a path still counts.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file, open '/home/u/worktrees/x'"),
+      ),
+    ).toBe('workspace_unavailable');
+    expect(
+      mapCaughtErrorToTerminus(new Error('git worktree add failed at /tmp/a')),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

@@ -63,6 +63,13 @@ function isDashToken(token: string): boolean {
   return token.startsWith('-');
 }
 
+/**
+ * @deprecated Legacy hand-rolled parser, kept only for the command handlers
+ * still reached through the pass-through forwarders in apps/kubic/src/
+ * commands/. commander is the single parser (docs/contributing-cli.md):
+ * a migrated command declares its options on its commander command and
+ * stops calling this. Delete this module once no handler imports it.
+ */
 export function parseFlagArgs(
   args: readonly string[],
   spec: readonly FlagSpec[],

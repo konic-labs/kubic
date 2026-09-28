@@ -87,7 +87,7 @@ npm test                    # scripts/*.test.mjs via node --test
 npm run test:unit           # vitest
 npm run typecheck
 npm run lint:deps
-npm run check:pi
+npm run check:pi            # exact pins on every dependency
 npx biome ci .              # exact CI lint parity (never --no-verify)
 npm run docs:check          # dangling links + dep-table drift
 npm run build               # tsc -> gitignored dist/

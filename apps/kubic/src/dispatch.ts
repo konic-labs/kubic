@@ -6,16 +6,23 @@
 // module holds no lanes, no fs and no process state of its own — the
 // routing is exercised directly by dispatch.test.ts.
 //
-// Behavior-identical by construction: every branch is the moved `main()`
-// branch with the inline production object replaced by its injected
-// runner, and the check order (config load → refusal → runtime exclude →
-// help → version → crash probe → commands → usage) is the moved order.
+// Routing is commander (./cli/program.ts): each command group registers
+// itself from its own module under ./commands/ (docs/contributing-cli.md).
+// The check order is unchanged: config load → refusal → runtime exclude →
+// usage fallthrough → commander (help, version, crash probe, commands).
 
-import {
-  HELP_EXIT_OK,
-  HELP_FLAGS,
-} from '../../../packages/core/src/cli-help.js';
+import { HELP_FLAGS } from '../../../packages/core/src/cli-help.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import type {
+  CommandContext,
+  CommandRegistrar,
+  DispatchRunners,
+} from './cli/context.js';
+import { createKubicProgram, runKubicProgram } from './cli/program.js';
+import { registerAnalysisCommands } from './commands/analysis.js';
+import { registerJournalCommands } from './commands/journal.js';
+import { registerOrchestratorCommands } from './commands/orchestrator.js';
+import { registerSoloCommands } from './commands/solo.js';
 import {
   type CliConfigResult,
   configRefusalExit,
@@ -30,42 +37,54 @@ import {
 export const ROOT_USAGE =
   'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
-// One runner per command in the if-chain. `rest` is the argv after the
-// command name — journal commands receive `[command, ...rest]`, exactly
-// the argv the root passed before the extraction; `config` is the one
-// process-wide config load, so every runner that needs the effective
-// configuration reads the same result the refusal gate saw.
-export type CommandRunner = (
-  rest: readonly string[],
-  config: CliConfigResult,
-) => number | Promise<number>;
+// The supported command names, read off the usage line so the routing
+// table and the listing can never drift apart (dispatch.test.ts also pins
+// that the registered commander commands are exactly these).
+export const COMMAND_NAMES: ReadonlySet<string> = new Set(
+  ROOT_USAGE.slice(
+    ROOT_USAGE.indexOf('<') + 1,
+    ROOT_USAGE.lastIndexOf('>'),
+  ).split(' | '),
+);
 
-export interface DispatchRunners {
-  readonly sessions: CommandRunner;
-  readonly git: CommandRunner;
-  readonly journal: CommandRunner;
-  readonly models: CommandRunner;
-  readonly run: CommandRunner;
-  readonly tui: CommandRunner;
-  readonly doctor: CommandRunner;
-  readonly orchestrate: CommandRunner;
-  readonly clean: CommandRunner;
-  readonly cost: CommandRunner;
-  readonly perf: CommandRunner;
-  readonly policy: CommandRunner;
-  readonly config: CommandRunner;
-  readonly audit: CommandRunner;
-  readonly workers: CommandRunner;
-  readonly eval: CommandRunner;
-  readonly benchmark: CommandRunner;
-  readonly replay: CommandRunner;
-  readonly export: CommandRunner;
-}
+// The modes that create `.kubic/` runtime state (issue #91).
+const STATE_CREATING_COMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'orchestrate',
+  'tui',
+]);
+
+// The contract's internal failure seam (issue #128), never listed.
+const CRASH_PROBE = '__crash-probe';
+
+// Root options commander answers before any command name.
+const ROOT_OPTIONS: ReadonlySet<string> = new Set([
+  ...HELP_FLAGS,
+  '--version',
+  '-V',
+]);
+
+// Runner and registry types live with the command registry (./cli/context.ts);
+// re-exported here because the dispatch seam is what callers wire.
+export type { CommandRunner, DispatchRunners } from './cli/context.js';
+
+// Every command module registers its own commander commands, so parallel
+// command migrations never edit the same file.
+const REGISTRARS: readonly CommandRegistrar[] = [
+  registerSoloCommands,
+  registerOrchestratorCommands,
+  registerJournalCommands,
+  registerAnalysisCommands,
+];
 
 export interface DispatchDeps {
   // The process's stdout channel (console.log in prod): the usage lines,
   // the refusal reason, and the version line all print through it.
   readonly out: (line: string) => void;
+  // The stderr channel (console.error in prod): commander's one-line parse
+  // errors and `error: …` lines from CliUsageError/CliExitError. Absent
+  // means stdout (the fakes in dispatch.test.ts capture one channel).
+  readonly err?: (line: string) => void;
   // One config load for the whole process, injected so the dispatch can be
   // exercised over loaded and refused results alike.
   readonly loadConfig: () => CliConfigResult;
@@ -117,101 +136,59 @@ export async function dispatchCommand(
   // (idempotent, fail-open, never dirties a committed .gitignore) — so the
   // first run/orchestrate leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
-  if (command === 'run' || command === 'orchestrate' || command === 'tui') {
+  if (command !== undefined && STATE_CREATING_COMMANDS.has(command)) {
     deps.ensureRuntimeExclude(
       runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
     );
   }
-  // Root-level help (issue #128): the #100 convention — one implementation in
-  // core/cli-help.ts, applied before argv validation — reaches the dispatcher
-  // too. Same line as the bare fallthrough below; only the exit code differs.
-  if (HELP_FLAGS.includes(command ?? '')) {
+  // Unknown commands and the bare invocation keep the POSIX usage + exit 1
+  // posture pinned by scripts/binary-contract.mjs — decided before commander
+  // parses, so they print the one usage line on stdout rather than
+  // commander's stderr message. Root options (`--help`, `-V`, …) go on to
+  // the parser. The contract crash probe (issue #128) is registered only
+  // under its env gate, so an ungated `__crash-probe` lands here too.
+  const crashProbe = process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1';
+  const known =
+    command !== undefined &&
+    (ROOT_OPTIONS.has(command) ||
+      COMMAND_NAMES.has(command) ||
+      (crashProbe && command === CRASH_PROBE));
+  if (!known) {
     deps.out(ROOT_USAGE);
-    return HELP_EXIT_OK;
+    return 1;
   }
-  if (command === '--version' || command === '-V') {
-    deps.out(formatVersionLine(deps.version()));
-    return 0;
+  const io = { out: deps.out, err: deps.err ?? deps.out };
+  const program = createKubicProgram(io, {
+    versionLine: formatVersionLine(deps.version()),
+    rootHelp: ROOT_USAGE,
+  });
+  let exitCode = 0;
+  const ctx: CommandContext = {
+    config: cliConfig,
+    runners: deps.runners,
+    rest,
+    out: io.out,
+    err: io.err,
+    setExitCode: (code) => {
+      exitCode = code;
+    },
+  };
+  for (const register of REGISTRARS) register(program, ctx);
+  if (crashProbe) {
+    // Deliberate failure seam for the shipped-artifact contract (issue
+    // #128): throws a plain Error so the top-level catch-all's `error:
+    // <message>` / KUBIC_DEBUG behavior is asserted end to end against the
+    // real binary. Internal, hidden, and absent from ROOT_USAGE.
+    program
+      .command(CRASH_PROBE, { hidden: true })
+      .helpOption(false)
+      .allowUnknownOption()
+      .allowExcessArguments()
+      .action(() => {
+        throw new Error('injected probe failure');
+      });
   }
-  // Deliberate failure seam for the shipped-artifact contract (issue #128):
-  // `kubic __crash-probe` throws a plain Error so the top-level catch-all's
-  // `error: <message>` / KUBIC_DEBUG behavior is asserted end to end against
-  // the real binary by scripts/binary-contract.mjs. Internal — not a
-  // supported command, deliberately absent from ROOT_USAGE, and gated on the
-  // contract's own env var (named like __KUBIC_CONTRACT_NODE_STUB) so
-  // arbitrary user argv cannot reach it: without the gate the command falls
-  // through to the unknown-command path below.
-  if (
-    command === '__crash-probe' &&
-    process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1'
-  ) {
-    throw new Error('injected probe failure');
-  }
-  if (command === 'sessions') {
-    return deps.runners.sessions(rest, cliConfig);
-  }
-  if (command === 'git') {
-    return deps.runners.git(rest, cliConfig);
-  }
-  if (
-    command === 'diff' ||
-    command === 'undo' ||
-    command === 'log' ||
-    command === 'status'
-  ) {
-    return deps.runners.journal([command, ...rest], cliConfig);
-  }
-  if (command === 'models') {
-    return deps.runners.models(rest, cliConfig);
-  }
-  if (command === 'run') {
-    return deps.runners.run(rest, cliConfig);
-  }
-  if (command === 'tui') {
-    return deps.runners.tui(rest, cliConfig);
-  }
-  if (command === 'doctor') {
-    return deps.runners.doctor(rest, cliConfig);
-  }
-  if (command === 'orchestrate') {
-    return deps.runners.orchestrate(rest, cliConfig);
-  }
-  if (command === 'clean') {
-    return deps.runners.clean(rest, cliConfig);
-  }
-  if (command === 'cost') {
-    return deps.runners.cost(rest, cliConfig);
-  }
-  if (command === 'perf') {
-    return deps.runners.perf(rest, cliConfig);
-  }
-  if (command === 'policy') {
-    return deps.runners.policy(rest, cliConfig);
-  }
-  if (command === 'config') {
-    return deps.runners.config(rest, cliConfig);
-  }
-  if (command === 'audit') {
-    return deps.runners.audit(rest, cliConfig);
-  }
-  if (command === 'workers') {
-    const code = await deps.runners.workers(rest, cliConfig);
-    // runWorkersCommand reports usage as 1; the binary surfaces §78
-    // usage errors as 2 (issue #77).
-    return code === 1 ? 2 : code;
-  }
-  if (command === 'eval') {
-    return deps.runners.eval(rest, cliConfig);
-  }
-  if (command === 'benchmark') {
-    return deps.runners.benchmark(rest, cliConfig);
-  }
-  if (command === 'replay') {
-    return deps.runners.replay(rest, cliConfig);
-  }
-  if (command === 'export') {
-    return deps.runners.export(rest, cliConfig);
-  }
-  deps.out(ROOT_USAGE);
-  return 1;
+  return runKubicProgram(program, [command, ...rest], io, {
+    code: () => exitCode,
+  });
 }

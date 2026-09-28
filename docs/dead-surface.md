@@ -147,6 +147,12 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 58 | `apps/kubic/src/cli/context.ts` | cli-foundation | keep: type-only registry contract (`CommandContext`, `CommandRegistrar`, `DispatchRunners`) consumed through `import type` by `dispatch.ts`, `cli/program.ts` and every `commands/*.ts` module — a types-only module is never `reachable` by the value-import rule |
+| 89 | `packages/core/src/cli/logger.ts` | cli-foundation | wire: consola logger for the commander migration ([contributing-cli.md](contributing-cli.md)); becomes reachable as the first migrated command logs through it |
+| 33 | `packages/core/src/cli/output.ts` | cli-foundation | wire: `--json` serializer + output mode for the commander migration; reachable with the first migrated `--json` command |
+| 105 | `packages/core/src/cli/prompt.ts` | cli-foundation | wire: @clack/prompts helpers for the commander migration; reachable with the first command that prompts |
+| 85 | `packages/core/src/cli/table.ts` | cli-foundation | wire: cli-table3 renderer for the commander migration; reachable with the first tabular report |
+| 90 | `packages/core/src/cli/theme.ts` | cli-foundation | wire: chalk palette for the commander migration; reachable with the first coloured report |
 
 ## Executed by #98 (the `ops/cost/*` + `ops/perf/*` cluster)
 

@@ -1,5 +1,20 @@
-// Shared-flag-parser gate (issue #127; §78, the `--help` convention's
-// sibling). Every command used to hand-roll the same value guard —
+// Single-parser gate (issue #127; §78, the `--help` convention's sibling;
+// extended when the CLI moved onto commander). commander — through
+// @commander-js/extra-typings, owned by the composition root
+// (apps/kubic/src) — is the single argv parser:
+//
+//   A. the root routes through commander: apps/kubic/src/dispatch.ts builds
+//      the program (createKubicProgram) and holds no `command === '…'`
+//      if-chain; each command group registers itself from its own module
+//      under apps/kubic/src/commands/;
+//   B. no other argv parser is imported anywhere in the product tree
+//      (yargs, minimist, meow, arg, node:util parseArgs, bare `commander`),
+//      and extra-typings is imported only under apps/kubic/src;
+//   C. packages/core/src/flags.ts (`parseFlagArgs`) is legacy — still used
+//      by the not-yet-migrated command handlers behind the pass-through
+//      forwarders — and must carry an @deprecated removal marker.
+//
+// Every command used to hand-roll the same value guard —
 //
 //   const value = args[i + 1];
 //   if (value === undefined || value.startsWith('--')) { … }
@@ -37,6 +52,10 @@ const PARSER = join(ROOT, 'packages', 'core', 'src', 'flags.ts');
 // a copy-pasted or generated guard can carry either — matching only
 // `startsWith('--')` would let the double-quoted twin slip past.
 const HAND_ROLLED_GUARDS = ["startsWith('--')", 'startsWith("--")'];
+// Argv parsers other than commander-via-extra-typings (rule B).
+const FOREIGN_PARSER_RE =
+  /from\s+['"](yargs(?:\/[^'"]*)?|minimist|meow|arg|commander)['"]|import\s*\{[^}]*\bparseArgs\b[^}]*\}\s*from\s*['"](?:node:)?util['"]/;
+const EXTRA_TYPINGS_RE = /from\s+['"]@commander-js\/extra-typings['"]/;
 
 function walk(dir, found) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -84,10 +103,106 @@ function guardOffenders(root = ROOT, files = sourceFiles(root)) {
   return offenders;
 }
 
+// `file:line: import` for every foreign parser import, and every
+// extra-typings import outside the composition root.
+function parserOffenders(root = ROOT, files = sourceFiles(root)) {
+  const app = join(root, 'apps', 'kubic', 'src');
+  const offenders = [];
+  for (const file of files) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    for (const [index, line] of lines.entries()) {
+      const foreign = FOREIGN_PARSER_RE.test(line);
+      const typedOutsideApp =
+        EXTRA_TYPINGS_RE.test(line) && !file.startsWith(app);
+      if (!foreign && !typedOutsideApp) continue;
+      offenders.push(`${relative(root, file)}:${index + 1}: ${line.trim()}`);
+    }
+  }
+  return offenders;
+}
+
 // One walk of the real tree, shared by the gate and its coverage floor.
 const REPO_SOURCES = sourceFiles();
 
-describe('shared flag parser (issue #127)', () => {
+describe('commander is the single parser', () => {
+  it('the root routes through commander, one registrar module per group', () => {
+    const dispatch = readFileSync(
+      join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts'),
+      'utf8',
+    );
+    assert.match(dispatch, /createKubicProgram\(/);
+    assert.doesNotMatch(
+      dispatch,
+      /command === ['"]/,
+      'dispatch.ts must not route by string comparison — register a commander command instead',
+    );
+    const program = readFileSync(
+      join(ROOT, 'apps', 'kubic', 'src', 'cli', 'program.ts'),
+      'utf8',
+    );
+    assert.match(program, EXTRA_TYPINGS_RE);
+    assert.match(program, /\.exitOverride\(/);
+    for (const group of ['solo', 'orchestrator', 'journal', 'analysis']) {
+      const file = join(
+        ROOT,
+        'apps',
+        'kubic',
+        'src',
+        'commands',
+        `${group}.ts`,
+      );
+      assert.ok(existsSync(file), `missing command module ${group}.ts`);
+      assert.match(
+        readFileSync(file, 'utf8'),
+        /export const register\w+Commands/,
+      );
+    }
+  });
+
+  it('no other argv parser is imported, and extra-typings stays in the app root', () => {
+    const offenders = parserOffenders(ROOT, REPO_SOURCES);
+    assert.deepEqual(
+      offenders,
+      [],
+      `argv parsing belongs to commander (@commander-js/extra-typings in apps/kubic/src):\n${offenders.join('\n')}`,
+    );
+  });
+
+  it('flags foreign parsers and extra-typings outside the app, not inside it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parser-gate-'));
+    try {
+      const write = (rel, body) => {
+        mkdirSync(join(dir, rel, '..'), { recursive: true });
+        writeFileSync(join(dir, rel), body);
+      };
+      write('packages/host/src/a.ts', "import yargs from 'yargs';\n");
+      write(
+        'packages/host/src/b.ts',
+        "import { parseArgs } from 'node:util';\n",
+      );
+      write('packages/eval/src/c.ts', "import { Command } from 'commander';\n");
+      write(
+        'packages/core/src/d.ts',
+        "import { Command } from '@commander-js/extra-typings';\n",
+      );
+      write(
+        'apps/kubic/src/cli/ok.ts',
+        "import { Command } from '@commander-js/extra-typings';\n",
+      );
+      write('packages/host/src/e.ts', "import { format } from 'node:util';\n");
+      assert.deepEqual(parserOffenders(dir), [
+        `${join('packages', 'core', 'src', 'd.ts')}:1: import { Command } from '@commander-js/extra-typings';`,
+        `${join('packages', 'eval', 'src', 'c.ts')}:1: import { Command } from 'commander';`,
+        `${join('packages', 'host', 'src', 'a.ts')}:1: import yargs from 'yargs';`,
+        `${join('packages', 'host', 'src', 'b.ts')}:1: import { parseArgs } from 'node:util';`,
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('legacy flag parser (issue #127)', () => {
   it('no hand-rolled startsWith("--") value guard survives outside packages/core/src/flags.ts', () => {
     const offenders = guardOffenders(ROOT, REPO_SOURCES);
     assert.deepEqual(
@@ -100,6 +215,8 @@ describe('shared flag parser (issue #127)', () => {
   it('the shared parser is the single implementation and the scan covers the tree', () => {
     const parser = readFileSync(PARSER, 'utf8');
     assert.match(parser, /export function parseFlagArgs\(/);
+    // Rule C: legacy, marked for removal once every handler is migrated.
+    assert.match(parser, /@deprecated/);
     assert.match(parser, /startsWith\(['"]--['"]\)|TERMINATOR/);
     // The gate itself must keep watching both quote spellings.
     assert.deepEqual(HAND_ROLLED_GUARDS, [

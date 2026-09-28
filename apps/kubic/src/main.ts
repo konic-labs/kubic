@@ -47,10 +47,12 @@ function cliVersion(): string {
 }
 
 const out = (line: string) => console.log(line);
+const err = (line: string) => console.error(line);
 const [command, ...rest] = process.argv.slice(2);
 try {
   const code = await dispatchCommand(command, rest, {
     out,
+    err,
     loadConfig: loadCliConfig,
     version: cliVersion,
     ensureRuntimeExclude: (entries) =>
@@ -59,7 +61,7 @@ try {
       process.stdin.isTTY === true && process.stdout.isTTY === true,
     runners: createProdRunners({
       out,
-      debug: (line) => console.error(line),
+      debug: err,
     }),
   });
   exitProcessAfterFlush(code);

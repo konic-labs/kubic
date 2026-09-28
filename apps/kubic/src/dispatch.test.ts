@@ -306,6 +306,30 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.lines).toEqual([ROOT_USAGE]);
     expect(h.calls).toEqual([]);
   });
+
+  it('an unknown root option or `help` is the unknown-command path (usage, exit 1)', async () => {
+    for (const command of ['--bogus', '-x', 'help']) {
+      const h = harness();
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(1);
+      expect(h.lines, command).toEqual([ROOT_USAGE]);
+      expect(h.calls, command).toEqual([]);
+    }
+  });
+
+  it('root options after the command reach the command (positional options)', async () => {
+    const h = harness();
+    expect(await dispatchCommand('doctor', ['-V', '--help'], h.deps)).toBe(0);
+    expect(h.calls).toEqual([
+      expect.objectContaining({ key: 'doctor', rest: ['-V', '--help'] }),
+    ]);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('forwards a leading `--` verbatim (commander would drop it)', async () => {
+    const h = harness();
+    await dispatchCommand('export', ['--', '-trajectory.json'], h.deps);
+    expect(h.calls[0]?.rest).toEqual(['--', '-trajectory.json']);
+  });
 });
 
 describe('config refusal (issue #90 policy, moved)', () => {

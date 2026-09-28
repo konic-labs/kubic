@@ -24,6 +24,15 @@ const COMMANDS_PAGE = join(ROOT, 'docs', 'cli', 'commands.md');
 // wiring; main.ts is the thin entry now.
 const DISPATCH = join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts');
 const PROD_RUNNERS = join(ROOT, 'apps', 'kubic', 'src', 'prod-runners.ts');
+// The commander registry: `clean` is registered by the orchestrator group.
+const ORCHESTRATOR_COMMANDS = join(
+  ROOT,
+  'apps',
+  'kubic',
+  'src',
+  'commands',
+  'orchestrator.ts',
+);
 const CLEAN = join(
   ROOT,
   'packages',
@@ -129,10 +138,11 @@ describe('clean is documented and dispatched (issue #92)', () => {
         'packages/host/src/orchestrator/worktree/clean.ts',
         'packages/host/src/orchestrator/worktree/remove.ts',
       ]);
-      // The route is pinned in the dispatch (issue #135), the runCleanCommand
-      // wiring in the production runners.
-      const dispatch = readFileSync(DISPATCH, 'utf8');
-      expect(dispatch).toContain("command === 'clean'");
+      // The route is pinned in the commander registry (the orchestrator
+      // group module), the runCleanCommand wiring in the production runners.
+      const registry = readFileSync(ORCHESTRATOR_COMMANDS, 'utf8');
+      expect(registry).toContain("'clean'");
+      expect(registry).toContain('runners.clean(');
       const wiring = readFileSync(PROD_RUNNERS, 'utf8');
       expect(wiring).toContain('runCleanCommand');
     },

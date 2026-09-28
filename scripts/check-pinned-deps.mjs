@@ -1,6 +1,9 @@
-// Exact-pin check for Pi dependencies (issue #4, design §65).
-// Every @earendil-works/* spec in every workspace package.json must be an
-// exact version — no ^, ~, or ranges — so Pi upgrades are always deliberate.
+// Exact-pin check (issue #4, design §65; extended to the CLI stack).
+// Every dependency spec in every workspace package.json must be an exact
+// version — no ^, ~, or ranges — so Pi upgrades AND third-party upgrades
+// (commander, chalk, consola, cli-table3, @clack/prompts, dev tooling) are
+// always deliberate. `overrides` entries stay Pi-only (they may pin nested
+// transitive versions by design).
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -54,7 +57,6 @@ export function checkPinned(root) {
       'optionalDependencies',
     ]) {
       for (const [dep, spec] of Object.entries(manifest[section] ?? {})) {
-        if (!dep.startsWith('@earendil-works/')) continue;
         // Stryker disable next-line ConditionalExpression: dropping the
         // typeof guard is unobservable — no non-string JSON value
         // stringifies to an exact-version match (tracking: #66).
@@ -94,8 +96,8 @@ if (isMain) {
     );
   }
   if (violations.length > 0) {
-    console.log(`${violations.length} unpinned Pi dependency(ies)`);
+    console.log(`${violations.length} unpinned dependency(ies)`);
     process.exit(1);
   }
-  console.log('pi pins OK');
+  console.log('dependency pins OK');
 }

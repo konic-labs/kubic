@@ -251,7 +251,10 @@ function isWorkspaceFailure(error: unknown): boolean {
     error instanceof Error ? error.message : error,
   ]
     .map((part) => String(part ?? ''))
-    .join(' ');
+    .join(' ')
+    // Path-like tokens are data, not a signal: `…/workspace/…` or
+    // `.claude/worktrees/…` in a message must not relabel the failure.
+    .replace(/\S*[\\/]\S*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

@@ -318,6 +318,24 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  // A path is not a signal: a user whose checkout lives under ~/workspace or
+  // a `.claude/worktrees/…` dir must not see every path-carrying failure
+  // relabelled as workspace_unavailable.
+  it('ignores "workspace"/"worktree" inside a path the message carries', () => {
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension bundle refused: /Users/me/workspace/proj/.claude/worktrees/wf-1/skills/budget is gone',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error('ENOENT: /home/me/workspace/x missing'),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

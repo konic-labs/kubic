@@ -102,9 +102,13 @@ describe('kubic run surfaces the models.json note', () => {
       }),
     );
     const warnings: string[] = [];
+    // A safety net only, never the thing under test: a 1 ms bound races the
+    // boot-phase note sinks under coverage instrumentation, so the quiet-load
+    // assertion would read an unfinished boot. The unreachable keyless
+    // endpoint ends the run on its own.
     await runHeadlessPrompt(
       'hello',
-      { timeoutMs: 1 },
+      { timeoutMs: 30_000 },
       {
         sessionsRoot: tmpRoot('models-note-root-'),
         env: new FakeExecutionEnv({}),

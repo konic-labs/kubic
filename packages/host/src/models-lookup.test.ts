@@ -160,7 +160,11 @@ describe('models.json lookup (issue #222)', () => {
     const debugLines: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
-      { timeoutMs: 1, debug: true },
+      // A safety net only, never the thing under test: the wall-clock guard
+      // must not race the boot-phase sinks (under coverage instrumentation a
+      // 1 ms bound fires before model assembly and the debug line is never
+      // emitted). The unreachable keyless endpoint ends the run on its own.
+      { timeoutMs: 30_000, debug: true },
       {
         sessionsRoot: tmpDir(),
         env: new FakeExecutionEnv({}),

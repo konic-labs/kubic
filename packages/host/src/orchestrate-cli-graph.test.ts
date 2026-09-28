@@ -21,6 +21,7 @@ function depsFor(lines: string[]): OrchestrateCommandDeps {
   const hunks: MergedHunk[] = [{ path: 'a.txt', hunk: '@@ -0,0 +1 @@ +a' }];
   return {
     out: (line: string) => lines.push(line),
+    err: (line: string) => lines.push(line),
     now: () => 1700000000000,
     isGitRepo: () => true,
     ensureWorktree: (agentId: string): OrchestrateWorktree => ({
@@ -54,7 +55,12 @@ describe('delegation DAG (issue #95, §54)', () => {
   it('renders the run DAG in the JSON envelope and the text output', async () => {
     const lines: string[] = [];
     const code = await runOrchestrateCommand(
-      ['-p', 'do the thing', '--agents', 'alpha,beta', '--yes', '--json'],
+      {
+        prompt: 'do the thing',
+        agents: ['alpha', 'beta'],
+        yes: true,
+        json: true,
+      },
       depsFor(lines),
     );
     expect(code).toBe(0);
@@ -72,7 +78,7 @@ describe('delegation DAG (issue #95, §54)', () => {
 
     const textLines: string[] = [];
     const textCode = await runOrchestrateCommand(
-      ['-p', 'do the thing', '--agents', 'alpha,beta', '--yes'],
+      { prompt: 'do the thing', agents: ['alpha', 'beta'], yes: true },
       depsFor(textLines),
     );
     expect(textCode).toBe(0);

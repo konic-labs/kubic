@@ -148,6 +148,7 @@ async function harness(
   const debugLines: string[] = [];
   const deps = await orchestrateDepsWithDefaults({
     out: (line) => lines.push(line),
+    err: (line) => lines.push(line),
     debug: (line) => debugLines.push(line),
     cwd: root,
     sessionsRoot,
@@ -348,15 +349,12 @@ describe('prod orchestrate path: the manager lane per-worker prompts (issue #103
     // EXIT=0: the child starts, announces itself and exits clean with no
     // work committed, so the run settles both workers end to end.
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        objective,
-        '--agents',
-        'alpha,beta',
-        '--yes',
-        '--session',
-        'lifecycle',
-      ],
+      {
+        prompt: objective,
+        agents: ['alpha', 'beta'],
+        yes: true,
+        session: 'lifecycle',
+      },
       h.deps,
     );
     expect(code).toBe(0);
@@ -381,15 +379,12 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
   it('reports a silent worker as spawn_failed through the CLI', async () => {
     const h = await harness({ readyTimeoutMs: 100 });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'say hi SILENT SLEEP=30000',
-        '--agents',
-        'worker-1',
-        '--yes',
-        '--session',
-        'lifecycle',
-      ],
+      {
+        prompt: 'say hi SILENT SLEEP=30000',
+        agents: ['worker-1'],
+        yes: true,
+        session: 'lifecycle',
+      },
       h.deps,
     );
     expect(code).toBe(1);
@@ -403,15 +398,12 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
   it('reports a worker that ran and failed as worker_failed through the CLI', async () => {
     const h = await harness();
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'say hi',
-        '--agents',
-        'worker-1',
-        '--yes',
-        '--session',
-        'lifecycle',
-      ],
+      {
+        prompt: 'say hi',
+        agents: ['worker-1'],
+        yes: true,
+        session: 'lifecycle',
+      },
       h.deps,
     );
     expect(code).toBe(1);

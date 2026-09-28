@@ -106,6 +106,13 @@ file that no longer exists, or when a row's file has become reachable
   reports its measured dirtiness after the run, naming the files when it is
   dirty and `clean=unknown` when the status cannot be read). All three are
   reachable from the binary now, so their rows are removed rather than kept.
+- The orchestrator-group commander migration (orchestrate, clean, workers)
+  **wired** four cli-foundation rows: `packages/core/src/cli/{logger,output,table,theme}.ts`
+  are reachable from the binary through `host/src/orchestrate-cli.ts`,
+  `host/src/orchestrator/worktree/clean.ts` and `host/src/workers-cli.ts`
+  (diagnostics via the consola logger, `--json` via `formatJson`, the
+  `kubic workers` table, the report colours), so their rows are removed.
+  `prompt.ts` keeps its row: no migrated command prompts yet.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |

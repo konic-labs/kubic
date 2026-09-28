@@ -134,6 +134,7 @@ async function startLiveWorker(signals: OrchestrateSignals): Promise<{
   const registry = new WorkerRegistry();
   const deps = await orchestrateDepsWithDefaults({
     out: () => undefined,
+    err: () => undefined,
     cwd: root,
     sessionsRoot,
     registry,
@@ -237,6 +238,7 @@ describe('prod orchestrate path: orphans left by a hard-killed manager', () => {
     );
     await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot: scratchRoot('kubic-orch-orphan-sessions-'),
       signals: fakeSignals(),

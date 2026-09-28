@@ -227,6 +227,7 @@ describe('prod extension startup, manager lane (issue #93)', () => {
     const debugLines: string[] = [];
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       debug: (line) => debugLines.push(line),
       cwd: tmpRoot(),
     });
@@ -241,6 +242,7 @@ describe('prod extension startup, manager lane (issue #93)', () => {
   it('fails closed at manager startup when the bundle dir is gone', async () => {
     const error = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: tmpRoot(),
       extensionOptions: {
         ...prodExtensionStartupOptions(process.cwd()),

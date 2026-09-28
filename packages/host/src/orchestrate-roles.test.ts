@@ -93,6 +93,7 @@ function implementerDoc(
 interface World {
   deps: OrchestrateCommandDeps;
   lines: string[];
+  errLines: string[];
   saved: OrchestratorRunState[];
   prompts: { agentId: string; prompt: string }[];
   spawnInfo: { agentId: string; info?: WorkerSpawnInfo }[];
@@ -101,6 +102,7 @@ interface World {
 
 function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
   const lines: string[] = [];
+  const errLines: string[] = [];
   const saved: OrchestratorRunState[] = [];
   const prompts: { agentId: string; prompt: string }[] = [];
   const spawnInfo: { agentId: string; info?: WorkerSpawnInfo }[] = [];
@@ -111,6 +113,7 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
   };
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => lines.push(line),
+    err: (line: string) => errLines.push(line),
     now: () => 1700000000000,
     isGitRepo: () => true,
     ensureWorktree: (agentId: string): OrchestrateWorktree => {
@@ -146,7 +149,7 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
     },
     ...overrides,
   };
-  return { deps, lines, saved, prompts, spawnInfo, calls };
+  return { deps, lines, errLines, saved, prompts, spawnInfo, calls };
 }
 
 function roleLoaderFor(files: Record<string, string>) {
@@ -166,15 +169,12 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
       loadWorkerRoles: roleLoaderFor(rolesFor(plannerDoc(), implementerDoc())),
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        OBJECTIVE,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: OBJECTIVE,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -213,15 +213,12 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     });
     expect(
       await runOrchestrateCommand(
-        [
-          '-p',
-          OBJECTIVE,
-          '--agents',
-          'alpha,beta',
-          '--session',
-          'sess-1',
-          '--yes',
-        ],
+        {
+          prompt: OBJECTIVE,
+          agents: ['alpha', 'beta'],
+          session: 'sess-1',
+          yes: true,
+        },
         first.deps,
       ),
     ).toBe(1);
@@ -240,7 +237,7 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     });
     expect(
       await runOrchestrateCommand(
-        ['--resume', '--session', 'sess-1', '--yes'],
+        { resume: true, session: 'sess-1', yes: true },
         second.deps,
       ),
     ).toBe(0);
@@ -252,15 +249,12 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
   it('keeps the plan step working when no role documents exist (solo default unaffected)', async () => {
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor({}) });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        OBJECTIVE,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: OBJECTIVE,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -276,15 +270,12 @@ describe('a withholding role withholds by absence (issue #104, criterion 2)', ()
       loadWorkerRoles: roleLoaderFor(rolesFor(plannerDoc(), implementerDoc())),
     });
     await runOrchestrateCommand(
-      [
-        '-p',
-        OBJECTIVE,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: OBJECTIVE,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     // The tool set the worker lane registers is the role's resolved set,
@@ -332,19 +323,16 @@ describe('a contradictory role document refuses the run (issue #104, criterion 3
     );
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor(files) });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        OBJECTIVE,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: OBJECTIVE,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
-    const text = world.lines.join('\n');
+    const text = world.errLines.join('\n');
     expect(text).toMatch(/code=role_refused/);
     expect(text).toContain("role 'planner'");
     expect(text).toContain(
@@ -366,16 +354,13 @@ describe('a contradictory role document refuses the run (issue #104, criterion 3
     });
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor(files) });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        OBJECTIVE,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-        '--json',
-      ],
+      {
+        prompt: OBJECTIVE,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);

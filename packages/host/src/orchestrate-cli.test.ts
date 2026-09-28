@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createCliTheme } from '../../core/src/cli/theme.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type {
   OrchestrateCommandDeps,
@@ -41,6 +42,8 @@ interface FakeCalls {
 interface FakeWorld {
   deps: OrchestrateCommandDeps;
   lines: string[];
+  /** stderr: the logger's `error: …` diagnostics. */
+  errLines: string[];
   debugLines: string[];
   calls: FakeCalls;
   saved: OrchestratorRunState[];
@@ -54,6 +57,7 @@ function makeWorld(
   hunksPerAgent?: Record<string, number>,
 ): FakeWorld {
   const lines: string[] = [];
+  const errLines: string[] = [];
   const debugLines: string[] = [];
   const calls: FakeCalls = {
     ensure: [],
@@ -70,6 +74,9 @@ function makeWorld(
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
       lines.push(line);
+    },
+    err: (line: string) => {
+      errLines.push(line);
     },
     debug: (line: string) => {
       debugLines.push(line);
@@ -124,7 +131,7 @@ function makeWorld(
     },
     ...overrides,
   };
-  return { deps, lines, debugLines, calls, saved, runInfo, prompts };
+  return { deps, lines, errLines, debugLines, calls, saved, runInfo, prompts };
 }
 
 function lastJsonLine(lines: string[]): Record<string, unknown> {
@@ -133,37 +140,58 @@ function lastJsonLine(lines: string[]): Record<string, unknown> {
 }
 
 describe('orchestrate usage (issue #76)', () => {
-  it('prints usage and exits 2 with no prompt', async () => {
+  // Argv syntax (unknown flags, missing values, malformed --agents /
+  // --budget / --session) is refused by the commander program before this
+  // handler runs: apps/kubic/src/commands/orchestrator.test.ts. What stays
+  // here are the cross-option rules the run itself owns.
+  it('exits 2 with no prompt, naming what is missing on stderr', async () => {
     const world = makeWorld();
-    const code = await runOrchestrateCommand([], world.deps);
+    const code = await runOrchestrateCommand({}, world.deps);
     expect(code).toBe(2);
-    expect(world.lines[0]).toMatch(/^usage: kubic orchestrate/);
+    expect(world.lines).toEqual([]);
+    expect(world.errLines).toEqual([
+      'error: missing -p, --prompt <text> (the objective), or --resume --session <id>',
+    ]);
     expect(world.calls.ensure).toEqual([]);
   });
 
-  it('exits 2 on unknown flags, missing values, and bad ids', async () => {
+  it('exits 2 on --resume without --session', async () => {
     const world = makeWorld();
     expect(
-      await runOrchestrateCommand(['-p', 'x', '--bogus'], world.deps),
+      await runOrchestrateCommand({ resume: true, prompt: 'x' }, world.deps),
     ).toBe(2);
+    expect(world.errLines).toEqual([
+      'error: --resume needs --session <id> (the run to re-attach to)',
+    ]);
+    expect(world.calls.ensure).toEqual([]);
+  });
+
+  it('refuses unsafe or duplicate agent ids from a library caller (they name worktrees)', async () => {
+    for (const agents of [['good', 'bad/id'], ['a', 'a'], [], ['a,b']]) {
+      const world = makeWorld();
+      expect(
+        await runOrchestrateCommand({ prompt: 'x', agents }, world.deps),
+        JSON.stringify(agents),
+      ).toBe(2);
+      expect(world.errLines).toEqual([
+        expect.stringMatching(/^error: invalid --agents /),
+      ]);
+      expect(world.calls.ensure).toEqual([]);
+    }
+  });
+
+  it('refuses an unsafe session id from a library caller (it names a state file)', async () => {
+    const world = makeWorld();
     expect(
       await runOrchestrateCommand(
-        ['--session', 'no spaces!!', '-p', 'x'],
+        { session: '../escape', prompt: 'x' },
         world.deps,
       ),
     ).toBe(2);
-    expect(
-      await runOrchestrateCommand(
-        ['-p', 'x', '--agents', 'good,bad/id'],
-        world.deps,
-      ),
-    ).toBe(2);
-    expect(
-      await runOrchestrateCommand(['-p', 'x', '--agents', 'a,a'], world.deps),
-    ).toBe(2);
-    expect(
-      await runOrchestrateCommand(['--resume', '-p', 'x'], world.deps),
-    ).toBe(2);
+    expect(world.errLines).toEqual([
+      'error: invalid --session id "../escape" (use [A-Za-z0-9_-])',
+    ]);
+    expect(world.calls.ensure).toEqual([]);
   });
 });
 
@@ -171,16 +199,70 @@ describe('orchestrate non-git refusal (issue #76)', () => {
   it('refuses outside a git repo with exit 2 and never runs solo', async () => {
     const world = makeWorld({ isGitRepo: () => false });
     const code = await runOrchestrateCommand(
-      ['-p', 'do things', '--agents', 'alpha,beta'],
+      { prompt: 'do things', agents: ['alpha', 'beta'] },
       world.deps,
     );
     expect(code).toBe(2);
-    expect(world.lines.join('\n')).toMatch(/git repository/);
+    expect(world.lines).toEqual([]);
+    expect(world.errLines).toEqual([
+      expect.stringMatching(/^error: orchestrator mode needs a git repository/),
+    ]);
     expect(world.calls.ensure).toEqual([]);
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
     expect(world.lines.some((line) => line.startsWith('worker:'))).toBe(false);
     expect(world.lines.some((line) => line.startsWith('result:'))).toBe(false);
+  });
+
+  it('under --json prints the not_a_repo envelope on stdout, the prose on stderr', async () => {
+    const world = makeWorld({ isGitRepo: () => false });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do things', json: true },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.lines).toHaveLength(1);
+    expect(JSON.parse(world.lines[0] as string)).toMatchObject({
+      ok: false,
+      exitCode: 2,
+      status: 'usage',
+      error: { code: 'not_a_repo', message: 'not a git repository' },
+    });
+    expect(world.errLines).toEqual([
+      'error: not a git repository code=not_a_repo',
+    ]);
+  });
+});
+
+describe('orchestrate report colours (shared CLI theme)', () => {
+  it('colours the report labels through the theme, never under --json', async () => {
+    const theme = createCliTheme('16');
+    const text = makeWorld({ theme });
+    expect(
+      await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1', yes: true },
+        text.deps,
+      ),
+    ).toBe(0);
+    expect(text.lines).toContain(`${theme.accent('session:')} sess-1`);
+    expect(text.lines).toContain(`${theme.success('merged:')} alpha`);
+    expect(
+      text.lines.some((line) => line.startsWith(theme.success('result:'))),
+    ).toBe(true);
+
+    const json = makeWorld({ theme });
+    await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      json.deps,
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting no ANSI escapes
+    expect(json.lines.join('\n')).not.toMatch(/\u001b\[/);
   });
 });
 
@@ -188,7 +270,7 @@ describe('orchestrate two-worker FIFO merge (issue #76)', () => {
   it('spawns, runs, merges in agent order with per-agent attribution', async () => {
     const world = makeWorld({}, { alpha: 2, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo prompt', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo prompt', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -210,10 +292,19 @@ describe('orchestrate two-worker FIFO merge (issue #76)', () => {
   it('emits a machine-readable --json envelope on success', async () => {
     const world = makeWorld({}, { alpha: 2, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--json'],
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
+    // Exactly one two-space-indented document on stdout; stderr silent.
+    expect(world.lines).toHaveLength(1);
+    expect(world.lines[0]).toMatch(/^\{\n {2}"ok": true,/);
+    expect(world.errLines).toEqual([]);
     const envelope = lastJsonLine(world.lines);
     expect(envelope).toMatchObject({
       ok: true,
@@ -242,30 +333,35 @@ describe('orchestrate approvals (issue #76)', () => {
       requestApproval: () => false,
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
-    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
+    expect(world.errLines.join('\n')).toMatch(/code=approval_denied/);
   });
 
   it('denies closed with exit 4 when no decider and no --yes (never silent)', async () => {
     const world = makeWorld({ requestApproval: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
     // Never silent: the denial is reported by its named code.
-    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
+    expect(world.errLines.join('\n')).toMatch(/code=approval_denied/);
   });
 
   it('--yes auto-approves without asking', async () => {
     const world = makeWorld({ requestApproval: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -283,11 +379,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=worker_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=worker_failed/);
     // The spawned worker is still reaped; nothing merges.
     expect(world.calls.merge).toEqual([]);
     expect(world.calls.reap).toContain('alpha');
@@ -305,11 +401,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_conflict/);
     const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(state.merged).toEqual(['alpha']);
     expect(state.pending).toEqual(['beta']);
@@ -324,11 +420,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=reap_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=reap_failed/);
     expect(world.calls.merge).toEqual(['alpha', 'beta']);
   });
 });
@@ -337,11 +433,11 @@ describe('orchestrate crash-resume (issue #76)', () => {
   it('resume with no stored state fails closed and machine-readable', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'ghost'],
+      { resume: true, session: 'ghost' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+    expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
     expect(world.calls.merge).toEqual([]);
   });
 
@@ -353,7 +449,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
       },
     });
     const code1 = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       first.deps,
     );
     expect(code1).toBe(1);
@@ -366,7 +462,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
       loadState: () => structuredClone(killed),
     });
     const code2 = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       second.deps,
     );
     expect(code2).toBe(0);
@@ -399,13 +495,13 @@ describe('orchestrate crash-resume (issue #76)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(stopped) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
     expect(world.calls.merge).toEqual([]);
     expect(world.calls.run).toEqual([]);
-    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_conflict/);
   });
 
   it('reports the resumed session agents in the envelope graph, not the CLI defaults', async () => {
@@ -432,7 +528,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(stopped) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-g', '--json'],
+      { resume: true, session: 'sess-g', json: true },
       world.deps,
     );
     expect(code).toBe(1);
@@ -461,7 +557,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
     // reading `queued:` believes a limit is gating the run.
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'a1,a2,a3,a4,a5,a6'],
+      { prompt: 'do it', agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] },
       world.deps,
     );
     expect(code).toBe(0);
@@ -518,6 +614,9 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
     const env = new NodeExecutionEnv(root);
     const deps: OrchestrateCommandDeps = {
       out: (line: string) => {
+        lines.push(line);
+      },
+      err: (line: string) => {
         lines.push(line);
       },
       now: () => 1700000000000,
@@ -580,7 +679,7 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
       saveState: () => undefined,
     };
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'demosess'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'demosess' },
       deps,
     );
     expect(code).toBe(0);
@@ -616,7 +715,7 @@ describe('orchestrate pre-merge guard (issue #76 fix a)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -638,11 +737,11 @@ describe('orchestrate pre-merge guard (issue #76 fix a)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=merge_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_failed/);
     expect(world.calls.merge).toEqual(['alpha']);
     const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(state.merged).toEqual(['alpha']);
@@ -667,7 +766,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -709,7 +808,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       isBranchMerged: (agentId: string) => agentId === 'beta',
     });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -744,7 +843,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       isBranchMerged: () => false,
     });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -764,11 +863,11 @@ describe('orchestrate state save failures (issue #76 fix c)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=state_save_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=state_save_failed/);
     expect(world.calls.merge).toEqual([]);
   });
 });
@@ -777,7 +876,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
   it('creates each worker session before its child spawns, with the attach id', async () => {
     const world = makeWorld({}, { alpha: 1, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -811,11 +910,11 @@ describe('orchestrate worker session creation (issue #85)', () => {
   it('fails closed as spawn_failed when the creation hook is omitted', async () => {
     const world = makeWorld({ createWorkerSession: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=spawn_failed/);
     // Never a child that cannot attach, and nothing merges.
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
@@ -829,11 +928,11 @@ describe('orchestrate worker session creation (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    const text = world.lines.join('\n');
+    const text = world.errLines.join('\n');
     expect(text).toMatch(/code=spawn_failed/);
     expect(text).toMatch(/sessions root not writable/);
     expect(world.calls.run).toEqual([]);
@@ -850,7 +949,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -885,7 +984,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(killed) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -902,11 +1001,11 @@ describe('orchestrate spawn failures (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=spawn_failed/);
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
   });
@@ -955,11 +1054,11 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
           structuredClone(stored) as unknown as OrchestratorRunState,
       });
       const code = await runOrchestrateCommand(
-        ['--resume', '--session', 'sess-1'],
+        { resume: true, session: 'sess-1' },
         world.deps,
       );
       expect(code).toBe(1);
-      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
       expect(world.calls.merge).toEqual([]);
       expect(world.calls.run).toEqual([]);
     },
@@ -989,15 +1088,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
   it('hands each worker a prompt that differs and cites its plan step', async () => {
     const world = makeWorld({}, { alpha: 1, beta: 1 });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1020,15 +1116,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
   it('stores the plan in the run state for replay', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1048,15 +1141,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     });
     expect(
       await runOrchestrateCommand(
-        [
-          '-p',
-          MANAGER_PROMPT,
-          '--agents',
-          'alpha,beta',
-          '--session',
-          'sess-1',
-          '--yes',
-        ],
+        {
+          prompt: MANAGER_PROMPT,
+          agents: ['alpha', 'beta'],
+          session: 'sess-1',
+          yes: true,
+        },
         first.deps,
       ),
     ).toBe(1);
@@ -1066,7 +1156,7 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     // Resume with NO -p at all: the prompts must come from stored state.
     const second = makeWorld({ loadState: () => structuredClone(killed) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1', '--yes'],
+      { resume: true, session: 'sess-1', yes: true },
       second.deps,
     );
     expect(code).toBe(0);
@@ -1099,7 +1189,7 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     };
     const world = makeWorld({ loadState: () => structuredClone(legacy) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1', '--yes'],
+      { resume: true, session: 'sess-1', yes: true },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1132,11 +1222,11 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
           structuredClone(stored) as unknown as OrchestratorRunState,
       });
       const code = await runOrchestrateCommand(
-        ['--resume', '--session', 'sess-1', '--yes'],
+        { resume: true, session: 'sess-1', yes: true },
         world.deps,
       );
       expect(code).toBe(1);
-      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
       expect(world.calls.run).toEqual([]);
       expect(world.calls.merge).toEqual([]);
     }
@@ -1151,15 +1241,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1180,20 +1267,19 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
-    const text = world.lines.join('\n');
-    expect(text).toMatch(/code=manager_toolset_refused/);
+    // A diagnostic on stderr; stdout carries no report for a refused start.
+    expect(world.lines).toEqual([]);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/^error: .*code=manager_toolset_refused$/);
     // The named error names the offending tool.
     expect(text).toMatch(/bash/);
     // Fail-closed: no worktree, no worker, no merge.
@@ -1208,21 +1294,23 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-        '--json',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
     // --json is one parseable envelope on every failure path, including this
-    // one: a machine consumer must not have to parse prose.
+    // one: a machine consumer must not have to parse prose. stdout holds
+    // exactly that document; the prose line went to stderr.
+    expect(world.lines).toHaveLength(1);
+    expect(world.errLines).toEqual([
+      expect.stringMatching(/^error: .*code=manager_toolset_refused$/),
+    ]);
     const envelope = JSON.parse(
       world.lines[world.lines.length - 1] as string,
     ) as {
@@ -1247,15 +1335,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);

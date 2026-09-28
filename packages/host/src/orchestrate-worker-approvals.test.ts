@@ -16,8 +16,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { OrchestrateCommandDeps } from './orchestrate-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
+import type {
+  OrchestrateCliOptions,
+  OrchestrateCommandDeps,
+  ParsedBudgetSpec,
+} from './orchestrate-cli.js';
+import { parseBudgetSpec, runOrchestrateCommand } from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
 import {
   awaitWorkerAskAnswer,
@@ -31,22 +35,24 @@ import type { MergedHunk } from './orchestrator/merge/attribution.js';
 
 // Both halves must name the SAME session and agent set: prod threads the
 // CLI's id and --agents list into the run, so the harness passes them.
-const ORCHESTRATE_ARGS = [
-  '-p',
-  'do the work',
-  '--session',
-  'orch-105',
-  '--agents',
-  'worker-1',
-];
-const TWO_WORKER_ARGS = [
-  '-p',
-  'do the work',
-  '--session',
-  'orch-105',
-  '--agents',
-  'worker-1,worker-2',
-];
+const ORCHESTRATE_ARGS: OrchestrateCliOptions = {
+  prompt: 'do the work',
+  session: 'orch-105',
+  agents: ['worker-1'],
+};
+const TWO_WORKER_ARGS: OrchestrateCliOptions = {
+  prompt: 'do the work',
+  session: 'orch-105',
+  agents: ['worker-1', 'worker-2'],
+};
+
+// The `--budget` value as the CLI parses it (a malformed spec is refused
+// there, so a test spec must parse).
+function budgetSpec(raw: string): ParsedBudgetSpec {
+  const spec = parseBudgetSpec(raw);
+  if (spec === undefined) throw new Error(`bad budget spec: ${raw}`);
+  return spec;
+}
 
 // Every scratch dir is removed after each test (worktrees live under the repo
 // root, so removing it disposes them too) — nothing accumulates in tmpdir.
@@ -103,6 +109,7 @@ function harness(
   const mailbox = join(dir, 'approvals');
   const deps: OrchestrateCommandDeps = {
     out: (line) => lines.push(line),
+    err: (line) => lines.push(line),
     debug: (line) => debugLines.push(line),
     now: () => 1700000000000,
     isGitRepo: () => true,
@@ -312,14 +319,11 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
       asksPerWorker: 2,
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--agents',
-        'worker-1',
-        '--budget',
-        'maxToolCalls=1',
-      ],
+      {
+        prompt: 'do the work',
+        agents: ['worker-1'],
+        budget: budgetSpec('maxToolCalls=1'),
+      },
       limited.deps,
     );
     expect(code).toBe(3);
@@ -424,14 +428,11 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
       asksPerWorker: 2,
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--agents',
-        'worker-1',
-        '--budget',
-        'worker-1:maxToolCalls=1',
-      ],
+      {
+        prompt: 'do the work',
+        agents: ['worker-1'],
+        budget: budgetSpec('worker-1:maxToolCalls=1'),
+      },
       h.deps,
     );
     expect(code).toBe(3);
@@ -454,7 +455,7 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
       asksPerWorker: 2,
     });
     const cleanCode = await runOrchestrateCommand(
-      ['-p', 'do the work', '--agents', 'worker-1'],
+      { prompt: 'do the work', agents: ['worker-1'] },
       clean.deps,
     );
     expect(cleanCode).toBe(0);
@@ -465,15 +466,12 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
   it('AC5: the full-access posture is session-scoped, indicated, and enforced again for a fresh session', async () => {
     const h = harness(() => ({ approved: true }), { agents: ['worker-1'] });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--session',
-        'orch-105',
-        '--agents',
-        'worker-1',
-        '--full-access',
-      ],
+      {
+        prompt: 'do the work',
+        session: 'orch-105',
+        agents: ['worker-1'],
+        fullAccess: true,
+      },
       h.deps,
     );
     expect(code).toBe(0);

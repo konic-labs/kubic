@@ -93,7 +93,10 @@
   (`approvals.maxPendingMs`) elapsed with nobody answering (a walked-away
   user — rerun with `--yes` to auto-approve merges). The exit code alone
   cannot tell them apart; read the label. `--json` reports the same code
-  in its `exitCode` field.
+  in its `exitCode` field. 3 when a worker exhausts its opt-in `--budget`.
+  Parse errors (unknown flag, missing value, malformed `--agents` /
+  `--session` / `--budget`) exit 2 before anything runs; every `error:`
+  line is on stderr.
 - **`kubic clean`**: 0 success — including `--dry-run` (which mutates
   nothing) and a second run over an already-clean repo
   (`clean: nothing to prune`); 1 a hard failure (a dirty worktree without
@@ -104,6 +107,10 @@
   (`… needs a git repository … nothing was removed`, nothing touched).
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.
+- **`kubic workers`**: 0 (an empty record included); 2 usage errors
+  (unknown flag, stray operand, `--json=1`) with one `error:` line on
+  stderr. The old usage-exit remap (1 → 2) is gone: the parser exits 2
+  itself, so a 1 is always a real failure.
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.

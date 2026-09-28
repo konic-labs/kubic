@@ -145,6 +145,7 @@ async function harness(): Promise<{
   const lines: string[] = [];
   const deps = await orchestrateDepsWithDefaults({
     out: (line) => lines.push(line),
+    err: (line) => lines.push(line),
     cwd: root,
     sessionsRoot,
     registry: new WorkerRegistry(),
@@ -163,15 +164,12 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     const h = await harness();
     const objective = `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`;
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        objective,
-        '--agents',
-        'alpha,beta',
-        '--yes',
-        '--session',
-        'rolesession',
-      ],
+      {
+        prompt: objective,
+        agents: ['alpha', 'beta'],
+        yes: true,
+        session: 'rolesession',
+      },
       h.deps,
     );
     expect(code).toBe(0);
@@ -214,13 +212,11 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       ),
     );
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
-        '--agents',
-        'alpha,beta',
-        '--yes',
-      ],
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha', 'beta'],
+        yes: true,
+      },
       h.deps,
     );
     expect(code).toBe(1);
@@ -247,7 +243,7 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       'not frontmatter at all\n',
     );
     const code = await runOrchestrateCommand(
-      ['-p', 'do the thing', '--agents', 'alpha', '--yes'],
+      { prompt: 'do the thing', agents: ['alpha'], yes: true },
       h.deps,
     );
     expect(code).toBe(1);
@@ -264,15 +260,12 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     process.env.KUBIC_MODEL = 'acme/m9';
     try {
       const code = await runOrchestrateCommand(
-        [
-          '-p',
-          `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
-          '--agents',
-          'alpha',
-          '--yes',
-          '--session',
-          'pinsession',
-        ],
+        {
+          prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+          agents: ['alpha'],
+          yes: true,
+          session: 'pinsession',
+        },
         h.deps,
       );
       expect(code).toBe(0);
@@ -303,21 +296,19 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     const dumpDir = scratchRoot('kubic-orch-noroles-prompts-');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: plain,
       sessionsRoot,
       registry: new WorkerRegistry(),
       workerEntry: { cmd: process.execPath, args: [fixture] },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        `do the thing EXIT=0 PROMPTDUMPDIR=${dumpDir}`,
-        '--agents',
-        'alpha',
-        '--yes',
-        '--session',
-        'norolesession',
-      ],
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'norolesession',
+      },
       deps,
     );
     expect(code).toBe(0);

@@ -34,6 +34,9 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): FakeWorld {
     out: (line: string) => {
       lines.push(line);
     },
+    err: (line: string) => {
+      lines.push(line);
+    },
     now: () => 1700000000000,
     isGitRepo: () => true,
     ensureWorktree: (agentId: string): OrchestrateWorktree => ({
@@ -66,16 +69,13 @@ describe('orchestrate parallel surfacing (issue #106, §49.1/§50)', () => {
   it('carries running/queued/cap in the --json envelope when agents exceed the cap', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do it',
-        '--agents',
-        'a1,a2,a3,a4,a5,a6',
-        '--session',
-        'sess-1',
-        '--yes',
-        '--json',
-      ],
+      {
+        prompt: 'do it',
+        agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -93,15 +93,12 @@ describe('orchestrate parallel surfacing (issue #106, §49.1/§50)', () => {
   it('prints the running/queued/cap numbers on the text output', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do it',
-        '--agents',
-        'a1,a2,a3,a4,a5,a6',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: 'do it',
+        agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -130,16 +127,13 @@ describe('orchestrate parallel surfacing (issue #106, §49.1/§50)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do it',
-        '--agents',
-        'a1',
-        '--session',
-        'sess-1',
-        '--yes',
-        '--json',
-      ],
+      {
+        prompt: 'do it',
+        agents: ['a1'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -174,7 +168,7 @@ describe('orchestrate parallel surfacing (issue #106, §49.1/§50)', () => {
     const text = makeWorld({ scheduler: textScheduler });
     expect(
       await runOrchestrateCommand(
-        ['-p', 'do it', '--agents', 'a1', '--session', 'sess-1', '--yes'],
+        { prompt: 'do it', agents: ['a1'], session: 'sess-1', yes: true },
         text.deps,
       ),
     ).toBe(0);

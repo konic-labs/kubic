@@ -21,12 +21,9 @@ import { runGitCommand } from './git-cli.js';
 import { runJournalCommand } from './journal-cli.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
 import { runPerfCommand } from './ops/perf/perf-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
-import { runCleanCommand } from './orchestrator/worktree/clean.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import { runPolicyCommand } from './policy/policy-cli.js';
 import { runReplayCommand } from './replay/replay.js';
-import { runWorkersCommand } from './workers-cli.js';
 
 const USAGE_PREFIX = 'usage: kubic';
 
@@ -49,27 +46,6 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    command: 'orchestrate',
-    run: (args, out) =>
-      runOrchestrateCommand(args, {
-        out,
-        isGitRepo: never('the git probe'),
-        ensureWorktree: never('worktree creation'),
-        createWorkerSession: never('session creation'),
-        runWorker: never('the worker spawn'),
-        mergeBranch: never('the merge'),
-        reapWorker: never('the reap'),
-      }),
-  },
-  {
-    command: 'clean',
-    run: (args, out) =>
-      runCleanCommand(args, {
-        out,
-        env: never('the execution env'),
-      }),
-  },
-  {
     command: 'git',
     run: (args, out) =>
       runGitCommand(args, { out, env: never('the execution env') }),
@@ -80,11 +56,6 @@ const CASES: Case[] = [
     run: (args: string[], out: (line: string) => void) =>
       runJournalCommand([sub, ...args], { out }),
   })),
-  {
-    command: 'workers',
-    run: (args, out) =>
-      runWorkersCommand(args, { out, list: never('the worker registry') }),
-  },
   {
     command: 'eval',
     run: (args, out) =>
@@ -128,17 +99,15 @@ const CASES: Case[] = [
 
 describe('--help convention (issue #100)', () => {
   it('covers every shipped command', () => {
-    // The forwarded commands the binary dispatches; a new command must be added
-    // here or it ships without the convention.
+    // The legacy-handler commands the binary dispatches (the shipped set
+    // minus those migrated to commander, whose help is generated); a new
+    // legacy command must be added here or it ships without the convention.
     expect(CASES.map((c) => c.command)).toEqual([
-      'orchestrate',
-      'clean',
       'git',
       'diff',
       'undo',
       'log',
       'status',
-      'workers',
       'eval',
       'benchmark',
       'replay',

@@ -101,9 +101,9 @@ describe('git effects (issue #19, slice C)', () => {
         stdout: 'abc1234567890\n',
         stderr: '',
       },
-      'git show --name-only --format= abc1234567890': {
+      'git show -z --name-only --format= abc1234567890': {
         exitCode: 0,
-        stdout: 'a.txt\nb.txt\n',
+        stdout: 'a.txt\0b.txt\0',
         stderr: '',
       },
     };

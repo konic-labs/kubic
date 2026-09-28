@@ -305,6 +305,9 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'CI',
   'NO_COLOR',
   'CLICOLOR',
+  // Git behavior, not authority: a user who turns off system git config
+  // wants every spawned git child (tools and tests) to honor it.
+  'GIT_CONFIG_NOSYSTEM',
   // Network reachability and trust roots (not credentials): tools behind
   // a corporate proxy or custom CA must keep working. Both spellings of
   // the proxy vars are conventional.

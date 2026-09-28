@@ -591,15 +591,14 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
       );
     const files = await runGit(
       ctx.env,
-      ['show', '--name-only', '--format=', sha],
+      ['show', '-z', '--name-only', '--format=', sha],
       gitEffectProvenance(inv, ctx, 'git_commit'),
     );
+    // `-z` means NUL-separated and never quoted: non-ASCII and newline
+    // paths come back exactly as committed (same parity as git_status).
     return {
       sha,
-      files: files.stdout
-        .split('\n')
-        .map((f) => f.trim())
-        .filter((f) => f !== ''),
+      files: files.stdout.split('\0').filter((f) => f !== ''),
     };
   },
 };

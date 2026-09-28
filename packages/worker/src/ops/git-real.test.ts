@@ -5,10 +5,15 @@
 // local bare remote, diff variants, stage, commit, checkpoint (subject and
 // apply), log, show, and branch list/create.
 //
-// Hermetic: each repo gets its own empty HOME and GIT_CONFIG_NOSYSTEM=1 for
-// the git the test drives directly, and HOME is stubbed into the process so
-// the ops' allowlisted spawn env resolves the same empty config. Every
-// scratch directory is removed in afterEach; nothing touches the network.
+// Hermetic: system git config is off (GIT_CONFIG_NOSYSTEM=1 is allowlisted
+// into the ops' spawn env, packages/exec/src/env.ts, and stubbed into the
+// process here), and global config has nowhere to live — HOME and
+// XDG_CONFIG_HOME are stubbed to empty per-repo directories, so op-spawned
+// git sees exactly the repo-local config this file writes, never the
+// host's. The git driven directly gets the same two directories plus an
+// explicit GIT_CONFIG_GLOBAL override, so an ambient config path cannot
+// leak. Every scratch directory is removed in afterEach; nothing touches
+// the network.
 
 import { execFileSync } from 'node:child_process';
 import {
@@ -40,6 +45,8 @@ interface Repo {
   // Empty HOME for this repo's git, so no developer config leaks in. It
   // lives outside the work tree or it would show up as untracked.
   home: string;
+  // Empty XDG_CONFIG_HOME, same purpose for $XDG_CONFIG_HOME/git/config.
+  xdg: string;
 }
 
 const scratchDirs: string[] = [];
@@ -55,7 +62,14 @@ function git(repo: Repo, args: string[]): string {
   return execFileSync('git', args, {
     cwd: repo.path,
     encoding: 'utf8',
-    env: { ...process.env, HOME: repo.home, GIT_CONFIG_NOSYSTEM: '1' },
+    env: {
+      ...process.env,
+      HOME: repo.home,
+      XDG_CONFIG_HOME: repo.xdg,
+      GIT_CONFIG_NOSYSTEM: '1',
+      // No ambient GIT_CONFIG_GLOBAL either: a missing path is no config.
+      GIT_CONFIG_GLOBAL: join(repo.home, 'no-global-config'),
+    },
   });
 }
 
@@ -63,13 +77,18 @@ function scratchRepo(): Repo {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'kubic-git-real-')));
   scratchDirs.push(parent);
   const home = join(parent, 'home');
+  const xdg = join(parent, 'xdg');
   const path = join(parent, 'repo');
   mkdirSync(home);
+  mkdirSync(xdg);
   mkdirSync(path);
-  // HOME is allowlisted into the ops' spawn env (packages/exec/src/env.ts),
-  // so stubbing it keeps op-spawned git on the same empty config as git().
+  // HOME, XDG_CONFIG_HOME and GIT_CONFIG_NOSYSTEM are allowlisted into the
+  // ops' spawn env, so stubbing them keeps op-spawned git on the same
+  // config-free view as git().
   vi.stubEnv('HOME', home);
-  const repo: Repo = { parent, path, home };
+  vi.stubEnv('XDG_CONFIG_HOME', xdg);
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+  const repo: Repo = { parent, path, home, xdg };
   git(repo, ['init', '-q', '-b', 'main']);
   git(repo, ['config', 'user.email', 'kubic-test@local']);
   git(repo, ['config', 'user.name', 'kubic test']);
@@ -314,6 +333,21 @@ describe('git read/effect ops over real git (issue #193)', () => {
 
     const log = await ok('git_log', { max: 1 }, repo.path, 'commit-log');
     expect(log.entries[0]?.message).toBe('feat: add files');
+  });
+
+  it('returns commit file paths verbatim (non-ASCII and newline names)', async () => {
+    const repo = scratchRepo();
+    const names = ['café 😀.txt', 'line\nbreak.txt'];
+    for (const name of names) writeFileSync(join(repo.path, name), 'x\n');
+    await ok('git_stage', { paths: names }, repo.path, 'commit-files-stage');
+
+    const committed = await ok(
+      'git_commit',
+      { message: 'unicode files' },
+      repo.path,
+      'commit-files',
+    );
+    expect(committed.files.sort()).toEqual([...names].sort());
   });
 
   it('creates a restorable checkpoint whose stash subject carries the message', async () => {

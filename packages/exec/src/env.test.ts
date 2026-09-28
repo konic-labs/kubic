@@ -570,6 +570,7 @@ describe('toolSpawnEnv allowlist coverage', () => {
       SSL_CERT_FILE: 'f',
       SSL_CERT_DIR: 'd',
       XDG_CONFIG_HOME: 'x',
+      GIT_CONFIG_NOSYSTEM: '1',
       XDG_SECRET_KEY: 'leak',
       OPENAI_API_KEY: 'leak',
     });
@@ -582,6 +583,7 @@ describe('toolSpawnEnv allowlist coverage', () => {
       SSL_CERT_FILE: 'f',
       SSL_CERT_DIR: 'd',
       XDG_CONFIG_HOME: 'x',
+      GIT_CONFIG_NOSYSTEM: '1',
     });
   });
 });

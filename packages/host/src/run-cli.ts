@@ -251,7 +251,11 @@ function isWorkspaceFailure(error: unknown): boolean {
     error instanceof Error ? error.message : error,
   ]
     .map((part) => String(part ?? ''))
-    .join(' ');
+    .join(' ')
+    // A path names WHERE, not what failed: drop path-like tokens so a
+    // checkout under e.g. `.claude/worktrees/` cannot turn an unrelated
+    // failure that merely quotes a path into workspace_unavailable.
+    .replace(/\S*[\\/]\S*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

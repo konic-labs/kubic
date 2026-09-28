@@ -318,6 +318,25 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  // A path segment is not a workspace signal: a checkout under
+  // `.claude/worktrees/` (or any `worktrees/`/`workspace/` directory) must
+  // not turn an unrelated failure that merely NAMES a path into exit 5.
+  it('ignores workspace/worktree words that are only part of a path', () => {
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: skills/budget missing under /repo/.claude/worktrees/wf-1/packages',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('bad config at /home/me/workspace/a')),
+    ).toBe('failed');
+    expect(mapCaughtErrorToTerminus(new Error('workspace unavailable'))).toBe(
+      'workspace_unavailable',
+    );
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

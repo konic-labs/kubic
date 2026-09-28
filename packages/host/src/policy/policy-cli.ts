@@ -6,7 +6,11 @@
 
 import { answerHelp } from '../../../core/src/cli-help.js';
 import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
-import { type EffectivePolicy, isToolAllowed } from './enterprise.js';
+import {
+  type EffectivePolicy,
+  isToolAllowed,
+  resolveEffectivePolicy,
+} from './enterprise.js';
 import { redactSecretShapes } from './secret-shapes.js';
 
 export const POLICY_EXIT_OK = 0;
@@ -15,6 +19,16 @@ export const POLICY_EXIT_USAGE = 2;
 export interface PolicyCommandDeps {
   resolvePolicy: () => EffectivePolicy | Promise<EffectivePolicy>;
   out: (line: string) => void;
+}
+
+// The effective policy for an installed allowlist (the tools a run's
+// permission classes grant): allow exactly those, deny everything else.
+export function policyFromInstalledAllowlist(
+  allowlist: readonly string[],
+): EffectivePolicy {
+  return resolveEffectivePolicy([
+    { layer: 'session', policy: { tools: { allow: [...allowlist] } } },
+  ]).policy;
 }
 
 export const POLICY_USAGE = 'usage: kubic policy --tool <name> [--json]';

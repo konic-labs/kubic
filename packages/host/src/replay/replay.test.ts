@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
@@ -124,6 +124,20 @@ function deps(
 }
 
 describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
+  it('resolves a relative trajectory path against the working directory, not /', async () => {
+    const dir = tmpRoot();
+    writeTrajectory(dir, 'rel.json');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      const o = out();
+      const exit = await runReplayCommand(['rel.json'], deps(o));
+      expect(o.lines.join('\n')).not.toMatch(/trajectory-unreadable/);
+      expect(exit).toBe(0);
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it('replays a versioned trajectory log-only: exit 0, tier printed, runner never called', async () => {
     const dir = tmpRoot();
     const path = writeTrajectory(dir, 't.json');

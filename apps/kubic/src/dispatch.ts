@@ -79,13 +79,24 @@ export interface DispatchDeps {
   // never dirties the tree the run merges into.
   readonly ensureRuntimeExclude: (entries: readonly string[]) => void;
   readonly runners: DispatchRunners;
+  // §78/§80 "interactive by default": true when stdin AND stdout are a TTY.
+  // Only consulted for the bare invocation; absent means non-interactive.
+  readonly isInteractive?: () => boolean;
 }
 
 export async function dispatchCommand(
-  command: string | undefined,
+  requested: string | undefined,
   rest: readonly string[],
   deps: DispatchDeps,
 ): Promise<number> {
+  // §78/§80: a bare `kubic` on an interactive terminal IS `kubic tui` — the
+  // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
+  // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
+  // posture pinned by scripts/binary-contract.mjs.
+  const command =
+    requested === undefined && deps.isInteractive?.() === true
+      ? 'tui'
+      : requested;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and

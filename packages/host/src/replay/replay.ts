@@ -259,8 +259,11 @@ function fail(
   return exitCode;
 }
 
+// Paths the user typed resolve against the working directory (a bridge
+// rooted at '/' turned `kubic replay t.json` into `/t.json`); absolute
+// paths are unaffected.
 function readFile(path: string): string {
-  return createNodeFileBridge('/').readTextFile(path);
+  return createNodeFileBridge(process.cwd()).readTextFile(path);
 }
 
 function loadTrajectory(
@@ -356,7 +359,7 @@ function checkWorktreeOverride(
 ): { ok: true } | { code: string; message: string; exit: number } {
   let exists = false;
   try {
-    exists = createNodeFileBridge('/').exists(path);
+    exists = createNodeFileBridge(process.cwd()).exists(path);
   } catch {
     exists = false;
   }

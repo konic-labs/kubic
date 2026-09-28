@@ -8,6 +8,7 @@
 // Exit codes: 0 report, 1 load/usage failure (a broken config fails closed
 // here too — the operator sees the named reason, not a silent default).
 
+import { answerHelp } from '../../../core/src/cli-help.js';
 import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
@@ -26,8 +27,10 @@ export interface ConfigCommandDeps {
   out: (line: string) => void;
 }
 
+export const CONFIG_USAGE = 'usage: kubic config [--json]';
+
 function usage(out: (line: string) => void): number {
-  out('usage: kubic config [--json]');
+  out(CONFIG_USAGE);
   return CONFIG_EXIT_FAIL;
 }
 
@@ -42,6 +45,10 @@ export function runConfigCommand(
   args: string[],
   deps: ConfigCommandDeps,
 ): number {
+  // `--help`/`-h` prints the usage line and exits 0 (issue #100 convention)
+  // — before the unknown-flag gate, and without loading the config.
+  const help = answerHelp(args, deps.out, CONFIG_USAGE);
+  if (help !== null) return help;
   const parsed = parseFlagArgs(args, CONFIG_FLAG_SPEC);
   const stray = parsed.unknown[0] ?? parsed.positional[0];
   if (stray !== undefined) {

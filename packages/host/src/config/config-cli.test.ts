@@ -125,6 +125,17 @@ describe('kubic config (issue #90)', () => {
     expect(lines.join('\n')).not.toContain('sk-live-abcdef1234567890');
   });
 
+  it('answers --help / -h with the usage line, exit 0, without loading', () => {
+    for (const flag of ['--help', '-h']) {
+      const { lines, out } = collect();
+      const load = () => {
+        throw new Error('help must not load the config');
+      };
+      expect(runConfigCommand([flag], { load, out })).toBe(CONFIG_EXIT_OK);
+      expect(lines).toEqual(['usage: kubic config [--json]']);
+    }
+  });
+
   it('rejects unknown flags with usage, exit 1', () => {
     const { lines, out } = collect();
     expect(runConfigCommand(['--layers'], { load: runtime, out })).toBe(

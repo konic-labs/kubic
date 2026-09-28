@@ -767,6 +767,9 @@ export async function runHeadlessPrompt(
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
+        // §60 audit identity for the ledger record of each resolved ask.
+        sessionId: id,
+        model: `${model.provider}/${model.id}`,
         // Per-worker approvals (issue #105): an orchestrator-managed child
         // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
         // seat, so a challenged call it cannot answer itself reaches the USER

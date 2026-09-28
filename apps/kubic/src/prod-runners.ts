@@ -42,8 +42,14 @@ import {
   loadProdAuditSecrets,
   runAuditCommand,
 } from '../../../packages/host/src/policy/audit-cli.js';
-import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
-import { runPolicyCommand } from '../../../packages/host/src/policy/policy-cli.js';
+import {
+  auditLedgerDirFor,
+  readAuditLedger,
+} from '../../../packages/host/src/policy/audit-ledger.js';
+import {
+  policyFromInstalledAllowlist,
+  runPolicyCommand,
+} from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
@@ -325,12 +331,20 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
     perf: (rest) =>
       // Perf-budget evaluation over argv samples (faux-only, issue #79).
       runPerfCommand([...rest], { out }),
-    policy: (rest) =>
-      // Routing offer over the enterprise default (deny-by-default): the
-      // enterprise policy engine is its own surface — the config-sourced
-      // APPROVAL policy (route/autoApprove) is reported by `kubic config`.
+    policy: (rest, cliConfig) =>
+      // The tool policy a run from THIS cwd actually installs — the same
+      // derivation (host/approvals.installedPolicyPosture) over the same
+      // config load `kubic run` boots with and `kubic doctor` reports — so
+      // the three surfaces cannot disagree. Deny-by-default still holds:
+      // a tool outside the installed allowlist answers `deny`.
       runPolicyCommand([...rest], {
-        resolvePolicy: () => resolveEffectivePolicy([]).policy,
+        resolvePolicy: () =>
+          policyFromInstalledAllowlist(
+            installedPolicyPosture({
+              workspace: process.cwd(),
+              ...installedPolicyDeps(cliConfig),
+            }).allowlist,
+          ),
         out,
       }),
     config: (rest, cliConfig) =>
@@ -342,14 +356,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         out,
       }),
     audit: (rest) =>
-      // Audit query over the record source (no audit persistence is wired
-      // yet, so the one-shot CLI reads zero rows — filters and the
-      // sentinel-only redaction are live, issue #79). loadSecrets is the
-      // prod inventory hook (empty until persistence lands): wired
-      // end-to-end now so persistence cannot forget it — without it a
-      // non-shaped listed value would echo unredacted through --json.
+      // Audit query over the repo-root §60 ledger (one OrgAuditRecord per
+      // line, <repo>/.kubic/orchestrator/approvals/audit.jsonl): the
+      // orchestrator approval layer writes every decision there through
+      // emitAudit, and solo decisions share the file and the format.
+      // loadSecrets is the prod inventory hook: every printed record is
+      // redacted against it, so a listed value never echoes via --json.
       runAuditCommand([...rest], {
-        loadRecords: () => [],
+        loadRecords: () => readAuditLedger(auditLedgerDirFor(process.cwd())),
         loadSecrets: loadProdAuditSecrets,
         out,
       }),
@@ -401,8 +415,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // Trajectory inspection + RL dataset export (issue #78): reads
       // trajectory export file(s) through the exec FileBridge.
       runTrajectoryExportCommand([...rest], {
+        // Relative to the user's working directory (a '/'-rooted bridge
+        // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
-          createNodeFileBridge('/').readTextFile(path),
+          createNodeFileBridge(process.cwd()).readTextFile(path),
         out,
       }),
   };

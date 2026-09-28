@@ -29,6 +29,10 @@ import { createInterface } from 'node:readline';
 import type { FileBridge } from '../../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
+  appendToLedger,
+  orchestratorDecisionAudit,
+} from '../../policy/audit-ledger.js';
+import {
   applyBudgetRaise,
   BUDGET_EXHAUSTED,
   type BudgetGate,
@@ -142,8 +146,12 @@ export interface PublishedWorkerAsk {
 // ---------------------------------------------------------------------------
 
 export const APPROVALS_DIR = 'approvals';
+// §60 posture values on ledger records.
+export const POSTURE_APPROVALS = 'approvals';
+export const POSTURE_FULL_ACCESS = 'full-access';
 export const DECISIONS_FILE = 'decisions.json';
-export const AUDIT_FILE = 'audit.jsonl';
+// The §60 ledger file (policy/audit-ledger.ts) in this approvals dir.
+export { AUDIT_LEDGER_FILE as AUDIT_FILE } from '../../policy/audit-ledger.js';
 export const ASKS_DIR = 'asks';
 export const SKIP_RECORDS_FILE = 'skip-records.json';
 
@@ -188,26 +196,17 @@ export class FileDecisionStore implements DecisionStore {
   }
 }
 
-// The run's audit sink: append-only JSONL beside the decisions it explains.
-// A sink failure never decides a run — the decision already happened — so it
-// is swallowed here and the in-memory log still answers readers.
-export class FileAuditLog {
-  private readonly bridge: FileBridge;
-  private readonly file: string;
+// The run's in-process router trace (typed events for the live surfaces and
+// tests). It is NOT the durable audit: decisions are persisted as §60
+// OrgAuditRecords in the repo ledger (policy/audit-ledger.ts).
+export class RouterAuditTrace {
   private readonly entries: RouterAuditEvent[] = [];
 
-  constructor(dir: string) {
-    this.bridge = createNodeFileBridge(dir);
-    this.file = AUDIT_FILE;
-  }
-
   append(event: RouterAuditEvent): void {
+    // In-process trace only. The durable trail is the §60 ledger
+    // (policy/audit-ledger.ts): decisions land there as OrgAuditRecords, so
+    // the file holds ONE record format that `kubic audit` reads back.
     this.entries.push(event);
-    try {
-      this.bridge.appendFile(this.file, `${JSON.stringify(event)}\n`);
-    } catch {
-      // Best-effort durability; see the class note.
-    }
   }
 
   events(): readonly RouterAuditEvent[] {
@@ -377,6 +376,10 @@ export interface WorkerAskRouterOptions {
   seat?: WorkerAskSeat;
   /** Extra sink beside the durable audit log. */
   audit?: (event: RouterAuditEvent) => void;
+  /** §60 posture stamped on ledger records (default: approvals enabled). */
+  posture?: () => string;
+  /** Where a failed ledger append is reported (never decides the ask). */
+  debug?: (line: string) => void;
 }
 
 export function createWorkerAskRouter(
@@ -388,7 +391,7 @@ export function createWorkerAskRouter(
   // The router's dir IS the mailbox dir: decisions, audit and asks live
   // together, so "what is pending" needs no second path.
   const mailboxDir = options.dir;
-  const auditLog = new FileAuditLog(options.dir);
+  const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
     options.audit?.(event);
@@ -400,6 +403,20 @@ export function createWorkerAskRouter(
     audit,
   });
   const pendingAsks = new Map<string, OrchestratorApprovalRequest>();
+  // §60: every decision (approve, deny, timeout, manager refusal) becomes
+  // one OrgAuditRecord in the repo ledger beside the decisions it explains.
+  const ledger = (
+    request: OrchestratorApprovalRequest,
+    verdict: OrchestratorVerdict,
+  ): void => {
+    appendToLedger(
+      mailboxDir,
+      orchestratorDecisionAudit(request, verdict, {
+        posture: options.posture?.() ?? POSTURE_APPROVALS,
+      }),
+      (message) => options.debug?.(`audit: ledger append failed: ${message}`),
+    );
+  };
 
   const ask = async (
     input: WorkerAskInput,
@@ -418,6 +435,7 @@ export function createWorkerAskRouter(
         askOptions.autoApprove === true
           ? router.submit(request, { approved: true, by: 'user' })
           : await router.request(request);
+      ledger(request, verdict);
       return classifyVerdict(request.key, verdict);
     } finally {
       pendingAsks.delete(request.key);
@@ -452,7 +470,9 @@ export function createWorkerAskRouter(
         // An unknown key is still a manager approve attempt: it is refused
         // against a key-shaped envelope so the refusal is audited either way.
         ({ key } as OrchestratorApprovalRequest);
-      return attemptManagerApprove(request, { audit });
+      const verdict = attemptManagerApprove(request, { audit });
+      ledger(request, verdict);
+      return verdict;
     },
     decided: (key: string) => router.decided(key),
     pendingKeys: () => router.pendingRequests().map((request) => request.key),
@@ -727,11 +747,10 @@ export function createOrchestratorApprovalsRun(
   const bridge = createNodeFileBridge(dir);
   bridge.createDir(ASKS_DIR, true);
   const debug = options.debug ?? (() => undefined);
-  // ONE audit log for the whole run: the router's decisions, this module's
-  // refusals (budget self-raise) and the skip posture all land in the same
-  // durable trail. A refusal written to a throwaway sink would be an audit
-  // record nobody can read — which is not an audit record.
-  const auditLog = new FileAuditLog(dir);
+  // ONE router trace for the whole run: the router's events, this module's
+  // refusals (budget self-raise) and the skip posture all land in it. The
+  // durable §60 trail is the repo ledger the router writes each decision to.
+  const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
     options.audit?.(event);
@@ -739,6 +758,9 @@ export function createOrchestratorApprovalsRun(
   const decisions = createWorkerAskRouter({
     dir,
     maxPendingMs: options.maxPendingMs,
+    posture: () =>
+      fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,
+    debug,
     ...(options.autoApprove === true
       ? { seat: createStandingAnswerSeat() }
       : options.seat === undefined

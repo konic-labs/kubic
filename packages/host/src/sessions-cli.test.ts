@@ -53,6 +53,42 @@ describe('sessions CLI (issue #14, slice F)', () => {
     ).toBe(true);
   });
 
+  it('list --json prints [] when there are no sessions', async () => {
+    const o = out();
+    const code = await runSessionsCommand(['list', '--json'], {
+      sessionsRoot: tmpRoot(),
+      out: o.write,
+    });
+    expect(code).toBe(0);
+    expect(o.lines).toEqual(['[]']);
+  });
+
+  it('list --json emits one {id, cwd} object per session', async () => {
+    const root = tmpRoot();
+    const o = out();
+    await runSessionsCommand(['create', '--cwd', '/work'], {
+      sessionsRoot: root,
+      out: o.write,
+    });
+    const listing = out();
+    await runSessionsCommand(['list', '--json'], {
+      sessionsRoot: root,
+      out: listing.write,
+    });
+    expect(JSON.parse(listing.lines.join('\n'))).toEqual([
+      { id: o.lines[0], cwd: '/work' },
+    ]);
+  });
+
+  it('list refuses an unknown flag with usage, exit 1', async () => {
+    const o = out();
+    const code = await runSessionsCommand(['list', '--bogus'], {
+      sessionsRoot: tmpRoot(),
+      out: o.write,
+    });
+    expect(code).toBe(1);
+  });
+
   it('attaches and shows the transcript tail', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));

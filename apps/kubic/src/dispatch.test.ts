@@ -263,6 +263,31 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
+  it('the bare invocation on an interactive terminal opens the TUI (§78/§80)', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand(undefined, [], deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([['tui', []]]);
+    // Same boot as `kubic tui`: the runtime ignore rules ship first.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('the bare invocation off a TTY keeps the usage + exit 1 posture', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => false };
+    expect(await dispatchCommand(undefined, [], deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a refused config stops the bare interactive TUI like `kubic tui`', async () => {
+    const h = harness({ config: refusedConfig() });
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand(undefined, [], deps)).not.toBe(0);
+    expect(h.calls).toEqual([]);
+  });
+
   it('throws from the gated crash probe (contract seam, issue #128)', async () => {
     process.env.__KUBIC_CONTRACT_CRASH_PROBE = '1';
     try {

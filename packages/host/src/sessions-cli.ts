@@ -42,7 +42,7 @@ export function defaultSessionsRoot(): string {
 }
 
 const SESSIONS_USAGE =
-  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
+  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list [--json] | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
 
 function usage(out: (line: string) => void): number {
   out(SESSIONS_USAGE);
@@ -79,6 +79,10 @@ const PRUNE_FLAG_SPEC: readonly FlagSpec[] = [
 const CREATE_FLAG_SPEC: readonly FlagSpec[] = [
   { name: '--cwd', takes: 'value' },
   { name: '--dangerously-skip-approvals', takes: 'boolean' },
+];
+
+const LIST_FLAG_SPEC: readonly FlagSpec[] = [
+  { name: '--json', takes: 'boolean' },
 ];
 
 const ATTACH_FLAG_SPEC: readonly FlagSpec[] = [
@@ -266,7 +270,21 @@ export async function runSessionsCommand(
     return 0;
   }
   if (sub === 'list') {
+    const parsed = parseFlagArgs(rest, LIST_FLAG_SPEC);
+    if (parsed.unknown.length > 0 || parsed.positional.length > 0) {
+      return usage(deps.out);
+    }
     const sessions = await listSessions(store, BACKGROUND_CONTEXT);
+    if (parsed.values['--json'] === true) {
+      // Always one JSON array — `[]` when there are no sessions, so a
+      // `| jq` consumer never reads an empty stream (§78).
+      deps.out(
+        JSON.stringify(
+          sessions.map((entry) => ({ id: entry.id, cwd: entry.cwd ?? null })),
+        ),
+      );
+      return 0;
+    }
     for (const entry of sessions) {
       deps.out(`${entry.id}  ${entry.cwd ?? '(no cwd)'}`);
     }

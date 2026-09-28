@@ -10,6 +10,12 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { outputModeFor } from '../../../packages/core/src/cli/output.js';
+import {
+  type CliTheme,
+  createCliTheme,
+  themeFor,
+} from '../../../packages/core/src/cli/theme.js';
 import {
   runBenchmarkCommand,
   runEvalCommand,
@@ -105,6 +111,23 @@ async function refuseLiveSuite(): Promise<never> {
   throw new Error(LIVE_SUITE_REFUSAL);
 }
 
+const PLAIN = createCliTheme('none');
+
+// Report colours and table style for a migrated command, decided once from
+// the real stdout: colour only on a TTY that allows it (NO_COLOR,
+// FORCE_COLOR, TERM=dumb honoured), box-drawn tables only there too, and
+// neither under `--json`.
+function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
+  const theme = json ? PLAIN : themeFor(process.stdout);
+  const mode = outputModeFor({
+    json,
+    stdinTTY: process.stdin.isTTY === true,
+    stdoutTTY: process.stdout.isTTY === true,
+    colorEnabled: theme.enabled,
+  });
+  return { theme, fancy: mode.fancy };
+}
+
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
   return {
@@ -118,19 +141,23 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },
-    git: (rest) =>
-      runGitCommand([...rest], {
+    git: (request) =>
+      runGitCommand(request, {
         env: new NodeExecutionEnv(process.cwd()),
         out,
+        ...reportStyle(request.json === true),
       }),
-    journal: (args, cliConfig) => {
+    journal: (request, cliConfig) => {
       // Issue #119: the same `session.retentionDays` projection `sessions
       // prune` reads — `log` self-heals aged entries of a session journal at
       // read time under it. Unset (or a refused config) leaves the read path
       // without a window: it then writes nothing.
       const retentionDays = sessionRetentionDays(cliConfig);
-      return runJournalCommand([...args], {
+      return runJournalCommand(request, {
         out,
+        err: debug,
+        errTheme: request.json === true ? PLAIN : themeFor(process.stderr),
+        ...reportStyle(request.json === true),
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },

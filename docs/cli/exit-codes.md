@@ -15,7 +15,7 @@
 | Code | Terminus / meaning | When you see it |
 | --- | --- | --- |
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
-| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` / `sessions` / journal usage and IO errors; unknown top-level command. |
+| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` usage and IO errors; journal IO failures; unknown top-level command. |
 | 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with skipped steps — non-reversible, stale, or already-undone (see below). |
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
@@ -29,8 +29,11 @@
   fail, 2 on usage errors. `--json` reports the same code in its
   `exitCode` field.
 - **`kubic diff/undo/log/status`**: 0 success (including empty diff and
-  clean dry-run), 1 usage/IO errors — except `undo`, which exits **2**
-  when it restored but skipped steps. Three skip classes reach that code:
+  clean dry-run); 2 usage errors — unknown option, missing option value,
+  a `--max-content-bytes` that is not a non-negative integer, an extra
+  operand, an invalid or conflicting `--session` — with one `error:` line
+  on stderr and nothing touched; 1 an unexpected IO failure (root
+  catch-all). `undo` also exits **2** when it restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
   appended (`unattributed`) whose baseline holds hashes, not pre-images
   (the exception is a path whose pre-image an earlier attributed entry in
@@ -41,7 +44,12 @@
   overrides per-invocation); and `already undone (skipped)` — a previous
   undo already unwound the step, nothing is rewritten. In every skipped
   class the exit is 2 and nothing is written for that step.
-- **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
+- **`kubic git`**: 0 success (including `log` on a repo with no commits
+  yet); 1 an op failure or outside a git repository (one `error:` line on
+  stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,
+  missing value, `--max` not a positive integer, `stage` without a path,
+  `commit` without a non-empty `-m`).
+- **`kubic sessions` / `kubic models`**: 0 success, 1
   usage or op failure (`models --resolve` failure exits 1). `sessions
   prune` keeps that shape: 0 for a dry run, `nothing to prune`, and a
   completed prune; 1 for a missing keep window (no `--keep-days`, no

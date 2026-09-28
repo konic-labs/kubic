@@ -90,11 +90,21 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['export', ['trajectory.json'], 'export'],
 ];
 
-const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
+// Commander-migrated commands hand their runner a typed request parsed
+// from the ROUTES argv instead of the raw argv.
+const TYPED_REQUESTS: Readonly<Record<string, unknown>> = {
+  git: { command: 'status' },
+  diff: { command: 'diff', json: true },
+  undo: { command: 'undo', step: true },
+  log: { command: 'log' },
+  status: { command: 'status' },
+};
 
 interface RunnerCall {
   readonly key: RunnerKey;
-  readonly rest: readonly string[];
+  // Raw argv for a forwarder; the typed request for a commander-migrated
+  // command (git, journal).
+  readonly rest: unknown;
   readonly config: CliConfigResult;
 }
 
@@ -128,7 +138,11 @@ function harness(
   for (const key of RUNNER_KEYS) {
     const override = options.runners?.[key];
     runners[key] = (rest, config) => {
-      calls.push({ key, rest: [...rest], config });
+      calls.push({
+        key,
+        rest: Array.isArray(rest) ? [...rest] : rest,
+        config,
+      });
       return override === undefined ? 0 : override(rest, config);
     };
   }
@@ -142,7 +156,8 @@ function harness(
       state.excludeCalls += 1;
       state.excludeEntries = entries;
     },
-    runners,
+    // The migrated runners take typed requests; the recorder is shape-blind.
+    runners: runners as unknown as DispatchRunners,
   };
   return { deps, calls, lines, state };
 }
@@ -204,9 +219,7 @@ describe('dispatch routing (issue #135)', () => {
         h.calls.map((call) => call.key),
         label,
       ).toEqual([key]);
-      expect(h.calls[0]?.rest, label).toEqual(
-        JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest,
-      );
+      expect(h.calls[0]?.rest, label).toEqual(TYPED_REQUESTS[command] ?? rest);
       expect(code, `${label} — exit code must flow back`).toBe(0);
     }
   });
@@ -359,13 +372,15 @@ describe('config refusal (issue #90 policy, moved)', () => {
   });
 
   it('lets every other command proceed', async () => {
-    const others = ROUTES.map(([command]) => command).filter(
-      (command) => !CONSUMING.includes(command) && !REPORTING.includes(command),
+    const others = ROUTES.filter(
+      ([command]) =>
+        !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
     expect(others).toHaveLength(16);
-    for (const command of others) {
+    // Each with its ROUTES argv: a bare `kubic git` is a usage error.
+    for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });
-      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      expect(await dispatchCommand(command, rest, h.deps), command).toBe(0);
       expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
       expect(h.lines, `${command} must not print a refusal`).toEqual([]);
     }

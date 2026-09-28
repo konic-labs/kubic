@@ -488,6 +488,36 @@ describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC
     expect(result.error?.message).toContain('limit=tokens');
   }, 60_000);
 
+  it('AC1b: maxToolCalls counts attempts the policy guards BLOCK, not only executed calls', async () => {
+    // Every scripted call is a destructive `rm -rf` the installed policy
+    // denies (a headless run has no approval surface). Pi's before_tool
+    // chain stops at the FIRST block, so a meter subscribed after the guards
+    // would count zero attempts and the run would end approval_denied. The
+    // meter must be subscribed before them: the third attempt trips
+    // maxToolCalls=2 and the run ends budget_exhausted instead.
+    const sessionsRoot = scratchRoot('kubic-208-blocked-');
+    const env = new FakeExecutionEnv({});
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const destructive = { command: 'rm -rf scratch' };
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
+      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
+      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
+      fauxAssistantMessage('done'),
+    ]);
+    vi.stubEnv('KUBIC_BUDGET', JSON.stringify({ maxToolCalls: 2 }));
+    const result = await runHeadlessPrompt(
+      'work',
+      {},
+      { sessionsRoot, models, env },
+    );
+    expect(result.terminus).toBe('budget_exhausted');
+    expect(result.error?.message).toContain('BUDGET_EXHAUSTED');
+    expect(result.error?.message).toContain('limit=toolCalls');
+  }, 60_000);
+
   it('a malformed KUBIC_BUDGET is a usage terminus (exit 2), never a silently dropped limit', async () => {
     const sessionsRoot = scratchRoot('kubic-208-sessions-');
     vi.stubEnv('KUBIC_BUDGET', '{not json');

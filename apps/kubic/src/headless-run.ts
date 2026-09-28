@@ -57,9 +57,9 @@ import {
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
 import {
-  attachRunBudget,
   BUDGET_EXHAUSTED,
   type BudgetLimit,
+  createRunBudgetEnforcer,
   type OrchestratorBudget,
   parseWorkerBudgetEnv,
   RUN_EXIT_BUDGET,
@@ -120,6 +120,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  type Hooks,
   type MutableModels,
   type OperationResultRecord,
   type Session,
@@ -1201,6 +1202,23 @@ async function runHeadlessPromptImpl(
       fauxPinned ||
       deps.model !== undefined ||
       roleModelSelection(role?.resolved.model) !== undefined;
+    // §71 child-side enforcement (issue #208): one meter for the run, built
+    // BEFORE the lane so its before_tool gate can subscribe BEFORE the
+    // policy interceptors — Pi's before_tool chain stops at the first block,
+    // so a later subscriber would never count a blocked/denied attempt. A
+    // breach rejects the drive race, so the run ends BUDGET_EXHAUSTED
+    // (exit 3) with the dimension named — never a silent overspend.
+    const budgetPlan = runBudget;
+    let rejectBudget: ((error: Error) => void) | undefined;
+    const budgetExceeded = new Promise<never>((_resolve, reject) => {
+      rejectBudget = reject;
+    });
+    const budgetEnforcer =
+      budgetPlan === undefined
+        ? undefined
+        : createRunBudgetEnforcer(budgetPlan, (termination) => {
+            rejectBudget?.(new BudgetExceededError(termination.limit));
+          });
     try {
       solo = await bootSoloLane({
         session,
@@ -1237,6 +1255,15 @@ async function runHeadlessPromptImpl(
           classes: installed.classes,
           interceptors: installed.interceptors,
           ...(contributions.length === 0 ? {} : { contributions }),
+          // §71 (issue #208): the budget meter goes FIRST. The chain stops
+          // at the first block, so this is what makes a destructive or
+          // network-denied call still count against maxToolCalls.
+          ...(budgetEnforcer === undefined
+            ? {}
+            : {
+                beforePolicyHooks: (hooks: Hooks) =>
+                  hooks.on('before_tool', budgetEnforcer.onToolAttempt),
+              }),
         },
       });
     } catch (error) {
@@ -1260,27 +1287,14 @@ async function runHeadlessPromptImpl(
     // lanes) yields no registry: telemetry degrades to lane/run spans and
     // never fails the run.
     const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
-    // §71 child-side enforcement (issue #208): every before_tool attempt
-    // counts and every usage row accumulates against the budget the manager
-    // handed down. A breach rejects the drive race, so the run ends
-    // BUDGET_EXHAUSTED (exit 3) with the dimension named — never a silent
-    // overspend, and never a completed run that ignored its budget.
-    const budgetPlan = runBudget;
-    let rejectBudget: ((error: Error) => void) | undefined;
-    const budgetExceeded = new Promise<never>((_resolve, reject) => {
-      rejectBudget = reject;
-    });
-    const detachBudget =
-      budgetPlan === undefined
+    // §71 child-side enforcement (issue #208): the usage half of the meter.
+    // Usage is an event, not a hook, so it has no ordering constraint; it
+    // shares the meter the before_tool gate already registered.
+    const detachBudgetUsage =
+      budgetEnforcer === undefined
         ? undefined
-        : attachRunBudget({
-            budget: budgetPlan,
-            hooks: harness.hooks,
-            events: harness.events,
-            onBreach: (termination) => {
-              rejectBudget?.(new BudgetExceededError(termination.limit));
-            },
-          });
+        : harness.events.on('usage', budgetEnforcer.onUsage);
+    const detachBudgetHooks = solo.detachBeforePolicyHooks;
     try {
       const beforeAccept = bootInterrupted();
       if (beforeAccept !== undefined) return beforeAccept;
@@ -1445,7 +1459,8 @@ async function runHeadlessPromptImpl(
           : `${record.error.code}: ${record.error.message}`;
       return finished(id, terminus, summary, summary);
     } finally {
-      detachBudget?.();
+      detachBudgetHooks?.();
+      detachBudgetUsage?.();
       detachToolSpans();
     }
   } catch (error) {

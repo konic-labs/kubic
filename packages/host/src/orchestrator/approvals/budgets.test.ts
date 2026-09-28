@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import { MAX_RUN_TIMEOUT_MS, RUN_EXIT_BUDGET } from '../../run-cli.js';
 import {
   applyBudgetRaise,
-  attachRunBudget,
   BUDGET_EXHAUSTED,
   type BudgetGate,
   type BudgetRaiseResult,
@@ -17,6 +16,7 @@ import {
   childBudgetOf,
   createBudgetGate,
   createBurnDown,
+  createRunBudgetEnforcer,
   createRunBudgetMeter,
   mintUserBudgetApproval,
   OrchestratorBudgetError,
@@ -232,33 +232,16 @@ describe('child run budget enforcement (issue #208)', () => {
     );
   });
 
-  it('attachRunBudget counts every tool attempt and stops at the cap', () => {
+  it('createRunBudgetEnforcer counts every tool attempt and stops at the cap', () => {
     // The real BEFORE_TOOL semantics: the cap-th attempt runs and the next
     // is blocked with the named limit — the wiring, not just the meter.
-    const budget = { maxToolCalls: 2 };
-    const hooks: Array<
-      (event: {
-        toolCallId: string;
-        toolName: string;
-      }) => { block: { reason: string; terminate: false } } | undefined
-    > = [];
     const breaches: BudgetTermination[] = [];
-    const detach = attachRunBudget({
-      budget,
-      hooks: {
-        on: (_name, handler) => {
-          hooks.push(handler);
-          return () => undefined;
-        },
-      },
-      events: { on: () => () => undefined },
-      onBreach: (termination) => breaches.push(termination),
-    });
-    const call = (id: string) =>
-      hooks[0]?.({ toolCallId: id, toolName: 'read' });
-    expect(call('c1')).toBeUndefined();
-    expect(call('c2')).toBeUndefined();
-    const blocked = call('c3');
+    const enforcer = createRunBudgetEnforcer({ maxToolCalls: 2 }, (t) =>
+      breaches.push(t),
+    );
+    expect(enforcer.onToolAttempt()).toBeUndefined();
+    expect(enforcer.onToolAttempt()).toBeUndefined();
+    const blocked = enforcer.onToolAttempt();
     expect(blocked?.block.reason).toContain(BUDGET_EXHAUSTED);
     expect(blocked?.block.reason).toContain('limit=toolCalls');
     expect(blocked?.block.terminate).toBe(false);
@@ -266,36 +249,16 @@ describe('child run budget enforcement (issue #208)', () => {
     expect(breaches).toEqual([
       { status: 'budget_exhausted', limit: 'toolCalls' },
     ]);
-    expect(call('c4')).toBeDefined();
+    expect(enforcer.onToolAttempt()).toBeDefined();
     expect(breaches).toHaveLength(1);
-    detach();
   });
 
-  it('attachRunBudget breaches on a fixture usage row and detaches cleanly', () => {
-    const budget = { maxCostUsd: 1 };
-    let usageHandler:
-      | ((event: {
-          row: {
-            usage: { input: number; output: number; cost: { total: number } };
-          };
-        }) => void)
-      | undefined;
-    let detached = 0;
+  it('createRunBudgetEnforcer breaches on a fixture usage row', () => {
     const breaches: BudgetTermination[] = [];
-    const detach = attachRunBudget({
-      budget,
-      hooks: { on: () => () => undefined },
-      events: {
-        on: (_name, handler) => {
-          usageHandler = handler;
-          return () => {
-            detached += 1;
-          };
-        },
-      },
-      onBreach: (termination) => breaches.push(termination),
-    });
-    usageHandler?.({
+    const enforcer = createRunBudgetEnforcer({ maxCostUsd: 1 }, (t) =>
+      breaches.push(t),
+    );
+    enforcer.onUsage({
       row: {
         usage: {
           input: 100,
@@ -305,8 +268,8 @@ describe('child run budget enforcement (issue #208)', () => {
       },
     });
     expect(breaches).toEqual([{ status: 'budget_exhausted', limit: 'cost' }]);
-    detach();
-    expect(detached).toBe(1);
+    // A later attempt is still blocked by the exhausted meter.
+    expect(enforcer.onToolAttempt()?.block.reason).toContain('limit=cost');
   });
 });
 

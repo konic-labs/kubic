@@ -32,6 +32,7 @@ import {
   BACKGROUND_CONTEXT,
   type Context,
   type DeferredHandle,
+  type Hooks,
   laneConfig,
   type Model,
   type OpenOperation,
@@ -119,6 +120,14 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
+  /**
+   * Issue #208: a before_tool gate registered BEFORE the policy interceptors.
+   * Pi's before_tool chain stops at the first block, so a gate that must
+   * observe EVERY attempt (the run budget meter) has to subscribe before the
+   * guards that may block it. Returns a detach function, exposed on the
+   * booted lane as `detachBeforePolicyHooks`.
+   */
+  beforePolicyHooks?: (hooks: Hooks) => () => void;
 }
 
 // Harness compaction budget overrides. keepRecentTokens mirrors Pi's
@@ -260,6 +269,9 @@ export interface SoloLane {
   // model switch re-clamps the harness reserve to the NEW model's window.
   configuredReserveTokens?: number;
   modelWindow?: (provider: string, modelId: string) => number | undefined;
+  // Issue #208: the detach for `policy.beforePolicyHooks`, when one was
+  // registered. The caller owns the lane's lifetime and unsubscribes here.
+  detachBeforePolicyHooks?: () => void;
 }
 
 export function splitSoloModelId(id: string): {
@@ -548,6 +560,12 @@ export async function bootSoloLane(
   if (options.toolAllowlist !== undefined) {
     await lane.setActiveTools(effectiveToolNames, context);
   }
+  // Issue #208: the budget meter (or any other attempt gate) subscribes
+  // BEFORE the policy interceptors: Pi's before_tool chain stops at the
+  // first block, so a later subscriber would never observe a denied call.
+  const detachBeforePolicyHooks = options.policy?.beforePolicyHooks?.(
+    harness.hooks,
+  );
   if (options.policy?.interceptors !== undefined) {
     registerPolicyInterceptors(harness.hooks, {
       ...options.policy.interceptors,
@@ -621,6 +639,9 @@ export async function bootSoloLane(
       options.models.getModels(provider).find((model) => model.id === modelId)
         ?.contextWindow,
     ...(binding === undefined ? {} : { binding }),
+    ...(detachBeforePolicyHooks === undefined
+      ? {}
+      : { detachBeforePolicyHooks }),
     ...(options.taskId === undefined
       ? {}
       : {

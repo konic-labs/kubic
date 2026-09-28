@@ -329,60 +329,58 @@ export function parseWorkerBudgetEnv(
 
 // The harness seams the child enforcement attaches to. Structural (never a
 // harness import) so the wiring itself is unit-testable with fakes.
-export interface BudgetHookRegistry {
-  on(
-    name: 'before_tool',
-    handler: (event: {
-      toolCallId: string;
-      toolName: string;
-    }) => { block: { reason: string; terminate: false } } | undefined,
-  ): () => void;
-}
 
-export interface BudgetUsageEventSource {
-  on(
-    name: 'usage',
-    handler: (event: { row: BudgetUsageRowLike }) => void,
-  ): () => void;
+/**
+ * The run's budget enforcer as two handlers a live lane attaches separately.
+ * Split (not one wiring helper) because hook ORDER is part of correctness
+ * (issue #208 review): Pi's before_tool chain stops at the FIRST block, so
+ * the attempt counter must subscribe BEFORE the policy guards — a later
+ * subscriber never sees a blocked/denied call and would undercount. The
+ * usage handler has no ordering constraint and shares the same meter.
+ */
+export interface RunBudgetEnforcer {
+  /** BEFORE_TOOL handler: counts the attempt, blocks once exhausted. */
+  onToolAttempt: () =>
+    | { block: { reason: string; terminate: false } }
+    | undefined;
+  /** USAGE handler: accumulates spend and reports the breach. */
+  onUsage: (event: { row: BudgetUsageRowLike }) => void;
 }
 
 export function budgetBlockReason(termination: BudgetTermination): string {
   return `budget ${BUDGET_EXHAUSTED} (limit=${termination.limit}): the call is blocked, exit ${RUN_EXIT_BUDGET}`;
 }
 
-// Wire the meter onto a live lane: every before_tool attempt is counted and
-// every usage row accumulates; the FIRST termination calls onBreach exactly
-// once (the run ends on it) and every later attempt is still blocked.
-export function attachRunBudget(input: {
-  budget: OrchestratorBudget;
-  hooks: BudgetHookRegistry;
-  events: BudgetUsageEventSource;
-  onBreach: (termination: BudgetTermination) => void;
-}): () => void {
-  const meter = createRunBudgetMeter(input.budget);
+// One meter behind both handlers: every before_tool ATTEMPT counts (including
+// one a later policy handler blocks) and every usage row accumulates; the
+// FIRST termination calls onBreach exactly once (the run ends on it) and
+// every later attempt is still blocked.
+export function createRunBudgetEnforcer(
+  budget: OrchestratorBudget,
+  onBreach: (termination: BudgetTermination) => void,
+): RunBudgetEnforcer {
+  const meter = createRunBudgetMeter(budget);
   let breached: BudgetTermination | undefined;
   const stop = (
     termination: BudgetTermination,
   ): { block: { reason: string; terminate: false } } => {
     if (breached === undefined) {
       breached = termination;
-      input.onBreach(termination);
+      onBreach(termination);
     }
     return {
       block: { reason: budgetBlockReason(termination), terminate: false },
     };
   };
-  const offTool = input.hooks.on('before_tool', () => {
-    const hit = meter.nextToolCall();
-    return hit === undefined ? undefined : stop(hit);
-  });
-  const offUsage = input.events.on('usage', (event) => {
-    const hit = meter.recordUsage(usageSpendOf(event.row));
-    if (hit !== undefined) stop(hit);
-  });
-  return () => {
-    offTool();
-    offUsage();
+  return {
+    onToolAttempt: () => {
+      const hit = meter.nextToolCall();
+      return hit === undefined ? undefined : stop(hit);
+    },
+    onUsage: (event) => {
+      const hit = meter.recordUsage(usageSpendOf(event.row));
+      if (hit !== undefined) stop(hit);
+    },
   };
 }
 

@@ -36,6 +36,7 @@ import {
   type NetworkLevel,
   type ShellLevel,
 } from '../../../agents/src/policy.js';
+import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { Hooks, JsonValue } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
@@ -50,6 +51,11 @@ export interface PolicyInterceptorOptions {
   onTrigger?: (trigger: PolicyTrigger) => void;
   shell?: ShellLevel;
   network?: NetworkLevel;
+  // Read-only confinement exception (issue #173; §29.3): the directories
+  // (or files) of the skills advertised with absolute paths outside the
+  // workspace. Only the `read` tool may open a path inside one; write,
+  // edit, ls, find and grep keep re-rooting every outside path.
+  readRoots?: readonly string[];
   isDestructive?: (command: string, workspace: string) => boolean;
   // Approval decider (issue #16, owned by the host). Consulted for every
   // call after the budget gate: denials block; approvals let the call
@@ -223,6 +229,7 @@ export function registerPolicyInterceptors(
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
+  const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
   // Tool calls a real challenge cleared. Guards below stand down for
   // exactly these ids — never by tool name or pattern. Unchallenged
   // fast-path calls never enter this set, so #15 guards stay up for them.
@@ -320,6 +327,13 @@ export function registerPolicyInterceptors(
     hooks.on('before_tool', (event) =>
       failClosed(() => {
         if (approvedCalls.has(event.toolCallId)) return undefined;
+        if (
+          event.toolName === 'read' &&
+          typeof event.args.path === 'string' &&
+          readRootFor(readRoots, event.args.path) !== undefined
+        ) {
+          return undefined;
+        }
         const confined = confineArgs(
           event.toolName,
           event.args,

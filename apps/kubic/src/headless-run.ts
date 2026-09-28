@@ -900,6 +900,10 @@ export async function runHeadlessPrompt(
       agentId: deps.agentId ?? 'root',
       journal,
       ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
+      // Issue #173: the advertised skills outside the cwd stay readable.
+      ...(skills.readRoots.length === 0
+        ? {}
+        : { skillReadRoots: skills.readRoots }),
       ...(role === undefined
         ? {}
         : {

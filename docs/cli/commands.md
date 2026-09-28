@@ -60,6 +60,20 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
+**Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
+advertised in the `<skills>` block names its absolute `<filePath>`. Paths
+outside the workspace are normally re-rooted under it, so one narrow,
+read-only exception applies to exactly the advertised skills that live
+outside the cwd: user skills (`~/.pi/agent/skills`, `~/.agents/skills`),
+trusted ancestor project skills, and explicit `--skill` paths. For a
+`SKILL.md`, `read` may open anything inside that skill's own directory
+(so the skill's relative references resolve); a flat skill file opens
+only itself. Nothing else changes: `write`, `edit`, `ls`, `find` and
+`grep` still re-root every outside path, any other outside `read` is
+still re-rooted, and skills hidden from the model
+(`disable-model-invocation`) open nothing. `kubic tui` and orchestrator
+workers (child `kubic run` processes) apply the same rule.
+
 **Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` (e.g. an orchestrator
 stopping a worker) and `SIGHUP` during a run are handled like the
 wall-clock guard (a signal during boot, before the prompt is admitted,

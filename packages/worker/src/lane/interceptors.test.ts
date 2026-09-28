@@ -151,6 +151,34 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(() => booted.env.fs.readFile('/etc/cron.d/x')).toThrow();
   });
 
+  it('lets read open an advertised skill root, and nothing else (issue #173)', async () => {
+    const skill = '/home/u/.agents/skills/a/SKILL.md';
+    const booted = await boot([
+      { name: 'read', args: { path: skill } },
+      { name: 'write', args: { path: skill, content: 'pwned' } },
+      { name: 'edit', args: { path: skill, oldText: 'a', newText: 'b' } },
+      { name: 'read', args: { path: '/etc/passwd' } },
+      { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
+    ]);
+    const seen: { tool: string; path: unknown }[] = [];
+    registerPolicyInterceptors(booted.harness.hooks, {
+      workspace: '/work',
+      readRoots: ['/home/u/.agents/skills/a'],
+    });
+    booted.harness.hooks.on('before_tool', (event) => {
+      seen.push({ tool: event.toolName, path: event.args.path });
+      return undefined;
+    });
+    await driveToolEnds(booted);
+    expect(seen).toEqual([
+      { tool: 'read', path: skill },
+      { tool: 'write', path: '/work/home/u/.agents/skills/a/SKILL.md' },
+      { tool: 'edit', path: '/work/home/u/.agents/skills/a/SKILL.md' },
+      { tool: 'read', path: '/work/etc/passwd' },
+      { tool: 'ls', path: '/work/home/u/.agents/skills/a' },
+    ]);
+  });
+
   it('blocks network commands under a domain-less allowlist (issue #166)', async () => {
     const blocked = await boot([
       { name: 'bash', args: { command: 'curl https://evil.example' } },

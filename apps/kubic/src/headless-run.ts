@@ -43,6 +43,7 @@ import {
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   attachToolSpans,
   RunSpans,
@@ -434,7 +435,35 @@ async function recordPrompt(
   }, context);
 }
 
+// Issue #185 (§39, §68): the finished run reports its OWN usage — the
+// session's usage rollup (what `kubic cost` reads), the tool calls it
+// executed and the model that answered — so an orchestrator building a
+// worker's §68 metrics reads real numbers from the child's report. Read
+// after the session is closed; a run that never created a session, or a
+// read that fails, keeps the refs-only report (never invented numbers).
 export async function runHeadlessPrompt(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  const result = await runHeadlessPromptOnce(prompt, options, deps);
+  if (result.sessionId === 'unassigned') return result;
+  try {
+    const measured = await readSessionRunUsage(
+      deps.sessionsRoot ?? defaultSessionsRoot(),
+      result.sessionId,
+    );
+    return {
+      ...result,
+      usage: measured.usage,
+      ...(measured.model === undefined ? {} : { model: measured.model }),
+    };
+  } catch {
+    return result;
+  }
+}
+
+async function runHeadlessPromptOnce(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},

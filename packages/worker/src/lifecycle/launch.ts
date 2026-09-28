@@ -18,7 +18,7 @@ import type { Provenance } from '../../../exec/src/env.js';
 import type { FailureCode } from '../lane/failures.js';
 import { classifyFailure } from '../lane/failures.js';
 import type { AgentResult, ResultErrorKind, ResultStatus } from '../result.js';
-import { validateAgentResult } from '../result.js';
+import { buildAgentResult, UNRESOLVED_MODEL } from '../result.js';
 import type { KubicUsageRow, UsageSummary } from '../usage.js';
 import { summarizeUsage } from '../usage.js';
 import type { PerfGateResult, PerfSample } from './budgets.js';
@@ -60,6 +60,11 @@ export interface LaunchWorkerRequest {
    *  times spawn, readiness and teardown itself. */
   worktreeMs?: number;
   attachMs?: number;
+  /** §68 provenance (issue #185): the worktree the child runs in and the
+   *  model/thinking it was pinned to, when the caller knows them. */
+  worktree?: string;
+  model?: string;
+  thinking?: string;
 }
 
 export interface LaunchWorkerDeps {
@@ -321,23 +326,32 @@ export function launchWorker(
         : phase === 'completed'
           ? 'completed'
           : 'failed';
-    const metrics = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      toolCalls: 0,
-      latencyMs: worker.startupMs ?? 0,
-      wallMs: Math.max(0, clock() - spawnStartedAt),
-    };
-    const built: AgentResult = {
+    // The one §68 builder (issue #185) zero-fills the token metrics the
+    // lifecycle cannot see and self-checks against the closed-world
+    // contract: a result that fails its own validator is a bug here.
+    return buildAgentResult({
       status,
       summary:
         failure === undefined
           ? `worker ${request.workerId} ${phase}`
           : failure.message,
-      filesChanged: [],
-      provenance: { workerId: request.workerId },
-      metrics,
+      provenance: {
+        workerId: request.workerId,
+        sessionId: request.sessionId,
+        pid: pid ?? null,
+        generation,
+        worktree:
+          request.worktree ?? `(unrecorded worktree of ${request.workerId})`,
+        model: request.model ?? UNRESOLVED_MODEL,
+        role: request.role,
+        ...(request.thinking === undefined
+          ? {}
+          : { thinking: request.thinking }),
+      },
+      metrics: {
+        latencyMs: worker.startupMs ?? 0,
+        wallMs: Math.max(0, clock() - spawnStartedAt),
+      },
       ...(failure === undefined
         ? {}
         : {
@@ -347,16 +361,7 @@ export function launchWorker(
               details: { code: failure.code },
             },
           }),
-    };
-    // Self-check against the closed-world contract (§68): a result that
-    // fails its own validator is a bug in this module, not a caller's.
-    const validation = validateAgentResult(built);
-    if (!validation.valid) {
-      throw new Error(
-        `worker result violates the §68 contract: ${validation.errors.join('; ')}`,
-      );
-    }
-    return built;
+    });
   };
 
   // A readiness timeout or an exit before the marker is terminal in the

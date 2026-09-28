@@ -31,7 +31,7 @@ import {
 } from '../../../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
-import { SESSION_ID_PATTERN } from '../../run-cli.js';
+import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
@@ -102,6 +102,57 @@ export async function loadSessionCostRows(
     }
   }
   return rows;
+}
+
+// One run's usage as its `--json` report carries it (issue #185; §39,
+// §68): the session's own usage rollup (the numbers `kubic cost` reads),
+// the tool calls it executed, and the `provider/id` of the model that
+// answered last. The orchestrator builds each worker's §68 metrics and
+// provenance from this — never invented zeros.
+export async function readSessionRunUsage(
+  sessionsRoot: string,
+  sessionId: string,
+): Promise<{ usage: RunUsage; model?: string }> {
+  const store = openSessionStore(
+    sessionsRoot,
+    createNodeFileBridge(sessionsRoot),
+  );
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const stats = await session.getStats(BACKGROUND_CONTEXT);
+    const entries = (await session.findEntries(
+      undefined,
+      BACKGROUND_CONTEXT,
+    )) as {
+      message?: { role?: unknown; provider?: unknown; model?: unknown };
+    }[];
+    let toolCalls = 0;
+    let model: string | undefined;
+    for (const entry of entries) {
+      const message = entry.message;
+      if (message?.role === 'toolResult') toolCalls += 1;
+      if (
+        message?.role === 'assistant' &&
+        typeof message.provider === 'string' &&
+        typeof message.model === 'string'
+      ) {
+        model = `${message.provider}/${message.model}`;
+      }
+    }
+    return {
+      usage: {
+        input: stats.usage.input,
+        output: stats.usage.output,
+        cacheRead: stats.usage.cacheRead,
+        cacheWrite: stats.usage.cacheWrite,
+        costUsd: stats.usage.cost.total,
+        toolCalls,
+      },
+      ...(model === undefined ? {} : { model }),
+    };
+  } finally {
+    await session.close(BACKGROUND_CONTEXT);
+  }
 }
 
 // Presentation over the per-agent rows: a table (box-drawn only on a

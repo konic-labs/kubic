@@ -28,6 +28,7 @@ import type {
   OrchestrateWorktree,
   OrchestratorRunState,
   ResolverOutcome,
+  WorkerRunOutput,
   WorkerSpawnInfo,
   WorktreeRequest,
 } from '../../../packages/host/src/orchestrate-cli.js';
@@ -91,8 +92,18 @@ import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.j
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
 import { TERMINAL_STATUSES } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
-import type { AgentResult } from '../../../packages/worker/src/result.js';
-import { validateAgentResult } from '../../../packages/worker/src/result.js';
+import type {
+  AgentResult,
+  AgentResultInput,
+  ResultErrorKind,
+  ResultStatus,
+  WorkerProvenance,
+  WorkspaceDiffRef,
+} from '../../../packages/worker/src/result.js';
+import {
+  buildAgentResult,
+  UNRESOLVED_MODEL,
+} from '../../../packages/worker/src/result.js';
 import { runtimeExcludeEntriesFor } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 
@@ -341,6 +352,12 @@ export class WorkerRunFailure extends Error {
    * or a user's refusal would look like a crash.
    */
   readonly approval?: { code: string; exitCode: number };
+  /**
+   * The §68 result for this terminus (issue #185): provenance and a named
+   * error.kind, built from what the child reported before it stopped.
+   * Attached by runWorker; the CLI reports and persists it.
+   */
+  result?: AgentResult;
 
   constructor(
     code: 'spawn_failed' | 'worker_failed' | 'result_invalid' | 'cancelled',
@@ -378,6 +395,96 @@ function approvalTerminusOf(
 // is `spawn_failed` (the worker never started); a worker that ran and
 // reported a failure keeps `worker_failed`, with the §52 code named in
 // the message so the taxonomy stays visible.
+// What the orchestrator itself observed about a launch (issue #185): the
+// files the worker changed, the §61 timings, and the provenance the
+// lifecycle layer knows (pid, generation, worktree, role). The model comes
+// from the child's own report when it names one.
+export interface WorkerObservation {
+  filesChanged: string[];
+  wallMs: number;
+  latencyMs: number;
+  provenance: Omit<WorkerProvenance, 'workerId' | 'model'> & {
+    model?: string;
+  };
+  diff?: WorkspaceDiffRef;
+}
+
+// The child's `kubic run --json` report (the LAST stdout line), read
+// leniently: every field is untrusted and checked where it is used.
+interface ChildReport {
+  ok?: unknown;
+  status?: unknown;
+  sessionId?: unknown;
+  result?: { summary?: unknown };
+  model?: unknown;
+  usage?: {
+    input?: unknown;
+    output?: unknown;
+    cacheRead?: unknown;
+    costUsd?: unknown;
+    toolCalls?: unknown;
+  };
+}
+
+function childReportOf(stdout: string): ChildReport | undefined {
+  const last = stdout.trim().split('\n').pop()?.trim() ?? '';
+  if (last.length === 0) return undefined;
+  try {
+    const parsed = JSON.parse(last) as unknown;
+    return parsed !== null && typeof parsed === 'object'
+      ? (parsed as ChildReport)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+// §39/§68 metrics from the child's own usage rollup (its session's rows,
+// the same numbers `kubic cost` reads) — never invented zeros when the
+// report carries them.
+function reportMetrics(
+  report: ChildReport | undefined,
+  observed: { wallMs: number; latencyMs: number },
+): AgentResultInput['metrics'] {
+  const usage = report?.usage;
+  const input = count(usage?.input);
+  const output = count(usage?.output);
+  const cached = count(usage?.cacheRead);
+  const toolCalls = count(usage?.toolCalls);
+  const costUsd = count(usage?.costUsd);
+  return {
+    wallMs: observed.wallMs,
+    latencyMs: observed.latencyMs,
+    ...(input === undefined ? {} : { inputTokens: input }),
+    ...(output === undefined ? {} : { outputTokens: output }),
+    ...(cached === undefined ? {} : { cachedTokens: cached }),
+    ...(toolCalls === undefined ? {} : { toolCalls }),
+    ...(costUsd === undefined ? {} : { costUsd }),
+  };
+}
+
+function provenanceOf(
+  agentId: string,
+  report: ChildReport | undefined,
+  observed: WorkerObservation['provenance'],
+): WorkerProvenance {
+  const reported =
+    typeof report?.model === 'string' && report.model.trim().length > 0
+      ? report.model
+      : undefined;
+  return {
+    ...observed,
+    workerId: agentId,
+    model: reported ?? observed.model ?? UNRESOLVED_MODEL,
+  };
+}
+
 // §68 on the prod path: a child that exited 0 is only a success once its
 // own `--json` report is read and the AgentResult built from it passes the
 // closed-world validator. The report must be the child's LAST stdout line,
@@ -387,7 +494,7 @@ export function workerResultFromRun(
   agentId: string,
   workerSession: string,
   done: { exitCode: number; stdout: string; stderr: string },
-  observed: { filesChanged: string[]; wallMs: number; latencyMs: number },
+  observed: WorkerObservation,
 ):
   | { ok: true; result: AgentResult }
   | { ok: false; error: { code: 'result_invalid'; message: string } } {
@@ -400,21 +507,11 @@ export function workerResultFromRun(
   });
   const last = done.stdout.trim().split('\n').pop()?.trim() ?? '';
   if (last.length === 0) return invalid('the child printed no result report');
-  let report: {
-    ok?: unknown;
-    status?: unknown;
-    sessionId?: unknown;
-    result?: { summary?: unknown };
-  };
-  try {
-    report = JSON.parse(last) as typeof report;
-  } catch {
+  const report = childReportOf(done.stdout);
+  if (report === undefined)
     return invalid(
-      `the last output line is not a JSON report: ${last.slice(0, 120)}`,
+      `the last output line is not a JSON report object: ${last.slice(0, 120)}`,
     );
-  }
-  if (report === null || typeof report !== 'object')
-    return invalid('the report is not an object');
   if (report.ok !== true || report.status !== 'completed')
     return invalid(
       `the report is not a completed run (status ${String(report.status)})`,
@@ -423,23 +520,71 @@ export function workerResultFromRun(
     return invalid(
       `the report names session '${String(report.sessionId)}', not '${workerSession}'`,
     );
-  const built = {
-    status: 'completed',
-    summary: report.result?.summary,
-    filesChanged: observed.filesChanged,
-    provenance: { workerId: agentId },
-    metrics: {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      toolCalls: 0,
-      latencyMs: observed.latencyMs,
-      wallMs: observed.wallMs,
+  const summary = report.result?.summary;
+  if (typeof summary !== 'string' || summary.trim().length === 0)
+    return invalid('summary must be a non-empty string');
+  try {
+    return {
+      ok: true,
+      result: buildAgentResult({
+        status: 'completed',
+        summary,
+        filesChanged: observed.filesChanged,
+        provenance: provenanceOf(agentId, report, observed.provenance),
+        metrics: reportMetrics(report, observed),
+        ...(observed.diff === undefined ? {} : { diff: observed.diff }),
+      }),
+    };
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : String(error));
+  }
+}
+
+// §68 on every terminus (issue #185): a worker that failed, timed out, was
+// cancelled, ran out of budget or never spawned still yields a result — with
+// full provenance and a named error.kind — so a failure can be diagnosed
+// from the result alone. The child's report (when it printed one) supplies
+// the model and the usage it spent before it stopped.
+export function workerFailureResult(
+  agentId: string,
+  failure: WorkerRunFailure,
+  done: { exitCode: number; stdout: string; stderr: string } | undefined,
+  observed: Omit<WorkerObservation, 'filesChanged' | 'diff'>,
+  launchFailure?: WorkerFailure,
+): AgentResult {
+  const report = done === undefined ? undefined : childReportOf(done.stdout);
+  const approval = failure.approval?.code;
+  const status: ResultStatus =
+    failure.code === 'spawn_failed'
+      ? 'spawn_failed'
+      : failure.code === 'cancelled'
+        ? 'cancelled'
+        : approval === 'BUDGET_EXHAUSTED'
+          ? 'budget_exhausted'
+          : report?.status === 'budget_exhausted'
+            ? 'timeout'
+            : 'failed';
+  const kind: ResultErrorKind =
+    approval === 'BUDGET_EXHAUSTED'
+      ? 'budget'
+      : approval !== undefined
+        ? 'approval'
+        : failure.code === 'worker_failed'
+          ? (launchFailure?.kind ?? 'process')
+          : 'process';
+  return buildAgentResult({
+    status,
+    summary: failure.message,
+    provenance: provenanceOf(agentId, report, observed.provenance),
+    metrics: reportMetrics(report, observed),
+    error: {
+      kind,
+      message: failure.message,
+      details: {
+        code: approval ?? launchFailure?.code ?? failure.code,
+      },
     },
-  };
-  const validation = validateAgentResult(built);
-  if (!validation.valid) return invalid(validation.errors.join('; '));
-  return { ok: true, result: validation.task };
+  });
 }
 
 function workerRunError(
@@ -1150,10 +1295,14 @@ export async function orchestrateDepsWithDefaults(
       worktree: OrchestrateWorktree,
       prompt: string,
       info?: WorkerSpawnInfo,
-    ): Promise<MergedHunk[]> => {
+    ): Promise<WorkerRunOutput> => {
       const workerSession =
         info?.workerSessionId ??
         workerSessionFor(info?.sessionId ?? 'orch', agentId);
+      // §68 provenance (issue #185): the model the child was pinned to (its
+      // own report names the one it actually ran, and wins) and thinking.
+      const modelPin = process.env.KUBIC_MODEL ?? info?.modelRef;
+      const thinking = process.env.KUBIC_MODEL_THINKING;
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
       // generation, registers the row `kubic workers` reads, builds the
@@ -1221,6 +1370,9 @@ export async function orchestrateDepsWithDefaults(
             const started = worktreeStartedAt.get(agentId);
             return started === undefined ? undefined : Date.now() - started;
           })(),
+          worktree: worktree.path,
+          ...(modelPin === undefined ? {} : { model: modelPin }),
+          ...(thinking === undefined ? {} : { thinking }),
         },
         {
           shell: shellForWorktree(worktree.path),
@@ -1230,109 +1382,166 @@ export async function orchestrateDepsWithDefaults(
       );
       launchedByAgent.set(agentId, launched);
       const launchedAt = Date.now();
-      const untrack = trackLive(launched);
-      // The row is written out the moment the worker is registered, so a
-      // concurrent/next `kubic workers` invocation lists it (§50) even if
-      // this launch later fails.
-      persistWorkerRowsNow();
-      // A launch that never became ready is already terminal; the read
-      // below is what turns it into the run's §78 `spawn_failed` code.
-      let done: { exitCode: number; stdout: string; stderr: string };
-      try {
-        done = await launched.wait();
-      } catch (error) {
-        persistWorkerRowsNow();
-        throw error;
-      } finally {
-        untrack();
-      }
-      throwIfCancelled(agentId);
-      if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
-        persistWorkerRowsNow();
-        throw workerRunError(agentId, done, launched.failure());
-      }
-      await launched.reap().catch(() => undefined);
-      persistWorkerRowsNow();
-      // The worker does not commit; the orchestrator stages what it left and
-      // commits on its behalf. The invariant is that the manager lane never
-      // authors the change content (see assertManagerZeroWrites).
-      const status = await runGit(
-        worktree.path,
-        ['status', '--porcelain=v1'],
-        workerSession,
-        agentId,
-        'worker-status',
-      );
-      if (status.exitCode === 0 && status.stdout.trim().length > 0) {
-        const add = await runGit(
-          worktree.path,
-          ['add', '-A'],
-          workerSession,
-          agentId,
-          'worker-stage',
-        );
-        if (add.exitCode !== 0)
-          throw new Error(
-            `worker stage failed: ${add.stderr.trim().slice(0, 200)}`,
-          );
-        const commit = await runGit(
-          worktree.path,
-          [
-            '-c',
-            'user.name=kubic-worker',
-            '-c',
-            'user.email=kubic-worker@local',
-            'commit',
-            '-m',
-            `worker ${agentId}: ${prompt.slice(0, 120)}`,
-          ],
-          workerSession,
-          agentId,
-          'worker-commit',
-        );
-        if (commit.exitCode !== 0)
-          throw new Error(
-            `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
-          );
-      }
-      const base = await resolveBase(needRoot(), workerSession);
-      const names = await runGit(
-        worktree.path,
-        ['diff', '--name-only', `${base}...HEAD`, '--'],
-        workerSession,
-        agentId,
-        'worker-diff',
-      );
-      if (names.exitCode !== 0)
-        throw new Error(
-          `worker diff failed: ${names.stderr.trim().slice(0, 200)}`,
-        );
-      const hunks: MergedHunk[] = [];
-      for (const path of names.stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)) {
-        const diff = await runGit(
-          worktree.path,
-          ['diff', `${base}...HEAD`, '--', path],
-          workerSession,
-          agentId,
-          'worker-hunk',
-        );
-        hunks.push({ path, hunk: diff.stdout });
-      }
-      // §68: the exit code alone never settles a worker — its own report
-      // must build a valid AgentResult, or the run fails typed.
-      const contract = workerResultFromRun(agentId, workerSession, done, {
-        filesChanged: hunks.map((hunk) => hunk.path),
+      const observation = (): Omit<
+        WorkerObservation,
+        'filesChanged' | 'diff'
+      > => ({
         wallMs: Math.max(0, Date.now() - launchedAt),
         latencyMs: launched.perf().sample.startupMs ?? 0,
+        provenance: {
+          sessionId: workerSession,
+          pid: launched.pid ?? null,
+          generation: launched.generation,
+          worktree: worktree.path,
+          role: info?.role ?? 'worker',
+          ...(modelPin === undefined ? {} : { model: modelPin }),
+          ...(thinking === undefined ? {} : { thinking }),
+        },
       });
-      if (!contract.ok) {
-        debug(contract.error.message);
-        throw new WorkerRunFailure(contract.error.code, contract.error.message);
+      // Every terminus carries a §68 result (issue #185): a failure is
+      // re-thrown as a WorkerRunFailure holding the AgentResult built from
+      // what the child reported before it stopped.
+      let finished:
+        | { exitCode: number; stdout: string; stderr: string }
+        | undefined;
+      const withResult = (error: unknown): WorkerRunFailure => {
+        const failure =
+          error instanceof WorkerRunFailure
+            ? error
+            : new WorkerRunFailure(
+                'worker_failed',
+                error instanceof Error ? error.message : String(error),
+              );
+        if (failure.result === undefined) {
+          try {
+            failure.result = workerFailureResult(
+              agentId,
+              failure,
+              finished,
+              observation(),
+              launched.failure(),
+            );
+          } catch (buildError) {
+            debug(
+              `result: could not build the failure result for '${agentId}': ${buildError instanceof Error ? buildError.message : String(buildError)}`,
+            );
+          }
+        }
+        return failure;
+      };
+      try {
+        const untrack = trackLive(launched);
+        // The row is written out the moment the worker is registered, so a
+        // concurrent/next `kubic workers` invocation lists it (§50) even if
+        // this launch later fails.
+        persistWorkerRowsNow();
+        // A launch that never became ready is already terminal; the read
+        // below is what turns it into the run's §78 `spawn_failed` code.
+        let done: { exitCode: number; stdout: string; stderr: string };
+        try {
+          done = await launched.wait();
+        } catch (error) {
+          persistWorkerRowsNow();
+          throw error;
+        } finally {
+          untrack();
+        }
+        finished = done;
+        throwIfCancelled(agentId);
+        if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+          persistWorkerRowsNow();
+          throw workerRunError(agentId, done, launched.failure());
+        }
+        await launched.reap().catch(() => undefined);
+        persistWorkerRowsNow();
+        // The worker does not commit; the orchestrator stages what it left and
+        // commits on its behalf. The invariant is that the manager lane never
+        // authors the change content (see assertManagerZeroWrites).
+        const status = await runGit(
+          worktree.path,
+          ['status', '--porcelain=v1'],
+          workerSession,
+          agentId,
+          'worker-status',
+        );
+        if (status.exitCode === 0 && status.stdout.trim().length > 0) {
+          const add = await runGit(
+            worktree.path,
+            ['add', '-A'],
+            workerSession,
+            agentId,
+            'worker-stage',
+          );
+          if (add.exitCode !== 0)
+            throw new Error(
+              `worker stage failed: ${add.stderr.trim().slice(0, 200)}`,
+            );
+          const commit = await runGit(
+            worktree.path,
+            [
+              '-c',
+              'user.name=kubic-worker',
+              '-c',
+              'user.email=kubic-worker@local',
+              'commit',
+              '-m',
+              `worker ${agentId}: ${prompt.slice(0, 120)}`,
+            ],
+            workerSession,
+            agentId,
+            'worker-commit',
+          );
+          if (commit.exitCode !== 0)
+            throw new Error(
+              `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
+            );
+        }
+        const base = await resolveBase(needRoot(), workerSession);
+        const names = await runGit(
+          worktree.path,
+          ['diff', '--name-only', `${base}...HEAD`, '--'],
+          workerSession,
+          agentId,
+          'worker-diff',
+        );
+        if (names.exitCode !== 0)
+          throw new Error(
+            `worker diff failed: ${names.stderr.trim().slice(0, 200)}`,
+          );
+        const hunks: MergedHunk[] = [];
+        for (const path of names.stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)) {
+          const diff = await runGit(
+            worktree.path,
+            ['diff', `${base}...HEAD`, '--', path],
+            workerSession,
+            agentId,
+            'worker-hunk',
+          );
+          hunks.push({ path, hunk: diff.stdout });
+        }
+        // §68: the exit code alone never settles a worker — its own report
+        // must build a valid AgentResult, or the run fails typed.
+        const contract = workerResultFromRun(agentId, workerSession, done, {
+          ...observation(),
+          filesChanged: hunks.map((hunk) => hunk.path),
+          // The worker's change set is the worker branch against the run's
+          // base: a reference, never the diff text (§69).
+          diff: { diffId: `${base}...${worktree.branch}` },
+        });
+        if (!contract.ok) {
+          debug(contract.error.message);
+          throw new WorkerRunFailure(
+            contract.error.code,
+            contract.error.message,
+          );
+        }
+        return { hunks, result: contract.result };
+      } catch (error) {
+        throw withResult(error);
       }
-      return hunks;
     },
     mergeBranch: async (
       agentId: string,

@@ -63,9 +63,23 @@ export interface WorkspaceDiffRef {
   diffId: string;
 }
 
+// §46/§68 (issue #185): who ran, where, as what, on which model. Required
+// on every result — failures included — so a result alone can be
+// diagnosed and replayed. `pid` is null only when no process ever existed
+// (a spawn that never produced one); `model` is `provider/id`, or
+// UNRESOLVED_MODEL when the worker never reported the model it ran.
 export interface WorkerProvenance {
   workerId: string;
+  sessionId: string;
+  pid: number | null;
+  generation: number;
+  worktree: string;
+  model: string;
+  thinking?: string;
+  role?: string;
 }
+
+export const UNRESOLVED_MODEL = 'unresolved';
 
 export interface ApprovalRecord {
   approvalId: string;
@@ -137,6 +151,9 @@ export function validateAgentResult(input: unknown): ResultValidation {
   if ('transcript' in input) {
     errors.push('result must not carry a transcript (§69)');
   }
+  if ('messages' in input) {
+    errors.push('result must not carry messages (§69)');
+  }
 
   if (
     typeof input.status !== 'string' ||
@@ -156,8 +173,25 @@ export function validateAgentResult(input: unknown): ResultValidation {
 
   if (!isObject(input.provenance)) {
     errors.push('provenance is required on every result, including failures');
-  } else if (!isNonEmptyString(input.provenance.workerId)) {
-    errors.push('provenance.workerId must be a non-empty string');
+  } else {
+    const provenance = input.provenance;
+    for (const field of ['workerId', 'sessionId', 'worktree', 'model']) {
+      if (!isNonEmptyString(provenance[field])) {
+        errors.push(`provenance.${field} must be a non-empty string`);
+      }
+    }
+    if (
+      provenance.pid !== null &&
+      !(Number.isInteger(provenance.pid) && (provenance.pid as number) > 0)
+    ) {
+      errors.push('provenance.pid must be a positive integer or null');
+    }
+    if (
+      !Number.isInteger(provenance.generation) ||
+      (provenance.generation as number) < 0
+    ) {
+      errors.push('provenance.generation must be a non-negative integer');
+    }
   }
 
   if (!isObject(input.metrics)) {
@@ -197,4 +231,53 @@ export function validateAgentResult(input: unknown): ResultValidation {
 
   if (errors.length > 0) return { valid: false, errors };
   return { valid: true, task: input as unknown as AgentResult };
+}
+
+// The one §68 builder (issue #185): every producer — the lifecycle launch,
+// the orchestrator's child-report reader, a failure terminus — goes
+// through here, so metrics are zero-filled the same way, the closed-world
+// validator runs on every result, and no transcript/messages key can slip
+// in (the input shape has none). An invalid result is a bug in the caller,
+// thrown as such.
+export interface AgentResultInput {
+  status: ResultStatus;
+  summary: string;
+  filesChanged?: string[];
+  provenance: WorkerProvenance;
+  metrics: Partial<ResultMetrics> & { wallMs: number; latencyMs: number };
+  error?: ResultError;
+  diff?: WorkspaceDiffRef;
+  tests?: TestResult[];
+  approvals?: ApprovalRecord[];
+}
+
+export function buildAgentResult(input: AgentResultInput): AgentResult {
+  const built: AgentResult = {
+    status: input.status,
+    summary: input.summary,
+    filesChanged: [...(input.filesChanged ?? [])],
+    provenance: { ...input.provenance },
+    metrics: {
+      inputTokens: input.metrics.inputTokens ?? 0,
+      outputTokens: input.metrics.outputTokens ?? 0,
+      cachedTokens: input.metrics.cachedTokens ?? 0,
+      toolCalls: input.metrics.toolCalls ?? 0,
+      latencyMs: input.metrics.latencyMs,
+      wallMs: input.metrics.wallMs,
+      ...(input.metrics.costUsd === undefined
+        ? {}
+        : { costUsd: input.metrics.costUsd }),
+    },
+    ...(input.error === undefined ? {} : { error: input.error }),
+    ...(input.diff === undefined ? {} : { diff: input.diff }),
+    ...(input.tests === undefined ? {} : { tests: input.tests }),
+    ...(input.approvals === undefined ? {} : { approvals: input.approvals }),
+  };
+  const validation = validateAgentResult(built);
+  if (!validation.valid) {
+    throw new Error(
+      `worker result violates the §68 contract: ${validation.errors.join('; ')}`,
+    );
+  }
+  return built;
 }

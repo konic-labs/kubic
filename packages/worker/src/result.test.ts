@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentResult } from './result.js';
 import {
+  buildAgentResult,
   ERROR_KINDS,
   RESULT_FIELDS,
   RESULT_STATUSES,
@@ -12,7 +13,14 @@ function validResult(overrides: Partial<AgentResult> = {}): AgentResult {
     status: 'completed',
     summary: 'done',
     filesChanged: ['src/a.ts'],
-    provenance: { workerId: 'worker-1' },
+    provenance: {
+      workerId: 'worker-1',
+      sessionId: 'orch-1-worker-1',
+      pid: 4242,
+      generation: 1,
+      worktree: '/repo/.kubic/wt/orch-1/worker-1',
+      model: 'faux/faux-1',
+    },
     metrics: {
       inputTokens: 1,
       outputTokens: 1,
@@ -143,5 +151,68 @@ describe('agent result (issue #7, §68)', () => {
     const result = validateAgentResult(revived);
     expect(result.valid).toBe(true);
     if (result.valid) expect(result.task).toEqual(task);
+  });
+});
+
+describe('§68 provenance is fleshed out (issue #185)', () => {
+  it.each(['sessionId', 'pid', 'generation', 'worktree', 'model'])(
+    'rejects a result missing provenance.%s',
+    (field) => {
+      const result = validResult();
+      const provenance = { ...result.provenance } as Record<string, unknown>;
+      delete provenance[field];
+      const checked = validateAgentResult({ ...result, provenance });
+      expect(checked.valid).toBe(false);
+      if (!checked.valid) {
+        expect(checked.errors.join('\n')).toContain(`provenance.${field}`);
+      }
+    },
+  );
+
+  it('accepts a null pid (a spawn that never produced a process)', () => {
+    const result = validResult({
+      status: 'spawn_failed',
+      error: { kind: 'process', message: 'never started' },
+    });
+    expect(
+      validateAgentResult({
+        ...result,
+        provenance: { ...result.provenance, pid: null },
+      }).valid,
+    ).toBe(true);
+  });
+
+  it('refuses transcript AND messages keys (§69)', () => {
+    const checked = validateAgentResult({ ...validResult(), messages: [] });
+    expect(checked.valid).toBe(false);
+  });
+
+  it('buildAgentResult is the one builder: zero-fills metrics, validates, never carries a transcript', () => {
+    const built = buildAgentResult({
+      status: 'failed',
+      summary: 'exited 6',
+      provenance: validResult().provenance,
+      metrics: { wallMs: 5, latencyMs: 1, inputTokens: 7 },
+      error: { kind: 'provider', message: 'exited 6' },
+    });
+    expect(built.metrics).toEqual({
+      inputTokens: 7,
+      outputTokens: 0,
+      cachedTokens: 0,
+      toolCalls: 0,
+      latencyMs: 1,
+      wallMs: 5,
+    });
+    expect(built.filesChanged).toEqual([]);
+    expect(Object.keys(built)).not.toContain('transcript');
+    expect(Object.keys(built)).not.toContain('messages');
+    expect(() =>
+      buildAgentResult({
+        status: 'failed',
+        summary: 'no error',
+        provenance: validResult().provenance,
+        metrics: { wallMs: 0, latencyMs: 0 },
+      }),
+    ).toThrow(/§68/);
   });
 });

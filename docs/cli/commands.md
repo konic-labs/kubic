@@ -58,7 +58,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, the answering `model` as `provider/id`, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
@@ -404,6 +404,28 @@ files that made it dirty (`staged=[…] unstaged=[…] untracked=[…]`, each li
 omitted when empty); a status that could not be read prints `clean=unknown`
 with the reason, never a false `clean=true`. The block closes with
 `retain: worktree + branch kept as evidence — only \`kubic clean\` disposes`.
+
+**Per-worker results (§68, issue #185).** Every worker — including one that
+failed, timed out, was cancelled, ran out of budget or never spawned —
+yields one validated §68 result, built from the child's own `--json` report.
+Text mode prints one line per settled worker, `<agent> (<role>): <summary>`.
+Under `--json` each `workers[]` entry carries, next to `agentId`/`branch`/
+`hunks`: `role`, `status` (`completed`, `failed`, `timeout`, `cancelled`,
+`budget_exhausted`, `spawn_failed`), `summary`, `usage` (`inputTokens`,
+`outputTokens`, `cachedTokens`, `toolCalls`, `wallMs`, `costUsd` — the
+worker session's own usage rollup, the numbers `kubic cost` reads),
+`provenance` (`workerId`, `sessionId`, `pid` — `null` only when no process
+ever existed —, `generation`, `worktree`, `model` as `provider/id` or
+`unresolved`, `role`, optional `thinking`) and, for a failure, `error`
+(`kind` from the §68 vocabulary, `message`, `details.code`). A completed
+worker's result also names its change set as a reference
+(`diff.diffId` = `<base>...<branch>`), never the diff text; no result ever
+carries a transcript or messages (§69). The result is persisted with the run
+in `<repo>/.kubic/orchestrator/<session>.json` (`records[].result`). The
+`kubic run --json` report that feeds it carries `usage.{input, output,
+cacheRead, cacheWrite, costUsd, toolCalls}` beside `usage.ref`, and the
+`model` that answered. Not yet populated: `approvals` (routed asks) and
+parsed `tests` counts.
 
 Failures print `error: <message> code=<code>` **on stderr** and exit 1
 (session creation, spawn, worker, merge, reap and manager-toolset failures),

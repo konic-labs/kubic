@@ -25,6 +25,8 @@ import {
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import type { AgentResult } from '../../worker/src/result.js';
+import { validateAgentResult } from '../../worker/src/result.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
@@ -131,6 +133,70 @@ export interface OrchestratedWorkerRecord {
   agentId: string;
   branch: string;
   hunks: MergedHunk[];
+  // The worker's §68 result (issue #185): status, summary, provenance and
+  // metrics — persisted with the run so resume, handoff and replay can read
+  // what each worker did and cost. Absent on state written before #185.
+  result?: AgentResult;
+}
+
+// What a worker run hands back (issue #185): the hunks it produced plus its
+// validated §68 result. A bare hunk list is still accepted (older seams and
+// fakes) and simply carries no result.
+export interface WorkerRunOutput {
+  hunks: MergedHunk[];
+  result?: AgentResult;
+}
+
+function runOutputOf(output: MergedHunk[] | WorkerRunOutput): WorkerRunOutput {
+  return Array.isArray(output) ? { hunks: output } : output;
+}
+
+// The per-worker view the envelope and the text line carry (issue #185).
+export interface WorkerResultView {
+  role: string;
+  status: string;
+  summary: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    toolCalls: number;
+    wallMs: number;
+    costUsd?: number;
+  };
+  provenance: AgentResult['provenance'];
+  error?: AgentResult['error'];
+}
+
+export function workerResultView(result: AgentResult): WorkerResultView {
+  return {
+    role: result.provenance.role ?? 'worker',
+    status: result.status,
+    summary: result.summary,
+    usage: {
+      inputTokens: result.metrics.inputTokens,
+      outputTokens: result.metrics.outputTokens,
+      cachedTokens: result.metrics.cachedTokens,
+      toolCalls: result.metrics.toolCalls,
+      wallMs: result.metrics.wallMs,
+      ...(result.metrics.costUsd === undefined
+        ? {}
+        : { costUsd: result.metrics.costUsd }),
+    },
+    provenance: result.provenance,
+    ...(result.error === undefined ? {} : { error: result.error }),
+  };
+}
+
+// One human line per worker: `<agent> (<role>): <summary>`.
+export function workerSummaryLine(
+  agentId: string,
+  result: AgentResult,
+): string {
+  const firstLine = result.summary.split('\n')[0]?.trim() ?? '';
+  const summary =
+    firstLine.length > 200 ? `${firstLine.slice(0, 200)}…` : firstLine;
+  return `${agentId} (${result.provenance.role ?? 'worker'}): ${summary}`;
 }
 
 export interface OrchestratorRunState {
@@ -197,6 +263,12 @@ export function parseOrchestratorRunState(
     if (typeof entry.agentId !== 'string') return undefined;
     if (typeof entry.branch !== 'string') return undefined;
     if (!Array.isArray(entry.hunks)) return undefined;
+    if (
+      entry.result !== undefined &&
+      !validateAgentResult(entry.result).valid
+    ) {
+      return undefined;
+    }
     for (const hunk of entry.hunks) {
       if (typeof hunk !== 'object' || hunk === null) return undefined;
       const part = hunk as Record<string, unknown>;
@@ -458,7 +530,7 @@ export interface OrchestrateCommandDeps {
     worktree: OrchestrateWorktree,
     prompt: string,
     info?: WorkerSpawnInfo,
-  ) => MergedHunk[] | Promise<MergedHunk[]>;
+  ) => MergedHunk[] | WorkerRunOutput | Promise<MergedHunk[] | WorkerRunOutput>;
   mergeBranch: (
     agentId: string,
     worktree: OrchestrateWorktree,
@@ -623,7 +695,13 @@ export interface OrchestrateEnvelope {
   exitCode: number;
   sessionId: string;
   status: OrchestrateStatus;
-  workers: { agentId: string; branch: string; hunks: number }[];
+  // Issue #185: each worker that produced a §68 result also carries its
+  // role, status, summary, usage and provenance (WorkerResultView).
+  workers: ({
+    agentId: string;
+    branch: string;
+    hunks: number;
+  } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
   attribution: AttributedHunk[];
   // The §54 delegation DAG of this run (§49.1 projection), rendered by
@@ -1001,6 +1079,9 @@ export async function runOrchestrateCommand(
             agentId: record.agentId,
             branch: record.branch,
             hunks: record.hunks.length,
+            ...(record.result === undefined
+              ? {}
+              : workerResultView(record.result)),
           })),
           mergeOrder: resumed.merged,
           attribution: resumed.records.flatMap((record) =>
@@ -1138,8 +1219,13 @@ export async function runOrchestrateCommand(
     });
   const worktrees = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
+  // §68 results per worker (issue #185), successes and failures alike.
+  const resultsByAgent = new Map<string, AgentResult>();
   for (const record of state.records) {
     hunksByAgent.set(record.agentId, record.hunks);
+    if (record.result !== undefined) {
+      resultsByAgent.set(record.agentId, record.result);
+    }
   }
 
   // Per-worker approvals + opt-in budgets (issue #105; §41.1, §41.2, §71).
@@ -1178,10 +1264,15 @@ export async function runOrchestrateCommand(
     workers: state.agents.map((agentId) => {
       const record = state.records.find((entry) => entry.agentId === agentId);
       const hunks = hunksByAgent.get(agentId) ?? [];
+      const result = resultsByAgent.get(agentId);
       return {
         agentId,
-        branch: record?.branch ?? `kubic/${agentId}`,
+        branch:
+          record?.branch ??
+          worktrees.get(agentId)?.branch ??
+          `kubic/${sessionId}/${agentId}`,
         hunks: hunks.length,
+        ...(result === undefined ? {} : workerResultView(result)),
       };
     }),
     mergeOrder: [...state.merged],
@@ -1410,11 +1501,8 @@ export async function runOrchestrateCommand(
       if (approvalsRun !== undefined) {
         approvalsRun.beginWorker(approvalScopeFor(agentId, worktree));
       }
-      const hunks = await deps.runWorker(
-        agentId,
-        worktree,
-        promptForWorker(agentId),
-        {
+      const output = runOutputOf(
+        await deps.runWorker(agentId, worktree, promptForWorker(agentId), {
           sessionId,
           workerSessionId,
           // The role this worker was assigned and the tool set its lane
@@ -1422,8 +1510,12 @@ export async function runOrchestrateCommand(
           // a tool — absence, never approval. Absent means no role
           // document exists for this worker, so nothing is narrowed.
           ...spawnRoleInfo(agentId, rolePlan),
-        },
+        }),
       );
+      if (output.result !== undefined) {
+        resultsByAgent.set(agentId, output.result);
+      }
+      const hunks = output.hunks;
       // The worker settled: route any ask that raced its exit, then read the
       // terminal outcome its run produced (a denial or a budget hit is NOT a
       // spawn failure — it carries its own named code and exit).
@@ -1447,6 +1539,12 @@ export async function runOrchestrateCommand(
       // collect is part of the manager's real call record (issue #103).
       recordLaneSequence();
     } catch (error) {
+      // Every terminus carries its §68 result (issue #185): a failure's
+      // provenance and error.kind reach the envelope and the saved state.
+      const failed = (error as { result?: unknown }).result;
+      if (failed !== undefined && validateAgentResult(failed).valid) {
+        resultsByAgent.set(agentId, failed as AgentResult);
+      }
       // A worker that exited non-zero because the USER denied it (or because a
       // configured budget ran out) reports the approval layer's named status in
       // the child's own §78 terminus; that code wins over the generic
@@ -1748,7 +1846,13 @@ export async function runOrchestrateCommand(
       );
     }
     const hunks = hunksByAgent.get(agentId) ?? [];
-    state.records.push({ agentId, branch: worktree.branch, hunks });
+    const result = resultsByAgent.get(agentId);
+    state.records.push({
+      agentId,
+      branch: worktree.branch,
+      hunks,
+      ...(result === undefined ? {} : { result }),
+    });
     state.merged.push(agentId);
     state.pending = state.pending.filter((entry) => entry !== agentId);
     state = { ...state, merging: undefined };
@@ -1827,6 +1931,12 @@ export async function runOrchestrateCommand(
       (record) =>
         `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,
     ),
+    // Issue #185: what each worker did, in its own words (§68 summary).
+    ...state.records.flatMap((record) =>
+      record.result === undefined
+        ? []
+        : [workerSummaryLine(record.agentId, record.result)],
+    ),
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
@@ -1860,6 +1970,7 @@ export async function runOrchestrateCommand(
         agentId: record.agentId,
         branch: record.branch,
         hunks: record.hunks.length,
+        ...(record.result === undefined ? {} : workerResultView(record.result)),
       })),
       mergeOrder: [...state.merged],
       attribution,

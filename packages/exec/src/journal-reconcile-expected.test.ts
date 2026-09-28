@@ -176,4 +176,20 @@ describe('reconcile expected state (issue #341)', () => {
     // c.txt matches its same-run entry and a.txt its baseline: nothing new.
     expect(run.sweep()).toBe(0);
   });
+  it('keys absolute and ./-prefixed tool paths by their root-relative path', () => {
+    // Review finding: write/edit journal args.path verbatim, so an absolute
+    // in-workspace path or a './' prefix must not become a phantom delete
+    // candidate nor miss the expected state for its relative path.
+    const root = tmpRoot('ws-341h-');
+    const store = new FileJournalStore(tmpRoot('j-341h-'));
+    writeFileSync(join(root, 'a.txt'), 'H0\n');
+    const run = begin(store, root, 'run-1');
+    writeFileSync(join(root, 'a.txt'), 'H1\n');
+    toolWrite(store, join(root, 'a.txt'), 'H0\n', 'H1\n');
+    writeFileSync(join(root, 'b.txt'), 'new\n');
+    toolWrite(store, './b.txt', null, 'new\n');
+    // An entry outside the workspace is never a sweep candidate.
+    toolWrite(store, join(tmpRoot('out-341h-'), 'x.txt'), null, 'x\n');
+    expect(run.sweep()).toBe(0);
+  });
 });

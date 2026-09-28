@@ -1345,6 +1345,20 @@ function decodeLossless(bytes: Uint8Array): string | null {
   return sha256Hex(raw) === sha256HexOfBytes(bytes) ? raw : null;
 }
 
+// A journaled path as the walk keys it ('/'-separated, relative to root), or
+// null when it resolves to the root itself or outside it.
+function rootRelativeKey(root: string, path: string): string | null {
+  const rel = relative(root, resolve(root, path));
+  if (
+    rel === '' ||
+    rel === '..' ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  )
+    return null;
+  return rel.split(sep).join('/');
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
 // Before-content is unknowable for these (the baseline holds hashes, not
@@ -1372,7 +1386,11 @@ export function reconcile(
   // `null` = expected absent.
   const sinceStart = new Map<string, string | null>();
   for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
-    sinceStart.set(e.path, e.afterHash);
+    // Tools journal `args.path` verbatim (absolute or './'-prefixed), while
+    // the walk keys are root-relative: normalize before keying, and drop a
+    // path outside the root — it is never a sweep candidate.
+    const key = rootRelativeKey(root, e.path);
+    if (key !== null) sinceStart.set(key, e.afterHash);
   }
   const expectedHash = (relPath: string): string | null => {
     if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;

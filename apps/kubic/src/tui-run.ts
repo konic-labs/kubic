@@ -195,6 +195,11 @@ export interface TuiRunDeps {
   // unhandled rejection) ends the process once the terminal is restored.
   // Absent means process.exit; tests inject a recorder.
   exit?: (code: number) => void;
+  // Issue #315: the approval overlay's arming delay and the clock it runs
+  // on. Absent means APPROVAL_ARMING_MS on the real clock; tests inject 0
+  // (or a manual clock) instead of sleeping.
+  approvalArmingMs?: number;
+  approvalClock?: () => number;
 }
 
 export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -937,7 +942,12 @@ export async function runTuiCommand(
   // creates the surface, hands its ask to the boot AS the seat, and attaches
   // the same surface to the app it builds for this boot — one object, so the
   // verdict collected on screen is the verdict the lane receives.
-  const surface = createApprovalSurface();
+  const surface = createApprovalSurface({
+    ...(deps.approvalArmingMs === undefined
+      ? {}
+      : { armingMs: deps.approvalArmingMs }),
+    ...(deps.approvalClock === undefined ? {} : { now: deps.approvalClock }),
+  });
   let boot: TuiLaneBoot;
   try {
     boot = await deps.bootLane(sessionId, surface.seat, flags);

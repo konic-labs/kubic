@@ -33,12 +33,15 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import {
+  APPROVAL_ARMING_MS,
   APPROVAL_DEFAULT_KEYS,
+  APPROVAL_IMMEDIATE_KEY,
   APPROVAL_MIN_WIDTH,
   approvalKeyConflicts,
+  approvalKeyProblems,
   renderApprovalInline,
   renderApprovalLines,
-  resolveApprovalAction,
+  resolveApprovalKey,
   shouldUseInlineFallback,
 } from './approval-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
@@ -62,6 +65,18 @@ export interface ApprovalSurfaceOptions {
   // request would sit invisible until the operator happened to press a key
   // (the bug the end-to-end test caught: the frame never showed the overlay).
   onChange?: (() => void) | undefined;
+  // Issue #315: the arming delay (APPROVAL_ARMING_MS when absent; 0 turns it
+  // off), the clock it is measured on, and the timer that repaints the frame
+  // the request arms in. All injectable so tests are deterministic.
+  armingMs?: number;
+  now?: () => number;
+  setTimer?: (ms: number, fire: () => void) => () => void;
+}
+
+function defaultArmTimer(ms: number, fire: () => void): () => void {
+  const timer = setTimeout(fire, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 // Structural request: approval-view.ts's own request type plus nothing. The
@@ -78,6 +93,9 @@ export interface ApprovalSurface {
   // The request currently shown, if any (queued requests are not shown).
   pending(): SurfaceRequest | undefined;
   isShowing(): boolean;
+  // Issue #315: false during the arming window after a request appears —
+  // every decision key but the immediate deny is ignored until then.
+  isArmed(): boolean;
   // Settles every queued and shown request as a deny. Used by the quit path
   // and by the in-flight cancel path, so nothing is left hanging.
   cancelPending(reason?: string): void;
@@ -94,8 +112,10 @@ export interface ApprovalSurface {
   // this when it attaches the overlay, and every surface change calls it so a
   // lane-arrived ask paints a frame instead of waiting for a keypress.
   renderRequest: (() => void) | undefined;
-  // Verifies the resolved key map; throws naming the conflicting key.
-  checkKeys(): boolean;
+  // Verifies the resolved key map; throws naming the conflicting key, a
+  // prose allow-session key (issue #315), or an approval key that shadows
+  // one of the caller's `reserved` global keys.
+  checkKeys(reserved?: ReadonlyArray<string>): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
   // The answer seat itself (issue #96): field-for-field the host's
   // `SoloPolicyInput.answer` shape (packages/host/src/approvals.ts), typed
@@ -162,14 +182,34 @@ export function createApprovalSurface(
   };
   const queue: PendingAsk[] = [];
   let shown: PendingAsk | undefined;
+  const armingMs = options.armingMs ?? APPROVAL_ARMING_MS;
+  const now = options.now ?? ((): number => performance.now());
+  const setTimer = options.setTimer ?? defaultArmTimer;
+  let shownAt = 0;
+  let cancelArmTimer: (() => void) | undefined;
   const notify = (): void => {
     hooks.onChange?.();
     hooks.renderRequest?.();
   };
+  const isArmed = (): boolean =>
+    shown !== undefined && now() - shownAt >= armingMs;
   const showNext = (): void => {
     if (shown !== undefined) return;
     shown = queue.shift();
-    if (shown !== undefined) notify();
+    if (shown === undefined) return;
+    // Issue #315: every request — the next queued one included — starts its
+    // own arming window, and the frame repaints when it arms so the key
+    // hints unlock visibly.
+    shownAt = now();
+    cancelArmTimer?.();
+    cancelArmTimer = undefined;
+    if (armingMs > 0) {
+      const arming = shown;
+      cancelArmTimer = setTimer(armingMs, () => {
+        if (shown === arming) notify();
+      });
+    }
+    notify();
   };
   const settle = (ask: PendingAsk, decision: ApprovalDecision): void => {
     if (shown === ask) {
@@ -184,7 +224,11 @@ export function createApprovalSurface(
     // pi-tui's matchesKey — no raw byte comparison on the input path, so a
     // Kitty-protocol terminal's Esc ('\x1b[27u') resolves like the legacy
     // byte. Deny first is that module's documented precedence.
-    return resolveApprovalAction(data, overrides);
+    const match = resolveApprovalKey(data, overrides);
+    if (match === undefined) return undefined;
+    // Issue #315: inside the arming window only the immediate deny acts.
+    if (!isArmed() && match.key !== APPROVAL_IMMEDIATE_KEY) return undefined;
+    return match.action;
   };
   const surface: ApprovalSurface = {
     ask: (request: SurfaceRequest): Promise<ApprovalDecision> => {
@@ -218,6 +262,7 @@ export function createApprovalSurface(
     },
     pending: (): SurfaceRequest | undefined => shown?.request,
     isShowing: (): boolean => shown !== undefined,
+    isArmed,
     cancelPending: (reason?: string): void => {
       const decision: ApprovalDecision = {
         approved: false,
@@ -234,21 +279,29 @@ export function createApprovalSurface(
     renderInline: (width: number): string[] => {
       const current = shown;
       if (current === undefined) return [];
-      return renderApprovalInline(current.request, width);
+      return renderApprovalInline(current.request, width, {
+        armed: isArmed(),
+        keys: surface.keys(),
+      });
     },
     renderOverlayBody: (width: number): string[] => {
       const current = shown;
       if (current === undefined) return [];
-      return renderApprovalLines(current.request, width);
+      return renderApprovalLines(current.request, width, {
+        armed: isArmed(),
+        keys: surface.keys(),
+      });
     },
     usesInlineFallback: (width: number): boolean =>
       shouldUseInlineFallback(width),
-    checkKeys: (): boolean => {
+    checkKeys: (reserved?: ReadonlyArray<string>): boolean => {
       const conflicts = approvalKeyConflicts(overrides);
       const first = conflicts[0];
       if (first !== undefined) {
         throw new Error(`approval key conflict: ${first.key}`);
       }
+      const problem = approvalKeyProblems(overrides, reserved)[0];
+      if (problem !== undefined) throw new Error(problem);
       return true;
     },
     keys: (): Record<ApprovalAction, readonly string[]> => ({

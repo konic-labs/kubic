@@ -530,9 +530,9 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-O` | Toggle the **diff panel** — the most recent tool call that changed files, rendered as unified hunks. |
 | `Ctrl-R` | Toggle the **journal panel** — every change in the session journal (filter by path or agent on the command line with `kubic diff --path/--agent`). |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
-| `a` | Approval overlay: **allow once** the challenged call. |
-| `s` | Approval overlay: **allow for the session**. |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. |
+| `a` | Approval overlay: **allow once** the challenged call (after the arming delay). |
+| `Ctrl-S` | Approval overlay: **allow for the session** (after the arming delay; never a bare letter). |
+| `d`, `Esc` | Approval overlay: **deny** the challenged call (`Esc` acts at once, `d` after the arming delay). |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
@@ -553,6 +553,20 @@ than rendering an unusable box — a narrow terminal can still answer. Denying
 leaves the session running; the transcript shows the refusal instead of the
 call's result. Quitting with an ask still pending denies it, so a shutdown
 cannot strand the turn.
+
+An approval is consent to run code with your authority, so keys typed for
+the editor can never produce one. Asks arrive while you may be typing the
+next prompt, so the overlay is a capturing modal: while it shows, printable
+keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
+`Ctrl-D`, `Ctrl-T`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work). Each request
+— including the next queued one — starts with an **arming delay** of 400 ms
+during which the decision keys are ignored and the hint row reads
+`… keys unlock in a moment · [Esc] deny now`; `Esc` (deny) is the only key
+that acts immediately. Once armed the hint row shows the live keys:
+`a` allows once, `Ctrl-S` allows for the session — a key ordinary typing
+cannot produce — and `d` or `Esc` denies. The keys live in the approval key
+registry, which refuses a map where two actions share a key, allow-session
+is a prose key, or an approval key shadows one of the global keys.
 
 These keys are classified by the terminal library's key decoder, not by
 matching raw bytes, so they work on terminals that negotiate the Kitty

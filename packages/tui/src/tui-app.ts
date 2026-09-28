@@ -42,6 +42,7 @@ import {
 } from './approval-surface.js';
 import type {
   ApprovalDecision,
+  ApprovalKeyOverrides,
   ApprovalOverlayHandle,
   ApprovalOverlayTui,
   ApprovalViewRequest,
@@ -475,7 +476,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   approvalSurface.onChange = onSurfaceChange;
   // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
   // name here rather than binding one action to two keys silently.
-  approvalSurface.checkKeys();
+  // Issue #315: an approval key may not shadow a loop key either.
+  approvalSurface.checkKeys([...GLOBAL_KEYS]);
   let overlayHost: ApprovalOverlayTui | undefined;
   let overlayHandle: ApprovalOverlayHandle | undefined;
   let overlayView: ApprovalView | undefined;
@@ -510,6 +512,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // callback exists because ApprovalView requires the seat, and it must
       // not double-apply — the loop's own handler is the single path.
       onDecision: () => {},
+      // Issue #315: the hints stay locked until the surface arms.
+      isArmed: () => approvalSurface.isArmed(),
+      keyOverrides: approvalSurface.keys() as ApprovalKeyOverrides,
     });
     overlayView = view;
     overlayHandle = showApprovalOverlay(overlayHost, view);
@@ -553,6 +558,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
       if (approvalSurface.isShowing() && approvalSurface.decide(data)) {
         settleApproval();
+        return { quit: false, consumed: true, cancel: false };
+      }
+      // Issue #315: the approval is a capturing modal. While it shows, every
+      // key it did not take — prose typed ahead for the next prompt, and a
+      // decision key pressed inside the arming window — is dropped rather
+      // than reaching the draft. Only the loop's global keys still act.
+      if (approvalSurface.isShowing() && !isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }
       if (keyId === 'ctrl+c') {

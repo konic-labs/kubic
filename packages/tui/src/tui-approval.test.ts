@@ -7,6 +7,7 @@
 // transcript's slot. Overlay COMPOSITING is asserted on the real alt-screen in
 // the composition-root test; this file pins the loop's decisions.
 import { describe, expect, it } from 'vitest';
+import { createApprovalSurface } from './approval-surface.js';
 import { APPROVAL_MIN_WIDTH } from './approval-view.js';
 import { createTuiApp, type TuiApprovalRequest } from './tui-app.js';
 
@@ -52,6 +53,7 @@ function approvalHost() {
 describe('approval in the loop (issue #96, criterion 1)', () => {
   it('shows the overlay for a gated call and resolves it on approve', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -81,6 +83,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 
   it('resolves deny on Escape without quitting the session', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -101,6 +104,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 
   it('leaves Esc as quit when nothing is pending', () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -115,6 +119,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 
   it('does not leak the decision key into the draft', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -130,6 +135,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 
   it('queues a second challenged call instead of dropping it', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -159,6 +165,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 
   it('denies a pending approval when the session quits (never hangs)', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -176,6 +183,7 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
 describe('inline fallback (issue #96, criterion 2)', () => {
   it('renders the inline body below APPROVAL_MIN_WIDTH instead of the overlay', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -199,6 +207,7 @@ describe('inline fallback (issue #96, criterion 2)', () => {
 
   it('does NOT render the inline body at the minimum width (overlay owns it)', async () => {
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',
@@ -219,6 +228,7 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     // The viewer shell (an injected boot with no loop) must be able to show
     // the request too: an unanswered approval is a hang otherwise.
     const app = createTuiApp({
+      approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,
       model: MODEL,
       mode: 'solo',

@@ -29,7 +29,7 @@ const REQUEST: ApprovalViewRequest = {
 
 describe('approval surface: width rule (issue #96, criterion 2)', () => {
   it('renders the inline form below APPROVAL_MIN_WIDTH', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     expect(surface.isShowing()).toBe(true);
     const lines = surface.renderInline(70).join('\n');
@@ -45,7 +45,7 @@ describe('approval surface: width rule (issue #96, criterion 2)', () => {
   });
 
   it('does not take the inline path at or above APPROVAL_MIN_WIDTH', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH)).toBe(false);
     expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH - 1)).toBe(true);
@@ -61,7 +61,7 @@ describe('approval surface: width rule (issue #96, criterion 2)', () => {
     const options = approvalOverlayOptions();
     expect(options.visible?.(APPROVAL_MIN_WIDTH, 30)).toBe(true);
     expect(options.visible?.(APPROVAL_MIN_WIDTH - 1, 30)).toBe(false);
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     expect(surface.usesInlineFallback(APPROVAL_MIN_WIDTH - 1)).toBe(true);
     surface.decide('d');
@@ -73,10 +73,10 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   it('resolves allow-once, allow-session and deny by key', async () => {
     for (const [key, expected] of [
       ['a', { approved: true, by: 'allow-once' }],
-      ['s', { approved: true, by: 'allow-session' }],
+      ['\x13', { approved: true, by: 'allow-session' }],
       ['d', { approved: false, reason: 'denied by the user' }],
     ] as const) {
-      const surface = createApprovalSurface();
+      const surface = createApprovalSurface({ armingMs: 0 });
       const pending = surface.ask(REQUEST);
       expect(surface.decide(key)).toBe(true);
       await expect(pending).resolves.toEqual(expected);
@@ -85,7 +85,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 
   it('treats Esc as deny (the approval-view default) without quitting', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     expect(surface.decide('\u001b')).toBe(true);
     await expect(pending).resolves.toEqual({
@@ -95,7 +95,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 
   it('ignores a key that is not a decision instead of settling on it', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     expect(surface.decide('z')).toBe(false);
     expect(surface.isShowing()).toBe(true);
@@ -107,7 +107,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 
   it('denies (never hangs) when no decision can arrive', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask(REQUEST);
     surface.cancelPending('the session quit before the approval was answered');
     await expect(pending).resolves.toEqual({
@@ -118,7 +118,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 
   it('answers one request at a time: a second ask waits for the first', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const first = surface.ask(REQUEST);
     const second = surface.ask({ ...REQUEST, key: 'k-2', toolName: 'write' });
     expect(surface.pending()?.key).toBe('k-1');
@@ -134,7 +134,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 
   it('settles every queued request when the session quits', async () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const first = surface.ask(REQUEST);
     const second = surface.ask({ ...REQUEST, key: 'k-2' });
     surface.cancelPending('quit');
@@ -146,22 +146,23 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
 
 describe('approval surface: boot key check (issue #96, criterion 1)', () => {
   it('passes the shipped defaults with zero conflicts', () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     expect(surface.checkKeys()).toBe(true);
   });
 
   it('refuses to arm a conflicting key map by name', () => {
     const surface = createApprovalSurface({
+      armingMs: 0,
       keyOverrides: { 'allow-once': ['x'], deny: ['x'] },
     });
     expect(() => surface.checkKeys()).toThrow(/approval key conflict: x/);
   });
 
   it('reports the documented keys the surface answers to', () => {
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     expect(surface.keys()).toEqual({
       'allow-once': ['a'],
-      'allow-session': ['s'],
+      'allow-session': ['ctrl+s'],
       deny: ['d', 'escape'],
     });
   });
@@ -171,7 +172,7 @@ describe('approval surface: untrusted content (issue #96, criterion 1)', () => {
   it('sanitizes the request before it reaches a render function', async () => {
     const ESC = '\u001b';
     const BEL = '\u0007';
-    const surface = createApprovalSurface();
+    const surface = createApprovalSurface({ armingMs: 0 });
     const pending = surface.ask({
       key: 'k',
       capability: `destructive${ESC}[2J-shell`,

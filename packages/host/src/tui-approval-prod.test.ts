@@ -191,6 +191,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -233,6 +234,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -272,6 +274,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -300,6 +303,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -336,6 +340,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       {
         out: (line: string) => lines.push(line),
         createTerminal: () => fake.terminal,
+        approvalArmingMs: 0,
         bootLane: fauxLaneBoot(root, models),
       },
     );
@@ -351,5 +356,43 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
+  });
+
+  // Issue #315: type-ahead cannot approve. With the shipped arming delay on
+  // an injected clock, an `a` typed 50 ms after the overlay appeared neither
+  // answers the ask nor reaches the draft; the same key once armed does.
+  it('ignores a decision key typed inside the arming window', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    let now = 0;
+    const { models } = fauxModels([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
+      fauxAssistantMessage('armed turn done'),
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        approvalClock: () => now,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'clean up') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(fake.frame).toContain('keys unlock in a moment');
+    now += 50;
+    fake.feed('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.frame).not.toContain('armed turn done');
+    now += 400;
+    fake.feed('a');
+    await waitFor(() => fake.frame.includes('armed turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 });

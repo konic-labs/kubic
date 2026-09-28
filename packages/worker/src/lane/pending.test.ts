@@ -21,6 +21,7 @@ import {
   fauxToolCall,
   type Session,
 } from '../pi-boundary.js';
+import { OperationKillRegistry } from './abort.js';
 import {
   describePendingOperation,
   describeSettlement,
@@ -366,5 +367,121 @@ describe('pending operations on re-attach (issue #147)', () => {
     );
     expect(settled).toMatchObject({ action: 'resumed', status: 'completed' });
     expect(spawns).toBe(1);
+  });
+
+  describe('with a stub lane', () => {
+    function stubLane(outcome: unknown) {
+      const calls: string[] = [];
+      const lane = {
+        drive: async (options: { operationId: string }) => {
+          calls.push(`drive:${options.operationId}`);
+          return {
+            ok: true as const,
+            value: { kind: 'settled' as const, outcome },
+          };
+        },
+        requestAbort: async (operationId: string) => {
+          calls.push(`abort:${operationId}`);
+          return {
+            ok: true as const,
+            value: { operationId, newlyRequested: true },
+          };
+        },
+      };
+      return {
+        calls,
+        solo: { lane: lane as never, kills: new OperationKillRegistry() },
+      };
+    }
+    const op = {
+      lane: 'main',
+      operationId: 'op-1',
+      kind: 'run' as const,
+      startedAt: 0,
+    };
+
+    it('an abort the dead process already requested is not requested twice', async () => {
+      const { calls, solo } = stubLane({ status: 'aborted' });
+      const settled = await settlePendingOperation(
+        solo,
+        { ...op, aborting: true },
+        'resume',
+        BACKGROUND_CONTEXT,
+      );
+      expect(settled).toMatchObject({ action: 'aborted', status: 'aborted' });
+      expect(settled.reason).toBeUndefined();
+      expect(calls).toEqual(['drive:op-1']);
+    });
+
+    it('the abort policy requests the abort before driving', async () => {
+      const { calls, solo } = stubLane({ status: 'aborted' });
+      await settlePendingOperation(solo, op, 'abort', BACKGROUND_CONTEXT);
+      expect(calls).toEqual(['abort:op-1', 'drive:op-1']);
+    });
+
+    it('reports a settlement with no status as settled', async () => {
+      const { solo } = stubLane(null);
+      const settled = await settlePendingOperation(
+        solo,
+        op,
+        'resume',
+        BACKGROUND_CONTEXT,
+      );
+      expect(settled).toMatchObject({ action: 'resumed', status: 'settled' });
+      const numeric = stubLane({ status: 7 });
+      expect(
+        (
+          await settlePendingOperation(
+            numeric.solo,
+            op,
+            'resume',
+            BACKGROUND_CONTEXT,
+          )
+        ).status,
+      ).toBe('settled');
+    });
+
+    it('a non-Error driver throw is named verbatim', async () => {
+      const { solo } = stubLane({ status: 'aborted' });
+      const settled = await settlePendingOperation(
+        solo,
+        op,
+        'resume',
+        BACKGROUND_CONTEXT,
+        async () => {
+          throw 'plain refusal';
+        },
+      );
+      expect(settled.reason).toBe('plain refusal');
+    });
+  });
+
+  it('lastUserPromptText skips non-user and malformed entries', () => {
+    expect(
+      lastUserPromptText([
+        { type: 'message', message: { role: 'user', content: 'wanted' } },
+        null,
+        { type: 'custom', message: { role: 'user', content: 'custom' } },
+        { type: 'message', message: { role: 'assistant', content: 'reply' } },
+        { type: 'message' },
+      ]),
+    ).toBe('wanted');
+    expect(
+      lastUserPromptText([
+        { type: 'message', message: { role: 'user', content: 'older' } },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [
+              null,
+              { type: 'image', text: 'not text' },
+              { type: 'text', text: 3 },
+              { type: 'text', text: 'only this' },
+            ],
+          },
+        },
+      ]),
+    ).toBe('only this');
   });
 });

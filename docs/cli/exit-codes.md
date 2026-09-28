@@ -121,15 +121,21 @@
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.
-- **`kubic cost`**: 0 success (including `no cost rows` on an empty
-  store), 1 unknown session / store failure, 2 usage errors. `--json`
-  emits the `toCostJson` shape field-for-field.
-- **`kubic perf`**: 0 pass (prints nothing gated), 1 breach (prints the
-  exact filed regression string), 2 usage errors — including `--measure`
-  on a kind with no live source (`attach`/`teardown` today), which names
-  `--samples` in one `error:` line rather than passing vacuously.
-  `--json` emits the full evaluation either way, with `source` telling
-  callers whether the samples were measured or operator-supplied.
+- **Analysis commands** (`eval`, `benchmark`, `replay`, `export`,
+  `cost`, `perf`, `policy`, `audit`): an argv syntax error exits 2 with
+  one commander `error: …` line on stderr and nothing on stdout, even
+  under `--json`. Syntax errors are an unknown option, a missing value,
+  a missing required option, or an extra operand.
+- **`kubic cost`**: 0 success, including `no cost rows` on an empty
+  store; 1 an unknown session or a store failure; 2 usage errors.
+  `--json` emits the `toCostJson` shape field-for-field.
+- **`kubic perf`**: 0 pass (the evaluation table, no regression line);
+  1 breach (the table plus the exact filed regression string); 2 usage
+  errors. `--measure` on a kind with no live source (`attach` and
+  `teardown` today) is a usage error: it names `--samples` in one
+  `error:` line instead of passing vacuously. `--json` emits the full
+  evaluation either way; its `source` field tells callers whether the
+  samples were measured or supplied on the command line.
 - **`kubic policy` / `kubic audit`**: 0 query (an offer, never an
   enforcement), 2 usage errors. Audit output is redacted before
   printing (secret shapes and listed values never appear).

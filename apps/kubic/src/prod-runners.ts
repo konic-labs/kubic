@@ -193,6 +193,24 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
+  // The analysis handlers' channels: the report on stdout, diagnostics on
+  // stderr (the `debug` channel), colour and box drawing from the real
+  // stdout (off on a pipe and under NO_COLOR; each handler also drops
+  // them under --json).
+  const report = () => {
+    const theme = themeFor(process.stdout);
+    return {
+      out,
+      err: debug,
+      theme,
+      fancy: outputModeFor({
+        json: false,
+        stdinTTY: process.stdin.isTTY === true,
+        stdoutTTY: process.stdout.isTTY === true,
+        colorEnabled: theme.enabled,
+      }).fancy,
+    };
+  };
   return {
     sessions: (invocation, cliConfig) => {
       // Issue #119: `sessions prune`'s default keep-window comes from config
@@ -437,23 +455,23 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             : { worktreeRoot: cliConfig.runtime.orchestrator.root }),
         }),
       ),
-    cost: (rest) =>
+    cost: (options) =>
       // Per-agent cost over real session stats (one aggregate row per
       // session); the task total is Σ(rows) by construction (issue #79).
-      runCostCommand([...rest], {
+      runCostCommand(options, {
         loadRows: (sessionId) => loadSessionCostRows(undefined, sessionId),
-        out,
+        ...report(),
       }),
-    perf: (rest) =>
-      // Perf-budget evaluation over argv samples (faux-only, issue #79).
-      runPerfCommand([...rest], { out }),
-    policy: (rest, cliConfig) =>
+    perf: (options) =>
+      // Perf-budget evaluation over measured or supplied samples (#79, #98).
+      runPerfCommand(options, report()),
+    policy: (options, cliConfig) =>
       // The tool policy a run from THIS cwd actually installs — the same
       // derivation (host/approvals.installedPolicyPosture) over the same
       // config load `kubic run` boots with and `kubic doctor` reports — so
       // the three surfaces cannot disagree. Deny-by-default still holds:
       // a tool outside the installed allowlist answers `deny`.
-      runPolicyCommand([...rest], {
+      runPolicyCommand(options, {
         resolvePolicy: () =>
           policyFromInstalledAllowlist(
             installedPolicyPosture({
@@ -461,7 +479,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
               ...installedPolicyDeps(cliConfig),
             }).allowlist,
           ),
-        out,
+        ...report(),
       }),
     config: (options, cliConfig) =>
       // Effective configuration with the layer each value came from (issue
@@ -471,17 +489,17 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...presentation(out, debug, options.json === true),
         load: kubicConfigLoader(cliConfig),
       }),
-    audit: (rest) =>
+    audit: (options) =>
       // Audit query over the repo-root §60 ledger (one OrgAuditRecord per
       // line, <repo>/.kubic/orchestrator/approvals/audit.jsonl): the
       // orchestrator approval layer writes every decision there through
       // emitAudit, and solo decisions share the file and the format.
       // loadSecrets is the prod inventory hook: every printed record is
       // redacted against it, so a listed value never echoes via --json.
-      runAuditCommand([...rest], {
+      runAuditCommand(options, {
         loadRecords: () => readAuditLedger(auditLedgerDirFor(process.cwd())),
         loadSecrets: loadProdAuditSecrets,
-        out,
+        ...report(),
       }),
     workers: async (options) => {
       // Issue #94: the rows come from the SHARED durable record the
@@ -511,45 +529,45 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         },
       );
     },
-    eval: (rest) =>
+    eval: (options) =>
       // Analysis surfaces (issue #78): the eval/benchmark presentation
       // layer is library-owned (packages/eval/src/cli.ts, read-only); the
       // root only supplies prod deps. Worktree cleanliness is a real git
       // probe (packages/exec).
-      runEvalCommand([...rest], {
+      runEvalCommand(options, {
         runSuite: refuseLiveSuite,
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
-        out,
+        ...report(),
       }),
-    benchmark: (rest) =>
-      runBenchmarkCommand([...rest], {
+    benchmark: (options) =>
+      runBenchmarkCommand(options, {
         runSuite: refuseLiveSuite,
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
-        out,
+        ...report(),
       }),
-    replay: (rest, cliConfig) =>
+    replay: (options, cliConfig) =>
       // Replay at a declared tier (issue #78): recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
       runReplayCommand(
-        [...rest],
+        options,
         {
-          out,
+          ...report(),
           run: (request, runtime) => runProdReplay(request, runtime),
         },
         // Issue #114: the re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
         runtimeRunDeps(cliConfig),
       ),
-    export: (rest) =>
+    export: (options) =>
       // Trajectory inspection + RL dataset export (issue #78): reads
       // trajectory export file(s) through the exec FileBridge.
-      runTrajectoryExportCommand([...rest], {
+      runTrajectoryExportCommand(options, {
         // Relative to the user's working directory (a '/'-rooted bridge
         // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
-        out,
+        ...report(),
       }),
   };
 }

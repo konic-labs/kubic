@@ -12,15 +12,14 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 
 **`--help` is uniform across the commands.** Every command below answers
-`kubic <command> --help` (or `-h`) with **exit 0**. Commands parsed by
-commander (`run`, `tui`, `doctor`, `models`, `config`, `sessions` and its
-subcommands) print commander's generated help — `Usage: kubic <command>
-[options]`, every option with its description, and examples where useful;
-the rest still print their one usage line (`packages/core/src/cli-help.ts`).
-Usage *errors* keep their own exit codes (a bad flag is still an error; a
-help request is not). For the commander-parsed commands every usage error —
-an unknown option, a missing value, a value the command's rules refuse, a
-stray operand — prints one `error: …` line on **stderr** and exits **2**.
+`kubic <command> --help` (or `-h`) with **exit 0**. Every command is
+parsed by commander (`apps/kubic/src/commands/*.ts`) and prints its
+generated help — `Usage: kubic <command> [options]`, every option with its
+description, and examples where useful (the analysis commands share
+[these rules](#analysis-commands-shared-rules)). Usage *errors* keep their
+own exit codes (a bad flag is still an error; a help request is not): an
+unknown option, a missing value, a value the command's rules refuse, or a
+stray operand prints one `error: …` line on **stderr** and exits **2**.
 
 The **root dispatcher** follows the same convention (issue #128):
 `kubic --help` / `kubic -h` prints the top-level command listing — the
@@ -929,181 +928,259 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
 `error: …` line on stderr and exits 2 (no stack trace).
 
-## `kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]`
+## Analysis commands: shared rules
 
-Score one suite against a task prompt or an existing trajectory
-export. `--worktree`, `--generation`, and `--tier` are mandatory
-provenance: a record missing any of them is rejected (exit 2), never
-stored. Every record carries `success`, `costUsd`, `tokens`,
+`eval`, `benchmark`, `replay`, `export`, `cost`, `perf`, `policy` and
+`audit` are parsed by commander
+(`apps/kubic/src/commands/analysis.ts`, see
+[contributing-cli.md](../contributing-cli.md)). They share these rules:
+
+- **Help.** `kubic <command> --help` (or `-h`) prints generated help on
+  stdout and exits 0. The help lists every option with its argument and
+  meaning, followed by an `Examples:` block.
+- **Argv syntax.** Both `--flag value` and `--flag=value` work, and `--`
+  ends the options. An unknown option, an option missing its value, a
+  missing required option, or an extra operand prints one
+  `error: …` line on **stderr** (for example
+  `error: unknown option '--bogus'` or
+  `error: required option '--budget <kind>' not specified`) and exits
+  **2**. The command itself never runs.
+- **stdout is data, stderr is diagnostics.** Reports, tables and JSON go
+  to stdout. Refusals and warnings go to stderr, one `<level>: <message>`
+  line each. A refusal is `error: <message>`, or
+  `error: [<code>] <message>` when it has a code.
+- **Tables.** `cost`, `perf`, `audit` and `benchmark` print their rows as
+  a table. On a colour terminal the table is box-drawn with coloured
+  headers. On a pipe, in CI, or with `NO_COLOR`, it is plain
+  space-aligned columns.
+- **`--json`.** stdout carries exactly one JSON document and nothing
+  else, with no colour and no tables. Every document is indented with
+  two spaces (the eval, benchmark, replay and export envelopes were
+  single-line before the commander migration). `eval`, `benchmark`, `replay` and
+  `export` put runtime failures inside their envelope. A bad invocation,
+  which is a usage error, leaves stdout empty and prints its `error:`
+  line on stderr.
+
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) --generation <n> [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+
+Scores one suite against a task prompt or an existing trajectory
+export. `--worktree`, `--generation` and `--tier` are mandatory
+provenance: a record missing any of them is refused with exit 2 and is
+never stored. Every record carries `success`, `costUsd`, `tokens`,
 `latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
-`generation`, and `tier`.
+`generation` and `tier`.
 
 | Flag | Meaning |
 | --- | --- |
-| `--task <prompt>` | Execute the suite against a task prompt. Needs a live model-backed suite runner the binary does not ship — exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
-| `--trajectory <json>` | Score an existing trajectory export (inline JSON) without re-running anything. Fully live: exit 0 with the record, 1 when the gates fail it. |
-| `--suite <id>` | **Required.** One of the built-in suites (`swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff`; `terminal-live` and `agentic-live` are stubs and refuse with exit 2). Unknown suites exit 2. |
+| `--suite <id>` | **Required.** One of the built-in suites: `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover` or `review-diff`. `terminal-live` and `agentic-live` are stubs and refuse with exit 2. An unknown suite exits 2. |
+| `--task <prompt>` | Runs the suite against a task prompt. This needs a live model-backed suite runner, which the binary does not ship, so it exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
+| `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
+| `--generation <n>` | **Required.** The worker generation that ran. Must be an integer; anything else exits 2. |
+| `--worktree <path>` | Where the run executed. Provenance: a record without it is refused with exit 2. |
+| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2. |
 | `--model <id>` | `provider/id` of the run (default `faux/faux`). |
-| `--worktree <path>` | **Required.** Where the run executed. |
-| `--generation <n>` | **Required.** Worker generation that ran. |
-| `--tier <smoke\|standard\|extended>` | **Required.** Published on every record. |
-| `--workspace inline\|worktree` | `worktree` refuses (exit 2) unless `git status --porcelain` in `--worktree` is clean; anything else exits 2. Default `inline`. |
+| `--workspace inline\|worktree` | `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean. Any other value exits 2. Default `inline`. |
 | `--thinking <level>` | Recorded on the record verbatim. |
-| `--json` | One JSON envelope (`ok`, `exitCode`, `record` or `error`) instead of the human line. Same exit code either way. |
+| `--json` | Prints one JSON envelope (`ok`, `exitCode`, and either `record` or `error`) instead of the text line. The exit code is the same either way. |
 
-## `kubic benchmark [--suite <id>] --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]`
+Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
+`error: [<code>] <message>` on stderr.
 
-Run the reproducible matrix: every non-stub suite, or one via
-`--suite`. Stub suites report `skipped (stub)` with `success:false`
-(never as passing work) and never count toward the verdict — exit 0
-iff every executed suite succeeded, 1 if any failed, 2 on usage
-errors (unknown suite, missing provenance, dirty `--workspace
-worktree`, or a suite that needs the live runner the binary does not
-ship). Flags match `kubic eval` minus `--task`/`--trajectory` (each
-matrix row runs `benchmark:<suite-id>` as its task).
+## `kubic benchmark --generation <n> [--suite <id>] [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+
+Runs the reproducible matrix: every suite, or a single one with
+`--suite`. The output is a `SUITE / CATEGORY / STATUS` table followed by
+the verdict line: `benchmark ok|FAILED: <passed>/<executed> suites passed,
+<n> stub(s) skipped`.
+
+Stub suites show as `skipped (stub)` with `success:false`, so they are
+never reported as passing work, and they never count toward the verdict.
+The exit code is:
+
+- 0 if every executed suite succeeded
+- 1 if any executed suite failed
+- 2 on usage errors: an unknown suite, missing provenance, a dirty
+  `--workspace worktree`, or a suite that needs the live runner the
+  binary does not ship
+
+The flags are the same as `kubic eval` without `--task` and
+`--trajectory`; each matrix row runs `benchmark:<suite-id>` as its task.
+`--json` prints `{ok, exitCode, results}`.
 
 ## `kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
-Replay a versioned trajectory at a declared determinism tier. The
-tier is printed and present in `--json` for every result — tiers
-never silently downgrade: a tier that needs pins refuses (exit 2)
-without them.
+Replays a versioned trajectory at a declared determinism tier. The tier
+is printed, and it is present in `--json` for every result. A tier never
+silently downgrades: a tier that needs pins refuses with exit 2 when
+they are missing.
 
 | Invocation | Meaning |
 | --- | --- |
-| `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exit 0 with the tier printed. |
-| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the solo lane at the pinned model. Refuses without both pins (exit 2); an unregistered pin exits 6 (`provider_probe_failed`). |
-| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config. Refuses without it (exit 2); `--model`/`--lockfile` are refused under live. |
-| `... --diff-against other.json` | Recorded compare: names the changed vars (`model`, `worktree`, `diff`); any difference exits 1 as the regression signal, identity exits 0. |
+| `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exits 0 and prints the tier. |
+| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the solo lane at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`). |
+| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config. Refuses with exit 2 without the role config. `--model` and `--lockfile` are refused under live. |
+| `... --diff-against other.json` | Recorded compare: names the variables that changed (`model`, `worktree`, `diff`). Any difference exits 1 as the regression signal; identical trajectories exit 0. |
 
-`--worktree <path>` is an experimental override for the re-execution
-tiers (warned on text, `experimental:["worktree"]` in `--json`).
-Recorded with any of `--model`/`--lockfile`/`--role-config`/`--worktree`
-exits 2. Exit codes are the §78 subset 0/1/2/5/6 (see
-[exit codes](exit-codes.md)).
+- **Experimental worktree.** `--worktree <path>` is an experimental
+  override for the re-execution tiers. In text mode it prints
+  `warn: --worktree is experimental` on stderr; in `--json` it adds
+  `experimental:["worktree"]`.
+- **Recorded takes the trajectory alone.** Recorded with any of
+  `--model`, `--lockfile`, `--role-config` or `--worktree` exits 2.
+- **Errors.** A missing trajectory or an unknown `--tier` is a refusal:
+  - with `--json`, a tiered envelope (`missing-trajectory` or
+    `invalid-tier`)
+  - without it, an `error: [<code>] …` line on stderr
+- **Exit codes** are the §78 subset 0/1/2/5/6 (see
+  [exit codes](exit-codes.md)).
 
-The re-execution tiers consume the effective config like `kubic run`
-(§35.1): the configured permission classes and journal retention govern
-the re-executed lane, and a refused config exits 1 with the config's
-named reason instead of proceeding on defaults. The refusal gate is
-command-level: a refused config also blocks the log-only inspection
-tiers (`recorded`, `compare`) — the command exits 1 before any tier
-runs, so a broken config is fixed first rather than inspected around.
+The re-execution tiers read the effective config the same way
+`kubic run` does (§35.1): the configured permission classes and journal
+retention govern the re-executed lane. A refused config exits 1 with the
+config's named reason instead of running on defaults.
+
+The refusal check applies to the whole command, not to individual tiers.
+A refused config also blocks the log-only tiers (`recorded` and
+`compare`): the command exits 1 before any tier runs, so the config has
+to be fixed first.
 
 ## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
 
-Trajectory inspection plus RL dataset export over trajectory export
-files. Without `--type` the file is validated and described (schema,
-task, model, provenance, result, usage). With `--type` a dataset
-record is built and validated: `sft`, `tooluse`, and `coding` read
-`--trajectory` alone; `dpo`, `preference` (chosen plus rejected), and
-`grpo` (two-candidate group) additionally need `--against` — a stray
-`--against` on a single-trajectory type exits 2, as does a missing
-one on a pair/group type.
+Inspects trajectory export files and exports RL dataset records from
+them.
 
-Excluded pairs (env-failure or cross-boundary runs carry no
-capability signal) print their exclusion tag with exit 0 — never a
-training record. Stripped provenance or failure labels refuse with
-exit 2. Text mode prints the canonical record JSON; `--json` wraps it
-in `{ok, exitCode, type, record}` (or `{…, excluded}`). Exit 0
-exported/described, 1 build-or-validation failure, 2 usage/error.
+- **Without `--type`**, the file is validated and described: schema,
+  task, model, provenance, result and usage.
+- **With `--type`**, a dataset record is built and validated:
+  - `sft`, `tooluse` and `coding` read `--trajectory` alone
+  - `dpo` and `preference` (chosen plus rejected) and `grpo` (a
+    two-candidate group) also need `--against`
+
+These invocations exit 2 with an `error:` line on stderr, and no file is
+read:
+
+- a missing `--trajectory`
+- an unknown `--type`
+- a pair or group type without `--against`
+- `--against` on any other type
+
+Excluded pairs are env-failure or cross-boundary runs, which carry no
+capability signal. They print their exclusion tag and exit 0; they never
+produce a training record. Stripped provenance or failure labels refuse
+with exit 2.
+
+Text mode prints the canonical record JSON. `--json` wraps it in
+`{ok, exitCode, type, record}`, or `{…, excluded}` for an excluded pair.
+Failures are envelopes under `--json` and `error: [<code>] …` lines
+otherwise. The exit code is:
+
+- 0 when the record was exported or the file described
+- 1 when the record failed to build or validate
+- 2 on a usage error or refusal
 
 ## `kubic cost [--session <id>] [--json]`
 
-Per-agent cost readout over real session stats: one aggregate row per
-session (`agent <id> | model aggregate | <tokens> tokens ($<cost>)`),
-plus `task total $<sum> (<n> agents)` — the total is exactly Σ(rows).
-With `--session <id>` only that session is read (unknown session exits
-1); with no sessions stored it prints `no cost rows`, exit 0.
+Reads per-agent cost from real session stats. It prints one aggregate
+row per session in an `AGENT / MODEL / TOKENS / COST` table, followed by
+`task total $<sum> (<n> agents)`. The total is exactly the sum of the
+rows.
+
+When the sessions carry prefix-cache counters, the readout adds the
+cache line and the transparent-caching note. With no sessions stored it
+prints `no cost rows` and exits 0.
 
 | Flag | Meaning |
 | --- | --- |
-| `--session <id>` | Read only this session (same `[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before any store is touched). |
-| `--json` | The in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field. Exits 0. |
-
-An unknown flag prints `usage: kubic cost [--session <id>] [--json]`
-and exits 2.
+| `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). |
+| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field. Exits 0. |
 
 ## `kubic perf --budget <kind> (--measure | --samples <csv>) [--json]`
 
-Perf-budget evaluation over the §61 constants. Exactly one sample
-source per run; two sources exist:
+Evaluates a perf budget against the §61 constants. Each run uses exactly
+one sample source, `--measure` or `--samples`:
 
-- **`--measure`** — `kubic perf` runs the real thing and times it:
-  `spawn` cycles a real `node -e` child through the worker spawn
-  environment, `worktree` runs a real `git worktree add` / `remove` cycle
-  in a scratch dir. Issue #98; the measurement module is
-  `packages/host/src/ops/perf/measure.ts`. The default measurement source
-  is the live one (no composition-root wiring needed). `attach` and
-  `teardown` have no live substrate in the solo path yet, so `--measure`
-  on those kinds exits 2 with a message naming `--samples`.
-- **`--samples <ms,ms,…>` — the explicit, documented fallback.**
-  Operator-supplied ms samples; no clock is consulted. This is the
-  faux-only path used by the test suite and by any environment where
-  spawning a child (or `git`) is not available or not wanted. It is a
-  fallback, not the default.
+- **`--measure`** runs the real thing and times it:
+  - `spawn` cycles a real `node -e` child through the worker spawn
+    environment
+  - `worktree` runs a real `git worktree add` / `remove` cycle in a
+    scratch directory
+  - `attach` and `teardown` have no live substrate in the solo path yet,
+    so `--measure` on those kinds exits 2 with an `error:` line that
+    names `--samples`
 
-A breach prints the exact filed regression string
+  This is the default measurement source (issue #98), implemented in
+  `packages/host/src/ops/perf/measure.ts`; the composition root needs no
+  wiring for it.
+- **`--samples <ms,ms,…>`** is the documented fallback: millisecond
+  samples you supply, with no clock consulted. The test suite uses it,
+  and so does any environment where spawning a child process (or `git`)
+  is unavailable or unwanted.
+
+Text mode prints a `BUDGET / LIMIT / SAMPLES / P50 / P95 / STATUS` table.
+The status is `within` or `BREACH`. Measured runs print a
+`perf: <note>` provenance line before the table.
+
+A breach adds the exact filed regression string
 (`perf regression: <kind> p95=<p95>ms exceeds budget=<budget>ms …`)
-and exits 1; a pass prints nothing gated and exits 0. `--measure` and
-`--samples` are mutually exclusive — both together exit 2 rather than
-silently picking one.
+after the table and exits 1. A pass exits 0. `--measure` and `--samples`
+are mutually exclusive: passing both exits 2 instead of silently
+picking one.
 
 | Flag | Meaning |
 | --- | --- |
-| `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** Which budget to evaluate. Anything else exits 2. |
-| `--measure` | Measure for real. Only `spawn` and `worktree` have a live source; the other kinds exit 2 and name `--samples`. |
-| `--samples <ms,ms,…>` | Fallback: comma-separated non-negative ms samples (at least one — empty exits 2, never a vacuous pass). |
-| `--json` | The full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`, plus the measured `source`/`samplesMs`) — exit 0 on pass, 1 on breach. |
-
-A missing flag, an unknown kind, non-numeric samples, or an unknown
-flag prints `usage: kubic perf --budget <worktree|spawn|attach|teardown> (--measure | --samples <ms,ms,…>) [--json]`
-and exits 2.
+| `--budget <worktree\|spawn\|attach\|teardown>` | **Required.** The budget to evaluate. Any other kind exits 2. |
+| `--measure` | Measures for real. Only `spawn` and `worktree` have a live source; the other kinds exit 2 and name `--samples`. |
+| `--samples <ms,ms,…>` | Fallback: comma-separated, non-negative millisecond samples. At least one is required: an empty or non-numeric list exits 2, so a run never passes vacuously. |
+| `--json` | Prints the full evaluation (`kind`, `budgetMs`, `count`, `p50`, `p95`, `within`, `regression`, plus `source` and `note` for measured samples). Exits 0 on a pass, 1 on a breach. |
 
 ## `kubic policy --tool <name> [--json]`
 
-Policy query as a routing offer (never enforcement): `allow <tool>`
-or `deny <tool>` against the tool policy a run from this directory
-actually installs — the same permission classes, over the same config
-load, that `kubic run` enforces and `kubic doctor` reports on its
-`policy:installed` line. Deny-by-default: a tool outside that installed
-allowlist is denied. Tool names match case- and whitespace-insensitively.
+Answers a policy query as a routing offer, never as enforcement. It
+prints `allow <tool>` or `deny <tool>` for the tool policy that a run
+from this directory actually installs: the same permission classes, from
+the same config load, that `kubic run` enforces and that `kubic doctor`
+reports on its `policy:installed` line.
+
+Policy is deny-by-default: a tool outside the installed allowlist is
+denied. Tool names match regardless of case and surrounding whitespace.
 
 | Flag | Meaning |
 | --- | --- |
-| `--tool <name>` | **Required.** The tool to query. Missing or empty exits 2. |
-| `--json` | `{"tool", "decision"}` instead of the text line. Exits 0. |
-
-An unknown flag prints `usage: kubic policy --tool <name> [--json]`
-and exits 2.
+| `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
+| `--json` | Prints `{"tool", "decision"}` instead of the text line. Exits 0. |
 
 ## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--json]`
 
-Audit-trail query: exact match on each supplied dimension, full
-14-field records out (one JSON object per line; `no audit records` +
-exit 0 when empty). Every printed record is redacted first —
+Queries the audit trail, matching each supplied filter exactly.
+
+**Output.** Text mode prints a table with the columns `WHEN`, `MODE`,
+`POSTURE`, `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`.
+With no matching records it prints `no audit records` and exits 0.
+`--json` prints the full 14-field records.
+
+**Redaction.** Every record is redacted before it is printed:
 secret-shaped values and listed-secret inventory values become
-`[redacted-secret]` — so credentials stay sentinel-only. Records come
-from the repo's §60 ledger, `.kubic/orchestrator/approvals/audit.jsonl`
-under the current directory (one record per line, covered by the shipped
-runtime ignore rules). `kubic orchestrate` appends one record per
-approval decision — approved, denied, timed out, or a refused manager
-approve — with `--posture approvals` or `full-access`. Solo approval
-decisions (`kubic run` / `kubic tui`) append one `mode: solo` record per
-resolved ask — approved or denied, `posture` `approvals` or `full-access`
-— to the workspace's ledger; a failed ledger write never changes the
-decision.
+`[redacted-secret]`, so credentials only ever appear as sentinels.
+
+**Where records come from.** The records are read from the repo's §60
+ledger, `.kubic/orchestrator/approvals/audit.jsonl` under the current
+directory, one record per line. The shipped runtime ignore rules cover
+this file.
+
+- `kubic orchestrate` appends one record per approval decision:
+  approved, denied, timed out, or a refused manager approve. The record
+  has `--posture approvals` or `full-access`.
+- `kubic run` and `kubic tui` append one `mode: solo` record per
+  resolved solo approval ask, approved or denied, with `posture`
+  `approvals` or `full-access`, to the workspace's ledger.
+- A failed ledger write never changes the decision.
 
 | Flag | Meaning |
 | --- | --- |
-| `--mode <solo\|orchestrator>` | Filter on mode. Anything else exits 2. |
-| `--posture <name>` | Filter on posture. Needs a value. |
-| `--result <ok\|deny\|error>` | Filter on result. Anything else exits 2. |
-| `--json` | The matching records as a JSON array (same redaction). Exits 0. |
-
-A filter without a value or an unknown flag prints
-`usage: kubic audit [--mode <solo|orchestrator>] [--posture <name>] [--result <ok|deny|error>] [--json]`
-and exits 2.
+| `--mode <solo\|orchestrator>` | Filters on mode. Any other value exits 2. |
+| `--posture <name>` | Filters on posture. |
+| `--result <ok\|deny\|error>` | Filters on result. Any other value exits 2. |
+| `--json` | Prints the matching records as a JSON array, with the same redaction. Exits 0. |
 
 Back to the [docs index](../README.md). See also
 [exit codes](exit-codes.md), [configuration](configuration.md), and

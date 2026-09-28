@@ -18,6 +18,7 @@ import { createProdRunners } from './prod-runners.js';
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -29,16 +30,22 @@ const noConfig: CliConfigResult = {
   ignoreSplit: { missing: [], checked: [], applicable: false },
 };
 
+// The prod runners colour from the real stdout; NO_COLOR pins plain text
+// whatever terminal the test runner has.
 function runners(): {
   lines: string[];
+  errs: string[];
   r: ReturnType<typeof createProdRunners>;
 } {
+  vi.stubEnv('NO_COLOR', '1');
   const lines: string[] = [];
+  const errs: string[] = [];
   return {
     lines,
+    errs,
     r: createProdRunners({
       out: (line) => lines.push(line),
-      debug: () => undefined,
+      debug: (line) => errs.push(line),
     }),
   };
 }
@@ -49,9 +56,10 @@ describe('kubic export (prod wiring)', () => {
     roots.push(dir);
     writeFileSync(join(dir, 'rel.json'), JSON.stringify(makeExport()));
     vi.spyOn(process, 'cwd').mockReturnValue(dir);
-    const { lines, r } = runners();
-    await r.export(['--trajectory', 'rel.json'], noConfig);
-    expect(lines.join('\n')).not.toMatch(/trajectory-unreadable/);
+    const { lines, errs, r } = runners();
+    expect(await r.export({ trajectory: 'rel.json' }, noConfig)).toBe(0);
+    expect(errs).toEqual([]);
+    expect(lines.join('\n')).toMatch(/^schema: /);
   });
 });
 
@@ -61,11 +69,11 @@ describe('kubic policy (prod wiring)', () => {
     expect(allowlist.length).toBeGreaterThan(0);
     for (const tool of allowlist) {
       const { lines, r } = runners();
-      await r.policy(['--tool', tool], noConfig);
+      await r.policy({ tool }, noConfig);
       expect(lines).toEqual([`allow ${tool}`]);
     }
     const { lines, r } = runners();
-    await r.policy(['--tool', 'network_fetch'], noConfig);
+    await r.policy({ tool: 'network_fetch' }, noConfig);
     expect(lines).toEqual(['deny network_fetch']);
   });
 });
@@ -87,9 +95,14 @@ describe('kubic audit (prod wiring)', () => {
     );
     vi.spyOn(process, 'cwd').mockReturnValue(root);
     const { lines, r } = runners();
-    await r.audit(['--mode', 'solo'], noConfig);
-    expect(lines.join('\n')).not.toBe('no audit records');
-    expect(lines.join('\n')).toContain('"mode":"solo"');
+    await r.audit({ mode: 'solo', json: true }, noConfig);
+    const records = JSON.parse(lines.join('\n')) as { mode: string }[];
+    expect(records.map((record) => record.mode)).toEqual(['solo']);
+    const text = runners();
+    await text.r.audit({ mode: 'solo' }, noConfig);
+    expect(text.lines).toHaveLength(1);
+    expect(text.lines[0]).toMatch(/^WHEN +MODE/);
+    expect(text.lines[0]).toMatch(/ solo +approvals /);
   });
 });
 
@@ -112,7 +125,7 @@ describe('kubic audit from a subdirectory', () => {
     );
     vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'pkg'));
     const { lines, r } = runners();
-    await r.audit([], noConfig);
-    expect(lines.join('\n')).toContain('"mode":"solo"');
+    await r.audit({ json: true }, noConfig);
+    expect(lines.join('\n')).toContain('"mode": "solo"');
   });
 });

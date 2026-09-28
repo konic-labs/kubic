@@ -1,6 +1,7 @@
 // `kubic export` command surface (issue #78): trajectory-export
 // inspection plus RL dataset export (#51 + #54 libraries).
-// Presentation only: argv in, exit code out. Trajectory files arrive
+// Presentation only: parsed options in (commander, apps/kubic/src/
+// commands/analysis.ts), exit code out. Trajectory files arrive
 // through the injected readFile (I/O confinement — this package never
 // touches node:fs); dataset records are built + validated with ./rl/*
 // over the stable trajectory contract (major 1).
@@ -15,8 +16,8 @@
 // 2 usage/error (missing flags, unreadable/malformed files, refused
 // provenance — never an emitted record).
 
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
@@ -40,7 +41,22 @@ export const EXPORT_EXIT_USAGE = 2;
 
 export interface ExportCliDeps {
   readFile: (path: string) => string;
+  // stdout: the description / record, or the one `--json` envelope.
   out: (line: string) => void;
+  // stderr: diagnostics — usage refusals and, off --json, failures as
+  // `error: [code] message` (core/cli/logger).
+  err: (line: string) => void;
+  // Colours the diagnostic prefixes; absent means plain.
+  theme?: CliTheme;
+}
+
+// The parsed `kubic export` options (commander's `opts()`); `trajectory`
+// is a required option there, still checked here for direct callers.
+export interface ExportCommandOptions {
+  readonly trajectory?: string;
+  readonly type?: string;
+  readonly against?: string;
+  readonly json?: boolean;
 }
 
 export type ExportDatasetType =
@@ -51,7 +67,7 @@ export type ExportDatasetType =
   | 'tooluse'
   | 'coding';
 
-const DATASET_TYPES: readonly ExportDatasetType[] = [
+export const DATASET_TYPES: readonly ExportDatasetType[] = [
   'sft',
   'dpo',
   'grpo',
@@ -68,9 +84,6 @@ const NEEDS_AGAINST: ReadonlySet<ExportDatasetType> = new Set([
   'preference',
 ]);
 
-export const USAGE_MESSAGE =
-  'usage: kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]';
-
 interface ExportOptions {
   trajectory: string;
   type: ExportDatasetType | undefined;
@@ -82,43 +95,34 @@ function isDatasetType(value: string): value is ExportDatasetType {
   return (DATASET_TYPES as readonly string[]).includes(value);
 }
 
-// Issue #127: the shared parser's spec for this command's flags.
-const EXPORT_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--trajectory', takes: 'value' },
-  { name: '--type', takes: 'value' },
-  { name: '--against', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
-
-function parseArgs(args: string[]): ExportOptions | null {
-  // Issue #127: the shared parser replaces the hand-rolled loop. Every
-  // syntax problem keeps the pre-migration posture — null, which the
-  // caller turns into the usage line and exit 2.
-  const flags = parseFlagArgs(args, EXPORT_FLAG_SPEC);
-  if (
-    flags.missing.length > 0 ||
-    flags.unknown.length > 0 ||
-    flags.positional.length > 0
-  ) {
-    return null;
+// Semantic validation (the type vocabulary and the --against pairing): a
+// usage message on failure, the normalized options otherwise.
+function normalize(options: ExportCommandOptions): ExportOptions | string {
+  const trajectory = options.trajectory;
+  if (trajectory === undefined) {
+    return "required option '--trajectory <file>' not specified";
   }
-  const trajectory = flags.values['--trajectory'] as string | undefined;
-  if (trajectory === undefined) return null;
-  const typeRaw = flags.values['--type'] as string | undefined;
   let type: ExportDatasetType | undefined;
-  if (typeRaw !== undefined) {
-    if (!isDatasetType(typeRaw)) return null;
-    type = typeRaw;
+  if (options.type !== undefined) {
+    if (!isDatasetType(options.type)) {
+      return `unknown --type (want ${DATASET_TYPES.join('|')})`;
+    }
+    type = options.type;
   }
-  const against = flags.values['--against'] as string | undefined;
+  const against = options.against;
   if (type !== undefined && NEEDS_AGAINST.has(type) && against === undefined) {
-    return null;
+    return `--type ${type} needs --against <other.json>`;
   }
-  if (type !== undefined && !NEEDS_AGAINST.has(type) && against !== undefined) {
-    return null;
+  if (
+    against !== undefined &&
+    (type === undefined || !NEEDS_AGAINST.has(type))
+  ) {
+    return `--against applies only to --type ${[...NEEDS_AGAINST].join('|')}`;
   }
-  return { trajectory, type, against, json: flags.values['--json'] === true };
+  return { trajectory, type, against, json: options.json === true };
 }
+
+const PLAIN = createCliTheme('none');
 
 function loadExport(
   readFile: (path: string) => string,
@@ -183,15 +187,15 @@ function describeJson(exported: TrajectoryExport): unknown {
 }
 
 export async function runExportCommand(
-  args: string[],
+  options: ExportCommandOptions,
   deps: ExportCliDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, USAGE_MESSAGE);
-  if (help !== null) return help;
-  const parsed = parseArgs(args);
-  if (parsed === null) {
-    deps.out(USAGE_MESSAGE);
+  const log: CliLogger = createLineLogger(deps.err, {
+    theme: options.json === true ? PLAIN : (deps.theme ?? PLAIN),
+  });
+  const parsed = normalize(options);
+  if (typeof parsed === 'string') {
+    log.error(parsed);
     return EXPORT_EXIT_USAGE;
   }
   const fail = (code: string, message: string): number => {
@@ -204,7 +208,7 @@ export async function runExportCommand(
         }),
       );
     } else {
-      deps.out(`export error [${code}]: ${message}`);
+      log.error(`[${code}] ${message}`);
     }
     return EXPORT_EXIT_USAGE;
   };
@@ -272,7 +276,7 @@ export async function runExportCommand(
         }),
       );
     } else {
-      deps.out(`export error [invalid-record]: ${message}`);
+      log.error(`[invalid-record] ${message}`);
     }
     return EXPORT_EXIT_FAILED;
   };
@@ -336,7 +340,7 @@ export async function runExportCommand(
         }),
       );
     } else {
-      deps.out(`export error: ${message}`);
+      log.error(message);
     }
     return EXPORT_EXIT_FAILED;
   }

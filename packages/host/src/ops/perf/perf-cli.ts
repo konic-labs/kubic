@@ -11,8 +11,18 @@
 //     numbers (faux-only: no clock, no I/O, no network), for budgets with
 //     no live substrate yet and for CI.
 
-import { answerHelp } from '../../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../../core/src/cli/exit-codes.js';
+import { createLineLogger } from '../../../../core/src/cli/logger.js';
+import { formatJson } from '../../../../core/src/cli/output.js';
+import { renderTable } from '../../../../core/src/cli/table.js';
+import {
+  type CliTheme,
+  createCliTheme,
+} from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
@@ -24,11 +34,16 @@ import {
 } from './budgets.js';
 import { type MeasureResult, measureSamples } from './measure.js';
 
-export const PERF_EXIT_OK = 0;
-export const PERF_EXIT_BREACH = 1;
-export const PERF_EXIT_USAGE = 2;
+export const BUDGET_KINDS = Object.keys(PERF_BUDGETS_MS) as PerfBudgetKind[];
 
-const BUDGET_KINDS = Object.keys(PERF_BUDGETS_MS) as PerfBudgetKind[];
+// The parsed `kubic perf` options (commander's `opts()`); `budget` is a
+// required option there, still checked here for direct callers.
+export interface PerfOptions {
+  readonly budget?: string;
+  readonly samples?: string;
+  readonly measure?: boolean;
+  readonly json?: boolean;
+}
 
 export interface PerfMeasureRequest {
   kind: PerfBudgetKind;
@@ -36,7 +51,13 @@ export interface PerfMeasureRequest {
 }
 
 export interface PerfCommandDeps {
+  // stdout: the report or the one `--json` document.
   out: (line: string) => void;
+  // stderr: diagnostics, one `error: …` line each (core/cli/logger).
+  err: (line: string) => void;
+  // Colour and box drawing for the human report; absent means plain.
+  theme?: CliTheme;
+  fancy?: boolean;
   // Real-measurement hook (issue #98). Defaults to the live measurement
   // module (ops/perf/measure.ts) inside this file, so a real
   // `kubic perf --measure` works without the composition root wiring
@@ -73,13 +94,7 @@ function defaultMeasure(
 // (budgets.ts percentile) while staying a sub-second measurement for spawn.
 export const DEFAULT_MEASURE_SAMPLES = 5;
 
-export const PERF_USAGE =
-  'usage: kubic perf --budget <worktree|spawn|attach|teardown> (--measure | --samples <ms,ms,…>) [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(PERF_USAGE);
-  return PERF_EXIT_USAGE;
-}
+const PLAIN = createCliTheme('none');
 
 function isBudgetKind(value: string): value is PerfBudgetKind {
   return (BUDGET_KINDS as readonly string[]).includes(value);
@@ -98,52 +113,75 @@ function parseSamples(raw: string): number[] | null {
   return samples.length > 0 ? samples : null;
 }
 
-// Issue #127: the shared parser replaces the hand-rolled loop. Missing
-// values keep their lines; unknown flags and stray operands keep the bare
-// usage exit; budget-kind and exclusivity checks stay this command's
-// semantics.
-const PERF_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-  { name: '--measure', takes: 'boolean' },
-  { name: '--budget', takes: 'value' },
-  { name: '--samples', takes: 'value' },
-];
+function evaluationTable(
+  evaluation: BudgetEvaluation,
+  deps: PerfCommandDeps,
+  theme: CliTheme,
+): string {
+  const status = evaluation.within
+    ? theme.success('within')
+    : theme.error('BREACH');
+  return renderTable(
+    [
+      [
+        evaluation.kind,
+        `${evaluation.budgetMs}ms`,
+        String(evaluation.count),
+        `${evaluation.p50}ms`,
+        `${evaluation.p95}ms`,
+        status,
+      ],
+    ],
+    [
+      { header: 'BUDGET' },
+      { header: 'LIMIT', align: 'right' },
+      { header: 'SAMPLES', align: 'right' },
+      { header: 'P50', align: 'right' },
+      { header: 'P95', align: 'right' },
+      { header: 'STATUS' },
+    ],
+    { fancy: deps.fancy === true, theme },
+  );
+}
 
+// `kubic perf` over parsed options: commander (apps/kubic/src/commands/
+// analysis.ts) owns argv syntax — unknown flags, missing values, the
+// required --budget, `--help`; this handler owns the semantics (budget
+// kinds, the one-source rule, the sample list).
 export async function runPerfCommand(
-  args: string[],
+  options: PerfOptions,
   deps: PerfCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, PERF_USAGE);
-  if (help !== null) return help;
-  const flags = parseFlagArgs(args, PERF_FLAG_SPEC);
-  for (const flag of flags.missing) {
-    deps.out(`error: ${flag} needs a value`);
-    return usage(deps.out);
+  const json = options.json === true;
+  const theme = json ? PLAIN : (deps.theme ?? PLAIN);
+  const log = createLineLogger(deps.err, { theme });
+  const usageError = (message: string): number => {
+    log.error(message);
+    return EXIT_USAGE;
+  };
+  const kind = options.budget;
+  const measure = options.measure === true;
+  const samplesRaw = options.samples;
+  if (kind === undefined) {
+    return usageError("required option '--budget <kind>' not specified");
   }
-  if (flags.unknown.length > 0 || flags.positional.length > 0) {
-    return usage(deps.out);
-  }
-  const json = flags.values['--json'] === true;
-  const measure = flags.values['--measure'] === true;
-  const kind = flags.values['--budget'] as string | undefined;
-  const samplesRaw = flags.values['--samples'] as string | undefined;
-  if (kind === undefined) return usage(deps.out);
   if (!isBudgetKind(kind)) {
     // Fail-closed echo: the budget kind is argv-controlled and may carry
     // secret-shaped material.
-    deps.out(
-      redactSecretShapes(`error: unknown budget ${JSON.stringify(kind)}`),
+    return usageError(
+      redactSecretShapes(
+        `unknown budget ${JSON.stringify(kind)} (want ${BUDGET_KINDS.join('|')})`,
+      ),
     );
-    return usage(deps.out);
   }
   // The two sample sources are mutually exclusive: silently preferring one
   // would make the reported provenance a guess.
   if (measure && samplesRaw !== undefined) {
-    deps.out('error: --measure and --samples are mutually exclusive');
-    return usage(deps.out);
+    return usageError('--measure and --samples are mutually exclusive');
   }
-  if (!measure && samplesRaw === undefined) return usage(deps.out);
+  if (!measure && samplesRaw === undefined) {
+    return usageError('one sample source is required: --measure or --samples');
+  }
 
   let samples: number[];
   let measured: MeasureResult | null = null;
@@ -152,19 +190,17 @@ export async function runPerfCommand(
     try {
       measured = await source({ kind });
     } catch (error) {
-      deps.out(
+      return usageError(
         redactSecretShapes(
-          `error: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.message : String(error),
         ),
       );
-      return usage(deps.out);
     }
     samples = measured.samplesMs;
   } else {
     const parsed = parseSamples(samplesRaw as string);
     if (parsed === null) {
-      deps.out('error: --samples needs a comma-separated list of ms numbers');
-      return usage(deps.out);
+      return usageError('--samples needs a comma-separated list of ms numbers');
     }
     samples = parsed;
   }
@@ -175,9 +211,10 @@ export async function runPerfCommand(
   const evaluation = evaluateBudget(kind, samples, (record) => {
     filed.push(record);
   });
+  const exit = evaluation.within ? EXIT_OK : EXIT_FAILED;
   if (json) {
     deps.out(
-      JSON.stringify(
+      formatJson(
         measured === null
           ? evaluation
           : {
@@ -185,19 +222,17 @@ export async function runPerfCommand(
               source: measured.source,
               note: measured.note,
             },
-        null,
-        2,
       ),
     );
-    return evaluation.within ? PERF_EXIT_OK : PERF_EXIT_BREACH;
+    return exit;
   }
-  // Provenance first: a pass prints nothing gated, but the operator must
-  // still be able to tell measured samples from argv ones (issue #98).
-  if (measured !== null) deps.out(`perf: ${measured.note}`);
+  // Provenance first: the operator must be able to tell measured samples
+  // from argv ones (issue #98).
+  if (measured !== null) deps.out(theme.muted(`perf: ${measured.note}`));
+  deps.out(evaluationTable(evaluation, deps, theme));
   if (!evaluation.within) {
     const record = filed[0] ?? evaluation;
-    deps.out(record.regression ?? 'perf regression');
-    return PERF_EXIT_BREACH;
+    deps.out(theme.warning(record.regression ?? 'perf regression'));
   }
-  return PERF_EXIT_OK;
+  return exit;
 }

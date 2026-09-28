@@ -10,6 +10,7 @@ import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
   type ReplayCommandDeps,
+  type ReplayCommandOptions,
   type ReplayRunResult,
   runReplayCommand,
 } from './replay.js';
@@ -28,9 +29,23 @@ afterEach(() => {
   }
 });
 
-function out(): { lines: string[]; write: (line: string) => void } {
+// stdout (`lines`) and stderr (`errs`) captured separately.
+interface Capture {
+  lines: string[];
+  errs: string[];
+  write: (line: string) => void;
+  err: (line: string) => void;
+}
+
+function out(): Capture {
   const lines: string[] = [];
-  return { lines, write: (line: string) => lines.push(line) };
+  const errs: string[] = [];
+  return {
+    lines,
+    errs,
+    write: (line: string) => lines.push(line),
+    err: (line: string) => errs.push(line),
+  };
 }
 
 export function fixtureTrajectory(
@@ -109,12 +124,10 @@ function writeLockfile(dir: string, name: string): string {
   return path;
 }
 
-function deps(
-  o: { lines: string[]; write: (line: string) => void },
-  run?: ReplayCommandDeps['run'],
-): ReplayCommandDeps {
+function deps(o: Capture, run?: ReplayCommandDeps['run']): ReplayCommandDeps {
   return {
     out: o.write,
+    err: o.err,
     run:
       run ??
       (async (): Promise<ReplayRunResult> => {
@@ -130,7 +143,7 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
     try {
       const o = out();
-      const exit = await runReplayCommand(['rel.json'], deps(o));
+      const exit = await runReplayCommand({ trajectory: 'rel.json' }, deps(o));
       expect(o.lines.join('\n')).not.toMatch(/trajectory-unreadable/);
       expect(exit).toBe(0);
     } finally {
@@ -143,13 +156,17 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     const path = writeTrajectory(dir, 't.json');
     const o = out();
     let called = false;
-    const exit = await runReplayCommand([path], {
-      out: o.write,
-      run: async () => {
-        called = true;
-        return { terminus: 'completed', summary: 'must not run' };
+    const exit = await runReplayCommand(
+      { trajectory: path },
+      {
+        out: o.write,
+        err: o.err,
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'must not run' };
+        },
       },
-    });
+    );
     expect(exit).toBe(0);
     expect(called).toBe(false);
     const text = o.lines.join('\n');
@@ -162,7 +179,10 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     const dir = tmpRoot();
     const path = writeTrajectory(dir, 't.json');
     const o = out();
-    const exit = await runReplayCommand([path, '--json'], deps(o));
+    const exit = await runReplayCommand(
+      { trajectory: path, json: true },
+      deps(o),
+    );
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
@@ -179,7 +199,7 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
   it('exits 5 with a machine-readable code when the trajectory file is missing', async () => {
     const o = out();
     const exit = await runReplayCommand(
-      [join(tmpRoot(), 'nope.json'), '--json'],
+      { trajectory: join(tmpRoot(), 'nope.json'), json: true },
       deps(o),
     );
     expect(exit).toBe(5);
@@ -194,7 +214,10 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
     const path = join(dir, 'bad.json');
     writeFileSync(path, '{not json');
     const o = out();
-    const exit = await runReplayCommand([path, '--json'], deps(o));
+    const exit = await runReplayCommand(
+      { trajectory: path, json: true },
+      deps(o),
+    );
     expect(exit).toBe(2);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       error: { code: string };
@@ -210,7 +233,10 @@ describe('replay recorded exact (§47 exact; §47.1 Recorded)', () => {
       JSON.stringify({ ...fixtureTrajectory(), schema_version: '2.0' }),
     );
     const o = out();
-    const exit = await runReplayCommand([path, '--json'], deps(o));
+    const exit = await runReplayCommand(
+      { trajectory: path, json: true },
+      deps(o),
+    );
     expect(exit).toBe(2);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       error: { code: string };
@@ -223,30 +249,34 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
   function detArgs(dir: string): {
     traj: string;
     lock: string;
-    base: string[];
+    base: ReplayCommandOptions;
   } {
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
-    return { traj, lock, base: [traj, '--tier', 'deterministic'] };
+    return { traj, lock, base: { trajectory: traj, tier: 'deterministic' } };
   }
 
   it('refuses without pins (exit 2, runner never called, tier published)', async () => {
     const dir = tmpRoot();
     const { base } = detArgs(dir);
-    for (const args of [
-      [...base],
-      [...base, '--model', 'acme/m1'],
-      [...base, '--lockfile', join(dir, 'pins.json')],
+    for (const options of [
+      base,
+      { ...base, model: 'acme/m1' },
+      { ...base, lockfile: join(dir, 'pins.json') },
     ]) {
       const o = out();
       let called = false;
-      const exit = await runReplayCommand([...args, '--json'], {
-        out: o.write,
-        run: async () => {
-          called = true;
-          return { terminus: 'completed', summary: 'must not run' };
+      const exit = await runReplayCommand(
+        { ...options, json: true },
+        {
+          out: o.write,
+          err: o.err,
+          run: async () => {
+            called = true;
+            return { terminus: 'completed', summary: 'must not run' };
+          },
         },
-      });
+      );
       expect(exit).toBe(2);
       expect(called).toBe(false);
       const envelope = JSON.parse(o.lines.join('\n')) as {
@@ -263,11 +293,12 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     const { traj, lock } = detArgs(dir);
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'deterministic', '--model', 'm1', '--lockfile', lock],
+      { trajectory: traj, tier: 'deterministic', model: 'm1', lockfile: lock },
       deps(o),
     );
     expect(exit).toBe(2);
-    expect(o.lines.join('\n')).toMatch(/invalid-model-pin/);
+    expect(o.lines).toEqual([]);
+    expect(o.errs.join('\n')).toMatch(/^error: \[invalid-model-pin\] /);
   });
 
   it('exits 5 when the lockfile is unreadable', async () => {
@@ -275,16 +306,13 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     const { traj } = detArgs(dir);
     const o = out();
     const exit = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'acme/m1',
-        '--lockfile',
-        join(dir, 'missing.json'),
-        '--json',
-      ],
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: join(dir, 'missing.json'),
+        json: true,
+      },
       deps(o),
     );
     expect(exit).toBe(5);
@@ -300,9 +328,10 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     const seen: unknown[] = [];
     const o = out();
     const exit = await runReplayCommand(
-      [...base, '--model', 'acme/m1', '--lockfile', lock, '--json'],
+      { ...base, model: 'acme/m1', lockfile: lock, json: true },
       {
         out: o.write,
+        err: o.err,
         run: async (request) => {
           seen.push(request);
           return { terminus: 'completed', summary: 'replayed ok' };
@@ -339,18 +368,16 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     for (const { terminus, code } of cases) {
       const o = out();
       const exit = await runReplayCommand(
-        [
-          traj,
-          '--tier',
-          'deterministic',
-          '--model',
-          'acme/m1',
-          '--lockfile',
-          lock,
-          '--json',
-        ],
+        {
+          trajectory: traj,
+          tier: 'deterministic',
+          model: 'acme/m1',
+          lockfile: lock,
+          json: true,
+        },
         {
           out: o.write,
+          err: o.err,
           run: async () => ({ terminus, summary: terminus }),
         },
       );
@@ -376,18 +403,16 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     for (const terminus of termini) {
       const o = out();
       const exit = await runReplayCommand(
-        [
-          traj,
-          '--tier',
-          'deterministic',
-          '--model',
-          'acme/m1',
-          '--lockfile',
-          lock,
-          '--json',
-        ],
+        {
+          trajectory: traj,
+          tier: 'deterministic',
+          model: 'acme/m1',
+          lockfile: lock,
+          json: true,
+        },
         {
           out: o.write,
+          err: o.err,
           run: async () => ({
             terminus: terminus as unknown as 'completed',
             summary: String(terminus),
@@ -415,31 +440,25 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
     });
     const first = out();
     await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'acme/m1',
-        '--lockfile',
-        lock,
-        '--json',
-      ],
-      { out: first.write, run },
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+        json: true,
+      },
+      { out: first.write, err: first.err, run },
     );
     const second = out();
     await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'acme/m1',
-        '--lockfile',
-        lock,
-        '--json',
-      ],
-      { out: second.write, run },
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+        json: true,
+      },
+      { out: second.write, err: second.err, run },
     );
     expect(second.lines.join('\n')).toBe(first.lines.join('\n'));
   });
@@ -461,13 +480,17 @@ describe('replay live (§47.1 Live)', () => {
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     let called = false;
-    const exit = await runReplayCommand([traj, '--tier', 'live', '--json'], {
-      out: o.write,
-      run: async () => {
-        called = true;
-        return { terminus: 'completed', summary: 'must not run' };
+    const exit = await runReplayCommand(
+      { trajectory: traj, tier: 'live', json: true },
+      {
+        out: o.write,
+        err: o.err,
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'must not run' };
+        },
       },
-    });
+    );
     expect(exit).toBe(2);
     expect(called).toBe(false);
     const envelope = JSON.parse(o.lines.join('\n')) as {
@@ -483,17 +506,17 @@ describe('replay live (§47.1 Live)', () => {
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
     const lock = writeLockfile(dir, 'pins.json');
-    for (const extra of [
-      ['--model', 'acme/m1'],
-      ['--lockfile', lock],
-    ]) {
+    for (const extra of [{ model: 'acme/m1' }, { lockfile: lock }]) {
       const o = out();
       const exit = await runReplayCommand(
-        [traj, '--tier', 'live', '--role-config', role, ...extra],
+        { trajectory: traj, tier: 'live', roleConfig: role, ...extra },
         deps(o),
       );
       expect(exit).toBe(2);
-      expect(o.lines.join('\n')).toMatch(/unexpected-flag-for-tier/);
+      expect(o.lines).toEqual([]);
+      expect(o.errs.join('\n')).toMatch(
+        /^error: \[unexpected-flag-for-tier\] /,
+      );
     }
   });
 
@@ -502,14 +525,12 @@ describe('replay live (§47.1 Live)', () => {
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'live',
-        '--role-config',
-        join(dir, 'missing.md'),
-        '--json',
-      ],
+      {
+        trajectory: traj,
+        tier: 'live',
+        roleConfig: join(dir, 'missing.md'),
+        json: true,
+      },
       deps(o),
     );
     expect(exit).toBe(5);
@@ -525,11 +546,12 @@ describe('replay live (§47.1 Live)', () => {
     const role = writeRoleConfig(dir, 'empty.md', '   \n');
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'live', '--role-config', role],
+      { trajectory: traj, tier: 'live', roleConfig: role },
       deps(o),
     );
     expect(exit).toBe(2);
-    expect(o.lines.join('\n')).toMatch(/role-config-invalid/);
+    expect(o.lines).toEqual([]);
+    expect(o.errs.join('\n')).toMatch(/^error: \[role-config-invalid\] /);
   });
 
   it('re-executes live: tier live, invocation live-exact, runner gets role config', async () => {
@@ -539,9 +561,10 @@ describe('replay live (§47.1 Live)', () => {
     const seen: unknown[] = [];
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'live', '--role-config', role, '--json'],
+      { trajectory: traj, tier: 'live', roleConfig: role, json: true },
       {
         out: o.write,
+        err: o.err,
         run: async (request) => {
           seen.push(request);
           return { terminus: 'completed', summary: 'live ok' };
@@ -571,18 +594,16 @@ describe('replay live (§47.1 Live)', () => {
     const seen: unknown[] = [];
     const o = out();
     const exit = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'live',
-        '--role-config',
-        role,
-        '--worktree',
-        wt,
-        '--json',
-      ],
+      {
+        trajectory: traj,
+        tier: 'live',
+        roleConfig: role,
+        worktree: wt,
+        json: true,
+      },
       {
         out: o.write,
+        err: o.err,
         run: async (request) => {
           seen.push(request);
           return { terminus: 'completed', summary: 'live ok' };
@@ -638,9 +659,10 @@ describe('replay compare/regression (§47 --diff-against)', () => {
     const o = out();
     let called = false;
     const exit = await runReplayCommand(
-      [traj, '--diff-against', other, '--json'],
+      { trajectory: traj, diffAgainst: other, json: true },
       {
         out: o.write,
+        err: o.err,
         run: async () => {
           called = true;
           return { terminus: 'completed', summary: 'must not run' };
@@ -673,7 +695,7 @@ describe('replay compare/regression (§47 --diff-against)', () => {
       const other = writeVariant(dir, `${variant}.json`, variant);
       const o = out();
       const exit = await runReplayCommand(
-        [traj, '--diff-against', other, '--json'],
+        { trajectory: traj, diffAgainst: other, json: true },
         deps(o),
       );
       expect(exit).toBe(1);
@@ -696,7 +718,7 @@ describe('replay compare/regression (§47 --diff-against)', () => {
     const other = writeVariant(dir, 'other.json', 'model');
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--diff-against', other],
+      { trajectory: traj, diffAgainst: other },
       deps(o),
     );
     expect(exit).toBe(1);
@@ -711,7 +733,7 @@ describe('replay compare/regression (§47 --diff-against)', () => {
     const traj = writeTrajectory(dir, 't.json');
     const missing = out();
     const exitMissing = await runReplayCommand(
-      [traj, '--diff-against', join(dir, 'missing.json'), '--json'],
+      { trajectory: traj, diffAgainst: join(dir, 'missing.json'), json: true },
       deps(missing),
     );
     expect(exitMissing).toBe(5);
@@ -723,7 +745,7 @@ describe('replay compare/regression (§47 --diff-against)', () => {
     writeFileSync(badPath, '{oops');
     const bad = out();
     const exitBad = await runReplayCommand(
-      [traj, '--diff-against', badPath, '--json'],
+      { trajectory: traj, diffAgainst: badPath, json: true },
       deps(bad),
     );
     expect(exitBad).toBe(2);
@@ -740,21 +762,18 @@ describe('replay compare/regression (§47 --diff-against)', () => {
     const lock = writeLockfile(dir, 'pins.json');
     const o = out();
     const exit = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'acme/m1',
-        '--lockfile',
-        lock,
-        '--diff-against',
-        other,
-      ],
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+        diffAgainst: other,
+      },
       deps(o),
     );
     expect(exit).toBe(2);
-    expect(o.lines.join('\n')).toMatch(/unexpected-flag-for-tier/);
+    expect(o.lines).toEqual([]);
+    expect(o.errs.join('\n')).toMatch(/^error: \[unexpected-flag-for-tier\] /);
   });
 });
 
@@ -763,12 +782,15 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     for (const extra of [
-      ['--model', 'acme/m1'],
-      ['--worktree', dir],
-      ['--lockfile', writeLockfile(dir, 'pins.json')],
+      { model: 'acme/m1' },
+      { worktree: dir },
+      { lockfile: writeLockfile(dir, 'pins.json') },
     ]) {
       const o = out();
-      const exit = await runReplayCommand([traj, ...extra, '--json'], deps(o));
+      const exit = await runReplayCommand(
+        { trajectory: traj, ...extra, json: true },
+        deps(o),
+      );
       expect(exit).toBe(2);
       const envelope = JSON.parse(o.lines.join('\n')) as {
         tier: string;
@@ -785,39 +807,41 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const lock = writeLockfile(dir, 'pins.json');
     const rolePath = join(dir, 'role.md');
     writeFileSync(rolePath, '---\nrole: implementer\n---\n');
-    const cases: { args: string[]; tier: string; exit: number }[] = [
-      { args: [traj], tier: 'recorded', exit: 0 },
-      {
-        args: [
-          traj,
-          '--tier',
-          'deterministic',
-          '--model',
-          'acme/m1',
-          '--lockfile',
-          lock,
-        ],
-        tier: 'deterministic',
-        exit: 0,
-      },
-      {
-        args: [traj, '--tier', 'live', '--role-config', rolePath],
-        tier: 'live',
-        exit: 0,
-      },
-      {
-        args: [traj, '--tier', 'deterministic'],
-        tier: 'deterministic',
-        exit: 2,
-      },
-      { args: [traj, '--tier', 'live'], tier: 'live', exit: 2 },
-    ];
+    const cases: { args: ReplayCommandOptions; tier: string; exit: number }[] =
+      [
+        { args: { trajectory: traj }, tier: 'recorded', exit: 0 },
+        {
+          args: {
+            trajectory: traj,
+            tier: 'deterministic',
+            model: 'acme/m1',
+            lockfile: lock,
+          },
+          tier: 'deterministic',
+          exit: 0,
+        },
+        {
+          args: { trajectory: traj, tier: 'live', roleConfig: rolePath },
+          tier: 'live',
+          exit: 0,
+        },
+        {
+          args: { trajectory: traj, tier: 'deterministic' },
+          tier: 'deterministic',
+          exit: 2,
+        },
+        { args: { trajectory: traj, tier: 'live' }, tier: 'live', exit: 2 },
+      ];
     for (const { args, tier, exit } of cases) {
       const o = out();
-      const got = await runReplayCommand([...args, '--json'], {
-        out: o.write,
-        run: async () => ({ terminus: 'completed', summary: 'ok' }),
-      });
+      const got = await runReplayCommand(
+        { ...args, json: true },
+        {
+          out: o.write,
+          err: o.err,
+          run: async () => ({ terminus: 'completed', summary: 'ok' }),
+        },
+      );
       expect(got).toBe(exit);
       const envelope = JSON.parse(o.lines.join('\n')) as { tier: string };
       expect(envelope.tier).toBe(tier);
@@ -834,16 +858,13 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     for (const lock of [notJson, noModels]) {
       const o = out();
       const exit = await runReplayCommand(
-        [
-          traj,
-          '--tier',
-          'deterministic',
-          '--model',
-          'acme/m1',
-          '--lockfile',
-          lock,
-          '--json',
-        ],
+        {
+          trajectory: traj,
+          tier: 'deterministic',
+          model: 'acme/m1',
+          lockfile: lock,
+          json: true,
+        },
         deps(o),
       );
       expect(exit).toBe(2);
@@ -860,7 +881,7 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const lock = writeLockfile(dir, 'pins.json');
     const badTier = out();
     const exitTier = await runReplayCommand(
-      [traj, '--tier', 'ultra', '--json'],
+      { trajectory: traj, tier: 'ultra', json: true },
       deps(badTier),
     );
     expect(exitTier).toBe(2);
@@ -869,18 +890,14 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     ).toBe('unknown');
     const badWt = out();
     const exitWt = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'acme/m1',
-        '--lockfile',
-        lock,
-        '--worktree',
-        join(dir, 'missing-wt'),
-        '--json',
-      ],
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+        worktree: join(dir, 'missing-wt'),
+        json: true,
+      },
       deps(badWt),
     );
     expect(exitWt).toBe(5);
@@ -897,81 +914,72 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const wt = tmpRoot('replay-wt-');
     const o = out();
     const exit = await runReplayCommand(
-      [
-        traj,
-        '--tier',
-        'deterministic',
-        '--model',
-        'other/m9',
-        '--lockfile',
-        lock,
-        '--worktree',
-        wt,
-      ],
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'other/m9',
+        lockfile: lock,
+        worktree: wt,
+      },
       {
         out: o.write,
+        err: o.err,
         run: async () => ({ terminus: 'completed', summary: 'ok' }),
       },
     );
     expect(exit).toBe(0);
-    const text = o.lines.join('\n');
-    expect(text).toMatch(/warning: --worktree is experimental/);
-    expect(text).toMatch(/invocation: different-worktree/);
+    // The experimental warning is a diagnostic (stderr); the report is data.
+    expect(o.errs).toEqual(['warn: --worktree is experimental']);
+    expect(o.lines.join('\n')).toMatch(/invocation: different-worktree/);
   });
 });
 
-describe('replay parse-error envelopes (§78 exit 2 with tier; --json)', () => {
-  it('emits a tiered envelope on parse errors: missing value, unknown flag, unexpected positional', async () => {
-    const dir = tmpRoot();
-    const traj = writeTrajectory(dir, 't.json');
-    const cases: { args: string[]; code: string }[] = [
-      { args: [traj, '--model'], code: 'missing-flag-value' },
-      { args: [traj, '--bogus'], code: 'unknown-flag' },
-      { args: [traj, 'extra-positional'], code: 'unexpected-argument' },
-    ];
-    for (const { args, code } of cases) {
-      const o = out();
-      const exit = await runReplayCommand([...args, '--json'], deps(o));
-      expect(exit).toBe(2);
-      const envelope = JSON.parse(o.lines.join('\n')) as {
-        ok: boolean;
-        exitCode: number;
-        tier: string;
-        invocation: null;
-        changed: string[];
-        error: { code: string; message: string };
-      };
-      expect(envelope.ok).toBe(false);
-      expect(envelope.exitCode).toBe(2);
-      expect(envelope.tier).toBe('recorded');
-      expect(envelope.invocation).toBe(null);
-      expect(envelope.changed).toEqual([]);
-      expect(envelope.error.code).toBe(code);
-    }
-  });
-
+// Argv syntax errors (a missing value, an unknown flag, a second operand)
+// are commander's — one `error: …` line on stderr, exit 2, pinned in
+// apps/kubic/src/commands/analysis.test.ts. The handler keeps the tiered
+// envelope for the semantic refusals below.
+describe('replay semantic-error envelopes (§78 exit 2 with tier; --json)', () => {
   it('emits a tiered envelope when the trajectory is missing', async () => {
     const o = out();
-    const exit = await runReplayCommand(['--json'], deps(o));
+    const exit = await runReplayCommand({ json: true }, deps(o));
     expect(exit).toBe(2);
+    expect(o.errs).toEqual([]);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
       exitCode: number;
       tier: string;
+      invocation: null;
+      trajectory: null;
+      changed: string[];
       error: { code: string };
     };
-    expect(envelope.ok).toBe(false);
-    expect(envelope.exitCode).toBe(2);
-    expect(envelope.tier).toBe('recorded');
+    expect(envelope).toMatchObject({
+      ok: false,
+      exitCode: 2,
+      tier: 'recorded',
+      invocation: null,
+      trajectory: null,
+      changed: [],
+    });
     expect(envelope.error.code).toBe('missing-trajectory');
   });
 
-  it('reports tier unknown on parse errors when --tier names an unknown tier', async () => {
+  it('names the missing trajectory on stderr off --json', async () => {
+    const o = out();
+    const exit = await runReplayCommand({}, deps(o));
+    expect(exit).toBe(2);
+    expect(o.lines).toEqual([]);
+    expect(o.errs).toEqual([
+      'error: [missing-trajectory] missing required argument <trajectory.json>',
+    ]);
+  });
+
+  it('publishes tier unknown when --tier names an unknown tier', async () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = await runReplayCommand(
-      [traj, '--tier', 'ultra', '--bogus', '--json'],
+      { trajectory: traj, tier: 'ultra', json: true },
       deps(o),
     );
     expect(exit).toBe(2);
@@ -980,6 +988,6 @@ describe('replay parse-error envelopes (§78 exit 2 with tier; --json)', () => {
       error: { code: string };
     };
     expect(envelope.tier).toBe('unknown');
-    expect(envelope.error.code).toBe('unknown-flag');
+    expect(envelope.error.code).toBe('invalid-tier');
   });
 });

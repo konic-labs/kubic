@@ -35,10 +35,20 @@ A module exports `register<Group>Commands: CommandRegistrar`, i.e.
 the process-wide config load (`ctx.config`), the injected runners
 (`ctx.runners`), the `out`/`err` line channels, and `ctx.setExitCode(code)`.
 
-Today every command is a pass-through forwarder (`registerForwarder`) that
-hands the raw argv to the legacy handler, which still parses with the
-deprecated `packages/core/src/flags.ts`. Migrating a command means
-replacing its forwarder with a real definition:
+A command that is not migrated yet is a pass-through forwarder
+(`registerForwarder`): it hands the raw argv to the legacy handler, which
+still parses it with the deprecated `packages/core/src/flags.ts`.
+
+The analysis group (`commands/analysis.ts`) is migrated and is the
+reference to copy:
+
+- it declares typed runners (`AnalysisRunners`, parsed options in), which
+  `DispatchRunners` extends;
+- its handlers take `{ out, err, theme?, fancy? }`;
+- its tests are in `commands/analysis.test.ts`.
+
+Migrating a command means replacing its forwarder with a real
+definition:
 
 ```ts
 program

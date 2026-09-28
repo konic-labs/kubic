@@ -13,6 +13,7 @@ import type { CleanOptions } from '../../../../packages/host/src/orchestrator/wo
 import type { RunCommandOptions } from '../../../../packages/host/src/run-cli.js';
 import type { SessionsInvocation } from '../../../../packages/host/src/sessions-cli.js';
 import type { WorkersCliOptions } from '../../../../packages/host/src/workers-cli.js';
+import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import type { TuiCommandOptions } from '../tui-run.js';
 
@@ -25,7 +26,9 @@ export type CommandRunner<Input = readonly string[]> = (
   config: CliConfigResult,
 ) => number | Promise<number>;
 
-export interface DispatchRunners {
+// Migrated command groups may declare their typed runners in their own
+// module (the analysis group's `AnalysisRunners`).
+export interface DispatchRunners extends AnalysisRunners {
   readonly sessions: CommandRunner<SessionsInvocation>;
   readonly git: CommandRunner<GitRequest>;
   readonly journal: CommandRunner<JournalRequest>;
@@ -35,16 +38,8 @@ export interface DispatchRunners {
   readonly doctor: CommandRunner<DoctorCommandOptions>;
   readonly orchestrate: CommandRunner<OrchestrateCliOptions>;
   readonly clean: CommandRunner<CleanOptions>;
-  readonly cost: CommandRunner;
-  readonly perf: CommandRunner;
-  readonly policy: CommandRunner;
   readonly config: CommandRunner<ConfigCommandOptions>;
-  readonly audit: CommandRunner;
   readonly workers: CommandRunner<WorkersCliOptions>;
-  readonly eval: CommandRunner;
-  readonly benchmark: CommandRunner;
-  readonly replay: CommandRunner;
-  readonly export: CommandRunner;
 }
 
 // The root commander program every registrar attaches to.

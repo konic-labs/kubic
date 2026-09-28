@@ -345,6 +345,29 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
+  // Issue #327: bare `kubic --orchestrator` on a TTY IS `kubic tui
+  // --orchestrator` — the opt-in interactive orchestrator entry. Off a TTY
+  // it keeps the bare usage + exit 1 posture like the other bare flags.
+  it('bare `kubic --orchestrator` on a TTY is `kubic tui --orchestrator` (issue #327)', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand('--orchestrator', [], deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['tui', { orchestrator: true }],
+    ]);
+    // Same boot as `kubic tui`: the runtime ignore rules ship first.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('bare `kubic --orchestrator` off a TTY keeps usage + exit 1 (issue #327)', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => false };
+    expect(await dispatchCommand('--orchestrator', [], deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
+
   // Issue #295: bare `kubic --model p/id` on a TTY is `kubic tui --model`.
   it('routes a bare --model on an interactive terminal to the TUI', async () => {
     const h = harness();

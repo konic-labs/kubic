@@ -65,6 +65,9 @@
   usage-on-no-args is the deliberate POSIX posture, so `--help` and the
   bare invocation differ only in their exit code. On an interactive
   terminal a bare `kubic` opens the TUI and exits as `kubic tui` does.
+  `kubic --orchestrator` (issue #327) is the same bare form with the
+  orchestrator opt-in: on a TTY it is exactly `kubic tui --orchestrator`;
+  off a TTY it is the usage line and exit 1, like every other bare flag.
 - **Unexpected top-level failures** (a bug in a command's wiring, an
   unshaped IO error): one `error: <message>` line on stderr, 1 — the full
   stack only with `KUBIC_DEBUG=1` (see
@@ -120,6 +123,12 @@
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider, 1 any other lane boot failure.
+  A session resolved into orchestrator mode (`--orchestrator`, or
+  `[modes] orchestrator = true` with no flag) refuses **before the
+  alt-screen** when the working directory is not a git repository: one
+  `error: orchestrator mode needs a git repository …` line on stderr and
+  exit 5. No prompts were taken and nothing ran; solo sessions never probe
+  git.
   A signalled quit exits `128+signo` after the same drain, restore and
   session close as a keyboard quit: 129 `SIGHUP`, 130 `SIGINT`, 143
   `SIGTERM`. An exception in input or render, or an unhandled rejection,

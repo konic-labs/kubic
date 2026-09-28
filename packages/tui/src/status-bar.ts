@@ -291,6 +291,14 @@ export class StatusBar implements Component {
     this.setState({ ...this.barState, approvalsSkipped: skipped });
   }
 
+  // Issue #327: the session mode toggle lands on the always-visible
+  // indicator within one frame (the same synchronous path the skip flag
+  // takes). Session-scoped by construction: fresh instances start from the
+  // seed's mode and callers re-pass every change.
+  setMode(mode: StatusMode): void {
+    this.setState({ ...this.barState, mode });
+  }
+
   setRows(rows: ReadonlyArray<StatusUsageRow>): void {
     this.setState({ ...this.barState, rows });
   }

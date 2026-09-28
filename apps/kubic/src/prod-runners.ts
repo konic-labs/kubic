@@ -321,6 +321,21 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // Issue #295: the SAME `[model]`/KUBIC_MODEL pin `kubic run`
           // selects with — both solo entry points talk to one model.
           model: runtimeModelPin(cliConfig),
+          // Issue #327: the config `[modes]` default — `orchestrator = true`
+          // starts bare `kubic` and `kubic tui` in orchestrator mode (the
+          // --orchestrator flag still wins), so the documented key selects
+          // something instead of being parsed and ignored.
+          modes: cliConfig.runtime?.modes,
+          // Issue #327: the manager-lane projections the interactive
+          // orchestrator drive consumes — the same `[orchestrator]`
+          // worktree/cap values and the same approval snapshot the CLI
+          // orchestrate runner threads (never a second policy).
+          ...(cliConfig.runtime === undefined
+            ? {}
+            : {
+                orchestratorRuntime: cliConfig.runtime.orchestrator,
+                approvalPolicy: approvalSnapshotFrom(cliConfig.runtime),
+              }),
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),

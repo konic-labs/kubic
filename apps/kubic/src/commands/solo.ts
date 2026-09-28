@@ -186,6 +186,10 @@ function registerTui(program: Command, ctx: CommandContext): void {
       rule(parseModelFlag),
     )
     .option(
+      '--orchestrator',
+      'start in orchestrator mode (delegation is opt-in; needs a git repository)',
+    )
+    .option(
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
@@ -206,6 +210,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
             ...(opts.model === undefined ? {} : { model: opts.model }),
+            ...(opts.orchestrator === true ? { orchestrator: true } : {}),
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),

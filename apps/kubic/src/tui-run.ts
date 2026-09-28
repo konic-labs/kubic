@@ -38,12 +38,14 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+import type { RuntimeOrchestrator } from '../../../packages/host/src/config/runtime.js';
 import {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
   FAUX_PROVIDER_ID,
   fauxProviderActive,
 } from '../../../packages/host/src/faux-provider.js';
+import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limits/orchestrator-notice.js';
 import {
   shouldEmitSoloNotice,
   soloTuiLine,
@@ -52,6 +54,11 @@ import {
   type AssembledModels,
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
+import {
+  buildOrchestratorRefusal,
+  resolveOrchestratorMode,
+} from '../../../packages/host/src/orchestrator/manager.js';
+import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
@@ -75,6 +82,7 @@ import { createApprovalSurface } from '../../../packages/tui/src/approval-surfac
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
+import type { StatusMode } from '../../../packages/tui/src/status-bar.js';
 import {
   type ColorLevel,
   createTuiTheme,
@@ -139,6 +147,10 @@ import {
   roleModelSelection,
 } from './headless-run.js';
 import { persistRunTrajectory } from './run-trajectory.js';
+import {
+  createProdTuiOrchestrator,
+  workerAskSeatFromAnswer,
+} from './tui-orchestrator.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -177,6 +189,97 @@ export interface TuiTurnRecord {
   lane?: { status: TerminalStatus; error?: OperationErrorLike } | 'deferred';
 }
 
+// One turn's driver, whichever lane owns it (issue #327): the solo
+// TuiTurnRunner already has this shape, and TuiOrchestratorTurn mirrors it,
+// so the input loop's busy latch, Ctrl-C handling and quit drain stay one
+// contract instead of two dispatch paths.
+export interface TuiTurnDriver {
+  isRunning(): boolean;
+  isCancelling(): boolean;
+  // False means Ctrl-C cannot cancel this turn: the runner quits instead of
+  // showing a "cancelling…" that the lane cannot honour. The solo lane
+  // always can; an orchestrator run only when its drive exposes `abort`.
+  canCancel(): boolean;
+  run(prompt: string): Promise<TuiTurnOutcome>;
+  cancel(): Promise<boolean>;
+  drainForQuit(bound: Promise<void>): Promise<void>;
+}
+
+// Issue #327: the orchestrator lane a session can switch to with Ctrl-G.
+// `run` IS the manager-lane path `kubic orchestrate` drives (one objective
+// in, one settle out); `report` receives the run's own output lines for the
+// transcript. Absent `abort` means cancellation can only stop waiting, not
+// the run — the prod drive always provides it.
+export interface TuiOrchestratorRun {
+  run(
+    objective: string,
+    report?: (line: string) => void,
+  ): Promise<TuiTurnOutcome>;
+  // Issue #327: best-effort cancellation. The prod drive has none — an
+  // orchestration is stopped by the manager's own signal guard (live
+  // workers are reaped on process exit); a drive that can abort stops the
+  // run itself.
+  abort?: () => Promise<void> | void;
+}
+
+// One orchestrator turn: drives the manager-lane run for an objective.
+// Cancellation asks the drive to abort when it can; the orchestrate path's
+// own signal guard reaps live workers on process exit otherwise. The drain
+// waits for the run to settle, bounded.
+export class TuiOrchestratorTurn implements TuiTurnDriver {
+  private readonly drive: TuiOrchestratorRun;
+  private readonly onReport: (line: string) => void;
+  private running: Promise<TuiTurnOutcome> | undefined;
+  private aborted = false;
+
+  constructor(drive: TuiOrchestratorRun, onReport: (line: string) => void) {
+    this.drive = drive;
+    this.onReport = onReport;
+  }
+
+  isRunning(): boolean {
+    return this.running !== undefined;
+  }
+
+  isCancelling(): boolean {
+    return this.aborted && this.isRunning();
+  }
+
+  canCancel(): boolean {
+    return this.drive.abort !== undefined;
+  }
+
+  run(prompt: string): Promise<TuiTurnOutcome> {
+    this.aborted = false;
+    const running = this.drive.run(prompt, this.onReport).finally(() => {
+      if (this.running === running) this.running = undefined;
+    });
+    this.running = running;
+    return running;
+  }
+
+  async cancel(): Promise<boolean> {
+    if (!this.isRunning()) return false;
+    // No abort seam means the manager run cannot be stopped from here; say
+    // so (false) instead of latching a "cancelling…" that never resolves.
+    if (this.drive.abort === undefined) return false;
+    this.aborted = true;
+    await this.drive.abort();
+    return true;
+  }
+
+  async drainForQuit(bound: Promise<void>): Promise<void> {
+    if (!this.isRunning()) return;
+    this.aborted = true;
+    await this.drive.abort?.();
+    const settled = (this.running ?? Promise.resolve()).then(
+      () => undefined,
+      () => undefined,
+    );
+    await Promise.race([settled, bound]);
+  }
+}
+
 export interface TuiLaneBoot {
   sessionId: string;
   model: string;
@@ -208,6 +311,14 @@ export interface TuiLaneBoot {
   // Issue #308: warnings to print on stderr before the alt-screen opens
   // (the full-access grant/in-force warning).
   notices?: string[];
+  // Issue #327: the orchestrator lane this session can switch to with
+  // Ctrl-G. The drive is the manager-lane path `kubic orchestrate` runs;
+  // worker approval asks reach the TUI overlay through the seat the
+  // composition root wires into the orchestrate deps. Absent (viewer boots,
+  // injected fake lanes) means the session is solo-only: toggling to
+  // orchestrator then refuses by name at submit time, never a silent
+  // fallback into solo.
+  orchestrator?: TuiOrchestratorRun;
 }
 
 export interface TuiRunDeps {
@@ -254,6 +365,15 @@ export interface TuiRunDeps {
   // process.env and stdout's TTY flag (the shipped behaviour); tests pass
   // 'none' so the shell's NO_COLOR / FORCE_COLOR never reach them.
   colorLevel?: ColorLevel;
+  // Issue #327: the config `[modes]` default — `orchestrator = true` starts
+  // the session in orchestrator mode (the --orchestrator flag still wins).
+  // This is what makes the documented key do something instead of being
+  // parsed and ignored.
+  modes?: { readonly orchestrator: boolean };
+  // Issue #327: the git probe behind the non-git orchestrator refusal
+  // (exit 5). Consulted only when the resolved mode IS orchestrator; absent
+  // means the caller owns the check (viewer boots and injected fakes).
+  isGitRepo?: () => boolean | Promise<boolean>;
 }
 
 export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
@@ -285,6 +405,33 @@ export const TUI_DRAIN_TIMEOUT_MS = 3000;
 function defaultDrainTimer(ms: number, fire: () => void): () => void {
   const timer = setTimeout(fire, ms);
   return () => clearTimeout(timer);
+}
+
+// Issue #327: the non-git orchestrator refusal needs a real probe before the
+// alt-screen opens — `git rev-parse --show-toplevel` through the exec seam,
+// the same question orchestrate's own deps answer. Never called for a solo
+// resolution.
+async function defaultIsGitRepo(): Promise<boolean> {
+  try {
+    const shell = new NodeExecutionEnv(process.cwd()).shell;
+    const result = await shell
+      .spawn('git', ['rev-parse', '--show-toplevel'], {
+        provenance: {
+          sessionId: '',
+          agentId: 'root',
+          toolCallId: 'tui:is-git-repo',
+          turnId: 0,
+          operation: 'tui',
+        },
+      })
+      .wait();
+    return result.exitCode === 0;
+  } catch {
+    // A probe that cannot even run (no git binary, a spawn failure) is not
+    // a repository as far as the orchestrator entry is concerned: refuse
+    // with the named message rather than throwing past it.
+    return false;
+  }
 }
 
 // The `kubic tui` parity flags (issue #113): same names and semantics as
@@ -349,6 +496,11 @@ export interface TuiRunOptions {
   // `[model]`/KUBIC_MODEL projection runtimeModelPin makes for `kubic run`.
   // It beats the role layer's model, which beats first-available.
   model?: ModelSelection;
+  // Issue #327: the config `[orchestrator]` projection (worktree parent and
+  // worker cap) the interactive drive hands the manager lane, and the
+  // approval snapshot a delegated conflict resolver runs under.
+  orchestratorRuntime?: RuntimeOrchestrator;
+  approvalPolicy?: ApprovalSnapshot;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -636,6 +788,29 @@ export async function bootTuiLane(
           }
         : {}),
       approvalsSkipped: installed.approvalsSkipped,
+      // Issue #327: the orchestrator lane a Ctrl-G switch submits to — the
+      // same manager-lane path `kubic orchestrate` runs, with the TUI's
+      // approval seat attached so a worker's ask reaches the overlay and
+      // its verdict travels back through the mailbox. Lazy deps: a session
+      // that never toggles pays nothing.
+      orchestrator: createProdTuiOrchestrator({
+        sessionId: id,
+        cwd: env.cwd,
+        sessionsRoot: root,
+        out: () => {
+          // The runner replaces the sink per turn (transcript lines); before
+          // the first run there is nowhere to paint.
+        },
+        ...(options.answer === undefined
+          ? {}
+          : { seat: workerAskSeatFromAnswer(options.answer) }),
+        ...(options.orchestratorRuntime === undefined
+          ? {}
+          : { orchestrator: options.orchestratorRuntime }),
+        ...(options.approvalPolicy === undefined
+          ? {}
+          : { approvalPolicy: options.approvalPolicy }),
+      }),
 
       loop: {
         accept: (prompt, loopContext) =>
@@ -723,8 +898,18 @@ export type TuiConfigProjection = {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
+  // Issue #327: the manager lane's projections for the interactive
+  // orchestrator drive — the `[orchestrator]` worktree/cap values and the
+  // approval snapshot the resolver path carries. Absent means the shipped
+  // defaults (and, for the snapshot, no delegation of conflicts).
+  orchestratorRuntime?: RuntimeOrchestrator;
+  approvalPolicy?: ApprovalSnapshot;
   // Issue #295: the `[model]`/KUBIC_MODEL pin (runtimeModelPin).
   model?: ModelSelection;
+  // Issue #327: the config `[modes]` projection (issue #90's runtime load).
+  // Consumed by runTuiCommand: `orchestrator = true` starts the session in
+  // orchestrator mode; the flag still beats it.
+  modes?: { readonly orchestrator: boolean };
 } & ReturnType<typeof runtimeLaneDeps>;
 
 function definedOnly<T extends object>(
@@ -761,6 +946,11 @@ export function tuiDepsWithDefaults(
     agentId: provided.agentId,
     roles: provided.roles,
     model: provided.model,
+    // Issue #327: the `[modes]` session default and the manager-lane
+    // projections the interactive orchestrator drive consumes.
+    modes: provided.modes,
+    orchestratorRuntime: provided.orchestratorRuntime,
+    approvalPolicy: provided.approvalPolicy,
   } satisfies Record<keyof TuiConfigProjection, unknown>;
   const projection = definedOnly(forwarded);
 
@@ -768,6 +958,10 @@ export function tuiDepsWithDefaults(
     out: provided.out,
     ...(provided.err === undefined ? {} : { err: provided.err }),
     createTerminal: () => new ProcessTerminal(),
+    ...(projection.modes === undefined ? {} : { modes: projection.modes }),
+    // Issue #327: the non-git orchestrator refusal needs a real probe before
+    // the alt-screen opens. Lazy: solo sessions never call it.
+    isGitRepo: () => defaultIsGitRepo(),
     // The seat arrives as an argument from runTuiCommand — see TuiRunDeps.
     bootLane: (
       sessionId?: string,
@@ -1114,6 +1308,12 @@ export class TuiTurnRunner {
     );
   }
 
+  // Ctrl-C: true (the solo lane always is; the orchestrator lane only when
+  // its drive exposes an abort seam). Part of TuiTurnDriver.
+  canCancel(): boolean {
+    return true;
+  }
+
   // True between a cancel request and the turn settling: the loop uses it to
   // distinguish the *first* Ctrl-C (cancel the operation) from a second one
   // (quit), which is the shipped contract in docs/cli/commands.md.
@@ -1162,6 +1362,9 @@ export interface TuiCommandOptions {
   readonly dangerouslySkipApprovals?: boolean;
   // Issue #295: `--model <provider/id>`, parsed by the registrar.
   readonly model?: ModelSelection;
+  // Issue #327 (§17, §81): `--orchestrator` — start the session in
+  // orchestrator mode (delegation stays opt-in; solo is the default).
+  readonly orchestrator?: boolean;
 }
 
 export async function runTuiCommand(
@@ -1169,6 +1372,24 @@ export async function runTuiCommand(
   deps: TuiRunDeps,
 ): Promise<number> {
   const sessionId = options.session;
+  // Issue #327 (§17, §81): solo is the architecture and the default; the
+  // flag is the explicit opt-in and the config `[modes]` key is the session
+  // default under it. resolveOrchestratorMode owns the precedence.
+  const mode = resolveOrchestratorMode({
+    cliFlag: options.orchestrator === true,
+    configValue: deps.modes?.orchestrator === true,
+  });
+  // Orchestrator mode needs git worktrees: refuse BEFORE the alt-screen
+  // opens, with the manager lane's own named message and exit 5 — never a
+  // silent fallback to solo.
+  if (mode === 'orchestrator' && deps.isGitRepo !== undefined) {
+    const isRepo = await deps.isGitRepo();
+    if (!isRepo) {
+      const refusal = buildOrchestratorRefusal();
+      (deps.err ?? deps.out)(`error: ${refusal.message}`);
+      return refusal.exitCode;
+    }
+  }
   const flags: TuiBootFlags = {};
   if (options.role !== undefined) flags.role = options.role;
   if (options.noSkills === true) flags.noSkills = true;
@@ -1229,11 +1450,11 @@ export async function runTuiCommand(
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
-    // Issue #307: `kubic tui` is the solo lane; the approvals half of the
-    // indicator comes from the installed policy, never a literal. A boot
-    // that only reports the older `fullAccess` signal (fakes, injected
-    // lanes) still seeds the OFF indicator.
-    mode: 'solo',
+    // Issue #307/#327: the session mode comes from the resolution above —
+    // never a literal, so the indicator and the submit routing cannot
+    // disagree with what the entry actually selected. The approvals half
+    // still comes from the installed policy.
+    mode,
     approvalsSkipped: boot.approvalsSkipped?.() ?? boot.fullAccess === true,
   });
   // Re-read after each turn (and each mid-turn refresh): a posture change
@@ -1250,12 +1471,23 @@ export async function runTuiCommand(
   // (KUBIC_WORKER_ID set) and for the documented KUBIC_NO_NOTICE opt-out;
   // the text is solo-warning.ts's, never re-worded here.
   const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  // Issue #327: an orchestrator session gets the orchestrator's own honest
+  // limits, not the solo statement — the footer must never describe the
+  // wrong lane. The text is orchestrator-notice.ts's, verbatim.
+  const orchestratorNotice = buildOrchestratorWorktreeNotice()
+    .slice(0, 2)
+    .join(' · ');
+  const laneNotice = (laneMode: StatusMode): string =>
+    laneMode === 'orchestrator' ? orchestratorNotice : soloNotice;
   // The faux testing provider is never silent: while it answers, the
-  // footer says so next to (or instead of) the solo notice.
-  const notice =
-    boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
-      ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
-      : soloNotice;
+  // footer says so next to (or instead of) the lane notice.
+  const noticeFor = (laneMode: StatusMode): string => {
+    const base = laneNotice(laneMode);
+    return boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
+      ? [FAUX_FOOTER, base].filter((part) => part !== '').join(' · ')
+      : base;
+  };
+  const notice = noticeFor(mode);
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier
   // turns), after each tool call (throttled) and at every settlement.
@@ -1286,6 +1518,18 @@ export async function runTuiCommand(
             if (event.type === 'tool-end') journalFeed?.request();
           },
         );
+  // Issue #327: the orchestrator turn the toggle switches to. Absent means
+  // this boot is solo-only (viewer/fake lanes): the submit path refuses by
+  // name instead of falling back into solo silently.
+  const orchestratorTurn =
+    boot.orchestrator === undefined
+      ? undefined
+      : new TuiOrchestratorTurn(boot.orchestrator, (line) => {
+          app.appendReport([line]);
+          if (!stopped) screen?.update();
+        });
+  // The driver of the turn in flight, whichever lane owns it (#327).
+  let activeTurn: TuiTurnDriver | undefined;
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -1410,13 +1654,13 @@ export async function runTuiCommand(
     // journal and the reconciliation, and the operation never records a
     // terminal status. The screen stays up (footer: cancelling…) until the
     // drain ends, bounded by drainTimeoutMs.
-    const draining = turn?.isRunning() === true;
+    const draining = activeTurn?.isRunning() === true;
     if (draining) {
       app.setEditorFooter('cancelling…');
       screen?.render();
     }
     void (async () => {
-      if (draining && turn !== undefined) {
+      if (draining && activeTurn !== undefined) {
         let cancelTimer: () => void = () => {};
         const bound = new Promise<void>((resolve) => {
           endDrain = resolve;
@@ -1426,7 +1670,7 @@ export async function runTuiCommand(
           );
         });
         try {
-          await turn.drainForQuit(bound);
+          await activeTurn.drainForQuit(bound);
         } catch {
           // The drain is best-effort; the sweep and close still run.
         }
@@ -1508,16 +1752,24 @@ export async function runTuiCommand(
       if (isKeyRelease(data)) return { consume: true };
       const routed = app.handleInput(data);
       if (routed.quit) {
-        if (routed.cancel && turn?.isRunning()) {
+        if (routed.cancel && activeTurn?.isRunning()) {
+          // Issue #327: a lane that cannot cancel never fakes it — Ctrl-C
+          // quits instead (the shutdown drain is bounded, and the manager's
+          // signal guard reaps live workers on process exit).
+          if (!activeTurn.canCancel()) {
+            shutdown();
+            return { consume: true };
+          }
           // Ctrl-C during a turn. The first one cancels the operation and
           // keeps the session alive; a second one (while the cancellation is
           // still draining) quits, which is the contract docs/cli/commands.md
           // ships. The footer is set synchronously so the cancellation is
           // visible on the very next frame — the abort itself is async.
-          if (!turn.isCancelling()) {
+          if (!activeTurn.isCancelling()) {
+            const cancelling = activeTurn;
             app.setEditorFooter('cancelling…');
             screen?.render();
-            void turn
+            void cancelling
               .cancel()
               .then((accepted) => {
                 if (stopped) return;
@@ -1553,13 +1805,29 @@ export async function runTuiCommand(
       }
       return undefined;
     };
-    if (turn !== undefined) {
+    if (turn !== undefined || orchestratorTurn !== undefined) {
       app.onSubmit((prompt: string) => {
-        if (stopped || turn.isRunning()) return;
+        if (stopped || activeTurn?.isRunning() === true) return;
+        // Issue #327: the NEXT submit goes to the lane the session mode
+        // names. The mode is read at submit time, so a Ctrl-G between turns
+        // routes the very next prompt — and a session booted without the
+        // lane refuses by name instead of pretending it ran there.
+        const wantsOrchestrator = app.mode() === 'orchestrator';
+        const driver = wantsOrchestrator ? orchestratorTurn : turn;
+        if (driver === undefined) {
+          app.setEditorFooter(
+            wantsOrchestrator
+              ? 'error: orchestrator mode is unavailable in this session'
+              : 'error: the solo lane is unavailable in this session',
+          );
+          if (!stopped) screen?.render();
+          return;
+        }
+        activeTurn = driver;
         app.setBusy(true);
         startSpinner();
         screen?.render();
-        void turn
+        void driver
           .run(prompt)
           .then((outcome) => {
             app.setBusy(false);
@@ -1567,9 +1835,12 @@ export async function runTuiCommand(
             syncPosture();
             journalFeed?.now();
             // A completed turn has no outcome line of its own, so the footer
-            // falls back to the trust statement instead of going blank
-            // (issue #89) — a cancelled/failed turn keeps its own report.
-            app.setEditorFooter(footerForOutcome(outcome) || notice);
+            // falls back to the lane's trust statement instead of going
+            // blank (issue #89) — a cancelled/failed turn keeps its own
+            // report.
+            app.setEditorFooter(
+              footerForOutcome(outcome) || noticeFor(app.mode()),
+            );
             if (!stopped) screen?.render();
           })
           .catch((error: unknown) => {
@@ -1579,9 +1850,12 @@ export async function runTuiCommand(
               error instanceof Error ? error.message : String(error);
             app.setEditorFooter(`error: ${message}`);
             if (!stopped) screen?.render();
+          })
+          .finally(() => {
+            if (activeTurn === driver) activeTurn = undefined;
           });
       });
-      await turn.refreshTranscript();
+      await turn?.refreshTranscript();
     }
   } catch (error) {
     // Post-start setup (boot/setFocus/render/input routing) can throw

@@ -33,6 +33,10 @@ an interactive terminal (stdin and stdout both a TTY) opens the TUI, exactly
 as `kubic tui`. Off a TTY (a pipe, CI, a script) it prints the *identical*
 listing and exits 1: usage-on-no-args is the deliberate POSIX posture, so
 only the exit code differs between the two paths.
+`kubic --orchestrator` (issue #327) is the same bare form with the
+orchestrator opt-in: on a TTY it is exactly `kubic tui --orchestrator`.
+Off a TTY, like every other bare flag, it prints the usage line and
+exits 1.
 `scripts/binary-contract.mjs` pins both exits and the line itself, so the
 dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 
@@ -555,7 +559,7 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 2 without touching anything
 (§78). See [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--model <provider/id>] [--dangerously-skip-approvals]`
+## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--model <provider/id>] [--orchestrator] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -582,6 +586,41 @@ the derived allowlist, and the destructive/network/confine guards with the
 approval ask. A challenged call surfaces the approval overlay — the
 interactive path can actually collect a verdict on it — and an unanswered
 ask denies on the same bounded wait.
+
+**Orchestrator mode (`--orchestrator`, issue #327).** `kubic tui
+--orchestrator` — and the bare `kubic --orchestrator` on a terminal — opens
+this TUI with the session mode set to `orchestrator` from the first frame:
+the header and the status-bar indicator both read `orchestrator`, and each
+submitted prompt is driven through the manager lane `kubic orchestrate`
+runs (one manager, one worker process and one git worktree per subagent)
+instead of the solo lane. Solo stays the default architecture — the flag
+(or the config key below) is the opt-in: opening a TUI starts no worker by
+itself, and a delegation only runs once you submit a prompt.
+
+The mode is session state, not a launch-time constant: **`Ctrl-G`** switches
+between `solo` and `orchestrator` between turns, the indicator follows, and
+the *next* submitted prompt takes the newly selected lane. The key is
+refused — with the reason on the footer — while a turn is running, because
+the in-flight turn owns its lane.
+
+Orchestrator mode needs git worktrees: outside a git repository the entry
+refuses **before the alt-screen opens**, printing the manager lane's
+non-repo message on stderr as one `error: …` line, and exits **5** — it
+never falls back to solo. Solo sessions never pay the git probe.
+
+Worker approval asks (a worker's challenged call it cannot answer itself)
+route to the same approval overlay as a solo challenge: the dialog names the
+worker and the full command, and the decision is written back to the run's
+mailbox, which is what unblocks the worker's bounded wait. A denied ask ends
+that worker's step (exit 4 on the CLI path) instead of hanging. The run's
+own report lines are written to the transcript; the multi-agent worktree
+tree is issue #342, not this entry.
+
+`[modes] orchestrator = true` in `.kubic/config.toml` starts sessions in
+orchestrator mode, so a bare `kubic` on a terminal opens the orchestrator
+TUI without the flag; `modes.solo = true` (or an unset `[modes]`) keeps the
+solo default, and both keys `true` is refused by name at config load. The
+`--orchestrator` flag beats the config key.
 
 **Full access (§41.4, issue #308).** `kubic tui --dangerously-skip-approvals`
 — and the bare `kubic --dangerously-skip-approvals` on a terminal — enables
@@ -639,8 +678,11 @@ The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in
 the tree, the transcript grows with the committed conversation, and the
 status bar fills with usage rows. While a turn runs the editor disables
-submit; `Ctrl-C` cancels the in-flight operation and keeps the session
-alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits.
+submit; `Ctrl-C` cancels the in-flight solo operation and keeps the session
+alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits. An orchestrator
+run cannot be cancelled from the TUI (there is no abort seam into the
+manager): `Ctrl-C` during one quits, and the manager's own signal guard
+reaps its live workers as the process exits.
 
 **Screen layout.** Top to bottom: a one-line header (the Konic `■ kubic`
 wordmark, mode and model); the agent tree, sized to its content (at most 6
@@ -663,6 +705,7 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Enter` | **Submit** the prompt (an empty draft submits nothing). |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
+| `Ctrl-G` | Switch the session mode between **solo** and **orchestrator** between turns — the next submitted prompt takes the selected lane. Refused (with the reason on the footer) while a turn runs. |
 | `Ctrl-O` | Toggle the **diff panel** — the most recent tool call that changed files, rendered as unified hunks. |
 | `Ctrl-R` | Toggle the **journal panel** — every change in the session journal (filter by path or agent on the command line with `kubic diff --path/--agent`). |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
@@ -670,7 +713,7 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
 | `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
-| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
+| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
@@ -734,13 +777,17 @@ main screen, so it stays in your scrollback: the whole last frame at the
 terminal's width — header, tree, the transcript including the last
 assistant answer, status bar, editor and footer — on stdout. A crash
 restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
-`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs: the operation
+`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the operation
 is aborted (recorded in the session, so a resumed session shows no
 unfinished operation), every tool process group it started is killed, and
 the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
 the end-of-run reconciliation sweep and the session close — so a killed
 tool's last write is still journaled and no child keeps running after the
-TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once.
+TUI exits. An **orchestrator** run has no abort seam into the manager, so a
+quit cannot stop the run itself: the loop waits for it at most the same
+bound and closes the session, and the manager's signal guard reaps its live
+workers when the process exits. A further `Ctrl-C` (or `SIGINT`) during that
+wait exits at once.
 Before the screen is restored the quit drains stdin for a moment (the Kitty
 keyboard protocol is popped first), so the release of the quitting key —
 which can arrive late over SSH — is swallowed instead of printing as

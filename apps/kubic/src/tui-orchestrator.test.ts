@@ -1,0 +1,525 @@
+// The interactive orchestrator entry (issue #327; §17, §81): mode resolution
+// (flag over config default), the non-git refusal (exit 5), the Ctrl-G toggle
+// routing the NEXT submit to the orchestrator drive, and the solo default
+// staying pinned.
+//
+// This file lives in the composition root because that is what it exercises:
+// the root's wiring of host contracts to the TUI presentation seam. The
+// orchestrator drive is a stub here — no workers, no network, no real
+// manager: the real delegation run is exercised by the orchestrate suites.
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  OrchestrateCliOptions,
+  OrchestrateCommandDeps,
+} from '../../../packages/host/src/orchestrate-cli.js';
+import {
+  createOrchestratorApprovalsRun,
+  publishWorkerAsk,
+  readWorkerAskAnswer,
+} from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
+import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
+import {
+  createProdTuiOrchestrator,
+  workerAskSeatFromAnswer,
+} from './tui-orchestrator.js';
+import {
+  TuiOrchestratorTurn as OrchestratorTurn,
+  runTuiCommand,
+  type TuiLaneLoop,
+  type TuiOrchestratorRun,
+  type TuiRunDeps,
+  type TuiTurnOutcome,
+} from './tui-run.js';
+
+const roots: string[] = [];
+
+function tmpRoot(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-327-asks-'));
+  roots.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function fakeTerminal(width: number): Terminal & {
+  writes: string[];
+  started: number;
+  stopped: number;
+  feed: (data: string) => void;
+} {
+  const writes: string[] = [];
+  const counts = { started: 0, stopped: 0 };
+  let handler: ((data: string) => void) | undefined;
+  return {
+    writes,
+    get started(): number {
+      return counts.started;
+    },
+    get stopped(): number {
+      return counts.stopped;
+    },
+    feed: (data: string) => handler?.(data),
+    start: (onInput: (data: string) => void) => {
+      counts.started += 1;
+      handler = onInput;
+    },
+    stop: () => {
+      counts.stopped += 1;
+    },
+    drainInput: () => Promise.resolve(),
+    write: (data: string) => writes.push(data),
+    get columns(): number {
+      return width;
+    },
+    get rows(): number {
+      return 30;
+    },
+    get kittyProtocolActive(): boolean {
+      return false;
+    },
+    moveBy: () => {},
+    hideCursor: () => {},
+    showCursor: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    setTitle: () => {},
+    setProgress: () => {},
+  };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(condition()).toBe(true);
+}
+
+function deps(
+  terminal: Terminal,
+  overrides: Partial<TuiRunDeps> = {},
+): TuiRunDeps {
+  return {
+    out: () => {},
+    createTerminal: () => terminal,
+    colorLevel: 'none',
+    bootLane: async (sessionId?: string) => ({
+      sessionId: sessionId ?? 's1',
+      model: 'faux/test',
+    }),
+    ...overrides,
+  };
+}
+
+// A minimal solo loop: accepts prompts, settles completed. No events, no
+// tools — the routing decision is what these tests observe.
+function fakeLoop(admitted: string[]): TuiLaneLoop {
+  return {
+    accept: async (prompt: string) => {
+      admitted.push(prompt);
+      return { ok: true, value: { operationId: `op-${admitted.length}` } };
+    },
+    lane: {
+      drive: async () => ({
+        ok: true,
+        value: { kind: 'settled', outcome: { status: 'completed' } },
+      }),
+    },
+    requestAbort: async () => {},
+    findEntries: async () => [],
+    events: { on: () => () => {}, off: () => {} },
+    kills: { register: () => () => {} },
+    context: BACKGROUND_CONTEXT,
+  } as unknown as TuiLaneLoop;
+}
+
+interface FakeDrive {
+  objectives: string[];
+  run: (
+    objective: string,
+    report?: (line: string) => void,
+  ) => Promise<{ status: 'completed' }>;
+}
+
+function fakeDrive(): FakeDrive {
+  const drive: FakeDrive = {
+    objectives: [],
+    run: async (objective, report) => {
+      drive.objectives.push(objective);
+      report?.('manager: planning');
+      return { status: 'completed' };
+    },
+  };
+  return drive;
+}
+
+describe('orchestrator entry: mode resolution (issue #327)', () => {
+  it('--orchestrator boots the TUI with the mode in the header and status bar', async () => {
+    const terminal = fakeTerminal(100);
+    const pending = runTuiCommand({ orchestrator: true }, deps(terminal));
+    await waitFor(() => terminal.started === 1);
+    const frame = terminal.writes.join('');
+    expect(frame).toContain('orchestrator · faux/test');
+    expect(frame).toContain('orchestrator • approvals:on');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('config [modes] orchestrator = true starts solo-flagless sessions in orchestrator mode', async () => {
+    const terminal = fakeTerminal(100);
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, { modes: { orchestrator: true } }),
+    );
+    await waitFor(() => terminal.started === 1);
+    const frame = terminal.writes.join('');
+    expect(frame).toContain('orchestrator · faux/test');
+    expect(frame).toContain('orchestrator • approvals:on');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('the flag wins over a config that says solo, and solo stays the default', async () => {
+    const flagged = fakeTerminal(100);
+    const run = runTuiCommand(
+      { orchestrator: true },
+      deps(flagged, { modes: { orchestrator: false } }),
+    );
+    await waitFor(() => flagged.started === 1);
+    expect(flagged.writes.join('')).toContain('orchestrator • approvals:on');
+    flagged.feed('\x03');
+    await run;
+
+    const plain = fakeTerminal(100);
+    const solo = runTuiCommand(
+      {},
+      deps(plain, { modes: { orchestrator: false } }),
+    );
+    await waitFor(() => plain.started === 1);
+    const frame = plain.writes.join('');
+    expect(frame).toContain('solo • approvals:on');
+    expect(frame).not.toContain('orchestrator ·');
+    plain.feed('\x03');
+    await solo;
+  });
+});
+
+describe('orchestrator entry: the non-git refusal (issue #327)', () => {
+  it('--orchestrator outside a git repo exits 5 with the named message', async () => {
+    const err: string[] = [];
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        err: (line: string) => err.push(line),
+        isGitRepo: () => false,
+      }),
+    );
+    expect(code).toBe(5);
+    expect(terminal.started).toBe(0);
+    expect(err.join('\n')).toContain('needs a git repository');
+  });
+
+  it('a config-driven orchestrator session is refused on the same path', async () => {
+    const terminal = fakeTerminal(100);
+    const code = await runTuiCommand(
+      {},
+      deps(terminal, { modes: { orchestrator: true }, isGitRepo: () => false }),
+    );
+    expect(code).toBe(5);
+    expect(terminal.started).toBe(0);
+  });
+
+  it('solo sessions never probe git', async () => {
+    const probe = vi.fn(() => true);
+    const terminal = fakeTerminal(100);
+    const pending = runTuiCommand({}, deps(terminal, { isGitRepo: probe }));
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(probe).not.toHaveBeenCalled();
+  });
+});
+
+describe('orchestrator entry: the toggle routes the next submit (issue #327)', () => {
+  it('Ctrl-G flips the indicator and the next prompt takes the orchestrator path', async () => {
+    const terminal = fakeTerminal(120);
+    const admitted: string[] = [];
+    const drive = fakeDrive();
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop(admitted),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('\x07');
+    await waitFor(() => terminal.writes.join('').includes('orchestrator •'));
+    terminal.feed('do it');
+    terminal.feed('\r');
+    await waitFor(() => drive.objectives.length === 1);
+    expect(drive.objectives).toEqual(['do it']);
+    expect(admitted).toEqual([]);
+    // The drive's report callback lands in the transcript, not nowhere.
+    await waitFor(() => terminal.writes.join('').includes('manager: planning'));
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('the solo default is pinned: without the toggle the prompt stays on the solo lane', async () => {
+    const terminal = fakeTerminal(120);
+    const admitted: string[] = [];
+    const drive = fakeDrive();
+    const pending = runTuiCommand(
+      {},
+      deps(terminal, {
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          loop: fakeLoop(admitted),
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('solo work');
+    terminal.feed('\r');
+    await waitFor(() => admitted.length === 1);
+    expect(admitted).toEqual(['solo work']);
+    expect(drive.objectives).toEqual([]);
+    terminal.feed('\x03');
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('orchestrator worker asks reach the TUI surface and the worker (issue #327)', () => {
+  const ask = {
+    trigger: 'destructive-shell',
+    toolName: 'bash',
+    args: { command: 'rm -rf /tmp/kubic-327-scratch' },
+    justification: 'worker must clear its own temp tree before the next step',
+    sessionId: 'orch-327',
+    agentId: 'worker-1',
+    role: 'worker',
+    worktree: '/repo/.kubic/wt/worker-1',
+    provenance: { parentSessionId: 'orch-327' },
+  } as const;
+
+  it('a published worker ask is rendered by the surface and the allow decision reaches the mailbox', async () => {
+    const dir = tmpRoot();
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const approvals = createOrchestratorApprovalsRun({
+      dir,
+      sessionId: 'orch-327',
+      maxPendingMs: 5_000,
+      seat: workerAskSeatFromAnswer(surface.seat),
+      pollMs: 5,
+    });
+    const published = publishWorkerAsk(approvals.mailboxDir(), ask);
+    const pumped = approvals.pump({
+      sessionId: 'orch-327',
+      agentId: 'worker-1',
+      worktree: ask.worktree,
+    });
+    await waitFor(() => surface.isShowing());
+    const shown = surface.pending();
+    // The overlay names the worker, the tool and the full command: the
+    // operator decides on what will run, not on a bare tool name.
+    expect(shown?.toolName).toBe('bash');
+    expect(shown?.summary).toContain("worker 'worker-1'");
+    expect(shown?.command).toContain('rm -rf /tmp/kubic-327-scratch');
+    expect(surface.renderOverlayBody(90).join('\n')).toContain('bash');
+    // The operator answers through the same key path the TUI routes.
+    expect(surface.decide('a')).toBe(true);
+    expect(await pumped).toBeUndefined();
+    expect(
+      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
+    ).toEqual({
+      approved: true,
+      by: 'user',
+    });
+  });
+
+  it('a deny decision reaches the mailbox as a refusal the worker unblocks on', async () => {
+    const dir = tmpRoot();
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const approvals = createOrchestratorApprovalsRun({
+      dir,
+      sessionId: 'orch-327',
+      maxPendingMs: 5_000,
+      seat: workerAskSeatFromAnswer(surface.seat),
+      pollMs: 5,
+    });
+    const published = publishWorkerAsk(approvals.mailboxDir(), ask);
+    const pumped = approvals.pump({
+      sessionId: 'orch-327',
+      agentId: 'worker-1',
+      worktree: ask.worktree,
+    });
+    await waitFor(() => surface.isShowing());
+    surface.decide('d');
+    const termination = await pumped;
+    expect(termination?.exitCode).toBe(4);
+    expect(
+      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
+    ).toMatchObject({ approved: false });
+  });
+});
+
+describe('orchestrator cancellation is honest (issue #327)', () => {
+  it('a drive without an abort seam cannot be cancelled; a drive with one can', async () => {
+    const noAbort = new OrchestratorTurn(
+      { run: () => new Promise<TuiTurnOutcome>(() => {}) },
+      () => {},
+    );
+    expect(noAbort.canCancel()).toBe(false);
+    void noAbort.run('x');
+    await waitFor(() => noAbort.isRunning());
+    expect(await noAbort.cancel()).toBe(false);
+    expect(noAbort.isCancelling()).toBe(false);
+
+    let aborted = 0;
+    const withAbort = new OrchestratorTurn(
+      {
+        run: () => new Promise<TuiTurnOutcome>(() => {}),
+        abort: () => {
+          aborted += 1;
+        },
+      },
+      () => {},
+    );
+    expect(withAbort.canCancel()).toBe(true);
+    void withAbort.run('x');
+    await waitFor(() => withAbort.isRunning());
+    expect(await withAbort.cancel()).toBe(true);
+    expect(aborted).toBe(1);
+    expect(withAbort.isCancelling()).toBe(true);
+  });
+
+  it('Ctrl-C on a non-cancellable orchestrator run quits instead of faking a cancel', async () => {
+    const terminal = fakeTerminal(120);
+    let started = false;
+    const drive: TuiOrchestratorRun = {
+      run: () => {
+        started = true;
+        return new Promise<TuiTurnOutcome>(() => {});
+      },
+    };
+    const pending = runTuiCommand(
+      { orchestrator: true },
+      deps(terminal, {
+        isGitRepo: () => true,
+        drainTimeoutMs: 0,
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+          orchestrator: drive,
+        }),
+      }),
+    );
+    await waitFor(() => terminal.started === 1);
+    terminal.feed('long task');
+    terminal.feed('\r');
+    await waitFor(() => started);
+    terminal.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(terminal.stopped).toBe(1);
+  });
+});
+
+describe('createProdTuiOrchestrator (issue #327)', () => {
+  it('runs the objective through the manager-lane command with the TUI seat attached', async () => {
+    const seen: {
+      options?: OrchestrateCliOptions;
+      depsOptions?: { approvalsSeat?: unknown };
+      lines: string[];
+    } = { lines: [] };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      seat: async () => ({ approved: true, by: 'user' }),
+      createDeps: async (options) => {
+        seen.depsOptions = options;
+        return { out: options.out } as OrchestrateCommandDeps;
+      },
+      runCommand: async (options, deps) => {
+        seen.options = options;
+        // The report sink the drive passed to the deps is the per-turn one.
+        deps.out('session: orch-9');
+        return 0;
+      },
+    });
+    const outcome = await drive.run('refactor the parser', (line) =>
+      seen.lines.push(line),
+    );
+    expect(seen.options).toEqual({
+      prompt: 'refactor the parser',
+      session: 'orch-9',
+    });
+    expect(typeof seen.depsOptions?.approvalsSeat).toBe('function');
+    expect(seen.lines).toEqual(['session: orch-9']);
+    expect(outcome).toEqual({ status: 'completed' });
+  });
+
+  it('maps a non-zero exit to a failed turn with the code named', async () => {
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      createDeps: async () => ({}) as OrchestrateCommandDeps,
+      runCommand: async () => 3,
+    });
+    expect(await drive.run('spend too much')).toEqual({
+      status: 'failed',
+      detail: 'the orchestrator run failed (exit 3)',
+    });
+  });
+
+  it('builds the run deps per turn, never reusing a previous run\u2019s state', async () => {
+    let built = 0;
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      createDeps: async () => {
+        built += 1;
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('one');
+    await drive.run('two');
+    expect(built).toBe(2);
+  });
+
+  it('a deps failure is a failed turn, not an exception into the loop', async () => {
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      createDeps: async () => {
+        throw new Error('not a git repository');
+      },
+      runCommand: async () => 0,
+    });
+    expect(await drive.run('anything')).toEqual({
+      status: 'failed',
+      detail: 'not a git repository',
+    });
+  });
+});

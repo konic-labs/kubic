@@ -204,6 +204,61 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
   });
 });
 
+describe('the TUI consumes [modes] orchestrator (issue #327)', () => {
+  it('forwards the config mode so a flagless session starts in orchestrator mode', async () => {
+    const workspace = tmpRoot();
+    const cliConfig = {
+      runtime: namedRuntime(workspace, '[modes]\norchestrator = true\n'),
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+    };
+    const fake = recordingTerminal();
+    const deps = {
+      ...tuiDepsWithDefaults(
+        {
+          out: () => {},
+          modes: cliConfig.runtime?.modes,
+        },
+        async () => ({ sessionId: 's', model: 'faux/m' }),
+      ),
+      createTerminal: () => fake.terminal,
+      colorLevel: 'none' as const,
+      // The entry's own non-git refusal is pinned in tui-orchestrator.test.ts;
+      // this test drives the config projection to the rendered mode.
+      isGitRepo: () => true,
+    };
+    const exit = runTuiCommand({}, deps);
+    await waitFor(() => fake.counts.started === 1);
+    expect(fake.writes.join('')).toContain('orchestrator · faux/m');
+    expect(fake.writes.join('')).toContain('orchestrator • approvals:on');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('a config that leaves [modes] unset keeps the solo default', async () => {
+    const workspace = tmpRoot();
+    const cliConfig = {
+      runtime: namedRuntime(workspace, ''),
+      error: undefined,
+      ignoreSplit: NO_SPLIT,
+    };
+    const fake = recordingTerminal();
+    const deps = {
+      ...tuiDepsWithDefaults(
+        { out: () => {}, modes: cliConfig.runtime?.modes },
+        async () => ({ sessionId: 's', model: 'faux/m' }),
+      ),
+      createTerminal: () => fake.terminal,
+      colorLevel: 'none' as const,
+    };
+    const exit = runTuiCommand({}, deps);
+    await waitFor(() => fake.counts.started === 1);
+    expect(fake.writes.join('')).toContain('solo • approvals:on');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+});
+
 // Two models on one provider: 'a' is the first-available pick, so a boot
 // that ignores the pin lands on fx/a and the assertions below catch it.
 function twoModels(): MutableModels {

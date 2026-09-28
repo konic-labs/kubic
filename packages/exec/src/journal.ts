@@ -1018,6 +1018,48 @@ export interface ReconcileContext {
   sessionId: string;
   agentId: string;
   timestamp: number;
+  /**
+   * Issue #341: where this run's part of the journal begins (captured with
+   * the boot baseline). Only entries appended after it define a path's
+   * expected state; absent ⇒ the whole store is treated as this run.
+   */
+  runStart?: JournalRunStart;
+}
+
+/**
+ * The journal position at the moment a run's baseline was captured: the
+ * entry count and the last entry then. The last entry is the marker — a
+ * retention pass that drops head entries mid-run shifts indexes, so the
+ * marker is re-found by content rather than trusted by position.
+ */
+export interface JournalRunStart {
+  count: number;
+  last: JournalEntry | null;
+}
+
+export function journalRunStart(store: FileJournalStore): JournalRunStart {
+  const all = store.entries();
+  return { count: all.length, last: all.at(-1) ?? null };
+}
+
+// The entries appended since `start` (issue #341). The fast path trusts the
+// recorded index when the marker is still there; otherwise the marker's
+// last occurrence is searched, and a marker retention already dropped
+// means everything left is newer than it.
+export function entriesSinceRunStart(
+  all: JournalEntry[],
+  start: JournalRunStart | undefined,
+): JournalEntry[] {
+  if (start === undefined || start.last === null) return all;
+  const marker = JSON.stringify(start.last);
+  const at = start.count - 1;
+  if (at < all.length && JSON.stringify(all[at]) === marker) {
+    return all.slice(start.count);
+  }
+  for (let i = Math.min(at, all.length - 1); i >= 0; i--) {
+    if (JSON.stringify(all[i]) === marker) return all.slice(i + 1);
+  }
+  return all;
 }
 
 export type RestoreResult =
@@ -1323,10 +1365,19 @@ export function reconcile(
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, options);
-  const latest = new Map<string, { afterHash: string | null }>();
-  for (const e of store.entries()) {
-    latest.set(e.path, { afterHash: e.afterHash });
+  // Issue #341: each path's EXPECTED state is the last entry journaled
+  // during THIS run, else the boot baseline — never "matches the baseline
+  // OR any historical after-hash", which hid same-run reverts, a resumed
+  // session's change back to an older hash, and repeat deletes.
+  // `null` = expected absent.
+  const sinceStart = new Map<string, string | null>();
+  for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
+    sinceStart.set(e.path, e.afterHash);
   }
+  const expectedHash = (relPath: string): string | null => {
+    if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;
+    return baseline[relPath] ?? null;
+  };
   let added = 0;
   const record = (input: {
     path: string;
@@ -1362,8 +1413,8 @@ export function reconcile(
     // The walk above already prunes an excluded directory, so this states the
     // rule for a path that reaches the sweep any other way.
     if (isOutOfScope(relPath, outOfScope)) continue;
-    if (baseline[relPath] === hash) continue;
-    if (latest.get(relPath)?.afterHash === hash) continue;
+    const expected = expectedHash(relPath);
+    if (expected === hash) continue;
     const abs = join(root, relPath);
     let size: number | null = null;
     try {
@@ -1397,8 +1448,8 @@ export function reconcile(
     }
     record({
       path: relPath,
-      op: baseline[relPath] === undefined ? 'create' : 'write',
-      beforeHash: baseline[relPath] ?? null,
+      op: expected === null ? 'create' : 'write',
+      beforeHash: expected,
       after,
       // The hash-only shape: the walk hash keeps dedupe and undo staleness
       // comparing the same digest the baseline walk produced, and the
@@ -1409,18 +1460,20 @@ export function reconcile(
         : {}),
     });
   }
-  for (const relPath of Object.keys(baseline)) {
+  const candidates = new Set([...Object.keys(baseline), ...sinceStart.keys()]);
+  for (const relPath of candidates) {
     // The same rule in the delete direction (issue #115): a baseline captured
     // before the entry was declared — or supplied by a caller — can name
     // out-of-scope paths, and their disappearance is not a journal event
     // either.
     if (isOutOfScope(relPath, outOfScope)) continue;
     if (current[relPath] !== undefined) continue;
-    if (latest.get(relPath)?.afterHash === null) continue;
+    const expected = expectedHash(relPath);
+    if (expected === null) continue;
     record({
       path: relPath,
       op: 'delete',
-      beforeHash: baseline[relPath] ?? null,
+      beforeHash: expected,
       after: null,
     });
   }

@@ -830,8 +830,17 @@ composition paths therefore capture a **baseline** when the lane boots and
 - The baseline is a metadata walk — sha256 per file, **no content copied** — of
   the lane's workspace root (`§42.5`), persisted as
   `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.
-- The sweep compares the tree against it and appends one entry per changed,
-  created or deleted path with `unattributed: true` and `toolCallId: null`.
+- The sweep compares each path against its **expected state**: the last
+  entry journaled for it during *this* run (the journal position is recorded
+  with the baseline), or the baseline when this run journaled nothing for it.
+  It appends one entry per changed, created or deleted path with
+  `unattributed: true` and `toolCallId: null`, and the entry's `beforeHash`
+  is that expected state (issue #341). A revert behind the tools' back is a
+  change too: a tool writes `a.txt` and `git checkout a.txt` restores it, so
+  the sweep records the restore and `diff` stops showing an edit that no
+  longer exists. Earlier runs of a resumed session never mask a change: a
+  file set back to an older run's content, or deleted again after being
+  recreated between runs, is journaled.
 - Excluded from **both** walks: `.git/`, `.kubic/` (journal state is never
   journaled) and anything the `.gitignore` files match — the root's rules plus
   every nested file's, child rules after the parent's so a nested negation

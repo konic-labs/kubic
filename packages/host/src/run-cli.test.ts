@@ -293,6 +293,29 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  it('ignores workspace keywords that only appear inside a filesystem path', () => {
+    // A checkout under e.g. .claude/worktrees/ or ~/workspace/ must not turn
+    // an unrelated failure that quotes a path into workspace_unavailable.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: skills/budget bundle missing at /home/dev/.claude/worktrees/wf-1/packages/extensions/dist',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("boom in 'C:\\Users\\dev\\workspace\\kubic\\x.ts'"),
+      ),
+    ).toBe('failed');
+    // The code outside the path still classifies.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file or directory, open '/tmp/worktree/x'"),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

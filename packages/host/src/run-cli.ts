@@ -226,7 +226,11 @@ function isWorkspaceFailure(error: unknown): boolean {
     error instanceof Error ? error.message : error,
   ]
     .map((part) => String(part ?? ''))
-    .join(' ');
+    .join(' ')
+    // Keywords inside a quoted filesystem path (a checkout under
+    // `.claude/worktrees/` or `~/workspace/`) say nothing about the
+    // failure's class, so absolute paths are blanked before matching.
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`,;()]*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CliUsageError } from '../../core/src/cli/exit-codes.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { runJournalCommand } from './journal-cli.js';
 
@@ -52,11 +53,14 @@ describe('session journal reachability (issue #83)', () => {
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
-    const code = await runJournalCommand(['diff', '--session', 'sess-1'], {
-      root,
-      sessionsRoot,
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'diff', session: 'sess-1' },
+      {
+        root,
+        sessionsRoot,
+        out: o.write,
+      },
+    );
     expect(code).toBe(0);
     expect(o.lines.join('\n')).toContain('a.txt');
   });
@@ -68,17 +72,23 @@ describe('session journal reachability (issue #83)', () => {
     const deps = { root, sessionsRoot };
     const diffOut = out();
     expect(
-      await runJournalCommand(['diff', '--session', 'sess-1'], {
-        ...deps,
-        out: diffOut.write,
-      }),
+      await runJournalCommand(
+        { command: 'diff', session: 'sess-1' },
+        {
+          ...deps,
+          out: diffOut.write,
+        },
+      ),
     ).toBe(0);
     const undoOut = out();
     expect(
-      await runJournalCommand(['undo', '--dry-run', '--session', 'sess-1'], {
-        ...deps,
-        out: undoOut.write,
-      }),
+      await runJournalCommand(
+        { command: 'undo', dryRun: true, session: 'sess-1' },
+        {
+          ...deps,
+          out: undoOut.write,
+        },
+      ),
     ).toBe(0);
     // Same store: diff shows the session's file, dry-run plans its restore.
     expect(diffOut.lines.join('\n')).toContain('a.txt');
@@ -94,7 +104,7 @@ describe('session journal reachability (issue #83)', () => {
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
     const code = await runJournalCommand(
-      ['diff', '--session', 'journal:sess-1'],
+      { command: 'diff', session: 'journal:sess-1' },
       { root, sessionsRoot, out: o.write },
     );
     expect(code).toBe(0);
@@ -110,37 +120,49 @@ describe('session journal reachability (issue #83)', () => {
     'a/b',
     '',
     'journal:',
-  ])('refuses session id %s with exit 1 and never escapes', async (id) => {
-    const sessionsRoot = tmpDir('sess-root-');
-    const root = tmpDir('ws-');
-    seedSessionJournal(sessionsRoot, 'sess-1', root);
-    const o = out();
-    const code = await runJournalCommand(['diff', '--session', id], {
-      root,
-      sessionsRoot,
-      out: o.write,
-    });
-    expect(code).toBe(1);
-    expect(o.lines.join('\n')).toMatch(/invalid --session/);
-    // The rejected join could only have escaped here: prove it never did.
-    expect(existsSync(join(sessionsRoot, '..', 'evil', 'journal'))).toBe(false);
-    expect(existsSync(join(sessionsRoot, '..', 'abs'))).toBe(false);
-  });
+  ])(
+    'refuses session id %s as a usage error (exit 2) and never escapes',
+    async (id) => {
+      const sessionsRoot = tmpDir('sess-root-');
+      const root = tmpDir('ws-');
+      seedSessionJournal(sessionsRoot, 'sess-1', root);
+      const o = out();
+      const error = await runJournalCommand(
+        { command: 'diff', session: id },
+        { root, sessionsRoot, out: o.write },
+      ).catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(CliUsageError);
+      expect((error as CliUsageError).exitCode).toBe(2);
+      expect((error as CliUsageError).message).toMatch(/invalid --session/);
+      expect(o.lines).toEqual([]);
+      // The rejected join could only have escaped here: prove it never did.
+      expect(existsSync(join(sessionsRoot, '..', 'evil', 'journal'))).toBe(
+        false,
+      );
+      expect(existsSync(join(sessionsRoot, '..', 'abs'))).toBe(false);
+    },
+  );
 
   it('refuses --session combined with a configured journal dir (explicit precedence)', async () => {
     const sessionsRoot = tmpDir('sess-root-');
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
-    const code = await runJournalCommand(['diff', '--session', 'sess-1'], {
-      root,
-      sessionsRoot,
-      journalDir: join(root, '.kubic', 'journal'),
-      out: o.write,
-    });
-    expect(code).toBe(1);
-    expect(o.lines.join('\n')).toMatch(
-      /conflicts with a configured journal dir/,
+    await expect(
+      runJournalCommand(
+        { command: 'diff', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          journalDir: join(root, '.kubic', 'journal'),
+          out: o.write,
+        },
+      ),
+    ).rejects.toThrow(
+      new CliUsageError(
+        '--session "sess-1" conflicts with a configured journal dir (use one store per invocation)',
+      ),
     );
+    expect(o.lines).toEqual([]);
   });
 });

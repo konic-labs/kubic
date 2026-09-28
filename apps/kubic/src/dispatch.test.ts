@@ -88,8 +88,6 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['export', ['trajectory.json'], 'export'],
 ];
 
-const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
-
 // Commands migrated to real commander definitions (commands/*.ts): their
 // runner receives the parsed options for the ROUTES argv, never argv.
 const PARSED: Readonly<Record<string, unknown>> = {
@@ -102,10 +100,15 @@ const PARSED: Readonly<Record<string, unknown>> = {
   orchestrate: {},
   clean: { dryRun: true },
   workers: { json: true },
+  git: { command: 'status' },
+  diff: { command: 'diff', json: true },
+  undo: { command: 'undo', step: true },
+  log: { command: 'log' },
+  status: { command: 'status' },
 };
 
-// A forwarded runner receives argv; a migrated one (the solo group:
-// run, tui, doctor, models, config, sessions) the options commander parsed.
+// A forwarded runner receives argv; a migrated one the options commander
+// parsed.
 type AnyRunner = (
   input: unknown,
   config: CliConfigResult,
@@ -113,6 +116,8 @@ type AnyRunner = (
 
 interface RunnerCall {
   readonly key: RunnerKey;
+  // Raw argv for a forwarder; the typed request for a commander-migrated
+  // command (git, journal).
   readonly rest: unknown;
   readonly config: CliConfigResult;
 }
@@ -227,13 +232,7 @@ describe('dispatch routing (issue #135)', () => {
         h.calls.map((call) => call.key),
         label,
       ).toEqual([key]);
-      expect(h.calls[0]?.rest, label).toEqual(
-        command in PARSED
-          ? PARSED[command]
-          : JOURNAL_COMMANDS.has(command)
-            ? [command, ...rest]
-            : rest,
-      );
+      expect(h.calls[0]?.rest, label).toEqual(PARSED[command] ?? rest);
       expect(code, `${label} — exit code must flow back`).toBe(0);
     }
   });
@@ -392,14 +391,15 @@ describe('config refusal (issue #90 policy, moved)', () => {
   });
 
   it('lets every other command proceed', async () => {
-    const others = ROUTES.map(([command]) => command).filter(
-      (command) => !CONSUMING.includes(command) && !REPORTING.includes(command),
+    const others = ROUTES.filter(
+      ([command]) =>
+        !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
     expect(others).toHaveLength(16);
-    for (const command of others) {
+    // Each with its ROUTES argv: a bare `kubic git` is a usage error.
+    for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });
-      const argv = ROUTES.find(([name]) => name === command)?.[1] ?? [];
-      expect(await dispatchCommand(command, argv, h.deps), command).toBe(0);
+      expect(await dispatchCommand(command, rest, h.deps), command).toBe(0);
       expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
       expect(h.lines, `${command} must not print a refusal`).toEqual([]);
     }

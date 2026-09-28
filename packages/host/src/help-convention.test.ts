@@ -10,15 +10,12 @@
 // (unknown flag, missing value) keep their own exit codes — this file
 // pins the request path only.
 //
-// Commands migrated to commander (run, tui, doctor, models, config,
-// sessions) answer `--help` with commander's generated help instead; their
-// help and usage-error exits are pinned at the program level in
-// apps/kubic/src/commands/solo.test.ts.
+// Commands migrated to commander answer `--help` with commander's generated
+// help instead; their help and usage-error exits are pinned at the program
+// level in apps/kubic/src/commands/*.test.ts.
 import { describe, expect, it } from 'vitest';
 import { runBenchmarkCommand, runEvalCommand } from '../../eval/src/cli.js';
 import { runExportCommand } from '../../eval/src/export-cli.js';
-import { runGitCommand } from './git-cli.js';
-import { runJournalCommand } from './journal-cli.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
 import { runPerfCommand } from './ops/perf/perf-cli.js';
 import { runAuditCommand } from './policy/audit-cli.js';
@@ -45,17 +42,6 @@ interface Case {
 }
 
 const CASES: Case[] = [
-  {
-    command: 'git',
-    run: (args, out) =>
-      runGitCommand(args, { out, env: never('the execution env') }),
-  },
-  // diff/undo/log/status are one handler; the subcommand is argv[0].
-  ...['diff', 'undo', 'log', 'status'].map((sub) => ({
-    command: sub,
-    run: (args: string[], out: (line: string) => void) =>
-      runJournalCommand([sub, ...args], { out }),
-  })),
   {
     command: 'eval',
     run: (args, out) =>
@@ -103,11 +89,6 @@ describe('--help convention (issue #100)', () => {
     // minus those migrated to commander, whose help is generated); a new
     // legacy command must be added here or it ships without the convention.
     expect(CASES.map((c) => c.command)).toEqual([
-      'git',
-      'diff',
-      'undo',
-      'log',
-      'status',
       'eval',
       'benchmark',
       'replay',

@@ -147,12 +147,15 @@ describe('read-time journal self-heal (issue #119)', () => {
 
     const loaded = loadedWithRetention('7');
     const o = out();
-    const code = await runJournalCommand(['log', '--session', 'sess-1'], {
-      root,
-      sessionsRoot,
-      retentionDays: sessionRetentionDays(loaded),
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log', session: 'sess-1' },
+      {
+        root,
+        sessionsRoot,
+        retentionDays: sessionRetentionDays(loaded),
+        out: o.write,
+      },
+    );
 
     expect(code).toBe(0);
     const lines = indexLines(journalDir);
@@ -196,15 +199,19 @@ describe('read-time journal self-heal (issue #119)', () => {
 
     const loaded = loadedWithRetention('7');
     const o = out();
-    const code = await runJournalCommand(['log'], {
-      root,
-      sessionsRoot,
-      retentionDays: sessionRetentionDays(loaded),
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log' },
+      {
+        root,
+        sessionsRoot,
+        retentionDays: sessionRetentionDays(loaded),
+        out: o.write,
+      },
+    );
 
     expect(code).toBe(0);
-    expect(o.lines[0]).toBe('session: sess-new');
+    // No `err` channel given: the fallback note lands on `out`.
+    expect(o.lines[0]).toBe('info: session: sess-new (latest session journal)');
     const healed = indexLines(newDir);
     expect(healed).toHaveLength(1);
     expect(healed[0]).toContain('fresh.txt');
@@ -222,11 +229,14 @@ describe('read-time journal self-heal (issue #119)', () => {
     expect(sessionRetentionDays(loaded)).toBeUndefined();
 
     const o = out();
-    const code = await runJournalCommand(['log', '--session', 'sess-1'], {
-      root,
-      sessionsRoot,
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log', session: 'sess-1' },
+      {
+        root,
+        sessionsRoot,
+        out: o.write,
+      },
+    );
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -241,12 +251,15 @@ describe('read-time journal self-heal (issue #119)', () => {
     expect(sessionRetentionDays(loaded)).toBe(0);
 
     const o = out();
-    const code = await runJournalCommand(['log', '--session', 'sess-1'], {
-      root,
-      sessionsRoot,
-      retentionDays: sessionRetentionDays(loaded),
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log', session: 'sess-1' },
+      {
+        root,
+        sessionsRoot,
+        retentionDays: sessionRetentionDays(loaded),
+        out: o.write,
+      },
+    );
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -262,12 +275,15 @@ describe('read-time journal self-heal (issue #119)', () => {
     const loaded = loadedWithRetention('7');
 
     const o = out();
-    const code = await runJournalCommand(['log'], {
-      journalDir,
-      root,
-      retentionDays: sessionRetentionDays(loaded),
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log' },
+      {
+        journalDir,
+        root,
+        retentionDays: sessionRetentionDays(loaded),
+        out: o.write,
+      },
+    );
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -280,26 +296,33 @@ describe('read-time journal self-heal (issue #119)', () => {
     const loaded = loadedWithRetention('7');
 
     const o = out();
-    const code = await runJournalCommand(['log', '--session', 'ghost'], {
-      root,
-      sessionsRoot,
-      retentionDays: sessionRetentionDays(loaded),
-      out: o.write,
-    });
+    const code = await runJournalCommand(
+      { command: 'log', session: 'ghost' },
+      {
+        root,
+        sessionsRoot,
+        retentionDays: sessionRetentionDays(loaded),
+        out: o.write,
+      },
+    );
     expect(code).toBe(0);
     expect(o.lines).toContain('journal is empty');
     // Enforcement on a store with no index writes nothing — not even the dir.
     expect(existsSync(join(sessionsRoot, 'ghost'))).toBe(false);
 
     const bad = out();
-    const badCode = await runJournalCommand(['log', '--session', '../evil'], {
-      root,
-      sessionsRoot,
-      retentionDays: sessionRetentionDays(loaded),
-      out: bad.write,
-    });
-    expect(badCode).toBe(1);
-    expect(bad.lines.join('\n')).toMatch(/invalid --session/);
+    await expect(
+      runJournalCommand(
+        { command: 'log', session: '../evil' },
+        {
+          root,
+          sessionsRoot,
+          retentionDays: sessionRetentionDays(loaded),
+          out: bad.write,
+        },
+      ),
+    ).rejects.toThrow(/invalid --session/);
+    expect(bad.lines).toEqual([]);
     // The rejected join could only have escaped here: prove it never did.
     expect(existsSync(join(sessionsRoot, '..', 'evil'))).toBe(false);
   });

@@ -239,11 +239,14 @@ describe('config feeds the live run path (issue #90)', () => {
     // `kubic diff --session <id>` on the run shows only in-scope changes.
     const diffOut: string[] = [];
     expect(
-      await runJournalCommand(['diff', '--session', result.sessionId], {
-        root: workspace,
-        sessionsRoot,
-        out: (line) => diffOut.push(line),
-      }),
+      await runJournalCommand(
+        { command: 'diff', session: result.sessionId },
+        {
+          root: workspace,
+          sessionsRoot,
+          out: (line) => diffOut.push(line),
+        },
+      ),
     ).toBe(0);
     expect(diffOut.join('\n')).toContain('in-scope.txt');
     expect(diffOut.join('\n')).not.toContain('vendor');
@@ -361,14 +364,14 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     const named: string[] = [];
     expect(
       await runJournalCommand(
-        ['diff', '--agent', 'kubic-solo', '--session', result.sessionId],
+        { command: 'diff', agent: 'kubic-solo', session: result.sessionId },
         { root: workspace, sessionsRoot, out: (line) => named.push(line) },
       ),
     ).toBe(0);
     expect(named.join('\n')).toContain('note.txt');
     const asRoot: string[] = [];
     await runJournalCommand(
-      ['diff', '--agent', 'root', '--session', result.sessionId],
+      { command: 'diff', agent: 'root', session: result.sessionId },
       { root: workspace, sessionsRoot, out: (line) => asRoot.push(line) },
     );
     expect(asRoot.join('\n')).not.toContain('note.txt');

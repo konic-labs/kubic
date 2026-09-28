@@ -252,10 +252,14 @@ function isWorkspaceFailure(error: unknown): boolean {
   ]
     .map((part) => String(part ?? ''))
     .join(' ')
-    // Keywords inside a quoted filesystem path (a checkout under
-    // `.claude/worktrees/` or `~/workspace/`) say nothing about the
-    // failure's class, so absolute paths are blanked before matching.
-    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`,;()]*/g, ' ');
+    // Keywords inside a filesystem path (a checkout under
+    // `.claude/worktrees/` or `~/My workspace/`) say nothing about the
+    // failure's class, so paths are blanked before matching: first any
+    // quoted span holding a path separator (it may contain spaces), then
+    // any whitespace-delimited word holding one (absolute or relative;
+    // an unquoted path with spaces splits into such words).
+    .replace(/(['"`])[^'"`\n]*[\\/][^'"`\n]*\1/g, ' ')
+    .replace(/[^\s]*[\\/][^\s]*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

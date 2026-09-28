@@ -341,6 +341,35 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
       ),
     ).toBe('workspace_unavailable');
   });
+
+  it('ignores workspace keywords in paths with spaces or relative paths', () => {
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: bundle missing at /Users/dev/My workspace/kubic/packages/extensions/dist',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("boom reading '/Users/dev/my worktree' contents"),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('bad input worktrees/wf-1/x')),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error('boom in C:\\Users\\My workspace\\kubic\\x.ts'),
+      ),
+    ).toBe('failed');
+    // A keyword outside any path still classifies.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error('worktree add failed for /Users/dev/My project/x'),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

@@ -43,6 +43,7 @@ import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
   assembleModels,
+  modelsSourcesProbe,
   providerProbesOf,
   runModelsCommand,
 } from '../../../packages/host/src/models-cli.js';
@@ -367,6 +368,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           // secret ref) and an incomplete runtime ignore split both fail
           // closed with the named reason instead of being silently ignored.
           doctorConfigProbe(cliConfig),
+          // Issue #322: which models.json files were found, their scope and
+          // trust state; an invalid file fails by name.
+          modelsSourcesProbe(assembled),
         ],
         // Config-sourced approval policy (issue #90): the route/autoApprove
         // come from the loaded layers, not a hardcoded default.

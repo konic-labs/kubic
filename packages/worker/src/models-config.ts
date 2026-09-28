@@ -47,6 +47,12 @@ export class ModelsJsonError extends Error {
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]*$/;
 
+// Issue #322: the variables a models.json may name as its key. The file
+// decides which env value is sent as a bearer token, so it may only name a
+// KUBIC_-namespaced variable or an `*_API_KEY` one — never an arbitrary
+// secret such as AWS_SECRET_ACCESS_KEY or GITHUB_TOKEN.
+const API_KEY_ENV = /^(KUBIC_[A-Z0-9_]+|[A-Z][A-Z0-9_]*_API_KEY)$/;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -168,6 +174,11 @@ function parseProvider(raw: unknown): CustomProviderSpec {
   ) {
     throw new ModelsJsonError(
       `provider '${id}': apiKeyEnv must be a non-empty string when set`,
+    );
+  }
+  if (typeof apiKeyEnv === 'string' && !API_KEY_ENV.test(apiKeyEnv)) {
+    throw new ModelsJsonError(
+      `provider '${id}': apiKeyEnv '${apiKeyEnv}' is not an allowed key variable (use a KUBIC_* name or a *_API_KEY name)`,
     );
   }
   // Static per-provider headers (gateways like opencode-go require one on

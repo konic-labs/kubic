@@ -38,7 +38,7 @@ is read — never half-applied.
 | `KUBIC_MODEL_THINKING` | Thinking level for the selected model (`off`…`max`). |
 | `KUBIC_APPROVALS_ROUTE` | `ask-user` or `deny`. |
 | `KUBIC_JOURNAL_RETENTION_DAYS` | Journal age bound, in days (non-negative integer). |
-| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer for this invocation. |
+| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation. |
 
 A malformed value fails closed with the variable named — it never silently
 falls back to a default.
@@ -223,6 +223,37 @@ Two keys are forbidden outright, not defaulted: **`[budgets]`**
 — doctor surfaces these as `policy-mismatch` fails pointing at
 [doctor and debug](doctor-and-debug.md)).
 
+## models.json
+
+Custom (OpenAI-compatible) providers are declared in `models.json`, on top
+of Pi's built-in providers. Files, in load order:
+
+| Location | Trust |
+| --- | --- |
+| `~/.kubic/models/models.json` (global) | Always loaded — it is your own machine-local file, and the recommended place for provider config. |
+| `./models.json` (project) | **Trust-gated** like the project `config.toml`: before `KUBIC_TRUST_PROJECT=1` it is never read, only named (`models.json ignored: <path> (project, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
+
+A project provider overrides a global provider with the same id. Every
+file is refused whole (never half-applied) and named when:
+
+- it is invalid JSON or fails the schema;
+- a provider id collides with a **built-in** provider (`anthropic`,
+  `openai`, …) — a custom provider can never replace a built-in's URL or
+  auth, trusted or not;
+- `apiKeyEnv` names a variable outside the allowlist: a `KUBIC_*` name or a
+  `*_API_KEY` name (`OPENROUTER_API_KEY`, `KUBIC_GATEWAY_TOKEN`). Anything
+  else (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `HOME`) is refused, so a
+  file can never choose an arbitrary secret to send as a bearer token.
+  Without `apiKeyEnv` the key is read from `KUBIC_API_KEY`.
+
+Which files were found and their trust state is reported: `kubic models`
+and `kubic doctor` print a `loaded models.json: <path> (global|project,
+trusted): <ids>` / `models.json ignored: <path> …` line on stderr, doctor's
+`dep:models-json` check lists each file with `loaded`, `ignored, untrusted`
+or `invalid` (an invalid file fails the check), and `kubic run` prints a
+`models.json ignored: …` line on stderr (the `loaded` receipt only under
+`--debug`).
+
 ## Secrets (never in config)
 
 Secrets live in `models.json` as **refs only**, resolved at request
@@ -269,12 +300,8 @@ not. The split, exactly as shipped:
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
   `GEMINI_API_KEY`, …) or its ambient credentials are set, and a keyless
   built-in is never selected implicitly (`kubic models` shows which are
-  usable). `./models.json` in the working directory adds custom providers
-  on top of the built-ins (a custom id that collides with a built-in is
-  refused by name; a `loaded models.json:` /
-  `models.json ignored:` note is printed on `models`/`doctor`; `run`
-  always prints `models.json ignored: …` on stderr and the `loaded` receipt
-  only under `--debug`). A model without `contextWindow`/`maxTokens` gets
+  usable). Custom providers come from `models.json` (see
+  [models.json](#modelsjson) below). A model without `contextWindow`/`maxTokens` gets
   fail-safe defaults `8192`/`2048` (small local servers overflow above
   them). The 16384-token compaction reserve is
   clamped to a quarter of the model's window (an 8192-token model reserves

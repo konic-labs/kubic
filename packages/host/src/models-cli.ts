@@ -23,7 +23,7 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import type { ProviderProbe } from './doctor.js';
+import type { DepProbe, ProviderProbe } from './doctor.js';
 import {
   FAUX_PROVIDER_ID,
   fauxProviderActive,
@@ -42,11 +42,25 @@ export interface ProviderInfo {
   readonly authSource?: string;
 }
 
+// One models.json location the assembly looked at (issue #322): the
+// user-global file is always trusted; the project file only after the
+// project-trust decision (§35.1).
+export interface ModelsSource {
+  readonly path: string;
+  readonly scope: 'global' | 'project';
+  readonly trusted: boolean;
+  readonly status: 'loaded' | 'untrusted' | 'invalid';
+  readonly providers: readonly string[];
+  readonly error?: string;
+}
+
 export interface AssembledModels {
   readonly models: MutableModels;
   // Receipt lines: `loaded models.json: …` / `models.json ignored: …`.
   readonly notes: readonly string[];
   readonly providers: ReadonlyMap<string, ProviderInfo>;
+  // Every models.json that exists at a looked-up location, in load order.
+  readonly sources: readonly ModelsSource[];
   // The providers the implicit first-available pick may use, preferred
   // first: the testing provider, models.json customs, then built-ins whose
   // auth is configured. A keyless built-in is never on this list.
@@ -54,8 +68,22 @@ export interface AssembledModels {
 }
 
 export interface AssembleOptions {
-  // The home the auth context expands `~` against (tests pass a temp dir).
+  // The home holding ~/.kubic/models/models.json; also what the auth
+  // context expands `~` against (tests pass a temp dir).
   readonly home?: string;
+  // The caller's accepted trust decision for the project layer (§35.1);
+  // KUBIC_TRUST_PROJECT=1 in `env` also opts in.
+  readonly projectTrusted?: boolean;
+}
+
+// The user-global models.json (§35 global tree: ~/.kubic/models/).
+export function globalModelsPath(home: string): string {
+  return join(home, '.kubic', 'models', 'models.json');
+}
+
+function envTrustsProject(env: Env): boolean {
+  const value = env.KUBIC_TRUST_PROJECT;
+  return value === '1' || value === 'true';
 }
 
 export interface ModelsCommandDeps extends CliIo {
@@ -92,10 +120,14 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// Composition helper: Pi's built-in providers, then models.json customs
-// when present. File access goes through the exec bridge (I/O confinement)
-// — absent or invalid models.json is reported, never thrown past the CLI.
-// A custom provider may not reuse a built-in id (refused by name). The faux
+// Composition helper: Pi's built-in providers, then models.json customs —
+// the user-global ~/.kubic/models/models.json (trusted), then the project
+// file, which is project-local configuration and loads only after project
+// trust (issue #322; §35.1): before trust it is never read, only named.
+// A project provider overrides a global one with the same id. File access
+// goes through the exec bridge (I/O confinement) — absent or invalid
+// models.json is reported, never thrown past the CLI. A custom provider may
+// not reuse a built-in id (refused by name, trusted or not). The faux
 // testing provider joins the catalog only under `KUBIC_PROVIDER=faux`.
 export async function assembleModels(
   cwd: string,
@@ -103,12 +135,16 @@ export async function assembleModels(
   options: AssembleOptions = {},
 ): Promise<AssembledModels> {
   const home = options.home ?? homedir();
+  const projectTrusted =
+    options.projectTrusted === true || envTrustsProject(env);
   const models = createModels({
     credentials: new InMemoryCredentialStore(),
     authContext: authContextFor(env, home),
   });
+  const bridge = createNodeFileBridge('/');
   const providers = new Map<string, ProviderInfo>();
   const notes: string[] = [];
+  const sources: ModelsSource[] = [];
   const customs: string[] = [];
   if (fauxProviderActive(env)) {
     registerFauxProvider(models);
@@ -117,26 +153,63 @@ export async function assembleModels(
   const builtins = builtinProviders();
   for (const provider of builtins) models.setProvider(provider);
   const builtinIds = new Set(builtins.map((provider) => provider.id));
-  const path = join(cwd, 'models.json');
-  let raw: string | undefined;
-  try {
-    raw = createNodeFileBridge('/').readTextFile(path);
-  } catch {
-    raw = undefined;
-  }
-  if (raw !== undefined) {
+  const load = (
+    path: string,
+    scope: ModelsSource['scope'],
+    trusted: boolean,
+  ): void => {
+    if (!bridge.exists(path)) return;
+    const label = scope === 'global' ? 'global' : 'project';
+    if (!trusted) {
+      // Refused before the file is read: nothing in it reaches the catalog.
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'untrusted',
+        providers: [],
+      });
+      notes.push(
+        `models.json ignored: ${path} (${label}, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`,
+      );
+      return;
+    }
     try {
-      const specs = parseModelsJson(JSON.parse(raw) as unknown);
+      const specs = parseModelsJson(
+        JSON.parse(bridge.readTextFile(path)) as unknown,
+      );
       refuseBuiltinCollisions(specs, builtinIds);
-      for (const name of registerCustomProviders(models, specs)) {
+      const names = registerCustomProviders(models, specs);
+      for (const name of names) {
+        const at = customs.indexOf(name);
+        if (at !== -1) customs.splice(at, 1);
         customs.push(name);
         providers.set(name, { origin: path, usable: true });
       }
-      notes.push(`loaded models.json: ${customs.join(', ')}`);
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'loaded',
+        providers: names,
+      });
+      notes.push(
+        `loaded models.json: ${path} (${scope === 'global' ? 'global' : 'project, trusted'}): ${names.join(', ')}`,
+      );
     } catch (error) {
-      notes.push(`models.json ignored: ${errorText(error)}`);
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'invalid',
+        providers: [],
+        error: errorText(error),
+      });
+      notes.push(`models.json ignored: ${path}: ${errorText(error)}`);
     }
-  }
+  };
+  load(globalModelsPath(home), 'global', true);
+  load(join(cwd, 'models.json'), 'project', projectTrusted);
   const checks = await Promise.all(
     builtins.map(async (provider) => {
       try {
@@ -161,7 +234,33 @@ export async function assembleModels(
     ...customs,
     ...usableBuiltins.filter((id) => !customs.includes(id)),
   ];
-  return { models, notes, providers, fallbackProviders };
+  return { models, notes, providers, sources, fallbackProviders };
+}
+
+// Doctor's models.json line (issue #322): each file found, its scope and
+// trust state. An invalid file fails the check by name (a refused config is
+// never silently ignored); an untrusted one is reported, not failed.
+export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
+  if (assembled.sources.length === 0) {
+    return {
+      id: 'models-json',
+      ok: true,
+      detail: 'no models.json (built-in providers only)',
+    };
+  }
+  const parts = assembled.sources.map((source) => {
+    const where = `${source.path} (${source.scope})`;
+    if (source.status === 'loaded')
+      return `${where}: loaded ${source.providers.join(', ')}`;
+    if (source.status === 'untrusted')
+      return `${where}: ignored, untrusted (KUBIC_TRUST_PROJECT=1 to load)`;
+    return `${where}: invalid — ${source.error ?? 'unreadable'}`;
+  });
+  return {
+    id: 'models-json',
+    ok: assembled.sources.every((source) => source.status !== 'invalid'),
+    detail: parts.join('; '),
+  };
 }
 
 // Doctor's provider lines (issue #221): only the providers a run could use

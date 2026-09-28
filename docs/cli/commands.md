@@ -880,9 +880,13 @@ composition paths therefore capture a **baseline** when the lane boots and
 
 Catalog readout over Pi's **built-in providers** (the generated catalogue:
 `anthropic`, `openai`, `google`, `amazon-bedrock`, `openrouter`, …) plus
-`models.json` customs in the current directory (absent or invalid
-`models.json` is reported as an `info: loaded models.json: …` /
-`info: models.json ignored: …` line on stderr, never fatal). A built-in is
+`models.json` customs from `~/.kubic/models/models.json` (always) and the
+project's `models.json` (only once the project is trusted,
+`KUBIC_TRUST_PROJECT=1`). Each file found is reported as an
+`info: loaded models.json: <path> (global|project, trusted): …` /
+`info: models.json ignored: <path> …` line on stderr — untrusted, invalid
+or colliding files are named, never fatal (see
+[configuration](configuration.md#modelsjson)). A built-in is
 **usable** when its auth is configured: its documented env key
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
 `OPENROUTER_API_KEY`, …) or, for Bedrock/Vertex, the ambient AWS/Google

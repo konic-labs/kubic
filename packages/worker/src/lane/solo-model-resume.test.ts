@@ -188,4 +188,28 @@ describe('resumed session model identity (issue #148)', () => {
       "session model 'faux/big' is unavailable: model 'big' is not registered on provider 'faux' (pin a model to switch this session)",
     );
   });
+
+  it('reconciles silently when no notice sink is given', async () => {
+    const session = await sessionOnBig();
+    const { models, small } = catalog();
+    const kept = await bootSoloLane({
+      session,
+      models,
+      model: small,
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+    expect(kept.model.id).toBe('big');
+    const switched = await bootSoloLane({
+      session,
+      models,
+      model: small,
+      modelPolicy: 'selected',
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+    expect(switched.model.id).toBe('small');
+  });
 });

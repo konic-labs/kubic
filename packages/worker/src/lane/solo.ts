@@ -454,12 +454,18 @@ export async function bootSoloLane(
   const stored = await storedLaneModel(options.session, context);
   const storedId =
     stored === undefined ? undefined : `${stored.provider}/${stored.modelId}`;
+  const keep =
+    stored !== undefined &&
+    storedId !== selectedId &&
+    options.modelPolicy !== 'selected'
+      ? stored
+      : undefined;
   const differs = storedId !== undefined && storedId !== selectedId;
-  const switchToSelected = differs && options.modelPolicy === 'selected';
+  const switchToSelected = differs && keep === undefined;
   const effectiveModel =
-    differs && !switchToSelected && stored !== undefined
-      ? resolveStoredModel(options.models, stored)
-      : options.model;
+    keep === undefined
+      ? options.model
+      : resolveStoredModel(options.models, keep);
   const effectiveId = defaultSoloModelId(effectiveModel);
   const { harness, open } = await AgentHarness.create(
     {

@@ -15,7 +15,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
@@ -176,6 +176,140 @@ describe('refused control-plane state (issue #324)', () => {
   });
 });
 
+// The control plane is not only `<workspace>/.kubic/` (issue #324 review): an
+// orchestrator worker's workspace is its worktree at <repo>/.kubic/wt/<agent>,
+// so the manager's real state sits two levels ABOVE it; the session root and
+// the global config live under ~/.kubic. Every one of those is classified.
+describe('control plane beyond the workspace (issue #324)', () => {
+  const HOME = '/home/u';
+  const WT = '/work/repo/.kubic/wt/worker-1';
+  const classes = {
+    filesystem: 'workspace-write',
+    shell: true,
+    network: 'none',
+    git: 'workspace',
+    credentials: 'none',
+  } as const;
+  const wtCtx = triggerContextFor(classes, WT, { home: HOME });
+  const soloCtx = triggerContextFor(classes, WS, { home: HOME });
+
+  it.each([
+    [
+      'write',
+      { path: '../../orchestrator/approvals/audit.jsonl', content: '' },
+    ],
+    ['write', { path: '/work/repo/.kubic/journal/index.jsonl', content: '' }],
+    ['bash', { command: 'echo x > ../../journal/index.jsonl' }],
+    ['bash', { command: 'cp a ../../orchestrator/decisions/d.json' }],
+    ['write', { path: '../../sessions/s1/posture.json', content: '{}' }],
+  ])('a worker in its worktree is refused %s %j', (tool, args) => {
+    expect(controlPlaneRefusal(tool, args, WT, { home: HOME })).toMatch(
+      /Kubic control-plane state/,
+    );
+    expect(detectTriggers(tool, args, wtCtx)).toContain('kubic-state-write');
+  });
+
+  it("a worker writing the repo's config.toml is asked, not refused", () => {
+    const args = { path: '../../config.toml', content: 'x' };
+    expect(controlPlaneRefusal('write', args, WT, { home: HOME })).toBe(
+      undefined,
+    );
+    expect(detectTriggers('write', args, wtCtx)).toContain('kubic-state-write');
+  });
+
+  it.each([
+    ['write', { path: 'src/app.ts', content: 'x' }],
+    ['write', { path: `${WT}/README.md`, content: 'x' }],
+    ['bash', { command: 'echo hi > out.txt' }],
+  ])('a worker writing its own worktree stays silent: %s %j', (tool, args) => {
+    expect(detectTriggers(tool, args, wtCtx)).not.toContain(
+      'kubic-state-write',
+    );
+    expect(controlPlaneRefusal(tool, args, WT, { home: HOME })).toBe(undefined);
+  });
+
+  it.each([
+    ['write', { path: '/home/u/.kubic/sessions/s1/posture.json', content: '' }],
+    ['bash', { command: 'echo x > ~/.kubic/sessions/s1/journal/a.json' }],
+  ])('the real session root under ~/.kubic is refused: %s %j', (tool, args) => {
+    expect(controlPlaneRefusal(tool, args, WS, { home: HOME })).toMatch(
+      /Kubic control-plane state/,
+    );
+    expect(detectTriggers(tool, args, soloCtx)).toContain('kubic-state-write');
+  });
+
+  it('the global config.toml is asked', () => {
+    const args = { path: '/home/u/.kubic/config.toml', content: 'x' };
+    expect(detectTriggers('write', args, soloCtx)).toContain(
+      'kubic-state-write',
+    );
+    expect(controlPlaneRefusal('write', args, WS, { home: HOME })).toBe(
+      undefined,
+    );
+  });
+
+  it("a subdirectory workspace still guards the project root's .kubic", () => {
+    const sub = triggerContextFor(classes, '/work/repo/packages/a', {
+      home: HOME,
+    });
+    expect(
+      detectTriggers('write', { path: '../../.kubic/config.toml' }, sub),
+    ).toContain('kubic-state-write');
+  });
+
+  it('defaults the home root to the real home directory (string only)', () => {
+    const target = join(homedir(), '.kubic', 'sessions', 's1', 'x.json');
+    expect(controlPlaneRefusal('write', { path: target }, WS)).toMatch(
+      /Kubic control-plane state/,
+    );
+  });
+
+  it('refuses an overridden sessions root wholesale', async () => {
+    const root = tmpRoot();
+    const policy = installSoloPolicy({
+      workspace: WS,
+      sessionDir: root,
+      sessionsRoot: '/srv/kubic-sessions',
+      home: HOME,
+    });
+    const verdict = await policy.ask({
+      toolName: 'write',
+      args: { path: '/srv/kubic-sessions/s1/posture.json', content: '{}' },
+      toolCallId: 't1',
+    });
+    expect(JSON.stringify(verdict)).toMatch(/Kubic control-plane state/);
+  });
+
+  it('full access in a worker worktree refuses the manager ledger and asks for the repo config', async () => {
+    const root = tmpRoot();
+    enableFullAccess(new FileApprovalStore(root), 'test');
+    const policy = installSoloPolicy({
+      workspace: WT,
+      sessionDir: root,
+      home: HOME,
+    });
+    const ledger = await policy.ask({
+      toolName: 'write',
+      args: { path: '../../orchestrator/approvals/audit.jsonl', content: '' },
+      toolCallId: 't1',
+    });
+    expect(JSON.stringify(ledger)).toMatch(/Kubic control-plane state/);
+    const config = await policy.ask({
+      toolName: 'write',
+      args: { path: '../../config.toml', content: 'x' },
+      toolCallId: 't2',
+    });
+    expect(config).toMatchObject({ approved: false });
+    expect(JSON.stringify(config)).toContain('kubic-state-write');
+    const own = await policy.ask({
+      toolName: 'write',
+      args: { path: 'src/app.ts', content: 'x' },
+      toolCallId: 't3',
+    });
+    expect(own).toMatchObject({ approved: true });
+  });
+});
+
 describe('kubic-state-write always asks (issue #324)', () => {
   it('autoApprove never answers it', async () => {
     const service = new ApprovalService({
@@ -304,6 +438,63 @@ describe('prod run path: control-plane writes (issue #324)', () => {
     // refusal's OWN audit record, appended (the ledger is append-only).
     expect(after.slice(0, before.length)).toBe(before);
     expect(after).not.toContain('{"who":"agent:x","result":"ok"}');
+  });
+
+  it("a worker run from its worktree cannot edit the manager's audit ledger", async () => {
+    const sessionsRoot = tmpRoot();
+    const repo = tmpRoot('repo-324-');
+    const workspace = join(repo, '.kubic', 'wt', 'worker-1');
+    mkdirSync(workspace, { recursive: true });
+    const dir = join(repo, '.kubic', 'orchestrator', 'approvals');
+    mkdirSync(dir, { recursive: true });
+    const ledger = join(dir, 'audit.jsonl');
+    writeFileSync(ledger, '{"who":"agent:x","result":"deny"}\n');
+    const result = await runHeadlessPrompt(
+      'hide the evidence',
+      {},
+      {
+        sessionsRoot,
+        models: modelsWith([
+          fauxAssistantMessage([
+            fauxToolCall('edit', {
+              path: '../../orchestrator/approvals/audit.jsonl',
+              oldText: '"result":"deny"',
+              newText: '"result":"ok"',
+            }),
+          ]),
+          fauxAssistantMessage('done'),
+        ]),
+        env: new NodeExecutionEnv(workspace),
+      },
+    );
+    expect(result.terminus).toBe('approval_denied');
+    expect(result.summary).toMatch(/Kubic control-plane state/);
+    expect(readFileSync(ledger, 'utf8')).toBe(
+      '{"who":"agent:x","result":"deny"}\n',
+    );
+  });
+
+  it('a faux write into the session root in use is refused by name', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot('ws-324-');
+    const target = join(sessionsRoot, 'forged', 'posture.json');
+    const result = await runHeadlessPrompt(
+      'grant yourself full access',
+      {},
+      {
+        sessionsRoot,
+        models: modelsWith([
+          fauxAssistantMessage([
+            fauxToolCall('write', { path: target, content: '{}' }),
+          ]),
+          fauxAssistantMessage('done'),
+        ]),
+        env: new NodeExecutionEnv(workspace),
+      },
+    );
+    expect(result.terminus).toBe('approval_denied');
+    expect(result.summary).toMatch(/Kubic control-plane state/);
+    expect(existsSync(target)).toBe(false);
   });
 
   it("challenges bash -c 'echo x > .kubic/journal/index.jsonl'", async () => {

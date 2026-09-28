@@ -822,6 +822,8 @@ export async function runHeadlessPrompt(
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
         sessionDir: join(root, id),
+        // The session root in use is refused control-plane state (#324).
+        sessionsRoot: root,
         // §60 audit identity for the ledger record of each resolved ask.
         sessionId: id,
         model: `${model.provider}/${model.id}`,

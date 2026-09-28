@@ -318,6 +318,8 @@ export async function bootTuiLane(
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
         sessionDir: join(root, id),
+        // The session root in use is refused control-plane state (#324).
+        sessionsRoot: root,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies

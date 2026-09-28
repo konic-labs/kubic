@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
 import type { PermissionClasses } from '../../agents/src/policy.js';
 import {
   checkAgreement,
@@ -194,6 +202,8 @@ export interface TriggerContext {
   isOutsideWorkspace: (path: string) => boolean;
   requires?: string[];
   budgetOverrun?: boolean;
+  /** Kubic state roots beyond the workspace (issue #324); see ControlPlaneRoots. */
+  controlPlane?: ControlPlaneRoots;
 }
 
 const GIT_PUSH = /^\s*git\s+push\b/i;
@@ -365,24 +375,72 @@ function targetToken(
   return stripQuotes(raw.slice(0, raw.length - cut));
 }
 
+// Kubic state that does not live under `<workspace>/.kubic/` (issue #324
+// review). `home` is where the global `~/.kubic` (config.toml, the default
+// session root) lives — default os.homedir(); `sessionsRoot` is the session
+// root actually in use when it was overridden elsewhere, refused wholesale.
+export interface ControlPlaneRoots {
+  home?: string;
+  sessionsRoot?: string;
+}
+
+// The path of `target` below `root` as case-folded segments, or undefined
+// when it is not at or below `root`.
+function segmentsBelow(root: string, target: string): string[] | undefined {
+  const rel = relative(root.toLowerCase(), target.toLowerCase());
+  if (rel === '') return [];
+  if (isAbsolute(rel)) return undefined;
+  const parts = rel.split(/[\\/]/);
+  return parts[0] === '..' ? undefined : parts;
+}
+
 // Where a write target lands in Kubic's control plane, lexically: `refuse`
-// for the refused state subtrees, `ask` for anything else under
-// `<workspace>/.kubic/`, undefined outside it. Case-folded, because the
-// default macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml`
-// IS the config file there). Symlinks are not followed — lexical, like every
-// shell detector in this module.
+// for the refused state subtrees, `ask` for anything else under a Kubic state
+// directory, undefined elsewhere. The state directories are the workspace's
+// own `.kubic/`, and — for a target OUTSIDE the workspace — the `.kubic/` of
+// every ancestor (an orchestrator worker's workspace is its worktree at
+// `<repo>/.kubic/wt/<agent>`, so the manager's journal and orchestrator state
+// sit above it; a solo run from a subdirectory has the project's `.kubic/`
+// above it) and `~/.kubic` (global config.toml, the session root). An
+// overridden session root is refused wholesale. A leading `~/` is the home
+// directory, as the shell expands it. Case-folded, because the default
+// macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml` IS the
+// config file there). Symlinks are not followed — lexical, like every shell
+// detector in this module.
 function controlPlaneClass(
   workspace: string,
   target: string,
+  roots: ControlPlaneRoots = {},
 ): 'refuse' | 'ask' | undefined {
   const path = stripQuotes(target);
   if (path === '') return undefined;
-  const rel = relative(resolve(workspace), resolve(workspace, path));
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined;
-  const parts = rel.split(/[\\/]/).map((part) => part.toLowerCase());
-  if (parts[0] !== '.kubic') return undefined;
-  const sub = parts[1];
-  return sub !== undefined && REFUSED_STATE_DIRS.has(sub) ? 'refuse' : 'ask';
+  const home = roots.home ?? homedir();
+  const ws = resolve(workspace);
+  const abs =
+    path === '~' || path.startsWith('~/')
+      ? resolve(home, `.${path.slice(1)}`)
+      : resolve(ws, path);
+  if (
+    roots.sessionsRoot !== undefined &&
+    segmentsBelow(resolve(roots.sessionsRoot), abs) !== undefined
+  ) {
+    return 'refuse';
+  }
+  const stateDirs = [join(ws, '.kubic')];
+  if (segmentsBelow(ws, abs) === undefined) {
+    for (let dir = dirname(ws); ; dir = dirname(dir)) {
+      stateDirs.push(join(dir, '.kubic'));
+      if (dirname(dir) === dir) break;
+    }
+    stateDirs.push(join(resolve(home), '.kubic'));
+  }
+  for (const stateDir of stateDirs) {
+    const parts = segmentsBelow(stateDir, abs);
+    if (parts === undefined) continue;
+    const sub = parts[0];
+    return sub !== undefined && REFUSED_STATE_DIRS.has(sub) ? 'refuse' : 'ask';
+  }
+  return undefined;
 }
 
 // Every write target a call names: write/edit's `path`, and for bash every
@@ -421,9 +479,10 @@ export function controlPlaneRefusal(
   toolName: string,
   args: Record<string, unknown>,
   workspace: string,
+  roots: ControlPlaneRoots = {},
 ): string | undefined {
   for (const target of writeTargets(toolName, args)) {
-    if (controlPlaneClass(workspace, target) === 'refuse') {
+    if (controlPlaneClass(workspace, target, roots) === 'refuse') {
       return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it`;
     }
   }
@@ -525,7 +584,9 @@ export function detectTriggers(
   }
   if (
     writeTargets(toolName, args).some(
-      (target) => controlPlaneClass(ctx.workspace, target) !== undefined,
+      (target) =>
+        controlPlaneClass(ctx.workspace, target, ctx.controlPlane) !==
+        undefined,
     )
   ) {
     found.push(KUBIC_STATE_WRITE);
@@ -681,6 +742,7 @@ export function createApprovalAsk(
       call.toolName,
       call.args,
       ctx.workspace,
+      ctx.controlPlane,
     );
     if (refusal !== undefined) return { approved: false, reason: refusal };
     const posture = store.loadPosture();
@@ -752,6 +814,10 @@ export interface SoloPolicyInput {
   source?: 'config' | 'default';
   /** Extension/facet contributions; telemetry composes outermost of them. */
   contributions?: ToolContribution[];
+  /** Home directory holding the global `~/.kubic` (default os.homedir()). */
+  home?: string;
+  /** The session root in use; writes into it are refused (issue #324). */
+  sessionsRoot?: string;
   /** Telemetry sink (issue #15 slice D); absent means no telemetry wrapper. */
   telemetry?: (record: { toolName: string; durationMs: number }) => void;
   /** Bounded approval wait (headless never answers; it denies on timeout). */
@@ -928,6 +994,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       }
     }
   };
+  // Kubic state beyond the workspace (issue #324): the global home and the
+  // session root this lane actually writes.
+  const controlPlane: ControlPlaneRoots = {
+    ...(input.home === undefined ? {} : { home: input.home }),
+    ...(input.sessionsRoot === undefined
+      ? {}
+      : { sessionsRoot: input.sessionsRoot }),
+  };
   const deny = (
     capability: string,
     toolName: string,
@@ -944,6 +1018,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       call.toolName,
       call.args,
       input.workspace,
+      controlPlane,
     );
     if (refusal !== undefined) {
       return deny(KUBIC_STATE_WRITE, call.toolName, refusal);
@@ -951,7 +1026,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     const detected = detectTriggers(
       call.toolName,
       call.args,
-      triggerContextFor(posture.classes, input.workspace),
+      triggerContextFor(posture.classes, input.workspace, controlPlane),
     );
     let capabilities = detected;
     if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
@@ -1059,9 +1134,11 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
 export function triggerContextFor(
   classes: PermissionClasses,
   workspace: string,
+  controlPlane?: ControlPlaneRoots,
 ): TriggerContext {
   return {
     workspace,
+    ...(controlPlane === undefined ? {} : { controlPlane }),
     network: classes.network,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,

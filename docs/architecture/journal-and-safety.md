@@ -71,14 +71,24 @@ that decide them:
   redirect (`>`, `>>`, `N>`, every one in the command), a `tee` target or a
   `cp`/`mv`/`install` destination under `<workspace>/.kubic/` — `config.toml`,
   `roles/`, anything else there — raises the named `kubic-state-write`
-  capability. No `autoApprove` entry answers it, and neither does the
+  capability. So does a target outside the workspace that lands in any
+  ancestor's `.kubic/` or in `~/.kubic/` (the global `config.toml`): an
+  orchestrator worker runs in its worktree at `<repo>/.kubic/wt/<agent>`, so
+  `../../config.toml` there is the repo's config, and a solo run from a
+  subdirectory still guards the project root's `.kubic/`. A leading `~/` is
+  read as the home directory. No `autoApprove` entry answers it, and neither
+  does the
   session's `--full-access` posture (solo or orchestrator worker): on a TTY it
   is a dialog, headless it is denied by name (exit 4). The path check is
   case-folded (`.KUBIC/Config.toml` is the config file on a case-insensitive
   disk).
 - **Journal, orchestrator and session state are refused outright.** A write
   into `.kubic/journal/`, `.kubic/orchestrator/` (approvals, the §60 audit
-  ledger, decisions, the ask mailbox) or `.kubic/sessions/` is a tool error
+  ledger, decisions, the ask mailbox) or `.kubic/sessions/` — the
+  workspace's, an ancestor's (a worker's
+  `../../orchestrator/approvals/audit.jsonl`) or `~/.kubic`'s — or into the
+  session root the run actually uses (`~/.kubic/sessions` by default) is a
+  tool error
   (`refused: … is Kubic control-plane state`), never an ask, whatever the
   posture. The refusal itself is appended to the audit ledger.
 - The journal still skips `.kubic/`, so an approved `kubic-state-write` is not

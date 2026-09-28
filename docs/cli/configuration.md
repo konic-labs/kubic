@@ -172,7 +172,7 @@ quietly stop configuring anything.
 | `budget-overrun` | The budget/concurrency overrun flag. |
 | `spawn-agents` | Agent spawning (the orchestrator). |
 | `privilege-escalation` | `sudo` anywhere in the command. |
-| `kubic-state-write` | A write into Kubic's control plane, `<workspace>/.kubic/` (`config.toml`, `roles/`, …): the `write`/`edit` tools, any redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. **Always asks**: `autoApprove` and `--full-access` never answer it. Writes into `.kubic/journal/`, `.kubic/orchestrator/` and `.kubic/sessions/` are refused outright as a tool error (issue #324; see [journal and safety](../architecture/journal-and-safety.md)). |
+| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (a worker worktree's repo) or `~/.kubic/` (the global `config.toml`): the `write`/`edit` tools, any redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. **Always asks**: `autoApprove` and `--full-access` never answer it. Writes into `.kubic/journal/`, `.kubic/orchestrator/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (issue #324; see [journal and safety](../architecture/journal-and-safety.md)). |
 
 `requires:<tool>` is accepted alongside them (the per-tool trigger). A name
 outside this set is reported by `kubic doctor` (`policy:approvals`), never

@@ -33,6 +33,7 @@ import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 
 const WORKER = `
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 

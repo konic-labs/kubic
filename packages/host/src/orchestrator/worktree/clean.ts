@@ -23,6 +23,12 @@ import {
   DEFAULT_JOURNAL_MAX_BYTES,
   FileJournalStore,
 } from '../../../../exec/src/journal.js';
+import {
+  commandOwnsSession,
+  isLiveWorkerRow,
+  killProcessGroup,
+} from '../../../../worker/src/lifecycle/orphans.js';
+import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   isSpawnedWorktreePath,
@@ -97,6 +103,16 @@ export interface CleanDeps {
     repoRoot: string,
   ) => JournalPruneResult;
   sessionAgents?: (sessionId: string, repoRoot: string) => string[] | undefined;
+  /** Workers whose process is still running, by agent id → pid (§51). A
+   *  live worker's worktree is never disposed without --force. Defaults to
+   *  the durable rows under `<repo>/.kubic/orchestrator/workers.json`. */
+  liveWorkers?: (
+    repoRoot: string,
+  ) => Map<string, { pid: number; sessionId: string }>;
+  /** A pid's command line (`ps -ww`), for the pid-reuse guard. */
+  workerCommand?: (pid: number) => Promise<string | undefined>;
+  /** Stops a live worker's process group (used only under --force). */
+  killWorker?: (pid: number) => void;
   resolveRepoRoot?: (env: ExecutionEnv) => Promise<string | undefined>;
 }
 
@@ -367,6 +383,18 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function defaultLiveWorkers(
+  repoRoot: string,
+): Map<string, { pid: number; sessionId: string }> {
+  const live = new Map<string, { pid: number; sessionId: string }>();
+  for (const row of workersListFromRepo(repoRoot)) {
+    if (row.pid !== undefined && isLiveWorkerRow(row)) {
+      live.set(row.workerId, { pid: row.pid, sessionId: row.sessionId });
+    }
+  }
+  return live;
+}
+
 export async function runCleanCommand(
   args: string[],
   deps: CleanDeps,
@@ -495,7 +523,43 @@ export async function runCleanCommand(
   const removed: { path: string; branch: string | null }[] = [];
   const deleted: string[] = [];
   const failures: { target: string; message: string }[] = [];
+  const live = (deps.liveWorkers ?? defaultLiveWorkers)(repoRoot);
+  const killWorker = deps.killWorker ?? killProcessGroup;
+  const workerCommand =
+    deps.workerCommand ??
+    (async (pid: number): Promise<string | undefined> => {
+      const ps = await deps.env.shell
+        .spawn('ps', ['-ww', '-o', 'command=', '-p', String(pid)], {
+          provenance: {
+            sessionId: options.sessionId ?? 'cli',
+            agentId: 'manager',
+            toolCallId: 'clean-live-probe',
+            turnId: 0,
+            operation: 'clean',
+          },
+        })
+        .wait();
+      return ps.exitCode === 0 ? ps.stdout.trim() : undefined;
+    });
   for (const item of plan.worktrees) {
+    const agent = item.branch === null ? null : parseBranchAgent(item.branch);
+    const entry = agent === null ? undefined : live.get(agent);
+    // Pid-reuse guard: a live pid whose command line does not name the
+    // worker's own session is not our worker — treated as dead, never killed.
+    const livePid =
+      entry !== undefined &&
+      commandOwnsSession(await workerCommand(entry.pid), entry.sessionId)
+        ? entry.pid
+        : undefined;
+    if (livePid !== undefined && options.force === true) {
+      killWorker(livePid);
+    } else if (livePid !== undefined) {
+      failures.push({
+        target: item.path,
+        message: `worker '${agent}' is still live (pid ${livePid}) — not removed; stop it or rerun with --force`,
+      });
+      continue;
+    }
     try {
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);

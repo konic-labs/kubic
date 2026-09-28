@@ -87,3 +87,28 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     expect(second.reason).toContain('retry budget');
   });
 });
+
+describe('provider not configured is never transient', () => {
+  it('classifies "no models available" as a non-retryable provider failure', () => {
+    const out = classifyFailure(
+      'provider',
+      'exited_6',
+      'no models available: register a provider first',
+    );
+    expect(out.code).not.toBe('provider_transient');
+    expect(out.code).toBe('provider_auth');
+    expect(out.strategy).toBe('abandon');
+    expect(out.remedy).toMatch(/configure|register/i);
+  });
+});
+
+describe('a missing provider response stays transient', () => {
+  it('keeps "no provider response" retryable', () => {
+    const out = classifyFailure(
+      'provider',
+      'exited_6',
+      'no provider response (503)',
+    );
+    expect(out.code).toBe('provider_transient');
+  });
+});

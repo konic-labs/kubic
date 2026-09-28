@@ -27,6 +27,9 @@ export interface WorkerRow {
   resources?: TaskResources;
   pid?: number;
   startupMs?: number;
+  /** The orchestrator process that owns this worker (crash recovery: a
+   *  row whose manager is dead is reconciled, see orphans.ts). */
+  managerPid?: number;
 }
 
 interface WorkerEntry {

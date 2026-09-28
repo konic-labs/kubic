@@ -134,6 +134,7 @@ writeFileSync(
   JSON.stringify({ key: published.request.key, answer }),
 );
 console.log(JSON.stringify({ key: published.request.key, answer }));
+if ((answer.approved ? 0 : 4) === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(answer.approved ? 0 : 4);
 `;
 

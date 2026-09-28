@@ -438,3 +438,49 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(text).toContain('deleted branch kubic/agent-2');
   });
 });
+
+describe('kubic clean never disposes a live worker (§51 crash recovery)', () => {
+  it('skips a worktree whose worker is still running, unless --force', async () => {
+    const run = async (
+      args: string[],
+      command = 'node kubic.js run --session s-agent-2',
+    ) => {
+      const env = new FakeExecutionEnv(repoScripts());
+      const lines: string[] = [];
+      const removed: string[] = [];
+      const killed: number[] = [];
+      const code = await runCleanCommand(args, {
+        env,
+        out: (line: string) => lines.push(line),
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        liveWorkers: () =>
+          new Map([['agent-2', { pid: 4242, sessionId: 's-agent-2' }]]),
+        workerCommand: async () => command,
+        killWorker: (pid: number) => {
+          killed.push(pid);
+        },
+      });
+      return { code, lines: lines.join('\n'), removed, killed };
+    };
+    const refused = await run([]);
+    expect(refused.removed).not.toContain('/repo/.kubic/wt/agent-2');
+    expect(refused.removed).toContain('/repo/.kubic/wt/agent-1');
+    expect(refused.lines).toMatch(/agent-2.*still live.*pid 4242.*--force/);
+    expect(refused.code).toBe(1);
+
+    const forced = await run(['--force']);
+    expect(forced.removed).toContain('/repo/.kubic/wt/agent-2');
+    expect(refused.killed).toEqual([]);
+    // --force stops the live worker's process group before disposing.
+    expect(forced.killed).toEqual([4242]);
+
+    // A reused pid (command does not name the worker's session) is treated
+    // as dead: never killed, and the worktree is disposed.
+    const reused = await run(['--force'], '/usr/bin/vim notes.txt');
+    expect(reused.killed).toEqual([]);
+    expect(reused.removed).toContain('/repo/.kubic/wt/agent-2');
+  });
+});

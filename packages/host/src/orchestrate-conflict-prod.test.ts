@@ -43,6 +43,7 @@ const touch = /TOUCH=(\\S+)/.exec(prompt)?.[1];
 writeFileSync('shared.txt', 'shared\\nline-by-' + (process.env.KUBIC_WORKER_ID ?? 'worker') + '\\n');
 if (touch !== undefined) writeFileSync(touch, 'left by the worker\\n');
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 
@@ -74,6 +75,7 @@ execFileSync('git', [
   'resolver: settle conflict',
 ]);
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 

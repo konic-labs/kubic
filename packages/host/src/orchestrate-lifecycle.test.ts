@@ -66,9 +66,10 @@ if (!prompt.includes('SILENT')) {
   process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 }
 if (sleep === null || sleep === undefined) {
+  if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
   process.exit(exitCode);
 }
-setTimeout(() => process.exit(exitCode), Number(sleep[1]));
+setTimeout(() => { if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); } process.exit(exitCode); }, Number(sleep[1]));
 `;
 
 // Every scratch dir is removed after each test; the worktrees live under the
@@ -420,5 +421,30 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
     // apart (§52, §78).
     expect(text).toMatch(/code=worker_failed/);
     expect(h.registry.get('worker-1')?.status).toBe('crashed');
+  });
+});
+
+describe('prod orchestrate path: §68 result contract', () => {
+  it('fails a worker that exits 0 without a result report as result_invalid', async () => {
+    const h = await harness();
+    const request = await sessionFor(h, 'worker-1');
+    const error = (await runWorkerOnce(
+      h,
+      request,
+      'say hi EXIT=0 NOREPORT',
+    )) as {
+      code?: string;
+      message?: string;
+    };
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe('result_invalid');
+    expect(error.message).toMatch(/§68/);
+  });
+
+  it('settles a worker whose report is valid', async () => {
+    const h = await harness();
+    const request = await sessionFor(h, 'worker-1');
+    const out = await runWorkerOnce(h, request, 'say hi EXIT=0');
+    expect(Array.isArray(out)).toBe(true);
   });
 });

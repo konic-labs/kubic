@@ -207,9 +207,10 @@ describe('launchWorker (issue #94)', () => {
     expect(done.exitCode).toBe(6);
     expect(registry.get('worker-1')?.status).toBe('crashed');
     // Exit 6 is the §78 provider boundary: the §52 code names the
-    // provider, not a generic crash.
+    // provider, not a generic crash — and a missing provider is a setup
+    // failure (non-retryable), never provider_transient.
     expect(launched.failure()).toMatchObject({
-      code: 'provider_transient',
+      code: 'provider_auth',
       kind: 'provider',
     });
     expect(launched.failure()?.message).toMatch(/exited 6/);

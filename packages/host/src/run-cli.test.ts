@@ -318,6 +318,23 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  it('does not read a path that merely contains "worktree" as a workspace failure', () => {
+    // A checkout under `.claude/worktrees/` (or any dir named so) must not
+    // turn an unrelated failure naming a file there into workspace_unavailable.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension bundle missing: /home/u/.claude/worktrees/wf-1/extensions/dist',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file, open '/repo/worktrees/x/a.json'"),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

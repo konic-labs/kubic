@@ -251,7 +251,11 @@ function isWorkspaceFailure(error: unknown): boolean {
     error instanceof Error ? error.message : error,
   ]
     .map((part) => String(part ?? ''))
-    .join(' ');
+    .join(' ')
+    // Filesystem paths are data, not a verdict: a checkout that merely
+    // lives under a directory named `worktrees` must not turn an unrelated
+    // failure naming a file there into workspace_unavailable.
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

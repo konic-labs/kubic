@@ -238,6 +238,9 @@ export function checkPromptValue(value: string, attached: boolean): string {
 // workspace-flavored failure (attach of a missing session, ENOENT/EACCES
 // on the sessions root, worktree problems) maps to workspace_unavailable
 // (5); everything else maps to failed (1).
+// An absolute or relative path token (POSIX or Windows drive form).
+const PATH_TOKEN = /(?:[A-Za-z]:)?(?:\.{0,2}[\\/])[^\s'"`,;()]*/g;
+
 function isWorkspaceFailure(error: unknown): boolean {
   const record = error as { name?: unknown; code?: unknown };
   if (record.name === 'SessionAttachError') return true;
@@ -245,12 +248,15 @@ function isWorkspaceFailure(error: unknown): boolean {
   // missing session: the workspace cannot host this run right now — the
   // named SessionLockError message carries the holder pid.
   if (record.name === 'SessionLockError') return true;
+  // Paths are stripped from the message first: a path is data, not a
+  // signal, so a repo under ~/workspace (or an agent worktree) must not turn
+  // an unrelated failure into workspace_unavailable (exit 5).
   const haystack = [
     record.code,
     record.name,
     error instanceof Error ? error.message : error,
   ]
-    .map((part) => String(part ?? ''))
+    .map((part) => String(part ?? '').replace(PATH_TOKEN, ' '))
     .join(' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,

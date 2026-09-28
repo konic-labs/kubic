@@ -19,7 +19,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
-import { isolateTestEnv, isLoopbackHost } from '../../../test/hermetic-env.js';
+import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   AgentHarness,
@@ -132,7 +132,12 @@ describe('hermetic unit-test environment (issue #377)', () => {
       '::ffff:127.0.0.1',
     ])
       expect(isLoopbackHost(host), String(host)).toBe(true);
-    for (const host of ['10.0.0.1', '192.168.1.4', 'provider.example.com', '0.0.0.0'])
+    for (const host of [
+      '10.0.0.1',
+      '192.168.1.4',
+      'provider.example.com',
+      '0.0.0.0',
+    ])
       expect(isLoopbackHost(host), host).toBe(false);
   });
 });

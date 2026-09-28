@@ -266,7 +266,16 @@ describe('resolveBashPolicy (issue #339)', () => {
     expect(
       resolveBashPolicy({ KUBIC_BASH_MAX_TIMEOUT: '2147483' }).maxTimeoutSec,
     ).toBe(2_147_483);
-    for (const bad of ['30s', 'x30', '0x10', '1e3', '1.', '1.x', '-5', '2147484']) {
+    for (const bad of [
+      '30s',
+      'x30',
+      '0x10',
+      '1e3',
+      '1.',
+      '1.x',
+      '-5',
+      '2147484',
+    ]) {
       expect(() => resolveBashPolicy({ KUBIC_BASH_MAX_TIMEOUT: bad })).toThrow(
         `KUBIC_BASH_MAX_TIMEOUT must be a positive number of seconds (at most 2147483), got "${bad}"`,
       );

@@ -249,9 +249,13 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
     writeModelsJson(workspace, 'http://127.0.0.1:9/v1');
     // A trusted project file (issue #322) without a resolver: the plain
     // env-key auth stays in place and nothing is audited.
-    const assembled = await assembleModels(workspace, {}, {
-      projectTrusted: true,
-    });
+    const assembled = await assembleModels(
+      workspace,
+      {},
+      {
+        projectTrusted: true,
+      },
+    );
     expect(assembled.models.getProvider('gw')).toBeDefined();
     expect(readAuditLedger(auditLedgerDir(workspace))).toEqual([]);
   });

@@ -968,12 +968,24 @@ flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
   which is a usage error, leaves stdout empty and prints its `error:`
   line on stderr.
 
-## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) --generation <n> [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) [--generation <n>] [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Scores one suite against a task prompt or an existing trajectory
-export. `--worktree`, `--generation` and `--tier` are mandatory
-provenance: a record missing any of them is refused with exit 2 and is
-never stored. Every record carries `success`, `costUsd`, `tokens`,
+export. Every record needs its provenance (`model`, `thinking`,
+`worktree`, `generation`) and a `--tier`; a record missing any of them
+is refused with exit 2 and is never stored.
+
+- With `--task`, the provenance comes from the flags: `--worktree` and
+  `--generation` are mandatory and `--model` defaults to `faux/faux`.
+- With `--trajectory`, the provenance comes from the export itself:
+  `model` from `provenance.model`, `thinking` from `model.thinking`, and
+  `worktree` and `generation` from `provenance`. These flags become
+  optional cross-checks. A flag that disagrees with the export is
+  refused with exit 2 and `[provenance-mismatch]`, and no record is
+  printed. The tier is not part of an export, so `--tier` stays
+  mandatory.
+
+Every record carries `success`, `costUsd`, `tokens`,
 `latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
 `generation` and `tier`.
 
@@ -982,12 +994,12 @@ never stored. Every record carries `success`, `costUsd`, `tokens`,
 | `--suite <id>` | **Required.** One of the built-in suites: `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover` or `review-diff`. `terminal-live` and `agentic-live` are stubs and refuse with exit 2. An unknown suite exits 2. |
 | `--task <prompt>` | Runs the suite against a task prompt. This needs a live model-backed suite runner, which the binary does not ship, so it exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
 | `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
-| `--generation <n>` | **Required.** The worker generation that ran. Must be an integer; anything else exits 2. |
-| `--worktree <path>` | Where the run executed. Provenance: a record without it is refused with exit 2. |
-| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2. |
-| `--model <id>` | `provider/id` of the run (default `faux/faux`). |
+| `--generation <n>` | The worker generation that ran. Must be an integer; anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
+| `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
+| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2 on both paths. |
+| `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/faux`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
 | `--workspace inline\|worktree` | `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean. Any other value exits 2. Default `inline`. |
-| `--thinking <level>` | Recorded on the record verbatim. |
+| `--thinking <level>` | With `--task`, recorded on the record verbatim (default none). With `--trajectory` it is read from `model.thinking`, and a different value exits 2 (`provenance-mismatch`). |
 | `--json` | Prints one JSON envelope (`ok`, `exitCode`, and either `record` or `error`) instead of the text line. The exit code is the same either way. |
 
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints

@@ -59,6 +59,9 @@ const TIER_HELP = 'published tier: smoke|standard|extended (provenance)';
 const WORKSPACE_HELP =
   'inline|worktree (default inline; worktree needs a clean --worktree)';
 const THINKING_HELP = 'thinking level, recorded verbatim';
+// eval --trajectory reads model/thinking/worktree/generation from the
+// export (#256): the flag only cross-checks it.
+const FROM_EXPORT = '; --trajectory reads it from the export';
 
 function examples(lines: readonly string[]): string {
   return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
@@ -140,18 +143,24 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     'eval',
     'score one suite against a task prompt or a recorded trajectory',
     [
-      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --worktree wt --generation 1 --tier smoke',
+      'kubic eval --trajectory "$(cat t.json)" --suite bugfix-repro --tier smoke',
     ],
   )
     .requiredOption('--suite <id>', 'built-in suite to score')
     .option('--task <prompt>', 'execute the suite against a task prompt')
     .option('--trajectory <json>', 'score an inline trajectory export (JSON)')
-    .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
-    .option('--worktree <path>', WORKTREE_HELP)
-    .requiredOption('--generation <n>', GENERATION_HELP)
+    .option(
+      '--model <id>',
+      `${MODEL_HELP} (--task default ${EVAL_DEFAULT_MODEL})${FROM_EXPORT}`,
+    )
+    .option('--worktree <path>', `${WORKTREE_HELP}${FROM_EXPORT}`)
+    .option(
+      '--generation <n>',
+      `${GENERATION_HELP}; required with --task${FROM_EXPORT}`,
+    )
     .option('--tier <tier>', TIER_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
-    .option('--thinking <level>', THINKING_HELP)
+    .option('--thinking <level>', `${THINKING_HELP}${FROM_EXPORT}`)
     .option('--json', ENVELOPE_HELP)
     .action(async (options) => done(await runners.eval(options, config)));
 

@@ -63,6 +63,53 @@ Child output is capped at two independent layers, both keeping the **tail**
   consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
+### Find/grep walk bounds (issue #172)
+
+`walkFiles` (`ops/walk.ts`) is what `find` and `grep` recurse with, so
+both made the same mistake on a real repo: the 10,000-entry cap was spent on
+`.git` and dependency trees, and a symlinked directory was followed as a
+second route to a subtree — a loop returned the same file under every route
+until the cap or the depth bound stopped it. The walk now:
+
+- **Never walks `.git`**, at any depth, ahead of the ignore matcher: a
+  `.gitignore` line cannot un-ignore it.
+- **Applies the default ignore set (`node_modules/`) plus every
+  `.gitignore` on the way down**, matched against the walk-root-relative
+  path. Nested rules ride the stack frame, so they scope to their own
+  subtree, and child rules are appended after the parent's — last-match-wins,
+  so a nested negation overrides a broader ignore, the ordering git uses. An
+  unreadable ignore file keeps the parent rules and keeps walking (the
+  documented widening, never a throw). The matcher is the journal's shared
+  subset (`exec/ignore.ts`), so repo-wide search and `kubic diff` agree on
+  what is ignored; its limits (character classes, nested anchored patterns
+  needing the root-relative form) are stated in [@kubic/exec](exec.md),
+  under "Baseline walk ignores".
+- **Never follows a symlink**, file or directory: the walk uses the optional
+  `FileSystem.lstat` (`exec/env.ts`) and skips any entry it marks
+  `isSymbolicLink`, so a loop yields one match per real path and a dangling
+  link is skipped rather than stat-failing. The named ROOT is the caller's
+  explicit target and is read as given (a symlinked root path still walks);
+  only links below it are skipped. Seams without `lstat` cannot tell
+  a link from its target (the documented widening; `FakeExecutionEnv` has no
+  links to make).
+- **Says when a bound stopped it.** `truncated: true` now always carries an
+  optional, additive `notice` naming the bound: `walk entry cap 10000
+  reached while listing <dir>; results may be incomplete` for the entry
+  bound, `walk depth cap 100 reached at <dir>; results may be incomplete`
+  for the depth bound, or `result cap <n> reached (maxResults); results may
+  be incomplete` / `(maxMatches)` for the op's own limit. The match cap is
+  exact: `truncated` is set only once a match beyond `maxMatches` was
+  actually seen, never merely because the cap filled on the last match.
+  Tool names, argument shapes, and the
+  existing result fields are unchanged; `ls` skips an entry whose `stat`
+  fails (a dangling symlink) instead of throwing, which it already did and is
+  now pinned by test.
+
+The real-filesystem suite for all of this is
+`packages/worker/src/ops/walk-real.test.ts` (mkdtemp trees through
+`NodeExecutionEnv`, a >10k `node_modules` fixture, a directory cycle, and a
+cleanup `afterEach`).
+
 ### Bash op: bash-preferred, sh fallback (issue #123)
 
 The `bash` op runs **bash when the system has it** — not `sh`, so

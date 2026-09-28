@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -61,6 +62,15 @@ export interface FileSystem {
   rename(from: string, to: string): void;
   listDir(path: string): string[];
   stat(path: string): StatInfo;
+  /**
+   * Symlink-aware stat (issue #172). `stat()` follows links, so a walk
+   * cannot tell a symlinked directory from a real one and would descend a
+   * loop, returning the same files under every route. `lstat()` lets the
+   * walk skip links entirely (a dangling one included, instead of throwing).
+   * Optional so existing seams stay valid; absent = links cannot be told
+   * apart from their targets (test doubles, and the documented widening).
+   */
+  lstat?(path: string): StatInfo & { isSymbolicLink: boolean };
   /**
    * Read `[start, end)` bytes (issue #122; mirrors #107's FileBridge seam).
    * Optional so existing seams stay valid; absent = whole-file reads only
@@ -197,6 +207,17 @@ class NodeFileSystem implements FileSystem {
       isDirectory: st.isDirectory(),
       size: st.size,
       mode: st.mode & 0o7777,
+    };
+  }
+
+  lstat(path: string): StatInfo & { isSymbolicLink: boolean } {
+    const st = lstatSync(confine(this.cwd, path));
+    return {
+      isFile: st.isFile(),
+      isDirectory: st.isDirectory(),
+      size: st.size,
+      mode: st.mode & 0o7777,
+      isSymbolicLink: st.isSymbolicLink(),
     };
   }
 

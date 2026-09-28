@@ -23,6 +23,7 @@ escapes, not a sandbox boundary.
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
+| `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher (#116, #172): the journal baseline walk and the worker's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock (#118) |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
@@ -47,7 +48,7 @@ Supporting shapes, field-for-field:
 | --- | --- |
 | `Provenance` | `sessionId: string`, `agentId: string`, `toolCallId: string`, `turnId: number`, `operation: string` |
 | `StatInfo` | `isFile: boolean`, `isDirectory: boolean`, `size: number` |
-| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo` |
+| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets) |
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
@@ -137,9 +138,18 @@ exit, so a sibling subtree never inherits another's rules. An unreadable
 nested ignore (chmod 000, a permission-denied mount) leaves the parent rules
 in force and the walk continues: the documented widening, never a throw.
 `reconcile` re-walks through the same `captureBaseline`, so boot and sweep can
-never disagree about what is in scope. The matcher stays the documented
-common subset (`*`, `?`, `**` at the edges, `dir/`, `!`) — character classes
-and mid-pattern `**` are not modeled — and nested rules are matched against
+never disagree about what is in scope. The matcher is the shared
+`ignore.ts` (#172), so this walk and the worker's find/grep walk also cannot
+disagree about what is ignored. The matcher stays the documented
+common subset (`*`, `?`, `**`, `dir/`, `!`) — character classes and rooted
+mid-pattern `**` are not modeled — compiled to tokens and matched with a
+linear DP, never a backtracking regex, so a wildcard-heavy pattern costs
+O(pattern x path) per entry instead of exponential time. A LEADING `**/`
+matches zero or more leading directories (git matches `**/foo` at the root,
+not only below one), and a trailing `dir/` applies to directories only: a
+file named like the directory stays in scope, while anything under an
+ignored directory is ignored by its ancestor. Nested rules are matched
+against
 the workspace-relative path rather than re-rooted at their own directory, so
 a nested ANCHORED pattern must be written repo-relative (`packages/foo/build/`);
 a git-style directory-relative one (`sub/build/` inside

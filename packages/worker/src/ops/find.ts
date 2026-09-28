@@ -4,7 +4,7 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkFiles } from './walk.js';
+import { walkCapNotice, walkDepthNotice, walkFiles } from './walk.js';
 
 export const FIND_DEFAULT_MAX = 100;
 
@@ -19,6 +19,8 @@ export interface FindResult {
   root: string;
   paths: string[];
   truncated: boolean;
+  /** Present when a cap (walk or maxResults) stopped the listing. */
+  notice?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,10 +81,15 @@ export const findOperation: Operation<FindArgs, FindResult> = {
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {
     const root = args.root ?? '.';
     const max = args.maxResults ?? FIND_DEFAULT_MAX;
-    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
+    const walk = walkFiles(ctx.env.fs, root);
     const paths: string[] = [];
-    let truncated = hitCap;
-    for (const entry of entries) {
+    let truncated = walk.hitCap || walk.hitDepth;
+    let notice = walk.hitCap
+      ? walkCapNotice(walk.capAt)
+      : walk.hitDepth
+        ? walkDepthNotice(walk.depthAt)
+        : undefined;
+    for (const entry of walk.entries) {
       if (args.type === 'file' && entry.isDirectory) continue;
       if (args.type === 'dir' && !entry.isDirectory) continue;
       if (
@@ -92,10 +99,11 @@ export const findOperation: Operation<FindArgs, FindResult> = {
         continue;
       if (paths.length >= max) {
         truncated = true;
+        notice ??= `result cap ${max} reached (maxResults); results may be incomplete`;
         break;
       }
       paths.push(entry.path);
     }
-    return { root, paths, truncated };
+    return { root, paths, truncated, notice };
   },
 };

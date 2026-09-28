@@ -29,17 +29,14 @@ export const FAUX_ENV = { KUBIC_PROVIDER: 'faux' };
 export const FAUX_NOTICE_FRAGMENT = 'testing provider';
 export const TOOL_PROMPT = 'faux:tool ls {"path":"."}';
 
-function lastLine(stdout) {
-  const lines = stdout.trim().split('\n');
-  return lines[lines.length - 1] ?? '';
-}
-
+// `--json` stdout is exactly one JSON document (formatJson indents it, so
+// it may span lines); anything else on stdout is a contract break.
 function envelopeOf(label, probe, problems) {
   try {
-    return JSON.parse(lastLine(probe.stdout));
+    return JSON.parse(probe.stdout.trim());
   } catch {
     problems.push(
-      `${label}: last stdout line is not a JSON envelope (${JSON.stringify(lastLine(probe.stdout))})`,
+      `${label}: stdout is not a JSON envelope (${JSON.stringify(probe.stdout.trim().slice(-200))})`,
     );
     return undefined;
   }

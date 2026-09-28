@@ -135,4 +135,19 @@ describe('faux smoke checker', () => {
       ),
     );
   });
+
+  // `--json` stdout is exactly one document, which the formatter indents
+  // with two spaces (orchestrate's envelope spans many lines).
+  it('reads an indented multi-line --json envelope', () => {
+    const { problems } = fauxSmoke({
+      run: healthy({
+        'orchestrate -p say hi --yes --json|faux': {
+          code: 0,
+          stdout: `${JSON.stringify({ ok: true, status: 'completed' }, null, 2)}\n`,
+          stderr: '',
+        },
+      }),
+    });
+    assert.deepEqual(problems, []);
+  });
 });

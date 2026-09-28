@@ -21,7 +21,6 @@
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
 | 6 | `provider_probe_failed` / provider-down | No reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). Doctor exits 6 when any failing check has reason `provider-down`. |
-
 ## Per-command notes
 
 - **`kubic doctor`**: 0 clean (warns included — `warn` is informational

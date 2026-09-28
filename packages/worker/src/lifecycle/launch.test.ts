@@ -347,6 +347,12 @@ describe('launchWorker (issue #94)', () => {
     expect(registry.get('worker-1')?.generation).toBe(2);
     expect(registry.get('worker-1')?.status).toBe('running');
     expect(registry.get('worker-1')?.pid).toBe(5151);
+    // Issue #383: each child is told the generation its row carries, so the
+    // §46 trajectory it writes matches `kubic workers`.
+    const envOf = (spawned: typeof first.spawned): Record<string, string> =>
+      (spawned[0]?.env ?? {}) as Record<string, string>;
+    expect(envOf(first.spawned).KUBIC_WORKER_GENERATION).toBe('1');
+    expect(envOf(second.spawned).KUBIC_WORKER_GENERATION).toBe('2');
   });
 
   it('reaps through the teardown budget on demand', async () => {

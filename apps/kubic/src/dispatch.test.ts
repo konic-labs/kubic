@@ -121,11 +121,12 @@ const PARSED: Readonly<Record<string, unknown>> = {
   perf: { budget: 'spawn', samples: '1' },
   policy: { tool: 'shell' },
   audit: {},
+  // #256: no commander model default on eval — the handler applies it on
+  // the --task path; --trajectory reads the model from the export.
   eval: {
     suite: 'swe-bench-mini',
     task: 'p',
     generation: '1',
-    model: 'faux/faux',
   },
   benchmark: { generation: '1', model: 'faux/faux' },
   replay: { trajectory: 't.json', tier: 'recorded' },

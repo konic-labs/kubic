@@ -47,6 +47,7 @@ export interface PreferencePair {
 }
 
 export type ExclusionTag =
+  | 'prompt-mismatch-excluded'
   | 'env-failure-excluded'
   | 'cross-boundary-excluded'
   | 'no-preference-signal-excluded';
@@ -112,6 +113,7 @@ export function buildPreferencePair(
     throw new RlProvenanceError('pair refused: prompt text is required');
   }
   const prompt = chosenExport.prompt.text;
+  const rejectedPrompt = rejectedExport.prompt?.text;
   const chosen = buildSide(chosenExport);
   const rejected = buildSide(rejectedExport);
   const exclude = (tag: ExclusionTag, reason: string): PairBuild => ({
@@ -124,6 +126,21 @@ export function buildPreferencePair(
       rejectedCategory: rejected.failureCategory,
     },
   });
+  // A pair ranks two answers to ONE prompt (#269): pairing task A's
+  // prompt with task B's completion teaches nothing but noise, so a
+  // different prompt text or task id is excluded before any other policy.
+  if (rejectedPrompt !== prompt) {
+    return exclude(
+      'prompt-mismatch-excluded',
+      'chosen and rejected answer a different prompt — a pair ranks two answers to one prompt',
+    );
+  }
+  if (chosen.taskRef !== rejected.taskRef) {
+    return exclude(
+      'prompt-mismatch-excluded',
+      `chosen and rejected answer different tasks (${chosen.taskRef} vs ${rejected.taskRef})`,
+    );
+  }
   // Env failures carry no capability signal — either side excluded.
   if (
     isEnvFailure(chosen.failureCategory) ||
@@ -215,6 +232,11 @@ export function validatePreferencePair(input: unknown): PairValidation {
   // the verifier must actually prefer chosen over rejected — hand-crafted
   // records bypass the builder, so validation re-enforces both.
   if (chosen.side !== undefined && rejected.side !== undefined) {
+    if (chosen.side.taskRef !== rejected.side.taskRef) {
+      errors.push(
+        `chosen and rejected answer different tasks (${chosen.side.taskRef} vs ${rejected.side.taskRef})`,
+      );
+    }
     if (
       isEnvFailure(chosen.side.failureCategory) ||
       isEnvFailure(rejected.side.failureCategory)

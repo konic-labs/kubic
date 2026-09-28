@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { makeExport } from './rl/fixtures.js';
 import { EvalRunnerError, runEvalTask, runEvalTrajectory } from './runner.js';
 import type { EvalSignals } from './signals.js';
 
@@ -26,6 +27,88 @@ function usageRows() {
     { inputTokens: 100, outputTokens: 50, costUsd: 0.02, latencyMs: 60000 },
   ];
 }
+
+describe('runEvalTask refusals are specific', () => {
+  const base = {
+    suite: 'swe-bench-mini',
+    task: 'fix',
+    model: 'acme/m1',
+    thinking: null,
+    worktree: '/wt/a',
+    generation: 3,
+    tier: 'standard',
+    workspace: 'inline' as const,
+  };
+  const ok = {
+    runSuite: async () => ({
+      success: true,
+      signals: signals(),
+      usageRows: usageRows(),
+    }),
+  };
+
+  it('refuses a blank worktree and a negative generation, accepts generation 0', async () => {
+    await expect(
+      runEvalTask({ ...base, worktree: '  ' }, ok),
+    ).rejects.toMatchObject({
+      code: 'missing-worktree',
+      message: expect.stringMatching(/^worktree is required/),
+    });
+    await expect(
+      runEvalTask({ ...base, generation: -1 }, ok),
+    ).rejects.toMatchObject({
+      code: 'missing-generation',
+      message: expect.stringMatching(/^generation is required/),
+    });
+    const record = await runEvalTask({ ...base, generation: 0 }, ok);
+    expect(record.generation).toBe(0);
+  });
+
+  it('explains a worktree-mode refusal with or without a checker', async () => {
+    await expect(
+      runEvalTask({ ...base, workspace: 'worktree' }, ok),
+    ).rejects.toMatchObject({
+      code: 'dirty-worktree',
+      message:
+        'worktree "/wt/a" has no cleanliness checker — refusing to benchmark without one',
+    });
+    await expect(
+      runEvalTask(
+        { ...base, workspace: 'worktree' },
+        { ...ok, ensureCleanWorktree: () => false },
+      ),
+    ).rejects.toMatchObject({
+      code: 'dirty-worktree',
+      message:
+        'worktree "/wt/a" is not clean — refusing to benchmark against a dirty tree',
+    });
+  });
+
+  it('explains missing and mismatched usage rows', async () => {
+    await expect(
+      runEvalTask(base, {
+        runSuite: async () => ({ success: true, signals: signals() }),
+      }),
+    ).rejects.toMatchObject({
+      code: 'missing-usage-rows',
+      message: expect.stringMatching(/^usage rows are required/),
+    });
+    await expect(
+      runEvalTask(base, {
+        runSuite: async () => ({
+          success: true,
+          signals: signals({ tokens: 999 }),
+          usageRows: usageRows(),
+        }),
+      }),
+    ).rejects.toMatchObject({
+      code: 'usage-mismatch',
+      message: expect.stringMatching(
+        /^signals do not reconcile with §39 usage rows: \S/,
+      ),
+    });
+  });
+});
 
 describe('runEvalTask (issue #53)', () => {
   it('builds a complete record from a faux suite run', async () => {
@@ -428,5 +511,134 @@ describe('runEvalTrajectory (issue #53)', () => {
     const error = new EvalRunnerError('missing-tier', 'tier missing');
     expect(error.exitCode).toBe(2);
     expect(error.toJSON().error.code).toBe('missing-tier');
+  });
+});
+
+describe('runEvalTrajectory provenance comes from the export (issue #256)', () => {
+  it('records the export provider/model, generation and worktree when no flags are given', async () => {
+    const record = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
+      tier: 'standard',
+    });
+    expect(record.model).toBe('acme/m1');
+    expect(record.generation).toBe(3);
+    expect(record.worktree).toBe('/wt/agent-1');
+    expect(record.caseId).toBe('swe-bench-mini:3');
+  });
+
+  it('takes thinking from exported.model.thinking', async () => {
+    const exported = makeExport();
+    exported.model.thinking = 'high';
+    const record = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: exported,
+      tier: 'standard',
+    });
+    expect(record.thinking).toBe('high');
+    const none = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: makeExport(),
+      tier: 'standard',
+    });
+    expect(none.thinking).toBeNull();
+  });
+
+  it('accepts flags that agree with the export', async () => {
+    const exported = makeExport();
+    exported.model.thinking = 'low';
+    const record = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: exported,
+      model: 'acme/m1',
+      thinking: 'low',
+      worktree: '/wt/agent-1',
+      generation: 3,
+      tier: 'standard',
+    });
+    expect(record.model).toBe('acme/m1');
+    expect(record.thinking).toBe('low');
+  });
+
+  it.each([
+    ['model', { model: 'faux/faux' }, /model/],
+    ['worktree', { worktree: '/other' }, /worktree/],
+    ['generation', { generation: 0 }, /generation/],
+    ['thinking', { thinking: 'high' }, /thinking/],
+  ] as const)(
+    'refuses a conflicting %s flag with provenance-mismatch',
+    async (_name, flags, pattern) => {
+      const error = await runEvalTrajectory({
+        suite: 'swe-bench-mini',
+        trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
+        tier: 'standard',
+        ...flags,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(EvalRunnerError);
+      expect((error as EvalRunnerError).code).toBe('provenance-mismatch');
+      expect((error as EvalRunnerError).exitCode).toBe(2);
+      expect((error as EvalRunnerError).message).toMatch(pattern);
+    },
+  );
+
+  it('refuses an unknown suite, a stub suite and a malformed export by code', async () => {
+    const refusal = (options: Parameters<typeof runEvalTrajectory>[0]) =>
+      runEvalTrajectory(options).catch((caught: unknown) => caught);
+    const unknown = (await refusal({
+      suite: 'nope',
+      trajectory: makeExport(),
+      tier: 'smoke',
+    })) as EvalRunnerError;
+    expect(unknown.code).toBe('unknown-suite');
+    expect(unknown.message).toBe('unknown suite "nope"');
+    const stub = (await refusal({
+      suite: 'terminal-live',
+      trajectory: makeExport(),
+      tier: 'smoke',
+    })) as EvalRunnerError;
+    expect(stub.code).toBe('stub-suite');
+    expect(stub.message).toMatch(/^suite "terminal-live" is a stub/);
+    const malformed = (await refusal({
+      suite: 'swe-bench-mini',
+      trajectory: { schema_version: '1.0' },
+      tier: 'smoke',
+    })) as EvalRunnerError;
+    expect(malformed.code).toBe('invalid-trajectory');
+    expect(malformed.message).toMatch(/^invalid trajectory export: .*§46/);
+  });
+
+  it('refuses a blank or unknown tier with distinct codes', async () => {
+    await expect(
+      runEvalTrajectory({
+        suite: 'swe-bench-mini',
+        trajectory: makeExport(),
+        tier: '   ',
+      }),
+    ).rejects.toMatchObject({
+      code: 'missing-tier',
+      message: expect.stringMatching(/^tier is required/),
+    });
+    await expect(
+      runEvalTrajectory({
+        suite: 'swe-bench-mini',
+        trajectory: makeExport(),
+        tier: 'bogus',
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid-tier',
+      message: expect.stringMatching(/^unknown tier "bogus"/),
+    });
+  });
+
+  it('names the error class', () => {
+    expect(new EvalRunnerError('missing-tier', 'x').name).toBe(
+      'EvalRunnerError',
+    );
+  });
+
+  it('still requires a tier (not recorded in the export)', async () => {
+    await expect(
+      runEvalTrajectory({ suite: 'swe-bench-mini', trajectory: makeExport() }),
+    ).rejects.toMatchObject({ code: 'missing-tier' });
   });
 });

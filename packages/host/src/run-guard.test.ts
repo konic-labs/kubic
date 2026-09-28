@@ -2,12 +2,13 @@
 // model terminates within the bound with a §78 budget_exhausted exit and
 // the journal:/usage:/trajectory: ref triple intact. Faux-only: the lane
 // is stubbed at the boot seam, the drive loop runs real — zero network.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
+import { parseTrajectoryExportJSON } from '../../trajectory/src/schema.js';
 import { bootSoloLane, type SoloLane } from '../../worker/src/lane/solo.js';
 import {
   type AgentLane,
@@ -45,6 +46,18 @@ function fauxModels(texts: string[]): MutableModels {
   models.setProvider(faux.provider);
   faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
   return models;
+}
+
+// Issue #383: the trajectory ref names the written §46 file, and a guard
+// exhaustion is recorded with its §52 category (never a missing one).
+function expectBudgetTrajectory(result: HeadlessRunResult): void {
+  expect(
+    result.trajectoryRef.endsWith(join(result.sessionId, 'trajectory.json')),
+  ).toBe(true);
+  const exported = parseTrajectoryExportJSON(
+    readFileSync(result.trajectoryRef, 'utf8'),
+  );
+  expect(exported.result.failureCategory).toBe('budget_exhausted');
 }
 
 function deps() {
@@ -207,7 +220,7 @@ describe('run guard mapping (issue #84)', () => {
     expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-    expect(result.trajectoryRef).toBe(`trajectory:${result.sessionId}`);
+    expectBudgetTrajectory(result);
     expect(result.error?.kind).toBe('budget_exhausted');
     expect(result.error?.message).toMatch(/timed out after 60ms/);
   });
@@ -222,7 +235,7 @@ describe('run guard mapping (issue #84)', () => {
       expect(mapTerminusToExitCode(result.terminus)).toBe(3);
       expect(result.journalRef).toBe(`journal:${result.sessionId}`);
       expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-      expect(result.trajectoryRef).toBe(`trajectory:${result.sessionId}`);
+      expectBudgetTrajectory(result);
     } finally {
       vi.useRealTimers();
     }
@@ -249,7 +262,7 @@ describe('run guard mapping (issue #84)', () => {
     expect(drive).toHaveBeenCalledTimes(3);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
-    expect(result.trajectoryRef).toBe(`trajectory:${result.sessionId}`);
+    expectBudgetTrajectory(result);
     expect(result.error?.message).toMatch(
       /turn budget exhausted after 3 turns/,
     );

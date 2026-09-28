@@ -176,7 +176,8 @@ describe('tui entry regression (issue #75)', () => {
     expect(doc).toContain('result: headless answer');
     expect(doc).toContain('usage: usage:');
     expect(doc).toContain('journal: journal:');
-    expect(doc).toContain('trajectory: trajectory:');
+    // Issue #383: the ref is the written §46 file's path.
+    expect(doc).toMatch(/trajectory: \S+\/trajectory\.json/);
     // No alt-screen escape sequences ever reach the headless output.
     expect(doc).not.toContain('?1049h');
     expect(doc).not.toContain('?1049l');

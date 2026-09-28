@@ -268,7 +268,9 @@ and `launched.perf()` reports the §61 sample against
 allowlist reaches the OS through `allowlistedShell` (`env -i …`, since
 the exec Shell seam carries no env field); `KUBIC_WORKER_ID` is on the
 allowlist so a worker announces itself, and an ordinary `kubic run`
-prints no marker. Registry rows persist to
+prints no marker. `KUBIC_WORKER_GENERATION` (the generation the row was
+registered under) rides next to it, so the child's §46 trajectory records
+the same generation `kubic workers` shows (issue #383). Registry rows persist to
 `<repo>/.kubic/orchestrator/workers.json` (§35 keeps that out of git) and
 `kubic workers` reads them back — one shared record, never a fresh empty
 registry.

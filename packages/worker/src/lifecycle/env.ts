@@ -26,6 +26,10 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // marker under this id and the orchestrator matches it, so the id is
   // part of the child's world — never the parent's whole environment.
   'KUBIC_WORKER_ID',
+  // The generation the lifecycle registered this child under (issue #383):
+  // the child's §46 trajectory records it as provenance.generation. A
+  // counter, not a secret.
+  'KUBIC_WORKER_GENERATION',
   // Per-worker approvals (issue #105): the orchestration run tells its child
   // where the ask mailbox is and which orchestrator session it belongs to, so
   // a challenged call the child cannot answer reaches the USER through the

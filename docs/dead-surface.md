@@ -118,6 +118,13 @@ file that no longer exists, or when a row's file has become reachable
   `prompt.ts` is reachable too: `sessions prune` asks through
   `promptConfirm`, its only helper (the unused select/text/spinner helpers
   were deleted rather than ledgered).
+- Issue #383 **wired** `packages/trajectory/src/export.ts`: every settled
+  `kubic run`, orchestrator worker child and TUI turn writes its §46
+  trajectory through `buildTrajectoryExport`
+  (`host/src/trajectory/run-trajectory.ts`), so its row is removed. The
+  `trajectory/src/index.ts` barrel cannot be deleted (a §64 skeleton path
+  pinned by `scripts/dep-lint.test.mjs`); its row is re-owned from `delete:`
+  to a named `keep:`.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -150,8 +157,7 @@ file that no longer exists, or when a row's file has become reachable
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |
-| 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
+| 56 | `packages/trajectory/src/index.ts` | #383 | keep: §64 skeleton path pinned by `scripts/dep-lint.test.mjs` (REQUIRED_PATHS), so it cannot be deleted; the live path imports `export.ts`/`schema.ts` per module |
 | 5 | `packages/tui/src/components.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 6 | `packages/tui/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

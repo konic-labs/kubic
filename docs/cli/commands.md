@@ -85,10 +85,36 @@ closed, and the run prints its normal result with `status: failed`,
 runs takes the default path and ends the process immediately.
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
-`usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`) on stdout (the
-labels are dimmed and the result coloured on a colour terminal; plain text
-under a pipe or `NO_COLOR`); on failure an `error:` line goes to stderr
-first. Exit code is the §78 terminus map — see [exit codes](exit-codes.md).
+`usage:` (`usage:<id>`), `trajectory:` (the absolute path of the run's
+trajectory file) on stdout (the labels are dimmed and the result coloured
+on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
+`error:` line goes to stderr first. Exit code is the §78 terminus map — see
+[exit codes](exit-codes.md).
+
+**Trajectories (§46).** Every run that attached a session writes
+`<sessions-root>/<id>/trajectory.json` when it settles, completed or not,
+and the `trajectory` ref (text line and `--json` envelope) is that file's
+absolute path. The file holds the session's latest settled run; a resumed
+`--session` run replaces it. It records:
+
+- the prompt, its tool calls (actions) and their results (observations)
+- per-request token and cost usage
+- the journal diff of this run
+- this session's approvals from the audit ledger
+- provenance: session, agent, pid, worker generation (0 for a solo run),
+  worktree, and `provider/id` model
+- the git base revision (`no-vcs` outside a git checkout) and branch
+- the used tool environment (`toolSpawnEnv`, so no secrets)
+- a result with a §52 `failureCategory` on every non-completed status
+
+The file is readable by `kubic replay <file>` (or `--session <id>`),
+`kubic export --trajectory <file>` (or `--session <id>`) and
+`kubic eval --trajectory "$(cat <file>)"`. A run that fails before any
+session exists (an invalid `--session` id, a missing session) writes none,
+and its ref stays `trajectory:<id>`. A trajectory that cannot be written is
+reported on stderr and never changes the run's exit code.
+`kubic tui` writes the same file after each settled turn, and each
+`kubic orchestrate` worker writes its own under its worker session.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
 (`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
@@ -1202,12 +1228,24 @@ flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
   which is a usage error, leaves stdout empty and prints its `error:`
   line on stderr.
 
-## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) --generation <n> [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) [--generation <n>] [--worktree <path>] [--tier <tier>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Scores one suite against a task prompt or an existing trajectory
-export. `--worktree`, `--generation` and `--tier` are mandatory
-provenance: a record missing any of them is refused with exit 2 and is
-never stored. Every record carries `success`, `costUsd`, `tokens`,
+export. Every record needs its provenance (`model`, `thinking`,
+`worktree`, `generation`) and a `--tier`; a record missing any of them
+is refused with exit 2 and is never stored.
+
+- With `--task`, the provenance comes from the flags: `--worktree` and
+  `--generation` are mandatory and `--model` defaults to `faux/faux`.
+- With `--trajectory`, the provenance comes from the export itself:
+  `model` from `provenance.model`, `thinking` from `model.thinking`, and
+  `worktree` and `generation` from `provenance`. These flags become
+  optional cross-checks. A flag that disagrees with the export is
+  refused with exit 2 and `[provenance-mismatch]`, and no record is
+  printed. The tier is not part of an export, so `--tier` stays
+  mandatory.
+
+Every record carries `success`, `costUsd`, `tokens`,
 `latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
 `generation` and `tier`.
 
@@ -1216,12 +1254,12 @@ never stored. Every record carries `success`, `costUsd`, `tokens`,
 | `--suite <id>` | **Required.** One of the built-in suites: `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover` or `review-diff`. `terminal-live` and `agentic-live` are stubs and refuse with exit 2. An unknown suite exits 2. |
 | `--task <prompt>` | Runs the suite against a task prompt. This needs a live model-backed suite runner, which the binary does not ship, so it exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
 | `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
-| `--generation <n>` | **Required.** The worker generation that ran. Must be an integer; anything else exits 2. |
-| `--worktree <path>` | Where the run executed. Provenance: a record without it is refused with exit 2. |
-| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2. |
-| `--model <id>` | `provider/id` of the run (default `faux/faux`). |
+| `--generation <n>` | The worker generation that ran. Must be an integer; anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
+| `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
+| `--tier <smoke\|standard\|extended>` | Published on every record. Provenance: a missing or unknown tier exits 2 on both paths. |
+| `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/faux`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
 | `--workspace inline\|worktree` | `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean. Any other value exits 2. Default `inline`. |
-| `--thinking <level>` | Recorded on the record verbatim. |
+| `--thinking <level>` | With `--task`, recorded on the record verbatim (default none). With `--trajectory` it is read from `model.thinking`, and a different value exits 2 (`provenance-mismatch`). |
 | `--json` | Prints one JSON envelope (`ok`, `exitCode`, and either `record` or `error`) instead of the text line. The exit code is the same either way. |
 
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
@@ -1248,12 +1286,17 @@ The flags are the same as `kubic eval` without `--task` and
 `--trajectory`; each matrix row runs `benchmark:<suite-id>` as its task.
 `--json` prints `{ok, exitCode, results}`.
 
-## `kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
+## `kubic replay ([--] <trajectory.json> | --session <id>) [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
 Replays a versioned trajectory at a declared determinism tier. The tier
 is printed, and it is present in `--json` for every result. A tier never
 silently downgrades: a tier that needs pins refuses with exit 2 when
 they are missing.
+
+`--session <id>` replays that session's own trajectory
+(`<sessions-root>/<id>/trajectory.json`, written when a `kubic run` or
+TUI turn settles). Giving both a file and `--session`, or a path-unsafe
+id, exits 2 with one `error:` line.
 
 | Invocation | Meaning |
 | --- | --- |
@@ -1285,10 +1328,13 @@ A refused config also blocks the log-only tiers (`recorded` and
 `compare`): the command exits 1 before any tier runs, so the config has
 to be fixed first.
 
-## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
+## `kubic export (--trajectory <file> | --session <id>) [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
 
 Inspects trajectory export files and exports RL dataset records from
-them.
+them. `--session <id>` stands for `--trajectory
+<sessions-root>/<id>/trajectory.json`, the file a settled `kubic run` or
+TUI turn writes. Giving both, or a path-unsafe id, exits 2 with one
+`error:` line.
 
 - **Without `--type`**, the file is validated and described: schema,
   task, model, provenance, result and usage.
@@ -1300,15 +1346,26 @@ them.
 These invocations exit 2 with an `error:` line on stderr, and no file is
 read:
 
-- a missing `--trajectory`
+- a missing `--trajectory` (and no `--session`)
 - an unknown `--type`
 - a pair or group type without `--against`
 - `--against` on any other type
 
-Excluded pairs are env-failure or cross-boundary runs, which carry no
-capability signal. They print their exclusion tag and exit 0; they never
-produce a training record. Stripped provenance or failure labels refuse
-with exit 2.
+A pair ranks two answers to one prompt. A pair is excluded when:
+
+- the two files answer a different prompt text or task id
+  (`prompt-mismatch-excluded`, checked first)
+- either side is an env failure (`env-failure-excluded`)
+- the verifier does not prefer chosen over rejected
+  (`no-preference-signal-excluded`)
+- the runs cross a worktree or grant boundary (`cross-boundary-excluded`)
+
+An excluded pair prints `excluded: <tag> — <reason>` and exits 0; it
+never produces a training record. A DPO record carries both sides'
+`taskRef`, and a hand-built record whose task refs differ fails
+validation. `grpo` refuses with exit 2 when its candidates answer
+different prompts or tasks. Stripped provenance or failure labels also
+refuse with exit 2.
 
 Text mode prints the canonical record JSON. `--json` wraps it in
 `{ok, exitCode, type, record}`, or `{…, excluded}` for an excluded pair.

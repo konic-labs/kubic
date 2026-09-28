@@ -63,17 +63,42 @@ export interface EvalOptions {
   readonly json?: boolean;
 }
 
+// model/thinking/worktree/generation stay undefined when their flag is
+// absent: the --trajectory path takes them from the export (§48, #256);
+// the --task and benchmark paths apply the defaults (EVAL_DEFAULT_MODEL,
+// thinking null) and require the rest (see forTask).
 interface Parsed {
   suite: string | undefined;
   task: string | undefined;
   trajectory: string | undefined;
   workspace: EvalWorkspace;
+  model: string | undefined;
+  thinking: string | undefined;
+  worktree: string | undefined;
+  generation: number | undefined;
+  tier: string;
+  json: boolean;
+}
+
+interface TaskProvenance {
   model: string;
   thinking: string | null;
   worktree: string;
   generation: number;
-  tier: string;
-  json: boolean;
+}
+
+const MISSING_GENERATION = "required option '--generation <n>' not specified";
+
+// The --task / benchmark provenance: the flags are the only source, so the
+// generation is required and the model defaults (documented default).
+function forTask(parsed: Parsed): TaskProvenance | string {
+  if (parsed.generation === undefined) return MISSING_GENERATION;
+  return {
+    model: parsed.model ?? EVAL_DEFAULT_MODEL,
+    thinking: parsed.thinking ?? null,
+    worktree: parsed.worktree ?? '',
+    generation: parsed.generation,
+  };
 }
 
 const PLAIN = createCliTheme('none');
@@ -90,21 +115,21 @@ function normalize(options: EvalOptions): Parsed | string {
   if (workspace !== 'inline' && workspace !== 'worktree') {
     return '--workspace must be one of inline|worktree';
   }
-  if (options.generation === undefined) {
-    return "required option '--generation <n>' not specified";
-  }
-  const generation = Number(options.generation);
-  if (options.generation.trim() === '' || !Number.isInteger(generation)) {
-    return '--generation needs an integer';
+  let generation: number | undefined;
+  if (options.generation !== undefined) {
+    generation = Number(options.generation);
+    if (options.generation.trim() === '' || !Number.isInteger(generation)) {
+      return '--generation needs an integer';
+    }
   }
   return {
     suite: options.suite,
     task: options.task,
     trajectory: options.trajectory,
     workspace,
-    model: options.model ?? EVAL_DEFAULT_MODEL,
-    thinking: options.thinking ?? null,
-    worktree: options.worktree ?? '',
+    model: options.model,
+    thinking: options.thinking,
+    worktree: options.worktree,
     generation,
     tier: options.tier ?? '',
     json: options.json === true,
@@ -191,23 +216,27 @@ export async function runEvalCommand(
       const record = await runEvalTrajectory({
         suite: parsed.suite,
         trajectory: payload,
-        model: parsed.model,
-        thinking: parsed.thinking,
-        worktree: parsed.worktree,
-        generation: parsed.generation,
+        ...(parsed.model === undefined ? {} : { model: parsed.model }),
+        ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
+        ...(parsed.worktree === undefined ? {} : { worktree: parsed.worktree }),
+        ...(parsed.generation === undefined
+          ? {}
+          : { generation: parsed.generation }),
         tier: parsed.tier,
       });
       emitRecord(deps.out, record, parsed.json);
       return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
     }
+    const provenance = forTask(parsed);
+    if (typeof provenance === 'string') {
+      log.error(provenance);
+      return EVAL_EXIT_USAGE;
+    }
     const record = await runEvalTask(
       {
         suite: parsed.suite,
         task: parsed.task as string,
-        model: parsed.model,
-        thinking: parsed.thinking,
-        worktree: parsed.worktree,
-        generation: parsed.generation,
+        ...provenance,
         tier: parsed.tier,
         workspace: parsed.workspace,
       },
@@ -242,6 +271,11 @@ export async function runBenchmarkCommand(
     log.error(parsed);
     return EVAL_EXIT_USAGE;
   }
+  const provenance = forTask(parsed);
+  if (typeof provenance === 'string') {
+    log.error(provenance);
+    return EVAL_EXIT_USAGE;
+  }
   const selected =
     parsed.suite === undefined
       ? [...EVAL_SUITES]
@@ -273,10 +307,7 @@ export async function runBenchmarkCommand(
         {
           suite: suite.id,
           task: parsed.task ?? `benchmark:${suite.id}`,
-          model: parsed.model,
-          thinking: parsed.thinking,
-          worktree: parsed.worktree,
-          generation: parsed.generation,
+          ...provenance,
           tier: parsed.tier,
           workspace: parsed.workspace,
         },

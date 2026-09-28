@@ -309,7 +309,9 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     const id = result.sessionId;
     expect(result.journalRef).toBe(`journal:${id}`);
     expect(result.usageRef).toBe(`usage:${id}`);
-    expect(result.trajectoryRef).toBe(`trajectory:${id}`);
+    // Issue #383: the ref resolves — it names the written §46 file.
+    expect(result.trajectoryRef).toBe(join(root, id, 'trajectory.json'));
+    expect(existsSync(result.trajectoryRef)).toBe(true);
     expect(result.error).toBeUndefined();
   });
 

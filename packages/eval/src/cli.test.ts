@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runBenchmarkCommand, runEvalCommand } from './cli.js';
+import { makeExport } from './rl/fixtures.js';
 import type { EvalSignals } from './signals.js';
 
 function signals(): EvalSignals {
@@ -188,6 +189,67 @@ describe('eval command (issue #53)', () => {
     expect(exit).toBe(0);
     expect(ran).toBe(false);
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
+  });
+});
+
+describe('eval --trajectory provenance (issue #256)', () => {
+  const exported = JSON.stringify(
+    makeExport({ model: 'acme/m1', generation: 3 }),
+  );
+
+  it('records the export provenance when no provenance flags are given', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: exported,
+        tier: 'standard',
+        json: true,
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(0);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      record: { model: string; worktree: string; generation: number };
+    };
+    expect(envelope.record).toMatchObject({
+      model: 'acme/m1',
+      worktree: '/wt/agent-1',
+      generation: 3,
+    });
+  });
+
+  it('exits 2 with provenance-mismatch on a conflicting --model and prints no record', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: exported,
+        model: 'faux/faux',
+        tier: 'standard',
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines).toEqual([]);
+    expect(o.errs.join('\n')).toMatch(/\[provenance-mismatch\]/);
+  });
+
+  it('still refuses a --task run without --generation', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      {
+        suite: 'swe-bench-mini',
+        task: 'fix',
+        worktree: '/wt/a',
+        tier: 'standard',
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    expect(o.errs).toEqual([
+      "error: required option '--generation <n>' not specified",
+    ]);
   });
 });
 

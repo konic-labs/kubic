@@ -372,9 +372,17 @@ export function binaryContract({ distPresent, expectedLine, run }) {
   for (const kind of REF_KINDS) {
     if (kind === 'session') continue;
     const value = refValue(headless.stdout, kind);
+    // The trajectory ref is the written §46 file (issue #383): even this
+    // provider-less run settles with a session, so it names
+    // <sessions-root>/<id>/trajectory.json rather than a `trajectory:<id>`
+    // string that resolves to nothing.
+    const expected =
+      kind === 'trajectory'
+        ? (ref) => ref.endsWith(`/${session}/trajectory.json`)
+        : (ref) => ref === `${kind}:${session}`;
     if (value === null) {
       problems.push(`\`kubic run -p\` missing the \`${kind}:\` ref`);
-    } else if (session !== null && value !== `${kind}:${session}`) {
+    } else if (session !== null && !expected(value)) {
       problems.push(
         `\`kubic run -p\` \`${kind}:\` ref ${JSON.stringify(value)} does not point at session ${session}`,
       );

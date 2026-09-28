@@ -278,7 +278,12 @@ describe('analysis commands: generated help', () => {
   });
 
   it('shows the eval model default and the perf budget kinds', async () => {
-    expect((await kubic(['eval', '--help'])).out.join('\n')).toContain(
+    // #256: eval's --model has no commander default (--trajectory reads the
+    // export); the --task default is documented in the help text instead.
+    const evalHelp = (await kubic(['eval', '--help'])).out.join('\n');
+    expect(evalHelp).toContain('--task default faux/faux');
+    expect(evalHelp).not.toContain('(default: "faux/faux")');
+    expect((await kubic(['benchmark', '--help'])).out.join('\n')).toContain(
       '(default: "faux/faux")',
     );
     expect((await kubic(['perf', '--help'])).out.join('\n')).toContain(
@@ -319,9 +324,7 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
     const cases: [readonly string[], string][] = [
       [['perf', '--samples', '1'], '--budget <kind>'],
       [['policy'], '--tool <name>'],
-      [['export'], '--trajectory <file>'],
       [['eval', '--task', 'x', '--generation', '1'], '--suite <id>'],
-      [['eval', '--suite', 's', '--task', 'x'], '--generation <n>'],
       [['benchmark'], '--generation <n>'],
     ];
     for (const [argv, option] of cases) {
@@ -332,6 +335,42 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
       ]);
       expect(run.calls).toEqual([]);
     }
+  });
+
+  it('export and replay take --session <id> as the trajectory source (#383)', async () => {
+    const exported = await kubic([
+      'export',
+      '--session',
+      'abc',
+      '--type',
+      'sft',
+    ]);
+    expect(exported.err).toEqual([]);
+    expect(exported.calls).toEqual([
+      { name: 'export', options: { session: 'abc', type: 'sft' } },
+    ]);
+    const replayed = await kubic(['replay', '--session', 'abc']);
+    expect(replayed.err).toEqual([]);
+    expect(replayed.calls).toEqual([
+      { name: 'replay', options: { session: 'abc' } },
+    ]);
+    // Neither source: the handler (not commander) names the missing one.
+    const neither = await kubic(['export']);
+    expect(neither.calls).toEqual([{ name: 'export', options: {} }]);
+  });
+
+  it('eval --trajectory needs no provenance flags at the commander layer (#256)', async () => {
+    const run = await kubic([
+      'eval',
+      '--suite',
+      's',
+      '--trajectory',
+      '{}',
+      '--tier',
+      'smoke',
+    ]);
+    expect(run.err).toEqual([]);
+    expect(run.calls).toHaveLength(1);
   });
 
   it('a stray operand exits 2 (replay takes exactly one trajectory)', async () => {

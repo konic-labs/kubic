@@ -175,6 +175,56 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
+describe('allow once is not a session approval (issue #231)', () => {
+  it("two identical destructive calls answered with 'a' produce two asks", async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models } = fauxModels([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf build/' }),
+      ]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf build/' }),
+      ]),
+      fauxAssistantMessage('both calls done'),
+    ]);
+    let asks = 0;
+    const boot = fauxLaneBoot(root, models);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: (sessionId, answer, flags) =>
+          boot(
+            sessionId,
+            answer === undefined
+              ? undefined
+              : (request) => {
+                  asks += 1;
+                  return answer(request);
+                },
+            flags,
+          ),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'clean up') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => asks === 1);
+    await waitFor(() => fake.frame.includes('Approval required'));
+    fake.feed('a');
+    // The second identical call must ask again: 'a' approved ONE call.
+    await waitFor(() => asks === 2);
+    fake.feed('a');
+    await waitFor(() => fake.frame.includes('both calls done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(asks).toBe(2);
+  });
+});
+
 describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () => {
   it('shows the overlay for a gated call and runs it when approved', async () => {
     const root = tmpRoot();

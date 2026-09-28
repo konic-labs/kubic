@@ -112,6 +112,19 @@ const DESTRUCTIVE_PATTERNS = [
   /\bgit\s+clean\s+[^|;&]*-[a-zA-Z]*f/i,
   /\b(chmod|chown)\b[^|;&]*\s-[a-zA-Z]*R/i,
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;/,
+  // Issue #357 — force pushes rewrite remote history: `--force`,
+  // `--force-with-lease`, `--force-if-includes`, a short flag cluster
+  // carrying `f` (`-f`, `-uf`) and a `+refspec`.
+  /\bgit\b[^|;&]*\spush\b[^|;&]*\s(--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/i,
+  // `find … -delete` removes every match.
+  /\bfind\b[^|;&]*\s-delete\b/i,
+  // Working-tree-discarding git forms: reset --hard, checkout of paths
+  // (`-- <path>`, `.`) or forced, and restore of the worktree (anything but
+  // a staged-only `--staged`/`-S` restore).
+  /\bgit\b[^|;&]*\sreset\b[^|;&]*\s--hard\b/i,
+  /\bgit\b[^|;&]*\scheckout\b[^|;&]*\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/i,
+  /\bgit\b[^|;&]*\srestore\b(?![^|;&]*\s(--staged|-S)\b)/i,
+  /\bgit\b[^|;&]*\srestore\b[^|;&]*\s(--worktree|-W)\b/i,
 ];
 
 export function defaultIsDestructive(

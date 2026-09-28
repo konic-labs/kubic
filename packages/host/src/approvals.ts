@@ -35,7 +35,9 @@ import { withTelemetry } from '../../worker/src/lane/wrap.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 import {
   appendToLedger,
-  auditLedgerDir,
+  auditLedgerDirFor,
+  fullAccessEnabledAudit,
+  postureChangedAudit,
   soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
@@ -149,6 +151,10 @@ export interface ApprovalRequest {
   justification?: string;
 }
 
+// The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
+// issue #231): approved, audited, never latched or persisted.
+export const ALLOW_ONCE = 'allow-once';
+
 export type ApprovalVerdict =
   | { approved: true; by: string; justified?: boolean }
   | { approved: false; reason: string };
@@ -211,21 +217,53 @@ export interface TriggerContext {
   isDestructive: (command: string, workspace: string) => boolean;
   isNetworkCommand: (command: string) => boolean;
   isOutsideWorkspace: (path: string) => boolean;
+  // The user's home directory: any write target under `<home>/.kubic`
+  // (session state, posture.json, approvals.json) is outside-write
+  // whatever the workspace is — even a workspace AT home (issue #355).
+  home?: string;
   requires?: string[];
   budgetOverrun?: boolean;
   /** Kubic state roots beyond the workspace (issue #324); see ControlPlaneRoots. */
   controlPlane?: ControlPlaneRoots;
 }
 
-const GIT_PUSH = /^\s*git\s+push\b/i;
-const GIT_REMOTE_MUTATION = /^\s*git\s+remote\s+(add|set-url|remove|rename)\b/i;
+// git push / remote mutation in ANY command segment (issue #357): the
+// verb is matched after a command-position boundary (start, `|;&`,
+// newline, whitespace or a subshell paren) and after any run of git global
+// options (`-C <dir>`, `-c <k=v>`, `--git-dir=…`, `--work-tree …`,
+// `--no-pager`, …) — so `ls; git push`, `cd x && git push` and
+// `git -C . push` all raise. A push named inside a quoted argument
+// (`echo "git push later"`) raises too: the literal scan cannot see
+// quotes, and an over-trigger is an ask, never a silent grant.
+const GIT_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
+const GIT_PUSH = new RegExp(
+  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+push\b`,
+  'i',
+);
+const GIT_REMOTE_MUTATION = new RegExp(
+  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
+  'i',
+);
+// Package installs and fetch-and-run launchers (issue #357): every one can
+// run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
+// npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
+// installs), pip/pipx/uv, gem, composer, brew, apt, cargo and go.
 const INSTALL =
-  /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+  /(^|[|;&\s(])(npm\s+(i|install|add|clean-install|ci|exec|x)|pnpm\s+(i|install|add|dlx)|yarn(\s+(add|install|dlx|global\s+add)|(?=\s*($|[|;&)])))|bun\s+(i|install|add)|npx|bunx|uvx|pip(3)?\s+install|pipx\s+(install|run)|uv\s+(add|pip\s+install|tool\s+install)|gem\s+install|composer\s+(require|install)|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
 const DEPLOY =
   /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
 // Shell redirection into an absolute target is a write by another name —
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
-const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
+// EVERY redirect operator in the command is scanned (issue #326), within a
+// segment and across `;`/`&&`/`||`/`|`/newline segments, so an inside
+// redirect first can no longer hide `> /etc/cron.d/x` after it. Operators:
+// `>`, `>>`, fd-prefixed `2>`/`1>>` (the digit is just text before the
+// operator), `&>`, `&>>`, clobber `>|`, and `>&` — whose target is an fd
+// duplication (`2>&1`, `>&-`) and skipped when it is a digit run or `-`,
+// and a file otherwise (`>& out.txt`). The target is the next token up to
+// whitespace or a `|;&<>` operator character.
+const REDIRECT = /(&>>?|>\||>>?&?)[ \t]*([^\s|;&<>]*)/g;
+const FD_DUPLICATION = /^(\d+|-)$/;
 // tee writes its last argument verbatim — the same class as a `>` redirect,
 // so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
 // no redirect fires. Every command segment is scanned (a `|;&` cannot be
@@ -500,6 +538,98 @@ export function controlPlaneRefusal(
   return undefined;
 }
 
+// Shell-expanded and cd-relative write targets (issue #355). The literal
+// detectors see the command before bash expands it, so a target starting
+// with `~` (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+// any `$VAR/...`) names a path the workspace check cannot know — it counts
+// as OUTSIDE, fail-closed, never joined under the workspace. A preceding
+// `cd <dir>` / `pushd <dir>` (at a command start) moves the cwd relative
+// targets resolve against for the rest of the command: into an outside dir
+// they resolve outside, and to an unknown one (bare `cd`, `cd ~`, `cd $X`,
+// `cd -`, any `popd`) every later relative target fails closed. Subshell
+// scoping is not modelled — a `(cd /etc)` still moves the tracked cwd,
+// which over-triggers, never under-triggers.
+const CD_COMMAND =
+  /(^|[;&|\n(])[ \t]*(cd|pushd|popd)(?=$|[\s;&|)])([^;&|\n)]*)/g;
+const SHELL_EXPANDED = /^[~$]/;
+// Stream pseudo-devices persist nothing: `2>/dev/null` or `> /dev/stderr`
+// anywhere in a command is not an outside write (exact paths only — any
+// other /dev target is a real device and still raises).
+const STREAM_DEVICE = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
+
+interface CdEvent {
+  index: number;
+  cwd: string | null;
+}
+
+function cdArgument(rest: string): string {
+  const args = rest.trim().replace(/^(-[LPe@]+\s+)+/, '');
+  const quote = args[0];
+  if (quote === '"' || quote === "'") {
+    const close = args.indexOf(quote, 1);
+    return close < 0 ? args.slice(1) : args.slice(1, close);
+  }
+  return args.split(/\s+/)[0] ?? '';
+}
+
+function cdEvents(command: string, workspace: string): CdEvent[] {
+  const events: CdEvent[] = [];
+  let cwd: string | null = resolve(workspace);
+  for (const match of command.matchAll(CD_COMMAND)) {
+    const dir = match[2] === 'popd' ? '' : cdArgument(match[3] ?? '');
+    if (dir === '' || dir.startsWith('-') || /[~$`]/.test(dir[0] ?? '')) {
+      cwd = null;
+    } else if (isAbsolute(dir)) {
+      cwd = resolve(dir);
+    } else if (cwd !== null) {
+      cwd = resolve(cwd, dir);
+    }
+    events.push({ index: match.index + (match[1] ?? '').length, cwd });
+  }
+  return events;
+}
+
+function cwdAt(
+  events: readonly CdEvent[],
+  position: number,
+  workspace: string,
+): string | null {
+  let cwd: string | null = resolve(workspace);
+  for (const event of events) {
+    if (event.index >= position) break;
+    cwd = event.cwd;
+  }
+  return cwd;
+}
+
+function underKubicHome(path: string, home: string | undefined): boolean {
+  if (home === undefined) return false;
+  const state = resolve(home, '.kubic');
+  return path === state || path.startsWith(`${state}/`);
+}
+
+function shellTargetOutside(
+  target: string,
+  cwd: string | null,
+  ctx: TriggerContext,
+): boolean {
+  if (SHELL_EXPANDED.test(target)) return true;
+  if (isAbsolute(target)) {
+    if (STREAM_DEVICE.test(resolve(target))) return false;
+    return (
+      underKubicHome(resolve(target), ctx.home) ||
+      ctx.isOutsideWorkspace(target)
+    );
+  }
+  if (cwd === null) return true;
+  const absolute = resolve(cwd, target);
+  if (underKubicHome(absolute, ctx.home)) return true;
+  // No cd moved the cwd: hand the raw token over, exactly as before.
+  return ctx.isOutsideWorkspace(
+    cwd === resolve(ctx.workspace) ? target : absolute,
+  );
+}
+
 export function detectTriggers(
   toolName: string,
   args: Record<string, unknown>,
@@ -527,46 +657,41 @@ export function detectTriggers(
       found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
-    const redirect = REDIRECT.exec(command);
-    if (redirect !== null && redirect[2] !== undefined) {
+    // Every write target (redirect, tee, cp/mv/install) goes through one
+    // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
+    // failing closed on shell-expanded prefixes (issue #355).
+    const cdTrail = cdEvents(command, ctx.workspace);
+    const outside = (raw: string, end: number, start: number): boolean => {
       // Targets arrive raw: quotes always come off, and a lifted token also
       // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
       // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
       // plain literal `)`/`]` stays part of the path.
-      const target = targetToken(
-        redirect[2],
-        redirect.index + redirect[0].length,
-        spanClosers,
+      const target = targetToken(raw, end, spanClosers);
+      return (
+        target !== '' &&
+        shellTargetOutside(target, cwdAt(cdTrail, start, ctx.workspace), ctx)
       );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
+    };
+    const targets: Array<[string, number, number]> = [];
+    for (const redirect of command.matchAll(REDIRECT)) {
+      const raw = redirect[2] ?? '';
+      if (redirect[1]?.endsWith('&') === true && FD_DUPLICATION.test(raw)) {
+        continue;
       }
+      targets.push([raw, redirect.index + redirect[0].length, redirect.index]);
     }
     // Shell-side writes by another name (issue #131): tee and trailing
     // cp/mv/install targets reach files no `>` ever touches. Both use the
     // same shared quote-stripping and last-argument target extraction,
     // scoped so the closer trim fires only on lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
-      const target = targetToken(
-        tee[1] ?? '',
-        tee.index + tee[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([tee[1] ?? '', tee.index + tee[0].length, tee.index]);
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
-      const target = targetToken(
-        copy[2] ?? '',
-        copy.index + copy[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([copy[2] ?? '', copy.index + copy[0].length, copy.index]);
+    }
+    if (targets.some(([raw, end, start]) => outside(raw, end, start))) {
+      found.push('outside-write');
     }
     // Privilege escalation and command indirection (issue #131): sudo is a
     // capability event wherever it sits, and a destructive/network verb
@@ -591,7 +716,12 @@ export function detectTriggers(
     (toolName === 'write' || toolName === 'edit') &&
     typeof args.path === 'string'
   ) {
-    if (ctx.isOutsideWorkspace(args.path)) found.push('outside-write');
+    if (
+      underKubicHome(resolve(ctx.workspace, args.path), ctx.home) ||
+      ctx.isOutsideWorkspace(args.path)
+    ) {
+      found.push('outside-write');
+    }
   }
   if (
     writeTargets(toolName, args).some(
@@ -746,6 +876,10 @@ export function createApprovalAsk(
   ctx: TriggerContext,
   store: FileApprovalStore,
 ): ApprovalAsk {
+  // Issue #325: the posture is read ONCE, when the ask is built (session
+  // boot) — never per call, so a posture.json written mid-session by the
+  // model cannot switch approvals off.
+  const posture = store.loadPosture();
   return async (call) => {
     const capabilities = detectTriggers(call.toolName, call.args, ctx);
     if (capabilities.length === 0) return { approved: true, challenged: false };
@@ -756,7 +890,6 @@ export function createApprovalAsk(
       ctx.controlPlane,
     );
     if (refusal !== undefined) return { approved: false, reason: refusal };
-    const posture = store.loadPosture();
     const asked = posture.fullAccess
       ? capabilities.filter((capability) => ALWAYS_ASK.has(capability))
       : capabilities;
@@ -790,6 +923,72 @@ export function enableFullAccess(
   };
   store.savePosture(posture);
   return posture;
+}
+
+// The one flag name for session-scoped full access (issue #308, §41.4).
+export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
+
+export interface SessionFullAccessOptions {
+  /**
+   * The session dir whose posture.json records the grant. Absent for a
+   * posture kept elsewhere (orchestrate's own skip record): only the audit
+   * row and the warning are produced then.
+   */
+  sessionDir?: string;
+  sessionId: string;
+  /** The command after `kubic`: 'run', 'tui', 'sessions create', 'orchestrate'. */
+  command: string;
+  /** Resolves the repo ledger (resolveRepoRuntimeRoot). */
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  clock?: () => number;
+  onAuditError?: (message: string) => void;
+}
+
+export interface SessionFullAccessGrant {
+  posture: AccessPosture;
+  /** The stderr warning every enabling command prints, word for word. */
+  warning: string;
+}
+
+// The ONE enable path for session-scoped full access (issue #308): `kubic`,
+// `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
+// all come through here. It records the posture in the session dir (never in
+// config), appends one §60 row naming the session and the originating
+// command, and returns the warning the caller prints on stderr.
+export function enableSessionFullAccess(
+  options: SessionFullAccessOptions,
+): SessionFullAccessGrant {
+  const commandLine = `kubic ${options.command} ${FULL_ACCESS_FLAG}`;
+  const clock = options.clock ?? Date.now;
+  const posture =
+    options.sessionDir === undefined
+      ? { fullAccess: true, enabledAt: clock(), enabledBy: commandLine }
+      : enableFullAccess(
+          new FileApprovalStore(options.sessionDir),
+          commandLine,
+          clock,
+        );
+  appendToLedger(
+    auditLedgerDirFor(options.workspace),
+    fullAccessEnabledAudit({
+      sessionId: options.sessionId,
+      command: commandLine,
+      workspace: options.workspace,
+      mode: options.mode ?? 'solo',
+    }),
+    options.onAuditError,
+  );
+  return {
+    posture,
+    warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
+  };
+}
+
+// The warning a headless run prints when the session it runs in already has
+// full access (issue #308): a scripted caller must never be surprised.
+export function fullAccessInForceWarning(sessionId: string): string {
+  return `session ${sessionId} runs with full access: approvals are skipped for every challenged call`;
 }
 
 // The INSTALLED solo policy (issue #86; §40, §41, §59.1). This is the
@@ -837,6 +1036,15 @@ export interface SoloPolicyInput {
   route?: 'ask-user' | 'deny';
   /** Stored decisions are scoped to one session (the shipped default). */
   sessionScoped?: boolean;
+  /**
+   * Config `[approvals] autoApprove` (issue #230): capabilities approved
+   * without an ask. Explicit-only — it arrives from config, never from the
+   * tool path — and it is consulted before the no-surface refusal, so a
+   * headless run honours it too.
+   */
+  autoApprove?: Capability[];
+  /** Config `[approvals] requireJustification` (issue #230). */
+  requireJustification?: boolean;
   /** Session dir carrying posture.json (session-scoped full access). */
   sessionDir?: string;
   /**
@@ -857,7 +1065,41 @@ export interface SoloPolicyInput {
   model?: string;
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
+  /**
+   * Set when this lane is an orchestrator-managed worker child (issue #279;
+   * the composition root reads KUBIC_WORKER_ID / KUBIC_ORCHESTRATOR_SESSION).
+   * Decisions answered through the manager seat are recorded by the manager
+   * (worker-asks), so the child appends nothing for them; decisions the child
+   * makes locally (a latched answer, the route, autoApprove, full access, a
+   * refusal) are recorded ONCE, as mode 'orchestrator' for this worker, in
+   * the main repo ledger — never inside the worktree.
+   */
+  orchestratedWorker?: { workerId: string; orchestratorSession: string };
 }
+
+// The orchestrated-worker identity from a child's environment (issue #279):
+// both variables are set by `kubic orchestrate` on each worker child; either
+// missing means a plain solo lane.
+export function orchestratedWorkerFromEnv(
+  env: Record<string, string | undefined>,
+): { workerId: string; orchestratorSession: string } | undefined {
+  const workerId = env.KUBIC_WORKER_ID?.trim() ?? '';
+  const orchestratorSession = env.KUBIC_ORCHESTRATOR_SESSION?.trim() ?? '';
+  if (workerId === '' || orchestratorSession === '') return undefined;
+  return { workerId, orchestratorSession };
+}
+
+// The config `[approvals]` half of the install (issue #230): the one shape
+// the composition root projects from the config load and every solo entry
+// point (run, tui, replay, doctor) spreads into installSoloPolicy.
+export type SoloApprovalConfig = Pick<
+  SoloPolicyInput,
+  | 'route'
+  | 'maxPendingMs'
+  | 'autoApprove'
+  | 'requireJustification'
+  | 'sessionScoped'
+>;
 
 // What the lane installed and what doctor must print, in ONE object.
 export interface InstalledPolicyPosture {
@@ -868,6 +1110,8 @@ export interface InstalledPolicyPosture {
   interceptors: string[];
   sessionScoped: boolean;
   maxPendingMs: number;
+  autoApprove: string[];
+  requireJustification: boolean;
   fullAccess: boolean;
   // §40.2 (issue #166): every declared level the tool set cannot express,
   // with the level the lane enforces instead — reported, never silent.
@@ -899,10 +1143,15 @@ export interface InstalledSoloPolicy {
   denials: () => RecordedApprovalDeny[];
   // The decider, exposed so a caller (or a test) can drive it directly.
   ask: ApprovalAsk;
+  // Issue #325: the end-of-session posture check — a posture.json written
+  // after the last ask is restored and recorded before the session closes.
+  settle?: () => void;
 }
 
 export function installedPolicyPosture(
   input: SoloPolicyInput,
+  // The posture record read at boot (issue #325); absent reads it here.
+  bootPosture?: AccessPosture,
 ): InstalledPolicyPosture {
   const classes = validateClasses({ ...(input.classes ?? {}) });
   const allowlist = toolsForClasses(classes);
@@ -914,19 +1163,36 @@ export function installedPolicyPosture(
       `installed policy contradicts itself: ${agreement.reason}`,
     );
   }
-  const route = input.route ?? 'ask-user';
-  const sessionScoped = input.sessionScoped ?? true;
+  // One validation for every approval knob (issue #230): the same
+  // validatePolicy the config load and the service use, so the posture
+  // doctor prints is exactly the policy the service enforces.
+  const policy = validatePolicy({
+    ...(input.route === undefined ? {} : { route: input.route }),
+    ...(input.maxPendingMs === undefined
+      ? {}
+      : { maxPendingMs: input.maxPendingMs }),
+    ...(input.autoApprove === undefined
+      ? {}
+      : { autoApprove: input.autoApprove }),
+    ...(input.sessionScoped === undefined
+      ? {}
+      : { sessionScoped: input.sessionScoped }),
+    ...(input.requireJustification === undefined
+      ? {}
+      : { requireJustification: input.requireJustification }),
+  });
   const fullAccess =
-    input.sessionDir === undefined
+    bootPosture?.fullAccess ??
+    (input.sessionDir === undefined
       ? false
-      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess;
+      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess);
   return {
     // The layer's own answer when the caller supplies it (the composition
     // root does); the shape rule only as the legacy fallback, so the printed
     // source is never a guess about a config-less install.
     source:
       input.source ?? (input.classes === undefined ? 'default' : 'config'),
-    route,
+    route: policy.route,
     classes: { ...classes },
     allowlist: [...allowlist],
     // Named mechanisms, not adjectives: this is exactly what the lane
@@ -939,25 +1205,36 @@ export function installedPolicyPosture(
       'confine-guard',
       'approval',
     ],
-    sessionScoped,
-    maxPendingMs: input.maxPendingMs ?? 60_000,
+    sessionScoped: policy.sessionScoped,
+    maxPendingMs: policy.maxPendingMs,
+    autoApprove: [...policy.autoApprove],
+    requireJustification: policy.requireJustification,
     fullAccess,
     unsupported: checkExpressible(classes),
   };
 }
 
 export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
-  const posture = installedPolicyPosture(input);
   const denials: RecordedApprovalDeny[] = [];
   const store =
     input.sessionDir === undefined
       ? undefined
       : new FileApprovalStore(input.sessionDir);
+  // Issue #325 (§41.4, §59): the full-access posture is resolved ONCE, here,
+  // at session boot — from what the explicit flag or `sessions create
+  // --dangerously-skip-approvals` recorded — and kept in memory. posture.json
+  // is never re-read to decide an ask.
+  const bootPosture: AccessPosture = store?.loadPosture() ?? {
+    fullAccess: false,
+  };
+  const posture = installedPolicyPosture(input, bootPosture);
   const service = new ApprovalService({
     policy: validatePolicy({
       route: posture.route,
       sessionScoped: posture.sessionScoped,
       maxPendingMs: posture.maxPendingMs,
+      autoApprove: posture.autoApprove,
+      requireJustification: posture.requireJustification,
     }),
     ...(store === undefined ? {} : { store }),
     // The seat's ask is the service's awaitAnswer: the service races it
@@ -966,10 +1243,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     ...(input.answer === undefined ? {} : { awaitAnswer: input.answer }),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
-  // §60 audit ledger: every resolved ask appends one solo record under
-  // <workspace>/.kubic/orchestrator/approvals. Best-effort by contract — a
-  // failed write (or a malformed record) goes to onAuditError, never into
-  // the approval decision.
+  // §60 audit ledger: every resolved ask appends one record to the REPO
+  // ledger (issue #279): <main checkout>/.kubic/orchestrator/approvals,
+  // resolved once here with the same resolver `kubic audit` reads through,
+  // so a run from a subdirectory or a linked worktree writes where the
+  // reader looks. Best-effort by contract — a failed write (or a malformed
+  // record) goes to onAuditError, never into the approval decision.
+  const ledgerDir = auditLedgerDirFor(input.workspace);
+  const worker = input.orchestratedWorker;
   const auditSessionId =
     input.sessionId ??
     (input.sessionDir === undefined ? '' : basename(input.sessionDir));
@@ -984,7 +1265,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     const onError = input.onAuditError ?? (() => undefined);
     try {
       appendToLedger(
-        auditLedgerDir(input.workspace),
+        ledgerDir,
         soloDecisionAudit({
           sessionId: auditSessionId,
           toolName,
@@ -998,6 +1279,14 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
               : { by: decision.by }
             : { reason: decision.reason }),
           posture: fullAccess ? 'full-access' : 'approvals',
+          ...(worker === undefined
+            ? {}
+            : {
+                worker: {
+                  id: worker.workerId,
+                  orchestratorSession: worker.orchestratorSession,
+                },
+              }),
         }),
         onError,
       );
@@ -1026,7 +1315,61 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     audit(toolName, capability, { approved: false, reason }, false);
     return { approved: false, reason };
   };
+  // A refusal recorded by someone else (the manager, for a worker child's
+  // seat-answered ask): still a denial the run must end on, never a record.
+  const refuseUnaudited = (
+    capability: string,
+    toolName: string,
+    reason: string,
+  ): { approved: false; reason: string } => {
+    denials.push({ capability, toolName, reason });
+    return { approved: false, reason };
+  };
+  // A posture.json change made DURING the session (issue #325) is refused:
+  // the file is restored to the boot posture (so a later resume does not
+  // inherit it) and the change is recorded once in the ledger. Checked on
+  // every ask and on settle(), never consulted for the decision itself.
+  let postureChangeRecorded = false;
+  const guardPosture = (): void => {
+    if (store === undefined) return;
+    let current: AccessPosture;
+    try {
+      current = store.loadPosture();
+    } catch {
+      return;
+    }
+    if (
+      current.fullAccess === bootPosture.fullAccess &&
+      current.enabledAt === bootPosture.enabledAt &&
+      current.enabledBy === bootPosture.enabledBy
+    ) {
+      return;
+    }
+    const onError = input.onAuditError ?? (() => undefined);
+    try {
+      store.savePosture(bootPosture);
+    } catch (error) {
+      onError(
+        `posture restore failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (postureChangeRecorded) return;
+    postureChangeRecorded = true;
+    appendToLedger(
+      ledgerDir,
+      postureChangedAudit({
+        sessionId: auditSessionId,
+        workspace: input.workspace,
+        bootFullAccess: bootPosture.fullAccess,
+        observedFullAccess: current.fullAccess === true,
+      }),
+      onError,
+    );
+  };
   const ask: ApprovalAsk = async (call) => {
+    // A posture.json change made mid-session (issue #325) is refused and
+    // restored before this call is judged.
+    guardPosture();
     // Refused control-plane state (issue #324): a tool error before any
     // posture is consulted — full access included — and never an ask.
     const refusal = controlPlaneRefusal(
@@ -1044,7 +1387,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       triggerContextFor(posture.classes, input.workspace, controlPlane),
     );
     let capabilities = detected;
-    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
+    if (posture.fullAccess && posture.route === 'ask-user') {
       // Full access never answers an always-ask capability (issue #324):
       // those still go through the ask below; everything else is approved.
       capabilities = detected.filter((capability) =>
@@ -1066,7 +1409,16 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       const key = approvalKey(call.toolName, capability, call.args);
       // A stored decision (a real answer, from a surface that has one) wins:
       // first-answer-latched, exactly like every other approval path.
-      const decided = service.decided(key);
+      // A stored approval granted without justification does not survive
+      // requireJustification (the service's own staleness rule): it
+      // re-enters the policy path below instead of being replayed.
+      const stored = service.decided(key);
+      const decided =
+        stored?.approved === true &&
+        posture.requireJustification &&
+        stored.justified !== true
+          ? undefined
+          : stored;
       if (decided !== undefined) {
         if (!decided.approved) {
           return deny(capability, call.toolName, decided.reason);
@@ -1075,6 +1427,28 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           call.toolName,
           capability,
           { approved: true, by: decided.by },
+          false,
+        );
+        continue;
+      }
+      // Config autoApprove (issue #230; §41.2): explicit-only, decided by
+      // the service (which also enforces requireJustification), and
+      // consulted BEFORE the route and the no-surface refusal, so a headless
+      // run honours it exactly like an interactive one.
+      if (posture.autoApprove.includes(capability)) {
+        const verdict = await service.request({
+          key,
+          capability,
+          toolName: call.toolName,
+          summary: summarizeRequest(call.toolName, capability, call.args),
+        });
+        if (!verdict.approved) {
+          return deny(capability, call.toolName, verdict.reason);
+        }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: verdict.by },
           false,
         );
         continue;
@@ -1095,15 +1469,21 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           toolName: call.toolName,
           summary: summarizeRequest(call.toolName, capability, call.args),
         });
+        // A worker child's seat IS the manager (issue #279): the manager's
+        // worker-asks record is the one §60 record for this decision.
         if (!verdict.approved) {
-          return deny(capability, call.toolName, verdict.reason);
+          return worker === undefined
+            ? deny(capability, call.toolName, verdict.reason)
+            : refuseUnaudited(capability, call.toolName, verdict.reason);
         }
-        audit(
-          call.toolName,
-          capability,
-          { approved: true, by: verdict.by },
-          false,
-        );
+        if (worker === undefined) {
+          audit(
+            call.toolName,
+            capability,
+            { approved: true, by: verdict.by },
+            false,
+          );
+        }
         continue;
       }
       // NO ANSWER SURFACE IS INSTALLED — `kubic run` has no TTY, and a `kubic
@@ -1140,6 +1520,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     posture,
     denials: () => [...denials],
     ask,
+    settle: guardPosture,
   };
 }
 
@@ -1149,11 +1530,24 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
 export function triggerContextFor(
   classes: PermissionClasses,
   workspace: string,
-  controlPlane?: ControlPlaneRoots,
+  controlPlaneOrHome?: ControlPlaneRoots | string,
+  home?: string,
 ): TriggerContext {
+  // HEAD passes the #324 control plane as the third argument; the #355
+  // branch passes the user's home string there (tests rely on both shapes),
+  // so the third argument is either. `home` is always set — `~`-expanded
+  // targets are checked against it (issue #355).
+  const controlPlane =
+    typeof controlPlaneOrHome === 'string' ? undefined : controlPlaneOrHome;
+  const resolvedHome =
+    typeof controlPlaneOrHome === 'string'
+      ? controlPlaneOrHome
+      : (home ?? homedir());
   return {
     workspace,
+    home: resolvedHome,
     ...(controlPlane === undefined ? {} : { controlPlane }),
+
     network: classes.network,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,
@@ -1219,8 +1613,16 @@ export class ApprovalService {
     const stamped: ApprovalVerdict = verdict.approved
       ? { ...verdict, justified: request.justification !== undefined }
       : verdict;
-    this.decisions.set(request.key, stamped);
-    this.persist();
+    // Issue #231 (§41.2): only session-scoped answers enter the latch —
+    // allow-session, autoApprove, the route, and user DENIALS (a refusal
+    // latching is the fail-safe direction: the user said no to this exact
+    // operation for this session). An 'allow once' approves THIS call only:
+    // it is returned without being stored or persisted, so the next
+    // identical call asks again.
+    if (!(stamped.approved && stamped.by === ALLOW_ONCE)) {
+      this.decisions.set(request.key, stamped);
+      this.persist();
+    }
     this.pending.delete(request.key);
     this.waiters.get(request.key)?.(stamped);
     this.waiters.delete(request.key);

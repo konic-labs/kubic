@@ -44,7 +44,7 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>]... [--no-skills] [--debug] [--json]`
+## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>]... [--no-skills] [--debug] [--json] [--dangerously-skip-approvals]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -58,7 +58,8 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted — and optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. A later `kubic run --session <id>` on that session warns again on stderr. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, and optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
@@ -140,9 +141,10 @@ recorded refusal (no installed approval surface, a policy route, a
 decider's no), `approval_timed_out` for a denial whose recorded reason
 carries the timeout marker (`timed out`) or a headless suspension on an
 approval that cannot arrive without a TTY. To run such an operation
-deliberately, record session-scoped full access first
-(`kubic sessions create --dangerously-skip-approvals`, or a prior
-`kubic sessions attach` decision) — it is never implied.
+deliberately, pass `--dangerously-skip-approvals` (session-scoped full
+access for the session this run creates or resumes), or record it first
+with `kubic sessions create --dangerously-skip-approvals` — it is never
+implied.
 
 **Attaching a session with a pending operation** (issue #147). A run
 that died mid-turn (SIGKILL, OOM, power loss, orphan reaping) leaves its
@@ -247,7 +249,7 @@ $ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
 built binary: a faux `run --json` (echo and a tool call), text mode, the
 unknown-value refusal, and an `orchestrate --yes` across worker processes.
 
-## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--full-access] [--json]`
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
 
 `kubic orchestrate --help` prints the generated help (every flag below plus
 examples) and exits 0. Unknown flags, a missing flag value, a stray operand,
@@ -336,9 +338,11 @@ you, and your verdict travels back to the worker:
   limit at all. With one configured, a worker that exceeds it is blocked with
   `BUDGET_EXHAUSTED` and the run exits **3**. A worker cannot raise its own
   budget: the raise is refused and audited.
-- **`--full-access` is the session-scoped skip (§41.4).** It is stored per
-  session, indicated on the surface, recorded for audit/doctor, and a fresh
-  session starts enforced again.
+- **`--dangerously-skip-approvals` is the session-scoped skip (§41.4).** It
+  is stored per session, indicated on the surface, recorded for audit/doctor
+  (one `posture:full-access` ledger row), warned on stderr, and a fresh
+  session starts enforced again. `--full-access` is a deprecated alias that
+  still works and prints a `hint:` naming the new flag.
 - **The manager can only look.** Its whole view of a pending ask is a read-only
   blocked indicator; a manager approve attempt is refused and audited.
 
@@ -415,7 +419,8 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |
 | `--budget <dims>` | **Opt-in** per-spawn budget for every worker (`maxTokens`, `maxCostUsd`, `maxRuntimeMs`, `maxToolCalls`; e.g. `--budget maxToolCalls=20`). Per-spawn overrides: `--budget worker-1:maxToolCalls=5;worker-2:maxCostUsd=0.5`. Absent means **no limit is applied**; a worker exceeding it ends `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own budget. |
-| `--full-access` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated and recorded. A fresh session starts enforced again. |
+| `--dangerously-skip-approvals` | Session-scoped full-access posture (§41.4): approvals are skipped for **this session only**, indicated, recorded in the audit ledger, and warned on stderr. A fresh session starts enforced again. |
+| `--full-access` | Deprecated alias of `--dangerously-skip-approvals`; prints `hint: --full-access is deprecated — use --dangerously-skip-approvals` on stderr. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `workers`, `mergeOrder`, `attribution`, `graph`, `parallel`, `retained`, optional `error` with a machine-readable `code`). `graph` is the delegation DAG as text lines (`node …`/`edge …`), naming the session and one node per worker — on a `--resume` run it describes the resumed session's agents. `parallel` is `{ running, queued, maxConcurrency }` (the same numbers the text lines print); `retained` is one row per retained worktree with its measured dirtiness. |
 
 Text output prints `session:`, one `worker: <id> branch=<b> hunks=<n>` line
@@ -524,7 +529,7 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 2 without touching anything
 (§78). See [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]`
+## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -551,6 +556,25 @@ the derived allowlist, and the destructive/network/confine guards with the
 approval ask. A challenged call surfaces the approval overlay — the
 interactive path can actually collect a verdict on it — and an unanswered
 ask denies on the same bounded wait.
+
+**Full access (§41.4, issue #308).** `kubic tui --dangerously-skip-approvals`
+— and the bare `kubic --dangerously-skip-approvals` on a terminal — enables
+full access for the session it opens or resumes, through the same path as
+`kubic run`: `posture.json`, one `posture:full-access` audit row, and a
+`warning:` line on stderr before the screen opens. The status bar shows
+`! warning: approvals OFF (full-access)` from the first frame. Off a
+terminal the bare form prints the usage line and exits 1, like bare
+`kubic`. The flag is never written to config.
+
+**The posture is decided at boot (§41.4, issue #325).** `kubic run` and
+`kubic tui` read the session's full-access posture once, when the lane
+boots, from what the flag or `kubic sessions create
+--dangerously-skip-approvals` recorded. `posture.json` is never re-read to
+decide an ask: a change written during the session (for example by a tool
+call) is ignored, the file is restored to the boot posture before the next
+ask and at session close, and one `posture:changed-mid-session` row
+(`result deny`) is appended to the audit ledger. Every decision row carries
+the posture decided at boot.
 
 **Parity with `kubic run` (issue #113).** The interactive lane carries the
 same context the headless one does:
@@ -599,9 +623,9 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
 | `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
-| `a` | Approval overlay: **allow once** the challenged call. |
-| `s` | Approval overlay: **allow for the session**. |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. |
+| `a` | Approval overlay: **allow once** — this call only. Nothing is stored: the next identical call asks again. |
+| `s` | Approval overlay: **allow for the session** — latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
+| `d`, `Esc` | Approval overlay: **deny** the challenged call. A denial latches for the session like `s`, so the same operation is refused without asking again. |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
@@ -648,7 +672,7 @@ its own generated help (`kubic sessions prune --help`).
 
 | Subcommand | Meaning |
 | --- | --- |
-| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
+| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 | `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then a `pending operation: <id> (<kind>, started <iso>)` line for each operation a crashed run left open (settled by the next `run`/`tui --session`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
@@ -1303,23 +1327,39 @@ Queries the audit trail, matching each supplied filter exactly.
 **Output.** Text mode prints a table with the columns `WHEN`, `MODE`,
 `POSTURE`, `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`.
 With no matching records it prints `no audit records` and exits 0.
-`--json` prints the full 14-field records.
+`--json` prints the full 14-field records. A ledger that exists but
+cannot be read (permission denied, I/O error) is not an empty trail: the
+command prints `error: cannot read the audit ledger <path>: …` on stderr
+and exits 1. Only a missing ledger reads as empty.
 
 **Redaction.** Every record is redacted before it is printed:
 secret-shaped values and listed-secret inventory values become
 `[redacted-secret]`, so credentials only ever appear as sentinels.
 
-**Where records come from.** The records are read from the repo's §60
-ledger, `.kubic/orchestrator/approvals/audit.jsonl` under the current
-directory, one record per line. The shipped runtime ignore rules cover
-this file.
+**Where records come from.** There is one §60 ledger per repository,
+`<repo>/.kubic/orchestrator/approvals/audit.jsonl`, one record per line.
+`<repo>` is the main checkout: from a subdirectory or from a linked
+worktree, every writer and `kubic audit` resolve the same file (the
+parent of git's common dir; outside git, the current directory). The
+shipped runtime ignore rules cover this file.
 
 - `kubic orchestrate` appends one record per approval decision:
   approved, denied, timed out, or a refused manager approve. The record
   has `--posture approvals` or `full-access`.
 - `kubic run` and `kubic tui` append one `mode: solo` record per
   resolved solo approval ask, approved or denied, with `posture`
-  `approvals` or `full-access`, to the workspace's ledger.
+  `approvals` or `full-access`. A run from `<repo>/sub` writes the repo
+  ledger, never `<repo>/sub/.kubic/`.
+- A worker child of `kubic orchestrate` writes no record for an ask the
+  manager answered (the manager's record is the one record). A decision
+  the child makes on its own (a latched answer, the route,
+  `autoApprove`, full access) is recorded once as `mode: orchestrator`
+  for that worker in the main repo ledger, never inside its worktree.
+- Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
+  `run`, `sessions create` or `orchestrate`) appends one
+  `posture:full-access` row naming the session and the command. A
+  `posture.json` change made during a session is refused and recorded
+  once as `posture:changed-mid-session`.
 - A failed ledger write never changes the decision.
 
 | Flag | Meaning |

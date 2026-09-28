@@ -174,8 +174,8 @@ quietly stop configuring anything.
 | `model.provider`, `model.id` | Selects the provider/model for `kubic run` (`selectModel`). |
 | `model.thinking` | Default thinking level for the selected model. |
 | `modes.solo`, `modes.orchestrator` | Selects the mode; both `true` is refused by name. |
-| `approvals.route` | Approval routing (`ask-user` \| `deny`). |
-| `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Effective policy; a pending ask denies on timeout, `autoApprove` is explicit-only. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. The same bound is the orchestrator's interactive merge gate (issue #130): an unanswered merge ask denies closed on elapse, naming the bound and the candidate. |
+| `approvals.route` | Approval routing (`ask-user` \| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay. `KUBIC_APPROVALS_ROUTE` overrides it. |
+| `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Installed on the solo lane (`run`, `tui`, `replay`) from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`). `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. The same bound is the orchestrator's worker-ask bound and its interactive merge gate (issue #130): an unanswered ask denies closed on elapse, naming the bound. Each worker child waits a little less than the manager (a tenth of the bound, at most 5 s, less), so the child denies with its own status first. |
 | `permissions.*` | Permission classes → the lane's derived tool allowlist (§40). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. |
 | `journal.outOfScope` | Paths excluded from the §42.5 baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
@@ -198,11 +198,11 @@ quietly stop configuring anything.
 | --- | --- |
 | `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `credentials` | Credential-tool overreach — no detector yet; fires via `requires:<tool>` or its owning tool. |
-| `git-push` | `git push`, `git remote add/set-url/remove/rename`. |
-| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `install` | Package installs (`npm install`, `pip install`, `brew install`, `apt install`, `cargo install`, `go install`). |
+| `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`) and after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`). |
+| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
+| `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
 | `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
-| `outside-write` | A write outside the workspace: the `write`/`edit` tools, a `>`/`>>` redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. |
+| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
 | `budget-overrun` | The budget/concurrency overrun flag. |
 | `spawn-agents` | Agent spawning (the orchestrator). |
 | `privilege-escalation` | `sudo` anywhere in the command. |
@@ -231,6 +231,32 @@ heuristics:
   is never trimmed, so `tee '/work)'` names the literal sibling path
   `/work)` and still raises outside-write. The outside check itself stays
   path-boundary aware (`/work-evil` is not `/work`).
+- **Every redirect** — each redirect operator in the command is checked,
+  within one segment and across `;`, `&&`, `||`, `|` and newlines, so
+  `echo a > notes.txt && echo b > /etc/cron.d/x` raises outside-write.
+  Covered forms: `>`, `>>`, fd-prefixed (`2>`, `1>>`), `&>`, `&>>`,
+  clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
+  file and is skipped, while `>& out.txt` names a file. The target is the
+  next token up to whitespace or a `|;&<>` character, quotes stripped.
+  Stream pseudo-devices persist nothing and never raise: exactly
+  `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` and `/dev/fd/<n>`
+  (so `cmd > out.txt 2>/dev/null` stays quiet); any other `/dev` target
+  still raises.
+- **Shell-expanded and `cd`-relative targets** — bash expands a target
+  before it writes, the detector does not, so a target starting with `~`
+  (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+  `$OUT/file`) counts as outside-write, fail-closed. A `cd <dir>` or
+  `pushd <dir>` at a command start moves the directory later relative
+  targets resolve against: `cd /etc && echo x > y` raises, `cd sub &&
+  echo x > y` does not. After a `cd` to an unknown place (bare `cd`,
+  `cd ~`, `cd $X`, `cd -`, any `popd`) every later relative target raises.
+  Subshells are not modelled: `(cd /etc); echo x > y` over-triggers. A
+  `$VAR` in the middle of a target (`out/$f.log`) is not expanded and is
+  checked as written. Any target under `~/.kubic` (session state,
+  `posture.json`, `approvals.json`) — including a `write`/`edit` path —
+  raises outside-write even when the workspace is the home directory.
+  Tool paths are not shell-expanded: the `write` tool takes `~/.bashrc`
+  literally, as a workspace file.
 - **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
   anywhere in the raw command, quoted text included
   (`echo "needs sudo"` raises it). A raised capability becomes an ask,
@@ -249,8 +275,12 @@ What remains out of scope — documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
 the command is data to the literal patterns), network exfiltration via
 `python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
-quoted or backslash-obfuscated verbs the literal patterns cannot see, and
-whitespace tricks around redirection targets.
+quoted or backslash-obfuscated verbs the literal patterns cannot see,
+whitespace tricks around redirection targets, git subcommands reached
+through an alias (`git config alias.p push; git p`), package managers
+not listed above, and installs run by a build script (`npm run setup`).
+The literal verb scan over-triggers on quoted text: `echo "git push
+later"` raises `git-push` (an ask, never a silent grant).
 
 Two keys are forbidden outright, not defaulted: **`[budgets]`**
 (`BudgetKeyError` — budgets are never defaulted by config) and

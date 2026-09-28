@@ -128,6 +128,8 @@ export interface InstalledPolicyPosture {
   interceptors: string[];
   sessionScoped: boolean;
   maxPendingMs: number;
+  autoApprove?: string[];
+  requireJustification?: boolean;
   fullAccess: boolean;
   // Issue #166 (§40.2): declared levels the tool set cannot express.
   unsupported?: readonly {
@@ -138,8 +140,42 @@ export interface InstalledPolicyPosture {
   }[];
 }
 
-function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
+// The config-sourced approval policy as policy:approvals validated it — the
+// half the installed posture must agree with (issue #230, §40.3).
+interface ConfiguredApprovals {
+  route: string;
+  maxPendingMs: number;
+}
+
+function configuredApprovals(raw: unknown): ConfiguredApprovals | undefined {
+  try {
+    const policy = validatePolicy(raw);
+    return { route: policy.route, maxPendingMs: policy.maxPendingMs };
+  } catch {
+    return undefined;
+  }
+}
+
+function installedPolicyCheck(
+  posture: InstalledPolicyPosture,
+  configured?: ConfiguredApprovals,
+): DoctorCheck {
   const base = { id: 'policy:installed', label: 'policy installed' };
+  // Issue #230 (§40.3): the route and bound the lane installs must be the
+  // ones config declares — two contradictory green lines are the false
+  // confidence doctor exists to prevent.
+  if (
+    configured !== undefined &&
+    (configured.route !== posture.route ||
+      configured.maxPendingMs !== posture.maxPendingMs)
+  ) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: `installed approval policy (route=${posture.route}, maxPendingMs=${posture.maxPendingMs}) differs from config (route=${configured.route}, maxPendingMs=${configured.maxPendingMs})`,
+    };
+  }
   // §40.3: what doctor prints must be what the lane enforces. The posture
   // carries both halves, so a contradiction is detectable from the object
   // itself — an empty allowlist is a real posture (filesystem none), a
@@ -190,7 +226,10 @@ function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
       `shell=${String(posture.classes.shell)}, network=${posture.classes.network}, ` +
       `git=${String(posture.classes.git)}, credentials=${posture.classes.credentials}; ` +
       `${posture.allowlist.length} allowed tool(s): ${posture.allowlist.join(', ')}; ` +
-      `guards: ${posture.interceptors.join(', ')}; route=${posture.route}` +
+      `guards: ${posture.interceptors.join(', ')}; route=${posture.route}, ` +
+      `maxPendingMs=${posture.maxPendingMs}, ` +
+      `autoApprove=${(posture.autoApprove ?? []).join(',') || 'none'}` +
+      `${posture.requireJustification === true ? ', requireJustification' : ''}` +
       `${
         posture.fullAccess
           ? '; FULL ACCESS recorded for this session — every guard stands down for challenged calls'
@@ -292,10 +331,14 @@ function policyCheck(raw: unknown): DoctorCheck {
     id: 'policy:approvals',
     label: 'policy approvals',
   };
-  let policy: { route: string; autoApprove: string[] };
+  let policy: { route: string; autoApprove: string[]; maxPendingMs: number };
   try {
     const validated = validatePolicy(raw);
-    policy = { route: validated.route, autoApprove: validated.autoApprove };
+    policy = {
+      route: validated.route,
+      autoApprove: validated.autoApprove,
+      maxPendingMs: validated.maxPendingMs,
+    };
   } catch (error) {
     return {
       ...base,
@@ -329,7 +372,7 @@ function policyCheck(raw: unknown): DoctorCheck {
     ...base,
     status: 'pass',
     reason: 'ok',
-    detail: `route=${policy.route}, ${policy.autoApprove.length} auto-approved`,
+    detail: `route=${policy.route}, ${policy.autoApprove.length} auto-approved, maxPendingMs=${policy.maxPendingMs}`,
   };
 }
 
@@ -421,8 +464,11 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  let configured: ConfiguredApprovals | undefined;
   try {
-    checks.push(policyCheck(deps.loadPolicy()));
+    const raw = deps.loadPolicy();
+    configured = configuredApprovals(raw);
+    checks.push(policyCheck(raw));
   } catch (error) {
     checks.push({
       id: 'policy:approvals',
@@ -438,7 +484,7 @@ export function collectDoctorChecks(
   // fail the matrix with policy-mismatch, never pass quietly.
   if (deps.installedPolicy !== undefined) {
     try {
-      checks.push(installedPolicyCheck(deps.installedPolicy()));
+      checks.push(installedPolicyCheck(deps.installedPolicy(), configured));
     } catch (error) {
       checks.push({
         id: 'policy:installed',

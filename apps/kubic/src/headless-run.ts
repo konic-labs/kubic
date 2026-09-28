@@ -28,8 +28,12 @@ import type {
   PostureOptions,
 } from '../../../packages/extensions/src/startup.js';
 import {
+  enableSessionFullAccess,
+  fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
+  orchestratedWorkerFromEnv,
+  type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import { redactSecretValues } from '../../../packages/host/src/config/secrets.js';
@@ -129,6 +133,10 @@ export interface HeadlessRunOptions {
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
   debug?: boolean;
+  // §41.4 (issue #308): `--dangerously-skip-approvals` — full access for the
+  // session this run creates or resumes, recorded in its posture.json and
+  // the audit ledger, never in config.
+  dangerouslySkipApprovals?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -156,6 +164,10 @@ export interface HeadlessRunDeps {
   // ('default' when nothing configured them). Absent means 'default' — the
   // documented safe default, never an assumed operator choice.
   policySource?: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy (route, maxPendingMs,
+  // autoApprove, requireJustification, sessionScoped). Absent means the
+  // documented defaults.
+  approvals?: SoloApprovalConfig;
   journalRetention?: JournalRetention;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
@@ -458,25 +470,36 @@ export async function runHeadlessPrompt(
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
-  const result = await runHeadlessPromptOnce(prompt, options, deps);
-  if (result.sessionId === 'unassigned') return result;
+  // Issue #148/#308: the live lane model and the approval posture the lane
+  // was installed with travel on the result (and so the --json envelope),
+  // whatever path the run ends on.
+  const report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  } = {};
+  const result = await runHeadlessPromptOnce(prompt, options, deps, report);
+  const withPosture =
+    report.posture === undefined
+      ? result
+      : { ...result, posture: report.posture };
+  if (withPosture.sessionId === 'unassigned') return withPosture;
   try {
     const measured = await readSessionRunUsage(
       deps.sessionsRoot ?? defaultSessionsRoot(),
-      result.sessionId,
+      withPosture.sessionId,
     );
     return {
-      ...result,
+      ...withPosture,
       usage: measured.usage,
       // Issue #148: the live lane model reported by the boot wins over the
       // session's recorded usage model — a pin may have switched models in
       // this run, and the result must name the one that actually ran.
-      ...(result.model !== undefined || measured.model === undefined
+      ...(withPosture.model !== undefined || measured.model === undefined
         ? {}
         : { model: measured.model }),
     };
   } catch {
-    return result;
+    return withPosture;
   }
 }
 
@@ -484,10 +507,13 @@ async function runHeadlessPromptOnce(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
+  report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  },
 ): Promise<HeadlessRunResult> {
   // Issue #148: every result after the lane booted names the model the
   // lane actually ran (the live lane model, never the bare selection).
-  const report: { model?: string } = {};
   const result = await runHeadlessPromptImpl(prompt, options, deps, report);
   return report.model === undefined
     ? result
@@ -498,7 +524,10 @@ async function runHeadlessPromptImpl(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps,
-  report: { model?: string },
+  report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  },
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
@@ -605,6 +634,8 @@ async function runHeadlessPromptImpl(
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #325: the installed policy's end-of-session posture check.
+  let settlePolicy: (() => void) | undefined;
   // Issue #109: the booted lane and the admitted operation are hoisted the
   // same way, so every exit path can drain in-flight work — a guard
   // firing mid-drive must not abandon the tool processes it interrupted.
@@ -865,6 +896,13 @@ async function runHeadlessPromptImpl(
     // the ask mailbox is. The seat published there is what turns a challenged
     // call into a question for the USER instead of a dead end.
     const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
+    // Issue #230: the manager hands its child a bound below its own config
+    // maxPendingMs; absent or malformed keeps the shipped child default.
+    const workerBoundRaw = process.env.KUBIC_APPROVALS_BOUND_MS;
+    const workerBoundMs =
+      workerBoundRaw !== undefined && /^[1-9]\d*$/.test(workerBoundRaw)
+        ? Number(workerBoundRaw)
+        : DEFAULT_WORKER_APPROVAL_BOUND_MS;
     const approvalsSeat =
       approvalMailboxDir === undefined || approvalMailboxDir.trim() === ''
         ? undefined
@@ -873,8 +911,25 @@ async function runHeadlessPromptImpl(
             // The child's own bound. It sits BELOW the orchestration's bound on
             // purpose: the child denies closed with the named status rather
             // than outliving the run that would answer it.
-            maxPendingMs: DEFAULT_WORKER_APPROVAL_BOUND_MS,
+            maxPendingMs: workerBoundMs,
           });
+    const warnLine =
+      deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+    // §41.4 (issue #308): the explicit flag enables full access for THIS
+    // session through the one host enable path (posture.json + one §60 row +
+    // the shared warning) BEFORE the policy is installed, so the lane boots
+    // under the posture the user asked for.
+    const fullAccessGrant =
+      options.dangerouslySkipApprovals === true
+        ? enableSessionFullAccess({
+            sessionDir: join(root, id),
+            sessionId: id,
+            command: 'run',
+            workspace: env.cwd,
+            onAuditError: (message) =>
+              debug?.(`audit: ledger append failed: ${message}`),
+          })
+        : undefined;
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -885,6 +940,8 @@ async function runHeadlessPromptImpl(
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
+        // Issue #230: the configured approval policy, never the defaults.
+        ...(deps.approvals ?? {}),
         sessionDir: join(root, id),
         // The session root in use is refused control-plane state (#324).
         sessionsRoot: root,
@@ -897,8 +954,29 @@ async function runHeadlessPromptImpl(
         // through the manager instead of dying at "no approval surface". The
         // wait is bounded inside the seat, so a manager that never answers
         // denies closed rather than hanging the child's turn.
-        ...(approvalsSeat === undefined ? {} : { answer: approvalsSeat }),
+        ...(approvalsSeat === undefined
+          ? {}
+          : { answer: approvalsSeat, maxPendingMs: workerBoundMs }),
+        // Issue #279: a worker child's §60 records are orchestrator records
+        // in the main repo ledger (seat-answered asks: the manager's).
+        ...((): {
+          orchestratedWorker?: {
+            workerId: string;
+            orchestratorSession: string;
+          };
+        } => {
+          const worker = orchestratedWorkerFromEnv(process.env);
+          return worker === undefined ? {} : { orchestratedWorker: worker };
+        })(),
       });
+    report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
+    settlePolicy = installed.settle;
+    // A headless run on a full-access session is never silent (issue #308):
+    // the grant's own warning when this run enabled it, otherwise the named
+    // in-force warning — on stderr, so stdout stays consumable.
+    if (installed.posture.fullAccess) {
+      warnLine(fullAccessGrant?.warning ?? fullAccessInForceWarning(id));
+    }
     const journal = new FileJournalStore(
       join(root, id, 'journal'),
       deps.journalRetention ?? {},
@@ -1253,6 +1331,13 @@ async function runHeadlessPromptImpl(
       }
     }
     flushSpans();
+    // Issue #325: a posture.json written after the last ask is restored to
+    // the boot posture (and recorded) before the session closes.
+    try {
+      settlePolicy?.();
+    } catch {
+      // Best-effort: the mapped result stands.
+    }
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {

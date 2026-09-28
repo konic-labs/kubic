@@ -193,6 +193,31 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
   });
 });
 
+describe('prod run path: second-segment outside redirect (issue #326)', () => {
+  it('refuses a later `> /etc/...` after an inside redirect with approval_denied (exit 4)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'write two files',
+      {},
+      {
+        sessionsRoot: root,
+        models: modelsWith([
+          fauxAssistantMessage([
+            fauxToolCall('bash', {
+              command: 'echo a > notes.txt && echo b > /etc/cron.d/kubic-326',
+            }),
+          ]),
+          fauxAssistantMessage('done'),
+        ]),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('approval_denied');
+    expect(mapTerminusToExitCode(result.terminus)).toBe(4);
+    expect(result.summary).toContain('outside-write');
+  });
+});
+
 describe('prod run path: allowlist (issue #86, criterion 3)', () => {
   it('refuses a tool outside the allowlist at execute time, not merely silently', async () => {
     const root = tmpRoot();

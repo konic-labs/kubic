@@ -25,6 +25,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
   confinePath,
   defaultIsDestructive,
@@ -37,6 +38,7 @@ import {
   detectTriggers,
   FileApprovalStore,
   type TriggerContext,
+  triggerContextFor,
   validatePolicy,
 } from './approvals.js';
 import { parseTomlConfig } from './config/config.js';
@@ -455,5 +457,208 @@ describe('capability/trigger vocabulary parity (issue #131)', () => {
     expect(new Set(ORCHESTRATOR_TRIGGERS).size).toBe(
       ORCHESTRATOR_TRIGGERS.length,
     );
+  });
+});
+
+describe('shell-expanded and cd-relative write targets (issue #355)', () => {
+  it('treats ~, ~user, $HOME, braced HOME and $VAR prefixes as outside', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo x >> ~/.bashrc',
+      'echo x > $HOME/.zshrc',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell syntax
+      'echo x > ${HOME}/.profile',
+      'echo x > "$HOME/.profile"',
+      'echo x > ~root/.bashrc',
+      'echo x > ~',
+      'echo x > $OUT/file',
+      'cp a ~/.ssh/authorized_keys',
+      'tee ~/.config/x',
+      'mv a $XDG_CONFIG_HOME/x',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toContain(
+        'outside-write',
+      );
+    }
+  });
+
+  it('resolves relative targets against a preceding cd/pushd', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'cd /etc && echo x > y',
+      'pushd /tmp && cp a b',
+      'cd /etc; tee y',
+      'cd "/etc" && echo x > y',
+      "cd '/etc' && cp a b",
+      'cd -P /etc && echo x > y',
+      'cd `pwd` && echo x > y',
+      'cd /etc && cd sub && echo x > y',
+      'cd .. && echo x > y',
+      'cd sub && cd ../.. && echo x > y',
+      // An unknown destination fails closed for relative targets.
+      'cd && echo x > y',
+      'cd ~ && echo x > y',
+      'cd $HOME/x && echo x > y',
+      'cd - && echo x > y',
+      'pushd sub && popd && echo x > y',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
+    }
+  });
+
+  it('keeps inside targets quiet, with or without a cd inside the workspace', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo x > ./out.txt',
+      'cd sub && echo x > y',
+      'cd /work/sub && cp a b',
+      'cd "sub dir" ; echo x > y',
+      'cp a b/c',
+      'cd /etc && echo x > /work/y',
+      'cd -P sub && echo x > y',
+      'cd -L -P sub && echo x > y',
+      'cd -LP  sub && echo x > y',
+      "cd '/work/sub' && echo x > y",
+      // A redirect BEFORE the cd is resolved against the workspace.
+      'echo x > y && cd /etc',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+  });
+
+  it('always raises for a target under ~/.kubic, even when the workspace is home', () => {
+    const home = '/home/u';
+    const ctx = triggerContext({
+      workspace: home,
+      home,
+      isOutsideWorkspace: (path: string) => confinePath(home, path).rewritten,
+    });
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > ~/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write', 'kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > /home/u/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write', 'kubic-state-write']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo {} > .kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write', 'kubic-state-write']);
+    expect(
+      detectTriggers(
+        'write',
+        { path: '/home/u/.kubic/sessions/abc/posture.json' },
+        ctx,
+      ),
+    ).toEqual(['outside-write', 'kubic-state-write']);
+    // A sibling that merely shares the prefix is an ordinary inside path.
+    expect(
+      detectTriggers('bash', { command: 'echo x > .kubicrc' }, ctx),
+    ).toEqual([]);
+    expect(detectTriggers('write', { path: 'notes.txt' }, ctx)).toEqual([]);
+  });
+
+  it('wires the home directory through triggerContextFor', () => {
+    const home = mkTmp('kubic-355-home-');
+    const ctx = triggerContextFor(SOLO_DEFAULTS, home, home);
+    expect(ctx.home).toBe(home);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: `echo {} > ${home}/.kubic/sessions/x/posture.json` },
+        ctx,
+      ),
+    ).toEqual(['outside-write', 'kubic-state-write']);
+  });
+});
+
+describe('every redirect is scanned (issue #326)', () => {
+  it('raises outside-write for an outside redirect after an inside one', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo a > notes.txt && echo b > /etc/cron.d/x',
+      'echo a > notes.txt; cat y >> /etc/profile',
+      'true | echo x > /etc/x',
+      'echo a > a.txt || echo b >> /etc/x',
+      'echo a > a.txt\necho b > /etc/x',
+      // Several redirects inside ONE segment: each target is checked.
+      'echo a > a.txt > /etc/x',
+      'cmd >out.txt 2>/etc/err.log',
+      // fd-prefixed, &> and clobber forms name a file the same way.
+      'cmd 2> /etc/err.log',
+      'cmd &> /etc/all.log',
+      'cmd &>> /etc/all.log',
+      'echo x >| /etc/x',
+      'echo x 1>>/etc/x',
+      'cmd >& /etc/all.log',
+      'cd /etc && cmd >&out.log',
+      "echo ok > a.txt; echo x > '/etc/q'",
+      'echo x >/etc/x;ls',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
+    }
+  });
+
+  it('raises nothing when every redirect stays inside', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo a > a.txt; echo b > b.txt',
+      'echo a > a.txt && echo b >> logs/b.txt',
+      'cmd > out.txt 2>&1',
+      'cmd 2>&1 | tee build.log',
+      'cmd >& out.txt',
+      'echo x >| a.txt',
+      'cmd &> all.log',
+      // Stream pseudo-devices are not persistent writes: a second-segment
+      // `2>/dev/null` must not turn every quiet command into an ask.
+      'cmd > out.txt 2>/dev/null',
+      // fd duplication names no file, even where a relative token would
+      // resolve outside.
+      'cd /etc && ls 2>&1',
+      'cd /etc && ls >&2 2>&-',
+      'ls missing 2> /dev/null || echo none > /dev/stderr',
+      'echo hi > /dev/stdout; echo x >/dev/tty',
+      'echo x > /dev/fd/2',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+    // …but only those exact paths: other /dev targets are real devices.
+    for (const command of [
+      'echo x > /dev/sda',
+      'echo x > /dev/null/../sda',
+      'echo x > /dev/nullx',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
+    }
+  });
+
+  it('keeps the span-closer trim for a lifted redirect target', () => {
+    const ctx = triggerContext();
+    expect(
+      detectTriggers('bash', { command: 'echo $(echo x > /work)' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo $(echo x > a.txt; echo y > /etc/z)' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
   });
 });

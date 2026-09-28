@@ -30,8 +30,11 @@ import {
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
+  enableSessionFullAccess,
+  fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
+  type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import {
@@ -159,6 +162,12 @@ export interface TuiLaneBoot {
   // stored model differs from the selection (kept or switched). Shown in
   // the footer from the first render alongside any pending-op notice.
   modelNotice?: string;
+  // Issue #308 (§41.4): the approval posture the lane was installed with —
+  // true seeds the status bar's OFF indicator from the first frame.
+  fullAccess?: boolean;
+  // Issue #308: warnings to print on stderr before the alt-screen opens
+  // (the full-access grant/in-force warning).
+  notices?: string[];
 }
 
 export interface TuiRunDeps {
@@ -189,6 +198,8 @@ export interface TuiBootFlags {
   role?: string;
   noSkills?: boolean;
   skillsList?: string[];
+  // Issue #308: `--dangerously-skip-approvals` for the booted session.
+  dangerouslySkipApprovals?: boolean;
 }
 
 export interface TuiRunOptions {
@@ -201,6 +212,9 @@ export interface TuiRunOptions {
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy — the same projection
+  // `kubic run` installs. Absent means the documented defaults.
+  approvals?: SoloApprovalConfig;
   // The installed-policy seat (issue #86): the same derivation the headless
   // runner installs. Absent means the shipped default (classes above +
   // destructive/network/confine guards + the approval ask); tests inject a
@@ -231,6 +245,9 @@ export interface TuiRunOptions {
   // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
   // 'root' — the shipped attribution, unchanged.
   agentId?: string;
+  // §41.4 (issue #308): enable full access for the booted session through
+  // the one host enable path before the policy is installed.
+  dangerouslySkipApprovals?: boolean;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -264,12 +281,19 @@ export async function bootTuiLane(
   // a mutation landing between two closes IS appended (pinned by the exec
   // suite). Assigned inside the try below.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #325: the installed policy's end-of-session posture check.
+  let settlePolicy: (() => void) | undefined;
   const close = async (): Promise<void> => {
     try {
       reconciliation?.sweep();
     } catch {
       // A sweep failure never masks the clean quit (same posture as the
       // headless runner: reconciliation observes, it does not gate).
+    }
+    try {
+      settlePolicy?.();
+    } catch {
+      // Best-effort, like the sweep: the clean quit stands.
     }
     try {
       await session.close(context);
@@ -334,12 +358,24 @@ export async function bootTuiLane(
     // (host/approvals.installSoloPolicy), which is also what `doctor`
     // reports. Without this the interactive path would be the unprotected
     // one, which is the defect this issue exists to close.
+    // §41.4 (issue #308): the explicit flag records full access for THIS
+    // session (posture.json + one §60 row) before the policy is installed.
+    const fullAccessGrant =
+      options.dangerouslySkipApprovals === true
+        ? enableSessionFullAccess({
+            sessionDir: join(root, id),
+            sessionId: id,
+            command: 'tui',
+            workspace: env.cwd,
+          })
+        : undefined;
     const installed =
       options.policy ??
       installSoloPolicy({
         workspace: env.cwd,
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
+        ...(options.approvals ?? {}),
         sessionDir: join(root, id),
         // The session root in use is refused control-plane state (#324).
         sessionsRoot: root,
@@ -451,6 +487,8 @@ export async function bootTuiLane(
         ),
       );
     }
+    const fullAccess = installed.posture.fullAccess;
+    settlePolicy = installed.settle;
     return {
       sessionId: id,
       // The model the lane actually runs (issue #148): the status bar and
@@ -467,6 +505,12 @@ export async function bootTuiLane(
       ...(pendingNotices.length === 0
         ? {}
         : { pendingNotice: pendingNotices.join('; ') }),
+      fullAccess,
+      ...(fullAccess
+        ? {
+            notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
+          }
+        : {}),
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -494,6 +538,7 @@ export function tuiDepsWithDefaults(provided: {
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
   policySource?: 'config' | 'default';
+  approvals?: SoloApprovalConfig;
   policy?: InstalledSoloPolicy;
   // Issue #113 (§42.4): config journal retention, threaded from the same
   // runtimeRunDeps projection `kubic run` uses.
@@ -505,6 +550,7 @@ export function tuiDepsWithDefaults(provided: {
   const {
     classes,
     policySource,
+    approvals,
     policy,
     journalRetention,
     reconcileOutOfScope,
@@ -522,6 +568,7 @@ export function tuiDepsWithDefaults(provided: {
       bootTuiLane(sessionId, {
         ...(classes === undefined ? {} : { classes }),
         ...(policySource === undefined ? {} : { policySource }),
+        ...(approvals === undefined ? {} : { approvals }),
         ...(policy === undefined ? {} : { policy }),
         ...(answer === undefined ? {} : { answer }),
         ...(journalRetention === undefined ? {} : { journalRetention }),
@@ -531,6 +578,9 @@ export function tuiDepsWithDefaults(provided: {
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0
           ? {}
           : { skillsList: flags.skillsList }),
+        ...(flags?.dangerouslySkipApprovals === true
+          ? { dangerouslySkipApprovals: true }
+          : {}),
       }),
   };
 }
@@ -758,6 +808,8 @@ export interface TuiCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
+  // §41.4 (issue #308): session-scoped full access (bare `kubic` and `tui`).
+  readonly dangerouslySkipApprovals?: boolean;
 }
 
 export async function runTuiCommand(
@@ -770,6 +822,9 @@ export async function runTuiCommand(
   if (options.noSkills === true) flags.noSkills = true;
   const skillsList = options.skills ?? [];
   if (skillsList.length > 0) flags.skillsList = [...skillsList];
+  if (options.dangerouslySkipApprovals === true) {
+    flags.dangerouslySkipApprovals = true;
+  }
   // commander validated the id already; re-checked because it becomes a
   // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
@@ -802,10 +857,16 @@ export async function runTuiCommand(
       detectColorLevel(process.env, process.stdout.isTTY === true),
     ),
   );
+  // Issue #308: the full-access warning lands on stderr (the main screen)
+  // before the alt-screen opens, and the bar shows OFF from the first frame.
+  for (const notice of boot.notices ?? []) {
+    (deps.err ?? deps.out)(`warning: ${notice}`);
+  }
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
     approvalSurface: surface,
+    ...(boot.fullAccess === true ? { approvalsSkipped: true } : {}),
   });
   const terminal = deps.createTerminal();
   // Solo no-isolation notice (issue #89): the trust statement is carried in

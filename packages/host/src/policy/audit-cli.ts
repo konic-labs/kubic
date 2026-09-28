@@ -7,7 +7,11 @@
 // secret-shaped values or listed-secret inventory values — credentials
 // stay sentinel-only.
 
-import { EXIT_OK, EXIT_USAGE } from '../../../core/src/cli/exit-codes.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { renderTable } from '../../../core/src/cli/table.js';
@@ -156,7 +160,19 @@ export async function runAuditCommand(
     }
     result = options.result;
   }
-  const records = await deps.loadRecords();
+  // An unreadable ledger (issue #279) is a failure naming the file, never
+  // an empty trail: "no audit records" would be a false all-clear.
+  let records: OrgAuditRecord[];
+  try {
+    records = await deps.loadRecords();
+  } catch (error) {
+    log.error(
+      redactSecretShapes(
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
+    return EXIT_FAILED;
+  }
   // Union of both inventory channels: an explicit list plus whatever the
   // injected loader returns — either source alone redacts.
   const secrets = [

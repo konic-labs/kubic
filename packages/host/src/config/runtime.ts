@@ -137,17 +137,20 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'approvals.route': { effect: 'approval routing (ask-user | deny) — §41' },
   'approvals.maxPendingMs': {
-    effect: 'pending-approval bound; a pending ask denies on timeout',
+    effect:
+      'pending-approval bound on the solo lane and the orchestrator; a pending ask denies on timeout',
   },
   'approvals.autoApprove': {
-    effect: 'explicit-only capability auto-approvals (never inferred)',
+    effect:
+      'explicit-only capability auto-approvals on the solo lane (never inferred)',
   },
   'approvals.sessionScoped': {
     effect:
-      'reported in the effective policy; store placement is chosen by the host',
+      'per-session approval store (true only; false is refused — no shared store exists)',
   },
   'approvals.requireJustification': {
-    effect: 'reported in the effective policy; asks require justification',
+    effect:
+      'installed on the solo lane: an approval without justification is denied',
   },
   'permissions.filesystem': {
     effect: 'permission classes for the lane: derived tool allowlist (§40)',
@@ -548,6 +551,15 @@ function approvalsFrom(
   routeOverride: 'ask-user' | 'deny' | undefined,
 ): RuntimeApprovals {
   const approvals: ApprovalsConfig = config.approvals ?? {};
+  // Issue #230: the host has exactly one store placement — per session
+  // (<session>/approvals.json). A shared, cross-session store is not
+  // implemented, so `sessionScoped = false` is refused by name rather than
+  // printed as an effective policy that no lane enforces.
+  if (approvals.sessionScoped === false) {
+    throw new ConfigError(
+      "'approvals': 'sessionScoped = false' is not supported — approval decisions are always stored per session (<session>/approvals.json); remove the key or set it to true",
+    );
+  }
   const route =
     routeOverride ?? approvals.route ?? RUNTIME_DEFAULTS.approvalsRoute;
   const source: ConfigValueSource =

@@ -10,7 +10,7 @@
 //
 // File access goes through the exec FileBridge (I/O confinement, §9).
 
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { OrchestratorApprovalRequest } from '../orchestrator/approvals/request.js';
 import type { OrchestratorVerdict } from '../orchestrator/approvals/routing.js';
@@ -30,23 +30,64 @@ export function auditLedgerDir(repoRoot: string): string {
   return join(repoRoot, '.kubic', 'orchestrator', 'approvals');
 }
 
-// The ledger dir for a working directory: the nearest ancestor holding a
-// `.git` entry (a directory, or the `.git` file of a linked worktree) — the
-// same root `git rev-parse --show-toplevel` names, which is where
-// `kubic orchestrate` writes. Outside a repository, the directory itself.
-export function auditLedgerDirFor(cwd: string): string {
+// The repo runtime root for a working directory (issue #279): the MAIN
+// checkout's toplevel — what `git rev-parse --path-format=absolute
+// --git-common-dir` names the parent of — so a run from a subdirectory and a
+// worker child in a linked worktree both resolve to the one directory
+// `kubic audit` reads. Resolved from the filesystem (no git spawn): the
+// nearest ancestor holding `.git`; a `.git` FILE (linked worktree) is
+// followed to its gitdir and that gitdir's `commondir`. Outside a repository,
+// the directory itself.
+export function resolveRepoRuntimeRoot(cwd: string): string {
   const bridge = createNodeFileBridge('/');
-  let dir = resolve(cwd);
+  const start = resolve(cwd);
+  let dir = start;
   for (;;) {
+    const dotGit = join(dir, '.git');
+    let found = false;
     try {
-      if (bridge.exists(join(dir, '.git'))) return auditLedgerDir(dir);
+      found = bridge.exists(dotGit);
     } catch {
       // Unreadable ancestor: keep walking.
     }
+    if (found) return mainCheckoutFor(dir, dotGit);
     const parent = dirname(dir);
-    if (parent === dir) return auditLedgerDir(resolve(cwd));
+    if (parent === dir) return start;
     dir = parent;
   }
+}
+
+function mainCheckoutFor(top: string, dotGit: string): string {
+  const bridge = createNodeFileBridge('/');
+  let text: string;
+  try {
+    // A directory `.git` makes this the main checkout; reading it as a file
+    // throws, which lands here.
+    text = bridge.readTextFile(dotGit);
+  } catch {
+    return top;
+  }
+  const match = /^gitdir:\s*(.+)$/m.exec(text);
+  if (match?.[1] === undefined) return top;
+  const gitDir = resolve(top, match[1].trim());
+  let common: string;
+  try {
+    common = resolve(
+      gitDir,
+      bridge.readTextFile(join(gitDir, 'commondir')).trim(),
+    );
+  } catch {
+    // No commondir (a submodule's gitdir): the checkout holding the `.git`
+    // file is its own main checkout.
+    return top;
+  }
+  return basename(common) === '.git' ? dirname(common) : top;
+}
+
+// The ledger dir for a working directory: the repo runtime root's ledger
+// (resolveRepoRuntimeRoot) — the one the solo writer and `kubic audit` share.
+export function auditLedgerDirFor(cwd: string): string {
+  return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
 // A synchronous file sink: one validated record per line. appendAudit
@@ -85,17 +126,32 @@ function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
   );
 }
 
-// Every §60 record in the ledger, oldest first. A missing ledger is an empty
-// trail; a torn or foreign line (e.g. a pre-unification router event) is
-// skipped, never guessed into a record.
+// A ledger that exists but cannot be read (permission denied, a directory in
+// its place, an I/O error) — named, so `kubic audit` never reports it as an
+// empty trail (issue #279).
+export class AuditLedgerReadError extends Error {
+  readonly path: string;
+  constructor(path: string, cause: unknown) {
+    super(
+      `cannot read the audit ledger ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'AuditLedgerReadError';
+    this.path = path;
+  }
+}
+
+// Every §60 record in the ledger, oldest first. A missing ledger (ENOENT) is
+// an empty trail; any other read failure throws AuditLedgerReadError. A torn
+// or foreign line (e.g. a pre-unification router event) is skipped, never
+// guessed into a record.
 export function readAuditLedger(dir: string): OrgAuditRecord[] {
   const bridge = createNodeFileBridge(dir);
   let text: string;
   try {
-    if (!bridge.exists(AUDIT_LEDGER_FILE)) return [];
     text = bridge.readTextFile(AUDIT_LEDGER_FILE);
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'ENOENT') return [];
+    throw new AuditLedgerReadError(join(dir, AUDIT_LEDGER_FILE), error);
   }
   const records: OrgAuditRecord[] = [];
   for (const line of text.split('\n')) {
@@ -199,6 +255,12 @@ export interface SoloDecisionInput {
   by?: string;
   reason?: string;
   posture: string;
+  /**
+   * Set when this lane is an orchestrator-managed worker child (issue #279):
+   * the record is then an orchestrator record for that worker, carrying the
+   * orchestration's session as its parent — never a mislabelled solo one.
+   */
+  worker?: { id: string; orchestratorSession: string; generation?: number };
 }
 
 export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
@@ -207,17 +269,25 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
       ? { approved: true, by: input.by ?? 'user' }
       : { approved: false, reason: input.reason ?? 'denied' },
   );
+  const worker = input.worker;
+  const role = worker === undefined ? 'root' : 'worker';
   return {
-    who: 'agent:root',
+    who: `agent:${worker === undefined ? 'root' : worker.id || UNKNOWN}`,
     what: `tool:${input.toolName || UNKNOWN}`,
-    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    agent: {
+      session: input.sessionId || UNKNOWN,
+      role,
+      ...(worker === undefined || worker.orchestratorSession === ''
+        ? {}
+        : { parent: worker.orchestratorSession }),
+    },
     model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'root' },
+    worker: { pid: process.pid, generation: worker?.generation ?? 0, role },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: { permission: `trigger:${input.trigger || UNKNOWN}`, approval },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },
-    mode: 'solo',
+    mode: worker === undefined ? 'solo' : 'orchestrator',
     posture: input.posture,
     result,
     reason,
@@ -298,6 +368,72 @@ export function credentialUseAudit(input: CredentialUseInput): AuditInput {
     posture: 'credentials',
     result: 'ok',
     reason: input.purpose,
+  };
+}
+
+// §60 record for switching a session to full access (issue #308, §41.4):
+// who enabled it (the user, through the CLI), when, for which session, and
+// through which command. One row per enable; the per-ask rows that follow
+// carry posture 'full-access' on their own.
+export interface FullAccessEnabledInput {
+  sessionId: string;
+  /** The originating command line, e.g. `kubic run --dangerously-skip-approvals`. */
+  command: string;
+  workspace: string;
+  mode: 'solo' | 'orchestrator';
+}
+
+export function fullAccessEnabledAudit(
+  input: FullAccessEnabledInput,
+): AuditInput {
+  return {
+    who: 'user:cli',
+    what: 'posture:full-access',
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'posture:full-access',
+      approval: `enabled by ${input.command}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: input.mode,
+    posture: 'full-access',
+    result: 'ok',
+    reason: `full access enabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
+  };
+}
+
+// §60 record for a posture.json change made DURING a session (issue #325):
+// the change is refused — the boot posture stays in force and the file is
+// restored — and recorded once, so a model-written grant is never mistaken
+// for the user's.
+export interface PostureChangedInput {
+  sessionId: string;
+  workspace: string;
+  bootFullAccess: boolean;
+  observedFullAccess: boolean;
+}
+
+export function postureChangedAudit(input: PostureChangedInput): AuditInput {
+  const boot = input.bootFullAccess ? 'full-access' : 'approvals';
+  const seen = input.observedFullAccess ? 'full-access' : 'approvals';
+  return {
+    who: 'agent:root',
+    what: 'posture:changed-mid-session',
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'root' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: { permission: 'posture:change', approval: 'denied' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'solo',
+    posture: boot,
+    result: 'deny',
+    reason: `posture.json changed during the session (${boot} -> ${seen}); ignored and restored — the posture decided at boot stays in force`,
   };
 }
 

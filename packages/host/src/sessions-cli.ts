@@ -21,7 +21,7 @@ import {
   SessionLockError,
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
-import { enableFullAccess, FileApprovalStore } from './approvals.js';
+import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
@@ -207,12 +207,17 @@ export async function runSessionsCommand(
     // and announced on the diagnostics channel. Fresh sessions start safe —
     // the flag must be passed explicitly every time.
     if (invocation.dangerouslySkipApprovals === true) {
-      const approvalStore = new FileApprovalStore(join(root, id));
-      const posture = enableFullAccess(
-        approvalStore,
-        'cli --dangerously-skip-approvals',
-      );
-      log.warn(`full-access approvals skipped (recorded ${posture.enabledAt})`);
+      // Issue #308: the shared enable path — posture.json, one §60 row
+      // naming this session and command, and the common warning.
+      const grant = enableSessionFullAccess({
+        sessionDir: join(root, id),
+        sessionId: id,
+        command: 'sessions create',
+        workspace: cwd,
+        onAuditError: (message) =>
+          log.warn(`audit: ledger append failed: ${message}`),
+      });
+      log.warn(grant.warning);
     }
     return 0;
   }

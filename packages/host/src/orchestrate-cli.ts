@@ -92,6 +92,15 @@ export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 // must deny closed on a human timescale, never hang the run headless.
 export const ORCHESTRATE_APPROVAL_BOUND_MS = 60_000;
 
+// The bound a worker CHILD waits for the manager's answer (issue #230): kept
+// strictly BELOW the manager's own bound, so the child denies closed with its
+// named status before the run that would answer it gives up. The margin is a
+// tenth of the bound, capped at 5 s; a 1 ms manager bound leaves 1 ms.
+export function workerApprovalBoundMs(managerBoundMs: number): number {
+  const margin = Math.min(5_000, Math.floor(managerBoundMs / 10));
+  return Math.max(1, managerBoundMs - Math.max(1, margin));
+}
+
 // The parsed `kubic orchestrate` options, as the commander program
 // (apps/kubic/src/commands/orchestrator.ts) hands them over: argv syntax,
 // `--help`, unknown flags, and malformed `--agents` / `--budget` /
@@ -1252,9 +1261,12 @@ export async function runOrchestrateCommand(
   // layer keeps the old behaviour instead of a half-wired one.
   const approvalsRun = deps.approvals?.({
     sessionId,
-    // The bound is a fixed run-level contract, not a caller knob: a headless
-    // ask must deny closed on a human timescale, never hang.
-    maxPendingMs: ORCHESTRATE_APPROVAL_BOUND_MS,
+    // The bound is the config `[approvals] maxPendingMs` snapshot (issue
+    // #230) — the same one the merge gate and the conflict resolver carry —
+    // falling back to the run-level default when no config was loaded. A
+    // headless ask still denies closed on it, never hangs.
+    maxPendingMs:
+      deps.approvalPolicy?.maxPendingMs ?? ORCHESTRATE_APPROVAL_BOUND_MS,
     // No `--yes` here (issue #323): the standing answer is the MERGE gate's,
     // never a worker-ask seat.
     ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),

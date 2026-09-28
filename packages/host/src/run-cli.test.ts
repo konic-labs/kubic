@@ -377,6 +377,27 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
       ),
     ).toBe('workspace_unavailable');
   });
+
+  it('never classifies by a word inside a path the message quotes', () => {
+    // A checkout under `…/.claude/worktrees/…` or `~/workspace/…` must not
+    // turn an unrelated failure (a refused extension bundle) into exit 5.
+    const refused = new Error(
+      'extension startup failed closed: skills/budget missing at /Users/me/repo/.claude/worktrees/wf-1/packages/extensions/bundles',
+    );
+    refused.name = 'ExtensionStartupError';
+    expect(mapCaughtErrorToTerminus(refused)).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("boom reading '/home/me/workspace/app/config.json'"),
+      ),
+    ).toBe('failed');
+    // A real signal in the same message still counts.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file, open '/home/me/workspace/x'"),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

@@ -114,12 +114,24 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       budgetSpec,
     )
     .option(
-      '--full-access',
+      '--dangerously-skip-approvals',
       'skip approvals for this session only (indicated and recorded)',
     )
+    .option('--full-access', 'deprecated alias of --dangerously-skip-approvals')
     .option('--json', 'print one JSON envelope on stdout')
     .addHelpText('after', ORCHESTRATE_EXAMPLES)
-    .action(async (options) => {
+    .action(async ({ dangerouslySkipApprovals, fullAccess, ...rest }) => {
+      // Issue #308: one flag name for full access across every command;
+      // `--full-access` still works and says what replaced it.
+      if (fullAccess === true) {
+        ctx.err(
+          'hint: --full-access is deprecated — use --dangerously-skip-approvals',
+        );
+      }
+      const options =
+        dangerouslySkipApprovals === true || fullAccess === true
+          ? { ...rest, fullAccess: true }
+          : rest;
       ctx.setExitCode(await runners.orchestrate(options, config));
     });
 

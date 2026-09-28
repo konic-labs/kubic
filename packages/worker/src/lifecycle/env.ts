@@ -40,6 +40,9 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // flag — neither is a secret.
   'KUBIC_MODELS_ROOT',
   'KUBIC_TRUST_PROJECT',
+  // The child's approval bound (issue #230): derived from the manager's
+  // config maxPendingMs and kept below it. A number, not a secret.
+  'KUBIC_APPROVALS_BOUND_MS',
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';

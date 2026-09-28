@@ -10,11 +10,7 @@ import { registerSoloCommands } from '../commands/solo.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES, ROOT_USAGE } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
-import {
-  createKubicProgram,
-  registerForwarder,
-  runKubicProgram,
-} from './program.js';
+import { createKubicProgram, runKubicProgram } from './program.js';
 
 function io() {
   const out: string[] = [];
@@ -125,42 +121,18 @@ describe('kubic program (commander contracts)', () => {
     const { out, channels } = io();
     const { ctx, code } = context(['-V']);
     const p = program(channels);
-    let seen: readonly string[] = [];
-    registerForwarder(
-      p,
-      ctx,
-      'demo',
-      (rest) => {
-        seen = rest;
-        return 7;
-      },
-      { summary: 'demo' },
-    );
+    let seen: { verbose?: true } = {};
+    p.command('demo')
+      .option('-V, --verbose')
+      .action((opts) => {
+        seen = opts;
+        ctx.setExitCode(7);
+      });
     expect(await runKubicProgram(p, ['demo', '-V'], channels, { code })).toBe(
       7,
     );
-    expect(seen).toEqual(['-V']);
+    expect(seen).toEqual({ verbose: true });
     expect(out).toEqual([]);
-  });
-
-  it('forwarders hand the raw argv through untouched (incl. `--` and --help)', async () => {
-    const { channels } = io();
-    const rest = ['--', '-weird.json', '--help', '--x=1'];
-    const { ctx, code } = context(rest);
-    const p = program(channels);
-    let seen: readonly string[] = [];
-    registerForwarder(
-      p,
-      ctx,
-      'demo',
-      (args) => {
-        seen = args;
-        return 0;
-      },
-      { summary: 'demo' },
-    );
-    await runKubicProgram(p, ['demo', ...rest], channels, { code });
-    expect(seen).toEqual(rest);
   });
 
   it('CliUsageError / CliExitError become one stderr line and their code', async () => {

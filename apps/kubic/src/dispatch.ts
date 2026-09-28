@@ -11,7 +11,6 @@
 // The check order is unchanged: config load → refusal → runtime exclude →
 // usage fallthrough → commander (help, version, crash probe, commands).
 
-import { HELP_FLAGS } from '../../../packages/core/src/cli-help.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import type {
   CommandContext,
@@ -59,7 +58,8 @@ const CRASH_PROBE = '__crash-probe';
 
 // Root options commander answers before any command name.
 const ROOT_OPTIONS: ReadonlySet<string> = new Set([
-  ...HELP_FLAGS,
+  '--help',
+  '-h',
   '--version',
   '-V',
 ]);

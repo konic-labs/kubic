@@ -35,20 +35,18 @@ A module exports `register<Group>Commands: CommandRegistrar`, i.e.
 the process-wide config load (`ctx.config`), the injected runners
 (`ctx.runners`), the `out`/`err` line channels, and `ctx.setExitCode(code)`.
 
-A command that is not migrated yet is a pass-through forwarder
-(`registerForwarder`): it hands the raw argv to the legacy handler, which
-still parses it with the deprecated `packages/core/src/flags.ts`.
+Every command is a real commander definition; the hand-rolled parser
+(`flags.ts`) and help convention (`cli-help.ts`) are gone, and
+`scripts/flag-parser-gate.test.mjs` keeps them from coming back.
 
-The analysis group (`commands/analysis.ts`) is migrated and is the
-reference to copy:
+The analysis group (`commands/analysis.ts`) is the reference to copy:
 
 - it declares typed runners (`AnalysisRunners`, parsed options in), which
   `DispatchRunners` extends;
 - its handlers take `{ out, err, theme?, fancy? }`;
 - its tests are in `commands/analysis.test.ts`.
 
-Migrating a command means replacing its forwarder with a real
-definition:
+A new command is a real definition:
 
 ```ts
 program
@@ -61,11 +59,9 @@ program
   });
 ```
 
-Then delete the handler's `parseFlagArgs` / `answerHelp` calls — commander
-now owns `--help`, `--flag=value`, `--`, and unknown-option errors. Update
-the command's `docs/cli/` page in the same commit. When the last handler
-stops importing `flags.ts`, delete it and its gate exemption in
-`scripts/flag-parser-gate.test.mjs`.
+Commander owns `--help`, `--flag=value`, `--`, and unknown-option errors;
+the handler takes the parsed options, never argv. Update the command's
+`docs/cli/` page in the same commit.
 
 ## Exit codes
 

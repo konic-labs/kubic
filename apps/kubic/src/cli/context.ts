@@ -17,11 +17,10 @@ import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import type { TuiCommandOptions } from '../tui-run.js';
 
-// A forwarded runner's `rest` is the argv after the command name; a
-// migrated command's runner takes the options commander parsed instead (the
-// `Input` parameter). `config` is the one process-wide config load, so every
-// runner reads the same result the refusal gate saw.
-export type CommandRunner<Input = readonly string[]> = (
+// A command's runner takes the options commander parsed (the `Input`
+// parameter). `config` is the one process-wide config load, so every runner
+// reads the same result the refusal gate saw.
+export type CommandRunner<Input> = (
   rest: Input,
   config: CliConfigResult,
 ) => number | Promise<number>;
@@ -49,8 +48,8 @@ export interface CommandContext {
   readonly config: CliConfigResult;
   readonly runners: DispatchRunners;
   // Raw argv after the command token, untouched by commander (it drops a
-  // leading `--`). Only the pass-through forwarders read it; a migrated
-  // command declares real options and reads commander's parsed values.
+  // leading `--`). Commands read commander's parsed values; only `run`'s
+  // prompt typo guard inspects the raw spelling.
   readonly rest: readonly string[];
   // stdout (data) and stderr (diagnostics) line channels.
   readonly out: (line: string) => void;

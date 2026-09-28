@@ -19,7 +19,6 @@
 //   disableModelInvocation: true (hidden from the model XML, explicit-call
 //     only — Pi-compatible escape hatch for agent-invoked helpers)
 
-import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { type PermissionClasses, toolsForClasses } from '../policy.js';
 
@@ -447,45 +446,4 @@ export function resolveTaskSkillRefs(
     });
   }
   return { granted, withheld };
-}
-
-export interface SkillFlagSelection {
-  noSkills: boolean;
-  skills: string[];
-}
-
-// Issue #127: the shared parser replaces the hand-rolled loop. `--skill`
-// stays repeatable; the fetch/install refusal is rebuilt in argv order so
-// its first-offender line is unchanged.
-const SKILL_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--skill', takes: 'value', repeat: true },
-  { name: '--no-skills', takes: 'boolean' },
-];
-
-// Minimal flag parser for the skill surface only: --skill is repeatable,
-// --no-skills disables layered discovery (explicit --skill still applies).
-// Anything fetch/install-shaped is rejected — skills never fetch, and no
-// fetcher module or flag exists in this package.
-export function parseSkillArgs(argv: string[]): SkillFlagSelection {
-  const flags = parseFlagArgs(argv, SKILL_FLAG_SPEC);
-  if (flags.missing.length > 0) {
-    throw new Error(`error: ${flags.missing[0]} needs a value`);
-  }
-  // The parser splits strays into unknown flags and positionals; this
-  // surface refuses them by name, in argv order (first offender wins).
-  const pool = [...flags.unknown, ...flags.positional];
-  for (const token of argv) {
-    const at = pool.indexOf(token);
-    if (at === -1) continue;
-    pool.splice(at, 1);
-    if (/fetch|install/i.test(token)) {
-      throw new Error(
-        `error: unknown skill flag '${token}' (skills never fetch)`,
-      );
-    }
-  }
-  return {
-    noSkills: flags.values['--no-skills'] === true,
-    skills: [...((flags.values['--skill'] as string[] | undefined) ?? [])],
-  };
 }

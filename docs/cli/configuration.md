@@ -58,9 +58,9 @@ the same thing as one object — `values`: `{ key, value, layer }` per set
 key, and one object per projection. A broken config (unknown key, refused
 project layer, `[budgets]`, a secret ref) exits 1 with the named reason
 instead of printing defaults.
-`kubic config --help` (or `-h`) prints `usage: kubic config [--json]` and
-exits 0 without loading anything; an unknown flag prints the same line and
-exits 1.
+`kubic config --help` (or `-h`) prints the generated help and exits 0
+without loading anything; an unknown flag prints one `error: …` line on
+stderr and exits 2.
 
 A refusal also stops the modes that execute an agent: `kubic run`,
 `kubic orchestrate` and `kubic tui` exit 1 with the named reason rather than

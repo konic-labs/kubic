@@ -335,6 +335,15 @@ describe('kubic tui', () => {
       'use [A-Za-z0-9_-]',
     );
   });
+
+  // Issue #36: skills never fetch — no fetch/install flag exists on the
+  // skill surface (run and tui), so commander refuses one by name.
+  it('refuses fetcher/install skill flags on run and tui', async () => {
+    for (const flag of ['--fetch-skills', '--install-skill', '--skill-fetch']) {
+      expect(await usageError(['run', '-p', 'x', flag])).toContain(flag);
+      expect(await usageError(['tui', flag])).toContain(flag);
+    }
+  });
 });
 
 describe('kubic doctor', () => {

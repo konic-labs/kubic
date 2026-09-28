@@ -10,9 +10,10 @@
 //   B. no other argv parser is imported anywhere in the product tree
 //      (yargs, minimist, meow, arg, node:util parseArgs, bare `commander`),
 //      and extra-typings is imported only under apps/kubic/src;
-//   C. packages/core/src/flags.ts (`parseFlagArgs`) is legacy — still used
-//      by the not-yet-migrated command handlers behind the pass-through
-//      forwarders — and must carry an @deprecated removal marker.
+//   C. the legacy hand-rolled layer is gone: packages/core/src/flags.ts
+//      (`parseFlagArgs`) and packages/core/src/cli-help.ts (`answerHelp`)
+//      were deleted once every command moved onto commander, and must not
+//      come back.
 //
 // Every command used to hand-roll the same value guard —
 //
@@ -20,8 +21,8 @@
 //   if (value === undefined || value.startsWith('--')) { … }
 //
 // which made legitimate values unpassable, knew no `--flag=value` form, and
-// had no end-of-flags escape. The fix is one parser (packages/core/src/
-// flags.ts, `parseFlagArgs`); this gate keeps the copies from coming back:
+// had no end-of-flags escape. The fix is one parser (commander); this gate
+// keeps the copies from coming back:
 //
 //   1. no non-test source file under packages/*/src or apps/*/src may
 //      contain a hand-rolled `startsWith('--')` value guard — the parser is
@@ -47,7 +48,11 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PARSER = join(ROOT, 'packages', 'core', 'src', 'flags.ts');
+// Rule C: the legacy parser and help modules, deleted by the migration.
+const LEGACY = [
+  join(ROOT, 'packages', 'core', 'src', 'flags.ts'),
+  join(ROOT, 'packages', 'core', 'src', 'cli-help.ts'),
+];
 // Both quote spellings: biome formats in-repo sources to single quotes, but
 // a copy-pasted or generated guard can carry either — matching only
 // `startsWith('--')` would let the double-quoted twin slip past.
@@ -83,8 +88,7 @@ function sourceFiles(root = ROOT) {
       if (existsSync(src)) walk(src, found);
     }
   }
-  const parser = join(root, 'packages', 'core', 'src', 'flags.ts');
-  return found.filter((file) => file !== parser).sort();
+  return found.sort();
 }
 
 // `file:line: text` for every hand-rolled guard under root's sources.
@@ -203,21 +207,21 @@ describe('commander is the single parser', () => {
 });
 
 describe('legacy flag parser (issue #127)', () => {
-  it('no hand-rolled startsWith("--") value guard survives outside packages/core/src/flags.ts', () => {
+  it('no hand-rolled startsWith("--") value guard survives', () => {
     const offenders = guardOffenders(ROOT, REPO_SOURCES);
     assert.deepEqual(
       offenders,
       [],
-      `argv flags must parse through parseFlagArgs (packages/core/src/flags.ts), not a hand-rolled guard:\n${offenders.join('\n')}`,
+      `argv flags must parse through commander, not a hand-rolled guard:\n${offenders.join('\n')}`,
     );
   });
 
-  it('the shared parser is the single implementation and the scan covers the tree', () => {
-    const parser = readFileSync(PARSER, 'utf8');
-    assert.match(parser, /export function parseFlagArgs\(/);
-    // Rule C: legacy, marked for removal once every handler is migrated.
-    assert.match(parser, /@deprecated/);
-    assert.match(parser, /startsWith\(['"]--['"]\)|TERMINATOR/);
+  it('the legacy parser and help modules are gone and the scan covers the tree', () => {
+    // Rule C: every command is a commander definition; the hand-rolled
+    // parser and help convention must not come back.
+    for (const file of LEGACY) {
+      assert.equal(existsSync(file), false, `${relative(ROOT, file)} is back`);
+    }
     // The gate itself must keep watching both quote spellings.
     assert.deepEqual(HAND_ROLLED_GUARDS, [
       "startsWith('--')",
@@ -232,7 +236,7 @@ describe('legacy flag parser (issue #127)', () => {
     );
   });
 
-  it('flags both quote spellings outside the parser, skipping tests and the parser', () => {
+  it('flags both quote spellings, skipping tests', () => {
     const dir = mkdtempSync(join(tmpdir(), 'flag-gate-'));
     try {
       const write = (rel, body) => {
@@ -248,6 +252,7 @@ describe('legacy flag parser (issue #127)', () => {
       write('packages/host/src/cli.test.ts', "v.startsWith('--');\n");
       assert.deepEqual(guardOffenders(dir), [
         `${join('apps', 'kubic', 'src', 'main.ts')}:1: if (v.startsWith("--")) throw 1;`,
+        `${join('packages', 'core', 'src', 'flags.ts')}:1: if (v.startsWith('--')) {}`,
         `${join('packages', 'host', 'src', 'cli.ts')}:2: if (v.startsWith('--')) throw 1;`,
       ]);
     } finally {

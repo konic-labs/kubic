@@ -19,7 +19,7 @@ import {
   CliUsageError,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
-import type { CommandContext, CommandRunner, KubicProgram } from './context.js';
+import type { KubicProgram } from './context.js';
 
 export interface ProgramIo {
   readonly out: (line: string) => void;
@@ -87,32 +87,4 @@ export async function runKubicProgram(
     }
     throw error;
   }
-}
-
-export interface ForwarderOptions {
-  readonly summary: string;
-  readonly hidden?: boolean;
-}
-
-// A pass-through command: commander routes to it, then the raw argv after
-// the command name goes to the existing hand-written handler unchanged —
-// including its own `--help`, flag parsing and exit codes. The migration
-// replaces each forwarder with a real commander definition.
-export function registerForwarder(
-  program: KubicProgram,
-  ctx: CommandContext,
-  name: string,
-  run: (rest: readonly string[]) => ReturnType<CommandRunner>,
-  options: ForwarderOptions,
-): void {
-  program
-    .command(name, { hidden: options.hidden === true })
-    .description(options.summary)
-    .helpOption(false)
-    .allowUnknownOption()
-    .allowExcessArguments()
-    .argument('[args...]')
-    .action(async () => {
-      ctx.setExitCode(await run(ctx.rest));
-    });
 }

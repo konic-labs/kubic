@@ -8,8 +8,10 @@
 // RED first: the module does not exist yet.
 
 import {
+  closeSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -18,6 +20,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   canonicalTrustPath,
@@ -197,6 +200,38 @@ describe('project trust store (issue #228)', () => {
     const childGrant = projectTrustCheck({ home, env: {}, store });
     expect(childGrant(child)).toBe(true);
     expect(childGrant(root)).toBe(false);
+  });
+
+  it('serializes a racing writer instead of losing its update', async () => {
+    const home = tmpDir();
+    const project = tmpDir();
+    const other = tmpDir();
+    const store = storeFor(home);
+    // A racing writer holds the lock and has just committed its own grant;
+    // the released writer must read that content after the wait and keep it.
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    const lock = `${store.file}.lock`;
+    writeFileSync(
+      store.file,
+      `${JSON.stringify({ [canonicalTrustPath(other)]: true }, null, 2)}\n`,
+    );
+    const held = openSync(lock, 'wx');
+    // The release must come from another thread: the waiting set() blocks
+    // this one in Atomics.wait, where a timer could never fire.
+    const release = new Worker(
+      `const { rmSync } = require('node:fs');
+       const { workerData } = require('node:worker_threads');
+       setTimeout(() => rmSync(workerData.lock, { force: true }), 25);`,
+      { eval: true, workerData: { lock } },
+    );
+    try {
+      store.set(project, true);
+    } finally {
+      closeSync(held);
+      await release.terminate();
+    }
+    expect(store.get(project)).toBe(true);
+    expect(store.get(other)).toBe(true);
   });
 });
 

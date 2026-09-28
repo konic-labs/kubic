@@ -336,3 +336,66 @@ describe('terminal restore on every exit path (issue #313)', () => {
     expect(names.map((name) => process.listenerCount(name))).toEqual(before);
   });
 });
+
+// Issue #314 (§16.1): on quit the final document is printed on the MAIN
+// screen — after `?1049l` — and carries the last assistant cell.
+describe('the final document reaches the main screen (issue #314)', () => {
+  it('prints every document line after leaving the alt screen, including the last answer', async () => {
+    const sessionsRoot = tmpRoot();
+    const workspace = tmpRoot();
+    let settled = false;
+    const bootLane: TuiRunDeps['bootLane'] = async (sessionId, answer) => {
+      const faux = fauxProvider();
+      faux.setResponses([fauxAssistantMessage('the final answer is 42')]);
+      const models = createModels();
+      models.setProvider(faux.provider);
+      const boot = await bootTuiLane(sessionId, {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        skills: { homeDir: workspace, cwd: workspace, trusted: false },
+        ...(answer === undefined ? {} : { answer }),
+      });
+      const loop = boot.loop;
+      if (loop === undefined) throw new Error('no loop');
+      return {
+        ...boot,
+        loop: {
+          ...loop,
+          findEntries: async (query, context) => {
+            const entries = await loop.findEntries(query, context);
+            if (JSON.stringify(entries).includes('the final answer is 42'))
+              settled = true;
+            return entries;
+          },
+        },
+      };
+    };
+    const run = start(bootLane);
+    await waitFor(() => run.fake.counts.started === 1);
+    for (const ch of 'answer') run.fake.feed(ch);
+    run.fake.feed('\r');
+    await waitFor(() => settled);
+    // Let the settlement paint land before quitting.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    run.fake.feed('\x1b');
+    expect(await run.exit).toBe(0);
+    const exitAlt = run.log.findIndex(
+      (entry) => entry.startsWith('TERM:') && entry.includes('?1049l'),
+    );
+    const autowrap = run.log.findIndex(
+      (entry, index) =>
+        index <= exitAlt && entry.startsWith('TERM:') && entry.includes('?7h'),
+    );
+    const outs = run.log
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.startsWith('OUT:'));
+    expect(exitAlt).toBeGreaterThanOrEqual(0);
+    expect(autowrap).toBeGreaterThanOrEqual(0);
+    expect(outs.length).toBeGreaterThan(0);
+    expect(outs.every(({ index }) => index > exitAlt)).toBe(true);
+    expect(outs.map(({ entry }) => entry).join('\n')).toContain(
+      'the final answer is 42',
+    );
+  });
+});

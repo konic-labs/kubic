@@ -569,8 +569,12 @@ the screen at once, including while no turn is running. A refused cancel is repo
 footer (`cancel failed: …`) instead of being swallowed — the turn keeps
 running and the key is never a silent no-op.
 
-Quitting restores the main screen and prints the final document (no cursor
-loss on interrupt). **Quitting mid-turn aborts the turn** — `Esc`, a second
+Quitting leaves the alternate screen first (autowrap, cursor, mouse and
+keyboard modes restored) and **then** prints the final document on your
+main screen, so it stays in your scrollback: the whole last frame at the
+terminal's width — header, tree, the transcript including the last
+assistant answer, status bar, editor and footer — on stdout. A crash
+restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
 `Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs: the operation
 is aborted (recorded in the session, so a resumed session shows no
 unfinished operation), every tool process group it started is killed, and

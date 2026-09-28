@@ -116,4 +116,45 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     expect(terminal.stopped).toBe(1);
     expect(terminal.writes.join('').split('?1049l').length - 1).toBe(1);
   });
+
+  // Issue #314 (§16.1): the final document lands on the MAIN screen. The
+  // printer and the terminal share one ordered log: every document line is
+  // printed after the alt screen is left (`?1049l`) and after autowrap is
+  // back on (`?7h`) — never into the alternate buffer that `?1049l` discards.
+  it('prints the final document after leaving the alt screen', () => {
+    const log: string[] = [];
+    const terminal = fakeTerminal(100);
+    const write = terminal.write;
+    terminal.write = (data: string) => {
+      write(data);
+      log.push(`TERM:${data}`);
+    };
+    const root = buildLayoutRoot({
+      tree: new Text('tree'),
+      transcript: new Text('the last answer'),
+      status: new Text('status'),
+      editor: new Text('editor'),
+    });
+    const screen = bootScreen(terminal, root);
+    screen.render();
+    screen.stop((line) => log.push(`OUT:${line}`));
+    const exitAlt = log.findIndex(
+      (entry) => entry.startsWith('TERM:') && entry.includes('?1049l'),
+    );
+    const autowrap = log.findIndex(
+      (entry) => entry.startsWith('TERM:') && entry.includes('?7h'),
+    );
+    const firstLine = log.findIndex((entry) => entry.startsWith('OUT:'));
+    expect(exitAlt).toBeGreaterThanOrEqual(0);
+    expect(autowrap).toBeGreaterThanOrEqual(0);
+    expect(firstLine).toBeGreaterThan(exitAlt);
+    expect(firstLine).toBeGreaterThan(autowrap);
+    // Nothing is written to the terminal after the document starts.
+    expect(
+      log.slice(firstLine).every((entry) => entry.startsWith('OUT:')),
+    ).toBe(true);
+    expect(
+      log.filter((entry) => entry.startsWith('OUT:')).join('\n'),
+    ).toContain('the last answer');
+  });
 });

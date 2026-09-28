@@ -1,6 +1,6 @@
 // Alt-screen lifecycle (issue #22, slice B; §16.1).
 // Thin over TuiAltScreen: boot sets the layout root, render draws one
-// frame, stop restores the main screen and prints the final document
+// frame, stop restores the main screen and THEN prints the final document
 // through the caller's printer (stdout in prod, capture in tests).
 
 import type { Terminal, VStack } from './tui-boundary.js';
@@ -49,9 +49,16 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
     stop: (print: (line: string) => void) => {
       if (stopped) return;
       stopped = true;
-      for (const line of root.render(terminal.columns)) print(line);
+      // Issue #314 (§16.1): the document is rendered while the layout is
+      // still attached, but PRINTED only after the terminal left the
+      // alternate buffer (and autowrap is back on) — printing first put it
+      // in the buffer `?1049l` discards, so the main screen never showed it.
+      // preserveScreen: Pi's own reprint is skipped; the caller's printer
+      // is the one channel the document takes.
+      const document = root.render(terminal.columns);
       screen.setLayoutRoot(undefined);
-      screen.stop();
+      screen.stop({ preserveScreen: true });
+      for (const line of document) print(line);
     },
     restore: () => {
       if (stopped) return;

@@ -35,7 +35,100 @@ export interface BashResult {
   shell: 'bash' | 'sh' | 'cmd';
   aborted: boolean;
   timedOut: boolean;
+  /**
+   * Issue #339: present when processes the command backgrounded outlived
+   * it — `killed` (the default: the group is reaped when the command
+   * exits) or `detached` (KUBIC_BASH_KEEP_BACKGROUND=1 left them running).
+   */
+  background?: 'killed' | 'detached';
   provenance: Provenance;
+}
+
+// Issue #339: a command the model gives no timeout still has one, and a
+// model-supplied timeout is clamped to a maximum — a turn can never be
+// held open indefinitely by one bash call.
+export const BASH_DEFAULT_TIMEOUT_SEC = 120;
+export const BASH_MAX_TIMEOUT_SEC = 600;
+
+export interface BashPolicy {
+  /** Seconds applied when the model supplies no timeout. */
+  defaultTimeoutSec: number;
+  /** Upper bound on any timeout, model-supplied or default. */
+  maxTimeoutSec: number;
+  /** Leave backgrounded jobs running (detached) after the command exits. */
+  keepBackground: boolean;
+}
+
+export const BASH_POLICY_ENV = {
+  defaultTimeoutSec: 'KUBIC_BASH_TIMEOUT',
+  maxTimeoutSec: 'KUBIC_BASH_MAX_TIMEOUT',
+  keepBackground: 'KUBIC_BASH_KEEP_BACKGROUND',
+} as const;
+
+// setTimeout overflows past 2^31-1 ms and would fire at once.
+const MAX_TIMER_SEC = 2_147_483;
+
+function positiveSeconds(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (
+    !/^\d+(\.\d+)?$/.test(raw.trim()) ||
+    !(value > 0) ||
+    value > MAX_TIMER_SEC
+  ) {
+    throw new Error(
+      `${name} must be a positive number of seconds (at most ${MAX_TIMER_SEC}), got "${raw}"`,
+    );
+  }
+  return value;
+}
+
+/**
+ * The documented bash-tool overrides (docs/cli/configuration.md). A
+ * malformed value fails closed with the variable named — never a silent
+ * fallback to the default.
+ */
+export function resolveBashPolicy(
+  env: Record<string, string | undefined>,
+): BashPolicy {
+  const maxTimeoutSec = positiveSeconds(
+    env,
+    BASH_POLICY_ENV.maxTimeoutSec,
+    BASH_MAX_TIMEOUT_SEC,
+  );
+  const defaultTimeoutSec = Math.min(
+    positiveSeconds(
+      env,
+      BASH_POLICY_ENV.defaultTimeoutSec,
+      BASH_DEFAULT_TIMEOUT_SEC,
+    ),
+    maxTimeoutSec,
+  );
+  const keepRaw = env[BASH_POLICY_ENV.keepBackground];
+  let keepBackground = false;
+  if (keepRaw !== undefined && keepRaw !== '') {
+    if (keepRaw === '1' || keepRaw === 'true') keepBackground = true;
+    else if (keepRaw !== '0' && keepRaw !== 'false') {
+      throw new Error(
+        `${BASH_POLICY_ENV.keepBackground} must be 1/true or 0/false, got "${keepRaw}"`,
+      );
+    }
+  }
+  return { defaultTimeoutSec, maxTimeoutSec, keepBackground };
+}
+
+function policyFor(ctx: OpContext): BashPolicy {
+  if (ctx.bashPolicy !== undefined) return ctx.bashPolicy;
+  try {
+    return resolveBashPolicy(process.env);
+  } catch (error) {
+    throw new OpError('tool_failed', (error as Error).message);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,6 +229,11 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       turnId: turnNumber(inv.turnId),
       operation: 'bash',
     };
+    const policy = policyFor(ctx);
+    const timeoutSec = Math.min(
+      args.timeout ?? policy.defaultTimeoutSec,
+      policy.maxTimeoutSec,
+    );
     const spawnShell = (shellName: string): ProcessHandle => {
       const shellArgs =
         process.platform === 'win32'
@@ -146,6 +244,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
         onUpdate: ctx.onUpdate,
         checkpointKey: inv.invocationId,
         checkpointStore: ctx.checkpointStore,
+        keepBackground: policy.keepBackground,
       });
       // First attempt and any retry both land in the lane's kill registry
       // (issue #11) so timeout/abort kill whichever handle is live.
@@ -155,13 +254,10 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     let shellName = shellFor();
     let live = spawnShell(shellName);
     let timedOut = false;
-    const timer =
-      args.timeout === undefined
-        ? undefined
-        : setTimeout(() => {
-            timedOut = true;
-            live.kill();
-          }, args.timeout * 1000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      live.kill();
+    }, timeoutSec * 1000);
     const onAbort = () => live.kill();
     if (ctx.signal) {
       if (ctx.signal.aborted) live.kill();
@@ -191,7 +287,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       live = spawnShell(shellName);
       result = await live.wait();
     }
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
     ctx.signal?.removeEventListener('abort', onAbort);
     const aborted =
       result.exitCode !== 0 && (timedOut || ctx.signal?.aborted === true);
@@ -210,6 +306,9 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       shell: shellName,
       aborted,
       timedOut,
+      ...(result.background === undefined
+        ? {}
+        : { background: result.background }),
       provenance,
     };
   },

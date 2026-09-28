@@ -57,6 +57,9 @@ export interface OpContext {
   // Lane abort support (issue #11): the op hands its process kill to the
   // lane's kill registry so requestLaneAbort drains in-flight trees.
   trackHandle?: (kill: () => void, invocation: ToolInvocation) => void;
+  // Issue #339: bash default/max timeout and background-job policy.
+  // Absent ⇒ resolved from the documented KUBIC_BASH_* env overrides.
+  bashPolicy?: import('./bash.js').BashPolicy;
 }
 
 export interface InvocationRef {

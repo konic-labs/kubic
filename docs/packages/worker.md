@@ -105,8 +105,9 @@ Two hard bounds keep one tool call from costing the whole file in memory
   started does not. That is distinct from an offset whose line lies beyond
   the budget — the empty-region case, which returns empty content with
   `truncated: true`. When the scan did reach EOF, `truncated` reflects
-  only output cutting (the line window and `READ_MAX_LINES`) — an explicit
-  `limit` is the requested region, not truncation. `readWindowed` calls
+  only output cutting (the line window, `READ_MAX_LINES`, and the 51200B
+  output cap) — an explicit `limit` is the requested region, not
+  truncation. `readWindowed` calls
   `fs.readFileRange` as a method (the real `NodeFileSystem` reads
   `this.cwd`; #199), and `read` names the actual failure: a missing path
   is `not_found`, a directory `is_directory`, an unreadable file
@@ -116,6 +117,28 @@ Two hard bounds keep one tool call from costing the whole file in memory
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal
   untouched. The boundary is exact: 8 MiB edits fine, 8 MiB + 1 refuses.
+- **`read` output bounds (issue #176; §27.5):** the scan bound above is
+  not a context bound. `READ_RESULT_MAX_BYTES` (51200B — Pi's
+  `DEFAULT_MAX_BYTES`) caps what the model sees, whole lines only: a window
+  past the cap keeps the lines that fit and adds
+  `output clipped at 51200B` (the last kept line still drives
+  `more: offset=`); a line that alone exceeds the cap is left out whole —
+  a partial line could poison an exact-match `edit` — with a
+  `line K is NB …` notice carrying a shell-quoted `sed -n 'Kp' < … | head
+  -c 51200` continuation (the path goes through stdin, never an operand:
+  GNU sed would read a leading-dash name as `-e`/`-f`/`-w` options) and
+  `more: offset=K+1` when further lines exist. An
+  offset past the last line, known exactly only when the scan reached EOF,
+  carries `offset K is past the last line (N lines total)`; when the budget
+  stopped the scan instead, the offset is only past the CONFIRMED lines and
+  the old `no lines at offset K (file has at least N lines)` header stays.
+  The first chunk is sniffed for NUL and for invalid UTF-8 (strict decode
+  with stream semantics, so a codepoint straddling the 512 KiB read
+  boundary is not a false positive); binary content returns an empty
+  `content`, a structured `binary: { reason, bytes }`, and a `binary file
+  (NB, …)` notice — the sniff only MARKS the window, so the #122 scan
+  contract is unchanged. `ReadResult` only gains fields; nothing is
+  renamed.
 
 The reason for both: `read` capped only its output and `edit` capped
 nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the

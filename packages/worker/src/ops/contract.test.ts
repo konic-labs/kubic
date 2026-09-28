@@ -10,7 +10,7 @@ import { OPERATIONS } from './registry.js';
 const EXPECTED: Record<string, { description: string; replay: string }> = {
   read: {
     description:
-      'Read a text file. Returns the raw lines under a "[read <path>: lines a-b of N]" header. offset is 1-indexed (default 1); limit defaults to and is capped at 2000 lines; at most 8 MiB is scanned. When the header ends "more: offset=N", call again with that offset.',
+      'Read a text file. Returns the raw lines under a "[read <path>: lines a-b of N]" header. offset is 1-indexed (default 1); limit defaults to and is capped at 2000 lines; at most 8 MiB is scanned and at most 51200 bytes are returned (long output arrives clipped, with a notice). Binary files are refused. When the header ends "more: offset=N", call again with that offset.',
     replay: 'safe',
   },
   ls: {

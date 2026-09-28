@@ -140,6 +140,50 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
+  it('read names an offset past the last line', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('t.txt', 'a\nb\nc\n');
+    expect(await text('read', { path: 't.txt', offset: 5 }, context(env))).toBe(
+      '[read t.txt: offset 5 is past the last line (3 lines total)]\n',
+    );
+  });
+
+  it('read names a line that alone exceeds the output cap', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('min.js', 'x'.repeat(3 * 1024 * 1024));
+    expect(await text('read', { path: 'min.js' }, context(env))).toBe(
+      "[read min.js: line 1 is 3145728B — above the 51200B output cap; read it with bash: sed -n '1p' < 'min.js' | head -c 51200]\n",
+    );
+  });
+
+  it('read names a byte-clipped window and points at the next offset', async () => {
+    const env = new FakeExecutionEnv({});
+    const line = (n: number) =>
+      `${String(n).padStart(5, '0')} ${'y'.repeat(93)}`;
+    env.fs.writeFile(
+      'wide.txt',
+      `${Array.from({ length: 1000 }, (_, i) => line(i + 1)).join('\n')}\n`,
+    );
+    const out = await text('read', { path: 'wide.txt' }, context(env));
+    expect(out.split('\n')[0]).toBe(
+      '[read wide.txt: lines 1-512 of at least 1000; more: offset=513; output clipped at 51200B]',
+    );
+    expect(out.split('\n')[1]).toBe(line(1));
+    expect(out.split('\n')[512]).toBe(line(512));
+    expect(out).not.toContain(line(513));
+  });
+
+  it('read refuses binary content with size and type, never replacement chars', async () => {
+    const env = new FakeExecutionEnv({});
+    const bytes = '\uFFFDPNG\r\n\u001a\n';
+    env.fs.writeFile('logo.png', bytes);
+    const out = await text('read', { path: 'logo.png' }, context(env));
+    expect(out).toBe(
+      `[read logo.png: binary file (${bytes.length}B, invalid UTF-8) — read serves text only; use bash for byte-level inspection]\n`,
+    );
+    expect(out).not.toContain('\uFFFD');
+  });
+
   it('grep returns path:line: text lines under a header', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('src/a.ts', 'const a = "x"; // TODO\nok\n');

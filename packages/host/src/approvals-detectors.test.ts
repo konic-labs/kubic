@@ -457,3 +457,60 @@ describe('capability/trigger vocabulary parity (issue #131)', () => {
     );
   });
 });
+
+describe('every redirect is scanned (issue #326)', () => {
+  it('raises outside-write for an outside redirect after an inside one', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo a > notes.txt && echo b > /etc/cron.d/x',
+      'echo a > notes.txt; cat y >> /etc/profile',
+      'true | echo x > /etc/x',
+      'echo a > a.txt || echo b >> /etc/x',
+      'echo a > a.txt\necho b > /etc/x',
+      // Several redirects inside ONE segment: each target is checked.
+      'echo a > a.txt > /etc/x',
+      'cmd >out.txt 2>/etc/err.log',
+      // fd-prefixed, &> and clobber forms name a file the same way.
+      'cmd 2> /etc/err.log',
+      'cmd &> /etc/all.log',
+      'cmd &>> /etc/all.log',
+      'echo x >| /etc/x',
+      'echo x 1>>/etc/x',
+      "echo ok > a.txt; echo x > '/etc/q'",
+      'echo x >/etc/x;ls',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'outside-write',
+      ]);
+    }
+  });
+
+  it('raises nothing when every redirect stays inside', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'echo a > a.txt; echo b > b.txt',
+      'echo a > a.txt && echo b >> logs/b.txt',
+      'cmd > out.txt 2>&1',
+      'cmd 2>&1 | tee build.log',
+      'cmd >& out.txt',
+      'echo x >| a.txt',
+      'cmd &> all.log',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+  });
+
+  it('keeps the span-closer trim for a lifted redirect target', () => {
+    const ctx = triggerContext();
+    expect(
+      detectTriggers('bash', { command: 'echo $(echo x > /work)' }, ctx),
+    ).toEqual([]);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo $(echo x > a.txt; echo y > /etc/z)' },
+        ctx,
+      ),
+    ).toEqual(['outside-write']);
+  });
+});

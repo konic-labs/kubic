@@ -192,7 +192,16 @@ const DEPLOY =
   /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
 // Shell redirection into an absolute target is a write by another name —
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
-const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
+// EVERY redirect operator in the command is scanned (issue #326), within a
+// segment and across `;`/`&&`/`||`/`|`/newline segments, so an inside
+// redirect first can no longer hide `> /etc/cron.d/x` after it. Operators:
+// `>`, `>>`, fd-prefixed `2>`/`1>>` (the digit is just text before the
+// operator), `&>`, `&>>`, clobber `>|`, and `>&` — whose target is an fd
+// duplication (`2>&1`, `>&-`) and skipped when it is a digit run or `-`,
+// and a file otherwise (`>& out.txt`). The target is the next token up to
+// whitespace or a `|;&<>` operator character.
+const REDIRECT = /(&>>?|>\||>>?&?)[ \t]*([^\s|;&<>]*)/g;
+const FD_DUPLICATION = /^(\d+|-)$/;
 // tee writes its last argument verbatim — the same class as a `>` redirect,
 // so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
 // no redirect fires. Every command segment is scanned (a `|;&` cannot be
@@ -380,19 +389,23 @@ export function detectTriggers(
       found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
-    const redirect = REDIRECT.exec(command);
-    if (redirect !== null && redirect[2] !== undefined) {
+    for (const redirect of command.matchAll(REDIRECT)) {
+      const raw = redirect[2] ?? '';
+      if (redirect[1]?.endsWith('&') === true && FD_DUPLICATION.test(raw)) {
+        continue;
+      }
       // Targets arrive raw: quotes always come off, and a lifted token also
       // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
       // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
       // plain literal `)`/`]` stays part of the path.
       const target = targetToken(
-        redirect[2],
+        raw,
         redirect.index + redirect[0].length,
         spanClosers,
       );
       if (target !== '' && ctx.isOutsideWorkspace(target)) {
         found.push('outside-write');
+        break;
       }
     }
     // Shell-side writes by another name (issue #131): tee and trailing

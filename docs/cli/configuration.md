@@ -168,7 +168,7 @@ quietly stop configuring anything.
 | `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, …), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
 | `install` | Package installs (`npm install`, `pip install`, `brew install`, `apt install`, `cargo install`, `go install`). |
 | `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
-| `outside-write` | A write outside the workspace: the `write`/`edit` tools, a `>`/`>>` redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. |
+| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
 | `budget-overrun` | The budget/concurrency overrun flag. |
 | `spawn-agents` | Agent spawning (the orchestrator). |
 | `privilege-escalation` | `sudo` anywhere in the command. |
@@ -196,6 +196,13 @@ heuristics:
   is never trimmed, so `tee '/work)'` names the literal sibling path
   `/work)` and still raises outside-write. The outside check itself stays
   path-boundary aware (`/work-evil` is not `/work`).
+- **Every redirect** — each redirect operator in the command is checked,
+  within one segment and across `;`, `&&`, `||`, `|` and newlines, so
+  `echo a > notes.txt && echo b > /etc/cron.d/x` raises outside-write.
+  Covered forms: `>`, `>>`, fd-prefixed (`2>`, `1>>`), `&>`, `&>>`,
+  clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
+  file and is skipped, while `>& out.txt` names a file. The target is the
+  next token up to whitespace or a `|;&<>` character, quotes stripped.
 - **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
   anywhere in the raw command, quoted text included
   (`echo "needs sudo"` raises it). A raised capability becomes an ask,

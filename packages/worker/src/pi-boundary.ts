@@ -85,6 +85,7 @@ export {
   ok,
 } from '@earendil-works/pi-agent-core';
 export type {
+  ApiKeyAuth,
   DeferredHandle,
   Model,
   ModelThinkingLevel,

@@ -9,6 +9,7 @@ import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
   parseModelsJson,
+  type RegisterCustomProvidersOptions,
   registerCustomProviders,
 } from '../../worker/src/models-config.js';
 import {
@@ -38,6 +39,7 @@ export interface ModelsCommandOptions {
 export function assembleModels(
   cwd: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  options: RegisterCustomProvidersOptions = {},
 ): {
   models: MutableModels;
   note: string | null;
@@ -53,7 +55,13 @@ export function assembleModels(
   }
   try {
     const parsed: unknown = JSON.parse(raw);
-    const names = registerCustomProviders(models, parseModelsJson(parsed));
+    // A run passes its request-time key resolver (issue #359) so every
+    // provider-key use is resolved and audited per request.
+    const names = registerCustomProviders(
+      models,
+      parseModelsJson(parsed),
+      options,
+    );
     return { models, note: `loaded models.json: ${names.join(', ')}` };
   } catch (error) {
     return {

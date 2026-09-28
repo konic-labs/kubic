@@ -31,6 +31,8 @@ import {
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
+import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+import { redactSecretValues } from '../../../packages/host/src/config/secrets.js';
 import {
   FAUX_MODEL_ID,
   FAUX_NOTICE,
@@ -489,12 +491,21 @@ export async function runHeadlessPrompt(
       : undefined;
   // The §50 vocabulary is closed: a diagnostic without its own class rides
   // the sink as `[session]`.
-  const debug: ((line: string) => void) | undefined =
+  // Issue #359: every resolved provider key is redacted from the debug
+  // channel — the values are known only once the resolver has run, so the
+  // redaction reads them at emit time.
+  let liveSecrets: () => string[] = () => [];
+  const rawDebug: ((line: string) => void) | undefined =
     deps.debug ??
     (debugSink === undefined
       ? undefined
       : (line: string) =>
           debugSink(/^\[[a-z]+\]/.test(line) ? line : `[session] ${line}`));
+  const debug: ((line: string) => void) | undefined =
+    rawDebug === undefined
+      ? undefined
+      : (line: string) =>
+          rawDebug(String(redactSecretValues(line, liveSecrets())));
   // Extension startup (issue #93): the solo lane loads the first-party
   // bundle set through the trust gates BEFORE any store or lane exists — a
   // missing/refused bundle fails this run closed (ExtensionStartupError maps
@@ -703,7 +714,26 @@ export async function runHeadlessPrompt(
     // receipt for the debug channel only.
     let models: MutableModels;
     if (deps.models === undefined) {
-      const assembled = assembleModels(deps.modelsCwd ?? process.cwd());
+      // Request-time provider keys (issue #359, §36.1): a models.json key is
+      // resolved per request and each use lands in the §60 ledger of the
+      // run's workspace — a worker's under its own worktree root.
+      const worker = process.env.KUBIC_WORKER_ID;
+      const keyResolver = createLedgerModelKeyResolver({
+        workspace: deps.env?.cwd ?? process.cwd(),
+        role:
+          role?.resolved.name ??
+          (worker === undefined || worker === '' ? 'root' : `worker:${worker}`),
+        sessionId: () => id,
+        mode: worker === undefined || worker === '' ? 'solo' : 'orchestrator',
+        onError: (message) =>
+          debug?.(`[session] credential use not audited: ${message}`),
+      });
+      liveSecrets = keyResolver.live;
+      const assembled = assembleModels(
+        deps.modelsCwd ?? process.cwd(),
+        process.env,
+        { resolveApiKey: keyResolver.resolve },
+      );
       if (assembled.note !== null) {
         if (assembled.note.startsWith('models.json ignored:')) {
           (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(

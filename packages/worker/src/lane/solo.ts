@@ -14,7 +14,9 @@ import type { FileJournalStore } from '../../../exec/src/journal.js';
 import {
   buildCompactPrompt,
   type CompactionCheckpoint,
+  compactionThreshold,
   DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
   shouldCheckAt,
   shouldCompact,
 } from '../compaction.js';
@@ -197,6 +199,10 @@ export interface SoloLane {
   sessionId: string;
   binding?: LaneBinding;
   affinity?: TaskAffinity;
+  // The configured (unclamped) compaction reserve and a window lookup, so a
+  // model switch re-clamps the harness reserve to the NEW model's window.
+  configuredReserveTokens?: number;
+  modelWindow?: (provider: string, modelId: string) => number | undefined;
 }
 
 export function splitSoloModelId(id: string): {
@@ -210,6 +216,30 @@ export function splitSoloModelId(id: string): {
     );
   }
   return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
+}
+
+// The harness took its reserve clamped to the BOOT model's window; after a
+// switch the clamp follows the live model (a missing lookup keeps it).
+async function reclampCompactionReserve(
+  solo: SoloLane,
+  model: { provider: string; modelId: string },
+  context: Context,
+): Promise<void> {
+  const window = solo.modelWindow?.(model.provider, model.modelId);
+  if (window === undefined || solo.configuredReserveTokens === undefined) {
+    return;
+  }
+  const current = await solo.harness.getCompactionSettings(context);
+  await solo.harness.setCompactionSettings(
+    {
+      ...current,
+      reserveTokens: effectiveReserveTokens(
+        window,
+        solo.configuredReserveTokens,
+      ),
+    },
+    context,
+  );
 }
 
 // The ONLY path off the pinned model through the lane: one-way,
@@ -244,6 +274,7 @@ export async function escalateSoloModel(
   const parsed = splitSoloModelId(to);
   validateEscalation(ladder, from, to);
   await solo.lane.setModel(parsed, context);
+  await reclampCompactionReserve(solo, parsed, context);
   const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
   solo.affinity = result.affinity;
   return result;
@@ -298,7 +329,7 @@ export async function maybeCompactSoloLane(
     return { checked: false, reason: 'checkpoint-skipped', checkpoint };
   }
   const reserve = check.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
-  const threshold = check.contextWindow - reserve;
+  const threshold = compactionThreshold(check.contextWindow, reserve);
   if (
     shouldCompact({
       contextTokens: check.contextTokens,
@@ -398,8 +429,12 @@ export async function bootSoloLane(
         }),
       compaction: {
         enabled: options.compaction?.enabled ?? true,
-        reserveTokens:
+        // Clamped to the model's window: a small-window model must not
+        // compact every turn (see effectiveReserveTokens).
+        reserveTokens: effectiveReserveTokens(
+          options.model.contextWindow,
           options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+        ),
         keepRecentTokens:
           options.compaction?.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
       },
@@ -471,6 +506,11 @@ export async function bootSoloLane(
     lane,
     kills,
     sessionId: options.sessionId,
+    configuredReserveTokens:
+      options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+    modelWindow: (provider, modelId) =>
+      options.models.getModels(provider).find((model) => model.id === modelId)
+        ?.contextWindow,
     ...(binding === undefined ? {} : { binding }),
     ...(options.taskId === undefined
       ? {}

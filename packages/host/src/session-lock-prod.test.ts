@@ -193,6 +193,31 @@ describe('repo-level overlap warning (issue #118)', () => {
     ).toBe(true);
   });
 
+  it('reaches the --debug sink when the caller wired no separate debug dep (the prod `kubic run` shape)', async () => {
+    const root = tmpRoot();
+    const workspace = tmpRoot('ws-');
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const sibling = await createSession(store, workspace, BACKGROUND_CONTEXT);
+    await sibling.close(BACKGROUND_CONTEXT);
+    const sinkLines: string[] = [];
+    const result = await runHeadlessPrompt(
+      'hello',
+      { debug: true },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['all done']),
+        env: new NodeExecutionEnv(workspace),
+        debugSink: (line) => sinkLines.push(line),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(
+      sinkLines.some((line) =>
+        line.includes('another run may be live in this workspace'),
+      ),
+    ).toBe(true);
+  });
+
   it('stays silent when the only other session touches a different workspace', async () => {
     const root = tmpRoot();
     const workspace = tmpRoot('ws-');

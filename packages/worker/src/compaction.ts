@@ -19,18 +19,37 @@ export interface CompactionThreshold {
   reserveTokens?: number;
 }
 
+// A reserve may take at most this share of the window. Without the clamp a
+// window at or below the reserve (an 8192-token local model vs the 16384
+// default) puts the threshold at or below zero and every turn compacts.
+// Pi has no equivalent clamp; this is Kubic policy.
+export const MAX_RESERVE_FRACTION = 0.25;
+
+export function effectiveReserveTokens(
+  contextWindow: number,
+  reserveTokens: number = DEFAULT_RESERVE_TOKENS,
+): number {
+  if (!(contextWindow > 0)) return reserveTokens;
+  return Math.min(
+    reserveTokens,
+    Math.floor(contextWindow * MAX_RESERVE_FRACTION),
+  );
+}
+
 export function compactionThreshold(
   contextWindow: number,
   reserveTokens: number = DEFAULT_RESERVE_TOKENS,
 ): number {
-  return contextWindow - reserveTokens;
+  return contextWindow - effectiveReserveTokens(contextWindow, reserveTokens);
 }
 
-// Trigger: contextTokens STRICTLY above contextWindow - reserveTokens.
+// Trigger: contextTokens STRICTLY above contextWindow - reserve (clamped).
 // Boundary: equality does not fire.
 export function shouldCompact(input: CompactionThreshold): boolean {
-  const reserve = input.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
-  return input.contextTokens > input.contextWindow - reserve;
+  return (
+    input.contextTokens >
+    compactionThreshold(input.contextWindow, input.reserveTokens)
+  );
 }
 
 export const COMPACTION_CHECKPOINTS = [

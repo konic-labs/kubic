@@ -510,6 +510,35 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     expect(o.lines.join('\n')).toMatch(/unknown flag --bogus/);
   });
 
+  it('points a positional prompt at -p instead of a bare "unknown flag" (exit 2, no lane)', async () => {
+    const o = out();
+    let called = false;
+    const exit = await runRunCommand(['fix tests'], {
+      out: o.write,
+      run: async () => {
+        called = true;
+        return completedResult();
+      },
+    });
+    expect(exit).toBe(2);
+    expect(called).toBe(false);
+    const text = o.lines.join('\n');
+    expect(text).toMatch(/unexpected argument "fix tests"/);
+    expect(text).toContain("kubic run -p 'fix tests'");
+  });
+
+  it('single-quotes the suggested prompt so $ and backticks never expand when pasted', async () => {
+    const o = out();
+    const exit = await runRunCommand(["echo $HOME `id` it's"], {
+      out: o.write,
+      run: async () => completedResult(),
+    });
+    expect(exit).toBe(2);
+    expect(o.lines.join('\n')).toContain(
+      "kubic run -p 'echo $HOME `id` it'\\''s'",
+    );
+  });
+
   it('passes --debug through to the runner without gating the run (issue #98)', async () => {
     const o = out();
     const seen: { debug?: boolean } = {};

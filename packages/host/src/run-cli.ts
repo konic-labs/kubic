@@ -256,6 +256,12 @@ function runFailure(
   };
 }
 
+// POSIX single-quote escaping for the suggested command: nothing inside
+// '…' expands ($, backticks, !), and an embedded ' becomes '\''.
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export async function runRunCommand(
   args: string[],
   deps: RunCommandDeps,
@@ -339,6 +345,15 @@ export async function runRunCommand(
     // `kubic run -- <x>` lands here now; the old loop named `--` itself,
     // but `--` is accepted syntax since #127, so the stray operand is the
     // token named (exit 2 either way).
+    // `kubic run "fix tests"` (no -p, no terminator) is the natural first
+    // try: name the operand and the exact flag form instead of calling a
+    // prompt a "flag". Still exit 2 — the prompt stays a flag (#127 typo rule).
+    if (prompt === undefined && terminatorAt === -1) {
+      deps.out(
+        `error: unexpected argument ${JSON.stringify(operands[0])} — the prompt is a flag: kubic run -p ${shellQuote(operands.join(' '))}`,
+      );
+      return RUN_EXIT_USAGE;
+    }
     deps.out(`error: unknown flag ${operands[0]}`);
     return RUN_EXIT_USAGE;
   }

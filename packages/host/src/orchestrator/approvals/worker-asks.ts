@@ -222,13 +222,6 @@ export type WorkerAskSeat = (
   request: OrchestratorApprovalRequest,
 ) => Promise<OrchestratorVerdict | undefined>;
 
-// The user's standing answer for a run (`--yes`): the flag IS the user's own
-// pre-authorization for this run, which is why the verdict is stamped
-// by:'user' — never a manager grant and never a model claim.
-export function createStandingAnswerSeat(): WorkerAskSeat {
-  return async () => ({ approved: true, by: 'user' });
-}
-
 // The USER's seat on an interactive run: what a TTY orchestration attaches so
 // a worker's challenged call is PRESENTED — the §41.2 dialog. It is the same
 // primitive the shipped merge prompt uses (readline over stdio), reduced to
@@ -716,9 +709,12 @@ export interface WorkerApprovalsRunOptions {
   dir: string;
   sessionId: string;
   maxPendingMs: number;
-  /** `--yes`: the user's standing answer for this run. */
-  autoApprove?: boolean;
-  /** The user's seat when a surface exists (TTY); absent denies on the bound. */
+  /**
+   * The user's seat when a surface exists (TTY); absent denies on the bound.
+   * There is deliberately no `--yes` knob here (issue #323): the run's
+   * standing answer covers the MERGE gate only, so a worker's dangerous call
+   * always reaches the real seat or denies closed — never an inferred grant.
+   */
   seat?: WorkerAskSeat;
   /** Opt-in budget, applied to every spawn; undefined enforces nothing. */
   budget?: unknown;
@@ -761,11 +757,7 @@ export function createOrchestratorApprovalsRun(
     posture: () =>
       fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,
     debug,
-    ...(options.autoApprove === true
-      ? { seat: createStandingAnswerSeat() }
-      : options.seat === undefined
-        ? {}
-        : { seat: options.seat }),
+    ...(options.seat === undefined ? {} : { seat: options.seat }),
     audit,
   });
   // Session-scoped full access (§41.4): the grant is keyed by sessionId, lives
@@ -891,7 +883,9 @@ export function createOrchestratorApprovalsRun(
     }
     const live = fullAccessLive();
     let outcome: WorkerAskOutcome;
-    if (live !== undefined) {
+    // A write into Kubic's control plane ALWAYS asks (issue #324): the
+    // full-access posture never answers it.
+    if (live !== undefined && request.trigger !== 'kubic-state-write') {
       // Full access for THIS session only: indicated, recorded, never quiet.
       debug(formatSessionSkipIndicator(live));
       outcome = await decisions.ask(inputFromRequest(published, scope), {

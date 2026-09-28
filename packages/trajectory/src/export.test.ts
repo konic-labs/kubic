@@ -410,17 +410,29 @@ describe('trajectory review fixes (round 2)', () => {
     });
   });
 
-  it('records the used env VERBATIM — never silent scrub (secrecy is upstream at the spawn allowlist #42)', () => {
+  // Issue #359 replaces the old "records the used env VERBATIM" premise: the
+  // spawn env DOES carry role grants (KUBIC_ROLE_*), so the exporter redacts
+  // every secret-classified key with the classifier the spawn path uses. The
+  // key stays (the run saw it); its value never leaves the process.
+  it('redacts secret-classified env keys, keeping every key', () => {
     const env = {
       PATH: '/usr/bin',
       HOME: '/home/agent',
-      SECRET_TOKEN: 's3cret-that-must-round-trip',
+      SECRET_TOKEN: 's3cret-that-must-not-leak',
+      KUBIC_ROLE_IMPLEMENTER_SESSION: 'grant-value',
     };
     const exported = buildTrajectoryExport(
       completeInput({
         environment: { capturedFrom: 'used', cwd: '/repo', env },
       }),
     );
-    expect(exported.environment.env).toEqual(env);
+    expect(exported.environment.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/agent',
+      SECRET_TOKEN: '<redacted>',
+      KUBIC_ROLE_IMPLEMENTER_SESSION: '<redacted>',
+    });
+    expect(JSON.stringify(exported)).not.toContain('s3cret-that-must-not-leak');
+    expect(JSON.stringify(exported)).not.toContain('grant-value');
   });
 });

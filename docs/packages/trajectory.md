@@ -24,9 +24,12 @@ Fail-closed, never silent drop: missing/incomplete provenance →
 `missing-provenance`/`invalid-provenance` (exit 2); `pid` is an explicit
 `null` for process-less (faux) runs, never omitted; a missing
 used-`ExecutionEnv` snapshot → `missing-environment`, anything but
-`capturedFrom: 'used'` → `untrusted-environment`, and the used env is
-recorded VERBATIM (transparency: replays see what the run saw; secrecy
-is enforced upstream at the spawn allowlist, #42); every
+`capturedFrom: 'used'` → `untrusted-environment`, and the used env keeps
+every key but redacts each secret-classified value (`*_KEY`, `*_TOKEN`,
+`*_SECRET`, `*_PASSWORD`, `*_CREDENTIALS`, `KUBIC_ROLE_*`) to `<redacted>`
+— the shared classifier in `packages/core/src/secret-keys.ts` that the
+worker spawn env uses too (#359: role grants ride in the spawn env, so it is
+not secret-free); every
 non-`completed` result carries a §52 `failureCategory` (else
 `missing-failure-category`), while a `completed` result carrying one is
 `contradictory-result`; bad `usage.byModel` rows → `invalid-usage`;

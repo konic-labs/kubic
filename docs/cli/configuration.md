@@ -200,6 +200,7 @@ quietly stop configuring anything.
 | `budget-overrun` | The budget/concurrency overrun flag. |
 | `spawn-agents` | Agent spawning (the orchestrator). |
 | `privilege-escalation` | `sudo` anywhere in the command. |
+| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (a worker worktree's repo) or `~/.kubic/` (the global `config.toml`): the `write`/`edit` tools, any redirect target, a `tee` target, or a `cp`/`mv`/`install` destination. **Always asks**: `autoApprove` and `--full-access` never answer it. Writes into `.kubic/journal/`, `.kubic/orchestrator/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (issue #324; see [journal and safety](../architecture/journal-and-safety.md)). |
 
 `requires:<tool>` is accepted alongside them (the per-tool trigger). A name
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
@@ -253,20 +254,33 @@ Two keys are forbidden outright, not defaulted: **`[budgets]`**
 
 ## Secrets (never in config)
 
-Secrets live in `models.json` as **refs only**, resolved at request
-time with one audit event per use — they never appear in config,
-trajectories, or logs:
+Secrets never appear in config: a secret-shaped value or a secret ref in
+`config.toml` is refused by name. What ships (issue #359):
 
-| Form | Meaning |
-| --- | --- |
-| `$ENV_VAR` | Read from the environment at request time. Missing/empty fails closed. |
-| `!command args…` | Run the helper (injected by the host) and use its output. Re-run every time — no TTL. |
-| `\$…` / `\!…` | Escaped literals (`\$FOO` means the text `$FOO`). |
-| anything else | Plain literal value. |
+- **Provider keys from `models.json` are resolved at request time.** A
+  provider's `apiKeyEnv` names the environment variable holding its key; that
+  is a `$ENV_VAR` ref, resolved through the request-time resolver on **every**
+  model request (never cached; a missing or empty variable leaves the provider
+  unconfigured). Availability checks (`kubic models`, the provider probe) read
+  presence only and are not a use.
+- **Every use is audited.** Each resolution appends one §60 record to the
+  audit ledger (`.kubic/orchestrator/approvals/audit.jsonl`, read by
+  `kubic audit`): `what: credential:<provider>`, the ref as a sentinel
+  (`sentinel:$GW_API_KEY`), the role, and the purpose
+  (`model-request:<provider>`) — **never the value**. A worker's uses are
+  recorded in its own worktree's ledger with `mode: orchestrator`.
+- **The value never persists.** Resolved values are redacted from the
+  `--debug` channel, and a trajectory export redacts every secret-classified
+  env key (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_CREDENTIALS`,
+  `KUBIC_ROLE_*`) to `<redacted>` with the same classifier the worker spawn
+  env uses.
 
-Tool credentials travel as budget-bounded scoped tokens revoked at
-settle/exit; agent processes see allowlisted env plus their role creds —
-no ambient leak.
+Not implemented: `!command` and literal refs inside `models.json` (the
+parser exists in `packages/host/src/config/secrets.ts`; wiring them is
+#224), and **tool-credential brokering** — no budget-bounded scoped token is
+issued to a worker or revoked at settle/exit (see
+[design drift, item 22](../design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)).
+Agent processes see the spawn allowlist plus their role grants.
 
 ## What lives where
 

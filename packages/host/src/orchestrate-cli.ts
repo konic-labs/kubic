@@ -313,6 +313,18 @@ export interface ApprovalInput {
   branch: string;
 }
 
+// One settled merge-gate decision, as the §60 ledger records it (issue
+// #323). `by` is `--yes` for the run's standing answer and `user` for a
+// decider's answer (or the deny-closed absence of one).
+export interface MergeDecisionRecord {
+  sessionId: string;
+  agentId: string;
+  branch: string;
+  approved: boolean;
+  by: '--yes' | 'user';
+  reason?: string;
+}
+
 // The verdict a merge approval settles on (issue #130, §41.2/§45.2). A
 // decider's answer is `approve` or `deny`; `timeout` is the run's bound
 // elapsing with nobody answering — a walked-away user, NOT a refusal — and
@@ -535,6 +547,11 @@ export interface OrchestrateCommandDeps {
   requestApproval?: (
     input: ApprovalInput,
   ) => MergeApprovalVerdict | boolean | Promise<MergeApprovalVerdict | boolean>;
+  // The merge gate's §60 audit hook (issue #323). Called once per settled
+  // merge decision; `by` tells a `--yes` standing answer apart from a user
+  // who answered the prompt, so the ledger never records an inferred
+  // approval as a user decision.
+  auditMerge?: (record: MergeDecisionRecord) => void;
   // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
   // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
   // composition root owns construction (its dir, its TTY seat, its debug
@@ -544,7 +561,6 @@ export interface OrchestrateCommandDeps {
   approvals?: (options: {
     sessionId: string;
     maxPendingMs: number;
-    autoApprove: boolean;
     budget?: unknown;
     /** Per-spawn override: the budget for THAT worker's gate (§71). */
     budgetForAgent?: (agentId: string) => unknown;
@@ -1129,7 +1145,8 @@ export async function runOrchestrateCommand(
     // The bound is a fixed run-level contract, not a caller knob: a headless
     // ask must deny closed on a human timescale, never hang.
     maxPendingMs: ORCHESTRATE_APPROVAL_BOUND_MS,
-    autoApprove: parsed.autoApprove,
+    // No `--yes` here (issue #323): the standing answer is the MERGE gate's,
+    // never a worker-ask seat.
     ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),
     // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
     // of THAT spawn only; absent, the shared spec applies.
@@ -1578,6 +1595,18 @@ export async function runOrchestrateCommand(
         : settled === false || settled === undefined
           ? { verdict: 'deny' }
           : settled;
+    deps.auditMerge?.({
+      sessionId,
+      agentId,
+      branch: worktree.branch,
+      approved: verdict.verdict === 'approve',
+      by: parsed.autoApprove ? '--yes' : 'user',
+      ...(verdict.verdict === 'timeout'
+        ? { reason: `timed out after ${verdict.maxPendingMs}ms` }
+        : verdict.verdict === 'deny'
+          ? { reason: 'denied' }
+          : {}),
+    });
     if (verdict.verdict !== 'approve') {
       const saveFailure = await saveOrFail(state);
       if (saveFailure !== undefined) {

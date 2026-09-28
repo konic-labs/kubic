@@ -33,6 +33,7 @@ import {
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
+import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
@@ -286,7 +287,15 @@ export async function bootTuiLane(
     } catch {
       // Reported below by the loop's own surfaces; the boot stands.
     }
-    const assembled = assembleModels(process.cwd());
+    // Request-time provider keys, audited per use (issue #359, §36.1).
+    const keyResolver = createLedgerModelKeyResolver({
+      workspace: options.env?.cwd ?? process.cwd(),
+      role: 'root',
+      sessionId: () => id,
+    });
+    const assembled = assembleModels(process.cwd(), process.env, {
+      resolveApiKey: keyResolver.resolve,
+    });
     const models = options.models ?? assembled.models;
     // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
     // picked implicitly; the footer names it (runTuiCommand).
@@ -309,6 +318,8 @@ export async function bootTuiLane(
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
         sessionDir: join(root, id),
+        // The session root in use is refused control-plane state (#324).
+        sessionsRoot: root,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies

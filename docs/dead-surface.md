@@ -187,3 +187,24 @@ rewritten. Two halves:
 
 The §61 worker lifecycle budgets (`packages/worker/src/lifecycle/budgets.ts`)
 are NOT part of this cluster: their wiring belongs to #94.
+
+## Unwired exports of reachable modules
+
+The gate above is file-level: a reachable module can still export dead
+functions. Rows here own those exports; `packages/host/src/config/secrets-surface.test.ts`
+fails when an export of `packages/host/src/config/secrets.ts` has neither a
+non-test caller nor a row below (issue #359).
+
+| Export | Module | Owner | Disposition |
+| --- | --- | --- | --- |
+| `assertNoPlaintextSecrets` | `packages/host/src/config/secrets.ts` | #359 | keep: persistence guard for §36.3 brokering ([design drift item 22](design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)) |
+| `containsPlaintextSecret` | `packages/host/src/config/secrets.ts` | #359 | keep: used only by `assertNoPlaintextSecrets` |
+| `ScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `issueScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `useScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `substituteTokenHost` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 host substitution, not implemented (design drift item 22) |
+| `revokeAllTokens` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 settle/exit revocation, not implemented (design drift item 22) |
+| `RoleCredentialSet` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 per-role credentials, not implemented (design drift item 22) |
+| `resolveRoleCredentials` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 per-role credentials, not implemented (design drift item 22) |
+| `AGENT_ENV_ALLOWLIST` | `packages/host/src/config/secrets.ts` | #359 | keep: superseded in practice by `ENV_ALLOWLIST` (`packages/worker/src/lifecycle/env.ts`) |
+| `buildAgentEnv` | `packages/host/src/config/secrets.ts` | #359 | keep: superseded in practice by `buildSpawnEnv` (`packages/worker/src/lifecycle/env.ts`) |

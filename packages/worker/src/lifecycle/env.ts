@@ -3,6 +3,8 @@
 // grant — never the parent's secrets, never a sibling role's token.
 // Debug lines go through redactEnvForLog so secrets never hit §50 output.
 
+import { redactSecretEnv } from '../../../core/src/secret-keys.js';
+
 export const ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',
@@ -34,20 +36,6 @@ export const ENV_ALLOWLIST: readonly string[] = [
 ];
 
 const KUBIC_PREFIX = 'KUBIC_';
-
-const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
-
-function isSecretKey(key: string): boolean {
-  const upper = key.toUpperCase();
-  // Grant-derived keys are secrets by provenance: every roleCredentialEnv
-  // output lives under KUBIC_ROLE_<ROLE>_, so redact the whole namespace
-  // instead of guessing from the suffix (a grant named `session` carries
-  // a secret but matches no SECRET_SUFFIXES entry).
-  if (upper.startsWith('KUBIC_ROLE_')) return true;
-  return SECRET_SUFFIXES.some(
-    (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
-  );
-}
 
 export function filterSpawnEnv(
   base: Record<string, string>,
@@ -94,12 +82,10 @@ export function buildSpawnEnv(
   return { ...filterSpawnEnv(base), ...roleCredentialEnv(role, grant) };
 }
 
+// The shared classifier (core/secret-keys.ts, issue #359): the trajectory
+// exporter redacts with the very same rule.
 export function redactEnvForLog(
   env: Record<string, string>,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    out[key] = isSecretKey(key) ? '<redacted>' : value;
-  }
-  return out;
+  return redactSecretEnv(env);
 }

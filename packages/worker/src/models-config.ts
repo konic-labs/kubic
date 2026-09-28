@@ -6,6 +6,7 @@
 // is refused with a named reason, never silently mapped.
 
 import {
+  type ApiKeyAuth,
   createProvider,
   envApiKeyAuth,
   type ModelThinkingLevel,
@@ -259,9 +260,57 @@ export const LOCAL_MODELS_EXAMPLE = {
   ],
 } as const;
 
+// One request-time use of a models.json provider key (issue #359, §36.1):
+// the host's resolver reads the named env var through `readEnv` (Pi's auth
+// context) and returns the key, auditing the use. It never sees a stored
+// credential — those resolve through Pi as before.
+export interface ApiKeyUse {
+  provider: string;
+  envVar: string;
+  readEnv: (name: string) => Promise<string | undefined>;
+}
+
+export interface RegisterCustomProvidersOptions {
+  resolveApiKey?: (use: ApiKeyUse) => Promise<string | undefined>;
+}
+
+// The provider's api-key auth when the host resolves keys itself: `check`
+// answers availability WITHOUT resolving (a probe is not a use), and every
+// `resolve` — Pi calls it per request — goes through the host's resolver.
+function requestTimeApiKeyAuth(
+  provider: string,
+  envVar: string,
+  resolveApiKey: (use: ApiKeyUse) => Promise<string | undefined>,
+): ApiKeyAuth {
+  const base = envApiKeyAuth(`${provider} API key`, [envVar]);
+  return {
+    ...base,
+    check: async ({ ctx, credential, signal }) => {
+      signal.throwIfAborted();
+      if (credential?.key)
+        return { source: 'stored credential', type: 'api_key' };
+      const value = await ctx.env(envVar);
+      return value ? { source: envVar, type: 'api_key' } : undefined;
+    },
+    resolve: async ({ ctx, credential, signal }) => {
+      signal.throwIfAborted();
+      if (credential?.key) return base.resolve({ ctx, credential, signal });
+      if (!(await ctx.env(envVar))) return undefined;
+      const key = await resolveApiKey({
+        provider,
+        envVar,
+        readEnv: (name) => ctx.env(name),
+      });
+      signal.throwIfAborted();
+      return key ? { auth: { apiKey: key }, source: envVar } : undefined;
+    },
+  };
+}
+
 export function registerCustomProviders(
   models: MutableModels,
   specs: CustomProviderSpec[],
+  options: RegisterCustomProvidersOptions = {},
 ): string[] {
   const names: string[] = [];
   for (const spec of specs) {
@@ -272,7 +321,10 @@ export function registerCustomProviders(
       baseUrl: spec.baseUrl,
       ...(spec.headers === undefined ? {} : { headers: spec.headers }),
       auth: {
-        apiKey: envApiKeyAuth(`${spec.id} API key`, [key]),
+        apiKey:
+          options.resolveApiKey === undefined
+            ? envApiKeyAuth(`${spec.id} API key`, [key])
+            : requestTimeApiKeyAuth(spec.id, key, options.resolveApiKey),
       },
       models: spec.models.map((m) => ({
         id: m.id,

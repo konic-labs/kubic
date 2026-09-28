@@ -19,6 +19,7 @@ import {
   type AuditSink,
   emitAudit,
   type OrgAuditRecord,
+  toCredentialSentinel,
 } from './audit.js';
 import { redactSecretShapes } from './secret-shapes.js';
 
@@ -223,6 +224,83 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   };
 }
 
+// §60 record for one orchestrator MERGE-gate decision (issue #323). The
+// approval names who decided: `--yes` (the run's standing answer, which
+// covers merges only) or `user` (a decider answered, or none existed and
+// the gate denied closed) — never an inferred approval dressed as a user's.
+export interface MergeDecisionInput {
+  sessionId: string;
+  agentId: string;
+  branch: string;
+  workspace: string;
+  approved: boolean;
+  by: '--yes' | 'user';
+  reason?: string;
+  posture: string;
+}
+
+export function mergeDecisionAudit(input: MergeDecisionInput): AuditInput {
+  const { approval, result, reason } = verdictFields(
+    input.approved
+      ? { approved: true, by: input.by }
+      : { approved: false, reason: input.reason ?? 'denied' },
+  );
+  return {
+    who: `agent:${input.agentId || UNKNOWN}`,
+    what: `merge:${input.branch || UNKNOWN}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'manager' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'manager' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: { permission: 'gate:merge', approval },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: input.posture,
+    result,
+    reason,
+  };
+}
+
+// §60 record for one credential use (issue #359; §36.1 rule 4): the ref
+// (as a sentinel), the role and the purpose — never the value.
+export interface CredentialUseInput {
+  sessionId: string;
+  role: string;
+  provider: string;
+  ref: string;
+  purpose: string;
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  when?: string;
+}
+
+export function credentialUseAudit(input: CredentialUseInput): AuditInput {
+  return {
+    who: `agent:${input.role || UNKNOWN}`,
+    what: `credential:${input.provider || UNKNOWN}`,
+    ...(input.when === undefined ? {} : { when: input.when }),
+    agent: { session: input.sessionId || UNKNOWN, role: input.role || UNKNOWN },
+    model: {
+      provider: input.provider || UNKNOWN,
+      id: UNKNOWN,
+      thinking: UNKNOWN,
+    },
+    worker: { pid: process.pid, generation: 0, role: input.role || UNKNOWN },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'credential:use',
+      approval: 'resolved at request time',
+    },
+    credential: { sentinel: toCredentialSentinel(input.ref) },
+    network: { ...NO_NETWORK },
+    mode: input.mode ?? 'solo',
+    posture: 'credentials',
+    result: 'ok',
+    reason: input.purpose,
+  };
+}
+
 function redactLeaves(value: unknown): unknown {
   if (typeof value === 'string') return redactSecretShapes(value);
   if (Array.isArray(value)) return value.map(redactLeaves);
@@ -244,13 +322,17 @@ export function appendToLedger(
   dir: string,
   input: AuditInput,
   onError: (message: string) => void = () => undefined,
+  secrets: readonly string[] = [],
 ): OrgAuditRecord | undefined {
   try {
     // emitAudit refuses a record carrying secret-shaped material. A decision
     // must not vanish because a free-text field (a deny reason echoing a
     // command) looked like a secret, so every string leaf is redacted first:
     // the record survives, the material never reaches the ledger.
-    return emitAudit([createLedgerSink(dir)], redactInput(input));
+    // `secrets` (live values) make emitAudit refuse a record carrying one.
+    return emitAudit([createLedgerSink(dir)], redactInput(input), {
+      secrets: [...secrets],
+    });
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error));
     return undefined;

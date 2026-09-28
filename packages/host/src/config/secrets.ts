@@ -101,6 +101,52 @@ export async function resolveSecretRef(
   return value;
 }
 
+// The models.json provider-key resolver (issue #359; §36.1 rules 3-4): the
+// provider's `apiKeyEnv` IS a `$ENV` ref, resolved through resolveSecretRef
+// at every request (Pi calls it per request), emitting exactly one audit
+// event per use — ref, role, purpose, never the value. Every resolved value
+// is remembered in `live` so the persistence paths can redact it.
+export interface ModelKeyUse {
+  provider: string;
+  envVar: string;
+  readEnv: (name: string) => Promise<string | undefined>;
+}
+
+export interface ModelKeyResolver {
+  resolve: (use: ModelKeyUse) => Promise<string | undefined>;
+  /** Every value resolved so far, for redactSecretValues. */
+  live: () => string[];
+}
+
+export function createModelKeyResolver(options: {
+  role: string;
+  audit: (event: SecretAuditEvent & { provider: string }) => void;
+  now?: () => number;
+}): ModelKeyResolver {
+  const live = new Set<string>();
+  return {
+    resolve: async (use) => {
+      const value = await use.readEnv(use.envVar);
+      if (value === undefined || value === '') return undefined;
+      const resolved = await resolveSecretRef(
+        parseSecretRef(`$${use.envVar}`),
+        {
+          env: { [use.envVar]: value },
+          runCommand: () => {
+            throw new SecretError('apiKeyEnv never runs a command');
+          },
+          audit: (event) => options.audit({ ...event, provider: use.provider }),
+          ...(options.now === undefined ? {} : { now: options.now }),
+        },
+        { role: options.role, purpose: `model-request:${use.provider}` },
+      );
+      live.add(resolved);
+      return resolved;
+    },
+    live: () => [...live],
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

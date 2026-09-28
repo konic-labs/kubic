@@ -70,3 +70,19 @@ describe('docs: per-worker approvals are documented as shipped (issue #105)', ()
     expect(architecture).toMatch(/read-only blocked indicator/i);
   });
 });
+
+// Issue #323: the page's promise that `--yes` answers merges only — never a
+// worker's dangerous call — is pinned, together with how the ledger tells the
+// standing answer apart from a user's.
+describe('docs: --yes is the merge gate standing answer only (issue #323)', () => {
+  it('states that --yes never approves a worker ask and how merges are audited', () => {
+    const commands = normalized(COMMANDS);
+    expect(commands).toMatch(
+      /`--yes` is the user's standing answer for \*\*merges only\*\*/,
+    );
+    expect(commands).toMatch(/never answers a worker's dangerous call/);
+    expect(commands).toMatch(/denies it closed on the bound \(exit 4\)/);
+    expect(commands).toContain('approved by --yes');
+    expect(commands).toContain('approved by user');
+  });
+});

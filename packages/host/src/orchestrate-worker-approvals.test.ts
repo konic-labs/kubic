@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
+  MergeDecisionRecord,
   OrchestrateCliOptions,
   OrchestrateCommandDeps,
   ParsedBudgetSpec,
@@ -76,6 +77,10 @@ interface Harness {
   debugLines: string[];
   raised: OrchestratorApprovalRequest[];
   published: PublishedWorkerAsk[];
+  /** Every merge-gate decision the CLI reported for the §60 ledger. */
+  merges: MergeDecisionRecord[];
+  /** How often the merge gate's decider was consulted. */
+  mergeAsks: () => number;
   /** The layer the CLI constructed through `deps.approvals`. */
   readonly approvals: WorkerApprovalsRun;
   dir: string;
@@ -91,6 +96,8 @@ interface HarnessOptions {
   triggerFor?: (agentId: string) => string;
   /** How many asks each worker raises (the child's own drive). */
   asksPerWorker?: number;
+  /** The merge gate's decider; default approves every merge. */
+  mergeDecider?: () => boolean;
 }
 
 // The run under test. Only ONE thing is faked: the decider seat (the user's
@@ -105,6 +112,8 @@ function harness(
   const debugLines: string[] = [];
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
+  const merges: MergeDecisionRecord[] = [];
+  let mergeAskCount = 0;
   let built: WorkerApprovalsRun | undefined;
   const mailbox = join(dir, 'approvals');
   const deps: OrchestrateCommandDeps = {
@@ -164,7 +173,11 @@ function harness(
     },
     mergeBranch: () => undefined,
     reapWorker: () => undefined,
-    requestApproval: () => true,
+    requestApproval: () => {
+      mergeAskCount += 1;
+      return options.mergeDecider?.() ?? true;
+    },
+    auditMerge: (record) => merges.push(record),
     // The production seam, faithfully: the CLI owns the run options and the
     // composition root BUILDS the layer from them. A harness that fabricated
     // its own run here would pass while prod dropped an option on the floor —
@@ -178,7 +191,6 @@ function harness(
         // a second of idle wall clock.
         pollMs: 5,
         maxPendingMs: options.maxPendingMs ?? cliOptions.maxPendingMs,
-        ...(cliOptions.autoApprove ? { autoApprove: true } : {}),
         ...(cliOptions.budget === undefined
           ? {}
           : { budget: cliOptions.budget }),
@@ -208,6 +220,8 @@ function harness(
     debugLines,
     raised,
     published,
+    merges,
+    mergeAsks: () => mergeAskCount,
     get approvals(): WorkerApprovalsRun {
       if (built === undefined) {
         throw new Error('the CLI never constructed the approvals layer');
@@ -489,5 +503,114 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     expect(freshCode).toBe(0);
     expect(fresh.raised).toHaveLength(1);
     expect(fresh.approvals.fullAccessGrant()).toBeUndefined();
+  });
+});
+
+// Issue #323 (§41.2, §41.4): `--yes` is the user's standing answer for the
+// MERGE gate only. It is never an inferred blanket approval of a worker's
+// dangerous call — that would be undeclared full access, audited as if the
+// user had answered.
+describe('--yes answers the merge gate only (issue #323)', () => {
+  it('a worker destructive-shell ask under --yes with no seat denies closed (exit 4) and is never approved', async () => {
+    const h = harness(() => ({ approved: true }), {
+      noSeat: true,
+      maxPendingMs: 30,
+      triggerFor: () => 'destructive-shell',
+    });
+    const code = await runOrchestrateCommand(
+      { ...ORCHESTRATE_ARGS, yes: true },
+      h.deps,
+    );
+    expect(code).toBe(4);
+    const [ask] = h.published as [PublishedWorkerAsk];
+    expect(h.approvals.decisions.decided(ask.request.key)).toMatchObject({
+      approved: false,
+    });
+    const text = h.lines.join('\n');
+    expect(text).toContain('worker worker-1: approval_');
+    expect(text).not.toContain('code=completed');
+    // Nothing merged: the run stopped at the denied worker.
+    expect(h.merges).toEqual([]);
+  });
+
+  it('a worker ask under --yes on a run WITH a seat still reaches the seat', async () => {
+    const h = harness(() => ({ approved: false, reason: 'no' }), {
+      triggerFor: () => 'destructive-shell',
+    });
+    const code = await runOrchestrateCommand(
+      { ...ORCHESTRATE_ARGS, yes: true },
+      h.deps,
+    );
+    expect(h.raised).toHaveLength(1);
+    expect(code).toBe(4);
+  });
+
+  it('--yes still auto-approves the merge gate without consulting the decider', async () => {
+    const h = harness(() => ({ approved: true }), {
+      mergeDecider: () => false,
+    });
+    const code = await runOrchestrateCommand(
+      { ...ORCHESTRATE_ARGS, yes: true },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(h.mergeAsks()).toBe(0);
+    expect(h.merges).toEqual([
+      {
+        agentId: 'worker-1',
+        branch: 'kubic/worker-1',
+        approved: true,
+        by: '--yes',
+        sessionId: 'orch-105',
+      },
+    ]);
+  });
+
+  it('an interactive merge approval is recorded as by:user, a denial as denied', async () => {
+    const approved = harness(() => ({ approved: true }));
+    expect(await runOrchestrateCommand(ORCHESTRATE_ARGS, approved.deps)).toBe(
+      0,
+    );
+    expect(approved.merges).toEqual([
+      {
+        agentId: 'worker-1',
+        branch: 'kubic/worker-1',
+        approved: true,
+        by: 'user',
+        sessionId: 'orch-105',
+      },
+    ]);
+    const denied = harness(() => ({ approved: true }), {
+      mergeDecider: () => false,
+    });
+    expect(await runOrchestrateCommand(ORCHESTRATE_ARGS, denied.deps)).toBe(4);
+    expect(denied.merges).toEqual([
+      {
+        agentId: 'worker-1',
+        branch: 'kubic/worker-1',
+        approved: false,
+        by: 'user',
+        reason: 'denied',
+        sessionId: 'orch-105',
+      },
+    ]);
+  });
+});
+
+// Issue #324: a worker write into Kubic's control plane always reaches the
+// user — the session's full-access posture never answers it.
+describe('kubic-state-write under --full-access (issue #324)', () => {
+  it('still goes to the seat; a denial ends the run with exit 4', async () => {
+    const h = harness(() => ({ approved: false, reason: 'not my config' }), {
+      triggerFor: () => 'kubic-state-write',
+    });
+    const code = await runOrchestrateCommand(
+      { ...ORCHESTRATE_ARGS, fullAccess: true },
+      h.deps,
+    );
+    expect(h.raised.map((request) => request.trigger)).toEqual([
+      'kubic-state-write',
+    ]);
+    expect(code).toBe(4);
   });
 });

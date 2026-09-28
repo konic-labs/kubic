@@ -318,6 +318,58 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  it('ignores workspace keywords that only appear inside a filesystem path', () => {
+    // A checkout under e.g. .claude/worktrees/ or ~/workspace/ must not turn
+    // an unrelated failure that quotes a path into workspace_unavailable.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: skills/budget bundle missing at /home/dev/.claude/worktrees/wf-1/packages/extensions/dist',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("boom in 'C:\\Users\\dev\\workspace\\kubic\\x.ts'"),
+      ),
+    ).toBe('failed');
+    // The code outside the path still classifies.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("ENOENT: no such file or directory, open '/tmp/worktree/x'"),
+      ),
+    ).toBe('workspace_unavailable');
+  });
+
+  it('ignores workspace keywords in paths with spaces or relative paths', () => {
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: bundle missing at /Users/dev/My workspace/kubic/packages/extensions/dist',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error("boom reading '/Users/dev/my worktree' contents"),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('bad input worktrees/wf-1/x')),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error('boom in C:\\Users\\My workspace\\kubic\\x.ts'),
+      ),
+    ).toBe('failed');
+    // A keyword outside any path still classifies.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error('worktree add failed for /Users/dev/My project/x'),
+      ),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

@@ -111,6 +111,10 @@ const EXCLUDED_DIRS = new Set([
   '.git',
   'coverage',
   'pi',
+  // Generated artifacts: Stryker's sandbox copies (with live mutants) and
+  // mutation reports are not product claims surfaces.
+  '.stryker-tmp',
+  'reports',
 ]);
 // Dev-tooling sources (design explorers, notes apps) are not product
 // claims surfaces — their UI strings describe the tool itself.
@@ -145,7 +149,14 @@ function isReviewedException(file: string, line: string): boolean {
   );
 }
 
+// One walk per run: both repo-wide tests share the listing.
+const sourceFileCache = new Map<string, string[]>();
+
 function sourceFiles(root: string): string[] {
+  const cached = sourceFileCache.get(root);
+  if (cached !== undefined) {
+    return cached;
+  }
   const out: string[] = [];
   const walk = (dir: string, rel: string): void => {
     for (const entry of readdirSync(dir)) {
@@ -167,6 +178,7 @@ function sourceFiles(root: string): string[] {
     }
   };
   walk(root, '');
+  sourceFileCache.set(root, out);
   return out;
 }
 
@@ -240,8 +252,13 @@ describe('honest-claims grep-gate (issue #58)', () => {
   it('no source file claims solo isolation/containment/injection-prevention', () => {
     // Vitest runs from the repo root, so the scan anchors at cwd.
     const root = process.cwd();
+    const files = sourceFiles(root);
+    // Canary: a wrong root would pass vacuously over zero product files.
+    expect(files.some((file) => file.endsWith('limits/solo-warning.ts'))).toBe(
+      true,
+    );
     const failures: string[] = [];
-    for (const file of sourceFiles(root)) {
+    for (const file of files) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
         if (isReviewedException(file, line)) {

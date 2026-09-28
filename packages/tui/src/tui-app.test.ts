@@ -1,6 +1,4 @@
 // Interactive TUI controller over the solo lane (issue #75, #88).
-// RED: the loop behaviours below do not exist yet — the app has no editor
-// submit binding, no transcript feed, no cancel-vs-quit split.
 //
 // Headless snapshots only (no VirtualTerminal in Pi 0.85.1): the root
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
@@ -39,7 +37,7 @@ describe('tui app root (issue #75)', () => {
       toolCallId: 't1',
       toolName: 'read',
     });
-    expect(app.render(100).join('\n')).toContain('read');
+    expect(app.render(100).join('\n')).toContain('● read');
     // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
     // the Kitty CSI-u form ('\x1b[116;5u') below.
@@ -49,17 +47,19 @@ describe('tui app root (issue #75)', () => {
       cancel: false,
     });
     expect(app.render(100).join('\n')).toContain('…1 call');
+    expect(app.render(100).join('\n')).not.toContain('● read');
     expect(app.handleInput('\x1b[116;5u')).toEqual({
       quit: false,
       consumed: true,
       cancel: false,
     });
-    expect(app.render(100).join('\n')).toContain('read');
+    expect(app.render(100).join('\n')).toContain('● read');
+    expect(app.render(100).join('\n')).not.toContain('…1 call');
     // Issue #88: the editor owns plain characters — T/t are prompt text,
     // never toggles (a coding-agent prompt must be able to spell "test").
     for (const ch of 'Tt') app.handleInput(ch);
     expect(app.editor.getText()).toBe('Tt');
-    expect(app.render(100).join('\n')).toContain('read');
+    expect(app.render(100).join('\n')).toContain('● read');
   });
 
   it('quits on Ctrl-C and passes other keys through', () => {
@@ -69,6 +69,9 @@ describe('tui app root (issue #75)', () => {
       consumed: true,
       cancel: true,
     });
+    // Any other key is neither a quit nor a cancel: it reaches the draft.
+    expect(app.handleInput('x')).toMatchObject({ quit: false, cancel: false });
+    expect(app.editor.getText()).toBe('x');
   });
 
   it('quits on Esc and on Ctrl-D with an empty draft', () => {
@@ -126,8 +129,23 @@ describe('tui app root (issue #75)', () => {
 
   it('prints the final document with transcript and status', () => {
     const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    app.applyLaneEntries([
+      {
+        id: 'a1',
+        seq: 1,
+        type: 'message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'final words' }],
+        },
+      },
+    ]);
     const doc = app.finalDocument(100).join('\n');
+    expect(doc).toContain('final words');
     expect(doc).toContain(`session ${SESSION}`);
+    expect(doc.indexOf('final words')).toBeLessThan(
+      doc.indexOf(`session ${SESSION}`),
+    );
     expect(doc).toContain('approvals:on');
   });
 });

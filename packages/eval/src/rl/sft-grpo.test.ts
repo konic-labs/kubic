@@ -40,7 +40,11 @@ describe('buildSftRecord (issue #54)', () => {
   it('rejects a record with a stripped failure label', () => {
     const built = buildSftRecord(makeExport({}));
     const { failureCategory: _dropped, ...stripped } = built;
-    expect(validateSftRecord(stripped).valid).toBe(false);
+    const checked = validateSftRecord(stripped);
+    expect(checked.valid).toBe(false);
+    if (!checked.valid) {
+      expect(checked.errors.join(' ')).toMatch(/failureCategory is required/);
+    }
   });
 });
 
@@ -62,16 +66,33 @@ describe('buildGrpoGroup (issue #54)', () => {
       makeExport({ promptText: 'task a' }),
       makeExport({ promptText: 'task b' }),
     ]);
-    expect(validateGrpoGroup(group).valid).toBe(false);
+    const checked = validateGrpoGroup(group);
+    expect(checked.valid).toBe(false);
+    if (!checked.valid) {
+      expect(checked.errors).toContain(
+        'candidates[1] shares no prompt with the group',
+      );
+    }
   });
 
   it('rejects a stripped candidate with an error', () => {
-    const group = buildGrpoGroup([makeExport({})]);
+    // Two candidates: a one-record group is refused for its size alone, which
+    // would let this pass without the provenance check ever running.
+    const group = buildGrpoGroup([makeExport({}), makeExport({})]);
+    expect(validateGrpoGroup(group).valid).toBe(true);
     const stripped = {
       ...group,
-      candidates: [{ ...group.candidates[0], provenance: undefined }],
+      candidates: [
+        group.candidates[0],
+        { ...group.candidates[1], provenance: undefined },
+      ],
     };
-    expect(validateGrpoGroup(stripped).valid).toBe(false);
+    const checked = validateGrpoGroup(stripped);
+    expect(checked.valid).toBe(false);
+    if (!checked.valid) {
+      expect(checked.errors.join(' ')).toMatch(/candidates\[1\]\.provenance/);
+      expect(checked.errors.join(' ')).not.toMatch(/candidates\[0\]/);
+    }
   });
 });
 

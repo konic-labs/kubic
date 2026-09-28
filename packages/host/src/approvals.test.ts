@@ -1,8 +1,14 @@
 // Slice A: approval policy + durable service (issue #16).
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   type ApprovalRequest,
   ApprovalService,
@@ -17,6 +23,19 @@ import {
   type TriggerContext,
   validatePolicy,
 } from './approvals.js';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function request(key = 'k1'): ApprovalRequest {
   return {
@@ -296,7 +315,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
         throw new Error('must not ask');
       },
     });
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    const dir = mkTmp('approvals-');
     const ask = createApprovalAsk(
       service,
       triggerContext(),
@@ -308,7 +327,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
   });
 
   it('denies triggered calls headless and approves on answer', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    const dir = mkTmp('approvals-');
     const store = new FileApprovalStore(dir);
     const denied = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 10 }),
@@ -352,7 +371,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
   });
 
   it('persists decisions and posture across restarts; fresh dirs start safe', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    const dir = mkTmp('approvals-');
     const first = new FileApprovalStore(dir);
     expect(first.loadPosture()).toEqual({ fullAccess: false });
     const service = new ApprovalService({
@@ -375,15 +394,13 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
       enabledAt: 1700000000000,
       enabledBy: 'cli',
     });
-    const fresh = new FileApprovalStore(
-      mkdtempSync(join(tmpdir(), 'approvals-')),
-    );
+    const fresh = new FileApprovalStore(mkTmp('approvals-'));
     expect(fresh.load()).toEqual({});
     expect(fresh.loadPosture()).toEqual({ fullAccess: false });
   });
 
   it('tolerates corrupt files', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    const dir = mkTmp('approvals-');
     writeFileSync(join(dir, 'approvals.json'), '{torn');
     writeFileSync(join(dir, 'posture.json'), '[torn');
     const store = new FileApprovalStore(dir);
@@ -392,7 +409,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
   });
 
   it('cleans its tmp file when a posture rename fails, and rethrows (issue #132)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-'));
+    const dir = mkTmp('approvals-');
     // A rename failure reachable without mocks: the destination exists as
     // a DIRECTORY, so the tmp write succeeds and rename(tmp, posture.json)
     // fails (EISDIR) — the disk-full/permission shape the cleanup exists

@@ -2,10 +2,10 @@
 // Faux-only: injected runner, zero network. Covers the §78 exit-code
 // contract (0/1/2/3/4/5/6), the --json envelope, identical persistence,
 // no alt-screen in -p path, and attach-reopens-transcript.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -21,9 +21,18 @@ import {
   runRunCommand,
 } from './run-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-cli-'));
+  const dir = mkdtempSync(join(tmpdir(), 'run-cli-'));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -287,7 +296,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
 });
 
 describe('run -p headless behavior (§17, §80)', () => {
-  it('exits 0 with result and no TTY (TERM=dumb CI, stdin /dev/null)', async () => {
+  it('exits 0 and prints the result through the injected sink alone (no terminal)', async () => {
     const o = out();
     const seen: { prompt?: string } = {};
     const exit = await runRunCommand(['-p', 'fix the bug'], {
@@ -385,11 +394,13 @@ describe('run -p headless behavior (§17, §80)', () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
     const o = out();
+    let createdId: string | undefined;
     const exit = await runRunCommand(['-p', 'headless hello'], {
       out: o.write,
       run: async (prompt: string) => {
         const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
         const id = session.metadata.id;
+        createdId = id;
         await session.mutate(async (mutator) => {
           await mutator.commit(
             [
@@ -421,9 +432,12 @@ describe('run -p headless behavior (§17, §80)', () => {
       },
     });
     expect(exit).toBe(0);
-    const sessionId = (o.lines.join('\n').match(/sess-[A-Za-z0-9_-]+/) ??
-      o.lines.join('\n').match(/[0-9a-f-]{8,}/))?.[0];
-    expect(sessionId).toBeDefined();
+    // The id an operator reads off the `session:` line is the id the run
+    // created — and it is the handle attach reopens.
+    const sessionLine = o.lines.find((line) => line.startsWith('session: '));
+    const sessionId = sessionLine?.slice('session: '.length);
+    expect(createdId).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(sessionId).toBe(createdId);
     const reopened = await attachSession(
       store,
       sessionId as string,

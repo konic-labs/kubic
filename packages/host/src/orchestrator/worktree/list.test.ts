@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
 import { listWorktrees, parseWorktreePorcelain } from './list.js';
 
-export const THREE_WT_PORCELAIN = `worktree /repo
+const THREE_WT_PORCELAIN = `worktree /repo
 HEAD abcdef0123456789
 branch refs/heads/main
 

@@ -2,10 +2,10 @@
 // §72, §78). Faux-only: the re-execution runner is injected (zero
 // network); trajectory fixtures are built with the versioned #51
 // exporter so tests always run against the current stable contract.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
@@ -14,9 +14,19 @@ import {
   runReplayCommand,
 } from './replay.js';
 
-function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'replay-'));
+const roots: string[] = [];
+
+function tmpRoot(prefix = 'replay-'): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
 }
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -543,7 +553,7 @@ describe('replay live (§47.1 Live)', () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
-    const wt = mkdtempSync(join(tmpdir(), 'replay-wt-'));
+    const wt = tmpRoot('replay-wt-');
     const seen: unknown[] = [];
     const o = out();
     const exit = await runReplayCommand(
@@ -870,7 +880,7 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
-    const wt = mkdtempSync(join(tmpdir(), 'replay-wt-'));
+    const wt = tmpRoot('replay-wt-');
     const o = out();
     const exit = await runReplayCommand(
       [

@@ -1,13 +1,26 @@
 // kubic doctor (issue #29; §41.4, §50): providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels } from './models-cli.js';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function cleanDeps(out: (line: string) => void): DoctorDeps {
   return {
@@ -146,7 +159,7 @@ describe('runDoctorCommand', () => {
   });
 
   it('main.ts-style wiring (assembled providers + node dep) passes clean', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'doctor-'));
+    const dir = mkTmp('doctor-');
     // A provider must exist for a clean run: with zero providers the
     // honest-limits aggregate (issue #58) fails missing-provider.
     writeFileSync(

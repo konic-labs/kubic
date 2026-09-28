@@ -3,11 +3,6 @@
 import { describe, expect, it } from 'vitest';
 
 describe('trigger formula (issue #34: contextTokens > contextWindow - reserveTokens)', () => {
-  it('exposes the default reserve of 16384 tokens', async () => {
-    const { DEFAULT_RESERVE_TOKENS } = await import('./compaction.js');
-    expect(DEFAULT_RESERVE_TOKENS).toBe(16384);
-  });
-
   it('fires only strictly above contextWindow - reserveTokens', async () => {
     const { shouldCompact } = await import('./compaction.js');
     const contextWindow = 200000;
@@ -126,6 +121,8 @@ describe('structured summaries with cumulative file ops (issue #34)', () => {
       { kind: 'deleted', path: 'c.ts' },
     ]);
     expect(ops.created).toEqual(['a.ts']);
+    expect(ops.modified).toEqual(['b.ts']);
+    expect(ops.deleted).toEqual(['c.ts']);
     const text = formatStructuredSummary({
       goal: 'ship it',
       decisions: ['use x'],

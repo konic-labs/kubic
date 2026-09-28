@@ -7,10 +7,10 @@
 // Lives in host because vitest only includes packages/*: it reaches across to
 // the composition root (apps/kubic) purely as a black-box caller. Faux
 // provider + FakeExecutionEnv only — zero network.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   loadExtensionStartup,
   prodExtensionStartupOptions,
@@ -35,9 +35,25 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'ext-startup-prod-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ext-startup-prod-'));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();

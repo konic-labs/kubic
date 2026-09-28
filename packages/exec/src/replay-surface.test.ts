@@ -18,7 +18,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const ROOT = process.cwd();
+// Anchored to this file, not process.cwd(): the gate must not depend on where
+// vitest was launched from.
+const ROOT = join(import.meta.dirname, '..', '..', '..');
 const EXEC_SRC = join(ROOT, 'packages', 'exec', 'src');
 
 // The two modules #97 deleted (89 + 97 LOC of unreachable kernel).
@@ -186,12 +188,16 @@ describe('replay-surface honesty (issue #97: deleted, not wired)', () => {
     }
   });
 
-  it('records the decision in the local design registry when present', () => {
+  it('records the decision in the local design registry when present', (ctx) => {
     // The registry is gitignored local design work (see .gitignore), so a
     // fresh clone has nothing to pin and this gate skips — the same
-    // absent-file rule the honest-claims gate uses for design docs.
+    // absent-file rule the honest-claims gate uses for design docs. Reported
+    // as a skip, never a vacuous pass.
     const registry = join(ROOT, 'docs', 'design', 'design-decisions.json');
-    if (!exists(registry)) return;
+    if (!exists(registry)) {
+      ctx.skip();
+      return;
+    }
     const parsed = JSON.parse(readFileSync(registry, 'utf8')) as {
       decisions?: Array<{
         decision?: string;

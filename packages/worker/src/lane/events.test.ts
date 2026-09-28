@@ -58,7 +58,37 @@ describe('harness event consumer (issue #11, slice B)', () => {
       ),
       'main',
     );
-    expect(end?.type).toBe('run-end');
+    expect(end).toEqual({
+      type: 'run-end',
+      lane: 'main',
+      runId: 'r-1',
+      status: 'completed',
+      endedAt: 9,
+    });
+    // A failed run carries its error through; other statuses never do.
+    const failed = toKubicLaneEvent(
+      laneEvent(
+        {
+          type: 'run_end',
+          runId: 'r-2',
+          fromTipId: null,
+          tipId: null,
+          endedAt: 11,
+          status: 'failed',
+          error: { code: 'boom' },
+        },
+        'main',
+      ),
+      'main',
+    );
+    expect(failed).toEqual({
+      type: 'run-end',
+      lane: 'main',
+      runId: 'r-2',
+      status: 'failed',
+      endedAt: 11,
+      error: { code: 'boom' },
+    });
   });
 
   it('maps tool start/end with Kubic op names', () => {
@@ -101,7 +131,17 @@ describe('harness event consumer (issue #11, slice B)', () => {
       ),
       'main',
     );
-    expect(end?.type).toBe('tool-end');
+    // The tool result payload stays behind: only the §15 fields cross.
+    expect(end).toEqual({
+      type: 'tool-end',
+      lane: 'main',
+      runId: 'r-1',
+      turnId: 't-1',
+      toolCallId: 'c-1',
+      toolName: 'read',
+      isError: false,
+      terminate: false,
+    });
   });
 
   it('maps usage with lane attribution and faults globally', () => {
@@ -114,7 +154,12 @@ describe('harness event consumer (issue #11, slice B)', () => {
       } as HarnessEvent,
       'main',
     );
-    expect(usage?.type).toBe('usage');
+    expect(usage).toEqual({
+      type: 'usage',
+      lane: 'main',
+      row: { id: 'u-1', seq: 0, usage: FULL_USAGE, adjustment: false },
+      totals: FULL_USAGE,
+    });
     const otherLane = toKubicLaneEvent(
       laneEvent({ type: 'run_start', runId: 'r-x', startedAt: 1 }, 'worker-a'),
       'main',

@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileBridge } from './file-bridge.js';
 import { FileJournalStore, restoreEntry } from './journal.js';
 
@@ -69,6 +69,19 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
   };
 });
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function restoreLitter(root: string): string[] {
   return readdirSync(root).filter((name) => name.includes('.kubic-restore-'));
 }
@@ -82,8 +95,8 @@ function seed(): {
   root: string;
   recorded: ReturnType<FileJournalStore['append']>;
 } {
-  const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const store = new FileJournalStore(tmpRoot('j-'));
+  const root = tmpRoot('ws-');
   writeFileSync(join(root, 'f.txt'), 'v2\n');
   const recorded = store.append({
     path: 'f.txt',

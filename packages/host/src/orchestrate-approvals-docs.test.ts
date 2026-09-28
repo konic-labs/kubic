@@ -51,8 +51,8 @@ describe('docs: per-worker approvals are documented as shipped (issue #105)', ()
 
   it('no longer claims per-worker approvals are unwired, in either document', () => {
     const scanned = [COMMANDS, ARCHITECTURE].map(normalized);
-    // Non-vacuity: a scan over zero files would assert nothing.
-    expect(scanned.length).toBe(2);
+    // Non-vacuity: a scan over empty (or missing) pages would assert nothing,
+    // so both pages must carry real content.
     expect(scanned.every((text) => text.length > 1_000)).toBe(true);
     for (const text of scanned) {
       // The old claim, in both of its spellings: "per-worker approvals" as a

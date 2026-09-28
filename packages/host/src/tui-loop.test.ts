@@ -1,6 +1,6 @@
 // `kubic tui` prompt loop over the solo lane (issue #88).
-// RED: runTuiCommand boots a viewer shell — no prompt accept, no drive,
-// no lane events into the views, and Ctrl-C exits unconditionally.
+// Before #88 runTuiCommand booted a viewer shell — no prompt accept, no
+// drive, no lane events into the views, and Ctrl-C exited unconditionally.
 //
 // The tui entry lives in apps/kubic (the composition root: the only owner
 // allowed to wire host + tui together), so this cross-cutting proof lives
@@ -9,10 +9,10 @@
 // seam structurally and the assertions read the restored main-screen
 // document the loop prints. One file drives a REAL faux lane end-to-end:
 // no VirtualTerminal (it does not exist), no network, no paid tokens.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   runTuiCommand,
   type TuiRunDeps,
@@ -40,9 +40,18 @@ type FauxContent = Parameters<typeof fauxAssistantMessage>[0];
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 type FauxStep = FauxContent | (() => Promise<FauxMessage>);
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'tui-loop-'));
+  const dir = mkdtempSync(join(tmpdir(), 'tui-loop-'));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(steps: FauxStep[]): {
   models: MutableModels;
@@ -153,6 +162,16 @@ function fakeTerminal(
       handler?.(data);
     },
   };
+}
+
+function sessionLogIncludes(root: string, needle: string): boolean {
+  for (const entry of readdirSync(root, { recursive: true, encoding: 'utf8' }))
+    if (
+      entry.endsWith('.jsonl') &&
+      readFileSync(join(root, entry), 'utf8').includes(needle)
+    )
+      return true;
+  return false;
 }
 
 async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
@@ -305,6 +324,10 @@ describe('kubic tui prompt loop (issue #88)', () => {
       release();
       fake.feed('\x03'); // idle again: Ctrl-C quits
       expect(await pending).toBe(0);
+      // The released turn keeps settling in the background after the loop
+      // quits; wait for its result to reach the session log so afterEach's
+      // rmSync is not raced by a late append that recreates the temp root.
+      await waitFor(() => sessionLogIncludes(root, '"namespace":"pi.result"'));
     } finally {
       process.off('unhandledRejection', onRejection);
     }
@@ -358,19 +381,21 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // — hit the fall-through branch and did nothing: `consumed: true` with
     // no effect, the exact silent no-op key the criterion forbids. Verified
     // from the pinned pi-tui: parseKey('\x1b[27u') === 'escape'.
-    const root = tmpRoot();
-    const lines: string[] = [];
-    const fake = fakeTerminal(100);
-    const { models } = fauxModels(['hello']);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
-    await waitFor(() => fake.counts.started === 1);
-    fake.feed('\x1b[27u');
-    expect(await pending).toBe(0);
-    expect(fake.counts.stopped).toBe(1);
+    for (const key of ['\x1b[27u', '\x1b[100;5u']) {
+      const root = tmpRoot();
+      const lines: string[] = [];
+      const fake = fakeTerminal(100);
+      const { models } = fauxModels(['hello']);
+      const pending = runTuiCommand([], {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      });
+      await waitFor(() => fake.counts.started === 1);
+      fake.feed(key);
+      expect(await pending).toBe(0);
+      expect(fake.counts.stopped).toBe(1);
+    }
   });
 
   it('quits on a second Ctrl-C during a turn, matching the documented key table', async () => {
@@ -484,10 +509,13 @@ describe('kubic tui docs contract (issue #88)', () => {
       new URL('../../../docs/cli/commands.md', import.meta.url),
       'utf8',
     );
-    const section = docs.slice(
-      docs.indexOf('## `kubic tui'),
-      docs.indexOf('## `kubic sessions'),
-    );
+    const start = docs.indexOf('## `kubic tui');
+    const end = docs.indexOf('## `kubic sessions');
+    // Both anchors must exist, in order: otherwise the slice silently widens
+    // to the whole page and the key checks pass off unrelated sections.
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const section = docs.slice(start, end);
     for (const key of [
       'Enter',
       'Ctrl-J',

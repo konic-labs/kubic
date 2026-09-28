@@ -247,6 +247,18 @@ describe('collectLimitChecks (issue #58)', () => {
       checkDeps: () => [{ id: 'node', ok: true }],
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
     });
-    expect(checks.some((check) => check.status === 'fail')).toBe(true);
+    const provider = checks.find(
+      (check) => check.id === 'limit:provider-availability',
+    );
+    expect(provider?.status).toBe('fail');
+    expect(provider?.reason).toBe('provider-down');
+    expect(provider?.detail).toBe('probe exploded');
+    // The other sections still ran: one throwing probe is not a crash.
+    expect(
+      checks.find((check) => check.id === 'limit:deps-present')?.status,
+    ).toBe('pass');
+    expect(
+      checks.find((check) => check.id === 'policy:enforceability')?.status,
+    ).toBe('pass');
   });
 });

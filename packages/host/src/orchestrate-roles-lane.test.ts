@@ -6,10 +6,10 @@
 // registers (write/edit/bash absent for a read-only role, so a call to one
 // fails tool-absent rather than routing to an approval decider), and the
 // role's model default is the model the lane actually selects.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -21,11 +21,24 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { createRoleToolGuard } from './roles/resolver.js';
+import { ROLE_MODEL_DEFAULTS } from './roles/roles-data.js';
 import { composeWorkerPrompt, planWorkerRoles } from './roles/worker-roles.js';
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -70,8 +83,15 @@ function toolsLineOf(spy: ReturnType<typeof vi.spyOn>): string[] {
   return line.split(',').map((name) => name.trim());
 }
 
+// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// would only be stderr noise, so the documented opt-out silences it.
+beforeEach(() => {
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('a delegated worker lane runs its assigned role (issue #104)', () => {
@@ -158,14 +178,19 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       expect(registered).toContain(held);
     }
     // And the role's own prompt text is what the lane was seeded with.
-    expect(registered.length).toBeGreaterThan(0);
+    const options = createSpy.mock.calls[0]?.[0] as { systemPrompt?: string };
+    expect(options.systemPrompt).toContain(
+      'You are the implementer. Execute the plan inside your worktree.',
+    );
   });
 
   it('the role\u2019s model default is the model the worker lane selects', async () => {
     // §12.1/§38.2: ROLE_MODEL_DEFAULTS is what the delegation path pins for
-    // the child (via KUBIC_MODEL). Here the lane is asked for exactly that
-    // pin, so the value the orchestrate path sends is provably usable — a
-    // pin the provider catalog rejected would fail the child by name.
+    // the child (via KUBIC_MODEL, which the child's composition root turns
+    // into the explicit model selection). Here the lane is handed exactly
+    // that pin, and the provider records the model it was actually called
+    // with — so the value the orchestrate path sends is provably the one
+    // the lane selects, not merely a pin that happened not to fail.
     const cwd = scratchRoot('roles-lane-');
     writeRole(
       cwd,
@@ -173,23 +198,41 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       READ_ONLY,
       'You are the planner. Produce ordered steps with file refs.',
     );
-    const faux = fauxProvider();
+    const plan = planWorkerRoles({
+      bridge: createNodeFileBridge(cwd),
+      cwd,
+      agents: ['alpha'],
+    });
+    const pin = plan.assignments[0]?.modelRef as string;
+    const defaults = ROLE_MODEL_DEFAULTS.planner;
+    expect(pin).toBe(`${defaults.provider}/${defaults.model}`);
+    // A faux provider registered under the id the defaults name, serving the
+    // model they name, so the pin resolves rather than failing closed.
+    const faux = fauxProvider({
+      provider: defaults.provider,
+      models: [{ id: defaults.model }],
+    });
     const models = createModels();
     models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('planned')]);
-    // The provider the defaults name ('local') is registered under the same
-    // id the catalog uses, so the pin resolves rather than failing closed.
+    const called: string[] = [];
+    faux.setResponses([
+      (_context, _options, _state, model) => {
+        called.push(`${model.provider}/${model.id}`);
+        return fauxAssistantMessage('planned');
+      },
+    ]);
     const result = await runHeadlessPrompt(
       'plan it',
       { role: 'planner' },
       {
         sessionsRoot: scratchRoot('roles-lane-sessions-'),
         models,
-        model: { provider: faux.provider.id, id: 'faux-1' },
+        model: { provider: defaults.provider, id: defaults.model },
         env: new FakeExecutionEnv({}),
         roles: { cwd },
       },
     );
     expect(result.terminus).toBe('completed');
+    expect(called).toEqual([pin]);
   });
 });

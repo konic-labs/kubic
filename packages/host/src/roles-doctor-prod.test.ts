@@ -10,16 +10,30 @@
 // `.kubic/roles/` tree — not a stub — because the gap this closes was exactly
 // "the piece exists but nothing calls it".
 
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { type DoctorDeps, runDoctorCommand } from './doctor.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
 
+const roots: string[] = [];
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function roleDir(role: string, frontmatter: string, prompt = 'Go.'): string {
-  const cwd = mkdtempSync(join(tmpdir(), 'kubic-doctor-roles-'));
+  const cwd = tmpRoot('kubic-doctor-roles-');
   mkdirSync(join(cwd, '.kubic', 'roles'), { recursive: true });
   writeFileSync(
     join(cwd, '.kubic', 'roles', `${role}.md`),
@@ -93,11 +107,19 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
 
   it('an absent role directory is not a failure', async () => {
     // Most workspaces have no `.kubic/roles/`; doctor must stay green there.
-    const cwd = mkdtempSync(join(tmpdir(), 'kubic-doctor-noroles-'));
+    const cwd = tmpRoot('kubic-doctor-noroles-');
     const parsed = await report(cwd);
     const roles = parsed.checks.filter((c) => c.id.startsWith('role:'));
-    // Either no role checks at all, or checks that do not fail.
     expect(roles.filter((c) => c.status === 'fail')).toEqual([]);
+    // The probe ran and says why nothing was found, and doctor stays green.
+    expect(roles).toContainEqual(
+      expect.objectContaining({
+        id: 'role:documents',
+        status: 'pass',
+        detail: expect.stringMatching(/no role documents/),
+      }),
+    );
+    expect(parsed.ok).toBe(true);
   });
 
   it('the wiring itself: the production runners inject the probe', async () => {

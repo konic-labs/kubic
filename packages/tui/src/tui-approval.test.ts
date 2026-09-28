@@ -1,6 +1,5 @@
 // The approval overlay inside the interactive loop (issue #96, criteria 1
-// and 2). RED: tui-app.ts knows nothing about approvals, so a challenged call
-// has no surface and the operator cannot answer it.
+// and 2).
 //
 // Headless: the app is rendered at a fixed width — at/above
 // APPROVAL_MIN_WIDTH the surface must be handed to the overlay host (the
@@ -117,10 +116,14 @@ describe('approval in the loop (issue #96, criterion 1)', () => {
     const second = app.requestApproval(
       request({ key: 'k-2', toolName: 'write' }),
     );
+    // Queued, not shown on top of the live one.
+    expect(fake.shown).toHaveLength(1);
     app.handleInput('a');
     await expect(first).resolves.toEqual({ approved: true, by: 'allow-once' });
-    // The second is now on the overlay.
-    const body = fake.shown[fake.shown.length - 1]?.render(60).join('\n') ?? '';
+    // The second is now on the overlay (the first one's was hidden).
+    expect(fake.shown).toHaveLength(2);
+    expect(fake.hidden).toBe(1);
+    const body = fake.shown[1]?.render(60).join('\n') ?? '';
     expect(body).toContain('write');
     app.handleInput('d');
     await expect(second).resolves.toEqual({
@@ -152,7 +155,7 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     expect(narrow).toContain('rm -rf /tmp/x');
     expect(narrow).toContain('deny');
     app.handleInput('d');
-    await pending;
+    await expect(pending).resolves.toMatchObject({ approved: false });
     // Once settled the inline body is gone from the narrow frame too.
     expect(app.render(APPROVAL_MIN_WIDTH - 1).join('\n')).not.toContain(
       '! approval (inline)',
@@ -166,8 +169,10 @@ describe('inline fallback (issue #96, criterion 2)', () => {
     const pending = app.requestApproval(request());
     const wide = app.render(APPROVAL_MIN_WIDTH).join('\n');
     expect(wide).not.toContain('! approval (inline)');
+    // ...because the overlay host really has it.
+    expect(fake.shown).toHaveLength(1);
     app.handleInput('d');
-    await pending;
+    await expect(pending).resolves.toMatchObject({ approved: false });
   });
 
   it('still renders the inline body with no overlay host attached', async () => {
@@ -179,6 +184,9 @@ describe('inline fallback (issue #96, criterion 2)', () => {
       '! approval (inline)',
     );
     app.handleInput('a');
-    await pending;
+    await expect(pending).resolves.toEqual({
+      approved: true,
+      by: 'allow-once',
+    });
   });
 });

@@ -13,10 +13,29 @@
 // builds with exit 0 and unchanged byte output for the same input.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 const repoRoot = resolve(import.meta.dirname, '../../../');
 const builder = join(repoRoot, 'docs/design/tools/build-explorer.mjs');
@@ -60,7 +79,7 @@ describe.skipIf(!present)(
   'design explorer builder — dangling § references (issue #100)',
   () => {
     it('exits non-zero, names the dangling reference, and writes nothing', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'kubic-xref-'));
+      const dir = mkTmp('kubic-xref-');
       const source = readFileSync(doc, 'utf8');
       const broken = `${source}\n\n# 99. Probe section\n\nDangling reference to §12.99 which does not exist.\n`;
       const brokenDoc = join(dir, 'probe.md');
@@ -75,7 +94,7 @@ describe.skipIf(!present)(
     });
 
     it('builds the real document with exit 0 and reports no dangling references', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'kubic-xref-ok-'));
+      const dir = mkTmp('kubic-xref-ok-');
       const out = join(dir, 'ok.html');
 
       const result = runBuilder(repoRoot, doc, out);

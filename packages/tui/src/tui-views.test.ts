@@ -1,6 +1,4 @@
 // The diff and journal panels (issue #96, acceptance criterion 3).
-// RED: tui-app.ts composes only tree + transcript + status; DiffView and
-// JournalView have no non-test importer and no key reaches them.
 //
 // Headless snapshots only (there is no VirtualTerminal in the pinned
 // pi-tui): every assertion below reads the pure render output of the app at
@@ -171,7 +169,7 @@ describe('journal panel (issue #96, criterion 3)', () => {
     expect(frame).not.toContain('--- a/src/app.ts');
     app.setJournalFilter({ agent: 'worker-1' });
     frame = app.render(100).join('\n');
-    expect(frame).toContain('other/file.md');
+    expect(frame).toContain('--- a/other/file.md');
     expect(frame).not.toContain('--- a/src/app.ts');
     app.setJournalFilter({});
     expect(app.render(100).join('\n')).toContain('--- a/src/app.ts');
@@ -190,6 +188,7 @@ describe('journal panel (issue #96, criterion 3)', () => {
     const frame = app.render(100).join('\n');
     // The journal body has no op-labelled header line (the CLI does not print
     // one), the diff view's first line does — so the header is the tell.
+    expect(frame).toContain('--- a/src/app.ts');
     expect(frame).not.toContain('src/app.ts — edit');
     app.handleInput(OPEN_DIFF);
     expect(app.render(100).join('\n')).toContain('src/app.ts — edit');
@@ -239,7 +238,8 @@ describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
   it('leaves plain d/D/j/J to the editor', () => {
     const app = createTuiApp({ sessionId: SESSION, model: MODEL });
     for (const ch of 'dD jJ') app.handleInput(ch);
-    expect(app.editor.getText()).toContain('dD');
+    expect(app.editor.getText()).toBe('dD jJ');
+    expect(app.panelMode()).toBe('closed');
     expect(app.render(100).join('\n')).not.toContain('no changes');
   });
 });

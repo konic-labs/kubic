@@ -1,7 +1,7 @@
 // `kubic orchestrate` (issue #76): plans, spawns workers in git worktrees,
 // settles/merges FIFO with per-agent attribution, and reaps. RED first:
 // every acceptance checkbox arrives here as a failing test.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -258,6 +258,8 @@ describe('orchestrate approvals (issue #76)', () => {
     );
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
+    // Never silent: the denial is reported by its named code.
+    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
   });
 
   it('--yes auto-approves without asking', async () => {
@@ -482,8 +484,12 @@ describe('orchestrate crash-resume (issue #76)', () => {
 describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => {
   it('spawn → run → settle → merge to the session branch over real git', {
     timeout: 30000,
-  }, async () => {
+  }, async (context) => {
     const root = mkdtempSync(join(tmpdir(), 'kubic-orch-'));
+    // The scratch repo (and the worktrees under it) never outlive the test.
+    context.onTestFinished(() =>
+      rmSync(root, { recursive: true, force: true }),
+    );
     const lines: string[] = [];
     const createdSessions: string[] = [];
     const provenance = {
@@ -505,7 +511,6 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
     await git(['config', 'user.email', 'demo@kubic.dev']);
     await git(['config', 'user.name', 'kubic demo']);
     await git(['config', 'commit.gpgsign', 'false']);
-    const { writeFileSync } = await import('node:fs');
     writeFileSync(join(root, 'base.txt'), 'base\n');
     await git(['add', 'base.txt']);
     await git(['commit', '-m', 'base']);
@@ -586,7 +591,6 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
     expect(log.indexOf('merge alpha')).toBeGreaterThan(
       log.indexOf('merge beta'),
     );
-    const { readFileSync } = await import('node:fs');
     expect(readFileSync(join(root, 'task-alpha.txt'), 'utf8')).toContain(
       'from alpha',
     );

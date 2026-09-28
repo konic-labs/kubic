@@ -1,10 +1,10 @@
 // Slice D end to end: the host approval service gating a real solo lane
 // through the worker approve hook (issues #15/#16).
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   confinePath,
@@ -31,6 +31,19 @@ import {
   validatePolicy,
 } from './approvals.js';
 
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
 function triggerContext(): TriggerContext {
   return {
     workspace: '/fake',
@@ -43,7 +56,7 @@ function triggerContext(): TriggerContext {
 
 describe('approvals gate the lane (issue #16, slice D)', () => {
   it('denies a destructive call headless, runs it under full-access', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-lane-'));
+    const dir = mkTmp('approvals-lane-');
     const store = new FileApprovalStore(dir);
     const service = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 20 }),

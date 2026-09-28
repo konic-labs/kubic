@@ -84,7 +84,10 @@ describe('export command (issue #78)', () => {
   });
 
   it('exports tool-use and coding records', async () => {
-    for (const type of ['tooluse', 'coding']) {
+    for (const [type, schema] of [
+      ['tooluse', 'tool-use/1'],
+      ['coding', 'coding/1'],
+    ]) {
       const o = out();
       const exit = await runExportCommand(
         ['--trajectory', 't.json', '--type', type],
@@ -92,7 +95,7 @@ describe('export command (issue #78)', () => {
       );
       expect(exit).toBe(0);
       const record = JSON.parse(o.lines.join('\n')) as { schema: string };
-      expect(record.schema).toMatch(/1$/);
+      expect(record.schema).toBe(schema);
     }
   });
 
@@ -176,6 +179,8 @@ describe('export command (issue #78)', () => {
     };
     expect(envelope.ok).toBe(false);
     expect(envelope.exitCode).toBe(2);
+    expect(envelope).not.toHaveProperty('record');
+    expect(o.lines.join('\n')).not.toMatch(/"schema":\s*"sft\/1"/);
   });
 
   it('exits 2 on missing --trajectory, unknown --type, missing --against, and stray --against', async () => {
@@ -212,5 +217,7 @@ describe('export command (issue #78)', () => {
         out: malformed.write,
       }),
     ).toBe(2);
+    expect(missing.lines.join('\n')).toMatch(/nope\.json/);
+    expect(malformed.lines.join('\n')).toMatch(/error/i);
   });
 });

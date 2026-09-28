@@ -231,7 +231,7 @@ describe('orchestrator toggle, indicator, session, audit (issue #40)', () => {
 describe('faux manager delegation (issue #40)', () => {
   it('runs a stub delegation with zero exec calls', () => {
     const spy = createManagerCallSpy();
-    const done = runManagerStub(spy, [
+    const plan = [
       'spawn_agent',
       'send_to_agent',
       'wait_for_agent',
@@ -239,8 +239,19 @@ describe('faux manager delegation (issue #40)', () => {
       'workspace_diff',
       'workspace_merge',
       'ask_user',
-    ]);
-    expect(done).toHaveLength(7);
+    ];
+    const done = runManagerStub(spy, plan);
+    expect(done).toEqual(plan);
+    expect(spy.calls).toEqual(plan);
+    expect(spy.execCalls).toEqual([]);
+  });
+
+  it('stops a stub delegation at the first exec call, before recording it', () => {
+    const spy = createManagerCallSpy();
+    expect(() =>
+      runManagerStub(spy, ['spawn_agent', 'bash', 'collect_result']),
+    ).toThrow(ManagerPolicyBlockedError);
+    expect(spy.calls).toEqual(['spawn_agent']);
     expect(spy.execCalls).toEqual([]);
   });
 });
@@ -263,7 +274,9 @@ describe('manager lane registration (issue #103)', () => {
   });
 
   it('registers the canonical allowlist when no toolset is supplied', () => {
-    expect(registerManagerLane().tools).toHaveLength(MANAGER_ALLOWLIST.length);
+    const lane = registerManagerLane();
+    expect(lane.tools).toEqual([...MANAGER_ALLOWLIST]);
+    expect(lane.allowlist).toEqual([...MANAGER_ALLOWLIST]);
   });
 
   it('refuses to start a lane carrying an exec tool, naming it', () => {

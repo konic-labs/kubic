@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation, OPERATIONS } from './registry.js';
+import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 import { WALK_MAX_ENTRIES, walkFiles } from './walk.js';
 
@@ -19,28 +19,6 @@ function inv(id = 'inv-1'): ToolInvocation {
     new MemoryMemoStore(),
   );
 }
-
-describe('operation registry growth (issue #13, slice B)', () => {
-  it('exposes exactly the expected operations', () => {
-    expect(Object.keys(OPERATIONS).sort()).toEqual([
-      'bash',
-      'edit',
-      'find',
-      'git_branch',
-      'git_checkpoint',
-      'git_commit',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_stage',
-      'git_status',
-      'grep',
-      'ls',
-      'read',
-      'write',
-    ]);
-  });
-});
 
 describe('find operation (issue #13, slice B)', () => {
   it('walks recursively and filters by name substring', async () => {

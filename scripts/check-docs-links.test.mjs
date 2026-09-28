@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { checkDocsDeps, checkDocsLinks } from './check-docs-links.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+const CLI = join(ROOT, 'scripts', 'check-docs-links.mjs');
+
+const scratchDirs = [];
+after(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), 'docs-links-'));
+  scratchDirs.push(dir);
   for (const [rel, content] of Object.entries(files)) {
     const full = join(dir, rel);
     mkdirSync(dirname(full), { recursive: true });
@@ -43,6 +52,43 @@ describe('check-docs-links', () => {
     });
     const result = checkDocsLinks(dir);
     assert.deepEqual(result.broken, []);
+  });
+});
+
+describe('check-docs-links CLI (npm run docs:check)', () => {
+  it('exits 1 naming the dangling link', () => {
+    const dir = fixture({ 'docs/a.md': '[gone](./missing.md)\n' });
+    const result = spawnSync(process.execPath, [CLI, '--root', dir], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1, 'a dangling link must fail the gate');
+    assert.match(result.stderr, /dangling link: .*missing\.md/);
+    assert.doesNotMatch(result.stdout, /docs links OK/);
+  });
+
+  it('exits 1 on neighbour drift even when every link resolves', () => {
+    const dir = fixture({
+      'packages/agents/src/memory.ts': `import type { FileBridge } from '../../exec/src/file-bridge.js';\n`,
+      'packages/exec/src/file-bridge.ts': `export type FileBridge = {};\n`,
+      'docs/packages/agents-pkg.md':
+        '## Dep-direction neighbours\n\n- May import: core only.\n',
+    });
+    const result = spawnSync(process.execPath, [CLI, '--root', dir], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1, 'docs drift must fail the gate');
+    assert.match(result.stdout, /docs links OK/);
+    assert.match(result.stderr, /docs drift: .*agents -> exec/);
+    assert.doesNotMatch(result.stdout, /docs deps OK/);
+  });
+
+  it('exits 0 on a clean fixture', () => {
+    const dir = fixture({ 'docs/a.md': '[b](./b.md)\n', 'docs/b.md': '# b\n' });
+    const result = spawnSync(process.execPath, [CLI, '--root', dir], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /docs deps OK/);
   });
 });
 

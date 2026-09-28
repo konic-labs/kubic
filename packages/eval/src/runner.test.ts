@@ -75,6 +75,7 @@ describe('runEvalTask (issue #53)', () => {
   });
 
   it('passes the same suite in a clean worktree via --workspace worktree', async () => {
+    const checked: string[] = [];
     const record = await runEvalTask(
       {
         suite: 'swe-bench-mini',
@@ -92,9 +93,13 @@ describe('runEvalTask (issue #53)', () => {
           signals: signals(),
           usageRows: usageRows(),
         }),
-        ensureCleanWorktree: () => true,
+        ensureCleanWorktree: (path: string) => {
+          checked.push(path);
+          return true;
+        },
       },
     );
+    expect(checked).toEqual(['/wt/clean']);
     expect(record.success).toBe(true);
     expect(record.worktree).toBe('/wt/clean');
   });
@@ -113,7 +118,9 @@ describe('runEvalTask (issue #53)', () => {
           workspace: 'worktree',
         },
         {
-          runSuite: async () => ({ success: true, signals: signals() }),
+          runSuite: async () => {
+            throw new Error('runSuite must not run');
+          },
           ensureCleanWorktree: () => false,
         },
       ),
@@ -134,11 +141,9 @@ describe('runEvalTask (issue #53)', () => {
           workspace: 'worktree',
         },
         {
-          runSuite: async () => ({
-            success: true,
-            signals: signals(),
-            usageRows: usageRows(),
-          }),
+          runSuite: async () => {
+            throw new Error('runSuite must not run');
+          },
         },
       ),
     ).rejects.toMatchObject({ code: 'dirty-worktree' });
@@ -157,9 +162,35 @@ describe('runEvalTask (issue #53)', () => {
           tier: 'smoke',
           workspace: 'inline',
         },
-        { runSuite: async () => ({ success: true, signals: signals() }) },
+        {
+          runSuite: async () => {
+            throw new Error('runSuite must not run');
+          },
+        },
       ),
     ).rejects.toMatchObject({ code: 'unknown-suite' });
+  });
+
+  it('refuses to score a stub suite without running it', async () => {
+    await expect(
+      runEvalTask(
+        {
+          suite: 'terminal-live',
+          task: 'fix',
+          model: 'acme/m1',
+          thinking: null,
+          worktree: '/wt/a',
+          generation: 1,
+          tier: 'smoke',
+          workspace: 'inline',
+        },
+        {
+          runSuite: async () => {
+            throw new Error('runSuite must not run');
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'stub-suite' });
   });
 
   it('rejects a run whose signals do not reconcile with usage rows (§39)', async () => {
@@ -325,7 +356,6 @@ describe('runEvalTrajectory (issue #53)', () => {
     expect(record.success).toBe(true);
     expect(record.tokens).toBe(150);
     expect(record.toolCalls).toBe(1);
-    expect(record instanceof Object).toBe(true);
     expect(record.model).toBe('acme/m1');
   });
 

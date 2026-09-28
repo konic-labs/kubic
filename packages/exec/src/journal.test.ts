@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyDelta,
   encodeDelta,
@@ -21,8 +21,17 @@ import {
   sha256Hex,
 } from './journal.js';
 
-function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'journal-'));
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix = 'journal-'): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
 }
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
@@ -64,7 +73,7 @@ describe('journal store (issue #17, slice A)', () => {
     store.append(entry());
     appendFileSync(store.indexPath, '{torn\n');
     store.append(entry({ path: 'b.txt' }));
-    expect(store.entries()).toHaveLength(2);
+    expect(store.entries().map((e) => e.path)).toEqual(['src/a.ts', 'b.txt']);
   });
 
   it('round-trips the line delta codec, including edge cases', () => {
@@ -97,14 +106,18 @@ describe('journal store (issue #17, slice A)', () => {
   it('restores before-content for undo, including delta-recorded edits', () => {
     const store = new FileJournalStore(tmpRoot());
     const before = `${'line\n'.repeat(20_000)}tail\n`;
+    const after = `${'line\n'.repeat(20_000)}changed\n`;
     const recorded = store.append(
       entry({
         path: 'big.txt',
         before,
-        after: 'changed\n',
-        bytesDelta: -99990,
+        after,
+        bytesDelta: after.length - before.length,
       }),
     );
+    // The edit really was delta-recorded (no full after-blob)...
+    expect(recorded.deltaHash).toMatch(/^[0-9a-f]{64}$/);
+    // ...and undo still gets the exact pre-image back.
     expect(store.readBefore(recorded)).toBe(before);
   });
 
@@ -370,7 +383,7 @@ describe('blob hash verification (issue #111)', () => {
     const recorded = store.append(
       entry({ path: 'f.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
     );
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const root = tmpRoot('ws-');
     writeFileSync(join(root, 'f.txt'), 'v2\n');
     writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'evil\n');
     const result = restoreEntry(store, recorded, root);

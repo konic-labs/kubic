@@ -4,10 +4,10 @@
 // cached per process; detection and execution both go through
 // ctx.env.shell so FakeExecutionEnv scripts the answer — no
 // child_process in ops.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ExecutionEnv,
   FakeScript,
@@ -141,9 +141,24 @@ class HangShell implements Shell {
   }
 }
 
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  __setResolvedShellForTests(undefined);
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
 // Real-child probes run through the same seam the op uses.
 async function bashPresent(): Promise<boolean> {
-  const env = new NodeExecutionEnv(mkdtempSync(join(tmpdir(), 'bash-probe-')));
+  const env = new NodeExecutionEnv(scratch('bash-probe-'));
   const result = await env.shell
     .spawn('bash', ['-c', 'true'], { provenance: ROOT_PROVENANCE })
     .wait();
@@ -155,24 +170,6 @@ const HAS_BASH = await bashPresent();
 describe('bash shell resolution (issue #123)', () => {
   beforeEach(() => {
     __setResolvedShellForTests(undefined);
-  });
-
-  it('falls back to sh when the bash spawn settles 127 with ENOENT', async () => {
-    const env = new FakeExecutionEnv({
-      'bash -c echo hi': BASH_MISSING,
-      'sh -c echo hi': { exitCode: 0, stdout: 'hi\n', stderr: '' },
-    });
-    const out = await callOperation(
-      'bash',
-      { command: 'echo hi' },
-      inv('inv-sh1'),
-      ctxFor(env),
-    );
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.result.exitCode).toBe(0);
-    expect(out.result.stdout).toBe('hi\n');
-    expect(out.result.shell).toBe('sh');
   });
 
   it('falls back to sh and succeeds on the spawn-ENOENT shape', async () => {
@@ -316,9 +313,7 @@ describe('bash shell resolution (issue #123)', () => {
   it.skipIf(!HAS_BASH)(
     'runs bashisms under bash and reports shell: bash (real child)',
     async () => {
-      const env = new NodeExecutionEnv(
-        mkdtempSync(join(tmpdir(), 'bash-shell-')),
-      );
+      const env = new NodeExecutionEnv(scratch('bash-shell-'));
       const out = await callOperation(
         'bash',
         { command: '[[ -n x ]] && echo ok' },
@@ -379,9 +374,7 @@ describe('bash shell resolution (issue #123)', () => {
   it.skipIf(!HAS_BASH)(
     'runs `local` in a function when bash is resolved (real child)',
     async () => {
-      const env = new NodeExecutionEnv(
-        mkdtempSync(join(tmpdir(), 'bash-local-')),
-      );
+      const env = new NodeExecutionEnv(scratch('bash-local-'));
       const out = await callOperation(
         'bash',
         { command: 'f() { local v=1; echo "local $v"; }; f' },
@@ -403,7 +396,7 @@ describe('bash shell resolution (issue #123)', () => {
     });
     const out = await callOperation(
       'bash',
-      { command: 'sleep-forever', timeout: 0.2 },
+      { command: 'sleep-forever', timeout: 0.01 },
       inv('inv-sh6'),
       ctxFor(wrapShell(new FakeExecutionEnv({}), shell)),
     );
@@ -423,7 +416,9 @@ describe('bash shell resolution (issue #123)', () => {
       'sh -c sleep-forever': 'hang',
     });
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 100);
+    // The fake shell settles in microtasks, so by the time this macrotask
+    // runs the op is parked on the hanging sh retry handle.
+    const timer = setTimeout(() => ctl.abort(), 0);
     const out = await callOperation(
       'bash',
       { command: 'sleep-forever' },

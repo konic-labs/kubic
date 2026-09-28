@@ -216,6 +216,9 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     expect(
       Buffer.byteLength(observation?.output ?? '', 'utf8'),
     ).toBeLessThanOrEqual(MAX_OBSERVATION_BYTES);
+    // Truncated, not dropped: the kept output is the head of the original,
+    // filled right up to the cap.
+    expect(observation?.output).toBe(big.slice(0, MAX_OBSERVATION_BYTES));
   });
 
   it('keeps the §52 failure taxonomy in sync with the worker owner', () => {
@@ -330,6 +333,9 @@ describe('trajectory review fixes (round 2)', () => {
       Buffer.byteLength(observation?.output ?? '', 'utf8'),
     ).toBeLessThanOrEqual(MAX_OBSERVATION_BYTES);
     expect(observation?.output).not.toContain('�');
+    // Cut on the last whole 3-byte character that fits, never shorter.
+    const whole = Math.floor(MAX_OBSERVATION_BYTES / 3);
+    expect(observation?.output).toBe(cjk.slice(0, whole));
   });
 
   it('rejects a completed result carrying a failureCategory', () => {

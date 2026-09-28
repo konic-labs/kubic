@@ -5,14 +5,23 @@
 // non-repo, a missing dir, or any git failure reads as NOT clean.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { isGitWorktreeClean } from './git-clean.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'git-clean-'));
+  const root = mkdtempSync(join(tmpdir(), 'git-clean-'));
+  roots.push(root);
+  return root;
 }
 
 function initRepo(dir: string): void {
@@ -27,7 +36,8 @@ function initRepo(dir: string): void {
   run(['config', 'user.name', 'test']);
   writeFileSync(join(dir, 'a.txt'), 'hello\n');
   run(['add', 'a.txt']);
-  run(['commit', '-m', 'init']);
+  // No signing / hooks from the developer's global config.
+  run(['-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-m', 'init']);
 }
 
 describe('isGitWorktreeClean (issue #78)', () => {
@@ -37,10 +47,16 @@ describe('isGitWorktreeClean (issue #78)', () => {
     expect(isGitWorktreeClean(dir)).toBe(true);
   });
 
-  it('reads false on a dirty tree (modified + untracked)', () => {
+  it('reads false on a modified tracked file', () => {
     const dir = tmpRoot();
     initRepo(dir);
     writeFileSync(join(dir, 'a.txt'), 'changed\n');
+    expect(isGitWorktreeClean(dir)).toBe(false);
+  });
+
+  it('reads false on an untracked file alone', () => {
+    const dir = tmpRoot();
+    initRepo(dir);
     writeFileSync(join(dir, 'new.txt'), 'untracked\n');
     expect(isGitWorktreeClean(dir)).toBe(false);
   });

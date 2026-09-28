@@ -1,16 +1,29 @@
 // Journal CLI surfacing of the unattributed count (issue #87): `kubic status`
 // names reconciliation finds on their own line, `kubic log` closes with the
 // summary line. RED: neither exists today.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { runJournalCommand } from './journal-cli.js';
 
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
 function seedUnattributed(): { journalDir: string; root: string } {
-  const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const journalDir = mkTmp('j-');
+  const root = mkTmp('ws-');
   const store = new FileJournalStore(journalDir);
   store.append({
     path: 'a.txt',
@@ -74,8 +87,8 @@ describe('journal CLI unattributed count (issue #87)', () => {
   });
 
   it('log on an empty journal keeps its sentence and reports zero finds', async () => {
-    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
     const lines: string[] = [];
     const code = await runJournalCommand(['log'], {
       journalDir,

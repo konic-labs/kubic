@@ -46,17 +46,20 @@ describe('failure taxonomy (issue #14, slice C)', () => {
     const failure = classifyFailure('provider', '429 rate limited', '');
     const decision = chooseRetry(
       failure,
-      { retryAfterMs: 5000 },
+      { retryAfterMs: 5000, now: 1_000 },
       new RetryBudget(3),
     );
     expect(decision.decision).toBe('retry_same');
-    expect(decision.notBefore).toBeGreaterThan(Date.now());
+    expect(decision.notBefore).toBe(6_000);
   });
 
   it('routes polluted context to escalation, not blind retry', () => {
     const failure = classifyFailure('context', 'context polluted', '');
-    const decision = chooseRetry(failure, {}, new RetryBudget(3));
+    const budget = new RetryBudget(3);
+    const decision = chooseRetry(failure, {}, budget);
     expect(decision.decision).toBe('escalate');
+    // Escalation is not a retry: it spends nothing from the retry budget.
+    expect(budget.remaining).toBe(3);
   });
 
   it('abandons on budget exhaustion and denied approvals', () => {

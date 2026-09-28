@@ -17,7 +17,16 @@
 // Real repo state, no build needed, zero network. Runs from `npm test`
 // (node --test) so it gates CI alongside the other script gates.
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -44,10 +53,10 @@ function walk(dir, found) {
 
 // Non-test TypeScript sources of the product tree, excluding the parser
 // itself (the one place the rule may live).
-function sourceFiles() {
+function sourceFiles(root = ROOT) {
   const found = [];
   for (const top of ['packages', 'apps']) {
-    const base = join(ROOT, top);
+    const base = join(root, top);
     if (!existsSync(base)) continue;
     for (const entry of readdirSync(base, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -55,22 +64,32 @@ function sourceFiles() {
       if (existsSync(src)) walk(src, found);
     }
   }
-  return found.filter((file) => file !== PARSER).sort();
+  const parser = join(root, 'packages', 'core', 'src', 'flags.ts');
+  return found.filter((file) => file !== parser).sort();
 }
+
+// `file:line: text` for every hand-rolled guard under root's sources.
+function guardOffenders(root = ROOT, files = sourceFiles(root)) {
+  const offenders = [];
+  for (const file of files) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    for (const [index, line] of lines.entries()) {
+      const guard = HAND_ROLLED_GUARDS.find((candidate) =>
+        line.includes(candidate),
+      );
+      if (guard === undefined) continue;
+      offenders.push(`${relative(root, file)}:${index + 1}: ${line.trim()}`);
+    }
+  }
+  return offenders;
+}
+
+// One walk of the real tree, shared by the gate and its coverage floor.
+const REPO_SOURCES = sourceFiles();
 
 describe('shared flag parser (issue #127)', () => {
   it('no hand-rolled startsWith("--") value guard survives outside packages/core/src/flags.ts', () => {
-    const offenders = [];
-    for (const file of sourceFiles()) {
-      const lines = readFileSync(file, 'utf8').split('\n');
-      for (const [index, line] of lines.entries()) {
-        const guard = HAND_ROLLED_GUARDS.find((candidate) =>
-          line.includes(candidate),
-        );
-        if (guard === undefined) continue;
-        offenders.push(`${relative(ROOT, file)}:${index + 1}: ${line.trim()}`);
-      }
-    }
+    const offenders = guardOffenders(ROOT, REPO_SOURCES);
     assert.deepEqual(
       offenders,
       [],
@@ -87,12 +106,35 @@ describe('shared flag parser (issue #127)', () => {
       "startsWith('--')",
       'startsWith("--")',
     ]);
-    const files = sourceFiles();
+    const files = REPO_SOURCES;
     // The tree ships 200+ non-test sources; a collapsed walk must fail loudly
     // instead of certifying an empty scan.
     assert.ok(
       files.length >= 150,
       `expected the source scan to cover the tree, saw ${files.length} files`,
     );
+  });
+
+  it('flags both quote spellings outside the parser, skipping tests and the parser', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flag-gate-'));
+    try {
+      const write = (rel, body) => {
+        mkdirSync(join(dir, rel, '..'), { recursive: true });
+        writeFileSync(join(dir, rel), body);
+      };
+      write(
+        'packages/host/src/cli.ts',
+        "const v = args[i + 1];\nif (v.startsWith('--')) throw 1;\n",
+      );
+      write('apps/kubic/src/main.ts', 'if (v.startsWith("--")) throw 1;\n');
+      write('packages/core/src/flags.ts', "if (v.startsWith('--')) {}\n");
+      write('packages/host/src/cli.test.ts', "v.startsWith('--');\n");
+      assert.deepEqual(guardOffenders(dir), [
+        `${join('apps', 'kubic', 'src', 'main.ts')}:1: if (v.startsWith("--")) throw 1;`,
+        `${join('packages', 'host', 'src', 'cli.ts')}:2: if (v.startsWith('--')) throw 1;`,
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

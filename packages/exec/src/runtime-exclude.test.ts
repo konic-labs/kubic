@@ -17,11 +17,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyRuntimeExcludeBlock,
   ensureRuntimeExcludeRules,
@@ -30,6 +31,19 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
   RuntimeExcludeError,
 } from './runtime-exclude.js';
+
+const scratchDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
+function scratchDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -51,7 +65,7 @@ function isIgnored(cwd: string, path: string): boolean {
 // tracked role documents and config, exactly like a user repo that set
 // Kubic up before its first run.
 function roleScratchRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-exclude-'));
+  const dir = scratchDir('kubic-exclude-');
   git(dir, ['init', '-q', '-b', 'main', '.']);
   git(dir, ['config', 'user.email', 'test@example.com']);
   git(dir, ['config', 'user.name', 'test']);
@@ -63,7 +77,15 @@ function roleScratchRepo(): string {
     '[agent]\nname = "kubic"\n',
   );
   git(dir, ['add', '.kubic', 'README.md']);
-  git(dir, ['commit', '-qm', 'init']);
+  // No signing / hooks from the developer's global config.
+  git(dir, [
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--no-verify',
+    '-qm',
+    'init',
+  ]);
   return dir;
 }
 
@@ -205,7 +227,7 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
   });
 
   it('skips (never throws) outside a git repository', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-norepo-'));
+    const dir = scratchDir('kubic-norepo-');
     const result = ensureRuntimeExcludeRules({ cwd: dir });
     expect(result.skipped).toBe('not-a-git-repo');
     expect(result.changed).toBe(false);

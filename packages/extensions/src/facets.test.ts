@@ -43,24 +43,21 @@ describe('facet boundary hardening (issue #69)', () => {
   });
 
   it('pins the exact refusal messages', () => {
-    try {
-      assertFacetImports('tui', ['@kubic/host']);
-      expect.unreachable();
-    } catch (error) {
-      expect((error as Error).name).toBe('FacetBoundaryError');
-      expect((error as Error).message).toMatch(
-        /tui facet must never import host/,
-      );
-    }
-    try {
-      assertFacetImports('worker', ['@earendil-works/pi-tui']);
-      expect.unreachable();
-    } catch (error) {
-      expect((error as Error).name).toBe('FacetBoundaryError');
-      expect((error as Error).message).toMatch(
-        /worker facet must never import pi-tui/,
-      );
-    }
+    expect(() => assertFacetImports('tui', ['@kubic/host'])).toThrow(
+      expect.objectContaining({
+        name: 'FacetBoundaryError',
+        message: 'tui facet must never import host (found "@kubic/host")',
+      }),
+    );
+    expect(() =>
+      assertFacetImports('worker', ['@earendil-works/pi-tui']),
+    ).toThrow(
+      expect.objectContaining({
+        name: 'FacetBoundaryError',
+        message:
+          'worker facet must never import pi-tui (found "@earendil-works/pi-tui")',
+      }),
+    );
   });
 
   it('never restricts contract facets or cross-non-banned imports', () => {

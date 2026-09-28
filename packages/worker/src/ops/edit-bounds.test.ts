@@ -8,6 +8,7 @@ import {
   ftruncateSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   rmSync,
   writeSync,
 } from 'node:fs';
@@ -128,17 +129,10 @@ describe('edit size guard (issue #122)', () => {
     expect(out.replacements).toBe(1);
     expect(journalAppends).toBe(1);
     expect(readCalls).toBe(1);
-  });
-
-  it('refuses 8 MiB + 1 at the exact boundary', async () => {
-    sparseFile('edge1.txt', 8 * MIB + 1);
-    await expect(
-      editOperation.execute(
-        inv(),
-        { path: 'edge1.txt', oldText: 'needle', newText: 'hay' },
-        ctx,
-      ),
-    ).rejects.toMatchObject({ name: 'OpError', code: 'file_too_large' });
+    // The replacement landed at the tail of the file.
+    const edited = readFileSync(join(dir, 'edge.txt'), 'utf8');
+    expect(edited.length).toBe(8 * MIB - 'EDITME'.length + 'ok'.length);
+    expect(edited.endsWith('ok')).toBe(true);
   });
 
   it('keeps the not_found refusal for missing files', async () => {

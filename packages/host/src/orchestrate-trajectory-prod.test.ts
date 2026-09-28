@@ -17,10 +17,16 @@
 // No network and no paid tokens: the worker entry is this test process's own
 // node running a fixture that prints its readiness marker and exits.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
@@ -30,9 +36,25 @@ process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '')
 process.exit(0);
 `;
 
+// Every scratch dir is removed after the test (the worktree lives under the
+// repo root, so removing it disposes it too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)', () => {
   it('the composition root default sink writes the parallel event to disk', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'kubic-orch-106-traj-'));
+    const root = scratch('kubic-orch-106-traj-');
     const git = (args: string[]) =>
       execFileSync('git', args, { cwd: root, encoding: 'utf8' });
     git(['init', '-b', 'main', '.']);
@@ -43,10 +65,10 @@ describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)
     git(['add', '-A']);
     git(['commit', '-m', 'base']);
 
-    const childDir = mkdtempSync(join(tmpdir(), 'kubic-orch-106-traj-child-'));
+    const childDir = scratch('kubic-orch-106-traj-child-');
     const worker = join(childDir, 'worker.mjs');
     writeFileSync(worker, WORKER);
-    const sessionsRoot = mkdtempSync(join(tmpdir(), 'kubic-orch-106-traj-s-'));
+    const sessionsRoot = scratch('kubic-orch-106-traj-s-');
 
     const lines: string[] = [];
     const prod = await orchestrateDepsWithDefaults({

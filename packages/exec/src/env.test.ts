@@ -1,7 +1,7 @@
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionEnv, ProcessSnapshot, Provenance } from './env.js';
 import {
   FakeExecutionEnv,
@@ -19,10 +19,24 @@ const PROV: Provenance = {
   operation: 'bash',
 };
 
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
 function makeNodeEnv(): { env: ExecutionEnv; cwd: string } {
   const cwd = mkdtempSync(join(tmpdir(), 'exec-env-'));
+  tempDirs.push(cwd);
   return { env: new NodeExecutionEnv(cwd), cwd };
 }
+
+// A child that blocks until the test drops a `go` file into its cwd — a
+// deterministic handshake in place of a fixed sleep.
+const AWAIT_GO =
+  "const t=setInterval(()=>{if(require('node:fs').existsSync('go')){clearInterval(t);";
+const AWAIT_GO_END = '}},5)';
 
 describe('execution env (issue #12, slice A)', () => {
   it('pins the root provenance identity exactly', () => {
@@ -63,11 +77,14 @@ describe('execution env (issue #12, slice A)', () => {
   });
 
   it('fake env is hermetic (no disk touched)', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'exec-fake-'));
     const env = new FakeExecutionEnv({});
-    env.fs.writeFile('mem.txt', 'data');
-    expect(env.fs.readFile('mem.txt')).toBe('data');
-    expect(readdirSync(cwd)).toEqual([]);
+    const name = `kubic-fake-hermetic-${process.pid}-${Date.now()}.txt`;
+    env.fs.writeFile(name, 'data');
+    expect(env.fs.readFile(name)).toBe('data');
+    expect(env.fs.listDir('.')).toEqual([name]);
+    // Neither the process cwd nor the fake's own cwd saw the write.
+    expect(existsSync(join(process.cwd(), name))).toBe(false);
+    expect(existsSync(join(env.cwd, name))).toBe(false);
   });
 
   it('fake env stats directories by prefix', () => {
@@ -132,8 +149,14 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
     );
     const result = await handle.wait();
     expect(result.stdout).toBe('ab');
-    expect(seen.length).toBeGreaterThanOrEqual(1);
-    expect(seen[seen.length - 1]?.stdout).toBe('ab');
+    // At least one interim (still-running) snapshot, then the settled one.
+    expect(seen.some((snap) => snap.exitCode === null)).toBe(true);
+    expect(seen[seen.length - 1]).toEqual({
+      stdout: 'ab',
+      stderr: '',
+      exitCode: 0,
+      provenance: PROV,
+    });
   });
 
   it('fake shell emits an update', async () => {
@@ -146,7 +169,7 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
       onUpdate: (snap) => seen.push(snap),
     });
     await handle.wait();
-    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen).toEqual([{ stdout: 'hi\n', stderr: '', exitCode: null }]);
   });
 
   it('checkpoint store throttles and change-gates', () => {
@@ -185,54 +208,81 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
   });
 
   it('node shell checkpoints mid-run while the process is still alive', async () => {
-    const { env } = makeNodeEnv();
+    const { env, cwd } = makeNodeEnv();
     const store = new MemoryCheckpointStore();
+    // The child cannot exit until the test releases it, so the checkpoint
+    // observed below is provably mid-run.
     const handle = env.shell.spawn(
       process.execPath,
       [
         '-e',
-        'process.stdout.write("part1");setTimeout(()=>process.stdout.write("part2"),500)',
+        `process.stdout.write("part1");${AWAIT_GO}process.stdout.write("part2")${AWAIT_GO_END}`,
       ],
       { provenance: PROV, checkpointKey: 'run-mid', checkpointStore: store },
     );
-    let mid: ProcessSnapshot | undefined;
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      const hit = store.latest('run-mid');
-      if (hit && hit.exitCode === null) {
-        mid = hit;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    await handle.wait();
-    expect(mid?.stdout).toContain('part1');
+    const mid = await vi.waitFor(
+      () => {
+        const hit = store.latest('run-mid');
+        if (!hit) throw new Error('no checkpoint yet');
+        return hit;
+      },
+      { timeout: 5000, interval: 5 },
+    );
+    writeFileSync(join(cwd, 'go'), '');
+    const result = await handle.wait();
+    expect(mid).toEqual({ stdout: 'part1', stderr: '', exitCode: null });
+    expect(result.stdout).toBe('part1part2');
+    expect(store.latest('run-mid')?.exitCode).toBe(0);
   });
 
   it.runIf(process.platform !== 'win32')(
     'kill leaves no orphans in the process group',
     async () => {
       const { env } = makeNodeEnv();
+      let stdout = '';
+      // The child announces its grandchild's pid once it is spawned — the
+      // test waits for that instead of sleeping a fixed interval.
       const handle = env.shell.spawn(
         process.execPath,
         [
           '-e',
-          "require('child_process').spawn('sleep', ['60']);setInterval(() => {}, 1000)",
+          "const c=require('child_process').spawn('sleep',['60']);process.stdout.write(String(c.pid));setInterval(()=>{},1000)",
         ],
-        { provenance: PROV },
+        { provenance: PROV, onUpdate: (snap) => (stdout = snap.stdout) },
       );
-      await new Promise((r) => setTimeout(r, 300));
-      handle.kill();
-      const deadline = Date.now() + 3000;
-      for (;;) {
+      const groupId = handle.pid;
+      expect(groupId).toBeGreaterThan(0);
+      const alive = (pid: number): boolean => {
         try {
-          process.kill(-(handle.pid ?? 0), 0);
+          process.kill(pid, 0);
+          return true;
         } catch {
-          break;
+          return false;
         }
-        if (Date.now() > deadline)
-          throw new Error('process group survived kill');
-        await new Promise((r) => setTimeout(r, 50));
+      };
+      try {
+        const grandchild = await vi.waitFor(
+          () => {
+            const pid = Number(stdout);
+            if (!(pid > 0)) throw new Error('grandchild pid not reported');
+            return pid;
+          },
+          { timeout: 5000, interval: 5 },
+        );
+        expect(alive(grandchild)).toBe(true);
+        handle.kill();
+        await handle.wait();
+        await vi.waitFor(
+          () => {
+            if (alive(-(groupId as number)))
+              throw new Error('process group survived kill');
+            if (alive(grandchild)) throw new Error('grandchild survived kill');
+          },
+          { timeout: 3000, interval: 10 },
+        );
+      } finally {
+        // Never leak a 60s sleeper if an assertion above failed.
+        if (groupId !== undefined && alive(-groupId)) process.kill(-groupId);
       }
     },
   );
@@ -279,7 +329,7 @@ describe('child output caps (issue #121)', () => {
     const { env } = makeNodeEnv();
     const total = MAX_CHILD_OUTPUT_BYTES + 2 * 1024 * 1024;
     const handle = env.shell.spawn(
-      'node',
+      process.execPath,
       [
         '-e',
         `process.stdout.write('a'.repeat(${total})); process.stdout.write('TAIL-END')`,
@@ -305,7 +355,7 @@ describe('child output caps (issue #121)', () => {
     const { env } = makeNodeEnv();
     const snapshotLengths: number[] = [];
     const handle = env.shell.spawn(
-      'node',
+      process.execPath,
       [
         '-e',
         `process.stdout.write('o'.repeat(3000)); process.stdout.write('OUT-TAIL'); ` +
@@ -360,24 +410,29 @@ describe('child output caps (issue #121)', () => {
 // decoder carries split codepoints across writes — and flush a trailing
 // incomplete sequence via decoder.end() on settle.
 describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
-  // One emoji as two explicit Buffer halves. The halves are written with a
-  // gap so the pipe delivers each write as its own `data` event — back-to-
-  // back writes can coalesce into a single chunk and never exercise the
-  // boundary at all.
+  // One emoji as two explicit Buffer halves. The child writes the second
+  // half only after the parent has seen the first as its own `data` event
+  // (the `go` handshake) — back-to-back writes can coalesce into a single
+  // chunk and never exercise the boundary at all.
   const EMOJI = '\u{1F600}';
   const emojiBytes = [...Buffer.from(EMOJI, 'utf8')]; // f0 9f 98 80
   const firstHalf = emojiBytes.slice(0, 2);
   const secondHalf = emojiBytes.slice(2);
   const splitWrite = (stream: 'stdout' | 'stderr'): string =>
     `process.${stream}.write(Buffer.from([${firstHalf.join(',')}]));` +
-    `setTimeout(()=>process.${stream}.write(Buffer.from([${secondHalf.join(',')}])),100)`;
+    `${AWAIT_GO}process.${stream}.write(Buffer.from([${secondHalf.join(',')}]))${AWAIT_GO_END}`;
+  // Release the child on the first data event (the first half, alone).
+  const releaseOnFirstChunk = (cwd: string) => () => {
+    const go = join(cwd, 'go');
+    if (!existsSync(go)) writeFileSync(go, '');
+  };
 
   it('reassembles a stdout codepoint split across two data events', async () => {
-    const { env } = makeNodeEnv();
+    const { env, cwd } = makeNodeEnv();
     const handle = env.shell.spawn(
       process.execPath,
       ['-e', splitWrite('stdout')],
-      { provenance: PROV },
+      { provenance: PROV, onUpdate: releaseOnFirstChunk(cwd) },
     );
     const result = await handle.wait();
     expect(result.exitCode).toBe(0);
@@ -386,11 +441,11 @@ describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
   });
 
   it('reassembles a stderr codepoint split across two data events', async () => {
-    const { env } = makeNodeEnv();
+    const { env, cwd } = makeNodeEnv();
     const handle = env.shell.spawn(
       process.execPath,
       ['-e', splitWrite('stderr')],
-      { provenance: PROV },
+      { provenance: PROV, onUpdate: releaseOnFirstChunk(cwd) },
     );
     const result = await handle.wait();
     expect(result.exitCode).toBe(0);

@@ -46,11 +46,20 @@ describe('validateEvalRecord (issue #53)', () => {
       generation: undefined as unknown as number,
     });
     expect(noGeneration.valid).toBe(false);
+    if (!noGeneration.valid) {
+      expect(noGeneration.errors).toEqual([
+        'generation is required: record which worker generation ran (§73)',
+      ]);
+    }
     const noTier = validateEvalRecord({
       ...input(),
       tier: undefined as unknown as string,
     });
     expect(noTier.valid).toBe(false);
+    if (!noTier.valid) {
+      expect(noTier.errors).toHaveLength(1);
+      expect(noTier.errors[0]).toMatch(/^tier is required/);
+    }
   });
 
   it('rejects a record missing or with an invalid category', () => {
@@ -219,25 +228,25 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     for (const tier of ['smoke', 'standard', 'extended']) {
       const result = validateEvalRecord({ ...input(), tier });
       expect(result.valid).toBe(true);
+      if (result.valid) expect(result.record.tier).toBe(tier);
     }
-    const withSignals = validateEvalRecord({
-      ...input(),
-      signals: {
-        tests: 'pass',
-        build: 'pass',
-        lint: 'pass',
-        typecheck: 'pass',
-        completion: true,
-        quality: 1,
-        regressionFree: true,
-        tokens: 150,
-        costUsd: 0.02,
-        latencyMs: 60000,
-        toolCalls: 3,
-        toolCounts: {},
-        escalations: 0,
-      },
-    });
+    const signals = {
+      tests: 'pass',
+      build: 'pass',
+      lint: 'pass',
+      typecheck: 'pass',
+      completion: true,
+      quality: 1,
+      regressionFree: true,
+      tokens: 150,
+      costUsd: 0.02,
+      latencyMs: 60000,
+      toolCalls: 3,
+      toolCounts: {},
+      escalations: 0,
+    } as const;
+    const withSignals = validateEvalRecord({ ...input(), signals });
     expect(withSignals.valid).toBe(true);
+    if (withSignals.valid) expect(withSignals.record.signals).toEqual(signals);
   });
 });

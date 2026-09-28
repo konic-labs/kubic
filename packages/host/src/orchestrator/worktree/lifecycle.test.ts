@@ -48,6 +48,11 @@ describe('settle and retain (issue #45)', () => {
 });
 
 describe('removeWorktree (issue #45)', () => {
+  // The fake shell answers any UNSCRIPTED argv with exit 0, so the argv the
+  // test must not see is scripted to FAIL: a stray `--force` or a branch
+  // delete then surfaces as a thrown remove instead of passing silently.
+  const REFUSED = { exitCode: 1, stdout: '', stderr: 'unexpected argv' };
+
   it('removes the worktree but keeps the branch', async () => {
     const env = new FakeExecutionEnv({
       'git worktree remove /repo/.kubic/wt/agent-1': {
@@ -55,6 +60,8 @@ describe('removeWorktree (issue #45)', () => {
         stdout: '',
         stderr: '',
       },
+      'git worktree remove /repo/.kubic/wt/agent-1 --force': REFUSED,
+      'git branch -D kubic/agent-1': REFUSED,
     });
     const result = await removeWorktree(env, '/repo/.kubic/wt/agent-1');
     expect(result.removed).toBe(true);
@@ -69,6 +76,7 @@ describe('removeWorktree (issue #45)', () => {
         stdout: '',
         stderr: '',
       },
+      'git worktree remove /repo/.kubic/wt/agent-2': REFUSED,
     });
     const result = await removeWorktree(env, '/repo/.kubic/wt/agent-2', {
       force: true,

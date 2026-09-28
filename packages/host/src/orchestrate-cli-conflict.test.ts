@@ -26,7 +26,6 @@ import {
   hashApprovalPolicy,
   IMPLEMENTER_TOOLSET,
   REVIEWER_READONLY_TOOLS,
-  ResolverPolicyError,
 } from './orchestrator/merge/conflicts.js';
 
 const POLICY: ApprovalSnapshot = {
@@ -255,6 +254,5 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
       ...REVIEWER_READONLY_TOOLS,
     ]);
     expect(MANAGER_INSPECTION_SEQUENCE.length).toBeGreaterThan(0);
-    expect(ResolverPolicyError.name).toBe('ResolverPolicyError');
   });
 });

@@ -48,8 +48,8 @@ describe('append-only turns (issue #33, rule 4)', () => {
       metadata: {},
     });
     const full = appendTurnContent(prefix, 'turn 7 user text');
-    expect(full.startsWith(prefix)).toBe(true);
     expect(full.slice(0, prefix.length)).toBe(prefix);
+    expect(full.slice(prefix.length)).toContain('turn 7 user text');
   });
 });
 
@@ -62,6 +62,8 @@ describe('lane lifecycle (issue #33, rule 5)', () => {
     expect(() =>
       registry.spawn({ sessionId: 's1', lane: 'main', modelId: 'faux/b' }),
     ).toThrow(/re-spawn/);
+    // The rejected re-spawn never overwrote the live binding.
+    expect(registry.continuation('s1', 'main').modelId).toBe('faux/a');
     expect(() => registry.continuation('nope', 'main')).toThrow(
       /no active lane/,
     );
@@ -102,6 +104,7 @@ describe('model affinity (issue #33, rule 6)', () => {
       reason: 'needs more',
     });
     expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink).toHaveBeenCalledWith(event);
     expect(affinity.modelId).toBe('faux/b');
     expect(affinity.escalations).toHaveLength(1);
     expect(() =>

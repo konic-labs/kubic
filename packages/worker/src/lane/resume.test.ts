@@ -1,5 +1,5 @@
 // Slice B: kill mid-run -> attach -> lane resumes the pending op (#14).
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -19,20 +19,29 @@ import {
   createSession,
   openSessionStore,
 } from './session-store.js';
-import { settleTerminalStatus } from './settle.js';
 import { bootSoloLane, driveToSettled } from './solo.js';
 
 const openSessions: Session[] = [];
+const scratchDirs: string[] = [];
 
 afterAll(async () => {
   for (const session of openSessions.splice(0)) {
     await session.close(BACKGROUND_CONTEXT);
   }
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
+
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
 
 describe('session resume (issue #14, slice B)', () => {
   it('resumes a pending op after a simulated kill', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'resume-'));
+    const root = scratch('resume-');
     const env = new FakeExecutionEnv({});
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
@@ -98,17 +107,24 @@ describe('session resume (issue #14, slice B)', () => {
       BACKGROUND_CONTEXT,
     );
     expect(driven.kind).toBe('settled');
-    const entries = await resumed.lane.findEntries(
-      undefined,
-      BACKGROUND_CONTEXT,
+    if (driven.kind === 'settled') {
+      const record = driven.outcome as OperationResultRecord;
+      expect(record.status).toBe('completed');
+    }
+    const transcript = JSON.stringify(
+      await resumed.lane.findEntries(undefined, BACKGROUND_CONTEXT),
     );
-    expect(JSON.stringify(entries)).toContain('finish this');
+    // The prompt was persisted by the dead process; the reply can only
+    // come from the resumed lane driving the pending op to completion.
+    expect(transcript).toContain('finish this');
+    expect(transcript).toContain('done');
+    expect(transcript).not.toContain('unfinished');
   });
 });
 
 describe('abort persistence (issue #14, slice E)', () => {
   it('abort settles the op as aborted with kills drained', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'abort-'));
+    const root = scratch('abort-');
     const env = new FakeExecutionEnv({});
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
@@ -150,6 +166,8 @@ describe('abort persistence (issue #14, slice E)', () => {
       const record = driven.outcome as OperationResultRecord;
       expect(record.status).toBe('aborted');
     }
-    expect(settleTerminalStatus('aborted').status).toBe('cancelled');
+    expect(
+      JSON.stringify(await lane.findEntries(undefined, BACKGROUND_CONTEXT)),
+    ).not.toContain('never runs');
   });
 });

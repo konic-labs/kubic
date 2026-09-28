@@ -9,10 +9,10 @@
 // declared) was journaled anyway. `isOutOfScope` is the shared rule both
 // walks and the sweep's after-content loop now apply: an entry excludes the
 // path itself and everything under it, path-boundary aware.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
 import {
   captureBaseline,
@@ -21,8 +21,21 @@ import {
   reconcile,
 } from './journal.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function workspace(): string {
-  const root = mkdtempSync(join(tmpdir(), 'ws-oos-'));
+  const root = tmpRoot('ws-oos-');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
   writeFileSync(join(root, 'change.txt'), 'before\n');
   mkdirSync(join(root, 'dist'));
@@ -35,7 +48,7 @@ function workspace(): string {
 }
 
 function journalStore(): FileJournalStore {
-  return new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-oos-')));
+  return new FileJournalStore(tmpRoot('j-oos-'));
 }
 
 // Records every content read the walk/sweep performs, so "not journaled" can
@@ -99,7 +112,7 @@ describe('out-of-scope matching (issue #115, §35/§42.5)', () => {
   });
 
   it('keeps exact-file behaviour: a file named like the entry is excluded', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-oos-file-'));
+    const root = tmpRoot('ws-oos-file-');
     writeFileSync(join(root, 'dist'), 'a file, not a directory\n');
     writeFileSync(join(root, 'dist-x'), 'sibling\n');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
@@ -134,8 +147,10 @@ describe('out-of-scope matching (issue #115, §35/§42.5)', () => {
     );
     expect(added).toBe(1);
     expect(journal.entries().map((e) => e.path)).toEqual(['change.txt']);
-    // Never read: the sweep's after-content read is bounded by scope, not
-    // only by size.
+    // The recorder is live (the in-scope change was read)...
+    expect(reads.some((path) => path.endsWith('/change.txt'))).toBe(true);
+    // ...but nothing under dist/ was: the sweep's after-content read is
+    // bounded by scope, not only by size.
     expect(reads.some((path) => path.includes('/dist/'))).toBe(false);
   });
 
@@ -150,7 +165,11 @@ describe('out-of-scope matching (issue #115, §35/§42.5)', () => {
     const baseline = captureBaseline(root);
     expect(baseline['dist/a.js']).toMatch(/^[0-9a-f]{64}$/);
 
+    expect(baseline['dist/sub/b.js']).toMatch(/^[0-9a-f]{64}$/);
+
     writeFileSync(join(root, 'dist', 'a.js'), 'rebuilt\n');
+    // The delete direction: only the baseline can name this path now.
+    rmSync(join(root, 'dist', 'sub', 'b.js'));
     const added = reconcile(
       journal,
       baseline,

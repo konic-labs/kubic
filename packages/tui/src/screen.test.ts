@@ -1,5 +1,4 @@
 // Slice B: alt-screen boot/stop lifecycle (issue #22; §16.1).
-// RED: bootScreen does not exist yet.
 import { describe, expect, it } from 'vitest';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
@@ -58,8 +57,12 @@ describe('screen lifecycle (issue #22, slice B)', () => {
       status: new Text('status'),
       editor: new Text('editor'),
     });
+    const count = (text: string, needle: string): number =>
+      text.split(needle).length - 1;
     const screen = bootScreen(terminal, root);
     expect(terminal.started).toBe(1);
+    // Boot enters the alt screen exactly once.
+    expect(count(terminal.writes.join(''), '?1049h')).toBe(1);
     screen.render();
     const firstFrame = terminal.writes.join('').length;
     screen.render();
@@ -75,7 +78,8 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     screen.stop((line: string) => printed.push(line));
     expect(printed.join('\n')).toContain('body');
     // Stop leaves the alt screen (restore to main) exactly once.
-    expect(terminal.writes.join('')).toContain('?1049l');
+    expect(count(terminal.writes.join(''), '?1049l')).toBe(1);
+    expect(count(beforeStop, '?1049l')).toBe(0);
     // C3: stop must unset the layout root before restoring the main
     // screen — otherwise TuiAltScreen.afterTerminalStop repaints the
     // full layout frame onto the main screen (mutant: +1.4KB writes).

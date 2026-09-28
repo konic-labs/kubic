@@ -197,6 +197,7 @@ describe('eval command (issue #53)', () => {
     );
     expect(exit).toBe(0);
     expect(ran).toBe(false);
+    expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
   });
 });
 
@@ -245,11 +246,13 @@ describe('benchmark command (issue #53)', () => {
     expect(stubs.length).toBeGreaterThan(0);
     for (const stub of stubs) {
       expect(stub.success).toBe(false);
+      expect((stub as { skipped?: boolean }).skipped).toBe(true);
     }
   });
 
   it('runs a single suite via --suite swe', async () => {
     const o = out();
+    const ran: string[] = [];
     const exit = await runBenchmarkCommand(
       [
         '--suite',
@@ -265,9 +268,17 @@ describe('benchmark command (issue #53)', () => {
         '--workspace',
         'worktree',
       ],
-      { ...deps, out: o.write },
+      {
+        ...deps,
+        runSuite: async (suiteId: string) => {
+          ran.push(suiteId);
+          return deps.runSuite();
+        },
+        out: o.write,
+      },
     );
     expect(exit).toBe(0);
+    expect(ran).toEqual(['swe-bench-mini']);
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
   });
 

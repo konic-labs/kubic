@@ -2,10 +2,10 @@
 // model terminates within the bound with a §78 budget_exhausted exit and
 // the journal:/usage:/trajectory: ref triple intact. Faux-only: the lane
 // is stubbed at the boot seam, the drive loop runs real — zero network.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { bootSoloLane, type SoloLane } from '../../worker/src/lane/solo.js';
@@ -29,8 +29,12 @@ vi.mock('../../worker/src/lane/solo.js', async (importOriginal) => {
   return { ...actual, bootSoloLane: vi.fn() };
 });
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-guard-'));
+  const dir = mkdtempSync(join(tmpdir(), 'run-guard-'));
+  made.push(dir);
+  return dir;
 }
 
 function fauxModels(texts: string[]): MutableModels {
@@ -84,9 +88,18 @@ function out(): { lines: string[]; write: (line: string) => void } {
 }
 
 beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
   bootWith(
     stubLane((() => new Promise<never>(() => {})) as AgentLane['drive']),
   );
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('run guard flags (issue #84)', () => {

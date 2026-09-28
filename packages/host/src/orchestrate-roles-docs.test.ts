@@ -11,7 +11,14 @@
 //      root's own path, prints a contradictory role's named reason — the
 //      same refusal the orchestrate run fails closed with.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,15 +38,59 @@ function prose(file: string): string {
   return readFileSync(join(ROOT, file), 'utf8').replace(/\s+/g, ' ');
 }
 
+// Every tracked markdown file. `git ls-files` is the source (never a plain
+// directory walk: gitignored trees such as docs/design/ legitimately describe
+// intent). Under Stryker the suite runs from a gitignored sandbox copy
+// (.stryker-tmp/sandbox-*/) where git lists nothing; Stryker copies only
+// non-ignored files there, so a walk that skips the gitignored trees IS the
+// tracked set. The non-empty guard below keeps both paths honest.
+const GITIGNORED_TREES = new Set([
+  '.git',
+  '.stryker-tmp',
+  'coverage',
+  'dist',
+  'docs/design',
+  'node_modules',
+  'pi',
+  'reports',
+  '.kubic/artifacts',
+  '.kubic/journal',
+  '.kubic/orchestrator',
+  '.kubic/sessions',
+  '.kubic/wt',
+]);
+
+function markdownOnDisk(dir = ''): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    const rel = dir === '' ? entry.name : `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (!GITIGNORED_TREES.has(rel) && entry.name !== 'node_modules') {
+        found.push(...markdownOnDisk(rel));
+      }
+    } else if (entry.isFile() && rel.endsWith('.md')) {
+      found.push(rel);
+    }
+  }
+  return found;
+}
+
 function trackedDocs(): string[] {
-  const out = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  });
-  return out
+  let listed = '';
+  try {
+    listed = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    // Not a git checkout at all: fall through to the walk.
+  }
+  const files = listed
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.endsWith('.md'));
+  return files.length > 0 ? files : markdownOnDisk().sort();
 }
 
 describe('no tracked doc claims roles are absent from the delegation path (#104)', () => {
@@ -127,8 +178,9 @@ describe('no tracked doc claims roles are absent from the delegation path (#104)
 });
 
 describe('kubic doctor prints the role refusal the run fails closed with (#104)', () => {
-  it('a contradictory document is one named failing check on the doctor path', async () => {
+  it('a contradictory document is one named failing check on the doctor path', async (context) => {
     const cwd = mkdtempSync(join(tmpdir(), 'kubic-104-doctor-'));
+    context.onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
     mkdirSync(join(cwd, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(cwd, '.kubic', 'roles', 'planner.md'),

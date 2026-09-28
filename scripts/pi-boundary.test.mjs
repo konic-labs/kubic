@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { checkPinned } from './check-pinned-deps.mjs';
 import { checkTree } from './dep-lint.mjs';
@@ -26,8 +27,19 @@ const PI_DEPS = [
 ];
 const PI_VERSION = '0.87.1';
 
+const scratchDirs = [];
+after(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+function scratchDir(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
 function fixturePackageJson(deps) {
-  const dir = mkdtempSync(join(tmpdir(), 'pinned-'));
+  const dir = scratchDir('pinned-');
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify({ name: 'fixture', private: true, dependencies: deps }),
@@ -63,7 +75,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('pinned check rejects ranges in optionalDependencies', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pinned-opt-'));
+    const dir = scratchDir('pinned-opt-');
     writeFileSync(
       join(dir, 'package.json'),
       JSON.stringify({
@@ -88,8 +100,8 @@ describe('pi pinning + boundary (issue #4)', () => {
     }
   });
 
-  it('pi-boundary.ts is the only file allowed Pi imports', () => {
-    const okDir = mkdtempSync(join(tmpdir(), 'piseam-ok-'));
+  it('pi-boundary.ts itself may import Pi', () => {
+    const okDir = scratchDir('piseam-ok-');
     mkdirSync(join(okDir, 'packages', 'worker', 'src'), { recursive: true });
     writeFileSync(
       join(okDir, 'packages', 'worker', 'src', 'pi-boundary.ts'),
@@ -99,7 +111,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('worker files outside pi-boundary.ts must not import Pi', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'piseam-bad-'));
+    const dir = scratchDir('piseam-bad-');
     mkdirSync(join(dir, 'packages', 'worker', 'src'), { recursive: true });
     writeFileSync(
       join(dir, 'packages', 'worker', 'src', 'tools.ts'),
@@ -115,7 +127,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('similarly-suffixed worker files must not import Pi', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'piseam-suffix-'));
+    const dir = scratchDir('piseam-suffix-');
     mkdirSync(join(dir, 'packages', 'worker', 'src'), { recursive: true });
     writeFileSync(
       join(dir, 'packages', 'worker', 'src', 'fake-pi-boundary.ts'),
@@ -131,7 +143,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('non-worker packages must not import Pi', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'piseam-host-'));
+    const dir = scratchDir('piseam-host-');
     mkdirSync(join(dir, 'packages', 'host', 'src'), { recursive: true });
     writeFileSync(
       join(dir, 'packages', 'host', 'src', 'dispatch.ts'),
@@ -297,7 +309,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('pinned check skips invalid manifests and missing trees', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pinned-bad-'));
+    const dir = scratchDir('pinned-bad-');
     writeFileSync(join(dir, 'package.json'), 'not json\n');
     assert.deepEqual(checkPinned(dir), []);
   });
@@ -353,18 +365,17 @@ describe('pi pinning + boundary (issue #4)', () => {
     const dir = fixturePackageJson({
       '@earendil-works/pi-ai': '^0.85.1',
     });
-    try {
-      execFileSync(
-        process.execPath,
-        [join(ROOT, 'scripts', 'check-pinned-deps.mjs'), dir],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-      assert.fail('CLI passed on an unpinned tree');
-    } catch (err) {
-      assert.equal(err.status, 1);
-      assert.match(err.stdout, /is not an exact pin/);
-      assert.match(err.stdout, /1 unpinned Pi dependency\(ies\)/);
-    }
+    // spawnSync, not execFileSync in a try/catch: the catch would also
+    // swallow an assert.fail thrown inside the try.
+    const result = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'check-pinned-deps.mjs'), dir],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 1, 'CLI must exit 1 on an unpinned tree');
+    assert.match(result.stdout, /is not an exact pin/);
+    assert.match(result.stdout, /1 unpinned Pi dependency\(ies\)/);
+    assert.doesNotMatch(result.stdout, /pi pins OK/);
   });
 
   it('pinned check rejects ranges in devDependencies', () => {
@@ -403,7 +414,7 @@ describe('pi pinning + boundary (issue #4)', () => {
   });
 
   it('pinned check tolerates missing packages and apps trees', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pinned-empty-'));
+    const dir = scratchDir('pinned-empty-');
     writeFileSync(
       join(dir, 'package.json'),
       JSON.stringify({ name: 'fixture', private: true }),

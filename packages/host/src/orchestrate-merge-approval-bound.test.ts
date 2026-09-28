@@ -20,7 +20,7 @@
 // "operator said no" from "nobody answered in time" (issue #129's rule,
 // applied to this seat). A plain `true`/`false` seam keeps its shipped
 // meaning: `true` approves, `false` is an explicit deny.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -40,9 +40,21 @@ import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.j
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import type { ApprovalSnapshot } from './orchestrator/merge/conflicts.js';
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchDir(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-130-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-130-'));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function policy(maxPendingMs: number): ApprovalSnapshot {
   return { route: 'ask-user', autoApprove: [], maxPendingMs };

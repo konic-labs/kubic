@@ -1,13 +1,26 @@
 // Slice C: baseline capture + end-of-run reconciliation (issue #17; §42.1/42.5).
 // RED: captureBaseline/reconcile do not exist yet.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { captureBaseline, FileJournalStore, reconcile } from './journal.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function workspace(): string {
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const root = tmpRoot('ws-');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
   writeFileSync(join(root, 'change.txt'), 'before\n');
   writeFileSync(join(root, 'skip.log'), 'noise\n');
@@ -20,6 +33,8 @@ function workspace(): string {
 describe('journal baseline + reconciliation (issue #17, slice C)', () => {
   it('captures hashes and excludes gitignored, out-of-scope, and .kubic paths', () => {
     const root = workspace();
+    mkdirSync(join(root, '.kubic'));
+    writeFileSync(join(root, '.kubic', 'state.json'), '{}\n');
     const baseline = captureBaseline(root, { outOfScope: ['change.txt'] });
     expect(Object.keys(baseline).sort()).toEqual(['.gitignore', 'keep.txt']);
     expect(baseline['keep.txt']).toMatch(/^[0-9a-f]{64}$/);
@@ -32,7 +47,7 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
     // says `/pi/` walked that whole tree into the baseline (measured on the
     // Kubic repo root: 2688 hashed files in ~12s, 2196 of them under pi/).
     // Only unanchored rules (skip.log, build/) were covered before this test.
-    const root = mkdtempSync(join(tmpdir(), 'ws-anchored-'));
+    const root = tmpRoot('ws-anchored-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     mkdirSync(join(root, 'pi'));
     writeFileSync(join(root, 'pi', 'upstream.ts'), 'vendored\n');
@@ -61,7 +76,7 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
 
   it('marks externally changed files unattributed with after-content', () => {
     const root = workspace();
-    const journal = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const journal = new FileJournalStore(tmpRoot('j-'));
     const baseline = captureBaseline(root, { outOfScope: [] });
     // sed -i equivalent: bypasses Kubic ops entirely.
     writeFileSync(join(root, 'change.txt'), 'after\n');
@@ -86,7 +101,7 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
 
   it('adds nothing for intercepted-then-unmodified files, and reports deletes', () => {
     const root = workspace();
-    const journal = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const journal = new FileJournalStore(tmpRoot('j-'));
     const baseline = captureBaseline(root, { outOfScope: [] });
     journal.append({
       path: 'change.txt',
@@ -100,11 +115,22 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
       timestamp: 1,
     });
     writeFileSync(join(root, 'change.txt'), 'before\n');
+    rmSync(join(root, 'keep.txt'));
     const added = reconcile(journal, baseline, root, {
       sessionId: 's1',
       agentId: 'root',
       timestamp: 2,
     });
-    expect(added).toBe(0);
+    // Only the external delete is new; the intercepted no-op write adds none.
+    expect(added).toBe(1);
+    const swept = journal.entries().slice(1);
+    expect(swept).toHaveLength(1);
+    expect(swept[0]).toMatchObject({
+      path: 'keep.txt',
+      op: 'delete',
+      unattributed: true,
+      beforeHash: baseline['keep.txt'],
+      afterHash: null,
+    });
   });
 });

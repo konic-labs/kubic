@@ -1,6 +1,12 @@
 // Slice D: lane journal wiring + durable next-day undo (issue #17; §42.4).
 // RED: SoloBootOptions has no journal; restoreEntry does not exist.
-import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -18,15 +24,25 @@ import {
 import { bootSoloLane, driveToSettled } from './solo.js';
 
 const openSessions: Session[] = [];
+const scratchDirs: string[] = [];
 afterAll(async () => {
-  for (const session of openSessions) {
+  for (const session of openSessions.splice(0)) {
     await session.close(BACKGROUND_CONTEXT);
+  }
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
 describe('lane journal wiring (issue #17, slice D)', () => {
   it('records a lane write into the session journal with toolCallId', async () => {
-    const journal = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const journal = new FileJournalStore(scratch('j-'));
     const env = new FakeExecutionEnv({});
     const repo = new MemorySessionRepo();
     const session = await repo.create({}, BACKGROUND_CONTEXT);
@@ -36,7 +52,11 @@ describe('lane journal wiring (issue #17, slice D)', () => {
     models.setProvider(faux.provider);
     faux.setResponses([
       fauxAssistantMessage([
-        fauxToolCall('write', { path: 'n.txt', content: 'hi\n' }),
+        fauxToolCall(
+          'write',
+          { path: 'n.txt', content: 'hi\n' },
+          { id: 'call-write-1' },
+        ),
       ]),
       fauxAssistantMessage('wrote it'),
     ]);
@@ -63,14 +83,16 @@ describe('lane journal wiring (issue #17, slice D)', () => {
     const entries = journal.entries();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.op).toBe('create');
-    expect(entries[0]?.toolCallId).toMatch(/^.+$/);
+    // The journal row carries the model's own tool call id, not a synthetic one.
+    expect(entries[0]?.toolCallId).toBe('call-write-1');
+    expect(env.fs.readFile('n.txt')).toBe('hi\n');
   });
 });
 
 describe('durable next-day undo (issue #17, slice D)', () => {
   it('reopens the journal from disk and restores before-content', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const dir = scratch('j-');
+    const root = scratch('ws-');
     writeFileSync(join(root, 'a.txt'), 'original\n');
     const dayOne = new FileJournalStore(dir);
     const recorded = dayOne.append({
@@ -90,13 +112,14 @@ describe('durable next-day undo (issue #17, slice D)', () => {
     writeFileSync(join(root, 'a.txt'), 'changed\n');
     const result = restoreEntry(dayTwo, recorded, root);
     expect(result).toEqual({ restored: true });
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('original\n');
     const entries = dayTwo.entries();
     expect(entries).toHaveLength(1);
   });
 
   it('reports unattributed entries non-reversible instead of corrupting', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const dir = scratch('j-');
+    const root = scratch('ws-');
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: 'x.txt',
@@ -118,8 +141,8 @@ describe('durable next-day undo (issue #17, slice D)', () => {
   });
 
   it('refuses to restore entry paths escaping the workspace root', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const dir = scratch('j-');
+    const root = scratch('ws-');
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: '../evil.txt',
@@ -139,13 +162,13 @@ describe('durable next-day undo (issue #17, slice D)', () => {
   });
 
   it('still restores dot-dot names that stay inside, and refuses symlink parents', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const dir = scratch('j-');
+    const root = scratch('ws-');
     // Issue #108: restoreEntry verifies the disk sits at the entry's
     // recorded after-state before writing — seed the after-content so the
     // restore path is exercised rather than the staleness refusal.
     writeFileSync(join(root, '..foo'), 'after\n');
-    const outside = mkdtempSync(join(tmpdir(), 'out-'));
+    const outside = scratch('out-');
     symlinkSync(outside, join(root, 'linked'));
     const store = new FileJournalStore(dir);
     const inside = store.append({

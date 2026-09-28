@@ -71,7 +71,12 @@ describe('buildCodingRecord (issue #54)', () => {
   it('rejects a stripped coding record with an error', () => {
     const built = buildCodingRecord(makeExport({}));
     const { provenance: _dropped, ...stripped } = built;
-    expect(validateCodingRecord(stripped).valid).toBe(false);
+    const checked = validateCodingRecord(stripped);
+    expect(checked.valid).toBe(false);
+    if (!checked.valid) {
+      expect(checked.errors.join(' ')).toMatch(/provenance/i);
+      expect(checked.record).toBeUndefined();
+    }
   });
 });
 

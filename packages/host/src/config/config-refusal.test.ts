@@ -9,7 +9,10 @@
 // still run so the operator can see the named reason.
 import { describe, expect, it } from 'vitest';
 import type { CliConfigResult } from '../../../../apps/kubic/src/config-runtime.js';
-import { configRefusalExit } from '../../../../apps/kubic/src/config-runtime.js';
+import {
+  configRefusalExit,
+  requireRuntimeConfig,
+} from '../../../../apps/kubic/src/config-runtime.js';
 
 function refused(reason: string): CliConfigResult {
   return {
@@ -36,12 +39,15 @@ describe('a refused config fails closed on the agent-executing modes', () => {
     expect(exit).toBe(1);
   });
 
+  // The stopped modes print `result.error` (pinned in dispatch.test.ts); the
+  // reporting commands surface it through requireRuntimeConfig, which must
+  // throw the named reason instead of handing back defaults.
   it('names the refusal so the operator can fix the key', () => {
-    const exit = configRefusalExit(
-      refused("layer 'project': unknown section '[bogus]'"),
-      'run',
-    );
-    expect(exit).toBe(1);
+    expect(() =>
+      requireRuntimeConfig(
+        refused("layer 'project': unknown section '[bogus]'"),
+      ),
+    ).toThrow("layer 'project': unknown section '[bogus]'");
   });
 
   it.each(['config', 'doctor'])('lets `kubic %s` report it', (command) => {
@@ -65,12 +71,6 @@ describe('a refused config fails closed on the agent-executing modes', () => {
       'replay',
     );
     expect(exit).toBe(1);
-  });
-
-  it('names the replay refusal so the operator can fix the key', () => {
-    const result = refused("layer 'project': unknown section '[bogus]'");
-    expect(configRefusalExit(result, 'replay')).toBe(1);
-    expect(result.error).toContain("unknown section '[bogus]'");
   });
 
   it('does not interfere when the config loaded', () => {

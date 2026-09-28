@@ -5,7 +5,7 @@
 // coarse cells — no token deltas (Pi keeps those; §15 routes no message
 // events). Pure: entries in, cells out, no I/O.
 import { describe, expect, it } from 'vitest';
-import { entriesToCells } from './lane-cells.js';
+import { entriesToCells, TOOL_RESULT_MAX_CHARS } from './lane-cells.js';
 
 function userEntry(id: string, seq: number, text: string) {
   return {
@@ -67,17 +67,38 @@ describe('lane entries to transcript cells (issue #88)', () => {
         },
       },
     ]);
-    expect(cells).toHaveLength(1);
-    expect(cells[0]?.kind).toBe('output');
-    expect(cells[0]?.markdown.startsWith('line one')).toBe(true);
-    expect(cells[0]?.markdown.length).toBeLessThan(long.length);
+    // Collapsed to one line, cut at the bound, and marked with an ellipsis.
+    const oneLine = `line one ${'x'.repeat(500)}`;
+    expect(cells).toEqual([
+      {
+        id: 'r1:result',
+        kind: 'output',
+        markdown: `${oneLine.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`,
+      },
+    ]);
   });
 
   it('skips entries it cannot render and keeps ids unique', () => {
     const cells = entriesToCells([
       { id: 'c1', seq: 5, type: 'compaction' },
       assistantEntry('a1', 6, [{ type: 'thinking', text: 'hmm' }]),
+      // No id: a cell id could not be derived, so it is dropped.
+      {
+        seq: 7,
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: 'orphan' }] },
+      },
+      // Several parts of one entry: each cell id carries its part index.
+      assistantEntry('a2', 8, [
+        { type: 'text', text: 'first' },
+        { type: 'toolCall', name: 'read', arguments: {} },
+        { type: 'text', text: 'second' },
+      ]),
     ]);
-    expect(cells).toEqual([]);
+    expect(cells.map((cell) => cell.id)).toEqual([
+      'a2:text',
+      'a2:1',
+      'a2:text:2',
+    ]);
   });
 });

@@ -53,10 +53,9 @@ describe('org audit record', () => {
     expect(record.posture).toBe('restricted');
   });
 
-  it('credential sentinel never carries secret material', () => {
+  it('credential sentinel names the reference, never the value', () => {
     const sentinel = toCredentialSentinel('$API_KEY');
-    expect(sentinel).not.toContain(FAUX_A);
-    expect(sentinel).not.toContain(FAUX_B);
+    expect(sentinel).toBe('sentinel:$API_KEY');
     const sink = createMemorySink();
     const record = emitAudit(
       [sink],
@@ -66,8 +65,28 @@ describe('org audit record', () => {
       },
       { secrets: [FAUX_A, FAUX_B], now: () => 1_700_000_000_000 },
     );
-    expect(JSON.stringify(record)).not.toContain(FAUX_A);
-    expect(JSON.stringify(record)).not.toContain(FAUX_B);
+    expect(record.credential.sentinel).toBe('sentinel:$API_KEY');
+    expect(sink.records).toEqual([record]);
+  });
+
+  it('refuses a listed (unshaped) secret anywhere in the record', () => {
+    // Not secret-SHAPED, so only the listed inventory can catch it.
+    const listed = 'plain-inventory-value-0001';
+    const sink = createMemorySink();
+    expect(() =>
+      emitAudit(
+        [sink],
+        { ...baseInput(), reason: `denied: saw ${listed}` },
+        { secrets: [listed] },
+      ),
+    ).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+    // The same record without the inventory is emitted: the refusal above
+    // came from the listed-secret rule, not the shape backstop.
+    expect(
+      emitAudit([sink], { ...baseInput(), reason: `denied: saw ${listed}` })
+        .reason,
+    ).toBe(`denied: saw ${listed}`);
   });
 
   it('rejects a sentinel smuggling secret-shaped material', () => {

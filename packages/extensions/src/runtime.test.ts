@@ -135,12 +135,16 @@ describe('first-party bundle startup gate (issue #93)', () => {
     });
     const gate = budgetToolGate(startup);
     expect(gate.id).toBe('extension-budget');
-    const call = gate.wrap(async () => 'ran', 'read') as (
-      ...args: unknown[]
-    ) => Promise<string>;
+    let runs = 0;
+    const call = gate.wrap(async () => {
+      runs += 1;
+      return 'ran';
+    }, 'read') as (...args: unknown[]) => Promise<string>;
     await expect(call()).resolves.toBe('ran');
     await expect(call()).rejects.toThrow(ExtensionBudgetError);
     await expect(call()).rejects.toThrow(/toolCalls/);
+    // A refused call never reaches the tool.
+    expect(runs).toBe(1);
   });
 
   it('lets tool calls through when the loaded budget has no tool-call limit', async () => {
@@ -151,6 +155,8 @@ describe('first-party bundle startup gate (issue #93)', () => {
     const call = gate.wrap(async () => 'ran', 'read') as (
       ...args: unknown[]
     ) => Promise<string>;
-    await expect(call()).resolves.toBe('ran');
+    for (let i = 0; i < 5; i += 1) {
+      await expect(call()).resolves.toBe('ran');
+    }
   });
 });

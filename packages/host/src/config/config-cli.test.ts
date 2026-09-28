@@ -113,12 +113,15 @@ describe('kubic config (issue #90)', () => {
 
   it('redacts secret-shaped material from a load failure', () => {
     const { lines, out } = collect();
-    runConfigCommand([], {
+    const code = runConfigCommand([], {
       load: () => {
         throw new Error('bad value sk-live-abcdef1234567890 in [ui]');
       },
       out,
     });
+    expect(code).toBe(CONFIG_EXIT_FAIL);
+    // Redacted, not dropped: the reason still reaches the operator.
+    expect(lines.join('\n')).toContain('in [ui]');
     expect(lines.join('\n')).not.toContain('sk-live-abcdef1234567890');
   });
 

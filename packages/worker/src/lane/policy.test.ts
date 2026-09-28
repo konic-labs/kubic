@@ -72,8 +72,9 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
         'write',
       ].sort(),
     );
-    expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).toEqual(
-      expect.arrayContaining(['read', 'bash']),
+    // The lane enforces exactly the allowlist the policy reported.
+    expect([...(await lane.getActiveTools(BACKGROUND_CONTEXT))].sort()).toEqual(
+      allowed.sort(),
     );
   });
 
@@ -103,9 +104,8 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
       BACKGROUND_CONTEXT,
     );
     expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
-    expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).toEqual(
-      expect.arrayContaining(['read']),
+    expect([...(await lane.getActiveTools(BACKGROUND_CONTEXT))].sort()).toEqual(
+      allowed.sort(),
     );
-    expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).not.toContain('bash');
   });
 });

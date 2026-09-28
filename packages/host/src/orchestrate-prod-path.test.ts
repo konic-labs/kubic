@@ -15,11 +15,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
@@ -44,9 +45,21 @@ const PROVENANCE: Provenance = {
   operation: 'orchestrate_prod_path',
 };
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 async function gitIn(
   cwd: string,
@@ -151,6 +164,13 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     // "Session already exists".
     const second = await deps.createWorkerSession?.(request);
     expect(second?.sessionId).toBe('prodsess-worker-1');
+    // Reused, not recreated: still exactly one session file on disk.
+    const sessionFiles = createNodeFileBridge(
+      sessionDirName(sessionsRoot, added.path),
+    )
+      .listDir('.')
+      .filter((entry) => entry.name.endsWith('.jsonl'));
+    expect(sessionFiles).toHaveLength(1);
     const store = openSessionStore(
       sessionsRoot,
       createNodeFileBridge(sessionsRoot),

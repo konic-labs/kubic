@@ -241,9 +241,17 @@ describe('trust-gated project-local config (issue #38)', () => {
   });
 
   it('refuses untrusted project files at load time without reading them', () => {
-    const bridge = fakeBridge({
+    const reads: string[] = [];
+    const inner = fakeBridge({
       '/repo/.kubic/config.toml': 'garbage [[[',
     });
+    const bridge: BridgePick = {
+      exists: inner.exists,
+      readTextFile: (path: string): string => {
+        reads.push(path);
+        return inner.readTextFile(path);
+      },
+    };
     const paths = defaultLayerPaths({
       home: '/home/u',
       projectRoot: '/repo',
@@ -251,6 +259,7 @@ describe('trust-gated project-local config (issue #38)', () => {
     expect(() => loadLayered(bridge, paths, { projectTrusted: false })).toThrow(
       ProjectUntrustedError,
     );
+    expect(reads).toEqual([]);
   });
 
   it('loads layered files through the FileBridge when trusted', () => {
@@ -760,7 +769,7 @@ describe('layered load hardening (issue #69)', () => {
     expect(() => loadLayered(bridge, paths)).toThrow(/layer 'global'/);
   });
 
-  it('skips project files pre-trust even when absent layers exist', () => {
+  it('loads the other layers pre-trust when no project file exists', () => {
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
     });

@@ -47,6 +47,7 @@ describe('session-scoped skip (issue #48)', () => {
     );
     const event = buildSessionSkipAuditEvent(record, 'enabled');
     expect(event.type).toBe('session-skip');
+    expect(event.action).toBe('enabled');
     expect(JSON.stringify(event)).toContain('s1');
     const off = buildSessionSkipAuditEvent(record, 'disabled');
     expect(off.action).toBe('disabled');
@@ -62,6 +63,7 @@ describe('session-scoped skip (issue #48)', () => {
     expect(check.status).toBe('fail');
     expect(check.detail).toMatch(/full-access/);
     const enforced = buildSessionSkipDoctorCheck('s2', [record]);
+    expect(enforced.status).toBe('pass');
     expect(enforced.detail).toMatch(/enforced/);
   });
 });

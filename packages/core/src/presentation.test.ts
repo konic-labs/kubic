@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import type { KubicPresentationState } from './presentation.js';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type {
+  AgentSummary,
+  KubicPresentationState,
+  LaneSnapshot,
+  WorkerSummary,
+} from './presentation.js';
 import {
   isPresentationCommand,
   PRESENTATION_COMMANDS,
@@ -74,19 +79,18 @@ describe('presentation contract (issue #5, §66)', () => {
   });
 
   it('holds replicated snapshots in keyed maps', () => {
-    const state: KubicPresentationState = {
-      session: { sessionId: 's1' },
-      agents: new Map([
-        ['a1', { agentId: 'a1', role: 'implementer', status: 'running' }],
-      ]),
-      lanes: new Map([['l1', { laneId: 'l1' }]]),
-      workers: new Map([['w1', { workerId: 'w1' }]]),
-      approvals: [{ requestId: 'r1' }],
-      usage: { inputTokens: 1, outputTokens: 2, costUsd: 0.01 },
-      connection: { status: 'connected' },
-    };
-    expect(state.agents.get('a1')?.role).toBe('implementer');
-    expect(state.lanes.size).toBe(1);
+    // Type-level contract (checked by `tsc`): the replicated collections are
+    // id-keyed maps, not arrays. Building a literal and reading it back would
+    // only assert what the test itself wrote.
+    expectTypeOf<KubicPresentationState['agents']>().toEqualTypeOf<
+      ReadonlyMap<string, AgentSummary>
+    >();
+    expectTypeOf<KubicPresentationState['lanes']>().toEqualTypeOf<
+      ReadonlyMap<string, LaneSnapshot>
+    >();
+    expectTypeOf<KubicPresentationState['workers']>().toEqualTypeOf<
+      ReadonlyMap<string, WorkerSummary>
+    >();
   });
 
   it('command guard accepts known and rejects unknown commands', () => {

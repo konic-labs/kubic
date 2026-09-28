@@ -386,15 +386,17 @@ describe('launchWorker (issue #94)', () => {
   });
 
   it('builds the §68 worker result from what the child actually did', async () => {
+    let now = 5_000;
     const child = controllable();
-    const registry = new WorkerRegistry(() => 0);
+    const registry = new WorkerRegistry(() => now);
     const launched = launchWorker(request(), {
       shell: child.shell,
       registry,
-      clock: () => 0,
+      clock: () => now,
     });
     child.emit(`${READY}\n`);
     await launched.ready;
+    now += 70;
     child.exit(0);
     await launched.wait();
     const result = launched.result();
@@ -406,7 +408,8 @@ describe('launchWorker (issue #94)', () => {
     // The result survives the contract's own validator — the worker
     // contract cannot drift from what the launch emits (§68 closed world).
     expect(validateAgentResult(result)).toMatchObject({ valid: true });
-    expect(result.metrics.wallMs).toBeGreaterThanOrEqual(0);
+    // Wall time is the injected clock's span from spawn to exit.
+    expect(result.metrics.wallMs).toBe(70);
   });
 
   it('reports a failed launch as a §68 result carrying the error kind', async () => {

@@ -49,7 +49,7 @@ async function bootWith(installed: InstalledSoloPolicy) {
       contributions: installed.contributions,
     },
   });
-  return { solo, session };
+  return { solo, session, env };
 }
 
 function callTool(
@@ -139,7 +139,7 @@ describe('installed policy on a live lane (issue #86, criterion 1)', () => {
 
   it('refuses a tool outside the allowlist at execute time with PolicyDeniedError', async () => {
     const classes = { ...SOLO_DEFAULTS, shell: false as const };
-    const { solo, session } = await bootWith(
+    const { solo, session, env } = await bootWith(
       installSoloPolicy({ workspace: '/fake', classes }),
     );
     try {
@@ -152,16 +152,18 @@ describe('installed policy on a live lane (issue #86, criterion 1)', () => {
         callTool(bash as { execute: (...args: unknown[]) => unknown }, 'bash'),
       ).rejects.toThrow(PolicyDeniedError);
       const read = tools.find((tool) => tool.name === 'read');
-      await expect(
-        (read as { execute: (...args: unknown[]) => unknown }).execute(
-          'call-2',
-          { path: '/fake/notes.txt' },
-          () => undefined,
-          { env: new FakeExecutionEnv({}) } as never,
-          {} as never,
-          BACKGROUND_CONTEXT,
-        ),
-      ).resolves.toBeDefined();
+      // The allowlisted tool passes the same wrapper and really executes.
+      const readResult = (await (
+        read as { execute: (...args: unknown[]) => unknown }
+      ).execute(
+        'call-2',
+        { path: 'notes.txt' },
+        () => undefined,
+        { env } as never,
+        {} as never,
+        BACKGROUND_CONTEXT,
+      )) as { content: Array<{ text?: string }> };
+      expect(readResult.content[0]?.text).toContain('workspace notes');
     } finally {
       await session.close(BACKGROUND_CONTEXT);
     }

@@ -1,6 +1,6 @@
 // Skills loader tests (issue #36; §29). Faux-only: FakeExecutionEnv + an
 // in-test FileBridge adapter (fs access stays inside packages/exec).
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -442,8 +442,12 @@ describe('skill CLI flags (issue #36)', () => {
   it('ships no fetcher module or flag', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const names = readdirSync(here);
+    // Non-vacuity: the listing is the real skills dir.
+    expect(names).toContain('skills.ts');
     expect(names.some((name) => /fetch|install/i.test(name))).toBe(false);
-    expect(join(here, 'skills.ts')).toBe(join(here, 'skills.ts'));
+    // And the loader itself has no network path to fetch through.
+    const source = readFileSync(join(here, 'skills.ts'), 'utf8');
+    expect(source).not.toMatch(/\bfetch\(|node:https?\b|node:net\b/);
   });
 });
 

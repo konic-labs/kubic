@@ -1,10 +1,10 @@
 // Slice B: model selection, one-way escalation, thinking clamp+persist
 // (issue #20; §38).
 // RED: selectModel/escalateModel/clampThinking do not exist yet.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   clampThinking,
@@ -16,6 +16,20 @@ import {
   supportedThinking,
 } from './model-select.js';
 import { createModels, fauxProvider } from './pi-boundary.js';
+
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function scratch(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'sess-'));
+  scratchDirs.push(dir);
+  return dir;
+}
 
 function modelsWithFaux(): ReturnType<typeof createModels> {
   const models = createModels();
@@ -75,13 +89,11 @@ describe('model selection + escalation + thinking (issue #20, slice B)', () => {
     expect(Array.isArray(levels)).toBe(true);
     const clamped = clampThinking(models, model, 'max');
     expect(levels.includes(clamped)).toBe(true);
-    const dir = mkdtempSync(join(tmpdir(), 'sess-'));
+    const dir = scratch();
     const bridge = createNodeFileBridge('/');
     saveThinkingLevel(bridge, dir, 'high');
     expect(loadThinkingLevel(bridge, dir)).toBe('high');
-    expect(
-      loadThinkingLevel(bridge, mkdtempSync(join(tmpdir(), 'sess-'))),
-    ).toBe(null);
+    expect(loadThinkingLevel(bridge, scratch())).toBe(null);
     // Tampered sidecar: unknown level reads back null, never propagates.
     writeFileSync(
       join(dir, 'thinking.json'),

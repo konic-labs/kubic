@@ -11,19 +11,20 @@
 //      plus the role's model default via the EXISTING `KUBIC_MODEL` pin.
 // No provider is dialled: the fixture child never reaches a model.
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
-  realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 
@@ -55,9 +56,21 @@ process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '')
 process.exit(0);
 `;
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 async function gitIn(
   cwd: string,
@@ -200,7 +213,13 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       ),
     );
     const code = await runOrchestrateCommand(
-      ['-p', 'do the thing', '--agents', 'alpha,beta', '--yes'],
+      [
+        '-p',
+        `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        '--agents',
+        'alpha,beta',
+        '--yes',
+      ],
       h.deps,
     );
     expect(code).toBe(1);
@@ -209,16 +228,12 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(text).toContain(
       "filesystem is 'read' but write tool 'write' is registered",
     );
-    // Nothing spawned, nothing merged, no retained worktree.
+    // Nothing spawned (a spawned child would have dumped its prompt), nothing
+    // merged, no retained worktree.
     expect(text).not.toMatch(/worker: /);
-    const wt = createNodeFileBridge(join(h.root, '.kubic', 'wt'));
-    let entries: unknown[] = [];
-    try {
-      entries = wt.listDir('.');
-    } catch {
-      entries = [];
-    }
-    expect(entries).toEqual([]);
+    expect(readdirSync(h.dumpDir)).toEqual([]);
+    const wt = join(h.root, '.kubic', 'wt');
+    expect(existsSync(wt) ? readdirSync(wt) : []).toEqual([]);
   });
 
   it('does not leave the run hanging when a role document does not parse', async () => {
@@ -315,7 +330,3 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(readDump(dumpDir, 'alpha', 'model')).toBe('(none)');
   });
 });
-
-// The worktree path is a real directory; the run retains it as evidence, so
-// the refusal test above asserts it was never created.
-void realpathSync;

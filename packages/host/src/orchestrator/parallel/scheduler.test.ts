@@ -131,6 +131,7 @@ describe('parallel FIFO wakeup (issue #47)', () => {
     const woke = sched.complete('a1');
     expect(woke).toEqual(['a5']);
     expect(sched.runningCount()).toBe(4);
+    expect(sched.pendingIds()).toEqual(['a6']);
     expect(logs.some((l) => l.includes('a5') && /wake|admit/i.test(l))).toBe(
       true,
     );
@@ -402,7 +403,8 @@ describe('parallel log sanitizing (issue #47 review)', () => {
       'interactive',
     );
     expect(dup.outcome).toBe('denied');
-    expect(logs.length).toBeGreaterThan(0);
+    // The deny itself is logged — the scan below covers that line.
+    expect(logs.some((l) => l.includes('w2'))).toBe(true);
     for (const line of logs) {
       expect(line.includes('\u001b')).toBe(false);
     }

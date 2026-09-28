@@ -1,4 +1,4 @@
-// Slice A RED: session aggregates from usage rows (issue #27; §39).
+// Slice A: session aggregates from usage rows (issue #27; §39).
 // Fixture rows must sum to exact session cost/tokens with the cache
 // split kept; TTFT/tool-ms are last-wins (latest row reporting wins).
 // Headless + faux-only: no network, no VirtualTerminal (Pi 0.85.1).
@@ -228,14 +228,26 @@ describe('status bar rows (issue #27, slice B)', () => {
       [skipped, 100],
       [basic, 60],
     ] as const) {
-      const lines = bar.render(width);
-      expect(lines).toHaveLength(2);
-      for (const line of lines) {
+      for (const line of bar.render(width)) {
         expect(statusVisibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
-    expect(skipped.render(100)[1]).toContain('OFF');
-    expect(basic.render(60)[1]).toContain('solo');
+    // Headless frames pinned exactly (SGR stripped): a regression in any
+    // segment, separator, or drop order shows up as a frame diff.
+    const frame = (bar: StatusBar, width: number): string[] =>
+      bar.render(width).map(stripSgr);
+    expect(frame(basic, 100)).toEqual([
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'solo • approvals:on • session sess-abc123',
+    ]);
+    expect(frame(skipped, 100)).toEqual([
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'solo • ! warning: approvals OFF (full-access) • session sess-abc123',
+    ]);
+    expect(frame(basic, 60)).toEqual([
+      'test/model… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms',
+      'solo • approvals:on • session sess-abc123',
+    ]);
   });
 });
 
@@ -383,19 +395,23 @@ describe('status bar mutation hardening (issue #68)', () => {
 
   it('truncates the model with an ellipsis when exactly 4 columns remain', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 65);
-    expect(statusVisibleWidth(lines[0])).toBeLessThanOrEqual(65);
-    expect(lines[0]).toContain('…');
+    expect(statusVisibleWidth(lines[0])).toBe(65);
+    // The ellipsis lands on the model (3 chars + '…'), not on the tail.
+    expect(stripSgr(lines[0])).toBe(
+      'tes… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+    );
   });
 
   it('returns the full line when it fits the width exactly', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 99);
+    expect(statusVisibleWidth(lines[0])).toBe(99);
     expect(lines[0]).toContain('thinking medium');
+    expect(lines[0]).not.toContain('…');
   });
 
   it('keeps the session stub at 34 cols where 4 columns remain', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 34);
-    expect(statusVisibleWidth(lines[1])).toBeLessThanOrEqual(34);
-    expect(lines[1]).toContain('session');
+    expect(lines[1]).toBe('solo • approvals:on • session ses…');
   });
 
   it('keeps warning color through the final narrow-OFF fallback at 47 cols', () => {

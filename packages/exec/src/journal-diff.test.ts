@@ -1,9 +1,9 @@
 // Slice A: journal diff core — attributed hunks from entries (issue #18; §42.2).
 // RED: diffEntries/renderDiff do not exist yet.
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
 import {
   clipChangeContent,
@@ -15,8 +15,21 @@ import {
   unifiedHunks,
 } from './journal-diff.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'j-'));
+  roots.push(root);
+  return root;
+}
+
 function seed(): FileJournalStore {
-  const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+  const store = new FileJournalStore(tmpRoot());
   store.append({
     path: 'a.txt',
     op: 'write',
@@ -89,10 +102,10 @@ describe('journal diff core (issue #18, slice A)', () => {
     expect(text).toContain('+TWO');
     expect(text).toContain('agent=root toolCall=call-1');
     expect(text).toContain('unattributed');
-    // JSON form parses with jq semantics: array of change objects.
-    const parsed = JSON.parse(JSON.stringify(diffEntries(seed(), {})));
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0].path).toBe('a.txt');
+    // The JSON form is lossless: every change survives a serialize/parse
+    // round trip unchanged (no Map/Date/undefined-only fields to drop).
+    const changes = diffEntries(seed(), {});
+    expect(JSON.parse(JSON.stringify(changes))).toEqual(changes);
   });
 });
 
@@ -195,10 +208,9 @@ describe('diff --json content clipping (issue #126)', () => {
     const clipped = clipContent('é'.repeat(10), 5);
     expect(clipped.truncated).toBe(true);
     // 4 bytes of é plus half of the next one decode to a replacement char.
-    expect(clipped.text?.startsWith('éé')).toBe(true);
-    expect(
-      clipped.text?.endsWith('\n[kubic: content truncated at 5 bytes]'),
-    ).toBe(true);
+    expect(clipped.text).toBe(
+      'éé\uFFFD\n[kubic: content truncated at 5 bytes]',
+    );
   });
 
   it('the projection clips both sides and flags the change', () => {
@@ -236,7 +248,7 @@ describe('corrupt journal content (issue #111)', () => {
     store: FileJournalStore;
     dir: string;
   } {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const dir = tmpRoot();
     const store = new FileJournalStore(dir);
     const before = 'b\n'.repeat(40_000);
     const after = 'c\n'.repeat(40_000);
@@ -289,7 +301,7 @@ describe('corrupt journal content (issue #111)', () => {
   });
 
   it('a hash-corrupt before-blob marks the change corrupt', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const dir = tmpRoot();
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: 'a.txt',

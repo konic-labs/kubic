@@ -11,16 +11,26 @@
 //   - unreadable/corrupt    → a real failure the operator must see
 // These tests pin the distinction so the fix cannot just swallow errors.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { loadRoles, rolesDoctorProbe } from './roles/roles-boot.js';
 
+const roots: string[] = [];
+
 function cwd(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-roles-absent-'));
+  const root = mkdtempSync(join(tmpdir(), 'kubic-roles-absent-'));
+  roots.push(root);
+  return root;
 }
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function withRoles(files: Record<string, string>): string {
   const root = cwd();
@@ -93,7 +103,9 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
       cwd: root,
       bridge: createNodeFileBridge(root),
     });
-    expect(checks.filter((check) => check.status === 'fail').length).toBe(1);
+    const failing = checks.filter((check) => check.status === 'fail');
+    expect(failing).toHaveLength(1);
+    expect(failing[0]?.detail).toMatch(/unknown frontmatter key 'not_a_key'/);
   });
 
   it('a consistent role document still reports clean', () => {

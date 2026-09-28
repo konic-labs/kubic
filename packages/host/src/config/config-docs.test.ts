@@ -6,10 +6,17 @@
 //
 // This is the docs-drift gate: editing the page without touching the code
 // (or vice versa) fails here, not in a reader's terminal.
-import { readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { resolveMaxConcurrency } from '../orchestrator/parallel/limits.js';
@@ -17,6 +24,7 @@ import { pathForAgent } from '../orchestrator/worktree/naming.js';
 import {
   CONFIG_LAYERS,
   KNOWN_CONFIG_SECTIONS,
+  ProjectUntrustedError,
   parseTomlConfig,
 } from './config.js';
 import {
@@ -46,6 +54,14 @@ function fencedBlocks(text: string): string[] {
   }
   return blocks;
 }
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('configuration docs parse against the implementation (issue #90)', () => {
   it('parses every TOML block on the page', () => {
@@ -197,21 +213,31 @@ describe('configuration docs parse against the implementation (issue #90)', () =
   });
 
   it('loads the documented example through the real FileBridge from disk', () => {
-    // Same content, production bridge: proves the doc example works through
-    // the same I/O path a user's `.kubic/config.toml` takes, and that a
+    // Same content, production bridge: the example is written where a user's
+    // `.kubic/config.toml` lives and read back through the same I/O path. A
     // distrusted project layer is refused by name rather than half-applied.
-    const bridge = createNodeFileBridge(dirname(EXAMPLE));
-    const runtime = loadRuntimeConfig({
-      bridge,
-      home: '/home/u',
-      cwd: '/repo',
-      enterprisePath: '/nonexistent/config.toml',
-      projectTrusted: false,
-      session: parseTomlConfig(readFileSync(EXAMPLE, 'utf8')),
-    });
+    const repo = mkdtempSync(join(tmpdir(), 'kubic-90-docs-'));
+    tempDirs.push(repo);
+    mkdirSync(join(repo, '.kubic'));
+    const configPath = join(repo, '.kubic', 'config.toml');
+    writeFileSync(configPath, readFileSync(EXAMPLE, 'utf8'));
+    const inputs = {
+      bridge: createNodeFileBridge(repo),
+      home: join(repo, 'home'),
+      cwd: repo,
+      enterprisePath: join(repo, 'etc', 'config.toml'),
+    };
+    const runtime = loadRuntimeConfig({ ...inputs, projectTrusted: true });
+    expect(runtime.modelSource).toBe('project');
     expect(runtime.journal.retentionDays).toBe(30);
     expect(runtime.approvals.policy.route).toBe('ask-user');
     expect(runtime.journal.maxAgeMs).toBe(30 * 86_400_000);
+    expect(() =>
+      loadRuntimeConfig({ ...inputs, projectTrusted: false }),
+    ).toThrow(ProjectUntrustedError);
+    expect(() =>
+      loadRuntimeConfig({ ...inputs, projectTrusted: false }),
+    ).toThrow(configPath);
   });
 });
 

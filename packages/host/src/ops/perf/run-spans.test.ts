@@ -141,7 +141,11 @@ describe('RunSpans §50 debug lines (issue #98)', () => {
     spans.endTool('call-7');
     spans.endLane(drive);
     spans.endRun(run);
-    for (const line of spans.debugLines()) {
+    const lines = spans.debugLines();
+    // Non-vacuous: the run, lane and tool all produced lines to check.
+    expect(lines.some((line) => line.startsWith('[agent]'))).toBe(true);
+    expect(lines.some((line) => line.startsWith('[tool]'))).toBe(true);
+    for (const line of lines) {
       expect(line).toMatch(
         /^\[(policy|worker|session|tool|model|agent|exit|handles)\]/,
       );

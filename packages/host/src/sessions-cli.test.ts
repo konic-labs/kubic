@@ -1,8 +1,8 @@
 // Slice F: `kubic sessions` CLI (issue #14).
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   createSession,
@@ -11,9 +11,18 @@ import {
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { runSessionsCommand } from './sessions-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'cli-'));
+  const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -30,12 +39,18 @@ describe('sessions CLI (issue #14, slice F)', () => {
     });
     expect(created).toBe(0);
     expect(o.lines.length).toBe(1);
+    const id = o.lines[0] ?? '';
+    expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
+    // A separate sink: the listing itself must carry the session and its cwd.
+    const listing = out();
     const listed = await runSessionsCommand(['list'], {
       sessionsRoot: root,
-      out: o.write,
+      out: listing.write,
     });
     expect(listed).toBe(0);
-    expect(o.lines.some((line) => line.includes('/work'))).toBe(true);
+    expect(
+      listing.lines.some((line) => line.includes(id) && line.includes('/work')),
+    ).toBe(true);
   });
 
   it('attaches and shows the transcript tail', async () => {
@@ -137,16 +152,20 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
   it('defaults to approvals enforced and rejects bad ids', async () => {
     const root = tmpRoot();
     const o = out();
-    await runSessionsCommand(['create', '--cwd', '/work'], {
-      sessionsRoot: root,
-      out: o.write,
-    });
+    expect(
+      await runSessionsCommand(['create', '--cwd', '/work'], {
+        sessionsRoot: root,
+        out: o.write,
+      }),
+    ).toBe(0);
     const id = o.lines[0] ?? '';
     const o2 = out();
-    await runSessionsCommand(['attach', id, '--tail', '0'], {
-      sessionsRoot: root,
-      out: o2.write,
-    });
+    expect(
+      await runSessionsCommand(['attach', id, '--tail', '0'], {
+        sessionsRoot: root,
+        out: o2.write,
+      }),
+    ).toBe(0);
     expect(
       o2.lines.some((line) => line.includes('posture: approvals enforced')),
     ).toBe(true);

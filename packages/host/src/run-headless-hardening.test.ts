@@ -4,12 +4,12 @@
 // store are mocked at the seam (file-local: vitest isolates modules per
 // test file); persistence still hits a real tmp sessions root. Faux
 // models only: zero network.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
+import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
 import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
 import { createSession } from '../../worker/src/lane/session-store.js';
 import {
@@ -85,8 +85,12 @@ vi.mock('../../worker/src/lane/solo.js', async (importOriginal) => {
   };
 });
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-headless-hardening-'));
+  const dir = mkdtempSync(join(tmpdir(), 'run-headless-hardening-'));
+  made.push(dir);
+  return dir;
 }
 
 function fauxModels(texts: string[]): MutableModels {
@@ -116,6 +120,9 @@ function deps() {
 }
 
 beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
   mockState.closeShouldReject = false;
   vi.mocked(bootSoloLane).mockResolvedValue({
     lane: fakeLane(),
@@ -124,6 +131,12 @@ beforeEach(() => {
     kind: 'settled' as const,
     outcome: { status: 'completed' },
   });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('headless hardening (issue #28, review cycle 2)', () => {
@@ -308,9 +321,15 @@ describe('headless composition root (issue #68; mutation hardening)', () => {
       { sessionsRoot: root, models: fauxModels(['env ok']) },
     );
     expect(result.terminus).toBe('completed');
-    // The mocked lane yields no assistant text. The default-env branch is
-    // proven by the completed run; the summary is the named non-answer
-    // (issue #129), not the prompt.
+    // The default-env branch: the lane booted over a real NodeExecutionEnv
+    // rooted at the process cwd.
+    const booted = vi.mocked(bootSoloLane).mock.calls[0]?.[0] as {
+      env?: unknown;
+    };
+    expect(booted.env).toBeInstanceOf(NodeExecutionEnv);
+    expect((booted.env as NodeExecutionEnv).cwd).toBe(process.cwd());
+    // The mocked lane yields no assistant text: the summary is the named
+    // non-answer (issue #129), not the prompt.
     expect(result.summary).toBe(
       '(no assistant text — the run settled without output)',
     );
@@ -376,7 +395,8 @@ describe('guard drain on exit paths (issue #109)', () => {
   });
 
   it('aborts and drains before the sweep on wall-clock exhaustion', async () => {
-    const events: string[] = [];
+    // One shared log for the drain AND the sweep, so the order is observed.
+    const events = guardEvents.events;
     const { lane, kills } = drainLane(events);
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane,
@@ -387,14 +407,12 @@ describe('guard drain on exit paths (issue #109)', () => {
     );
     const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
     expect(result.terminus).toBe('budget_exhausted');
-    expect(events).toEqual(['abort:op-1', 'kill']);
-    expect(guardEvents.events).toEqual(['sweep']);
-    // Order across the two logs: the drain ran before the sweep started.
-    expect(events.length).toBe(2);
+    // The drain ran before the sweep started.
+    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
   });
 
   it('still drains the kill registry when the lane refuses the abort', async () => {
-    const events: string[] = [];
+    const events = guardEvents.events;
     const { lane, kills } = drainLane(events, true);
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane,
@@ -406,12 +424,11 @@ describe('guard drain on exit paths (issue #109)', () => {
     const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
     expect(result.terminus).toBe('budget_exhausted');
     // abort attempt (threw) → kill drained anyway → then sweep.
-    expect(events).toEqual(['abort:op-1', 'kill']);
-    expect(guardEvents.events).toEqual(['sweep']);
+    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
   });
 
   it('drains on the outer catch-all when the drive throws', async () => {
-    const events: string[] = [];
+    const events = guardEvents.events;
     const { lane, kills } = drainLane(events);
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane,
@@ -420,12 +437,11 @@ describe('guard drain on exit paths (issue #109)', () => {
     vi.mocked(driveToSettled).mockRejectedValue(new Error('drive blew up'));
     const result = await runHeadlessPrompt('boom', {}, deps());
     expect(result.terminus).toBe('failed');
-    expect(events).toEqual(['abort:op-1', 'kill']);
-    expect(guardEvents.events).toEqual(['sweep']);
+    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
   });
 
   it('drains on the waiting-deferred approval path', async () => {
-    const events: string[] = [];
+    const events = guardEvents.events;
     const { lane, kills } = drainLane(events);
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane,
@@ -438,12 +454,11 @@ describe('guard drain on exit paths (issue #109)', () => {
     });
     const result = await runHeadlessPrompt('wait', {}, deps());
     expect(result.terminus).toBe('approval_timed_out');
-    expect(events).toEqual(['abort:op-1', 'kill']);
-    expect(guardEvents.events).toEqual(['sweep']);
+    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
   });
 
   it('does not touch a lane when admission was refused', async () => {
-    const events: string[] = [];
+    const events = guardEvents.events;
     const { lane, kills } = drainLane(events);
     vi.mocked(bootSoloLane).mockResolvedValue({
       lane: {
@@ -458,7 +473,6 @@ describe('guard drain on exit paths (issue #109)', () => {
     const result = await runHeadlessPrompt('refused', {}, deps());
     expect(result.terminus).toBe('failed');
     // No operation was admitted: no abort, no kill — but the sweep ran.
-    expect(events).toEqual([]);
-    expect(guardEvents.events).toEqual(['sweep']);
+    expect(events).toEqual(['sweep']);
   });
 });

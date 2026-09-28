@@ -7,10 +7,16 @@
 // Lives in host because vitest only includes packages/*: it reaches the
 // composition root (apps/kubic) as a real caller plus the CLI the operator
 // runs, exactly as `run-prod-path.test.ts` does. Faux provider only.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { FileJournalStore, restoreEntry } from '../../exec/src/journal.js';
@@ -23,9 +29,25 @@ import {
 } from '../../worker/src/pi-boundary.js';
 import { runJournalCommand } from './journal-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(prefix = 'reconcile-prod-'): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 // bash-mutates-then-settles: the tool call writes a file Kubic never
 // intercepts (bash is replay:"never" and journals nothing), then the lane

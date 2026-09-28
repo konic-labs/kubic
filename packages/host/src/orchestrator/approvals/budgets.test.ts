@@ -52,17 +52,17 @@ describe('orchestrator budgets (issue #48)', () => {
     expect(BUDGET_EXHAUSTED).toBe('BUDGET_EXHAUSTED');
     expect(RUN_EXIT_BUDGET).toBe(3);
     const budget = validateOrchestratorBudget({ maxTokens: 10 });
-    const state = createBurnDown(budget);
-    state.tokens = 10;
-    const hit = checkBudgetExhaustion(budget, {
-      tokens: 10,
+    const usage = {
+      tokens: 9,
       costUsd: 0,
       runtimeMs: 0,
       toolCalls: 0,
       retries: 0,
-    });
-    expect(hit?.status).toBe('budget_exhausted');
-    expect(hit?.status).not.toBe('failed');
+    };
+    // One token under the limit is still inside the budget.
+    expect(checkBudgetExhaustion(budget, usage)).toBeUndefined();
+    const hit = checkBudgetExhaustion(budget, { ...usage, tokens: 10 });
+    expect(hit).toEqual({ status: 'budget_exhausted', limit: 'tokens' });
   });
 
   it('refuses worker self-raise of its own budget', () => {
@@ -82,9 +82,15 @@ describe('orchestrator budgets (issue #48)', () => {
       maxTokens: 100,
       maxToolCalls: 5,
     });
-    const state = createBurnDown(budget);
-    state.tokens = 30;
-    state.toolCalls = 2;
+    // A fresh burn-down starts at zero spend on the injected clock.
+    expect(createBurnDown(budget, () => 1234)).toEqual({
+      tokens: 0,
+      costUsd: 0,
+      runtimeMs: 0,
+      toolCalls: 0,
+      retries: 0,
+      startedAt: 1234,
+    });
     const event = buildBudgetTrajectoryEvent('agent-1', budget, {
       tokens: 30,
       costUsd: 0,
@@ -96,5 +102,12 @@ describe('orchestrator budgets (issue #48)', () => {
     expect(JSON.stringify(event)).toContain('agent-1');
     expect(event.remaining.maxTokens).toBe(70);
     expect(event.remaining.maxToolCalls).toBe(3);
+    // Only configured dims are reported, and nothing is exhausted yet.
+    expect(Object.keys(event.remaining).sort()).toEqual([
+      'maxTokens',
+      'maxToolCalls',
+    ]);
+    expect(event.spent.tokens).toBe(30);
+    expect(event.exhausted).toBeUndefined();
   });
 });

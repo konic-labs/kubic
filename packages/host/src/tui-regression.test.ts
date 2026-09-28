@@ -5,10 +5,10 @@
 // imports @kubic/tui (dep-lint): the fake terminal satisfies the seam
 // structurally. Faux lane boot only — zero network.
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { runTuiCommand } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
@@ -20,9 +20,25 @@ import {
 } from '../../worker/src/pi-boundary.js';
 import { runRunCommand } from './run-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'tui-regression-'));
+  const dir = mkdtempSync(join(tmpdir(), 'tui-regression-'));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -118,6 +134,9 @@ describe('tui entry regression (issue #75)', () => {
     });
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('result: hi');
+    // The hook is inert on this path (run-cli never calls it), so the
+    // observable half is the output: no alt-screen sequence reaches it.
+    expect(lines.join('\n')).not.toContain('?1049h');
   });
 
   it('headless `kubic run` exit codes and transcript are unchanged by the loop (issue #88)', async () => {

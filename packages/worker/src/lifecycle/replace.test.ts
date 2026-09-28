@@ -32,63 +32,55 @@ describe('replaceWorker (issue #42)', () => {
 
   it('kill-during-deferred: memoOnce keeps the approved effect single', async () => {
     const memos = new MemoryMemoStore();
-    const first = await memos.once('inv-7', 'approval:write', 'approved');
-    expect(first).toBe('approved');
-    // The replacement worker replays the same deferred drain: the memo
-    // already owns the answer, so no second approval fires.
-    let secondApprovalFired = false;
-    const replayed = await memos.once('inv-7', 'approval:write', 'approved');
-    if (replayed !== 'approved') secondApprovalFired = true;
-    expect(replayed).toBe('approved');
-    expect(secondApprovalFired).toBe(false);
-
+    // Generation 1 answers the deferred approval, then dies.
+    const first = await memos.once('inv-7', 'approval:write', 'approved-gen-1');
+    expect(first).toBe('approved-gen-1');
+    // The replacement worker's resumed lane replays the same deferred
+    // drain with a fresh candidate: the memo already owns the answer, so
+    // the second approval never takes effect.
+    const replayed: unknown[] = [];
     const out = await replaceWorker(
       { workerId: 'w-1', sessionId: 's-1', oldGeneration: 1 },
       {
         allocateGeneration: () => 2,
         openSession: async () => ({ laneId: 'main' }),
-        resumeLane: async () => ({ resumed: true }),
+        resumeLane: async () => {
+          replayed.push(
+            await memos.once('inv-7', 'approval:write', 'approved-gen-2'),
+          );
+          return { resumed: true };
+        },
         terminate: async () => undefined,
       },
     );
+    expect(replayed).toEqual(['approved-gen-1']);
+    expect(out.generation).toBe(2);
     expect(out.memosSurvived).toBe(true);
-  });
-
-  it('refuses a stale generation instead of replacing over it', async () => {
-    await expect(
-      replaceWorker(
-        { workerId: 'w-1', sessionId: 's-1', oldGeneration: 1 },
-        {
-          allocateGeneration: () => 1,
-          openSession: async () => ({ laneId: 'main' }),
-          resumeLane: async () => ({ resumed: true }),
-          terminate: async () => undefined,
-        },
-      ),
-    ).rejects.toThrow(/generation/i);
   });
 
   it('stale replace leaves the live worker untouched and throws StaleGenerationError', async () => {
     const calls: string[] = [];
-    await expect(
-      replaceWorker(
-        { workerId: 'w-1', sessionId: 's-1', oldGeneration: 1 },
-        {
-          allocateGeneration: () => 1,
-          openSession: async (sessionId: string) => {
-            calls.push(`open:${sessionId}`);
-            return { laneId: 'main' };
-          },
-          resumeLane: async (lane: { laneId: string }) => {
-            calls.push(`resume:${lane.laneId}`);
-            return { resumed: true };
-          },
-          terminate: async (workerId: string) => {
-            calls.push(`terminate:${workerId}`);
-          },
+    const replacing = replaceWorker(
+      { workerId: 'w-1', sessionId: 's-1', oldGeneration: 1 },
+      {
+        allocateGeneration: () => 1,
+        openSession: async (sessionId: string) => {
+          calls.push(`open:${sessionId}`);
+          return { laneId: 'main' };
         },
-      ),
-    ).rejects.toBeInstanceOf(StaleGenerationError);
+        resumeLane: async (lane: { laneId: string }) => {
+          calls.push(`resume:${lane.laneId}`);
+          return { resumed: true };
+        },
+        terminate: async (workerId: string) => {
+          calls.push(`terminate:${workerId}`);
+        },
+      },
+    );
+    await expect(replacing).rejects.toBeInstanceOf(StaleGenerationError);
+    await expect(replacing).rejects.toThrow(
+      'stale generation for session s-1: got generation 1, want newer than 1',
+    );
     // Generation is validated BEFORE terminate: the live proc is never
     // killed, the session never opened, the lane never resumed.
     expect(calls).toEqual([]);

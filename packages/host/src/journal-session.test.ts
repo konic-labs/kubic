@@ -1,16 +1,25 @@
 // Session-journal reachability (issue #83): `kubic diff/undo` reach the
 // headless-run session journal under <sessionsRoot>/<id>/journal via
 // --session or the printed `journal:<id>` ref. RED first.
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { runJournalCommand } from './journal-cli.js';
 
+const made: string[] = [];
+
 function tmpDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];

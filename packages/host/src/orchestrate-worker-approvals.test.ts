@@ -12,10 +12,10 @@
 // budgets, skip, audit), and the WORKER half speaks the same mailbox contract
 // the prod child speaks (publish, then bounded wait) — so both halves of the
 // cross-process channel are exercised by one test.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { OrchestrateCommandDeps } from './orchestrate-cli.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
@@ -48,9 +48,21 @@ const TWO_WORKER_ARGS = [
   'worker-1,worker-2',
 ];
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 interface Harness {
   deps: OrchestrateCommandDeps;
@@ -154,6 +166,10 @@ function harness(
       built = createOrchestratorApprovalsRun({
         dir,
         sessionId: cliOptions.sessionId,
+        // The manager's mailbox pump at the worker half's own 5ms cadence
+        // (prod default 100ms): each ask settles in one tick, not a tenth of
+        // a second of idle wall clock.
+        pollMs: 5,
         maxPendingMs: options.maxPendingMs ?? cliOptions.maxPendingMs,
         ...(cliOptions.autoApprove ? { autoApprove: true } : {}),
         ...(cliOptions.budget === undefined

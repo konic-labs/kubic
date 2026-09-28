@@ -35,17 +35,34 @@ describe('enterprise precedence', () => {
     ]);
     expect(isToolAllowed(policy, 'bash')).toBe(false);
     expect(isToolAllowed(policy, 'git_push')).toBe(false);
-    expect(overriddenAttempts.length).toBeGreaterThan(0);
+    // Every lower-layer attempt is named, not just "some" of them.
+    expect(overriddenAttempts).toEqual(
+      expect.arrayContaining([
+        "project.tools.allow 'bash' rejected: enterprise denial holds",
+        "session.tools.allow 'bash' rejected: enterprise denial holds",
+        "agent.tools.allow 'git_push' rejected: enterprise denial holds",
+      ]),
+    );
   });
 
   it('every lower layer override of an enterprise denial is rejected (fuzz)', () => {
     for (const layer of POLICY_LAYERS) {
       if (layer === 'enterprise') continue;
-      const { policy } = resolveEffectivePolicy([
+      const { policy, overriddenAttempts } = resolveEffectivePolicy([
         { layer: 'enterprise', policy: ENTERPRISE_DENY.enterprise },
         denyInput(layer, 'bash'),
       ]);
       expect(isToolAllowed(policy, 'bash'), `layer ${layer}`).toBe(false);
+      expect(overriddenAttempts, `layer ${layer}`).toContain(
+        `${layer}.tools.allow 'bash' rejected: enterprise denial holds`,
+      );
+      // Control: the same lower-layer grant DOES enable a tool the
+      // enterprise layer did not deny, so the denial above is load-bearing.
+      const control = resolveEffectivePolicy([
+        { layer: 'enterprise', policy: { tools: { deny: ['git_push'] } } },
+        denyInput(layer, 'bash'),
+      ]).policy;
+      expect(isToolAllowed(control, 'bash'), `control ${layer}`).toBe(true);
     }
   });
 

@@ -354,16 +354,23 @@ describe('solo model escalation through the lane path (issue #82, rule 6)', () =
     expect(affinity.escalations).toHaveLength(1);
     const info = await booted.lane.inspectExecution(BACKGROUND_CONTEXT);
     expect(info.configuredModel).toEqual({ provider: 'faux', modelId: 'b' });
+    // A second, otherwise-distinct step is refused by the ladder bound
+    // (maxEscalations: 1) — not by the same-model guard.
     await expect(
       escalateSoloModel(
         booted,
         ladder,
-        'faux/b',
+        'faux/a',
         'again',
         BACKGROUND_CONTEXT,
         (e) => void seen.push(e),
       ),
-    ).rejects.toThrow(/bounded|no-op|same-model/);
+    ).rejects.toThrow(/escalation bounded/);
     expect(seen).toHaveLength(1);
+    expect(ladder.record).toHaveLength(1);
+    expect(booted.affinity?.modelId).toBe('faux/b');
+    expect(
+      (await booted.lane.inspectExecution(BACKGROUND_CONTEXT)).configuredModel,
+    ).toEqual({ provider: 'faux', modelId: 'b' });
   });
 });

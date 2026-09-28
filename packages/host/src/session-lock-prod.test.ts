@@ -4,10 +4,10 @@
 // caller, exactly as run-prod-path.test.ts does. Faux provider only.
 // Hermetic by rule: pid liveness is stubbed (`process.kill`), fake pid
 // numbers only — no test here ever signals a real process.
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -28,9 +28,25 @@ import { runSessionsCommand } from './sessions-cli.js';
 
 const FAKE_PID = 424242;
 
+const made: string[] = [];
+
 function tmpRoot(prefix = 'lock-prod-'): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();

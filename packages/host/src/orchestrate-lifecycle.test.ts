@@ -12,15 +12,10 @@
 // build artifact, is what this path owns. Everything else is real: an OS
 // process, the OS-level environment, the pipe the marker arrives on, and
 // the registry the run leaves behind.
-import {
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
@@ -76,8 +71,29 @@ if (sleep === null || sleep === undefined) {
 setTimeout(() => process.exit(exitCode), Number(sleep[1]));
 `;
 
+// Every scratch dir is removed after each test; the worktrees live under the
+// repo root, so removing it disposes them too.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 async function gitIn(
@@ -221,6 +237,7 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
   it('hands the child the §3.8 allowlist at the OS level, not the parent env', async () => {
     // The rule on the path that actually spawns: an unrelated secret in
     // the parent environment never reaches a worker's world.
+    const previous = process.env.AWS_SECRET_ACCESS_KEY;
     process.env.AWS_SECRET_ACCESS_KEY = 'parent-ambient-secret';
     const h = await harness();
     const dump = join(h.root, 'child-env.json');
@@ -228,7 +245,8 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
       const request = await sessionFor(h, 'worker-1');
       await runWorkerOnce(h, request, `say hi ENVDUMP=${dump}`);
     } finally {
-      delete process.env.AWS_SECRET_ACCESS_KEY;
+      if (previous === undefined) delete process.env.AWS_SECRET_ACCESS_KEY;
+      else process.env.AWS_SECRET_ACCESS_KEY = previous;
     }
     // The child's OWN view of its environment — read from the operating
     // system, not from the spawn call the test could have gotten wrong.
@@ -286,7 +304,7 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
   });
 
   it('fails a silent child as spawn_failed inside the readiness timeout', async () => {
-    const h = await harness({ readyTimeoutMs: 250 });
+    const h = await harness({ readyTimeoutMs: 100 });
     const request = await sessionFor(h, 'worker-1');
     // The child starts and stays up but never announces itself: without
     // the lifecycle layer this is a silent hang (the caller just waits).
@@ -305,6 +323,14 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     expect(h.deps.launches?.failureOf('worker-1')?.code).toBe(
       'process_spawn_failed',
     );
+    // The silent child (scripted to linger 30s) is killed on the timeout,
+    // not left running behind the failed launch.
+    const pid = row?.pid ?? 0;
+    expect(pid).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(processAlive(pid)).toBe(false), {
+      timeout: 2_000,
+      interval: 10,
+    });
   });
 });
 
@@ -352,7 +378,7 @@ describe('prod orchestrate path: the manager lane per-worker prompts (issue #103
 
 describe('prod orchestrate path: the §78 code a failed worker reports (issue #94)', () => {
   it('reports a silent worker as spawn_failed through the CLI', async () => {
-    const h = await harness({ readyTimeoutMs: 250 });
+    const h = await harness({ readyTimeoutMs: 100 });
     const code = await runOrchestrateCommand(
       [
         '-p',
@@ -396,13 +422,3 @@ describe('prod orchestrate path: the §78 code a failed worker reports (issue #9
     expect(h.registry.get('worker-1')?.status).toBe('crashed');
   });
 });
-
-// A worker's transcript lives under the sessions root, keyed by the
-// worktree path the session was created with (Pi's JSONL session repo
-// encodes the cwd into the directory name). macOS resolves /var to
-// /private/var, and the session records the resolved path.
-export function sessionDir(h: Harness, agentId: string): string {
-  const worktreePath = realpathSync(join(h.root, '.kubic', 'wt', agentId));
-  const encoded = worktreePath.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
-  return join(h.sessionsRoot, `--${encoded}--`);
-}

@@ -3,10 +3,10 @@
 // lives in host because vitest only includes packages/* — it reaches
 // across to the adapter purely as a black-box caller, never into lane
 // internals. Faux provider only: zero network.
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -27,9 +27,25 @@ import {
   runRunCommand,
 } from './run-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-prod-path-'));
+  const dir = mkdtempSync(join(tmpdir(), 'run-prod-path-'));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -101,21 +117,6 @@ describe('prod run path, live lane (issue #28, E1)', () => {
       { sessionsRoot: root, models, env: new FakeExecutionEnv({}) },
     );
     expect(result.terminus).toBe('failed');
-  });
-
-  it('maps an empty model registry to provider_probe_failed', async () => {
-    const root = tmpRoot();
-    const result = await runHeadlessPrompt(
-      'hello',
-      {},
-      {
-        sessionsRoot: root,
-        models: createModels(),
-        env: new FakeExecutionEnv({}),
-      },
-    );
-    expect(result.terminus).toBe('provider_probe_failed');
-    expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });
 
@@ -286,23 +287,6 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   });
 });
 
-describe('prod run path, store failures (issue #28, E2)', () => {
-  it('maps an unknown --session attach to workspace_unavailable', async () => {
-    const root = tmpRoot();
-    const result = await runHeadlessPrompt(
-      'hello',
-      { sessionId: 'sess-nope' },
-      {
-        sessionsRoot: root,
-        models: fauxModels(['unused']),
-        env: new FakeExecutionEnv({}),
-      },
-    );
-    expect(result.terminus).toBe('workspace_unavailable');
-    expect(result.sessionId).toBe('sess-nope');
-  });
-});
-
 describe('prod run path, result refs (issue #68; mutation hardening)', () => {
   it('points journal/usage/trajectory refs at the live session', async () => {
     const root = tmpRoot();
@@ -323,7 +307,7 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('keeps the requested session id in every failure ref', async () => {
+  it('maps an unknown --session attach to workspace_unavailable, keeping the id in every ref', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'hello',
@@ -339,13 +323,11 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     expect(result.journalRef).toBe('journal:sess-nope');
     expect(result.usageRef).toBe('usage:sess-nope');
     expect(result.trajectoryRef).toBe('trajectory:sess-nope');
-    expect(result.error).toEqual({
-      kind: 'workspace_unavailable',
-      message: result.error?.message,
-    });
+    expect(result.error?.kind).toBe('workspace_unavailable');
+    expect(result.error?.message).toMatch(/sess-nope/);
   });
 
-  it('tags a provider failure with the provider terminus kind', async () => {
+  it('maps an empty model registry to provider_probe_failed with that kind', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'hello',
@@ -357,8 +339,9 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
       },
     );
     expect(result.terminus).toBe('provider_probe_failed');
+    expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(result.error?.kind).toBe('provider_probe_failed');
-    expect(typeof result.error?.message).toBe('string');
+    expect(result.error?.message).toMatch(/\S/);
   });
 
   it('persists the prompt even when no model can run it', async () => {

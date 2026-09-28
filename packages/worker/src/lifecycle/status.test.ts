@@ -36,14 +36,17 @@ describe('worker lifecycle §13 (issue #42)', () => {
     expect(() => assertTransition('spawning', 'running')).toThrow(/readiness/i);
   });
 
-  it('marks exactly the five §13 terminal states', () => {
-    expect(isTerminalStatus('completed')).toBe(true);
-    expect(isTerminalStatus('spawn_failed')).toBe(true);
-    expect(isTerminalStatus('crashed')).toBe(true);
-    expect(isTerminalStatus('timeout')).toBe(true);
-    expect(isTerminalStatus('budget_exhausted')).toBe(true);
-    expect(isTerminalStatus('running')).toBe(false);
-    expect(isTerminalStatus('ready')).toBe(false);
+  it('marks exactly the five §13 terminal outcomes plus cancelled as terminal', () => {
+    expect(
+      WORKER_STATUSES.filter((status) => isTerminalStatus(status)),
+    ).toEqual([
+      'completed',
+      'spawn_failed',
+      'crashed',
+      'timeout',
+      'budget_exhausted',
+      'cancelled',
+    ]);
   });
 
   it('lets cancel land from any live state but never resurrects a terminal', () => {

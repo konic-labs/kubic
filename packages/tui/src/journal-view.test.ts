@@ -99,9 +99,14 @@ describe('journal view (issue #25; §80)', () => {
   });
 
   it('reconciliation-only entry shows the unattributed badge', () => {
-    const text = renderJournalLines(changes().slice(2)).join('\n');
-    expect(text).toContain('unattributed');
-    expect(text).toContain('agent=root toolCall=none');
+    // A reconciliation-only write has no pre-image: the badge names it and
+    // the hunk is replaced by the missing-blob placeholder.
+    expect(renderJournalLines(changes().slice(2))).toEqual([
+      '--- a/c.txt',
+      '+++ b/c.txt',
+      '# agent=root toolCall=none [unattributed, non-reversible]',
+      '~ content unavailable: c.txt (missing before-blob)',
+    ]);
   });
 
   it('binary/missing blob renders a placeholder, never crashes', () => {
@@ -110,10 +115,19 @@ describe('journal view (issue #25; §80)', () => {
       path: 'bin.dat',
       after: 'a\0b',
     };
-    const text = renderJournalLines([bad]).join('\n');
-    expect(text).toContain('binary');
+    const placeholder = '~ binary content not shown: bin.dat';
+    expect(renderJournalLines([bad])).toEqual([
+      '--- a/bin.dat',
+      '+++ b/bin.dat',
+      '# agent=root toolCall=call-1',
+      placeholder,
+    ]);
     const view = new JournalView([bad]);
-    expect(view.render(80).join('\n')).toContain('binary');
+    expect(view.render(80).join('\n')).toContain(placeholder);
+    const missing: DiffFileChange = { ...changes()[0], after: null };
+    expect(renderJournalLines([missing]).at(-1)).toBe(
+      '~ content unavailable: a.txt (missing after-blob)',
+    );
   });
 
   it('empty journal renders the no-changes line', () => {
@@ -133,7 +147,8 @@ describe('journal view (issue #25; §80)', () => {
   it('view-level filters narrow the snapshot identically to the CLI', () => {
     const view = new JournalView(changes(), { filter: { agent: 'root' } });
     const doc = view.render(100).join('\n');
-    expect(doc).toContain('a.txt');
+    expect(doc).toContain('--- a/a.txt');
+    expect(doc).toContain('--- a/c.txt');
     expect(doc).not.toContain('b.txt');
   });
 });

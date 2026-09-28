@@ -1,5 +1,4 @@
 // Slice A: follow-end transcript fed by LaneSnapshot coarse cells (§16.1, §80).
-// RED: createTranscriptView/appendDelta do not exist yet.
 //
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // ScrollView root directly (Component.render is pure) and assert document
@@ -151,6 +150,12 @@ describe('transcript view (issue #23, slice A)', () => {
     );
     view.appendDelta({ id: 'c', kind: 'output', append: '!' });
     const replayed = replayTranscript(view.writeLog);
+    // Non-vacuous: the live document really holds the snapshot plus the
+    // post-snapshot delta, so an empty replay cannot match it.
+    const doc = view.render(80).join('\n');
+    expect(doc).toContain('alpha one');
+    expect(doc).toContain('run tests');
+    expect(doc).toContain('ok!');
     expect(replayed.render(80)).toEqual(view.render(80));
   });
 });

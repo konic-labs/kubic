@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation, OPERATIONS } from './registry.js';
+import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
 function ctx(): OpContext {
@@ -19,26 +19,6 @@ function inv(id = 'inv-1'): ToolInvocation {
 }
 
 describe('operation registry (issue #13, slice A)', () => {
-  it('exposes exactly the expected operations', () => {
-    expect(Object.keys(OPERATIONS).sort()).toEqual([
-      'bash',
-      'edit',
-      'find',
-      'git_branch',
-      'git_checkpoint',
-      'git_commit',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_stage',
-      'git_status',
-      'grep',
-      'ls',
-      'read',
-      'write',
-    ]);
-  });
-
   it('routes read by name and threads invocation ids', async () => {
     const out = await callOperation('read', { path: 'a.txt' }, inv(), ctx());
     expect(out.ok).toBe(true);
@@ -88,8 +68,10 @@ describe('read operation (issue #13, slice A)', () => {
       ctx(),
     );
     expect(out.ok).toBe(false);
-    if (!out.ok)
+    if (!out.ok) {
+      expect(out.error.code).toBe('invalid_args');
       expect(out.error.message).toMatch(/unknown.*model|model.*unknown/i);
+    }
   });
 
   it('marks truncation when the file exceeds the cap', async () => {

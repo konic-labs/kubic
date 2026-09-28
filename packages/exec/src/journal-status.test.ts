@@ -1,9 +1,9 @@
 // Slice C: log timeline + status (issue #18; §42.2).
 // RED: renderLog/journalStatus do not exist yet.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
 import {
   journalStatus,
@@ -11,8 +11,21 @@ import {
   renderLog,
 } from './journal-status.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function seed(): FileJournalStore {
-  const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+  const store = new FileJournalStore(tmpRoot('j-'));
   store.append({
     path: 'a.txt',
     op: 'edit',
@@ -53,7 +66,7 @@ describe('journal log + status (issue #18, slice C)', () => {
   });
 
   it('reports non-repo status outside a repository', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const root = tmpRoot('ws-');
     const status = journalStatus(seed(), root);
     expect(status.entries).toBe(2);
     expect(status.reversible).toBe(1);
@@ -62,7 +75,7 @@ describe('journal log + status (issue #18, slice C)', () => {
   });
 
   it('reports branch state inside a repository without running naive git', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const root = tmpRoot('ws-');
     mkdirSync(join(root, '.git'));
     writeFileSync(
       join(root, '.git', 'HEAD'),
@@ -81,9 +94,9 @@ describe('journal log + status (issue #18, slice C)', () => {
 // `(detached)`.
 describe('worktree HEAD resolution (issue #126)', () => {
   function linkedWorktree(head: string): { root: string; gitdir: string } {
-    const gitdir = mkdtempSync(join(tmpdir(), 'gd-'));
+    const gitdir = tmpRoot('gd-');
     writeFileSync(join(gitdir, 'HEAD'), head);
-    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const root = tmpRoot('wt-');
     writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
     return { root, gitdir };
   }
@@ -94,7 +107,7 @@ describe('worktree HEAD resolution (issue #126)', () => {
   });
 
   it('resolves a relative gitdir pointer against the worktree root', () => {
-    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const root = tmpRoot('wt-');
     const gitdir = join(root, '.git-worktrees', 'wt');
     mkdirSync(gitdir, { recursive: true });
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/relative-branch\n');
@@ -108,7 +121,7 @@ describe('worktree HEAD resolution (issue #126)', () => {
   });
 
   it('a dangling pointer degrades to (unknown), no throw', () => {
-    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const root = tmpRoot('wt-');
     writeFileSync(
       join(root, '.git'),
       `gitdir: ${join(root, 'absent-gitdir')}\n`,
@@ -118,13 +131,13 @@ describe('worktree HEAD resolution (issue #126)', () => {
   });
 
   it('a malformed pointer degrades to (unknown), no throw', () => {
-    const root = mkdtempSync(join(tmpdir(), 'wt-'));
+    const root = tmpRoot('wt-');
     writeFileSync(join(root, '.git'), 'not a gitdir pointer\n');
     expect(journalStatus(seed(), root).repo?.branch).toBe('(unknown)');
   });
 
   it('the classic .git-directory layout stays byte-for-byte behavior', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const root = tmpRoot('ws-');
     mkdirSync(join(root, '.git'));
     writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/classic\n');
     expect(journalStatus(seed(), root).repo?.branch).toBe('classic');
@@ -133,7 +146,7 @@ describe('worktree HEAD resolution (issue #126)', () => {
 
 describe('unattributed count (issue #87)', () => {
   it('counts reconciliation finds separately in status', () => {
-    const status = journalStatus(seed(), mkdtempSync(join(tmpdir(), 'ws-')));
+    const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.entries).toBe(2);
     expect(status.unattributed).toBe(1);
   });
@@ -147,8 +160,8 @@ describe('unattributed count (issue #87)', () => {
   });
 
   it('summarizes an empty journal without inventing entries', () => {
-    const empty = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-    expect(journalStatus(empty, mkdtempSync(join(tmpdir(), 'ws-')))).toEqual({
+    const empty = new FileJournalStore(tmpRoot('j-'));
+    expect(journalStatus(empty, tmpRoot('ws-'))).toEqual({
       entries: 0,
       reversible: 0,
       nonReversible: 0,
@@ -166,7 +179,7 @@ describe('unattributed count (issue #87)', () => {
 // letting it hide behind reversibility counts.
 describe('corrupt count (issue #111)', () => {
   it('counts entries whose content is unexpectedly missing under a recorded hash', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'j-'));
+    const dir = tmpRoot('j-');
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: 'a.txt',
@@ -180,14 +193,14 @@ describe('corrupt count (issue #111)', () => {
       timestamp: 1700000000000,
     });
     writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
-    const status = journalStatus(store, mkdtempSync(join(tmpdir(), 'ws-')));
+    const status = journalStatus(store, tmpRoot('ws-'));
     expect(status.corrupt).toBe(1);
   });
 
   it('does not count designed absences as corrupt', () => {
     // seed()'s unattributed entry records a hash-only pre-image — no
     // before-blob exists by design, and that is not corruption.
-    const status = journalStatus(seed(), mkdtempSync(join(tmpdir(), 'ws-')));
+    const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.corrupt).toBe(0);
   });
 });

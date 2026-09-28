@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { checkTree } from './dep-lint.mjs';
 
@@ -45,8 +51,22 @@ const REQUIRED_PATHS = [
   'biome.json',
 ];
 
-function fixtureTree(files) {
+// Every fixture is removed after the file: this suite builds ~50 trees per
+// run (and Stryker's tap run repeats it per mutant), so leaking them piles
+// up six-figure dir counts in the OS temp dir.
+const scratchDirs = [];
+after(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+function scratchDir() {
   const dir = mkdtempSync(join(tmpdir(), 'dep-lint-'));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+function fixtureTree(files) {
+  const dir = scratchDir();
   for (const [rel, content] of Object.entries(files)) {
     const full = join(dir, rel);
     mkdirSync(dirname(full), { recursive: true });
@@ -247,7 +267,7 @@ describe('dep-lint (issue #2)', () => {
   });
 
   it('ignores non-directory entries in packages/', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dep-lint-'));
+    const dir = scratchDir();
     writeFileSync(join(dir, 'packages'), 'not a directory\n');
     assert.deepEqual(checkTree(dir), []);
   });
@@ -435,21 +455,17 @@ describe('dep-lint (issue #2)', () => {
     const dir = fixtureTree({
       'packages/core/src/a.ts': `import { b } from '@kubic/exec';\n`,
     });
-    try {
-      execFileSync(
-        process.execPath,
-        [join(ROOT, 'scripts', 'dep-lint.mjs'), dir],
-        {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
-      assert.fail('CLI passed on a violating tree');
-    } catch (err) {
-      assert.equal(err.status, 1);
-      assert.match(err.stdout, /forbidden import core -> exec/);
-      assert.match(err.stdout, /1 forbidden import\(s\)/);
-    }
+    // spawnSync, not execFileSync in a try/catch: the catch would also
+    // swallow an assert.fail thrown inside the try.
+    const result = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'dep-lint.mjs'), dir],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 1, 'CLI must exit 1 on a violating tree');
+    assert.match(result.stdout, /forbidden import core -> exec/);
+    assert.match(result.stdout, /1 forbidden import\(s\)/);
+    assert.doesNotMatch(result.stdout, /dep-direction OK/);
   });
 
   it('ignores same-package relative imports for every owner', () => {

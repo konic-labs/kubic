@@ -1,9 +1,9 @@
 // Slice D: push guard, git CLI, git-via-bash reconciliation (issue #19; §43).
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
 import {
   captureBaseline,
@@ -17,6 +17,19 @@ import {
 import { callOperation } from '../../worker/src/ops/registry.js';
 import { detectTriggers } from './approvals.js';
 import { gitPushHasNoTool, runGitCommand } from './git-cli.js';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 const TRIGGER_CTX = {
   workspace: '/ws',
@@ -88,7 +101,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git-via-bash changes appear in reconciliation as unattributed', () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-'));
+    const root = mkTmp('git-');
     execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 't@t'], {
       cwd: root,
@@ -106,7 +119,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
     execFileSync('git', ['commit', '-m', 'v1'], { cwd: root, stdio: 'ignore' });
 
     const env = new NodeExecutionEnv(root);
-    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const store = new FileJournalStore(mkTmp('j-'));
     const baseline = captureBaseline(root);
     // The agent rewrites the file through bash + git (no journal entry —
     // bash mutations are not intercepted by design).
@@ -128,7 +141,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
   });
 
   it('git mutations through the bash op reconcile the same way', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'git-'));
+    const root = mkTmp('git-');
     execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 't@t'], {
       cwd: root,
@@ -139,7 +152,7 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
       stdio: 'ignore',
     });
     writeFileSync(join(root, 'tracked.txt'), 'v1\n');
-    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
+    const store = new FileJournalStore(mkTmp('j-'));
     const baseline = captureBaseline(root);
     const memos = new MemoryMemoStore();
     const out = await callOperation(

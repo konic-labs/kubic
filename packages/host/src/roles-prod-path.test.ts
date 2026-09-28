@@ -7,10 +7,10 @@
 // prompt on a live `--role` path.
 //
 // Faux provider only (zero network, zero paid tokens).
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -25,8 +25,12 @@ import { runDoctorCommand } from './doctor.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
 import { runRunCommand } from './run-cli.js';
 
+const roots: string[] = [];
+
 function tmpRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
 }
 
 function fauxModels(texts: string[]): MutableModels {
@@ -61,8 +65,18 @@ function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
   return options?.systemPrompt as string;
 }
 
+// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// is only stderr noise, silenced through its documented opt-out.
+beforeEach(() => {
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
@@ -99,7 +113,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
     );
   });
 
-  it('registers only the role-declared tool set on the lane (absence, not approval)', async () => {
+  it('hands the lane prompt only the role-declared tool set (absence, not approval)', async () => {
     const cwd = tmpRoot('roles-cwd-');
     writeRole(
       cwd,

@@ -35,6 +35,8 @@ describe('kubic workers (issue #42)', () => {
     expect(text).toMatch(/10s/);
     expect(text).toMatch(/parent-session/);
     expect(text).toMatch(/review/);
+    // The §49.3 startup span is surfaced on the text row too.
+    expect(text).toMatch(/startup=40ms/);
   });
 
   it('prints --json rows carrying the §13 status and startup span ms', async () => {
@@ -60,10 +62,10 @@ describe('kubic workers (issue #42)', () => {
       debug: (line: string) => debug.push(line),
     });
     expect(code).toBe(0);
-    expect(debug.some((l) => l.startsWith('[worker] spawn'))).toBe(true);
-    expect(
-      debug.some((l) => l.startsWith('[exit] code=0 exited cleanly')),
-    ).toBe(true);
+    expect(debug).toEqual([
+      '[worker] spawn id=w-1 session=s-1 gen=2 pid=4242 startup=40ms',
+      '[exit] code=0 exited cleanly',
+    ]);
   });
 
   it('rejects unknown flags with usage', async () => {

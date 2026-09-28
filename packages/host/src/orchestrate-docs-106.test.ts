@@ -11,7 +11,7 @@
 //   - assert the file list is non-empty, so an absence scan cannot pass
 //     vacuously the way an earlier path bug let it.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -39,16 +39,59 @@ function section(page: string, heading: string): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-/** Every tracked markdown file — `git ls-files`, never a directory walk. */
+// Every tracked markdown file. `git ls-files` is the source (never a plain
+// directory walk: gitignored trees such as docs/design/ legitimately describe
+// intent). Under Stryker the suite runs from a gitignored sandbox copy
+// (.stryker-tmp/sandbox-*/) where git lists nothing; Stryker copies only
+// non-ignored files there, so a walk that skips the gitignored trees IS the
+// tracked set. The non-empty guard below keeps both paths honest.
+const GITIGNORED_TREES = new Set([
+  '.git',
+  '.stryker-tmp',
+  'coverage',
+  'dist',
+  'docs/design',
+  'node_modules',
+  'pi',
+  'reports',
+  '.kubic/artifacts',
+  '.kubic/journal',
+  '.kubic/orchestrator',
+  '.kubic/sessions',
+  '.kubic/wt',
+]);
+
+function markdownOnDisk(dir = ''): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    const rel = dir === '' ? entry.name : `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (!GITIGNORED_TREES.has(rel) && entry.name !== 'node_modules') {
+        found.push(...markdownOnDisk(rel));
+      }
+    } else if (entry.isFile() && rel.endsWith('.md')) {
+      found.push(rel);
+    }
+  }
+  return found;
+}
+
 function trackedDocs(): string[] {
-  const out = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  });
-  return out
+  let listed = '';
+  try {
+    listed = execFileSync('git', ['ls-files', 'docs', 'README.md', '*.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    // Not a git checkout at all: fall through to the walk.
+  }
+  const files = listed
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.endsWith('.md'));
+  return files.length > 0 ? files : markdownOnDisk().sort();
 }
 
 describe('#106 docs describe what ships (issue #106)', () => {
@@ -63,7 +106,7 @@ describe('#106 docs describe what ships (issue #106)', () => {
     expect(body).toMatch(/tree:/);
     expect(body).toMatch(/retained: /);
     expect(body).toMatch(/clean=unknown/);
-    expect(body).toMatch(/revolver|resolver/i);
+    expect(body).toMatch(/resolver/i);
     // The claims that are now false must be gone from this section.
     expect(body).not.toMatch(/counts are not surfaced/i);
     expect(body).not.toMatch(/surfaces none of it/i);

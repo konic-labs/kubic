@@ -124,6 +124,9 @@ describe('buildDpoRecord (issue #54)', () => {
 
   it('rejects a cross-boundary DPO record at validation', () => {
     const built = buildDpoRecord(passing({}), failing({}));
+    // A null record would spread to `{ boundary }` and be invalid for the
+    // wrong reason.
+    expect(built.record).not.toBeNull();
     const crossed = {
       ...built.record,
       boundary: 'cross-worktree',

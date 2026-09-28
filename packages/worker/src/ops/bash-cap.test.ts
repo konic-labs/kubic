@@ -2,21 +2,31 @@
 // stream (BASH_RESULT_MAX_CHARS) with a self-describing header and a
 // `truncated` flag — a grep over a giant file must not dump megabytes
 // into the model's context window. Real NodeExecutionEnv + real sh child.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { BASH_RESULT_MAX_CHARS } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext } from './types.js';
 
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function realCtx(): OpContext {
+  const cwd = mkdtempSync(join(tmpdir(), 'bash-cap-'));
+  scratchDirs.push(cwd);
   return {
     sessionId: 's1',
     agentId: 'root',
-    env: new NodeExecutionEnv(mkdtempSync(join(tmpdir(), 'bash-cap-'))),
+    env: new NodeExecutionEnv(cwd),
   };
 }
 

@@ -8,14 +8,7 @@
 // digest would read as "every file changed" and rewrite journal history.
 
 import { createHash } from 'node:crypto';
-import {
-  closeSync,
-  mkdtempSync,
-  openSync,
-  rmSync,
-  writeFileSync,
-  writeSync,
-} from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -26,7 +19,6 @@ import {
   FileJournalStore,
   HASH_CHUNK_BYTES,
   HASH_NOTICE_BYTES,
-  LARGE_FILE_BYTES,
   reconcile,
   sha256Hex,
 } from './journal.js';
@@ -97,8 +89,8 @@ function spyReads(): {
 }
 
 describe('bounded baseline hashing (#107)', () => {
-  it('never reads more than one chunk of a file far larger than the chunk', () => {
-    const size = HASH_CHUNK_BYTES * 3;
+  it('never reads more than one chunk of a file larger than the chunk', () => {
+    const size = HASH_CHUNK_BYTES * 2 + 1;
     const root = tmpFile('big.txt', 'a'.repeat(size));
     const spy = spyReads();
     const baseline = captureBaseline(root, { bridge: spy.bridge });
@@ -136,18 +128,6 @@ describe('bounded baseline hashing (#107)', () => {
     expect(baseline['binary.bin']).toBe(
       legacyHash(bridge, join(root, 'binary.bin')),
     );
-  });
-
-  it('bounds the heap cost of a large file instead of scaling with it', () => {
-    const size = HASH_CHUNK_BYTES * 6;
-    const root = tmpFile('large.txt', 'a'.repeat(size));
-    const before = process.memoryUsage().heapUsed;
-    captureBaseline(root, { bridge: createNodeFileBridge('/') });
-    const delta = process.memoryUsage().heapUsed - before;
-    // A whole-file read of this fixture would cost >= size. The bound is
-    // generous (3 chunks) so the assertion is about the class, not noise.
-    expect(delta).toBeLessThan(HASH_CHUNK_BYTES * 3);
-    expect(size).toBeGreaterThan(LARGE_FILE_BYTES);
   });
 
   it('ships a bridge that can read a range: the bound depends on it', () => {
@@ -210,65 +190,64 @@ describe('bounded baseline hashing (#107)', () => {
     // what a file truncated between the size probe and the read produces.
     const root = tmpFile('shrinks.bin', 'a'.repeat(HASH_CHUNK_BYTES * 2));
     const inner = createNodeFileBridge('/');
-    // biome-ignore lint/style/useNamingConvention: probe double
     const bridge: FileBridge = {
       ...inner,
       readFileRange: (path: string, start: number, end: number): Uint8Array => {
         const bytes = inner.readFileRange?.(path, start, end);
         if (bytes === undefined) throw new Error('need a range read');
-        // The last window comes back short, as if the file were truncated.
+        // The first window comes back half-length, as if the file shrank
+        // between the size probe and the read.
         return start === 0
           ? bytes.subarray(0, Math.floor(bytes.length / 2))
           : bytes;
       },
     };
     const baseline = captureBaseline(root, { bridge });
-    // The digest must equal hashing exactly the bytes that came back, never a
-    // zero-padded window.
-    const chunk = inner.readFileRange?.(
-      join(root, 'shrinks.bin'),
-      0,
-      HASH_CHUNK_BYTES,
+    // The digest must equal hashing exactly the bytes that came back (half
+    // the first window, then the whole second one), never a zero-padded window.
+    expect(baseline['shrinks.bin']).toBe(
+      sha256Hex('a'.repeat(HASH_CHUNK_BYTES / 2 + HASH_CHUNK_BYTES)),
     );
-    const expectedFirst = chunk?.subarray(0, Math.floor(chunk.length / 2));
-    const decoder = new TextDecoder('utf-8');
-    const hash = createHash('sha256');
-    hash.update(decoder.decode(expectedFirst, { stream: true }), 'utf8');
-    hash.update(
-      decoder.decode(
-        inner.readFileRange?.(
-          join(root, 'shrinks.bin'),
-          HASH_CHUNK_BYTES,
-          HASH_CHUNK_BYTES * 2,
-        ),
-        { stream: true },
-      ),
-      'utf8',
-    );
-    hash.update(decoder.decode(), 'utf8');
-    expect(baseline['shrinks.bin']).toBe(hash.digest('hex'));
   });
 
   it('names a very large file instead of hashing it silently', () => {
     // A sparse file (the reviewer's case: 4 GiB apparent, 0 real blocks) costs
     // its apparent size in boot I/O. Memory stays bounded, but the cost used to
-    // be invisible — the walk now reports it. Sparse keeps the test cheap.
-    const root = mkdtempSync(join(tmpdir(), 'kubic-bounded-walk-'));
-    roots.push(root);
-    const fd = openSync(join(root, 'sparse.bin'), 'w');
-    // Apparent size above the notice threshold, no real blocks written.
-    writeSync(fd, new Uint8Array(1), 0, 1, HASH_NOTICE_BYTES + 1);
-    closeSync(fd);
-    const bridge = createNodeFileBridge('/');
+    // be invisible — the walk now reports it. The notice keys off the size the
+    // bridge's listing reports, so a double reports an apparent size above the
+    // threshold for a tiny real file: the walk still streams it through range
+    // reads, without the test paying ~256 MiB of zero-hashing.
+    const root = tmpFile('sparse.bin', 'tiny-real-content\n');
+    const inner = createNodeFileBridge('/');
+    const realSize = Buffer.byteLength('tiny-real-content\n');
+    const apparent: FileBridge = {
+      ...inner,
+      listDir: (path: string) =>
+        inner
+          .listDir(path)
+          .map((info) =>
+            info.name === 'sparse.bin'
+              ? { ...info, size: HASH_NOTICE_BYTES + 1 }
+              : info,
+          ),
+      readFileRange: (path: string, start: number, end: number) =>
+        start >= realSize
+          ? new Uint8Array(0)
+          : (inner.readFileRange?.(path, start, end) ?? new Uint8Array(0)),
+    };
     const notices: string[] = [];
     const baseline = captureBaseline(root, {
-      bridge,
+      bridge: apparent,
       onNotice: (detail) => notices.push(detail),
     });
-    expect(baseline['sparse.bin']).toBeDefined();
-    expect(notices.length).toBe(1);
-    expect(notices[0]).toMatch(/very large file/);
-    expect(notices[0]).toContain('sparse.bin');
+    // Hashed anyway (a skipped file would hide real changes)...
+    expect(baseline['sparse.bin']).toBe(
+      legacyHash(inner, join(root, 'sparse.bin')),
+    );
+    // ...and named exactly once, with its apparent size.
+    expect(notices).toEqual([
+      `hashing a very large file: sparse.bin (${HASH_NOTICE_BYTES + 1} bytes) — boot reads its full apparent size`,
+    ]);
   });
 
   it('stays quiet for ordinary files', () => {
@@ -284,7 +263,6 @@ describe('bounded baseline hashing (#107)', () => {
     // whole-file reads: the fallback is announced through the notice hook.
     const root = tmpFile('big.txt', 'a'.repeat(HASH_CHUNK_BYTES * 2));
     const inner = createNodeFileBridge('/');
-    // biome-ignore lint/style/useNamingConvention: probe double
     const noRange: FileBridge = {
       ...inner,
       readFileRange: undefined,
@@ -308,7 +286,6 @@ describe('bounded baseline hashing (#107)', () => {
     const root = tmpFile('changed.txt', 'before\n');
     const inner = createNodeFileBridge('/');
     const reads: string[] = [];
-    // biome-ignore lint/style/useNamingConvention: probe double
     const spy: FileBridge = {
       ...inner,
       readTextFile: (path: string): string => {

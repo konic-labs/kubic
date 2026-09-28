@@ -107,10 +107,10 @@ describe('installed-policy source honesty (issue #86)', () => {
     // config check).
     const deps = installedPolicyDeps(cliResult(undefined));
     expect(deps.source).toBe('default');
-    expect(
-      installSoloPolicy({ workspace: '/tmp/x', ...deps }).posture.allowlist
-        .length,
-    ).toBeGreaterThan(0);
+    expect(deps.classes).toBeUndefined();
+    const posture = installSoloPolicy({ workspace: '/tmp/x', ...deps }).posture;
+    expect(posture.classes).toEqual(SOLO_DEFAULTS);
+    expect(posture.allowlist.length).toBeGreaterThan(0);
   });
 
   it('the run path and doctor agree on the source for the same config', () => {
@@ -129,8 +129,13 @@ describe('installed-policy source honesty (issue #86)', () => {
     expect(
       installSoloPolicy({ workspace: '/tmp/x', ...noConfig }).posture.source,
     ).toBe('default');
-    expect(
-      installSoloPolicy({ workspace: '/tmp/x', ...withPerms }).posture.source,
-    ).toBe('config');
+    const configuredPosture = installSoloPolicy({
+      workspace: '/tmp/x',
+      ...withPerms,
+    }).posture;
+    expect(configuredPosture.source).toBe('config');
+    // The configured class really reached the install, not just the label.
+    expect(configuredPosture.classes.shell).toBe(false);
+    expect(configuredPosture.allowlist).not.toContain('bash');
   });
 });

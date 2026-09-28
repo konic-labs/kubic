@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileBridge } from './file-bridge.js';
 import {
   FileJournalStore,
@@ -45,9 +45,23 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
   };
 });
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'journal-retention-'));
+  const root = mkdtempSync(join(tmpdir(), 'journal-retention-'));
+  roots.push(root);
+  return root;
 }
+
+// These tests count retention I/O (stats, index reads), which the fsync'd
+// index append does not touch — `durable: false` drops ~one fsync per append
+// from the many-append fixtures without changing what is measured.
+const FAST = { durable: false } as const;
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -91,7 +105,7 @@ function referencedBytes(dir: string, store: FileJournalStore): number {
 
 describe('blob size cache (issue #124, slice 1)', () => {
   it('append #51 over 50 entries and 30 unique blobs stats zero times', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tmpRoot(), FAST);
     for (let i = 0; i < 50; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
@@ -164,6 +178,7 @@ describe('retention reference counting (issue #124, slice 2)', () => {
 describe('retention fast path (issue #124, slice 2)', () => {
   it('100 appends far under the bound pay zero per-append retention I/O', () => {
     const store = new FileJournalStore(tmpRoot(), {
+      ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
     counts.fileInfo = 0;
@@ -171,10 +186,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
     for (let i = 0; i < 100; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
-    const M = 30; // unique blobs
-    const prunes = 0;
-    // Stats converge to 0 at any session length: at most M + prunes.
-    expect(counts.fileInfo).toBeLessThanOrEqual(M + prunes);
+    // Sizes are recorded at write time and no prune runs: zero stats.
     expect(counts.fileInfo).toBe(0);
     // And the pass is skipped outright: no per-append index reads — one
     // seeding pass at most, never one scan per append.
@@ -183,6 +195,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
 
   it('a forced prune takes the slow path and computes the same drop set as before', () => {
     const store = new FileJournalStore(tmpRoot(), {
+      ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
     for (let i = 0; i < 100; i++) {
@@ -200,7 +213,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
 describe('prune stats bound (issue #124, slice 2)', () => {
   it('a genuine prune on a cold store stats at most once per unique blob', () => {
     const dir = tmpRoot();
-    const seed = new FileJournalStore(dir);
+    const seed = new FileJournalStore(dir, FAST);
     for (let i = 0; i < 50; i++) {
       seed.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }

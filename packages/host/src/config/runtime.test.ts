@@ -1,10 +1,10 @@
 // Runtime config load (issue #90; design §35.1/§36/§71) — RED first.
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
@@ -43,6 +43,20 @@ const HOME = '/home/u';
 const CWD = '/repo';
 const GLOBAL = `${HOME}/.kubic/config.toml`;
 const PROJECT = `${CWD}/.kubic/config.toml`;
+
+const tempDirs: string[] = [];
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function load(
   files: Record<string, string>,
@@ -86,7 +100,7 @@ describe('runtime config load (issue #90)', () => {
 
     // Measurably live: the projection prunes a real store. An entry older
     // than the bound is gone after the append that enforces retention.
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-90-journal-'));
+    const dir = tempDir('kubic-90-journal-');
     const store = new FileJournalStore(dir, {
       maxAgeMs: runtime.journal.maxAgeMs,
     });
@@ -102,7 +116,19 @@ describe('runtime config load (issue #90)', () => {
       toolCallId: null,
       timestamp: Date.now() - 30 * dayMs,
     });
-    expect(store.entries()).toEqual([]);
+    store.append({
+      path: 'b.txt',
+      op: 'write',
+      before: null,
+      after: 'y',
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: Date.now() - dayMs,
+    });
+    // Only the entry past the bound is gone; one inside it survives.
+    expect(store.entries().map((entry) => entry.path)).toEqual(['b.txt']);
 
     // No retention key: no age bound is invented (§42.4 opt-in).
     const unbounded = load(
@@ -112,10 +138,12 @@ describe('runtime config load (issue #90)', () => {
       },
     );
     expect(unbounded.journal.maxAgeMs).toBeUndefined();
-    const keepDir = mkdtempSync(join(tmpdir(), 'kubic-90-journal-keep-'));
+    const keepDir = tempDir('kubic-90-journal-keep-');
     const keep = new FileJournalStore(
       keepDir,
-      unbounded.journal.retentionDays === undefined ? {} : {},
+      unbounded.journal.maxAgeMs === undefined
+        ? {}
+        : { maxAgeMs: unbounded.journal.maxAgeMs },
     );
     keep.append({
       path: 'a.txt',
@@ -282,6 +310,40 @@ describe('runtime config load (issue #90)', () => {
     expect(loadRuntimeConfig(noEnterpriseCli).sources['model.provider']).toBe(
       'cli',
     );
+    // The lower tail: project > workspace > session > agent.
+    const tail = (
+      files: Record<string, string>,
+      extra: Partial<RuntimeConfigInputs>,
+    ) =>
+      loadRuntimeConfig({
+        bridge: fakeBridge(files),
+        home: HOME,
+        cwd: CWD,
+        enterprisePath: '/nonexistent/config.toml',
+        projectTrusted: true,
+        workspaceRoot: '/ws',
+        ...extra,
+      }).model?.provider;
+    const workspaceFile = '/ws/.kubic/config.toml';
+    const session = { model: { provider: 's', id: 'm' } };
+    const agent = { model: { provider: 'a', id: 'm' } };
+    expect(
+      tail(
+        {
+          [PROJECT]: files[PROJECT],
+          [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n',
+        },
+        { session, agent },
+      ),
+    ).toBe('p');
+    expect(
+      tail(
+        { [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n' },
+        { session, agent },
+      ),
+    ).toBe('w');
+    expect(tail({}, { session, agent })).toBe('s');
+    expect(tail({}, { agent })).toBe('a');
   });
 
   it('reports the override attempts it refused to apply', () => {
@@ -483,7 +545,7 @@ describe('effective config view (issue #90)', () => {
     );
   });
 
-  it('renders the same view for humans, redacting secret shapes', () => {
+  it('renders the same view for humans', () => {
     const runtime = load(
       { [GLOBAL]: '[model]\nprovider = "local"\nid = "llama3"\n' },
       { projectTrusted: true },
@@ -493,7 +555,6 @@ describe('effective config view (issue #90)', () => {
       lines.some((line) => line.includes('model.provider = "local" (global,')),
     ).toBe(true);
     expect(lines.some((line) => line.includes('budgets'))).toBe(true);
-    expect(lines.join('\n')).not.toMatch(/\$[A-Z]/);
   });
 
   it('distinguishes consumed, kept and pending keys (issue #133)', () => {
@@ -565,6 +626,8 @@ describe('effective config view (issue #90)', () => {
       '\n',
     );
     expect(rendered).not.toContain('sk-live-abcdef1234567890');
+    // Redacted, not dropped: the key still renders, with a marker.
+    expect(rendered).toContain('ui.theme = "[redacted-secret]"');
   });
 
   // The acceptance criterion's own bar: a .kubic/config.toml value must

@@ -364,7 +364,8 @@ describe('runtime exclude (issue #91, moved order)', () => {
   });
 
   it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-dispatch-root-'));
+    // Under FIXTURE so the afterAll cleanup removes it too.
+    const dir = mkdtempSync(join(FIXTURE, 'root-'));
     mkdirSync(join(dir, '.kubic'), { recursive: true });
     writeFileSync(
       join(dir, '.kubic', 'config.toml'),

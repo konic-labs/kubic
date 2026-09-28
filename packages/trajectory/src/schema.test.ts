@@ -74,11 +74,17 @@ describe('trajectory schema version (issue #51)', () => {
     expect(() =>
       parseTrajectoryExport({ schema_version: SCHEMA_VERSION }),
     ).toThrowError(TrajectorySchemaError);
+    expect(() =>
+      parseTrajectoryExport({ schema_version: SCHEMA_VERSION }),
+    ).toThrowError(expect.objectContaining({ code: 'malformed' }));
   });
 
   it('rejects invalid JSON text as malformed', () => {
     expect(() => parseTrajectoryExportJSON('{nope')).toThrowError(
       TrajectorySchemaError,
+    );
+    expect(() => parseTrajectoryExportJSON('{nope')).toThrowError(
+      expect.objectContaining({ code: 'malformed' }),
     );
   });
 

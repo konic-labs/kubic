@@ -1,11 +1,19 @@
-import { mkdtempSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from './file-bridge.js';
+
+const created: string[] = [];
+
+afterEach(() => {
+  for (const path of created.splice(0))
+    rmSync(path, { recursive: true, force: true });
+});
 
 function tmpBridge() {
   const cwd = mkdtempSync(join(tmpdir(), 'bridge-'));
+  created.push(cwd);
   return { cwd, bridge: createNodeFileBridge(cwd) };
 }
 
@@ -16,16 +24,7 @@ describe('node file bridge (issue #14, slice A)', () => {
     bridge.appendFile('a.txt', 'two\n');
     expect(bridge.readTextFile('a.txt')).toBe('one\ntwo\n');
     expect(bridge.readTextLines('a.txt', 1)).toEqual(['one']);
-    expect(bridge.listDir('.').map((entry) => entry.name)).toContain('a.txt');
-  });
-
-  it('reads lines through a line reader', () => {
-    const { bridge } = tmpBridge();
-    bridge.writeFile('b.txt', 'x\ny\n');
-    const reader = bridge.openTextLineReader('b.txt');
-    expect(reader.readLine()).toBe('x');
-    expect(reader.readLine()).toBe('y');
-    reader.close();
+    expect(bridge.listDir('.').map((entry) => entry.name)).toEqual(['a.txt']);
   });
 
   it('stats, creates dirs, renames, and removes', () => {
@@ -36,7 +35,8 @@ describe('node file bridge (issue #14, slice A)', () => {
     bridge.writeFile('sub/c.txt', 'hi');
     expect(bridge.fileInfo('sub/c.txt').size).toBe(2);
     bridge.renameFile('sub/c.txt', 'sub/d.txt');
-    expect(bridge.exists('sub/d.txt')).toBe(true);
+    expect(bridge.exists('sub/c.txt')).toBe(false);
+    expect(bridge.readTextFile('sub/d.txt')).toBe('hi');
     bridge.remove('sub', true);
     expect(bridge.exists('sub')).toBe(false);
   });
@@ -60,6 +60,7 @@ describe('node file bridge hardening (review #14)', () => {
     expect(reader.readLine()).toBe('x');
     expect(reader.readLine()).toBe('y');
     expect(reader.readLine()).toBeUndefined();
+    reader.close();
   });
 
   it('creates parent directories on write and sanitizes temp prefixes', () => {
@@ -67,8 +68,12 @@ describe('node file bridge hardening (review #14)', () => {
     bridge.writeFile('deep/nested/f.txt', 'hi');
     expect(bridge.readTextFile('deep/nested/f.txt')).toBe('hi');
     const dir = bridge.createTempDir('../../evil');
-    expect(dir.startsWith(tmpdir())).toBe(true);
-    const file = bridge.createTempFile('p', '.log');
+    created.push(dir);
+    // Directly under tmpdir: the `..` segments never climbed out of it.
+    expect(dirname(dir)).toBe(tmpdir());
+    const file = bridge.createTempFile('../p', '/../.log');
+    created.push(file);
+    expect(dirname(file)).toBe(tmpdir());
     expect(bridge.exists(file)).toBe(true);
   });
 });

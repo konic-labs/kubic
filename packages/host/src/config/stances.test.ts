@@ -43,13 +43,6 @@ describe('MCP stance (issue #38)', () => {
       expect(req.length).toBeGreaterThan(0);
     }
   });
-
-  // Arrival requirements stay pending until the Phase-4 epic.
-  describe.skip('Phase-4 MCP arrival (pending)', () => {
-    it('spawns MCP servers under containment', () => {});
-    it('brokers MCP tool credentials per role', () => {});
-    it('audits every MCP tool call in the trajectory', () => {});
-  });
 });
 
 describe('ACP edge-only (issue #38)', () => {
@@ -75,6 +68,11 @@ describe('ACP edge-only (issue #38)', () => {
       if (parent === root) throw new Error('repo root not found');
       root = parent;
     }
+    // Canary: the pattern must recognise the edge's own definitions, or the
+    // scan below passes vacuously.
+    expect(
+      ACP_EDGE_REFERENCE.test(readFileSync(join(here, 'stances.ts'), 'utf8')),
+    ).toBe(true);
     const violations: string[] = [];
     const owners = readdirSync(join(root, 'packages')).filter((entry) =>
       statSync(join(root, 'packages', entry)).isDirectory(),
@@ -83,12 +81,17 @@ describe('ACP edge-only (issue #38)', () => {
       if (owner === 'host') continue;
       for (const file of tsFiles(join(root, 'packages', owner))) {
         const content = readFileSync(file, 'utf8');
-        if (/config\/acp(\.js)?['"]/.test(content)) violations.push(file);
+        if (ACP_EDGE_REFERENCE.test(content)) violations.push(file);
       }
     }
     expect(violations).toEqual([]);
   });
 });
+
+// The ACP edge types live in config/stances.ts (re-exported by the config
+// barrel), so a leak shows up as a stances import or an ACP symbol by name.
+const ACP_EDGE_REFERENCE =
+  /config\/stances(\.js)?['"]|\b(AcpEdgeEnvelope|AcpChordMessage|AcpLaneSnapshot|createAcpEdgeEnvelope|ACP_EDGE_OWNER)\b/;
 
 function fileExists(path: string): boolean {
   try {

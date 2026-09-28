@@ -81,6 +81,14 @@ describe('orchestrator request envelope (issue #48)', () => {
     expect(() =>
       validateOrchestratorRequest({ ...base(), worktree: 'rel' }),
     ).toThrow(/worktree/);
+    expect(() =>
+      validateOrchestratorRequest({ ...base(), provenance: {} }),
+    ).toThrow(/provenance/);
+    const { provenance, ...unprovenanced } = base();
+    void provenance;
+    expect(() => validateOrchestratorRequest(unprovenanced)).toThrow(
+      /provenance/,
+    );
   });
 
   it('refuses unknown triggers fail-closed', () => {

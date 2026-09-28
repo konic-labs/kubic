@@ -113,6 +113,46 @@ function prose(page: string): string {
     .replace(/\s+/g, ' ');
 }
 
+// The tracked docs/ pages plus README.md. `git ls-files` is the source (never
+// a plain directory walk: docs/design/ is gitignored local design work). Under
+// Stryker the suite runs from a gitignored sandbox copy
+// (.stryker-tmp/sandbox-*/) where git lists nothing; Stryker copies only
+// non-ignored files there, so a walk of docs/ that skips docs/design/ IS the
+// tracked set. The non-empty guard in the test keeps both paths honest.
+function markdownOnDisk(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (rel !== 'docs/design') found.push(...markdownOnDisk(rel));
+    } else if (entry.isFile() && rel.endsWith('.md')) {
+      found.push(rel);
+    }
+  }
+  return found;
+}
+
+function trackedDocs(): string[] {
+  let listed = '';
+  try {
+    listed = execFileSync('git', ['ls-files', 'docs', 'README.md'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    // Not a git checkout at all: fall through to the walk.
+  }
+  const files = listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith('.md'));
+  if (files.length > 0) return files;
+  const walked = markdownOnDisk('docs');
+  if (existsSync(join(ROOT, 'README.md'))) walked.push('README.md');
+  return walked.sort();
+}
+
 describe('orchestrator scope is honest (issue #95)', () => {
   it('the architecture page states the shipped fan-out and names the gaps', () => {
     const page = readFileSync(ARCHITECTURE_PAGE, 'utf8');
@@ -168,15 +208,7 @@ describe('orchestrator scope is honest (issue #95)', () => {
     // Scope is the TRACKED docs: docs/design/ is gitignored local design work
     // that legitimately describes intent rather than shipped behaviour, and
     // it carries its own `shipped-differently` notes.
-    const listed = execFileSync('git', ['ls-files', 'docs', 'README.md'], {
-      cwd: ROOT,
-      encoding: 'utf8',
-    });
-    const files = listed
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.endsWith('.md'))
-      .map((line) => join(ROOT, line));
+    const files = trackedDocs().map((line) => join(ROOT, line));
     expect(files.length).toBeGreaterThan(20);
     for (const file of files) {
       const body = prose(readFileSync(file, 'utf8'));
@@ -208,41 +240,43 @@ describe('orchestrator scope is honest (issue #95)', () => {
     }
   });
 
-  it('amends D7 and D8 in the design registry when the local registry is present', () => {
-    // The registry is gitignored local design work (see .gitignore), so a
-    // fresh clone has nothing to pin and this check skips — the same
-    // absent-file rule packages/exec/src/replay-surface.test.ts uses.
-    if (!existsSync(REGISTRY)) return;
-    const parsed = JSON.parse(readFileSync(REGISTRY, 'utf8')) as {
-      decisions?: Array<{
-        id?: string;
-        status?: string;
-        decision?: string;
-        rationale?: string;
-      }>;
-    };
-    const byId = new Map(
-      (parsed.decisions ?? []).map((entry) => [entry.id ?? '', entry]),
-    );
-    for (const id of ['D7', 'D8']) {
-      const entry = byId.get(id);
-      expect(entry, `${id} must exist in the registry`).toBeDefined();
-      const text = `${entry?.decision ?? ''}\n${entry?.rationale ?? ''}`;
-      // An amendment is dated and names the issue that records the reality.
-      expect(text, `${id} must be amended`).toMatch(
-        /Amended \d{4}-\d{2}-\d{2}/,
+  // The registry is gitignored local design work (see .gitignore), so a
+  // fresh clone (or a Stryker sandbox) has nothing to pin: the check is
+  // reported SKIPPED there rather than passing green on an early return.
+  it.skipIf(!existsSync(REGISTRY))(
+    'amends D7 and D8 in the design registry when the local registry is present',
+    () => {
+      const parsed = JSON.parse(readFileSync(REGISTRY, 'utf8')) as {
+        decisions?: Array<{
+          id?: string;
+          status?: string;
+          decision?: string;
+          rationale?: string;
+        }>;
+      };
+      const byId = new Map(
+        (parsed.decisions ?? []).map((entry) => [entry.id ?? '', entry]),
       );
-      expect(text, `${id} must name the manager-lane issue`).toContain(
-        MANAGER_LANE_ISSUE,
+      for (const id of ['D7', 'D8']) {
+        const entry = byId.get(id);
+        expect(entry, `${id} must exist in the registry`).toBeDefined();
+        const text = `${entry?.decision ?? ''}\n${entry?.rationale ?? ''}`;
+        // An amendment is dated and names the issue that records the reality.
+        expect(text, `${id} must be amended`).toMatch(
+          /Amended \d{4}-\d{2}-\d{2}/,
+        );
+        expect(text, `${id} must name the manager-lane issue`).toContain(
+          MANAGER_LANE_ISSUE,
+        );
+      }
+      // D7's amendment states what the mode actually ships.
+      expect(byId.get('D7')?.decision ?? '').toMatch(/CLI/);
+      // D8's amendment states the shipped session-scoped entry point.
+      expect(byId.get('D8')?.decision ?? '').toMatch(
+        /kubic orchestrate|--session/,
       );
-    }
-    // D7's amendment states what the mode actually ships.
-    expect(byId.get('D7')?.decision ?? '').toMatch(/CLI/);
-    // D8's amendment states the shipped session-scoped entry point.
-    expect(byId.get('D8')?.decision ?? '').toMatch(
-      /kubic orchestrate|--session/,
-    );
-  });
+    },
+  );
 
   it('gives every runtime-dead orchestrator module a ledger row it can execute', () => {
     const ledger = readFileSync(LEDGER, 'utf8');
@@ -260,6 +294,9 @@ describe('orchestrator scope is honest (issue #95)', () => {
       if (!path.startsWith('packages/')) continue;
       rows.set(path, cells.slice(2).join(' | '));
     }
+    // Not vacuous: a ledger format drift that parses to zero rows would make
+    // every `rows.has(...)` absence check below pass for free.
+    expect(rows.size).toBeGreaterThan(10);
     // EVERY module under packages/host/src/orchestrator/ (non-test sources)
     // has a three-way disposition: reachable (in no ledger row), named-issue
     // (a row whose owner is an open issue), or deleted (gone from the tree).

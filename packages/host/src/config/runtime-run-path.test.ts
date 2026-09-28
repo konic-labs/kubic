@@ -5,17 +5,24 @@
 // the journal the run wrote and the lane allowlist it installed.
 //
 // Faux provider only: zero network, zero paid tokens.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   runtimeLaneDeps,
   runtimeRunDeps,
 } from '../../../../apps/kubic/src/config-runtime.js';
 import { runHeadlessPrompt } from '../../../../apps/kubic/src/headless-run.js';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
-import { FakeExecutionEnv, NodeExecutionEnv } from '../../../exec/src/env.js';
+import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
 import {
@@ -23,25 +30,37 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type MutableModels,
 } from '../../../worker/src/pi-boundary.js';
 import { runJournalCommand } from '../journal-cli.js';
 import { loadRuntimeConfig, type RuntimeConfig } from './runtime.js';
 
-function fauxModels(text: string): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage(text)]);
-  return models;
-}
+const tempDirs: string[] = [];
 
 function tmpRoot(prefix = 'kubic-90-run-'): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
 }
 
+beforeEach(() => {
+  // The solo no-isolation notice goes straight to process.stderr (its text
+  // and gating are pinned in limits/solo-warning.test.ts and
+  // solo-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
+  // Orchestrator-child inputs are cleared so the host shell cannot leak in.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+  vi.stubEnv('KUBIC_WORKER_ID', undefined);
+  vi.stubEnv('KUBIC_APPROVALS_DIR', undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe('config feeds the live run path (issue #90)', () => {
-  it('bounds the journal the run writes from [journal] retentionDays', async () => {
+  it('projects [journal] retentionDays into a journal bound that prunes on append', () => {
     const root = tmpRoot();
     const runtime = loadRuntimeConfig({
       bridge: createNodeFileBridge(root),
@@ -83,7 +102,19 @@ describe('config feeds the live run path (issue #90)', () => {
       toolCallId: null,
       timestamp: Date.now() - 3 * 86_400_000,
     });
-    expect(store.entries()).toEqual([]);
+    store.append({
+      path: 'fresh.txt',
+      op: 'write',
+      before: null,
+      after: 'y',
+      bytesDelta: 1,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: Date.now(),
+    });
+    // Only the entry past the configured day is pruned.
+    expect(store.entries().map((entry) => entry.path)).toEqual(['fresh.txt']);
   });
 
   it('drives a real lane whose allowlist comes from the loaded classes', async () => {
@@ -109,15 +140,25 @@ describe('config feeds the live run path (issue #90)', () => {
       git: false,
     });
 
+    // The model asks for a shell write; with `shell = false` the lane never
+    // installed bash, so the call is refused and the workspace is untouched.
+    const workspace = tmpRoot('kubic-90-ws-');
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'printf "x\\n" > created.txt' }),
+      ]),
+      fauxAssistantMessage('done'),
+    ]);
     const result = await runHeadlessPrompt(
-      'say hi',
+      'write a file through bash',
       {},
       {
         sessionsRoot: root,
-        models: fauxModels('hi'),
-        env: new FakeExecutionEnv({}).withProvenance({
-          source: 'kubic-90-test',
-        } as never),
+        models,
+        env: new NodeExecutionEnv(workspace),
         policyClasses: runtime.permissions.classes,
         journalRetention:
           runtime.journal.maxAgeMs === undefined
@@ -126,11 +167,12 @@ describe('config feeds the live run path (issue #90)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
+    expect(existsSync(join(workspace, 'created.txt'))).toBe(false);
     // The run wrote a real session whose journal exists at the documented
     // location (§E3) — the config did not stop the run, it shaped it.
-    const ref = result.sessionId;
-    const journalDir = join(root, ref, 'journal');
-    expect(createNodeFileBridge(root).exists(journalDir)).toBe(true);
+    const journalDir = join(root, result.sessionId, 'journal');
+    expect(existsSync(journalDir)).toBe(true);
+    expect(new FileJournalStore(journalDir).entries()).toEqual([]);
   });
 
   it('excludes a configured out-of-scope directory from the run’s baseline and sweep', async () => {
@@ -223,19 +265,30 @@ describe('config feeds the live run path (issue #90)', () => {
       ...SOLO_DEFAULTS,
     });
     expect(runtime.permissions.source).toBe('defaults');
+    // The same shell write the narrowed lane refused goes through on the
+    // defaults: the refusal above came from the config, not the lane.
+    const workspace = tmpRoot('kubic-90-ws-');
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'printf "x\\n" > created.txt' }),
+      ]),
+      fauxAssistantMessage('done'),
+    ]);
     const result = await runHeadlessPrompt(
-      'say hi',
+      'write a file through bash',
       {},
       {
         sessionsRoot: root,
-        models: fauxModels('hi'),
-        env: new FakeExecutionEnv({}).withProvenance({
-          source: 'kubic-90-test',
-        } as never),
+        models,
+        env: new NodeExecutionEnv(workspace),
         policyClasses: runtime.permissions.classes,
       },
     );
     expect(result.terminus).toBe('completed');
+    expect(readFileSync(join(workspace, 'created.txt'), 'utf8')).toBe('x\n');
   });
 });
 

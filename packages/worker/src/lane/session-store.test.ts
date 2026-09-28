@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,15 +22,25 @@ import {
 } from './session-store.js';
 
 const openSessions: Session[] = [];
+const scratchDirs: string[] = [];
 
 afterAll(async () => {
   for (const session of openSessions.splice(0)) {
     await session.close(BACKGROUND_CONTEXT);
   }
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'sessions-'));
+  return scratch('sessions-');
 }
 
 describe('JSONL session store (issue #14, slice A)', () => {
@@ -152,7 +163,7 @@ describe('session lock primitive (issue #118)', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   function lockDir(): string {
-    return mkdtempSync(join(tmpdir(), 'lock-'));
+    return scratch('lock-');
   }
 
   function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
@@ -197,13 +208,15 @@ describe('session lock primitive (issue #118)', () => {
     }
   });
 
-  it('steals a provably-stale lock (dead holder pid, file older than a day)', () => {
+  it('steals a day-old lock even when its pid looks alive (pid reuse)', () => {
     const dir = lockDir();
     writeFileSync(
       join(dir, 'lock.json'),
       JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() - DAY_MS - 1 }),
     );
-    const kill = stubKill(false);
+    // Liveness stubbed ALIVE: only the age arm can make this lock stale
+    // (the dead-pid arm is covered by the same-day crash-recovery case).
+    const kill = stubKill(true);
     try {
       acquireSessionLock(dir, 'sess-b');
     } finally {
@@ -215,7 +228,8 @@ describe('session lock primitive (issue #118)', () => {
   it('treats a torn lock.json as a stale candidate and steals it', () => {
     const dir = lockDir();
     writeFileSync(join(dir, 'lock.json'), '{"pid": 4242'); // torn write
-    const kill = stubKill(false);
+    // Even with every pid looking alive, a torn payload names no holder.
+    const kill = stubKill(true);
     try {
       acquireSessionLock(dir, 'sess-c');
     } finally {
@@ -335,6 +349,11 @@ describe('session locking wiring (issue #118)', () => {
     const kill = stubKill(false);
     try {
       const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
+      // The crashed holder's lock now names this process.
+      const lock = JSON.parse(
+        readFileSync(join(root, id, 'lock.json'), 'utf8'),
+      ) as { pid?: unknown };
+      expect(lock.pid).toBe(process.pid);
       await attached.close(BACKGROUND_CONTEXT);
     } finally {
       kill.mockRestore();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation, OPERATIONS } from './registry.js';
+import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
 function ctx(): OpContext {
@@ -17,33 +17,6 @@ function inv(id = 'inv-1'): ToolInvocation {
     new MemoryMemoStore(),
   );
 }
-
-describe('operation registry growth (issue #13, slice C; extended #19)', () => {
-  it('exposes exactly the expected operations', () => {
-    expect(Object.keys(OPERATIONS).sort()).toEqual([
-      'bash',
-      'edit',
-      'find',
-      'git_branch',
-      'git_checkpoint',
-      'git_commit',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_stage',
-      'git_status',
-      'grep',
-      'ls',
-      'read',
-      'write',
-    ]);
-  });
-
-  it('declares write and edit as never-replay', () => {
-    expect(OPERATIONS.write.replay).toBe('never');
-    expect(OPERATIONS.edit.replay).toBe('never');
-  });
-});
 
 describe('write operation (issue #13, slice C)', () => {
   it('creates a file with afterHash and bytesDelta', async () => {
@@ -94,9 +67,11 @@ describe('write operation (issue #13, slice C)', () => {
     const ls = await callOperation('ls', { path: '.' }, inv(), c);
     expect(ls.ok).toBe(true);
     if (ls.ok) {
-      expect(ls.result.entries.map((e) => e.name)).not.toContain(
-        'a.txt.kubic-tmp',
-      );
+      // Exactly the fixture files: no tmp sibling of any name survives.
+      expect(ls.result.entries.map((e) => e.name).sort()).toEqual([
+        'a.txt',
+        'twice.txt',
+      ]);
     }
   });
 

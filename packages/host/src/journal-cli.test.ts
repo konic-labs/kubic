@@ -1,19 +1,38 @@
 // Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
 // RED: runJournalCommand does not exist yet.
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import { runJournalCommand } from './journal-cli.js';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function setup(): {
   journalDir: string;
   root: string;
   out: { lines: string[]; write: (line: string) => void };
 } {
-  const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const journalDir = mkTmp('j-');
+  const root = mkTmp('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   const store = new FileJournalStore(journalDir);
   store.append({
@@ -120,8 +139,8 @@ describe('journal CLI undo staleness (issue #108)', () => {
     journalDir: string;
     root: string;
   } {
-    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
     // Journaled v1→v2, then a manual edit landed v3 after the fact.
     writeFileSync(join(root, 'stale.txt'), 'v3\n');
     new FileJournalStore(journalDir).append({
@@ -195,8 +214,8 @@ describe('journal CLI undo staleness (issue #108)', () => {
 // marker and exit 0 — a readable journal is worth more than a crash.
 describe('journal CLI corrupt content (issue #111)', () => {
   function seedTornDelta(): { journalDir: string; root: string } {
-    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
     const store = new FileJournalStore(journalDir);
     const before = 'b\n'.repeat(40_000);
     const after = 'c\n'.repeat(40_000);
@@ -254,8 +273,8 @@ describe('journal CLI default store fallback (issue #125)', () => {
     oldId: string;
     newId: string;
   } {
-    const sessionsRoot = mkdtempSync(join(tmpdir(), 'sr-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const sessionsRoot = mkTmp('sr-');
+    const root = mkTmp('ws-');
     const oldId = 'sess-old';
     const newId = 'sess-new';
     const seed = (
@@ -418,8 +437,8 @@ describe('journal CLI default store fallback (issue #125)', () => {
   });
 
   it('empty everywhere prints the nothing-anywhere hint and exits 0', async () => {
-    const sessionsRoot = mkdtempSync(join(tmpdir(), 'sr-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const sessionsRoot = mkTmp('sr-');
+    const root = mkTmp('ws-');
     const lines: string[] = [];
     const code = await runJournalCommand(['diff'], {
       root,
@@ -444,8 +463,8 @@ describe('journal CLI default store fallback (issue #125)', () => {
   });
 
   it('a missing sessions root is the same empty path, no throw', async () => {
-    const sessionsRoot = join(mkdtempSync(join(tmpdir(), 'sr-')), 'absent');
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const sessionsRoot = join(mkTmp('sr-'), 'absent');
+    const root = mkTmp('ws-');
     const lines: string[] = [];
     const code = await runJournalCommand(['diff'], {
       root,
@@ -568,9 +587,9 @@ describe('journal CLI undo record + redo (issue #117)', () => {
 // report `(detached)` (or a non-repo) for a live branch.
 describe('journal CLI worktree status (issue #126)', () => {
   it('status names the worktree branch from the gitdir pointer', async () => {
-    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'wt-'));
-    const gitdir = mkdtempSync(join(tmpdir(), 'gd-'));
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('wt-');
+    const gitdir = mkTmp('gd-');
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/wt-feature\n');
     writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
     const lines: string[] = [];
@@ -601,8 +620,8 @@ describe('journal CLI diff --json content bounds (issue #126)', () => {
     before: string;
     after: string;
   } {
-    const journalDir = mkdtempSync(join(tmpdir(), 'j-'));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const journalDir = mkTmp('j-');
+    const root = mkTmp('ws-');
     const before = `${'a'.repeat(bytes)}\n`;
     const after = `${'b'.repeat(bytes)}\n`;
     new FileJournalStore(journalDir).append({

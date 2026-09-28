@@ -6,10 +6,10 @@
 // explicitly recorded, and doctor reports the INSTALLED policy object rather
 // than a literal. Faux provider only: zero network, zero paid tokens.
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -36,9 +36,26 @@ import {
 import { runDoctorCommand } from './doctor.js';
 import { buildRunEnvelope, mapTerminusToExitCode } from './run-cli.js';
 
+const roots: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-86-run-'));
+  const root = mkdtempSync(join(tmpdir(), 'kubic-86-run-'));
+  roots.push(root);
+  return root;
 }
+
+// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// is only stderr noise, silenced through its documented opt-out.
+beforeEach(() => {
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function modelsWith(
   steps: ReturnType<typeof fauxAssistantMessage>[],
@@ -155,7 +172,7 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
     expect(await transcriptOf(root, id)).not.toContain('no approval surface');
   });
 
-  it('leaves an ordinary (non-destructive) command unapproved-path-free', async () => {
+  it('runs an ordinary (non-destructive) command without an approval refusal', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'say hi',
@@ -170,6 +187,9 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
+    const transcript = await transcriptOf(root, result.sessionId);
+    expect(transcript).toContain('echo hi');
+    expect(transcript).not.toContain('not approved');
   });
 });
 
@@ -377,7 +397,7 @@ describe('installed policy derivation (issue #86, §40.3 agreement)', () => {
     expect(installed.posture.allowlist.length).toBeGreaterThan(0);
   });
 
-  it('refuses a contradictory pair by name instead of installing it', () => {
+  it('derives an empty allowlist from all-closed classes without refusing it', () => {
     // shell:false still yields a valid allowlist (bash simply absent), so the
     // derivation must NOT throw on the restrictive side — the contradiction
     // case is an allowlist that contradicts its classes, which

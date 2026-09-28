@@ -13,13 +13,25 @@ import {
 } from './clean.js';
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
-import { THREE_WT_PORCELAIN } from './list.test.js';
 
-function spawnedEntries(): WorktreeEntry[] {
-  return parseWorktreePorcelain(THREE_WT_PORCELAIN).filter((e) =>
-    e.path.includes('/.kubic/wt/'),
-  );
-}
+// Kept local, not imported from list.test.ts: importing a test file
+// re-registers its suites here, so they ran twice.
+const THREE_WT_PORCELAIN = `worktree /repo
+HEAD abcdef0123456789
+branch refs/heads/main
+
+worktree /repo/.kubic/wt/agent-1
+HEAD 1111111111111111
+branch refs/heads/kubic/agent-1
+
+worktree /repo/.kubic/wt/agent-2
+HEAD 2222222222222222
+branch refs/heads/kubic/agent-2
+
+worktree /repo/.kubic/wt/agent-3
+HEAD 3333333333333333
+branch refs/heads/kubic/agent-3
+`;
 
 const TOPLEVEL = {
   exitCode: 0,
@@ -185,7 +197,13 @@ describe('kubic clean (issue #45, #92)', () => {
       '/repo/.kubic/wt/agent-2',
       '/repo/.kubic/wt/agent-3',
     ]);
-    expect(spawnedEntries()).toHaveLength(3);
+    // Every planned worktree carries the branch it is disposed with; the
+    // main checkout's `main` is never among them.
+    expect(plan.worktrees.map((w) => w.branch)).toEqual([
+      'kubic/agent-1',
+      'kubic/agent-2',
+      'kubic/agent-3',
+    ]);
   });
 
   it('anchors clean scope to the repo root, not a substring', () => {

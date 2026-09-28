@@ -43,11 +43,20 @@ describe('git log/show (issue #19, slice B)', () => {
     );
     expect(out.ok).toBe(true);
     if (out.ok) {
-      expect(out.result.entries).toHaveLength(2);
-      expect(out.result.entries[0]).toMatchObject({
-        sha: 'abc1234',
-        message: 'first commit',
-      });
+      expect(out.result.entries).toEqual([
+        {
+          sha: 'abc1234',
+          author: 'author one',
+          date: '2026-09-01',
+          message: 'first commit',
+        },
+        {
+          sha: 'def5678',
+          author: 'author two',
+          date: '2026-09-02',
+          message: 'second commit',
+        },
+      ]);
     }
   });
 
@@ -65,7 +74,7 @@ describe('git log/show (issue #19, slice B)', () => {
       }),
     );
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.patch).toContain('diff --git');
+    if (out.ok) expect(out.result.patch).toBe('diff --git a/x b/x\n');
   });
 
   it('git_log is unavailable-with-reason outside a repo', async () => {

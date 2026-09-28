@@ -1,5 +1,4 @@
 // `kubic tui` wiring over the solo lane (issue #75).
-// RED: apps/kubic/src/tui-run.ts does not exist yet.
 //
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on
@@ -98,8 +97,13 @@ describe('kubic tui (issue #75)', () => {
     const code = await pending;
     expect(code).toBe(0);
     const frames = terminal.writes.join('');
-    expect(frames).toContain('?2026h');
-    expect(frames).toContain('?1049l');
+    // Alt-screen entered, at least one atomic frame drawn, then restored.
+    const enter = frames.indexOf('?1049h');
+    expect(enter).toBeGreaterThanOrEqual(0);
+    expect(frames.indexOf('?2026h', enter)).toBeGreaterThan(enter);
+    expect(frames.lastIndexOf('?1049l')).toBeGreaterThan(
+      frames.lastIndexOf('?2026h'),
+    );
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
     const order = ['◌ solo', 'session s1', 'approvals:on'].map((m) =>

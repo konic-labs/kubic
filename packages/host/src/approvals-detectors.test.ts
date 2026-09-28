@@ -21,10 +21,10 @@
 // heuristic for tee/cp/mv/install, and word-boundary `sudo` matching that
 // deliberately over-triggers — a raised capability becomes an ask, never a
 // silent grant.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   confinePath,
   defaultIsDestructive,
@@ -41,6 +41,19 @@ import {
 } from './approvals.js';
 import { parseTomlConfig } from './config/config.js';
 import { ORCHESTRATOR_TRIGGERS } from './orchestrator/approvals/request.js';
+
+const made: string[] = [];
+
+function mkTmp(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function triggerContext(
   overrides: Partial<TriggerContext> = {},
@@ -402,7 +415,7 @@ describe('privilege escalation + indirection (issue #131, slice 2)', () => {
   });
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'approvals-131-'));
+    const dir = mkTmp('approvals-131-');
     const store = new FileApprovalStore(dir);
     const service = new ApprovalService({
       policy: validatePolicy({

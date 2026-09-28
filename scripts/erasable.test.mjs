@@ -1,25 +1,33 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TSC = join(ROOT, 'node_modules', '.bin', 'tsc');
 
-const PACKAGES = [
-  'packages/core',
-  'packages/exec',
-  'packages/worker',
-  'packages/host',
-  'packages/agents',
-  'packages/trajectory',
-  'packages/eval',
-  'packages/tui',
-  'apps/kubic',
-];
+// Discovered, not hand-listed: a hard-coded list silently skipped
+// packages/extensions, so "every package/app" was never true.
+const PACKAGES = ['packages', 'apps'].flatMap((top) =>
+  readdirSync(join(ROOT, top), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `${top}/${entry.name}`),
+);
+
+const scratchDirs = [];
+after(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 function tscFails(cwd, args) {
   try {
@@ -32,6 +40,7 @@ function tscFails(cwd, args) {
 
 function negativeFixture(name, source) {
   const dir = mkdtempSync(join(tmpdir(), `erasable-${name}-`));
+  scratchDirs.push(dir);
   writeFileSync(join(dir, 'fixture.ts'), source);
   writeFileSync(
     join(dir, 'tsconfig.json'),
@@ -54,6 +63,9 @@ describe('erasable-syntax config (issue #3)', () => {
   });
 
   it('every package/app tsconfig extends the base and typechecks', () => {
+    // Floor: 9 packages + apps/kubic — a collapsed discovery must not pass.
+    assert.ok(PACKAGES.length >= 10, `saw only ${PACKAGES.join(', ')}`);
+    assert.ok(PACKAGES.includes('packages/extensions'));
     for (const pkg of PACKAGES) {
       const file = join(ROOT, pkg, 'tsconfig.json');
       assert.ok(existsSync(file), `missing ${pkg}/tsconfig.json`);
@@ -121,6 +133,31 @@ describe('erasable-syntax config (issue #3)', () => {
     ]);
     assert.ok(output !== null, 'tsc passed on namespace — expected failure');
     assert.match(output, /TS1294.*erasableSyntaxOnly/);
+  });
+
+  it('import = require() fails with the erasable-syntax error', () => {
+    const dir = negativeFixture(
+      'import-eq',
+      "import fs = require('node:fs');\nexport const x = fs;\n",
+    );
+    const output = tscFails(dir, [
+      '--noEmit',
+      '-p',
+      join(dir, 'tsconfig.json'),
+    ]);
+    assert.ok(output !== null, 'tsc passed on import = — expected failure');
+    assert.match(output, /\(1,1\): error TS1294.*erasableSyntaxOnly/);
+  });
+
+  it('export = fails with the erasable-syntax error', () => {
+    const dir = negativeFixture('export-eq', 'const x = 1;\nexport = x;\n');
+    const output = tscFails(dir, [
+      '--noEmit',
+      '-p',
+      join(dir, 'tsconfig.json'),
+    ]);
+    assert.ok(output !== null, 'tsc passed on export = — expected failure');
+    assert.match(output, /\(2,1\): error TS1294.*erasableSyntaxOnly/);
   });
 
   it('CI runs tests, typecheck, dep-lint, and biome', () => {

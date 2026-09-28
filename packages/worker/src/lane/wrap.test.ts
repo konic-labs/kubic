@@ -115,11 +115,14 @@ describe('wrap composition (issue #15, slice D)', () => {
     await expect((denied.execute as unknown as ExecuteFn)()).rejects.toThrow(
       PolicyDeniedError,
     );
+    // Denied before the core ran, but the attempt is still timed/recorded.
+    expect(log).toEqual([]);
     expect(records).toHaveLength(1);
     expect(records[0]?.toolName).toBe('bash');
     const [allowed] = composeTools([stubTool(log)], contributions);
     await (allowed.execute as unknown as ExecuteFn)();
-    expect(log).toContain('core');
+    expect(log).toEqual(['core']);
+    expect(records.map((record) => record.toolName)).toEqual(['bash', 'read']);
   });
 
   it('boots the solo lane with classes, interceptors, and wraps applied', async () => {

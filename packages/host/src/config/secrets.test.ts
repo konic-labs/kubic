@@ -114,7 +114,12 @@ describe('redaction + audit (issue #38)', () => {
     ]);
     expect(JSON.stringify(redacted)).not.toContain(FIXTURE_KEY_A);
     expect(JSON.stringify(redacted)).not.toContain(FIXTURE_KEY_B);
-    expect(JSON.stringify(redacted)).toContain('[REDACTED]');
+    expect(redacted).toEqual({
+      provider: 'local',
+      auth: '[REDACTED]',
+      nested: { note: 'key=[REDACTED] ok' },
+      list: ['[REDACTED]', 'public'],
+    });
   });
 
   it('detects plaintext secrets in log lines', () => {
@@ -510,15 +515,30 @@ describe('ScopedToken hardening (issue #69)', () => {
     );
     expect(env.PATH).toBe('/role/bin');
     expect(env.HOME).toBe('/home/u');
+    // Without a role cred, an undefined allowlisted value is absent, not
+    // copied through as a key with an undefined value.
+    const bare = buildAgentEnv(
+      { PATH: undefined, HOME: '/home/u' },
+      AGENT_ENV_ALLOWLIST,
+      {},
+    );
+    expect(bare).toEqual({ HOME: '/home/u' });
   });
 
   it('isolates role credential sets by entries, not by reference', () => {
-    const set = resolveRoleCredentials(
-      'reviewer',
-      {},
-      { version: 3, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
+    const opts = {
+      version: 3,
+      ttlMs: 60_000,
+      hosts: ['h'],
+      maxUses: 3,
+      now: 1_000,
+    };
+    const entries: Record<string, string> = { readKey: FIXTURE_KEY_A };
+    const set = resolveRoleCredentials('reviewer', entries, opts);
+    // A later change to the caller's entries never reaches an issued set.
+    entries.writeKey = FIXTURE_KEY_B;
     expect(set).toMatchObject({ role: 'reviewer', version: 3 });
-    expect(set.tokens).toEqual({});
+    expect(Object.keys(set.tokens)).toEqual(['readKey']);
+    expect(resolveRoleCredentials('reviewer', {}, opts).tokens).toEqual({});
   });
 });

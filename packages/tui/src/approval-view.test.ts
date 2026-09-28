@@ -4,7 +4,7 @@
 // matchesKey/Focusable/CURSOR_MARKER/registry; §16.9 themes/keybindings.
 // Headless snapshots render directly (no VirtualTerminal in Pi 0.85.1)
 // like layout.test.ts. Faux-only: zero network, short real timers.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APPROVAL_MIN_WIDTH,
   type ApprovalOverlayHandle,
@@ -36,6 +36,26 @@ function request(): ApprovalViewRequest {
     justification: 'clean scratch dir',
   };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+// Settles only once the clock reaches maxPendingMs — not a tick earlier.
+async function settledAt(
+  pending: Promise<unknown>,
+  maxPendingMs: number,
+): Promise<void> {
+  let settled = false;
+  void pending.then(() => {
+    settled = true;
+  });
+  await vi.advanceTimersByTimeAsync(maxPendingMs - 1);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(settled).toBe(true);
+}
+
 describe('approval render (issue #26; §41)', () => {
   it('shows capability, justification, command+paths, and 3 actions', () => {
     const lines = renderApprovalLines(request(), 100);
@@ -243,11 +263,14 @@ describe('approval focus (issue #26; §16.4/§16.6)', () => {
 
 describe('approval timeout + memoOnce (issue #26; §41)', () => {
   it('denies with reason on maxPendingMs expiry and never hangs headless', async () => {
+    vi.useFakeTimers();
     const memo = createApprovalMemo();
-    const verdict = await waitForApproval('k1', {
+    const pending = waitForApproval('k1', {
       memo,
       maxPendingMs: 20,
     });
+    await settledAt(pending, 20);
+    const verdict = await pending;
     expect(verdict).toEqual({
       approved: false,
       reason: 'approval timed out after 20ms',
@@ -379,12 +402,15 @@ describe('approval mutation hardening (issue #68)', () => {
   });
 
   it('waits out an undefined answer to the timeout deny', async () => {
+    vi.useFakeTimers();
     const memo = createApprovalMemo();
-    const verdict = await waitForApproval('k1', {
+    const pending = waitForApproval('k1', {
       memo,
       maxPendingMs: 20,
       awaitAnswer: () => Promise.resolve(undefined),
     });
+    await settledAt(pending, 20);
+    const verdict = await pending;
     expect(verdict).toEqual({
       approved: false,
       reason: 'approval timed out after 20ms',

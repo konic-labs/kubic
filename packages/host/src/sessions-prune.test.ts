@@ -10,12 +10,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   loadCliConfig,
   sessionRetentionDays,
@@ -30,9 +31,18 @@ const FAKE_PID = 424243;
 const FLIP_PID = 424251;
 const DEAD_PID = 424252;
 
+const made: string[] = [];
+
 function tmpRoot(prefix = 'prune-'): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -411,7 +421,7 @@ describe('sessions prune, keep-window resolution (issue #119)', () => {
     expect(o.lines.join('\n')).toContain('off');
   });
 
-  it('config retentionDays flows in as the default window; the flag overrides it', async () => {
+  it('config retentionDays flows in as the default window', async () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     sessionDir(root, 'aged-29d', 29 * DAY_MS);

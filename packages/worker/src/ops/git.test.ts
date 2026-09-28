@@ -67,7 +67,26 @@ describe('git ops (issue #19, slice A)', () => {
       ctx(scripts),
     );
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.diff).toContain('diff --git');
+    if (out.ok) expect(out.result.diff).toBe('diff --git a/a.txt b/a.txt\n');
+    // Range scoping: the revision range is its own argv element before
+    // the `--` path separator. (An unscripted fake spawn yields '', so a
+    // wrong argv cannot produce this diff.)
+    const ranged = await callOperation(
+      'git_diff',
+      { range: 'main..HEAD', path: 'a.txt' },
+      inv(),
+      ctx({
+        'git diff main..HEAD -- a.txt': {
+          exitCode: 0,
+          stdout: 'diff --git a/a.txt b/a.txt\n+ranged\n',
+          stderr: '',
+        },
+      }),
+    );
+    expect(ranged.ok).toBe(true);
+    if (ranged.ok) {
+      expect(ranged.result.diff).toBe('diff --git a/a.txt b/a.txt\n+ranged\n');
+    }
   });
 
   it('reports unavailable-with-reason outside a repo, and never inits', async () => {

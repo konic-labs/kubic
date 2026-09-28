@@ -3,13 +3,26 @@
 // proves the selection chain end-to-end. Zero network: catalog reads are
 // local (refresh is an explicit, separate concern).
 
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { LOCAL_MODELS_EXAMPLE } from '../../worker/src/models-config.js';
 import { createModels, fauxProvider } from '../../worker/src/pi-boundary.js';
 import { assembleModels, runModelsCommand } from './models-cli.js';
+
+const made: string[] = [];
+
+function tmpDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'm-'));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 describe('kubic models (issue #20, slice C)', () => {
   it('lists providers, models, and thinking support', async () => {
@@ -77,7 +90,7 @@ describe('kubic models (issue #20, slice C)', () => {
   });
 
   it('assembles models.json customs from cwd, reporting invalid files', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'm-'));
+    const dir = tmpDir();
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify(LOCAL_MODELS_EXAMPLE),
@@ -85,9 +98,9 @@ describe('kubic models (issue #20, slice C)', () => {
     const ok = assembleModels(dir);
     expect(ok.models.getProvider('local')?.id).toBe('local');
     expect(ok.note).toContain('local');
-    const empty = assembleModels(mkdtempSync(join(tmpdir(), 'm-')));
+    const empty = assembleModels(tmpDir());
     expect(empty.note).toBe(null);
-    const badDir = mkdtempSync(join(tmpdir(), 'm-'));
+    const badDir = tmpDir();
     writeFileSync(join(badDir, 'models.json'), '{nope');
     const bad = assembleModels(badDir);
     expect(bad.note).toContain('ignored');

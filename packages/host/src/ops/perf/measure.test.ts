@@ -9,7 +9,7 @@
 //     injected ExecutionEnv (a real throwaway repo in tests).
 // Faux-only where it matters: the spawn source is hermetic; the worktree
 // source takes an injected env so a test can use the fake seam.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +20,7 @@ import {
 } from '../../../../exec/src/env.js';
 import {
   MEASURED_BUDGET_KINDS,
+  MeasureError,
   type MeasureRequest,
   measureSamples,
 } from './measure.js';
@@ -45,8 +46,9 @@ describe('measureSamples: spawn source (issue #98)', () => {
     };
     const result = await measureSamples(request);
     expect(result.kind).toBe('spawn');
-    expect(result.samplesMs).toHaveLength(5);
-    expect(result.samplesMs.every((ms) => ms >= 0)).toBe(true);
+    // The injected clock ticks 10ms per read and each sample reads it once
+    // before and once after the spawn: every sample is exactly one tick.
+    expect(result.samplesMs).toEqual([10, 10, 10, 10, 10]);
     expect(result.source).toBe('measured');
   });
 
@@ -59,56 +61,36 @@ describe('measureSamples: spawn source (issue #98)', () => {
       }),
     ).rejects.toThrow(/at least one sample/i);
   });
+
+  it('refuses a budget kind with no live measurement source', async () => {
+    await expect(
+      measureSamples({
+        kind: 'attach',
+        samples: 1,
+        env: new FakeExecutionEnv({}),
+      }),
+    ).rejects.toThrow(MeasureError);
+  });
 });
 
 describe('measureSamples: worktree source (issue #98)', () => {
-  it('measures N real worktree add/remove cycles in a throwaway repo', async () => {
+  // One real throwaway repo, two measured cycles: every real git spawn costs
+  // wall-clock time, so the measurement and its cleanup share one run.
+  it('measures N real worktree add/remove cycles and leaves no worktree behind', async () => {
     const root = tmpRoot('measure-wt-');
-    // A real, minimal git repo: worktree add needs a commit to branch from.
     const env = new NodeExecutionEnv(root);
-    for (const argv of [
-      ['init', '-q', '.'],
-      [
-        '-c',
-        'user.email=perf@kubic.local',
-        '-c',
-        'user.name=kubic',
-        'commit',
-        '-q',
-        '--allow-empty',
-        '-m',
-        'init',
-      ],
-    ]) {
-      const handle = env.shell.spawn('git', argv, {
-        provenance: env.provenance,
-      });
-      const done = await handle.wait();
+    const git = async (argv: string[]) => {
+      const done = await env.shell
+        .spawn('git', argv, { provenance: env.provenance })
+        .wait();
       if (done.exitCode !== 0)
         throw new Error(`git ${argv.join(' ')} failed: ${done.stderr}`);
-    }
+      return done.stdout;
+    };
     try {
-      const result = await measureSamples({
-        kind: 'worktree',
-        samples: 3,
-        env,
-        repoRoot: root,
-      });
-      expect(result.kind).toBe('worktree');
-      expect(result.samplesMs).toHaveLength(3);
-      expect(result.samplesMs.every((ms) => ms >= 0)).toBe(true);
-      expect(result.source).toBe('measured');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('leaves no worktree behind after measuring', async () => {
-    const root = tmpRoot('measure-wt-clean-');
-    const env = new NodeExecutionEnv(root);
-    for (const argv of [
-      ['init', '-q', '.'],
-      [
+      // worktree add needs a commit to branch from.
+      await git(['init', '-q', '.']);
+      await git([
         '-c',
         'user.email=perf@kubic.local',
         '-c',
@@ -118,32 +100,27 @@ describe('measureSamples: worktree source (issue #98)', () => {
         '--allow-empty',
         '-m',
         'init',
-      ],
-    ]) {
-      const handle = env.shell.spawn('git', argv, {
-        provenance: env.provenance,
-      });
-      await handle.wait();
-    }
-    try {
-      await measureSamples({
+      ]);
+      const result = await measureSamples({
         kind: 'worktree',
         samples: 2,
         env,
         repoRoot: root,
       });
-      const list = env.shell.spawn('git', ['worktree', 'list', '--porcelain'], {
-        provenance: env.provenance,
-      });
-      const done = await list.wait();
+      expect(result.kind).toBe('worktree');
+      expect(result.samplesMs).toHaveLength(2);
+      expect(result.samplesMs.every((ms) => ms >= 0)).toBe(true);
+      expect(result.source).toBe('measured');
       // One entry only: the main checkout. Every measured worktree was removed.
+      const list = await git(['worktree', 'list', '--porcelain']);
       expect(
-        done.stdout.split('\n').filter((line) => line.startsWith('worktree ')),
+        list.split('\n').filter((line) => line.startsWith('worktree ')),
       ).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    // Eight real git spawns: headroom for a loaded CI box, not a sleep.
+  }, 15_000);
 });
 
 describe('MEASURED_BUDGET_KINDS (issue #98)', () => {
@@ -195,14 +172,26 @@ describe('measureSamples: spawn argv plumbing (issue #98 follow-up)', () => {
   });
 });
 
-describe('measureSamples: injected writer', () => {
-  it('never writes outside the injected sessions root', async () => {
-    // The spawn source is hermetic: it must not touch the real filesystem.
-    const root = tmpRoot('measure-hermetic-');
-    writeFileSync(join(root, 'sentinel.txt'), 'untouched\n');
+describe('measureSamples: hermetic spawn source', () => {
+  it('writes nothing through the injected env filesystem', async () => {
     const env = new FakeExecutionEnv({});
     await measureSamples({ kind: 'spawn', samples: 2, env });
-    expect(() => env.fs.readFile('sentinel.txt')).toThrow();
-    rmSync(root, { recursive: true, force: true });
+    expect(env.fs.listDir('')).toEqual([]);
+  });
+});
+
+describe('measureSamples: worktree failure (issue #98)', () => {
+  it('fails loudly when git worktree add fails instead of recording a sample', async () => {
+    const path = `/repo/.kubic/wt/perf-0-${process.pid}`;
+    const env = new FakeExecutionEnv({
+      [`git worktree add ${path} -b kubic/perf-0-${process.pid}`]: {
+        exitCode: 128,
+        stdout: '',
+        stderr: 'fatal: not a git repository',
+      },
+    });
+    await expect(
+      measureSamples({ kind: 'worktree', samples: 1, env, repoRoot: '/repo' }),
+    ).rejects.toThrow(/worktree add failed.*exit 128.*not a git repository/);
   });
 });

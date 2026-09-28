@@ -141,6 +141,35 @@ test('a 3-column ledger row parses too (disposition only)', () => {
   );
 });
 
+test('checkSurface reports uncovered, stale and wired rows separately', () => {
+  // The three ways the ledger and the tree disagree must each go red on
+  // their own — a gate that only ever returns [] would pass the real-tree
+  // test below vacuously.
+  withTree(
+    {
+      'apps/app/src/main.ts': "import { w } from './wired.js';\nw;\n",
+      'apps/app/src/wired.ts': 'export const w = 1;\n',
+      'apps/app/src/dead.ts': 'export const d = 1;\n',
+      'apps/app/src/ledgered.ts': 'export const l = 1;\n',
+      'docs/dead-surface.md':
+        '| LOC | file | disposition |\n| --- | --- | --- |\n' +
+        '| 1 | `apps/app/src/ledgered.ts` | keep: seam |\n' +
+        '| 1 | `apps/app/src/wired.ts` | wire: done |\n' +
+        '| 1 | `apps/app/src/gone.ts` | delete: done |\n',
+    },
+    (root) => {
+      const result = checkSurface(root);
+      assert.deepEqual(result.dead, [
+        'apps/app/src/dead.ts',
+        'apps/app/src/ledgered.ts',
+      ]);
+      assert.deepEqual(result.uncovered, ['apps/app/src/dead.ts']);
+      assert.deepEqual(result.stale, ['apps/app/src/gone.ts']);
+      assert.deepEqual(result.wired, ['apps/app/src/wired.ts']);
+    },
+  );
+});
+
 test('the CLI gate runs from a path containing a space', () => {
   // The main-module guard must not depend on the raw (percent-encoded)
   // .pathname: under a spaced root that comparison fails and the script

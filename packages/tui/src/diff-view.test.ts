@@ -114,15 +114,18 @@ describe('truthful hunk header counts (issue #126)', () => {
 
 describe('diff view header + hunks (issue #25)', () => {
   it('write+edit renders path header, op label, attribution, hunks', () => {
-    const header = renderDiffHeader(WRITE_EDIT);
-    expect(header).toContain('a.txt');
-    expect(header).toContain('write');
-    const lines = renderDiffLines(WRITE_EDIT);
-    expect(lines).toContain('--- a/a.txt');
-    expect(lines).toContain('+++ b/a.txt');
-    expect(lines.join('\n')).toContain('agent=root toolCall=call-1');
-    expect(lines).toContain('-two');
-    expect(lines).toContain('+TWO');
+    expect(renderDiffLines(WRITE_EDIT)).toEqual([
+      'a.txt — write',
+      '--- a/a.txt',
+      '+++ b/a.txt',
+      '# agent=root toolCall=call-1',
+      '@@ -1,4 +1,4 @@',
+      ' one',
+      '-two',
+      '+TWO',
+      ' three',
+      ' ',
+    ]);
   });
 
   it('headless DiffView snapshot shows header + hunks within width', () => {
@@ -142,12 +145,20 @@ describe('diff view header + hunks (issue #25)', () => {
       ...WRITE_EDIT,
       after: `one\n${'x'.repeat(200)}\nthree\n`,
     };
-    const lines = renderDiffLines(long, { width: 40, maxLines: 5 });
-    expect(lines.length).toBeLessThanOrEqual(6);
-    for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(40);
-    }
-    expect(lines[lines.length - 1]).toMatch(/more lines/);
+    // maxLines keeps the long line inside the window, so both the width
+    // clamp (ellipsis at 40) and the trailer are exercised.
+    const lines = renderDiffLines(long, { width: 40, maxLines: 8 });
+    expect(lines).toEqual([
+      'a.txt — write',
+      '--- a/a.txt',
+      '+++ b/a.txt',
+      '# agent=root toolCall=call-1',
+      '@@ -1,4 +1,4 @@',
+      ' one',
+      '-two',
+      `+${'x'.repeat(38)}…`,
+      '… (2 more lines)',
+    ]);
   });
 });
 
@@ -162,14 +173,17 @@ describe('diff placeholders (issue #25)', () => {
   });
 
   it('binary either-side renders a placeholder and never throws', () => {
-    const lines = renderDiffLines({ ...WRITE_EDIT, after: 'a\0b' });
-    expect(lines.join('\n')).toContain('binary');
-    expect(lines.some((l) => l.startsWith('+a'))).toBe(false);
+    for (const side of [{ after: 'a\0b' }, { before: 'a\0b' }]) {
+      const lines = renderDiffLines({ ...WRITE_EDIT, ...side });
+      expect(lines.slice(4)).toEqual(['~ binary content not shown: a.txt']);
+    }
   });
 
   it('missing blob (unexpected null side) renders a placeholder', () => {
     const lines = renderDiffLines({ ...WRITE_EDIT, before: null });
-    expect(lines.join('\n')).toContain('unavailable');
+    expect(lines.slice(4)).toEqual([
+      '~ content unavailable: a.txt (missing before-blob)',
+    ]);
   });
 
   it('create/delete null sides render hunks, not placeholders', () => {

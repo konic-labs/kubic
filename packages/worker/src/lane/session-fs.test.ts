@@ -2,18 +2,27 @@
 // Pi 0.87.1 adds FileSystem.openTextLineReader (+ TextLine/TextLineReader);
 // the bridge adapter must expose it with correct final-line termination so
 // JsonlSessionRepo can discard torn trailing records.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { BACKGROUND_CONTEXT } from '../pi-boundary.js';
 import { bridgeToPiFileSystem } from './session-fs.js';
+
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function setup(files: Record<string, string>): {
   fs: ReturnType<typeof bridgeToPiFileSystem>;
 } {
   const root = mkdtempSync(join(tmpdir(), 'session-fs-'));
+  scratchDirs.push(root);
   const bridge = createNodeFileBridge(root);
   for (const [name, content] of Object.entries(files)) {
     bridge.writeFile(name, content);

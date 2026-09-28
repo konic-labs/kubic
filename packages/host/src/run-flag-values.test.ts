@@ -5,10 +5,10 @@
 //   --prompt="--help"            equals form, value verbatim
 //   -p -- --json-experiment      end-of-flags, next raw token
 //   -p --json                    still the typo error (never weakened)
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -24,9 +24,25 @@ import {
 } from '../../worker/src/pi-boundary.js';
 import { type HeadlessRunResult, runRunCommand } from './run-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-flag-values-'));
+  const dir = mkdtempSync(join(tmpdir(), 'run-flag-values-'));
+  made.push(dir);
+  return dir;
 }
+
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -91,7 +107,7 @@ describe('run flag values starting with -- (issue #127)', () => {
     expect(o.lines.join('\n')).not.toMatch(/usage: kubic run/);
     const sessionId = (o.lines.join('\n').match(/^session: (.+)$/m) ??
       [])[1] as string;
-    expect(sessionId).toBeDefined();
+    expect(sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(await transcriptOf(root, sessionId)).toContain('--help');
   });
 
@@ -110,6 +126,7 @@ describe('run flag values starting with -- (issue #127)', () => {
     expect(seen.prompt).toBe('--json-experiment');
     const sessionId = (o.lines.join('\n').match(/^session: (.+)$/m) ??
       [])[1] as string;
+    expect(sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(await transcriptOf(root, sessionId)).toContain('--json-experiment');
   });
 
@@ -129,11 +146,16 @@ describe('run flag values starting with -- (issue #127)', () => {
   it('accepts a --json-prefixed prompt through the equals form too', async () => {
     const root = tmpRoot();
     const o = out();
+    const seen: { prompt?: string } = {};
     const exit = await runRunCommand(['--prompt=--json-experiment'], {
       out: o.write,
-      run: fauxRun(root),
+      run: async (prompt: string) => {
+        seen.prompt = prompt;
+        return fauxRun(root)(prompt);
+      },
     });
     expect(exit).toBe(0);
+    expect(seen.prompt).toBe('--json-experiment');
     expect(o.lines[0]).toMatch(/^result: /);
   });
 

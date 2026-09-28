@@ -1,18 +1,16 @@
 // Skills on the live solo path (issue #99, scope item 2; §29).
-// RED: nothing in the shipped binary calls discoverSkills /
-// formatSkillsForSystemPrompt — skills.ts is runtime-dead, `--no-skills`
-// does not exist, and the assembled solo prompt never carries a skill
-// block. Every test below fails until the composition root runs discovery
-// through the real FileBridge and hands the model-visible blocks to the
-// lane boot.
+// Before #99 nothing in the shipped binary called discoverSkills /
+// formatSkillsForSystemPrompt and `--no-skills` did not exist. These tests
+// pin that the composition root runs discovery through the real FileBridge
+// and hands the model-visible blocks to the lane boot.
 //
 // Faux provider only (zero network, zero paid tokens): the assertions are
 // about the system-prompt bytes handed to AgentHarness.create, observed
 // through the same spy seam solo-wiring.test.ts uses.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
@@ -24,8 +22,12 @@ import {
 } from '../../worker/src/pi-boundary.js';
 import { runRunCommand } from './run-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
 function fauxModels(texts: string[]): MutableModels {
@@ -57,8 +59,18 @@ function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
   return options?.systemPrompt as string;
 }
 
+beforeEach(() => {
+  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // it); the documented opt-out keeps it off the test runner's stderr.
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  // Restores KUBIC_TRUST_PROJECT to the developer's own value too.
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
@@ -219,36 +231,32 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
     writeSkill(join(cwd, '.agents', 'skills'), 'env-gated', 'Needs the opt-in');
     const root = tmpRoot('skills-sessions-');
     const createSpy = vi.spyOn(AgentHarness, 'create');
-    delete process.env.KUBIC_TRUST_PROJECT;
-    try {
-      await runHeadlessPrompt(
-        'hello',
-        {},
-        {
-          sessionsRoot: root,
-          models: fauxModels(['done']),
-          env: new FakeExecutionEnv({}),
-          // No explicit `trusted`: the env switch decides.
-          skills: { homeDir: home, cwd },
-        },
-      );
-      expect(promptOf(createSpy)).not.toContain('env-gated');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', undefined);
+    await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        // No explicit `trusted`: the env switch decides.
+        skills: { homeDir: home, cwd },
+      },
+    );
+    expect(promptOf(createSpy)).not.toContain('env-gated');
 
-      process.env.KUBIC_TRUST_PROJECT = '1';
-      createSpy.mockClear();
-      await runHeadlessPrompt(
-        'hello',
-        {},
-        {
-          sessionsRoot: root,
-          models: fauxModels(['done']),
-          env: new FakeExecutionEnv({}),
-          skills: { homeDir: home, cwd },
-        },
-      );
-      expect(promptOf(createSpy)).toContain('<name>env-gated</name>');
-    } finally {
-      delete process.env.KUBIC_TRUST_PROJECT;
-    }
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    createSpy.mockClear();
+    await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['done']),
+        env: new FakeExecutionEnv({}),
+        skills: { homeDir: home, cwd },
+      },
+    );
+    expect(promptOf(createSpy)).toContain('<name>env-gated</name>');
   });
 });

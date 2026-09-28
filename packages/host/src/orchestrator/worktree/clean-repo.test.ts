@@ -27,21 +27,39 @@ afterEach(() => {
   }
 });
 
+// stderr is piped, not inherited: `git worktree add` narrates "Preparing
+// worktree ..." on stderr, which would otherwise leak into the test output.
+// A failing call still throws with that stderr attached.
 function git(dir: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  return execFileSync('git', args, {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 
 // realpath: macOS tmpdir is a symlink (/var → /private/var) and git reports
 // the resolved toplevel, so the test's root must be the resolved form too.
+// Identity and signing are passed per-commit, so the operator's global git
+// config (e.g. commit.gpgsign) cannot break or stall the fixture.
 function scratchRepo(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'kubic-clean-')));
   scratchDirs.push(dir);
-  git(dir, ['init']);
-  git(dir, ['config', 'user.email', 'kubic-test@local']);
-  git(dir, ['config', 'user.name', 'kubic test']);
+  git(dir, ['init', '-q']);
   writeFileSync(join(dir, 'README.md'), '# scratch\n');
   git(dir, ['add', 'README.md']);
-  git(dir, ['commit', '-m', 'init']);
+  git(dir, [
+    '-c',
+    'user.email=kubic-test@local',
+    '-c',
+    'user.name=kubic test',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '-m',
+    'init',
+  ]);
   return dir;
 }
 

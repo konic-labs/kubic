@@ -1,4 +1,4 @@
-// Slice A RED: AgentTreeView one-node + ToolOutput collapsing (issue #24).
+// Slice A: AgentTreeView one-node + ToolOutput collapsing (issue #24).
 // Solo-only: root + tool children, glyphs ✓/●/◌, keyboard+click toggle,
 // truncation. Headless snapshots render directly (no VirtualTerminal in
 // Pi 0.85.1) like layout.test.ts.
@@ -314,6 +314,10 @@ describe('tree mutation hardening (issue #68)', () => {
     // One tool: singular 'call' via the injected clock (1500 - 1000).
     expect(view.render(100)).toEqual(['● solo', '  …1 call, 500ms']);
     expect(view.getState().tools[0]?.durationMs).toBe(500);
+    // The label option names the root when the view builds its own state.
+    expect(
+      new AgentTreeView(undefined, { label: 'lane-7' }).render(100),
+    ).toEqual(['◌ lane-7']);
   });
 
   it('restarts a retooled call instead of duplicating it', () => {

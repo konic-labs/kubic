@@ -40,6 +40,7 @@ interface Booted {
     hooks: Parameters<typeof registerPolicyInterceptors>[0];
   };
   lane: AgentLane;
+  env: FakeExecutionEnv;
 }
 
 async function boot(
@@ -67,7 +68,7 @@ async function boot(
     agentId: 'root',
   });
   sessions.push(session);
-  return booted as unknown as Booted;
+  return { ...(booted as unknown as Booted), env };
 }
 
 async function driveToolEnds(booted: Booted): Promise<HarnessEvent[]> {
@@ -142,7 +143,12 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(ends).toHaveLength(1);
     expect(seenBySecond).toHaveLength(1);
     expect(seenBySecond[0]?.path).toBe('/work/etc/cron.d/x');
-    expect(JSON.stringify(ends[0])).not.toContain('/etc/cron.d/x",');
+    const end = ends[0];
+    if (end?.type !== 'tool_end') throw new Error('unreachable');
+    expect(end.isError).toBe(false);
+    // The write landed at the confined path, never the requested one.
+    expect(booted.env.fs.readFile('/work/etc/cron.d/x')).toBe('nope');
+    expect(() => booted.env.fs.readFile('/etc/cron.d/x')).toThrow();
   });
 
   it('blocks network commands when network is none, allows otherwise', async () => {
@@ -161,9 +167,11 @@ describe('policy interceptors (issue #15, slice C)', () => {
     ]);
     registerPolicyInterceptors(allowed.harness.hooks, { workspace: '/work' });
     const allowedEnds = await driveToolEnds(allowed);
-    expect(JSON.stringify(allowedEnds[0])).not.toContain(
-      'network command blocked',
-    );
+    expect(allowedEnds).toHaveLength(1);
+    const allowedEnd = allowedEnds[0];
+    if (allowedEnd?.type !== 'tool_end') throw new Error('unreachable');
+    expect(allowedEnd.isError).toBe(false);
+    expect(JSON.stringify(allowedEnd)).not.toContain('network command blocked');
   });
 
   it('denies through the approval decider and stands down guards only when challenged', async () => {
@@ -190,7 +198,10 @@ describe('policy interceptors (issue #15, slice C)', () => {
     });
     const challengedEnds = await driveToolEnds(challenged);
     expect(challengedEnds).toHaveLength(1);
-    expect(JSON.stringify(challengedEnds[0])).not.toContain('blocked');
+    const challengedEnd = challengedEnds[0];
+    if (challengedEnd?.type !== 'tool_end') throw new Error('unreachable');
+    expect(challengedEnd.isError).toBe(false);
+    expect(JSON.stringify(challengedEnd)).not.toContain('blocked');
 
     // Unchallenged fast-path: approved, but every #15 guard stays up — the
     // outside read is still confined.

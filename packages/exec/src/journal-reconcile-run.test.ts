@@ -15,14 +15,27 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore, loadBaseline, sha256Hex } from './journal.js';
 import { beginReconciliation } from './journal-reconcile.js';
 
 const NOW = 1_700_000_000_000;
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function workspace(): string {
-  const root = mkdtempSync(join(tmpdir(), 'ws-reconcile-'));
+  const root = tmpRoot('ws-reconcile-');
   writeFileSync(join(root, 'keep.txt'), 'v1\n');
   writeFileSync(join(root, 'gone.txt'), 'bye\n');
   writeFileSync(join(root, 'ignored.log'), 'noise\n');
@@ -31,7 +44,7 @@ function workspace(): string {
 }
 
 function journalStore(): FileJournalStore {
-  return new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-reconcile-')));
+  return new FileJournalStore(tmpRoot('j-reconcile-'));
 }
 
 describe('run-scoped reconciliation lifecycle (issue #87)', () => {
@@ -77,8 +90,7 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     // Whatever bypasses interception: an external writer, not a Kubic op.
     writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
     writeFileSync(join(root, 'new.txt'), 'born\n');
-    const gone = join(root, 'gone.txt');
-    writeFileSync(gone, '');
+    rmSync(join(root, 'gone.txt'));
     expect(run.sweep()).toBe(3);
     const entries = store.entries();
     expect(entries.every((e) => e.unattributed === true)).toBe(true);
@@ -95,6 +107,9 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     const created = entries.find((e) => e.path === 'new.txt');
     expect(created?.op).toBe('create');
     expect(created?.beforeHash).toBe(null);
+    const deleted = entries.find((e) => e.path === 'gone.txt');
+    expect(deleted?.op).toBe('delete');
+    expect(deleted?.beforeHash).toBe(sha256Hex('bye\n'));
   });
 
   it('costs one metadata walk and zero blobs when nothing changed', () => {
@@ -191,7 +206,7 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
   // not even a test timeout fires, because the block is synchronous. The walk
   // must treat a special file as "not journalable" and keep going.
   it('does not block on a named pipe in the workspace (regression)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-fifo-'));
+    const root = tmpRoot('ws-fifo-');
     writeFileSync(join(root, 'keep.txt'), 'v1\n');
     execFileSync('mkfifo', [join(root, 'pipe')]);
     const store = journalStore();
@@ -205,7 +220,6 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     });
     // The regular file is journaled; the pipe is skipped, not read.
     expect(Object.keys(run.baseline)).toEqual(['keep.txt']);
-    rmSync(root, { recursive: true, force: true });
   });
 
   // The docs used to promise unattributed entries are ALWAYS non-reversible
@@ -214,7 +228,7 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
   // baseline. When an earlier tool entry in the same run already stored that
   // pre-image, undo CAN restore it — and must, rather than refusing.
   it('reports a sweep entry reversible when a pre-image was stored earlier (regression)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ws-preimage-'));
+    const root = tmpRoot('ws-preimage-');
     writeFileSync(join(root, 'f.txt'), 'v1-boot\n');
     const store = journalStore();
     const run = beginReconciliation({
@@ -241,9 +255,9 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     writeFileSync(join(root, 'f.txt'), 'v3-external\n');
     expect(run.sweep()).toBe(1);
     const sweepEntry = store.entries().find((e) => e.unattributed === true);
-    expect(sweepEntry).toBeDefined();
+    if (sweepEntry === undefined) throw new Error('missing sweep entry');
+    expect(sweepEntry.beforeHash).toBe(sha256Hex('v1-boot\n'));
     // The pre-image resolves, so this entry is reversible in fact.
-    expect(store.readBefore(sweepEntry as never)).toBe('v1-boot\n');
-    rmSync(root, { recursive: true, force: true });
+    expect(store.readBefore(sweepEntry)).toBe('v1-boot\n');
   });
 });

@@ -10,11 +10,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { bootTuiLane } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
@@ -26,9 +27,18 @@ import {
 } from '../../worker/src/pi-boundary.js';
 import { runJournalCommand } from './journal-cli.js';
 
+const made: string[] = [];
+
 function tmpRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 function fauxModels(): MutableModels {
   const faux = fauxProvider();
@@ -93,6 +103,8 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
       models: fauxModels(),
     });
     const journalDir = join(sessionsRoot, boot.sessionId, 'journal');
+    // The close IS the sweep point: an absent close would make this vacuous.
+    expect(boot.close).toBeTypeOf('function');
     writeFileSync(join(workspace, 'file.txt'), 'v2\n');
     await boot.close?.();
     await boot.close?.();
@@ -108,6 +120,7 @@ describe('end-of-run reconciliation, tui path (issue #87)', () => {
       env: new NodeExecutionEnv(workspace),
       models: fauxModels(),
     });
+    expect(boot.close).toBeTypeOf('function');
     await boot.close?.();
     expect(
       new FileJournalStore(

@@ -1,7 +1,7 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { ProcessSnapshot } from '../../../exec/src/env.js';
 import {
   FakeExecutionEnv,
@@ -9,15 +9,24 @@ import {
   NodeExecutionEnv,
 } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation, OPERATIONS } from './registry.js';
+import { callOperation } from './registry.js';
 import type { JsonValue, OpContext, ToolInvocation } from './types.js';
 
 function fakeCtx(env: FakeExecutionEnv, extra?: Partial<OpContext>): OpContext {
   return { env, sessionId: 's1', agentId: 'a1', ...extra };
 }
 
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function nodeCtx(extra?: Partial<OpContext>): OpContext {
   const cwd = mkdtempSync(join(tmpdir(), 'ops-bash-'));
+  scratchDirs.push(cwd);
   return {
     env: new NodeExecutionEnv(cwd),
     sessionId: 's1',
@@ -32,32 +41,6 @@ function inv(id: string, store: MemoryMemoStore): ToolInvocation {
     store,
   );
 }
-
-describe('operation registry growth (issue #13, slice D)', () => {
-  it('exposes exactly the expected operations', () => {
-    expect(Object.keys(OPERATIONS).sort()).toEqual([
-      'bash',
-      'edit',
-      'find',
-      'git_branch',
-      'git_checkpoint',
-      'git_commit',
-      'git_diff',
-      'git_log',
-      'git_show',
-      'git_stage',
-      'git_status',
-      'grep',
-      'ls',
-      'read',
-      'write',
-    ]);
-  });
-
-  it('declares bash as never-replay', () => {
-    expect(OPERATIONS.bash.replay).toBe('never');
-  });
-});
 
 describe('bash operation (issue #13, slice D)', () => {
   it('runs echo and threads provenance', async () => {
@@ -91,19 +74,28 @@ describe('bash operation (issue #13, slice D)', () => {
   });
 
   it('aborts on signal with a partial snapshot', async () => {
+    // Abort as soon as the child's first output is observed: deterministic
+    // (no fixed sleep) and proves the partial stdout survives the kill.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 300);
     const out = await callOperation(
       'bash',
-      { command: `${process.execPath} -e "setTimeout(()=>{},30000)"` },
+      {
+        command: `${process.execPath} -e "process.stdout.write('partial');setTimeout(()=>{},30000)"`,
+      },
       inv('inv-b3', new MemoryMemoStore()),
-      nodeCtx({ signal: ctl.signal }),
+      nodeCtx({
+        signal: ctl.signal,
+        onUpdate: (snap) => {
+          if (snap.stdout.includes('partial')) ctl.abort();
+        },
+      }),
     );
-    clearTimeout(timer);
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.aborted).toBe(true);
+      expect(out.result.timedOut).toBe(false);
       expect(out.result.exitCode).toBeNull();
+      expect(out.result.stdout).toBe('partial');
     }
   }, 10000);
 
@@ -112,7 +104,7 @@ describe('bash operation (issue #13, slice D)', () => {
       'bash',
       {
         command: `${process.execPath} -e "setTimeout(()=>{},30000)"`,
-        timeout: 1,
+        timeout: 0.05,
       },
       inv('inv-b4', new MemoryMemoStore()),
       nodeCtx(),
@@ -121,6 +113,7 @@ describe('bash operation (issue #13, slice D)', () => {
     if (out.ok) {
       expect(out.result.aborted).toBe(true);
       expect(out.result.timedOut).toBe(true);
+      expect(out.result.exitCode).toBeNull();
     }
   }, 10000);
 

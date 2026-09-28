@@ -4,7 +4,7 @@
 // sentence, list the shipped flags, and show `clean` in the usage line; the
 // binary's dispatch must actually answer `clean` (a typo in the dispatch
 // table would otherwise pass silently).
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -70,8 +70,9 @@ describe('clean is documented and dispatched (issue #92)', () => {
 
   it('documents every shipped clean flag on the commands page', () => {
     const page = readFileSync(COMMANDS_PAGE, 'utf8');
-    const section = page.slice(page.indexOf('## `kubic clean'));
-    expect(section.length).toBeGreaterThan(0);
+    const start = page.indexOf('## `kubic clean');
+    expect(start, 'missing the `kubic clean` section').toBeGreaterThan(-1);
+    const section = page.slice(start);
     const body = section.slice(0, section.indexOf('\n## ', 1));
     for (const flag of SHIPPED_FLAGS) {
       expect(body, `missing ${flag} in the clean section`).toContain(flag);
@@ -82,18 +83,60 @@ describe('clean is documented and dispatched (issue #92)', () => {
     expect(body).toContain('nothing was removed');
   });
 
-  it('is the only disposer: nothing in the package deletes a spawned branch', () => {
-    // The "only kubic clean disposes" claim is a code claim too: `git branch
-    // -D` on a spawned branch may only be issued from the clean/remove path.
-    const clean = readFileSync(CLEAN, 'utf8');
-    expect(clean).toContain('deleteSpawnedBranch');
-    // The route is pinned in the dispatch (issue #135), the runCleanCommand
-    // wiring in the production runners.
-    const dispatch = readFileSync(DISPATCH, 'utf8');
-    expect(dispatch).toContain("command === 'clean'");
-    const wiring = readFileSync(PROD_RUNNERS, 'utf8');
-    expect(wiring).toContain('runCleanCommand');
-  });
+  // A source-text scan: under Stryker every literal is instrumented, so the
+  // argv pattern cannot match there (and a text scan kills no mutants).
+  it.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
+    'is the only disposer: nothing in the package deletes a spawned branch',
+    () => {
+      // The "only kubic clean disposes" claim is a code claim too: `git branch
+      // -D` on a spawned branch may only be issued from the clean/remove path.
+      const clean = readFileSync(CLEAN, 'utf8');
+      expect(clean).toContain('deleteSpawnedBranch');
+      // Scan every shipped source: the branch delete argv lives only in
+      // remove.ts, and only clean.ts calls the helper that issues it.
+      const sources: string[] = [];
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) walk(full);
+          else if (
+            entry.name.endsWith('.ts') &&
+            !entry.name.endsWith('.test.ts')
+          )
+            sources.push(full);
+        }
+      };
+      for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+        const src = join(ROOT, 'packages', pkg, 'src');
+        if (existsSync(src)) walk(src);
+      }
+      walk(join(ROOT, 'apps', 'kubic', 'src'));
+      expect(sources.length).toBeGreaterThan(50);
+      const rel = (file: string): string => file.slice(ROOT.length + 1);
+      const deleters = sources
+        .filter((file) => /'branch',\s*'-D'/.test(readFileSync(file, 'utf8')))
+        .map(rel);
+      expect(deleters).toEqual([
+        'packages/host/src/orchestrator/worktree/remove.ts',
+      ]);
+      const callers = sources
+        .filter((file) =>
+          /deleteSpawnedBranch\(/.test(readFileSync(file, 'utf8')),
+        )
+        .map(rel)
+        .sort();
+      expect(callers).toEqual([
+        'packages/host/src/orchestrator/worktree/clean.ts',
+        'packages/host/src/orchestrator/worktree/remove.ts',
+      ]);
+      // The route is pinned in the dispatch (issue #135), the runCleanCommand
+      // wiring in the production runners.
+      const dispatch = readFileSync(DISPATCH, 'utf8');
+      expect(dispatch).toContain("command === 'clean'");
+      const wiring = readFileSync(PROD_RUNNERS, 'utf8');
+      expect(wiring).toContain('runCleanCommand');
+    },
+  );
 
   it('shows every accepted flag in the clean usage line', async () => {
     // A flag the parser accepts but the usage line omits is undiscoverable —

@@ -1,15 +1,28 @@
 // Slice B: undo core — reverse-chronological restore (issue #18; §42.2).
 // RED: planUndo/applyUndo do not exist yet.
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileJournalStore } from './journal.js';
 import { applyUndo, planUndo } from './journal-undo.js';
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 function seed(): { store: FileJournalStore; root: string } {
-  const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const store = new FileJournalStore(tmpRoot('j-'));
+  const root = tmpRoot('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   writeFileSync(join(root, 'b.txt'), 'keep\n');
   store.append({
@@ -70,7 +83,10 @@ describe('journal undo core (issue #18, slice B)', () => {
     const step = planUndo(store, { step: true });
     expect(step.steps.map((s) => s.path)).toEqual(['ghost.txt']);
     const path = planUndo(store, { path: 'a.txt' });
-    expect(path.steps).toHaveLength(2);
+    expect(path.steps.map((s) => [s.path, s.timestamp])).toEqual([
+      ['a.txt', 200],
+      ['a.txt', 100],
+    ]);
     const before = planUndo(store, {});
     const entriesBefore = store.entries().length;
     const result = applyUndo(store, before, root, { dryRun: true });
@@ -152,8 +168,8 @@ describe('journal undo core (issue #18, slice B)', () => {
 // the world after it) and reversible: a second `undo --step` is the redo.
 describe('undo record + redo (issue #117)', () => {
   function seedOne(): { store: FileJournalStore; root: string } {
-    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const store = new FileJournalStore(tmpRoot('j-'));
+    const root = tmpRoot('ws-');
     writeFileSync(join(root, 'a.txt'), 'v2\n');
     store.append({
       path: 'a.txt',
@@ -188,11 +204,17 @@ describe('undo record + redo (issue #117)', () => {
 
   it('defaults the undo record timestamp to now when no clock is injected', () => {
     const { store, root } = seedOne();
-    const before = Date.now();
-    applyUndo(store, planUndo(store, { step: true }), root, {});
+    // Pin the wall clock (Date only) so the default is asserted exactly.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_234_567_890_123);
+      applyUndo(store, planUndo(store, { step: true }), root, {});
+    } finally {
+      vi.useRealTimers();
+    }
     const entries = store.entries();
     const record = entries[entries.length - 1];
-    expect(record?.timestamp).toBeGreaterThanOrEqual(before);
+    expect(record?.timestamp).toBe(1_234_567_890_123);
   });
 
   it('redo: a second undo --step immediately after restores the pre-undo content', () => {
@@ -236,8 +258,8 @@ describe('undo record + redo (issue #117)', () => {
   });
 
   it('plain undo skips interleaved bookkeeping; --step still targets the newest entry (the redo)', () => {
-    const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-    const root = mkdtempSync(join(tmpdir(), 'ws-'));
+    const store = new FileJournalStore(tmpRoot('j-'));
+    const root = tmpRoot('ws-');
     const undoRecord = (
       path: string,
       before: string,
@@ -343,8 +365,8 @@ const ENTRY_BASE = {
 } as const;
 
 function seedStale(): { store: FileJournalStore; root: string } {
-  const store = new FileJournalStore(mkdtempSync(join(tmpdir(), 'j-')));
-  const root = mkdtempSync(join(tmpdir(), 'ws-'));
+  const store = new FileJournalStore(tmpRoot('j-'));
+  const root = tmpRoot('ws-');
   return { store, root };
 }
 
@@ -426,8 +448,11 @@ describe('undo staleness safety (issue #108)', () => {
       after: 'v2\n',
       ...ENTRY_BASE,
     });
-    const result = applyUndo(store, planUndo(store, {}), root, {});
+    const plan = planUndo(store, {}, root);
+    expect(plan.stale).toBe(0);
+    const result = applyUndo(store, plan, root, {});
     expect(result.restored).toEqual(['vanished.txt']);
+    expect(result.skipped).toEqual([]);
     expect(readFileSync(join(root, 'vanished.txt'), 'utf8')).toBe('v1\n');
   });
 
@@ -467,5 +492,8 @@ describe('undo staleness safety (issue #108)', () => {
     });
     expect(dryForced.restored).toEqual(['stale.txt']);
     expect(dryForced.skipped).toEqual([]);
+    // Force changes the verdict, never the dry-run contract: disk untouched.
+    expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v3\n');
+    expect(store.entries()).toHaveLength(1);
   });
 });

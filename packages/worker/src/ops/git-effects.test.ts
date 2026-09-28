@@ -50,7 +50,9 @@ describe('git effects (issue #19, slice C)', () => {
         ),
         ctx({}),
       );
+      // Unscripted fake spawns exit 0, so only validation can refuse.
       expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error.code).toBe('invalid_args');
     }
   });
 
@@ -63,6 +65,7 @@ describe('git effects (issue #19, slice C)', () => {
     );
     // Rejected: any `..` segment is refused, even one that resolves inside.
     expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error.code).toBe('invalid_args');
   });
 
   it('git_branch refuses hostile names and git_diff refuses dash ranges', async () => {
@@ -74,6 +77,7 @@ describe('git effects (issue #19, slice C)', () => {
         ctx({}),
       );
       expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error.code).toBe('invalid_args');
     }
     const diffed = await callOperation(
       'git_diff',
@@ -82,6 +86,7 @@ describe('git effects (issue #19, slice C)', () => {
       ctx({}),
     );
     expect(diffed.ok).toBe(false);
+    if (!diffed.ok) expect(diffed.error.code).toBe('invalid_args');
   });
 
   it('git_commit returns the sha plus file list for the trajectory', async () => {

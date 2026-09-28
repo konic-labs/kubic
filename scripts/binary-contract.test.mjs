@@ -5,11 +5,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  existsSync,
+  copyFileSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  renameSync,
+  realpathSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -633,34 +634,42 @@ describe('CI wiring (issue #101)', () => {
     // The contract exits non-zero on violation; process.exit() would kill the
     // process before the finally-block cleanup, leaking one scratch dir per
     // failing run. Point TMPDIR at a fresh dir and force the failure path.
-    const sandbox = mkdtempSync(join(tmpdir(), 'bc-cleanup-'));
+    // The script derives its root from its own location, so a copy in a
+    // dist-less fixture root takes the missing-build path without renaming
+    // the real dist/ (which raced any concurrent build or binary run).
+    // realpath: the script's main guard compares argv[1] with its own
+    // resolved URL, so a symlinked tmpdir (macOS /var -> /private/var)
+    // would skip main entirely and exit 0.
+    const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'bc-cleanup-')));
     try {
-      const entry = join(ROOT, 'dist/apps/kubic/src/main.js');
-      const stashed = `${entry}.cleanup-probe`;
-      const hadDist = existsSync(entry);
-      if (hadDist) renameSync(entry, stashed);
-      try {
-        const result = spawnSync(
-          process.execPath,
-          ['scripts/binary-contract.mjs'],
-          {
-            cwd: ROOT,
-            env: { ...process.env, TMPDIR: sandbox },
-            encoding: 'utf8',
-          },
-        );
-        assert.equal(result.status, 1, 'the missing-dist path must exit 1');
-        const leftovers = readdirSync(sandbox).filter((n) =>
-          n.startsWith('kubic-binary-contract-'),
-        );
-        assert.deepEqual(
-          leftovers,
-          [],
-          'no scratch dir may survive a failing run',
-        );
-      } finally {
-        if (hadDist) renameSync(stashed, entry);
-      }
+      const fixtureRoot = join(sandbox, 'repo');
+      const scratchTmp = join(sandbox, 'tmp');
+      mkdirSync(join(fixtureRoot, 'scripts'), { recursive: true });
+      mkdirSync(scratchTmp);
+      copyFileSync(
+        join(ROOT, 'scripts', 'binary-contract.mjs'),
+        join(fixtureRoot, 'scripts', 'binary-contract.mjs'),
+      );
+      copyFileSync(
+        join(ROOT, 'package.json'),
+        join(fixtureRoot, 'package.json'),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [join(fixtureRoot, 'scripts', 'binary-contract.mjs')],
+        {
+          cwd: fixtureRoot,
+          env: { ...process.env, TMPDIR: scratchTmp },
+          encoding: 'utf8',
+        },
+      );
+      assert.equal(result.status, 1, 'the missing-dist path must exit 1');
+      assert.match(result.stderr, /binary contract: missing build output/);
+      assert.deepEqual(
+        readdirSync(scratchTmp),
+        [],
+        'no scratch dir may survive a failing run',
+      );
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

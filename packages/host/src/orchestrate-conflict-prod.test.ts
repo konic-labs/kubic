@@ -11,14 +11,16 @@
 // real agent could pick — and the manager re-merges.
 import { execFileSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { ApprovalSnapshot } from './orchestrator/merge/conflicts.js';
@@ -88,9 +90,21 @@ const POLICY: ApprovalSnapshot = {
   maxPendingMs: 60_000,
 };
 
+// Every scratch dir (repo, sessions, fixtures) is removed after each test —
+// the worktrees live under the repo root, so removing it disposes them too.
+const scratchDirs: string[] = [];
+
 function scratch(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function gitIn(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -238,6 +252,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     expect(code).toBe(1);
     expect(h.lines.join('\n')).toMatch(/code=merge_conflict/);
     expect(h.lines.join('\n')).toMatch(/approval snapshot/);
+    // Never delegated: the resolver child, which writes its prompt first
+    // thing, was never spawned in the conflicted worktree.
+    expect(
+      existsSync(join(h.root, '.kubic', 'wt', 'beta', 'resolver-prompt.txt')),
+    ).toBe(false);
+    expect(h.lines.join('\n')).not.toMatch(/resolver: resolver child exited/);
   });
 
   it('reads real retained-worktree dirtiness and names the files', async () => {
@@ -291,6 +311,18 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // The snapshot the composition root threads in is the one the CLI hands
     // the spec builder; the hash it derives must round-trip, which is what
     // makes the spec's self-consistency check meaningful rather than theatre.
-    expect(hashApprovalPolicy(POLICY)).toBe(hashApprovalPolicy({ ...POLICY }));
+    const h = await harness(RESOLVER_SETTLE);
+    expect(h.deps.approvalPolicy).toEqual(POLICY);
+    expect(hashApprovalPolicy(h.deps.approvalPolicy as ApprovalSnapshot)).toBe(
+      hashApprovalPolicy({ ...POLICY }),
+    );
+    // …and the hash is not a constant: a changed snapshot no longer matches,
+    // so the re-check can actually refuse a drifted policy.
+    expect(hashApprovalPolicy({ ...POLICY, maxPendingMs: 1 })).not.toBe(
+      hashApprovalPolicy(POLICY),
+    );
+    expect(hashApprovalPolicy({ ...POLICY, route: 'auto' })).not.toBe(
+      hashApprovalPolicy(POLICY),
+    );
   });
 });

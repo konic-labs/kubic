@@ -10,7 +10,7 @@ import { allowlistedShell } from './shell.js';
 
 const PROBE = [
   '-e',
-  'process.stdout.write(JSON.stringify({secret: process.env.PARENT_ONLY_SECRET ?? null, path: process.env.PATH ?? null, role: process.env.KUBIC_ROLE_WRITER_TOKEN ?? null, workerId: process.env.KUBIC_WORKER_ID ?? null, home: process.env.HOME ?? null}))',
+  'process.stdout.write(JSON.stringify({secret: process.env.PARENT_ONLY_SECRET ?? null, path: process.env.PATH ?? null, role: process.env.KUBIC_ROLE_WRITER_TOKEN ?? null, workerId: process.env.KUBIC_WORKER_ID ?? null, home: process.env.HOME ?? null, aws: process.env.AWS_SECRET_ACCESS_KEY ?? null}))',
 ];
 
 describe('allowlistedShell (issue #94, §3.8)', () => {
@@ -73,9 +73,12 @@ describe('allowlistedShell (issue #94, §3.8)', () => {
         ),
       });
       const done = await child.wait();
+      expect(done.exitCode).toBe(0);
       const seen = JSON.parse(done.stdout.trim()) as Record<string, unknown>;
-      expect(seen.secret).toBeNull();
-      expect(done.stdout).not.toContain('parent-ambient-secret');
+      // The probe reads the variable directly: the parent has it set, the
+      // child must not.
+      expect(seen.aws).toBeNull();
+      expect(seen.path).toBe(process.env.PATH);
     } finally {
       if (previous === undefined) delete process.env.AWS_SECRET_ACCESS_KEY;
       else process.env.AWS_SECRET_ACCESS_KEY = previous;

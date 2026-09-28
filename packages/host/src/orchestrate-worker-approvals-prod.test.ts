@@ -16,21 +16,17 @@
 // env allowlist carrying KUBIC_APPROVALS_DIR to the child, the mailbox
 // atomicity across processes, the manager's interval pump answering a live
 // ask, and the child's own bounded wait denying closed when nobody answers.
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { OrchestratorApprovalRequest } from './orchestrator/approvals/request.js';
-import {
-  createInteractiveSeat,
-  formatWorkerAskQuestion,
-  workerSeatForRun,
-} from './orchestrator/approvals/worker-asks.js';
+import { workerSeatForRun } from './orchestrator/approvals/worker-asks.js';
 
 const PROVENANCE: Provenance = {
   sessionId: 'issue-105',
@@ -141,9 +137,21 @@ console.log(JSON.stringify({ key: published.request.key, answer }));
 process.exit(answer.approved ? 0 : 4);
 `;
 
+// Every scratch dir is removed after each test (worktrees live under the repo
+// root, so removing it disposes them too) — nothing accumulates in tmpdir.
+const scratchDirs: string[] = [];
+
 function scratchRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 async function gitIn(
   cwd: string,
@@ -196,7 +204,7 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     // wiring that keeps a headless run denying closed instead of hanging.
     expect(workerSeatForRun(false)).toBeUndefined();
     const seat = workerSeatForRun(true, { prompt: async () => 'y' });
-    expect(seat).toBeDefined();
+    expect(seat).toBeTypeOf('function');
   });
 
   it("the seat the run attaches presents the ask and returns the user's verdict", async () => {
@@ -278,6 +286,24 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     expect(injected).toHaveLength(1);
     expect(injected[0]?.agentId).toBe('worker-1');
     expect(code).toBe(4);
+    // Exit 4 alone cannot tell the seat's denial from the headless merge
+    // denial (AC1 below exits 4 on an APPROVED ask), so read the child's own
+    // evidence: it received the injected seat's verdict under the same key.
+    const evidence = JSON.parse(
+      readFileSync(
+        join(
+          h.root,
+          '.kubic',
+          'orchestrator',
+          'approvals',
+          'worker-1.child.json',
+        ),
+        'utf8',
+      ),
+    ) as { key: string; answer: { approved: boolean; reason: string } };
+    expect(evidence.key).toBe(injected[0]?.key);
+    expect(evidence.answer.approved).toBe(false);
+    expect(evidence.answer.reason).toContain('the injected seat declined');
   }, 60_000);
 });
 
@@ -363,7 +389,7 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
   }, 60_000);
 
   it('AC2 (prod): with no user answer the child denies closed on its own bound with the named reason', async () => {
-    const h = await prodHarness(300);
+    const h = await prodHarness(100);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
       debug: () => undefined,
@@ -403,6 +429,9 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
       ),
     ) as { answer: { approved: boolean; code: string; reason: string } };
     expect(evidence.answer.approved).toBe(false);
-    expect(evidence.answer.reason).toMatch(/timed out|denied/i);
+    // The CHILD's own bound fired (the manager has no seat to answer with):
+    // the named code, and a reason that carries the configured bound.
+    expect(evidence.answer.code).toBe('approval_timeout');
+    expect(evidence.answer.reason).toMatch(/timed out after 100ms/);
   }, 60_000);
 });

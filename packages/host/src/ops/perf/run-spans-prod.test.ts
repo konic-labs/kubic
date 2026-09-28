@@ -7,10 +7,10 @@
 //   - stderr debug: the §50 `[tool]` in/out and `[agent]` lane lines behind
 //     `--debug` (injected sink here, console.error in prod).
 // Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
 import {
@@ -21,9 +21,26 @@ import {
   type MutableModels,
 } from '../../../../worker/src/pi-boundary.js';
 
+const roots: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'run-spans-prod-'));
+  const root = mkdtempSync(join(tmpdir(), 'run-spans-prod-'));
+  roots.push(root);
+  return root;
 }
+
+// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// is only stderr noise, silenced through its documented opt-out.
+beforeEach(() => {
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 // A faux model that makes exactly one real tool call, then answers — so the
 // run's tool span comes from a real harness tool execution, not a fixture.

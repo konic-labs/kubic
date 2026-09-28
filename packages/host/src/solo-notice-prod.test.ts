@@ -5,11 +5,17 @@
 // PATH (apps/kubic), not just inside the strings module: stderr for `run`
 // before the first turn, the editor footer for `tui` from the first render.
 // Faux lane only — zero network, zero paid tokens.
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import {
   runTuiCommand,
@@ -41,8 +47,12 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
 
+const made: string[] = [];
+
 function tmpRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
 // One faux provider plus the model collection it registers into; the handle
@@ -89,10 +99,17 @@ function warningLines(writes: readonly CapturedWrite[]): string[] {
     .filter((line) => line.startsWith('warning:'));
 }
 
-const ENV_KEYS = ['KUBIC_WORKER_ID', 'KUBIC_NO_NOTICE'] as const;
+// Every test starts from both inputs unset — independent of the developer's
+// own shell — and unstubAllEnvs restores whatever was there before.
+beforeEach(() => {
+  vi.stubEnv(SOLO_NOTICE_WORKER_ENV, undefined);
+  vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, undefined);
+});
 
 afterEach(() => {
-  for (const key of ENV_KEYS) delete process.env[key];
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('solo no-isolation notice on `kubic run` (issue #89)', () => {
@@ -188,24 +205,40 @@ describe('solo no-isolation notice suppression (issue #89)', () => {
   }
 
   it('stays silent for an orchestrator worker session', async () => {
-    process.env.KUBIC_WORKER_ID = 'worker-1';
-    expect(warningLines(await runOnce('worker'))).toEqual([]);
+    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, 'worker-1');
+    // A worker announces readiness on stdout instead (issue #94): capture
+    // it so it neither leaks into the runner's output nor goes unchecked.
+    const stdout: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation((chunk: unknown): boolean => {
+        stdout.push(String(chunk));
+        return true;
+      });
+    let writes: CapturedWrite[];
+    try {
+      writes = await runOnce('worker');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warningLines(writes)).toEqual([]);
+    expect(stdout.join('')).toContain('KUBIC_WORKER_READY worker-1');
   });
 
   it('keeps warning when KUBIC_WORKER_ID is set but empty', async () => {
-    process.env.KUBIC_WORKER_ID = '';
+    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, '');
     expect(warningLines(await runOnce('empty-worker'))).toEqual(
       soloWarningLines(),
     );
   });
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
-    process.env.KUBIC_NO_NOTICE = '1';
+    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
     expect(warningLines(await runOnce('optout'))).toEqual([]);
   });
 
   it('KUBIC_NO_NOTICE must be explicitly truthy to opt out', async () => {
-    process.env.KUBIC_NO_NOTICE = '0';
+    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '0');
     expect(warningLines(await runOnce('optout-zero'))).toEqual(
       soloWarningLines(),
     );
@@ -216,12 +249,12 @@ describe('solo no-isolation notice suppression (issue #89)', () => {
     // env var documents). Both are pinned here: a predicate that silently
     // dropped 'true' would leave an operator who wrote it still warned, and
     // this test is what makes that impossible.
-    process.env.KUBIC_NO_NOTICE = 'true';
+    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, 'true');
     expect(warningLines(await runOnce('optout-true'))).toEqual([]);
   });
 
   it('does not treat an unrecognized opt-out value as consent', async () => {
-    process.env.KUBIC_NO_NOTICE = 'yes';
+    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, 'yes');
     expect(warningLines(await runOnce('optout-word'))).toEqual(
       soloWarningLines(),
     );
@@ -387,7 +420,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
   });
 
   it('stays silent for an orchestrator worker session', async () => {
-    process.env.KUBIC_WORKER_ID = 'worker-1';
+    vi.stubEnv(SOLO_NOTICE_WORKER_ENV, 'worker-1');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
     const pending = runTuiCommand([], {
@@ -406,7 +439,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
   });
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
-    process.env.KUBIC_NO_NOTICE = '1';
+    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
     const pending = runTuiCommand([], {
@@ -420,6 +453,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     await waitFor(() => fake.started() === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);
+    expect(fake.writes.join('')).not.toContain('no isolation');
     expect(lines.join('\n')).not.toContain('no isolation');
   });
 });
@@ -490,7 +524,6 @@ describe('the notice is documented where the operator looks (issue #89)', () => 
 
   it('names the shipped suppression env vars, exactly as the module does', () => {
     expect(commandsPage).toContain(SOLO_NOTICE_WORKER_ENV);
-    expect(commandsPage).toContain(`${SOLO_NOTICE_OPT_OUT_ENV}=1`);
     // The opt-out is documented with the value it actually needs: a bare
     // mention of the name would leave an operator guessing at `=1`.
     expect(commandsPage).toContain(`${SOLO_NOTICE_OPT_OUT_ENV}=1`);

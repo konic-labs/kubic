@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBudget, BudgetTermination, ReplayPin } from './budget.js';
+import type { AgentBudget, ReplayPin } from './budget.js';
 import {
   BUDGET_LIMITS,
   BUDGET_OWNERSHIP,
@@ -41,6 +41,10 @@ describe('budget (issue #9, §71)', () => {
       retryBudget: { maxAttempts: 3, maxCostUsd: 1 },
     };
     const budget = createBudget(partial);
+    // Guard against a vacuous pass: a dropped retryBudget would skip the
+    // mutation below and leave the caller object trivially intact.
+    expect(budget.retryBudget).toEqual({ maxAttempts: 3, maxCostUsd: 1 });
+    expect(budget.retryBudget).not.toBe(partial.retryBudget);
     if (budget.retryBudget !== undefined) {
       budget.retryBudget.maxAttempts = 99;
     }
@@ -84,15 +88,6 @@ describe('budget (issue #9, §71)', () => {
       outcome: 'failed',
       reason: 'aggregate tokens exhausted',
     });
-  });
-
-  it('budget exhaustion is a distinct status, not a generic failure', () => {
-    const termination: BudgetTermination = {
-      status: 'budget_exhausted',
-      limit: 'tokens',
-    };
-    expect(termination.status).toBe('budget_exhausted');
-    expect(termination.status).not.toBe('failed');
   });
 
   it('terminateForBudget produces exhaustion via implementation output', () => {

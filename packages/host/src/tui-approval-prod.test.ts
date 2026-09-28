@@ -1,7 +1,7 @@
 // The approval overlay on the real `kubic tui` composition path (issue #96,
-// criteria 1 and 6). RED: `kubic tui` installs the approval policy (issue
-// #86) but attaches no answer seat, so a challenged call is refused with
-// NO_ANSWER_SURFACE_REASON and the operator can never approve anything.
+// criteria 1 and 6). Before #96 `kubic tui` installed the approval policy
+// (issue #86) but attached no answer seat, so a challenged call was refused
+// with NO_ANSWER_SURFACE_REASON and the operator could never approve anything.
 //
 // Real code end to end: the prod boot (bootTuiLane) on a real faux lane, a
 // real ProcessTerminal-shaped fake Terminal driving the real alt-screen, and
@@ -10,10 +10,10 @@
 //
 // Lives in host next to tui-loop.test.ts (it reaches the composition root as
 // a black-box caller). Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   runTuiCommand,
   type TuiApprovalSeat,
@@ -37,9 +37,18 @@ import {
   type Session,
 } from '../../worker/src/pi-boundary.js';
 
+const made: string[] = [];
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-96-tui-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-96-tui-'));
+  made.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
@@ -118,6 +127,7 @@ function fauxLaneBoot(
 function fakeTerminal(width: number) {
   const writes: string[] = [];
   const counts = { started: 0, stopped: 0 };
+  let handler: ((data: string) => void) | undefined;
   return {
     writes,
     counts,
@@ -158,8 +168,6 @@ function fakeTerminal(width: number) {
   };
 }
 
-let handler: ((data: string) => void) | undefined;
-
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 400 && !condition(); i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -176,7 +184,7 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       fauxAssistantMessage([
         fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
       ]),
-      fauxAssistantMessage('done'),
+      fauxAssistantMessage('approved turn done'),
     ]);
     const pending = runTuiCommand([], {
       out: (line: string) => lines.push(line),
@@ -193,16 +201,18 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     expect(fake.frame).toContain('allow once');
     // 'a' is the shipped allow-once binding: the call runs, the turn settles.
     fake.feed('a');
-    await waitFor(
-      () => fake.frame.includes('done') || lines.join('\n').includes('done'),
-    );
+    // (The main-screen `lines` document is only printed at quit, so the
+    // live frame is the only place the settled turn can show up yet.)
+    await waitFor(() => fake.frame.includes('approved turn done'));
     // Quit cleanly (criterion 6): restore + exit 0.
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
-    // The refusal reason never appeared: the call was really approved.
+    // The refusal reason never appeared: the call was really approved, and
+    // the tree shows the bash call succeeded.
     expect(fake.frame).not.toContain('no approval surface is installed');
+    expect(lines.join('\n')).toMatch(/✓ bash \d+ms/);
   });
 
   it('denies the gated call on Esc without quitting the session', async () => {
@@ -228,15 +238,22 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     // still alive and the turn continues to its next assistant message.
     fake.feed('\u001b');
     await waitFor(() => fake.frame.includes('after the denial'));
+    // Still in the alt-screen: nothing was stopped or printed to the main
+    // screen (that document is only written at quit).
     expect(fake.counts.stopped).toBe(0);
-    expect(lines.join('\n')).not.toContain('after the denial');
-    // The overlay is gone from the frame once the request settled.
-    expect(fake.frame.split('Approval required').length - 1).toBeGreaterThan(0);
+    expect(lines).toEqual([]);
     // Now a clean quit (criterion 6).
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
+    // The restored main screen carries the continued turn and no overlay
+    // left behind for a request that already settled; the denied call
+    // never ran successfully.
+    const doc = lines.join('\n');
+    expect(doc).toContain('after the denial');
+    expect(doc).not.toContain('Approval required');
+    expect(doc).not.toMatch(/✓ bash \d+ms/);
   });
 
   it('quits cleanly with no approval ever asked (criterion 6)', async () => {

@@ -12,6 +12,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { INLINE_APPROVAL_HEADER } from './approval-surface.js';
+import { APPROVAL_DEFAULT_KEYS, APPROVAL_MIN_WIDTH } from './approval-view.js';
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
 const appSource = readFileSync(
@@ -40,69 +42,80 @@ function boundKeyIds(): string[] {
   return [...ids].sort();
 }
 
-describe('the documented TUI keys match the app (#96 criterion 5)', () => {
-  it('finds the section and the bindings at all (not vacuous)', () => {
-    // A path or rename bug would otherwise let every assertion below pass
-    // against an empty subject.
-    expect(tuiSection().length).toBeGreaterThan(200);
-    expect(appSource.length).toBeGreaterThan(1000);
-    expect(boundKeyIds().length).toBeGreaterThanOrEqual(4);
-    expect(boundKeyIds()).toContain('ctrl+o');
-    expect(boundKeyIds()).toContain('ctrl+r');
-  });
+// Source-text scans: under Stryker every literal in tui-app.ts is
+// instrumented, so `keyId === '...'` cannot match there (and a text scan
+// kills no mutants).
+describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
+  'the documented TUI keys match the app (#96 criterion 5)',
+  () => {
+    it('finds the section and the bindings at all (not vacuous)', () => {
+      // A path or rename bug would otherwise let every assertion below pass
+      // against an empty subject.
+      expect(tuiSection().length).toBeGreaterThan(200);
+      expect(appSource.length).toBeGreaterThan(1000);
+      expect(boundKeyIds().length).toBeGreaterThanOrEqual(4);
+      expect(boundKeyIds()).toContain('ctrl+o');
+      expect(boundKeyIds()).toContain('ctrl+r');
+    });
 
-  it('documents Ctrl-O and Ctrl-R for the inspectable panels', () => {
-    const section = tuiSection();
-    // Table rows: | `key` | meaning | — so the pattern spans the row's pipes.
-    expect(section).toMatch(/`Ctrl-O`[^|]*\|[^|]*diff panel/i);
-    expect(section).toMatch(/`Ctrl-R`[^|]*\|[^|]*journal panel/i);
-  });
+    it('documents Ctrl-O and Ctrl-R for the inspectable panels', () => {
+      const section = tuiSection();
+      // Table rows: | `key` | meaning | — so the pattern spans the row's pipes.
+      expect(section).toMatch(/`Ctrl-O`[^|]*\|[^|]*diff panel/i);
+      expect(section).toMatch(/`Ctrl-R`[^|]*\|[^|]*journal panel/i);
+    });
 
-  it('does NOT document D or J as panel keys: the editor claims them', () => {
-    // `tui-app.ts` records the probe: editor bindings claim a/b/c/d/e/f/g/j/
-    // k/u/w/y, so a bare `j`/`d` never reaches the global handler.
-    const section = tuiSection();
-    expect(section).not.toMatch(/`Ctrl-O`[^|]*\(`D`\)/);
-    expect(section).not.toMatch(/`Ctrl-R`[^|]*\(`J`\)/);
-    expect(section).not.toMatch(/\| `D` \|/);
-    expect(section).not.toMatch(/\| `J` \|/);
-  });
+    it('documents every key id the app binds as a key-table row', () => {
+      // The reverse direction of the drift: a binding the doc never mentions is
+      // a feature the operator cannot discover.
+      const section = tuiSection();
+      const docName = (id: string): string =>
+        id === 'escape'
+          ? 'Esc'
+          : id.replace(
+              /^ctrl\+(.)$/,
+              (_, k: string) => `Ctrl-${k.toUpperCase()}`,
+            );
+      for (const id of boundKeyIds()) {
+        expect(section).toMatch(new RegExp(`\\| \`${docName(id)}\` \\|`));
+      }
+    });
 
-  it('documents the approval decision keys the surface actually binds', () => {
-    // APPROVAL_DEFAULT_KEYS in approval-view.ts: 'a', 's', 'd'+'escape'.
-    const viewSource = readFileSync(
-      join(repoRoot, 'packages/tui/src/approval-view.ts'),
-      'utf8',
-    );
-    expect(viewSource).toMatch(/'allow-once': \['a'\]/);
-    expect(viewSource).toMatch(/'allow-session': \['s'\]/);
-    expect(viewSource).toMatch(/deny: \['d', 'escape'\]/);
-    const section = tuiSection();
-    expect(section).toMatch(/\| `a` \|[^|]*allow once/i);
-    expect(section).toMatch(/\| `s` \|[^|]*allow for the session/i);
-    expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
-  });
+    it('does NOT document D or J as panel keys: the editor claims them', () => {
+      // `tui-app.ts` records the probe: editor bindings claim a/b/c/d/e/f/g/j/
+      // k/u/w/y, so a bare `j`/`d` never reaches the global handler.
+      const section = tuiSection();
+      expect(section).not.toMatch(/`Ctrl-O`[^|]*\(`D`\)/);
+      expect(section).not.toMatch(/`Ctrl-R`[^|]*\(`J`\)/);
+      expect(section).not.toMatch(/\| `D` \|/);
+      expect(section).not.toMatch(/\| `J` \|/);
+    });
 
-  it('documents the narrow-terminal threshold the code uses', () => {
-    const viewSource = readFileSync(
-      join(repoRoot, 'packages/tui/src/approval-view.ts'),
-      'utf8',
-    );
-    const min = /APPROVAL_MIN_WIDTH = (\d+)/.exec(viewSource)?.[1];
-    expect(min).toBe('80');
-    // The doc says "below 80 columns" — the same number, in prose.
-    expect(tuiSection()).toMatch(/below 80 columns/i);
-  });
+    it('documents the approval decision keys the surface actually binds', () => {
+      // The shipped binding table itself, not a regex over its source text.
+      expect(APPROVAL_DEFAULT_KEYS).toEqual({
+        'allow-once': ['a'],
+        'allow-session': ['s'],
+        deny: ['d', 'escape'],
+      });
+      const section = tuiSection();
+      expect(section).toMatch(/\| `a` \|[^|]*allow once/i);
+      expect(section).toMatch(/\| `s` \|[^|]*allow for the session/i);
+      expect(section).toMatch(/\| `d`, `Esc` \|[^|]*deny/i);
+    });
 
-  it('documents the inline fallback by the header the code renders', () => {
-    const surfaceSource = readFileSync(
-      join(repoRoot, 'packages/tui/src/approval-surface.ts'),
-      'utf8',
-    );
-    const header = /INLINE_APPROVAL_HEADER = '([^']+)'/.exec(
-      surfaceSource,
-    )?.[1];
-    expect(header).toContain('approval (inline)');
-    expect(tuiSection()).toContain('approval (inline)');
-  });
-});
+    it('documents the narrow-terminal threshold the code uses', () => {
+      // The doc says "below N columns" — the code's number, in prose.
+      expect(tuiSection()).toMatch(
+        new RegExp(`below ${APPROVAL_MIN_WIDTH} columns`, 'i'),
+      );
+    });
+
+    it('documents the inline fallback by the header the code renders', () => {
+      // The doc quotes the header's leading, width-independent part.
+      const quoted = INLINE_APPROVAL_HEADER.split(' — ')[0] as string;
+      expect(quoted).toBe('! approval (inline)');
+      expect(tuiSection()).toContain(`\`${quoted}\``);
+    });
+  },
+);

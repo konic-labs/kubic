@@ -77,6 +77,8 @@ describe('usage rollups (issue #20, slice C)', () => {
   it('empty usage formats without NaN', () => {
     const summary = summarizeUsage([]);
     expect(summary.requests).toBe(0);
-    expect(formatUsageLine('m', 'off', summary)).toContain('0 tokens');
+    const line = formatUsageLine('m', 'off', summary);
+    expect(line).toContain('0 tokens');
+    expect(line).not.toContain('NaN');
   });
 });

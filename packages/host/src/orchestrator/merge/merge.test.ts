@@ -94,7 +94,14 @@ describe('two-branch shared/types.ts conflict (issue #46 §85)', () => {
       theirsDiff: 'diff --git a/shared/types.ts b/shared/types.ts\n+theirs',
       ...policyCarriage(),
     });
-    expect(spec.conflict.files).toContain('shared/types.ts');
+    expect(spec.conflict.files).toEqual(['shared/types.ts']);
+    // The writer gets both sides and the constraints, verbatim.
+    expect(spec.conflict.oursDiff).toContain('+ours');
+    expect(spec.conflict.theirsDiff).toContain('+theirs');
+    expect(spec.constraints).toEqual([
+      'stay inside the worktree',
+      'no network installs',
+    ]);
     expect(RESOLVER_ALLOWED_ROLES).toEqual(['implementer', 'debugger']);
     expect(spec.tools).toContain('write');
     expect(spec.tools).toContain('bash');
@@ -107,9 +114,10 @@ describe('two-branch shared/types.ts conflict (issue #46 §85)', () => {
       'workspace_apply',
     ];
     expect(() => assertManagerZeroWrites(managerCalls)).not.toThrow();
-    expect(
-      managerCalls.some((call) => MANAGER_WRITE_TOOLS.includes(call)),
-    ).toBe(false);
+    // Had the manager resolved the conflict itself, the same trace fails.
+    expect(() => assertManagerZeroWrites([...managerCalls, 'edit'])).toThrow(
+      ManagerAuthoringError,
+    );
   });
 });
 
@@ -380,7 +388,7 @@ describe('journal attribution post-merge (issue #46)', () => {
       { path: 'shared/types.ts', agent: 'agent-1', hunk: '@@ -1 +1 @@' },
       { path: 'shared/types.ts', agent: 'agent-2', hunk: '@@ -9 +9 @@' },
     ];
-    expect(filterEntriesByAgent(entries, 'agent-1')).toHaveLength(1);
+    expect(filterEntriesByAgent(entries, 'agent-1')).toEqual([entries[0]]);
     const hunks = attributeMergedHunks(
       [{ path: 'shared/types.ts', hunk: '@@ -1 +1 @@' }],
       'agent-1',

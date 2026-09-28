@@ -7,10 +7,10 @@
 // row to `<repo>/.kubic/orchestrator/workers.json` — runtime state §35
 // already keeps out of the commit path — and `kubic workers` reads that
 // file back. Last write per worker wins; ordering is registration order.
-import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { WorkerRegistry } from './registry.js';
 import {
@@ -21,8 +21,18 @@ import {
   writeWorkerRows,
 } from './rows.js';
 
+const scratchDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function scratch(): string {
-  return mkdtempSync(join(tmpdir(), 'kubic-worker-rows-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-worker-rows-'));
+  scratchDirs.push(dir);
+  return dir;
 }
 
 function seededRegistry(now = 1_000): WorkerRegistry {

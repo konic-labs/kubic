@@ -293,6 +293,7 @@ describe('first-party bundle startup (issue #80)', () => {
     };
     expect(shipped.name).toBe(BUDGET_MANIFEST.name);
     expect(shipped.publisher).toBe(BUDGET_MANIFEST.publisher);
+    expect(shipped.version).toBe(BUDGET_MANIFEST.version);
     expect(shipped.sourcePath).toBe(BUDGET_MANIFEST.sourcePath);
     expect(shipped.facets).toEqual([...BUDGET_MANIFEST.facets]);
   });

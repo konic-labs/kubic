@@ -101,20 +101,30 @@ describe('orchestrator routing (issue #48)', () => {
 
   it('memoOnce: concurrent races settle once (single user prompt)', async () => {
     let asks = 0;
+    // The user answers only once all three racers are in flight — an
+    // explicit latch, not a wall-clock sleep.
+    let answer: () => void = () => {};
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
     const router = createOrchestratorRouter({
-      maxPendingMs: 200,
+      maxPendingMs: 5_000,
       awaitAnswer: async () => {
         asks += 1;
-        await new Promise((r) => setTimeout(r, 20));
+        await answered;
         return { approved: true, by: 'user' };
       },
     });
     const request = req();
-    const [a, b, c] = await Promise.all([
+    const racing = Promise.all([
       router.request(request),
       router.request(request),
       router.request(request),
     ]);
+    // One prompt is pending while the racers wait on it.
+    expect(router.pendingRequests()).toHaveLength(1);
+    answer();
+    const [a, b, c] = await racing;
     expect(a).toEqual({ approved: true, by: 'user' });
     expect(b).toEqual(a);
     expect(c).toEqual(a);

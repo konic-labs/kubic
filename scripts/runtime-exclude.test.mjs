@@ -24,11 +24,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   ensureRuntimeExcludeRules,
@@ -65,8 +66,14 @@ function porcelain(cwd) {
 
 // A user repo that already has the committed half of the split in place,
 // then runs and orchestrates there.
+const scratchRepos = [];
+after(() => {
+  for (const dir of scratchRepos) rmSync(dir, { recursive: true, force: true });
+});
+
 function scratchUserRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'kubic-gate-'));
+  scratchRepos.push(dir);
   git(dir, ['init', '-q', '-b', 'main', '.']);
   git(dir, ['config', 'user.email', 'test@example.com']);
   git(dir, ['config', 'user.name', 'test']);
@@ -79,7 +86,8 @@ function scratchUserRepo() {
     '[agent]\nname = "kubic"\n',
   );
   git(dir, ['add', '.kubic', '.gitignore', 'README.md']);
-  git(dir, ['commit', '-qm', 'init']);
+  // A developer's global commit.gpgsign must not break the scratch commit.
+  git(dir, ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'init']);
   return dir;
 }
 
@@ -340,11 +348,15 @@ describe('this repo ships the split (issue #91)', () => {
       join(ROOT, 'docs', 'cli', 'configuration.md'),
       'utf8',
     );
-    const section = doc.slice(doc.indexOf('## What lives where'));
-    assert.ok(
-      section.length > 0,
+    // indexOf is -1 when the heading is gone, and slice(-1) is the doc's
+    // last character — non-empty — so check the index, not the slice.
+    const start = doc.indexOf('## What lives where');
+    assert.notEqual(
+      start,
+      -1,
       'configuration.md must keep a What-lives-where section',
     );
+    const section = doc.slice(start);
     for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
       assert.ok(
         section.includes(entry),

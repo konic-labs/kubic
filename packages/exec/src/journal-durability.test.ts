@@ -11,10 +11,10 @@
 //     bytes as content before #111's hash check rejects them).
 //
 // RED: `appendDurably` does not exist yet and putBlob writes in place.
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileBridge } from './file-bridge.js';
 import {
   FileJournalStore,
@@ -82,8 +82,17 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
   };
 });
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
 function tmpRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'journal-durable-'));
+  const root = mkdtempSync(join(tmpdir(), 'journal-durable-'));
+  roots.push(root);
+  return root;
 }
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
@@ -159,6 +168,24 @@ describe('journal durability (issue #117, slice 1)', () => {
     expect(store.entries()).toEqual([]);
   });
 
+  it('a torn blob write fails the append and leaves no torn prefix behind', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    hooks.tornWrite = (path) =>
+      path.includes(`${'/'}blobs${'/'}`) && path.endsWith('.tmp');
+    try {
+      expect(() =>
+        store.append(entry({ path: 'a.txt', after: 'hello world\n' })),
+      ).toThrow(/simulated crash mid-write/);
+    } finally {
+      hooks.tornWrite = null;
+    }
+    // The torn prefix landed only in the tmp, which is cleaned up; nothing
+    // is visible under the content address and no entry references it.
+    expect(readdirSync(join(dir, 'blobs'))).toEqual([]);
+    expect(store.entries()).toEqual([]);
+  });
+
   it('blob content is intact through the rename when the write succeeds', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);
@@ -166,9 +193,7 @@ describe('journal durability (issue #117, slice 1)', () => {
     const blob = join(dir, 'blobs', recorded.afterHash ?? 'missing');
     expect(readFileSync(blob, 'utf8')).toBe('hello\n');
     expect(sha256Hex(readFileSync(blob, 'utf8'))).toBe(recorded.afterHash);
-    // No tmp survives a successful putBlob.
-    expect(
-      readdirSync(join(dir, 'blobs')).filter((name) => name.endsWith('.tmp')),
-    ).toEqual([]);
+    // No tmp survives a successful putBlob: the blob is the only file.
+    expect(readdirSync(join(dir, 'blobs'))).toEqual([recorded.afterHash]);
   });
 });

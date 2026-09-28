@@ -4,7 +4,7 @@
 // retention, and the runtime exclude rules. And its deferred-settlement
 // footer must stop blaming a missing TTY (there is one). Faux provider
 // only: zero network.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,7 +15,6 @@ import {
   TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
-import { FileJournalStore } from '../../exec/src/journal.js';
 import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
 import { driveToSettled, type SoloLane } from '../../worker/src/lane/solo.js';
 import {
@@ -27,8 +26,12 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 
+const made: string[] = [];
+
 function tmpRoot(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
 function fauxModels(texts: string[]): MutableModels {
@@ -75,6 +78,8 @@ function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('skills reach the TUI lane (issue #113, §29.3)', () => {
@@ -375,6 +380,9 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
     };
     expect(await runTuiCommand(['--role'], deps)).toBe(2);
     expect(await runTuiCommand(['--skill'], deps)).toBe(2);
+    // Each refusal names its own flag, not a generic failure.
+    expect(lines).toContain('error: --role needs a value');
+    expect(lines).toContain('error: --skill needs a value');
     const usage: string[] = [];
     expect(
       await runTuiCommand(['--help'], {

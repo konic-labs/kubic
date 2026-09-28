@@ -1,8 +1,12 @@
 // Recursive walk over the FileSystem seam (issue #13, slice B).
 // Shared by find and grep. Depth-capped so hostile trees terminate, and
 // symlink-aware (issue #172): links are never followed, so a loop cannot
-// return the same file under every route. The entry cap is reported via
-// WalkResult.hitCap so callers surface partial results honestly.
+// return the same file under every route. Both caps are reported via
+// WalkResult.hitCap / hitDepth so callers surface partial results honestly.
+// The ROOT is read as given — the caller named it, and a symlinked root (a
+// /tmp path, a linked checkout) must still walk — while every link BELOW it
+// is skipped, file or directory, so results never repeat content under a
+// second route.
 //
 // Issue #172: the walk skips `.git` unconditionally and applies the default
 // ignore set plus every `.gitignore` on the way down, so a repo-root search
@@ -32,16 +36,30 @@ export interface WalkEntry {
   isDirectory: boolean;
 }
 
-// The cap and its location travel together: a hitCap result always names the
-// directory whose listing was interrupted, so callers never look at an unset
-// capAt.
+// The caps and their locations travel together: a `hitCap` result always
+// names the directory whose listing was interrupted, and a `hitDepth` result
+// the directory whose children the depth bound pruned, so callers never look
+// at an unset location.
 export type WalkResult =
-  | { entries: WalkEntry[]; hitCap: false }
-  | { entries: WalkEntry[]; hitCap: true; capAt: string };
+  | { entries: WalkEntry[]; hitCap: false; hitDepth: false }
+  | { entries: WalkEntry[]; hitCap: true; capAt: string; hitDepth: false }
+  | { entries: WalkEntry[]; hitCap: false; hitDepth: true; depthAt: string }
+  | {
+      entries: WalkEntry[];
+      hitCap: true;
+      capAt: string;
+      hitDepth: true;
+      depthAt: string;
+    };
 
 /** Model-readable cap line for a result that stopped at the walk bound. */
 export function walkCapNotice(capAt: string): string {
   return `walk entry cap ${WALK_MAX_ENTRIES} reached while listing ${capAt}; results may be incomplete`;
+}
+
+/** Model-readable line for a result pruned by the depth bound. */
+export function walkDepthNotice(depthAt: string): string {
+  return `walk depth cap ${WALK_MAX_DEPTH} reached at ${depthAt}; results may be incomplete`;
 }
 
 function joinPath(root: string, name: string): string {
@@ -74,6 +92,7 @@ interface WalkFrame {
 
 export function walkFiles(fs: FileSystem, root: string): WalkResult {
   const entries: WalkEntry[] = [];
+  let depthAt: string | undefined;
   const stack: WalkFrame[] = [
     {
       path: root,
@@ -84,7 +103,12 @@ export function walkFiles(fs: FileSystem, root: string): WalkResult {
   ];
   while (stack.length > 0) {
     const current = stack.pop() as WalkFrame;
-    if (current.depth > WALK_MAX_DEPTH) continue;
+    if (current.depth > WALK_MAX_DEPTH) {
+      // Prune the subtree and remember where: the result must say the walk
+      // was incomplete instead of looking like an empty directory.
+      depthAt ??= current.path;
+      continue;
+    }
     let names: string[];
     try {
       names = fs.listDir(current.path);
@@ -110,7 +134,15 @@ export function walkFiles(fs: FileSystem, root: string): WalkResult {
     }
     for (const name of names) {
       if (entries.length >= WALK_MAX_ENTRIES) {
-        return { entries, hitCap: true, capAt: current.path };
+        return depthAt === undefined
+          ? { entries, hitCap: true, capAt: current.path, hitDepth: false }
+          : {
+              entries,
+              hitCap: true,
+              capAt: current.path,
+              hitDepth: true,
+              depthAt,
+            };
       }
       // VCS internals are never repo content, and a `.gitignore` can never
       // un-ignore them: the skip is ahead of the matcher.
@@ -136,5 +168,7 @@ export function walkFiles(fs: FileSystem, root: string): WalkResult {
       }
     }
   }
-  return { entries, hitCap: false };
+  return depthAt === undefined
+    ? { entries, hitCap: false, hitDepth: false }
+    : { entries, hitCap: false, hitDepth: true, depthAt };
 }

@@ -4,7 +4,7 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkCapNotice, walkFiles } from './walk.js';
+import { walkCapNotice, walkDepthNotice, walkFiles } from './walk.js';
 
 export const GREP_DEFAULT_MAX = 100;
 
@@ -97,8 +97,17 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
     const max = args.maxMatches ?? GREP_DEFAULT_MAX;
     const matches: GrepMatch[] = [];
     const walk = walkFiles(ctx.env.fs, root);
-    let truncated = walk.hitCap;
-    let notice = walk.hitCap ? walkCapNotice(walk.capAt) : undefined;
+    // The walk's own caps truncate the result whatever the match cap does.
+    let truncated = walk.hitCap || walk.hitDepth;
+    let notice = walk.hitCap
+      ? walkCapNotice(walk.capAt)
+      : walk.hitDepth
+        ? walkDepthNotice(walk.depthAt)
+        : undefined;
+    // A match beyond `max` was actually seen (not merely a window that ended
+    // exactly at the cap) — the one condition under which `truncated` is
+    // exact rather than conservative.
+    let overCap = false;
     for (const entry of walk.entries) {
       if (entry.isDirectory) continue;
       if (args.include && !entry.path.includes(args.include)) continue;
@@ -111,22 +120,27 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
       const lines = text.split('\n');
       for (let i = 0; i < lines.length; i += 1) {
         if (!re.test(lines[i] as string)) continue;
-        if (matches.length >= max) break;
+        if (matches.length >= max) {
+          overCap = true;
+          break;
+        }
         matches.push({
           path: entry.path,
           line: i + 1,
           text: lines[i] as string,
         });
       }
-      // The match cap stopped the scan before the tree was exhausted, so the
-      // result says so and names the bound (#172) — even when the cap was
-      // reached on the very last line, "stopped at the bound" is the honest
-      // reading (the same one `read` uses for a bound-stopped scan).
-      if (matches.length >= max) {
-        truncated = true;
-        notice ??= `result cap ${max} reached (maxMatches); results may be incomplete`;
-        break;
-      }
+      if (overCap) break;
+      // When the walk itself already cut the result, stop scanning for a
+      // match beyond the cap: the result is incomplete either way, and the
+      // notice already says so. Without a walk cut, the scan continues only
+      // until it can PROVE another match exists (or exhausts the walk), so
+      // `truncated` never over-claims on a cap-exact match set.
+      if (truncated && matches.length >= max) break;
+    }
+    if (overCap) {
+      truncated = true;
+      notice ??= `result cap ${max} reached (maxMatches); results may be incomplete`;
     }
     return { pattern: args.pattern, matches, truncated, notice };
   },

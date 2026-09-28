@@ -86,14 +86,20 @@ until the cap or the depth bound stopped it. The walk now:
 - **Never follows a symlink**, file or directory: the walk uses the optional
   `FileSystem.lstat` (`exec/env.ts`) and skips any entry it marks
   `isSymbolicLink`, so a loop yields one match per real path and a dangling
-  link is skipped rather than stat-failing. Seams without `lstat` cannot tell
+  link is skipped rather than stat-failing. The named ROOT is the caller's
+  explicit target and is read as given (a symlinked root path still walks);
+  only links below it are skipped. Seams without `lstat` cannot tell
   a link from its target (the documented widening; `FakeExecutionEnv` has no
   links to make).
 - **Says when a bound stopped it.** `truncated: true` now always carries an
   optional, additive `notice` naming the bound: `walk entry cap 10000
-  reached while listing <dir>; results may be incomplete` for the walk bound,
-  or `result cap <n> reached (maxResults); results may be incomplete` /
-  `(maxMatches)` for the op's own limit. Tool names, argument shapes, and the
+  reached while listing <dir>; results may be incomplete` for the entry
+  bound, `walk depth cap 100 reached at <dir>; results may be incomplete`
+  for the depth bound, or `result cap <n> reached (maxResults); results may
+  be incomplete` / `(maxMatches)` for the op's own limit. The match cap is
+  exact: `truncated` is set only once a match beyond `maxMatches` was
+  actually seen, never merely because the cap filled on the last match.
+  Tool names, argument shapes, and the
   existing result fields are unchanged; `ls` skips an entry whose `stat`
   fails (a dangling symlink) instead of throwing, which it already did and is
   now pinned by test.

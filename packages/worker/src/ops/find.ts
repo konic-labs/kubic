@@ -4,7 +4,7 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkCapNotice, walkFiles } from './walk.js';
+import { walkCapNotice, walkDepthNotice, walkFiles } from './walk.js';
 
 export const FIND_DEFAULT_MAX = 100;
 
@@ -82,8 +82,12 @@ export const findOperation: Operation<FindArgs, FindResult> = {
     const max = args.maxResults ?? FIND_DEFAULT_MAX;
     const walk = walkFiles(ctx.env.fs, root);
     const paths: string[] = [];
-    let truncated = walk.hitCap;
-    let notice = walk.hitCap ? walkCapNotice(walk.capAt) : undefined;
+    let truncated = walk.hitCap || walk.hitDepth;
+    let notice = walk.hitCap
+      ? walkCapNotice(walk.capAt)
+      : walk.hitDepth
+        ? walkDepthNotice(walk.depthAt)
+        : undefined;
     for (const entry of walk.entries) {
       if (args.type === 'file' && entry.isDirectory) continue;
       if (args.type === 'dir' && !entry.isDirectory) continue;

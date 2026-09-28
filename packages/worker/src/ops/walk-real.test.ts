@@ -94,7 +94,7 @@ describe('walk ignore rules on the node seam (issue #172)', () => {
     ]);
   });
 
-  it('stops at the depth bound on a hostile tree', async () => {
+  it('stops at the depth bound on a hostile tree and says so', async () => {
     const root = tmp('walk-depth-');
     let dir = root;
     for (let i = 0; i <= WALK_MAX_DEPTH + 2; i += 1) dir = join(dir, `d${i}`);
@@ -109,6 +109,10 @@ describe('walk ignore rules on the node seam (issue #172)', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.result.matches).toEqual([]);
+    // The depth cap pruned a subtree: the result says so rather than
+    // looking like an empty file set.
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.notice).toContain(String(WALK_MAX_DEPTH));
   });
 
   it('never walks .git and honors .gitignore rules per subtree', async () => {
@@ -270,5 +274,24 @@ describe('walk ignore rules on the node seam (issue #172)', () => {
     expect(hits.result.matches).toHaveLength(1);
     expect(hits.result.truncated).toBe(true);
     expect(hits.result.notice).toContain('maxMatches');
+  });
+
+  it('does not call a match set truncated just because it filled the cap', async () => {
+    const root = tmp('walk-exactcap-');
+    // Exactly the cap in matches, and nothing else in the tree: the search
+    // proved there is no further match, so the result is complete.
+    writeFileSync(join(root, 'a.txt'), 'needle\nneedle\n');
+    writeFileSync(join(root, 'b.txt'), 'other\n');
+    const hits = await callOperation(
+      'grep',
+      { pattern: 'needle', root: '.', maxMatches: 2 },
+      inv(),
+      ctx(root),
+    );
+    expect(hits.ok).toBe(true);
+    if (!hits.ok) return;
+    expect(hits.result.matches).toHaveLength(2);
+    expect(hits.result.truncated).toBe(false);
+    expect(hits.result.notice).toBeUndefined();
   });
 });

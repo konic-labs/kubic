@@ -264,8 +264,14 @@ not. The split, exactly as shipped:
   This repository ships the same five rules in its own `.gitignore` — the
   rules, the writer, and this page are pinned together by
   `scripts/runtime-exclude.test.mjs` and the config tests.
-- **Models**: `./models.json` in the working directory (custom providers
-  registered on top of built-ins; a `loaded models.json:` /
+- **Models**: Pi's built-in providers (`anthropic`, `openai`, `google`,
+  `amazon-bedrock`, …) are always registered; each is usable once its
+  documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, …) or its ambient credentials are set, and a keyless
+  built-in is never selected implicitly (`kubic models` shows which are
+  usable). `./models.json` in the working directory adds custom providers
+  on top of the built-ins (a custom id that collides with a built-in is
+  refused by name; a `loaded models.json:` /
   `models.json ignored:` note is printed on `models`/`doctor`; `run`
   always prints `models.json ignored: …` on stderr and the `loaded` receipt
   only under `--debug`). A model without `contextWindow`/`maxTokens` gets

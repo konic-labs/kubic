@@ -702,18 +702,22 @@ export async function runHeadlessPrompt(
     // to the warning channel unconditionally; a successful load is a
     // receipt for the debug channel only.
     let models: MutableModels;
+    // Issue #221: the implicit pick only considers customs and built-ins
+    // whose auth is configured — a keyless built-in is never picked.
+    let fallbackProviders: readonly string[] | undefined;
     if (deps.models === undefined) {
-      const assembled = assembleModels(deps.modelsCwd ?? process.cwd());
-      if (assembled.note !== null) {
-        if (assembled.note.startsWith('models.json ignored:')) {
+      const assembled = await assembleModels(deps.modelsCwd ?? process.cwd());
+      for (const note of assembled.notes) {
+        if (note.startsWith('models.json ignored')) {
           (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
-            assembled.note,
+            note,
           );
         } else {
-          debug?.(assembled.note);
+          debug?.(note);
         }
       }
       models = assembled.models;
+      fallbackProviders = assembled.fallbackProviders;
     } else {
       models = deps.models;
     }
@@ -738,14 +742,15 @@ export async function runHeadlessPrompt(
       // An explicit pin (replay re-execution at the declared model, or the
       // `[model]`/env pin runtimeModelPin projects) wins over default
       // selection; the role layer's own `provider/id` pin (issue #133) is
-      // the next default, and `kubic run` with neither keeps the
-      // first-registered-provider pick.
+      // the next default, and `kubic run` with neither takes the first
+      // usable provider (customs first; never a keyless built-in).
       model = selectModel(
         models,
         fauxPinned
           ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
           : deps.model,
         roleModelSelection(role?.resolved.model),
+        fallbackProviders,
       );
     } catch (error) {
       if (error instanceof ModelSelectError) {

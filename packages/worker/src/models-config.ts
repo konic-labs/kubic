@@ -259,6 +259,22 @@ export const LOCAL_MODELS_EXAMPLE = {
   ],
 } as const;
 
+// Issue #221/#322: a custom provider may not take a built-in provider's id.
+// `setProvider` would silently replace the built-in (its baseUrl and auth),
+// so the collision is refused by name instead — trusted file or not.
+export function refuseBuiltinCollisions(
+  specs: readonly CustomProviderSpec[],
+  builtinIds: ReadonlySet<string>,
+): void {
+  for (const spec of specs) {
+    if (builtinIds.has(spec.id)) {
+      throw new ModelsJsonError(
+        `provider id '${spec.id}' collides with a built-in provider (built-ins are configured by their env key; give the custom provider another id)`,
+      );
+    }
+  }
+}
+
 export function registerCustomProviders(
   models: MutableModels,
   specs: CustomProviderSpec[],

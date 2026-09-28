@@ -878,17 +878,31 @@ composition paths therefore capture a **baseline** when the lane boots and
 
 ## `kubic models [--json] [--resolve <provider/id>]`
 
-Catalog readout over built-ins plus `models.json` customs in the
-current directory (absent or invalid `models.json` is reported as an
-`info: loaded models.json: …` / `info: models.json ignored: …` line on
-stderr, never fatal). Under `KUBIC_PROVIDER=faux` the catalog also lists
-the `faux` testing provider and a `warn:` line names it.
+Catalog readout over Pi's **built-in providers** (the generated catalogue:
+`anthropic`, `openai`, `google`, `amazon-bedrock`, `openrouter`, …) plus
+`models.json` customs in the current directory (absent or invalid
+`models.json` is reported as an `info: loaded models.json: …` /
+`info: models.json ignored: …` line on stderr, never fatal). A built-in is
+**usable** when its auth is configured: its documented env key
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`OPENROUTER_API_KEY`, …) or, for Bedrock/Vertex, the ambient AWS/Google
+credentials Pi recognises. A custom provider may not reuse a built-in id
+(the file is ignored with a note naming the collision). Under
+`KUBIC_PROVIDER=faux` the catalog also lists the `faux` testing provider
+and a `warn:` line names it.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table, one row per model (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). An empty catalog leaves stdout empty and prints `info: no providers registered (add models.json or set provider env keys)` on stderr. Exits 0. |
-| `--json` | The same catalog as one pretty-printed JSON document. Exits 0. |
-| `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)`; a resolution failure prints `error: …` on stderr and exits 1. |
+| (none) | A `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table, one row per model of every **usable** provider (plain aligned columns off a terminal, box-drawn on an interactive colour terminal), then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| `--json` | Every registered provider, usable or not, as one pretty-printed JSON document: `id`, `name`, `source` (`built-in`, `testing` or the `models.json` path), `usable`, `auth` (the auth source Pi reported, when configured) and `models` (`id`, `name`, `thinking`, `inputCost`, `outputCost`). Exits 0. |
+| `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
+
+**Default model.** `kubic run`/`kubic tui` with no `--model`, `[model]`,
+`KUBIC_MODEL` or role pin take the first model of the first usable
+provider: `models.json` customs first, then built-ins whose auth is
+configured. A built-in with no key is never picked implicitly; with nothing
+usable the run exits 6 (`provider_probe_failed`). Pin the model you mean,
+e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
 Usage errors (unknown option, `--resolve` without a value, an operand)
 exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.

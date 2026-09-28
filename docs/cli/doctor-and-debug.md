@@ -19,16 +19,20 @@ go to stderr as `info:` lines, so stdout — and `--json` — carry only the
 report:
 
 ```
-PASS provider:local (ok): listed, not dialled, 1 model(s) registered
-FAIL provider:openai (provider-down): listed, not dialled — unreachable
-doctor: 3 pass, 6 warn, 1 fail, 0 skip
+PASS provider:local (ok): listed, not dialled, 1 model(s) registered — from /repo/models.json
+PASS provider:anthropic (ok): listed, not dialled, 23 model(s) registered — built-in, auth from ANTHROPIC_API_KEY
+doctor: 4 pass, 6 warn, 0 fail, 0 skip
 ```
 
 Provider lines are explicit about what was measured: `listed, not dialled`
 means the provider is registered in the catalog but nothing contacted it
 (the default probe — zero network). A probe that really dialled reports
 `dialled and reachable`; the line never claims reachability it did not
-observe.
+observe. Each line names where the provider came from (`built-in` with its
+auth source, or the `models.json` path). Only **usable** providers are
+listed: Pi's built-ins whose env key / ambient credentials are not set
+are left out (they are not available to a run — `kubic models` names
+them).
 
 `--json` emits `{ok, exitCode, checks}` with the same checks and the
 same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other

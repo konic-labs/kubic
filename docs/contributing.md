@@ -120,12 +120,14 @@ leaves gating to the per-file check).
 - **tap side** — `stryker.tap.conf.json` (`@stryker-mutator/tap-runner`)
   mutates the script systems under test (`scripts/dep-lint.mjs`,
   `scripts/check-pinned-deps.mjs`) and runs the killing suites
-  (`scripts/dep-lint.test.mjs`, `scripts/pi-boundary.test.mjs`) with
+  (`scripts/dep-lint.test.mjs`, `scripts/pi-boundary.test.mjs`,
+  `scripts/check-docs-links.test.mjs` — the only suite exercising
+  `listInternalEdges`) with
   `nodeArgs: ["--test-reporter=tap", "{{testFile}}"]` — in-process, so
   coverage attribution and mutant activation share one process — and
   `coverageAnalysis: "perTest"` (file-level: every hit lands in the static
-  bucket, which the tap runner maps per test file). Proof run: **83.50 total
-  (334 killed), 83.53 check-pinned-deps, 83.49 dep-lint — gate exit 0**.
+  bucket, which the tap runner maps per test file). Proof run (#72): **83.57
+  total (351 killed), 82.93 check-pinned-deps, 83.73 dep-lint — gate exit 0**.
 - **ratchet** — `mutation-check.mjs --baseline <previous report>` holds each
   file to `min(80, its baseline score)`: a file below 80 may not drop below
   its baseline, a file at or above 80 must stay ≥ 80, and files new to the
@@ -136,13 +138,16 @@ leaves gating to the per-file check).
 
 ### CI: per push and nightly
 
-- **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>
-  [--tap]` maps the diff to the touched source files (a changed
-  `x.test.ts` maps to its sibling `x.ts`), capped at 25 files; the rest are
-  left to the nightly run with a warning. No mutable file changed → the step
-  is skipped; a failed diff exits 1 rather than widening or emptying the
-  scope. The run is non-incremental (the report holds only the touched
-  files) and ratchets against the cached nightly baseline.
+- **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>`
+  maps `git diff -U0` hunks to the **changed lines** of touched source files
+  (`path:start-end` ranges; a core file alone can hold ~1k mutants covered by
+  ~500 tests), capped at 25 files — the rest are left to the nightly run
+  with a warning. Test-only changes mutate nothing per push; the nightly
+  ratchet catches weakened tests. `--tap` maps changed scripts to their SUTs.
+  No mutable change → the step is skipped; a failed diff exits 1 rather
+  than widening or emptying the scope. The changed lines' score is
+  ratcheted against the file's nightly baseline: new code may not drag a
+  file down.
 - **`mutation-nightly` (03:00 UTC + `workflow_dispatch`)** — full scope with
   `--incremental` against the previous run (only changed code and tests
   re-run), ratcheted against the baseline. The incremental file is cached

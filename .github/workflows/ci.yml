@@ -117,7 +117,9 @@ jobs:
     # so a regression can never become the new floor.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # A cold run (no incremental cache) is ~2h+ on a 4-vCPU runner; warm
+    # runs only re-test changed code and tests.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

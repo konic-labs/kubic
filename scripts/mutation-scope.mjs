@@ -1,94 +1,107 @@
 // Mutation scope helper (issues #66, #72): map a diff to the Stryker
-// `--mutate` files for the per-push gate. Only the touched source files are
-// mutated — never their whole package — so a push costs minutes, not hours.
-// The full scope lives in stryker.conf.json / stryker.tap.conf.json and runs
-// nightly.
+// `--mutate` entries for the per-push gate. The vitest side mutates only the
+// changed LINES of touched source files (`path:start-end` ranges) — a whole
+// core file can hold ~1k mutants covered by ~500 tests — so a push costs
+// minutes. Test-only changes mutate nothing per push: test-strength
+// regressions are the nightly full run's ratchet. The full scope lives in
+// stryker.conf.json / stryker.tap.conf.json.
 //
 // CLI: `node scripts/mutation-scope.mjs --ref <git-ref> [--tap|--vitest]`
-// prints comma-separated `--mutate` files for the chosen runner (default
-// vitest), or nothing when no mutable file changed (the caller skips the
-// step). A failed diff exits 1: the gate must never go silently empty or
-// silently widen to the full scope.
+// prints comma-separated `--mutate` entries for the chosen runner (default
+// vitest), or nothing when nothing mutable changed (the caller skips the
+// step). A failed diff exits 1: the gate must never go silently empty.
 
-// Upper bound on per-push vitest files. Over the cap, the first files (sorted)
-// are kept and the rest are left to the nightly full run, with a warning.
+// Upper bound on per-push vitest files. Over the cap, the first files
+// (sorted) are kept and the rest are left to the nightly run, with a warning.
 export const MAX_VITEST_FILES = 25;
 
 // Tap-side systems under test; keep in sync with stryker.tap.conf.json.
 const SCRIPT_SUTS = ['scripts/dep-lint.mjs', 'scripts/check-pinned-deps.mjs'];
 
+const SOURCE = /^(packages|apps)\/[^/]+\/src\/.+\.ts$/;
+
+function isSource(file) {
+  return (
+    SOURCE.test(file) && !file.endsWith('.test.ts') && !file.endsWith('.d.ts')
+  );
+}
+
+// Added/changed line ranges per file from `git diff -U0 --no-prefix`.
+export function changedRanges(diff) {
+  const ranges = new Map();
+  let file = null;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      file = line === '+++ /dev/null' ? null : line.slice(4);
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (hunk === null || file === null) continue;
+    const start = Number(hunk[1]);
+    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    if (count === 0) continue; // pure deletion: nothing left to mutate
+    if (!ranges.has(file)) ranges.set(file, []);
+    ranges.get(file).push([start, start + count - 1]);
+  }
+  return ranges;
+}
+
+export function vitestScope(ranges) {
+  const files = [...ranges.keys()].filter(isSource).sort();
+  const kept = files.slice(0, MAX_VITEST_FILES);
+  const mutate = kept.flatMap((f) =>
+    ranges.get(f).map(([a, b]) => `${f}:${a}-${b}`),
+  );
+  return { mutate, dropped: files.length - kept.length };
+}
+
 // Script test files exercise a sibling SUT (`dep-lint.test.mjs` imports
 // `checkTree` from `dep-lint.mjs`); config-wide tests (erasable,
 // pi-boundary) read the whole tree, so they conservatively map to every SUT.
-function tapScopeForScript(file) {
-  const base = file.replace(/\.test\.mjs$/, '.mjs');
-  if (SCRIPT_SUTS.includes(base)) return [base];
-  if (base === file) return [];
-  return [...SCRIPT_SUTS];
-}
-
-function vitestScopeForFile(file, exists) {
-  if (!/^(packages|apps)\/[^/]+\/src\/.+\.ts$/.test(file)) return [];
-  if (file.endsWith('.d.ts')) return [];
-  const source = file.replace(/\.test\.ts$/, '.ts');
-  return exists(source) ? [source] : [];
-}
-
-function defaultExists(file) {
-  return process.getBuiltinModule('node:fs').existsSync(file);
-}
-
-export function scopeForChangedFiles(files, exists = defaultExists) {
-  const vitest = new Set();
+export function tapScope(files) {
   const tap = new Set();
   for (const f of files) {
-    for (const s of vitestScopeForFile(f, exists)) vitest.add(s);
-    if (f.startsWith('scripts/')) {
-      for (const s of tapScopeForScript(f)) tap.add(s);
-    }
+    if (!f.startsWith('scripts/')) continue;
+    const base = f.replace(/\.test\.mjs$/, '.mjs');
+    if (SCRIPT_SUTS.includes(base)) tap.add(base);
+    else if (base !== f) for (const s of SCRIPT_SUTS) tap.add(s);
   }
-  const sorted = [...vitest].sort();
-  return {
-    vitest: sorted.slice(0, MAX_VITEST_FILES),
-    tap: [...tap],
-    dropped: Math.max(0, sorted.length - MAX_VITEST_FILES),
-  };
+  return [...tap];
 }
 
-function changedFilesSince(ref) {
+function git(args) {
   const { execFileSync } = process.getBuiltinModule('node:child_process');
-  const out = execFileSync('git', ['diff', '--name-only', `${ref}...HEAD`], {
+  return execFileSync('git', args, {
     encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
   });
-  return out
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
 }
 
 function main(argv) {
   const ref = argv.includes('--ref') ? argv[argv.indexOf('--ref') + 1] : null;
-  const runner = argv.includes('--tap') ? 'tap' : 'vitest';
   if (!ref) {
     console.error('mutation-scope: --ref <git-ref> is required');
     process.exit(1);
   }
-  let files;
+  const range = `${ref}...HEAD`;
   try {
-    files = changedFilesSince(ref);
+    if (argv.includes('--tap')) {
+      const files = git(['diff', '--name-only', range]).split('\n');
+      console.log(tapScope(files.filter(Boolean)).join(','));
+      return;
+    }
+    const diff = git(['diff', '-U0', '--no-prefix', '--no-color', range]);
+    const scope = vitestScope(changedRanges(diff));
+    if (scope.dropped > 0) {
+      console.error(
+        `mutation-scope: ${scope.dropped} changed file(s) over the ${MAX_VITEST_FILES}-file cap are left to the nightly full run`,
+      );
+    }
+    console.log(scope.mutate.join(','));
   } catch (err) {
-    console.error(
-      `mutation-scope: git diff ${ref}...HEAD failed: ${err.message}`,
-    );
+    console.error(`mutation-scope: git diff ${range} failed: ${err.message}`);
     process.exit(1);
   }
-  const scope = scopeForChangedFiles(files);
-  if (runner === 'vitest' && scope.dropped > 0) {
-    console.error(
-      `mutation-scope: ${scope.dropped} changed file(s) over the ${MAX_VITEST_FILES}-file cap are left to the nightly full run`,
-    );
-  }
-  console.log(scope[runner].join(','));
 }
 
 if (import.meta.main) main(process.argv.slice(2));

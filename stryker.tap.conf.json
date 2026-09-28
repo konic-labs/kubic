@@ -3,7 +3,11 @@
   "packageManager": "npm",
   "testRunner": "tap",
   "tap": {
-    "testFiles": ["scripts/dep-lint.test.mjs", "scripts/pi-boundary.test.mjs"],
+    "testFiles": [
+      "scripts/dep-lint.test.mjs",
+      "scripts/pi-boundary.test.mjs",
+      "scripts/check-docs-links.test.mjs"
+    ],
     "nodeArgs": ["--test-reporter=tap", "{{testFile}}"]
   },
   "coverageAnalysis": "perTest",

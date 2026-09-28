@@ -9,5 +9,9 @@ export default defineConfig({
     // Half the cores, not vitest's cores-1 default: several coding agents
     // often run the suite at once on one laptop. The suite is ~10s either way.
     maxWorkers: '50%',
+    // Stryker instruments every expression, which makes CPU-bound tests
+    // (e.g. the 8 MiB read-bound scan) several times slower on CI runners.
+    testTimeout:
+      process.env.STRYKER_MUTATOR_WORKER === undefined ? 5_000 : 30_000,
   },
 });

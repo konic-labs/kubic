@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
-import { runCleanCommand } from './clean.js';
+import { type CleanOptions, runCleanCommand } from './clean.js';
 
 const scratchDirs: string[] = [];
 
@@ -89,16 +89,18 @@ function kubicBranches(root: string): string[] {
 
 async function clean(
   root: string,
-  args: string[],
+  options: CleanOptions,
   worktreeRoot?: string,
-): Promise<{ code: number; lines: string[] }> {
+): Promise<{ code: number; lines: string[]; errs: string[] }> {
   const lines: string[] = [];
-  const code = await runCleanCommand(args, {
+  const errs: string[] = [];
+  const code = await runCleanCommand(options, {
     env: new NodeExecutionEnv(root),
     out: (line: string) => lines.push(line),
+    err: (line: string) => errs.push(line),
     ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
   });
-  return { code, lines };
+  return { code, lines, errs };
 }
 
 describe('kubic clean on a scratch repo (issue #92)', () => {
@@ -111,7 +113,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const worktreesBefore = worktreeList(root);
     const branchesBefore = kubicBranches(root);
 
-    const { code, lines } = await clean(root, ['--dry-run']);
+    const { code, lines } = await clean(root, { dryRun: true });
 
     expect(code).toBe(0);
     const text = lines.join('\n');
@@ -127,7 +129,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const root = scratchRepo();
     const retained = retainWorktree(root, 'worker-1');
 
-    const { code, lines } = await clean(root, []);
+    const { code, lines } = await clean(root, {});
 
     expect(code).toBe(0);
     expect(lines).toContain(`removed worktree ${retained}`);
@@ -138,7 +140,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     // The main checkout is never pruned.
     expect(worktreeList(root)).toContain(root);
 
-    const second = await clean(root, []);
+    const second = await clean(root, {});
     expect(second.code).toBe(0);
     const secondText = second.lines.join('\n');
     expect(secondText).toContain('nothing to prune');
@@ -152,7 +154,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
 
     // The composition root threads `[orchestrator].root` here; the default
     // scope would never plan this worktree.
-    const { code, lines } = await clean(root, [], '.kubic-custom/wt');
+    const { code, lines } = await clean(root, {}, '.kubic-custom/wt');
 
     expect(code).toBe(0);
     expect(lines).toContain(`removed worktree ${custom}`);
@@ -167,7 +169,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     git(root, ['worktree', 'add', handmade, '-b', 'handmade']);
     const retained = retainWorktree(root, 'worker-1');
 
-    const { code, lines } = await clean(root, []);
+    const { code, lines } = await clean(root, {});
 
     expect(code).toBe(0);
     expect(lines).toContain(`removed worktree ${retained}`);
@@ -186,8 +188,8 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const foreign = join(root, '.kubic', 'wt', 'fake');
     git(root, ['worktree', 'add', foreign, '-b', 'feature/foreign']);
 
-    const dry = await clean(root, ['--dry-run']);
-    const real = await clean(root, []);
+    const dry = await clean(root, { dryRun: true });
+    const real = await clean(root, {});
 
     expect(dry.code).toBe(0);
     expect(dry.lines.join('\n')).not.toContain(foreign);
@@ -207,28 +209,15 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const dir = plainDir();
     writeFileSync(join(dir, 'keep.txt'), 'keep\n');
 
-    for (const args of [[], ['--dry-run']]) {
-      const { code, lines } = await clean(dir, args);
-      const text = lines.join('\n');
+    for (const options of [{}, { dryRun: true }]) {
+      const { code, lines, errs } = await clean(dir, options);
+      expect(lines).toEqual([]);
+      const text = errs.join('\n');
       expect(code).toBe(2);
       expect(text).toContain('needs a git repository');
       expect(text).toContain('nothing was removed');
     }
     expect(existsSync(join(dir, 'keep.txt'))).toBe(true);
-  });
-
-  it('rejects an unknown flag with exit 2 and removes nothing', async () => {
-    const root = scratchRepo();
-    const retained = retainWorktree(root, 'worker-1');
-
-    const { code, lines } = await clean(root, ['--nuke']);
-
-    const text = lines.join('\n');
-    expect(code).toBe(2);
-    expect(text).toContain('unknown flag --nuke');
-    expect(text).toContain('usage: kubic clean');
-    expect(existsSync(retained)).toBe(true);
-    expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
   });
 
   it('--session scopes disposal to a failed orchestrate run', async () => {
@@ -252,23 +241,23 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
       }),
     );
 
-    const dry = await clean(root, ['--session', 'orch-fail', '--dry-run']);
+    const dry = await clean(root, { sessionId: 'orch-fail', dryRun: true });
     const dryText = dry.lines.join('\n');
     expect(dry.code).toBe(0);
     expect(dryText).toContain(one);
     expect(dryText).toContain(two);
     expect(dryText).not.toContain(three);
 
-    const real = await clean(root, ['--session', 'orch-fail']);
+    const real = await clean(root, { sessionId: 'orch-fail' });
     expect(real.code).toBe(0);
     expect(existsSync(one)).toBe(false);
     expect(existsSync(two)).toBe(false);
     expect(existsSync(three)).toBe(true);
     expect(kubicBranches(root)).toEqual(['kubic/worker-3']);
 
-    const missing = await clean(root, ['--session', 'nope', '--dry-run']);
+    const missing = await clean(root, { sessionId: 'nope', dryRun: true });
     expect(missing.code).toBe(1);
-    expect(missing.lines.join('\n')).toContain(
+    expect(missing.errs.join('\n')).toContain(
       "no retained set for session 'nope'",
     );
   });
@@ -277,7 +266,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const root = scratchRepo();
     const retained = retainWorktree(root, 'worker-1');
 
-    const dry = await clean(root, ['--dry-run', '--json']);
+    const dry = await clean(root, { dryRun: true, json: true });
     const dryEnvelope = JSON.parse(dry.lines.join('\n')) as {
       ok: boolean;
       exitCode: number;
@@ -295,7 +284,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     expect(dryEnvelope.branches).toEqual(['kubic/worker-1']);
     expect(existsSync(retained)).toBe(true);
 
-    const real = await clean(root, ['--json']);
+    const real = await clean(root, { json: true });
     const envelope = JSON.parse(real.lines.join('\n')) as {
       dryRun: boolean;
       worktrees: { path: string; branch: string }[];
@@ -316,14 +305,14 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const one = retainWorktree(root, 'worker-1');
     const two = retainWorktree(root, 'worker-2');
 
-    const explicit = await clean(root, ['--all', '--dry-run']);
-    const implicit = await clean(root, ['--dry-run']);
+    const explicit = await clean(root, { all: true, dryRun: true });
+    const implicit = await clean(root, { dryRun: true });
 
     expect(explicit.code).toBe(0);
     expect(implicit.code).toBe(0);
     expect(explicit.lines).toEqual(implicit.lines);
 
-    const real = await clean(root, ['--all']);
+    const real = await clean(root, { all: true });
     expect(real.code).toBe(0);
     expect(existsSync(one)).toBe(false);
     expect(existsSync(two)).toBe(false);
@@ -335,8 +324,8 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     const retained = retainWorktree(root, 'worker-1');
     writeFileSync(join(retained, 'wip.txt'), 'wip\n');
 
-    const refused = await clean(root, []);
-    const refusedText = refused.lines.join('\n');
+    const refused = await clean(root, {});
+    const refusedText = refused.errs.join('\n');
     expect(refused.code).toBe(1);
     expect(refusedText).toContain('error:');
     expect(refusedText).toContain('--force');
@@ -344,7 +333,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     // Never half-disposed: the failed worktree keeps its branch.
     expect(kubicBranches(root)).toEqual(['kubic/worker-1']);
 
-    const forced = await clean(root, ['--force']);
+    const forced = await clean(root, { force: true });
     expect(forced.code).toBe(0);
     expect(existsSync(retained)).toBe(false);
     expect(kubicBranches(root)).toEqual([]);

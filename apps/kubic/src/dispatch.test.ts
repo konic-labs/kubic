@@ -1,12 +1,12 @@
 // Dispatch wiring suite (issue #135): the composition root's front door —
 // which command routes to which runner, the config-refusal matrix, the §78
-// exit-code remap, and the front-door special cases — over injected
+// exit codes, and the front-door special cases — over injected
 // runners. Faux everything: no real lanes, no network, and no fs beyond the
 // one fixture dir this file creates.
 //
 // The `prod wiring deps shapes` block drives the REAL production runners
 // (./prod-runners.js) over hermetic argv and fixtures on purpose: it pins
-// the documented deps shapes the root wires (clean {env,out}, cost
+// the documented deps shapes the root wires (clean {env,out,err}, cost
 // {loadRows,out}, audit {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
 import {
@@ -21,14 +21,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
-import { CLEAN_USAGE } from '../../../packages/host/src/orchestrator/worktree/clean.js';
 import {
   type CliConfigResult,
   loadCliConfig,
   runtimeExcludeEntriesFor,
 } from './config-runtime.js';
 import {
-  type CommandRunner,
   type DispatchDeps,
   type DispatchRunners,
   dispatchCommand,
@@ -92,9 +90,25 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
 
 const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
 
+// Commands on real commander definitions hand their runner the parsed
+// options (for the ROUTES argv above), not the raw argv.
+const PARSED_OPTIONS: Readonly<Record<string, unknown>> = {
+  orchestrate: {},
+  clean: { dryRun: true },
+  workers: { json: true },
+};
+
+// A faux runner accepts whatever its command hands it: the raw argv for a
+// pass-through forwarder, the parsed options for a commander command.
+type FauxRunner = (
+  args: unknown,
+  config: CliConfigResult,
+) => number | Promise<number>;
+
 interface RunnerCall {
   readonly key: RunnerKey;
-  readonly rest: readonly string[];
+  // The argv (forwarders) or the parsed options (migrated commands).
+  readonly rest: unknown;
   readonly config: CliConfigResult;
 }
 
@@ -113,7 +127,7 @@ interface Harness {
 // `version` is a constant, `loadConfig` answers the given result.
 function harness(
   options: {
-    runners?: Partial<Record<RunnerKey, CommandRunner>>;
+    runners?: Partial<Record<RunnerKey, FauxRunner>>;
     config?: CliConfigResult;
     version?: string;
   } = {},
@@ -124,12 +138,16 @@ function harness(
     excludeCalls: 0,
     excludeEntries: undefined,
   };
-  const runners = {} as Record<RunnerKey, CommandRunner>;
+  const runners = {} as Record<RunnerKey, FauxRunner>;
   for (const key of RUNNER_KEYS) {
     const override = options.runners?.[key];
-    runners[key] = (rest, config) => {
-      calls.push({ key, rest: [...rest], config });
-      return override === undefined ? 0 : override(rest, config);
+    runners[key] = (args, config) => {
+      calls.push({
+        key,
+        rest: Array.isArray(args) ? [...args] : args,
+        config,
+      });
+      return override === undefined ? 0 : override(args, config);
     };
   }
   const deps: DispatchDeps = {
@@ -205,7 +223,11 @@ describe('dispatch routing (issue #135)', () => {
         label,
       ).toEqual([key]);
       expect(h.calls[0]?.rest, label).toEqual(
-        JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest,
+        command in PARSED_OPTIONS
+          ? PARSED_OPTIONS[command]
+          : JOURNAL_COMMANDS.has(command)
+            ? [command, ...rest]
+            : rest,
       );
       expect(code, `${label} — exit code must flow back`).toBe(0);
     }
@@ -555,15 +577,15 @@ describe('runtime exclude (issue #91, moved order)', () => {
   });
 });
 
-describe('workers usage remap (issue #77, §78)', () => {
-  it('remaps the usage exit 1 → 2', async () => {
-    const h = harness({ runners: { workers: async () => 1 } });
-    expect(await dispatchCommand('workers', ['--json'], h.deps)).toBe(2);
-    expect(h.calls.map((call) => call.key)).toEqual(['workers']);
+describe('workers usage exit (issue #77, §78)', () => {
+  it('commander refuses an unknown flag with exit 2 before the runner', async () => {
+    const h = harness();
+    expect(await dispatchCommand('workers', ['--nope'], h.deps)).toBe(2);
+    expect(h.calls).toEqual([]);
   });
 
-  it('passes every other code through unchanged', async () => {
-    for (const code of [0, 3, 6]) {
+  it('passes every runner code through unchanged (no remap left)', async () => {
+    for (const code of [0, 1, 3, 6]) {
       const h = harness({ runners: { workers: async () => code } });
       expect(await dispatchCommand('workers', [], h.deps), `code ${code}`).toBe(
         code,
@@ -614,14 +636,20 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     ]);
   });
 
-  it('clean receives { env, out } (answers --help from the injected out)', async () => {
+  it('clean receives { env, out, err } (an unknown session fails by name on stderr)', async () => {
+    // Read-only: a dry run scoped to a session this checkout never ran
+    // resolves the repo, finds no retained set, and removes nothing.
     const cap = capture();
     const code = await createProdRunners(cap.io).clean(
-      ['--help'],
+      { sessionId: 'no-such-session-dispatch-test', dryRun: true },
       loadedConfig(),
     );
-    expect(code).toBe(0);
-    expect(cap.lines).toEqual([CLEAN_USAGE]);
+    expect(code).toBe(1);
+    expect(cap.lines).toEqual([]);
+    expect(cap.errs).toHaveLength(1);
+    expect(cap.errs[0]).toMatch(
+      /^error: no retained set for session 'no-such-session-dispatch-test'/,
+    );
   });
 
   it('cost receives { loadRows, out } (an unknown session fails by name)', async () => {

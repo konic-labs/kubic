@@ -15,8 +15,11 @@
 // planned — and each mutation re-checks its own confinement.
 
 import { join } from 'node:path';
-import { answerHelp } from '../../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
+import { formatJson } from '../../../../core/src/cli/output.js';
+import {
+  type CliTheme,
+  createCliTheme,
+} from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
@@ -30,6 +33,7 @@ import {
 } from '../../../../worker/src/lifecycle/orphans.js';
 import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
+import { lineLogger } from '../cli-log.js';
 import {
   isSpawnedWorktreePath,
   isSpawnedWorktreeShape,
@@ -83,7 +87,12 @@ export interface JournalPruneResult {
 
 export interface CleanDeps {
   env: ExecutionEnv;
+  // stdout: the disposal report or the `--json` document.
   out: (line: string) => void;
+  // stderr: `error: …` diagnostics through the shared logger.
+  err: (line: string) => void;
+  // Colours the report verbs; colourless when absent (and under --json).
+  theme?: CliTheme;
   repoRoot?: string;
   // The spawned set's parent, workspace-relative: `[orchestrator].root` when
   // the config sets one, `.kubic/wt` otherwise (issue #133). It is a config
@@ -114,109 +123,6 @@ export interface CleanDeps {
   /** Stops a live worker's process group (used only under --force). */
   killWorker?: (pid: number) => void;
   resolveRepoRoot?: (env: ExecutionEnv) => Promise<string | undefined>;
-}
-
-export const CLEAN_USAGE =
-  'usage: kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(CLEAN_USAGE);
-  return CLEAN_EXIT_USAGE;
-}
-
-function positiveInt(raw: string): number | null {
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) return null;
-  return parsed;
-}
-
-// Issue #127: the shared parser replaces the known-set scan + flagValue
-// helper. The old lines are preserved: a starved bound is still reported
-// first (`--max-age-ms --nuke` → '--max-age-ms/--max-bytes need a value',
-// not `--nuke`), and `--max-age-ms 5 --nuke` still refuses `--nuke` by
-// name once the bound is set (both exit 2). The parser adds `--flag=value`
-// and the `--` terminator.
-const CLEAN_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--all', takes: 'boolean' },
-  { name: '--dry-run', takes: 'boolean' },
-  { name: '--force', takes: 'boolean' },
-  { name: '--journal', takes: 'boolean' },
-  { name: '--json', takes: 'boolean' },
-  { name: '--max-age-ms', takes: 'value' },
-  { name: '--max-bytes', takes: 'value' },
-  { name: '--session', takes: 'value' },
-];
-
-export function parseCleanArgs(
-  args: string[],
-): { valid: true; options: CleanOptions } | { valid: false; error: string } {
-  const parsed = parseFlagArgs(args, CLEAN_FLAG_SPEC);
-  const missing = parsed.missing;
-  if (missing.includes('--max-age-ms') || missing.includes('--max-bytes')) {
-    return { valid: false, error: '--max-age-ms/--max-bytes need a value' };
-  }
-  if (missing.includes('--session')) {
-    return { valid: false, error: '--session needs a value' };
-  }
-  if (parsed.unknown.length > 0) {
-    return { valid: false, error: `unknown flag ${parsed.unknown[0]}` };
-  }
-  if (parsed.positional.length > 0) {
-    return {
-      valid: false,
-      error: `unexpected argument ${JSON.stringify(parsed.positional[0])}`,
-    };
-  }
-  const values = parsed.values;
-  const maxAgeRaw = values['--max-age-ms'] as string | undefined;
-  const maxBytesRaw = values['--max-bytes'] as string | undefined;
-  const sessionRaw = values['--session'] as string | undefined;
-  let sessionId: string | undefined;
-  if (sessionRaw !== undefined) {
-    if (!SESSION_ID_PATTERN.test(sessionRaw)) {
-      return {
-        valid: false,
-        error: `invalid --session id ${JSON.stringify(sessionRaw)} (use [A-Za-z0-9_-])`,
-      };
-    }
-    sessionId = sessionRaw;
-  }
-  let maxAgeMs: number | undefined;
-  let maxBytes: number | undefined;
-  if (maxAgeRaw !== undefined) {
-    const parsedBound = positiveInt(maxAgeRaw);
-    if (parsedBound === null) {
-      return { valid: false, error: '--max-age-ms needs a positive integer' };
-    }
-    maxAgeMs = parsedBound;
-  }
-  if (maxBytesRaw !== undefined) {
-    const parsedBound = positiveInt(maxBytesRaw);
-    if (parsedBound === null) {
-      return { valid: false, error: '--max-bytes needs a positive integer' };
-    }
-    maxBytes = parsedBound;
-  }
-  // Two contradictory scopes at once: refuse before either is resolved.
-  if (values['--all'] === true && sessionId !== undefined) {
-    return {
-      valid: false,
-      error: '--all and --session are mutually exclusive',
-    };
-  }
-  return {
-    valid: true,
-    options: {
-      ...(values['--dry-run'] === true ? { dryRun: true } : {}),
-      ...(values['--json'] === true ? { json: true } : {}),
-      ...(values['--all'] === true ? { all: true } : {}),
-      ...(values['--force'] === true ? { force: true } : {}),
-      ...(values['--journal'] === true ? { journal: true } : {}),
-      ...(maxAgeMs === undefined ? {} : { maxAgeMs }),
-      ...(maxBytes === undefined ? {} : { maxBytes }),
-      ...(sessionId === undefined ? {} : { sessionId }),
-    },
-  };
 }
 
 function journalPolicy(options: CleanOptions): {
@@ -343,11 +249,15 @@ function defaultPruneJournal(
 export function cleanDepsWithDefaults(options: {
   env: ExecutionEnv;
   out: (line: string) => void;
+  err: (line: string) => void;
+  theme?: CliTheme;
   worktreeRoot?: string;
 }): CleanDeps {
   return {
     env: options.env,
     out: options.out,
+    err: options.err,
+    ...(options.theme === undefined ? {} : { theme: options.theme }),
     ...(options.worktreeRoot === undefined
       ? {}
       : { worktreeRoot: options.worktreeRoot }),
@@ -395,22 +305,29 @@ function defaultLiveWorkers(
   return live;
 }
 
+// The parsed `kubic clean` options arrive from the commander program
+// (apps/kubic/src/commands/orchestrator.ts): unknown flags, missing or
+// malformed values, an invalid `--session` id and `--all` with `--session`
+// are refused there (exit 2) before this runs.
 export async function runCleanCommand(
-  args: string[],
+  options: CleanOptions,
   deps: CleanDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before argv parsing (issue #100).
-  const help = answerHelp(args, deps.out, CLEAN_USAGE);
-  if (help !== null) return help;
-  const parsed = parseCleanArgs(args);
-  if (!parsed.valid) {
-    deps.out(`error: ${parsed.error}`);
-    return usage(deps.out);
-  }
-  const options = parsed.options;
-  if (options.all === true && options.sessionId !== undefined) {
-    deps.out('error: --all and --session are mutually exclusive');
-    return usage(deps.out);
+  const theme =
+    options.json === true || deps.theme === undefined
+      ? createCliTheme('none')
+      : deps.theme;
+  const log = lineLogger(deps.err, { theme });
+  // Defence in depth: the id names a state file under .kubic/orchestrator,
+  // so a library caller cannot bypass the CLI's own --session check.
+  if (
+    options.sessionId !== undefined &&
+    !SESSION_ID_PATTERN.test(options.sessionId)
+  ) {
+    log.error(
+      `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-]); nothing was removed`,
+    );
+    return CLEAN_EXIT_USAGE;
   }
   // The spawned set's parent comes from the config projection on the deps
   // (issue #133) — `[orchestrator].root`, `.kubic/wt` by default.
@@ -422,10 +339,10 @@ export async function runCleanCommand(
     deps.repoRoot ??
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
   if (repoRoot === undefined) {
-    deps.out(
-      'error: `kubic clean` needs a git repository — it disposes retained `kubic/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
+    log.error(
+      '`kubic clean` needs a git repository — it disposes retained `kubic/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
-    return usage(deps.out);
+    return CLEAN_EXIT_USAGE;
   }
 
   let plan: CleanPlan;
@@ -436,8 +353,8 @@ export async function runCleanCommand(
         repoRoot,
       );
       if (agents === undefined) {
-        deps.out(
-          `error: no retained set for session '${options.sessionId}' — expected ${sessionStorePath(repoRoot, options.sessionId)}; nothing was removed`,
+        log.error(
+          `no retained set for session '${options.sessionId}' — expected ${sessionStorePath(repoRoot, options.sessionId)}; nothing was removed`,
         );
         return CLEAN_EXIT_FAILURE;
       }
@@ -453,10 +370,10 @@ export async function runCleanCommand(
   } catch (error) {
     if (isWorktreeError(error)) {
       if (error.code === 'not_a_repo') {
-        deps.out(`error: ${error.message} — nothing was removed`);
-        return usage(deps.out);
+        log.error(`${error.message} — nothing was removed`);
+        return CLEAN_EXIT_USAGE;
       }
-      deps.out(`error: ${error.message}`);
+      log.error(error.message);
       return error.exitCode;
     }
     throw error;
@@ -471,35 +388,33 @@ export async function runCleanCommand(
       plan.worktrees.length > 0 || plan.branches.length > 0 || bounded;
     if (options.json === true) {
       deps.out(
-        JSON.stringify(
-          {
-            ok: true,
-            exitCode: CLEAN_EXIT_OK,
-            dryRun: true,
-            worktrees: plan.worktrees,
-            branches: plan.branches,
-            journal: plan.journal,
-          },
-          null,
-          2,
-        ),
+        formatJson({
+          ok: true,
+          exitCode: CLEAN_EXIT_OK,
+          dryRun: true,
+          worktrees: plan.worktrees,
+          branches: plan.branches,
+          journal: plan.journal,
+        }),
       );
       return CLEAN_EXIT_OK;
     }
     if (!changed) {
-      deps.out('clean: nothing to prune');
+      deps.out(theme.muted('clean: nothing to prune'));
       return CLEAN_EXIT_OK;
     }
     for (const item of plan.worktrees) {
-      deps.out(`would remove worktree ${item.path}`);
+      deps.out(`${theme.warning('would remove')} worktree ${item.path}`);
     }
     for (const branch of plan.branches) {
-      deps.out(`would delete branch ${branch}`);
+      deps.out(`${theme.warning('would delete')} branch ${branch}`);
     }
     if (bounded) {
-      deps.out('would prune journal entries outside the retention policy');
+      deps.out(
+        `${theme.warning('would prune')} journal entries outside the retention policy`,
+      );
     }
-    deps.out('clean (dry run): nothing changed');
+    deps.out(theme.muted('clean (dry run): nothing changed'));
     return CLEAN_EXIT_OK;
   }
 
@@ -600,27 +515,25 @@ export async function runCleanCommand(
 
   if (options.json === true) {
     deps.out(
-      JSON.stringify(
-        {
-          ok: exitCode === CLEAN_EXIT_OK,
-          exitCode,
-          dryRun: false,
-          worktrees: removed,
-          branches: deleted,
-          journal,
-          ...(failures.length === 0 ? {} : { failures }),
-        },
-        null,
-        2,
-      ),
+      formatJson({
+        ok: exitCode === CLEAN_EXIT_OK,
+        exitCode,
+        dryRun: false,
+        worktrees: removed,
+        branches: deleted,
+        journal,
+        ...(failures.length === 0 ? {} : { failures }),
+      }),
     );
     return exitCode;
   }
-  for (const item of removed) deps.out(`removed worktree ${item.path}`);
-  for (const branch of deleted) deps.out(`deleted branch ${branch}`);
-  for (const failure of failures) {
-    deps.out(`error: ${failure.message}`);
+  for (const item of removed) {
+    deps.out(`${theme.success('removed')} worktree ${item.path}`);
   }
+  for (const branch of deleted) {
+    deps.out(`${theme.success('deleted')} branch ${branch}`);
+  }
+  for (const failure of failures) log.error(failure.message);
   // "nothing to prune" only when the invocation disposed nothing at all —
   // a journal-only prune already reported its own counts below.
   if (
@@ -629,7 +542,7 @@ export async function runCleanCommand(
     failures.length === 0 &&
     !bounded
   ) {
-    deps.out('clean: nothing to prune');
+    deps.out(theme.muted('clean: nothing to prune'));
   }
   if (bounded) {
     deps.out(

@@ -3,13 +3,18 @@
 // every command module's `register*Commands(program, ctx)` receives.
 
 import type { Command } from '@commander-js/extra-typings';
+import type { OrchestrateCliOptions } from '../../../../packages/host/src/orchestrate-cli.js';
+import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
+import type { WorkersCliOptions } from '../../../../packages/host/src/workers-cli.js';
 import type { CliConfigResult } from '../config-runtime.js';
 
-// `rest` is the argv after the command name — journal commands receive
-// `[command, ...rest]`; `config` is the one process-wide config load, so
-// every runner reads the same result the refusal gate saw.
-export type CommandRunner = (
-  rest: readonly string[],
+// `args` is what the command hands its handler: for a pass-through
+// forwarder the argv after the command name (journal commands receive
+// `[command, ...rest]`); for a migrated command the options commander
+// parsed. `config` is the one process-wide config load, so every runner
+// reads the same result the refusal gate saw.
+export type CommandRunner<Args = readonly string[]> = (
+  args: Args,
   config: CliConfigResult,
 ) => number | Promise<number>;
 
@@ -21,14 +26,14 @@ export interface DispatchRunners {
   readonly run: CommandRunner;
   readonly tui: CommandRunner;
   readonly doctor: CommandRunner;
-  readonly orchestrate: CommandRunner;
-  readonly clean: CommandRunner;
+  readonly orchestrate: CommandRunner<OrchestrateCliOptions>;
+  readonly clean: CommandRunner<CleanOptions>;
   readonly cost: CommandRunner;
   readonly perf: CommandRunner;
   readonly policy: CommandRunner;
   readonly config: CommandRunner;
   readonly audit: CommandRunner;
-  readonly workers: CommandRunner;
+  readonly workers: CommandRunner<WorkersCliOptions>;
   readonly eval: CommandRunner;
   readonly benchmark: CommandRunner;
   readonly replay: CommandRunner;

@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import type { ShellResult } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -94,7 +95,11 @@ import { runtimeExcludeEntriesFor } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
 
 export interface OrchestrateRunOptions {
+  // stdout (the report or the --json envelope) and stderr (diagnostics).
   out: (line: string) => void;
+  err: (line: string) => void;
+  // Report colours; the command wires the stdout theme (none under --json).
+  theme?: CliTheme;
   debug?: (line: string) => void;
   cwd?: string;
   /** Worker sessions root; defaults to the user sessions root (~/.kubic/sessions). */
@@ -914,6 +919,8 @@ export async function orchestrateDepsWithDefaults(
   const approvalSnapshot = options.approvalPolicy;
   return {
     out: options.out,
+    err: options.err,
+    ...(options.theme === undefined ? {} : { theme: options.theme }),
     debug,
     // Issue #133: the configured worker cap is the run's own admission
     // surface — the same scheduler the CLI would default to, constructed

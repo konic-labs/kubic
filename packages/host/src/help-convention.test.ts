@@ -19,14 +19,11 @@ import { runJournalCommand } from './journal-cli.js';
 import { runModelsCommand } from './models-cli.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
 import { runPerfCommand } from './ops/perf/perf-cli.js';
-import { runOrchestrateCommand } from './orchestrate-cli.js';
-import { runCleanCommand } from './orchestrator/worktree/clean.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import { runPolicyCommand } from './policy/policy-cli.js';
 import { runReplayCommand } from './replay/replay.js';
 import { runRunCommand } from './run-cli.js';
 import { runSessionsCommand } from './sessions-cli.js';
-import { runWorkersCommand } from './workers-cli.js';
 
 const USAGE_PREFIX = 'usage: kubic';
 
@@ -53,27 +50,10 @@ const CASES: Case[] = [
     run: (args, out) =>
       runRunCommand(args, { out, run: never('the run path') }),
   },
-  {
-    command: 'orchestrate',
-    run: (args, out) =>
-      runOrchestrateCommand(args, {
-        out,
-        isGitRepo: never('the git probe'),
-        ensureWorktree: never('worktree creation'),
-        createWorkerSession: never('session creation'),
-        runWorker: never('the worker spawn'),
-        mergeBranch: never('the merge'),
-        reapWorker: never('the reap'),
-      }),
-  },
-  {
-    command: 'clean',
-    run: (args, out) =>
-      runCleanCommand(args, {
-        out,
-        env: never('the execution env'),
-      }),
-  },
+  // orchestrate, clean and workers are commander commands now: their
+  // `--help` is the program's generated help, answered before a handler
+  // exists (apps/kubic/src/commands/orchestrator.test.ts pins exit 0 and
+  // that no runner is reached).
   {
     command: 'tui',
     run: (args, out) =>
@@ -112,11 +92,6 @@ const CASES: Case[] = [
         checkDeps: never('the dep probe'),
         loadPolicy: never('the policy load'),
       }),
-  },
-  {
-    command: 'workers',
-    run: (args, out) =>
-      runWorkersCommand(args, { out, list: never('the worker registry') }),
   },
   {
     command: 'eval',
@@ -161,12 +136,11 @@ const CASES: Case[] = [
 
 describe('--help convention (issue #100)', () => {
   it('covers every shipped command', () => {
-    // The 21 commands the binary dispatches; a new command must be added
-    // here or it ships without the convention.
+    // The legacy-handler commands the binary dispatches (the 21 shipped
+    // minus those migrated to commander, whose help is generated); a new
+    // legacy command must be added here or it ships without the convention.
     expect(CASES.map((c) => c.command)).toEqual([
       'run',
-      'orchestrate',
-      'clean',
       'tui',
       'sessions',
       'git',
@@ -176,7 +150,6 @@ describe('--help convention (issue #100)', () => {
       'log',
       'status',
       'doctor',
-      'workers',
       'eval',
       'benchmark',
       'replay',

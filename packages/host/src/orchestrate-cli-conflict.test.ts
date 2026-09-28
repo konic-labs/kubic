@@ -83,6 +83,9 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): FakeWorld {
     out: (line: string) => {
       lines.push(line);
     },
+    err: (line: string) => {
+      lines.push(line);
+    },
     debug: (line: string) => {
       debugLines.push(line);
     },
@@ -117,7 +120,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     const world = makeWorld({ mergeBranch: conflictOnce([]) });
     world.deps.mergeBranch = conflictOnce(world.merged);
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -139,7 +147,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     const world = makeWorld({ mergeBranch: conflictOnce([]) });
     world.deps.mergeBranch = conflictOnce(world.merged);
     await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     const request = world.resolverRuns[0] as ResolverRequest;
@@ -175,7 +188,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     });
     world.deps.mergeBranch = conflictOnce(world.merged);
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
@@ -198,7 +216,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     });
     world.deps.mergeBranch = conflictOnce(world.merged);
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
@@ -217,7 +240,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     });
     world.deps.mergeBranch = conflictOnce(world.merged);
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
@@ -234,7 +262,12 @@ describe('orchestrate conflict delegation (issue #106, §45.2)', () => {
     });
     world.deps.mergeBranch = conflictOnce(world.merged);
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'do it',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);

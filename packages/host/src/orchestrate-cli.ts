@@ -22,13 +22,14 @@ import {
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
   type WorkerApprovalsRun,
 } from './orchestrator/approvals/worker-asks.js';
+import { lineLogger } from './orchestrator/cli-log.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
   buildManagerPlan,
@@ -89,25 +90,23 @@ export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 // must deny closed on a human timescale, never hang the run headless.
 export const ORCHESTRATE_APPROVAL_BOUND_MS = 60_000;
 
-export const ORCHESTRATE_USAGE =
-  'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--full-access] [--json]';
-
-export function orchestrateUsage(out: (line: string) => void): number {
-  out(ORCHESTRATE_USAGE);
-  return RUN_EXIT_USAGE;
+// The parsed `kubic orchestrate` options, as the commander program
+// (apps/kubic/src/commands/orchestrator.ts) hands them over: argv syntax,
+// `--help`, unknown flags, and malformed `--agents` / `--budget` /
+// `--session` values are refused there (exit 2) before this runs — the
+// value parsers below (`parseAgentList`, `parseBudgetSpec`) are the ones
+// it calls. The cross-option rules (`-p` unless `--resume`, `--resume`
+// needs `--session`) stay here, with the run.
+export interface OrchestrateCliOptions {
+  readonly prompt?: string;
+  readonly agents?: readonly string[];
+  readonly session?: string;
+  readonly resume?: boolean;
+  readonly yes?: boolean;
+  readonly budget?: ParsedBudgetSpec;
+  readonly fullAccess?: boolean;
+  readonly json?: boolean;
 }
-
-// Issue #127: the shared parser's spec for this command's flags.
-const ORCHESTRATE_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--prompt', takes: 'value', aliases: ['-p'] },
-  { name: '--agents', takes: 'value' },
-  { name: '--session', takes: 'value' },
-  { name: '--resume', takes: 'boolean' },
-  { name: '--yes', takes: 'boolean' },
-  { name: '--full-access', takes: 'boolean' },
-  { name: '--budget', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
 
 export class MergeConflictError extends Error {
   agentId: string;
@@ -403,7 +402,12 @@ export type ResolverOutcome =
   | { resolved: false; reason: string };
 
 export interface OrchestrateCommandDeps {
+  // stdout: the report lines or the one `--json` envelope.
   out: (line: string) => void;
+  // stderr: `error: … code=<code>` and usage diagnostics (shared logger).
+  err: (line: string) => void;
+  // Colours the report labels; colourless when absent and under --json.
+  theme?: CliTheme;
   debug?: (line: string) => void;
   now?: () => number;
   isGitRepo: () => boolean | Promise<boolean>;
@@ -739,60 +743,44 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
   };
 }
 
-function parseAgents(raw: string): string[] | undefined {
+// `--agents a,b`: comma-separated worker ids, each a valid agent id and
+// unique (one worktree per writer). Undefined when the list is malformed.
+// A worker set is non-empty, duplicate-free, and every id is a valid agent id.
+export function validAgentSet(agents: readonly string[]): boolean {
+  return (
+    agents.length > 0 &&
+    new Set(agents).size === agents.length &&
+    agents.every((agent) => validateAgentId(agent).length === 0)
+  );
+}
+
+export function parseAgentList(raw: string): string[] | undefined {
   const agents = raw
     .split(',')
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  if (agents.length === 0) return undefined;
-  if (new Set(agents).size !== agents.length) return undefined;
-  for (const agent of agents) {
-    if (validateAgentId(agent).length > 0) return undefined;
-  }
-  return agents;
+  return validAgentSet(agents) ? agents : undefined;
 }
 
-function parseArgs(args: string[]): ParsedArgs | undefined {
-  // Issue #127: the shared parser replaces the hand-rolled loop; every
-  // syntax problem (missing value, unknown flag, stray operand) keeps the
-  // pre-migration posture — usage, exit 2, no run.
-  const flags = parseFlagArgs(args, ORCHESTRATE_FLAG_SPEC);
-  if (
-    flags.missing.length > 0 ||
-    flags.unknown.length > 0 ||
-    flags.positional.length > 0
-  ) {
-    return undefined;
-  }
-  const parsed: ParsedArgs = {
-    agents: [...ORCHESTRATE_DEFAULT_AGENTS],
-    resume: flags.values['--resume'] === true,
-    autoApprove: flags.values['--yes'] === true,
-    json: flags.values['--json'] === true,
-    budgetsByAgent: {},
-    fullAccess: flags.values['--full-access'] === true,
-  };
-  const prompt = flags.values['--prompt'] as string | undefined;
-  if (prompt !== undefined) parsed.prompt = prompt;
-  const sessionId = flags.values['--session'] as string | undefined;
-  if (sessionId !== undefined) parsed.sessionId = sessionId;
-  const agentsRaw = flags.values['--agents'] as string | undefined;
-  if (agentsRaw !== undefined) {
-    const agents = parseAgents(agentsRaw);
-    if (agents === undefined) return undefined;
-    parsed.agents = agents;
-  }
-  const budgetRaw = flags.values['--budget'] as string | undefined;
-  if (budgetRaw !== undefined) {
+function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
+  return {
+    agents:
+      options.agents === undefined
+        ? [...ORCHESTRATE_DEFAULT_AGENTS]
+        : [...options.agents],
+    resume: options.resume === true,
+    autoApprove: options.yes === true,
+    json: options.json === true,
     // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
-    // nothing configured → no limit applied. A malformed spec is refused
-    // (usage), never silently dropped.
-    const spec = parseBudgetSpec(budgetRaw);
-    if (spec === undefined) return undefined;
-    parsed.budget = spec.shared;
-    parsed.budgetsByAgent = spec.byAgent;
-  }
-  return parsed;
+    // nothing configured → no limit applied.
+    ...(options.budget?.shared === undefined
+      ? {}
+      : { budget: options.budget.shared }),
+    budgetsByAgent: options.budget?.byAgent ?? {},
+    fullAccess: options.fullAccess === true,
+    ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
+    ...(options.session === undefined ? {} : { sessionId: options.session }),
+  };
 }
 
 function statusForExit(exitCode: number, code: string): OrchestrateStatus {
@@ -812,25 +800,37 @@ function statusForExit(exitCode: number, code: string): OrchestrateStatus {
 }
 
 export async function runOrchestrateCommand(
-  args: string[],
+  options: OrchestrateCliOptions,
   deps: OrchestrateCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before argv parsing (issue #100).
-  const help = answerHelp(args, deps.out, ORCHESTRATE_USAGE);
-  if (help !== null) return help;
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
-  const parsed = parseArgs(args);
-  if (parsed === undefined) return orchestrateUsage(deps.out);
+  const parsed = parsedFrom(options);
+  // --json keeps every stream colourless; stdout carries one document.
+  const theme =
+    parsed.json || deps.theme === undefined
+      ? createCliTheme('none')
+      : deps.theme;
+  const log = lineLogger(deps.err, { theme });
   if (parsed.resume && parsed.sessionId === undefined) {
-    return orchestrateUsage(deps.out);
+    log.error('--resume needs --session <id> (the run to re-attach to)');
+    return RUN_EXIT_USAGE;
+  }
+  // Defence in depth: agent ids name worktrees and branches, the session id
+  // a state file under .kubic/orchestrator — a library caller cannot bypass
+  // the CLI's own --agents / --session checks.
+  if (options.agents !== undefined && !validAgentSet(options.agents)) {
+    log.error(
+      `invalid --agents ${JSON.stringify(options.agents)} (unique ids of [A-Za-z0-9_-])`,
+    );
+    return RUN_EXIT_USAGE;
   }
   if (
     parsed.sessionId !== undefined &&
     !SESSION_ID_PATTERN.test(parsed.sessionId)
   ) {
-    deps.out(
-      `error: invalid --session id ${JSON.stringify(parsed.sessionId)} (use [A-Za-z0-9_-])`,
+    log.error(
+      `invalid --session id ${JSON.stringify(parsed.sessionId)} (use [A-Za-z0-9_-])`,
     );
     return RUN_EXIT_USAGE;
   }
@@ -853,10 +853,11 @@ export async function runOrchestrateCommand(
     // happens before `fail()` exists, which is why this is built inline),
     // prose plus the named code otherwise.
     const message = error instanceof Error ? error.message : String(error);
+    log.error(`${message} code=manager_toolset_refused`);
     if (parsed.json) {
       const status = statusForExit(RUN_EXIT_FAILED, 'manager_toolset_refused');
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: RUN_EXIT_FAILED,
           sessionId,
@@ -874,20 +875,19 @@ export async function runOrchestrateCommand(
       );
       return RUN_EXIT_FAILED;
     }
-    deps.out(`error: ${message} code=manager_toolset_refused`);
     return RUN_EXIT_FAILED;
   }
 
   const emit = (envelope: OrchestrateEnvelope, textLines: string[]): number => {
+    // stdout is data (the envelope, or the report lines); the failure
+    // line is a diagnostic on stderr in both modes.
     if (parsed.json) {
-      deps.out(JSON.stringify(envelope));
+      deps.out(formatJson(envelope));
     } else {
       for (const line of textLines) deps.out(line);
-      if (envelope.error !== undefined) {
-        deps.out(
-          `error: ${envelope.error.message} code=${envelope.error.code}`,
-        );
-      }
+    }
+    if (envelope.error !== undefined) {
+      log.error(`${envelope.error.message} code=${envelope.error.code}`);
     }
     return envelope.exitCode;
   };
@@ -919,21 +919,25 @@ export async function runOrchestrateCommand(
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
       },
-      [`session: ${sessionId}`],
+      [`${theme.accent('session:')} ${sessionId}`],
     );
   };
 
   if (parsed.prompt === undefined && !parsed.resume) {
-    return orchestrateUsage(deps.out);
+    log.error(
+      'missing -p, --prompt <text> (the objective), or --resume --session <id>',
+    );
+    return RUN_EXIT_USAGE;
   }
   if (!(await deps.isGitRepo())) {
-    deps.out(
-      'error: orchestrator mode needs a git repository — run solo here (`kubic run -p <prompt>`) or retry inside a git checkout (orchestrator never falls back to solo)',
-    );
+    // --json: the envelope names it (and `fail` logs the one-line code);
+    // text: the full refusal with the way out.
     if (parsed.json) {
       return fail(RUN_EXIT_USAGE, 'not_a_repo', 'not a git repository');
     }
-    deps.out(ORCHESTRATE_USAGE);
+    log.error(
+      'orchestrator mode needs a git repository — run solo here (`kubic run -p <prompt>`) or retry inside a git checkout (orchestrator never falls back to solo)',
+    );
     return RUN_EXIT_USAGE;
   }
 
@@ -1782,18 +1786,18 @@ export async function runOrchestrateCommand(
     .map((record) => `${record.agentId}=${record.hunks.length} hunk(s)`)
     .join(', ');
   const textLines = [
-    `session: ${sessionId}`,
+    `${theme.accent('session:')} ${sessionId}`,
     ...state.records.map(
       (record) =>
         `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,
     ),
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
-    ...state.merged.map((agentId) => `merged: ${agentId}`),
-    ...spawned.map((agentId) => `reaped: ${agentId}`),
+    ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    ...spawned.map((agentId) => `${theme.muted('reaped:')} ${agentId}`),
     // §54: the delegation shape, one line per node/edge of the run's DAG.
     ...delegationGraphLines(sessionId, state.agents).map(
-      (line) => `dag: ${line}`,
+      (line) => `${theme.muted('dag:')} ${line}`,
     ),
     // §49.1/§50 (issue #106): the admission surface, measured. The counters
     // are the high-water the scheduler held; the cap is the one it judged
@@ -1808,7 +1812,7 @@ export async function runOrchestrateCommand(
     // §44.1 retained-worktree status (issue #106) — after the run, one line
     // per retained worktree, dirty ones naming their files.
     ...retainedLines,
-    `result: orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+    `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
   ];
   return emit(
     {

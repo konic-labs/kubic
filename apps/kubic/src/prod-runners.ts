@@ -10,6 +10,12 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { debugEnabled } from '../../../packages/core/src/cli/logger.js';
+import { outputModeFor } from '../../../packages/core/src/cli/output.js';
+import {
+  type CliTheme,
+  themeFor,
+} from '../../../packages/core/src/cli/theme.js';
 import {
   runBenchmarkCommand,
   runEvalCommand,
@@ -103,6 +109,13 @@ const LIVE_SUITE_REFUSAL =
 
 async function refuseLiveSuite(): Promise<never> {
   throw new Error(LIVE_SUITE_REFUSAL);
+}
+
+// The report colours for stdout: NO_COLOR / FORCE_COLOR / TERM=dumb and a
+// non-TTY stdout all turn them off (the handlers also drop them under
+// --json).
+function stdoutTheme(): CliTheme {
+  return themeFor(process.stdout);
 }
 
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
@@ -281,7 +294,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           : { probeSessionOverlap: sessionOverlapProbe }),
       });
     },
-    orchestrate: async (rest, cliConfig) => {
+    orchestrate: async (options, cliConfig) => {
       // Opt-in orchestrator mode (issue #76): the EPIC E stack (manager
       // lane, worker lifecycle, merge queue, approvals, worktrees) executes
       // for real. Solo stays the default — `run` never enters this path.
@@ -290,9 +303,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // the policy the manager holds — the same config load this process
       // already consumed, never a second default.
       return runOrchestrateCommand(
-        [...rest],
+        options,
         await orchestrateDepsWithDefaults({
           out,
+          // Diagnostics (`error: … code=…`) share the stderr channel.
+          err: debug,
+          theme: stdoutTheme(),
           debug,
           ...(cliConfig.runtime === undefined
             ? {}
@@ -306,16 +322,18 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         }),
       );
     },
-    clean: (rest, cliConfig) =>
+    clean: (options, cliConfig) =>
       // Explicit-only disposer for retained orchestrator worktrees/branches
       // (issue #92, §42.4/§44.1/§78): the library path owns planning and
       // git. Issue #133: the spawned set's parent comes from the same
       // config load, so `kubic clean` finds what orchestrate created.
       runCleanCommand(
-        [...rest],
+        options,
         cleanDepsWithDefaults({
           env: new NodeExecutionEnv(process.cwd()),
           out,
+          err: debug,
+          theme: stdoutTheme(),
           ...(cliConfig.runtime?.orchestrator.root === undefined
             ? {}
             : { worktreeRoot: cliConfig.runtime.orchestrator.root }),
@@ -367,19 +385,33 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         loadSecrets: loadProdAuditSecrets,
         out,
       }),
-    workers: async (rest) => {
+    workers: async (options) => {
       // Issue #94: the rows come from the SHARED durable record the
       // orchestration writes (`<repo>/.kubic/orchestrator/workers.json`).
       // The in-process WorkerRegistry is the orchestrator run's own view —
       // a fresh CLI process's registry is always empty, so a registry
       // branch here could only ever be dead (issue #94's finding, finished
-      // in #132): the CLI reads the durable record directly. The §78 usage
-      // remap (1 → 2) lives in the dispatch, after this runner returns.
-      return runWorkersCommand([...rest], {
-        list: () => workersListFromRepo(process.cwd()),
-        out,
-        debug,
+      // in #132): the CLI reads the durable record directly. The table is
+      // box-drawn only on an interactive, coloured stdout; `--debug` (or
+      // KUBIC_DEBUG=1) adds the §50 spawn/exit lines on stderr.
+      const theme = stdoutTheme();
+      const mode = outputModeFor({
+        json: options.json === true,
+        stdinTTY: process.stdin.isTTY === true,
+        stdoutTTY: process.stdout.isTTY === true,
+        colorEnabled: theme.enabled,
       });
+      return runWorkersCommand(
+        { ...options, debug: debugEnabled(options) },
+        {
+          list: () => workersListFromRepo(process.cwd()),
+          out,
+          err: debug,
+          debug,
+          theme,
+          fancy: mode.fancy,
+        },
+      );
     },
     eval: (rest) =>
       // Analysis surfaces (issue #78): the eval/benchmark presentation

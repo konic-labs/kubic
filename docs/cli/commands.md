@@ -169,7 +169,15 @@ per process start, not per session. `kubic tui` shows the same statement
 as its one-line form in the editor footer, and the re-execution tiers of
 `kubic replay` announce it too (they drive this same run path).
 
-## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--full-access] [--json]`
+
+`kubic orchestrate --help` prints the generated help (every flag below plus
+examples) and exits 0. Unknown flags, a missing flag value, a stray operand,
+and a malformed `--agents` / `--session` / `--budget` value are refused
+before anything runs: one `error: …` line on stderr naming the flag, exit 2.
+A run with neither `-p` nor `--resume`, or `--resume` without `--session`,
+exits 2 with `error: missing -p, --prompt <text> …` /
+`error: --resume needs --session <id> …`.
 
 Opt-in orchestrator mode: plans N workers, spawns one worker process per
 subagent in its own git worktree (`kubic/<agent>` at
@@ -329,9 +337,14 @@ omitted when empty); a status that could not be read prints `clean=unknown`
 with the reason, never a false `clean=true`. The block closes with
 `retain: worktree + branch kept as evidence — only \`kubic clean\` disposes`.
 
-Failures print `error: <message> code=<code>` and exit 1 (session creation,
-spawn, worker, merge, reap and manager-toolset failures), 2 (usage, non-git
-refusal), or 4 (approval denied) — see [exit codes](exit-codes.md).
+Failures print `error: <message> code=<code>` **on stderr** and exit 1
+(session creation, spawn, worker, merge, reap and manager-toolset failures),
+2 (usage, non-git refusal), or 4 (approval denied) — see
+[exit codes](exit-codes.md). stdout carries only the report (or, under
+`--json`, exactly one two-space-indented envelope — the `error:` line still
+goes to stderr, so `kubic orchestrate --json … | jq` always parses). On a
+colour terminal the report labels (`session:`, `merged:`, `result:`, …) are
+coloured; `NO_COLOR`, a pipe, and `--json` turn colour off.
 
 **A genuine merge conflict is delegated, never resolved by the manager**
 (issue #106, §45.2). The merge aborts first (never a half-merged tree); the
@@ -348,6 +361,8 @@ the failure line names the resolver outcome so a delegation attempt is never
 indistinguishable from no attempt at all.
 
 ## `kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]`
+
+`kubic clean --help` prints the generated help with examples and exits 0.
 
 The explicit-only disposer for retained orchestrator state. `orchestrate`
 keeps every spawned worktree (`<root>/.kubic/wt/<agent>`) and branch
@@ -376,13 +391,20 @@ never appear in `--dry-run`.
 | `--max-age-ms <n>` / `--max-bytes <n>` | Positive integers; the journal retention bounds. Either one turns the journal prune on without `--journal`. |
 | `--json` | One JSON envelope (`ok`, `exitCode`, `dryRun`, `worktrees`, `branches`, `journal`, optional `failures`) — same exit code as the text view. |
 
+The report (`removed worktree …`, `would delete branch …`, `journal: …`)
+is stdout; every `error:` line — a failed removal, an unknown session, the
+non-repo refusal — is stderr, so `--json` stdout is always exactly one
+two-space-indented document.
+
 Exit codes: 0 success (including a dry run and a second idempotent run),
 1 a hard failure (dirty worktree without `--force`, a failing branch delete,
-an unknown `--session`), 2 usage errors (unknown flag, invalid or missing
-flag value, `--all` with `--session`) **and** the non-repo refusal — outside
-a git repo it prints `error: … needs a git repository … nothing was removed`
-and exits 2 without touching anything (§78). See
-[exit codes](exit-codes.md).
+an unknown `--session`), 2 usage errors (unknown flag, stray operand, a
+missing value, a non-positive `--max-age-ms`/`--max-bytes`, an invalid
+`--session` id, `--all` with `--session` — each refused by the parser before
+anything is planned, one `error: …` line naming the flag) **and** the
+non-repo refusal — outside a git repo it prints `error: … needs a git
+repository … nothing was removed` and exits 2 without touching anything
+(§78). See [exit codes](exit-codes.md).
 
 ## `kubic tui [--session <id>]`
 
@@ -803,16 +825,18 @@ fresh empty registry): one line per worker with
 the §13 status verbatim, age, owner, pid, startup span ms, and
 resources (`skills=… templates=…`, `-` when none). A row that claims a live status
 whose worker and manager processes are both gone is shown as `crashed`. A repo that never ran
-an orchestrator has no record — no text output (`--json` prints `[]`), exit 0.
+an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
+`info: no orchestrator workers recorded in this repo` note on stderr, exit 0.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | `<id>  <status>  gen=<n>  age=<age>  owner=<owner>  pid=<pid>  startup=<ms>  resources=<…>` per worker. |
+| (none) | A table with one row per worker: `WORKER  STATUS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with the status coloured, on an interactive colour terminal. |
 | `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view. |
-| `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr. Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
+| `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
-An unknown flag prints `usage: kubic workers [--json] [--debug]` and
-exits 2 (no stack trace).
+`kubic workers --help` prints the generated help and exits 0. An unknown
+flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
+`error: …` line on stderr and exits 2 (no stack trace).
 
 ## `kubic eval (--task <prompt> | --trajectory <json>) --suite <id> --model <id> --worktree <path> --generation <n> --tier <smoke|standard|extended> [--workspace inline|worktree] [--thinking <level>] [--json]`
 

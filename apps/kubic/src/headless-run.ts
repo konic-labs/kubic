@@ -1097,8 +1097,9 @@ const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };
 // The role layer's `provider/id` pin as a selection (issue #133). The config
 // load refuses a malformed ref by name (checkRoleModelRef) before it can
 // reach here; this stays fail-closed for a programmatic layer, and an absent
-// pin means "no default" — the caller's own selection stands.
-function roleModelSelection(
+// pin means "no default" — the caller's own selection stands. Shared with
+// the TUI boot (issue #295), so both solo entry points apply one rule.
+export function roleModelSelection(
   ref: string | undefined,
 ): ModelSelection | undefined {
   if (ref === undefined) return undefined;

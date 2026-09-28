@@ -447,7 +447,7 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 2 without touching anything
 (§78). See [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]`
+## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills] [--model <provider/id>]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
@@ -482,6 +482,19 @@ same context the headless one does:
 - **Journal retention (§42.4):** the session journal takes the same
   `[journal] retentionDays` projection `run` threads — a TUI session's
   journal age-prunes under config.
+- **Model selection (§38.1):** the same precedence as `run` — an explicit
+  pin (`--model <provider/id>`, else `[model]` in config or
+  `KUBIC_MODEL`), then the `--role` layer's `[roles.<name>].model`, then
+  the first registered model. The header and status bar name the model
+  the lane actually runs on. An unknown or unavailable pinned model exits
+  6 with the named reason before the alt-screen opens. A bare `kubic
+  --model <provider/id>` on a terminal is `kubic tui --model …`.
+- **Agent id and role layers (§12.1, §35):** `[agent].name` names the lane
+  (journal and reconciliation attribution, so `kubic diff --agent <name>`
+  finds TUI changes) and `[roles.<name>].tools` layers under the role
+  document on `--role`, exactly as `run`.
+- **Audit identity (§60):** every approval the TUI resolves writes its
+  ledger record with the session id and the `provider/id` model.
 - **Runtime exclude rules (§35):** `kubic tui` ships the same `.kubic/`
   exclude rules before creating state, so a session whose config ever
   relocates state in-repo leaves `git status` clean.

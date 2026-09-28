@@ -113,10 +113,18 @@ export async function dispatchCommand(
   // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
   // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
   // posture pinned by scripts/binary-contract.mjs.
+  // Issue #295: `kubic --model <provider/id>` on a TTY is
+  // `kubic tui --model …` — the bare form takes the TUI's model pin too.
+  const bareModel =
+    requested !== undefined &&
+    (requested === '--model' || requested.startsWith('--model=')) &&
+    deps.isInteractive?.() === true;
   const command =
-    requested === undefined && deps.isInteractive?.() === true
+    (requested === undefined && deps.isInteractive?.() === true) || bareModel
       ? 'tui'
       : requested;
+  const commandRest =
+    bareModel && requested !== undefined ? [requested, ...rest] : rest;
   // Issue #90 (design §35.1): one config load for the whole process — paths
   // per §35.1, the project layer behind the trust gate, documented env
   // overrides, fail-closed on unknown/unsupported keys, budget keys and
@@ -168,7 +176,7 @@ export async function dispatchCommand(
   const ctx: CommandContext = {
     config: cliConfig,
     runners: deps.runners,
-    rest,
+    rest: commandRest,
     out: io.out,
     err: io.err,
     setExitCode: (code) => {
@@ -190,7 +198,7 @@ export async function dispatchCommand(
         throw new Error('injected probe failure');
       });
   }
-  return runKubicProgram(program, [command, ...rest], io, {
+  return runKubicProgram(program, [command, ...commandRest], io, {
     code: () => exitCode,
   });
 }

@@ -102,6 +102,7 @@ import {
 } from '../../../packages/worker/src/lane/solo.js';
 import {
   ModelSelectError,
+  type ModelSelection,
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
@@ -111,6 +112,7 @@ import {
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
 import type { runtimeLaneDeps } from './config-runtime.js';
+import { roleModelSelection } from './headless-run.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -177,6 +179,8 @@ export interface TuiBootFlags {
   role?: string;
   noSkills?: boolean;
   skillsList?: string[];
+  // Issue #295: `--model <provider/id>` — the explicit pin, above config.
+  model?: ModelSelection;
 }
 
 export interface TuiRunOptions {
@@ -219,6 +223,10 @@ export interface TuiRunOptions {
   // the SAME runtimeLaneDeps projection `kubic run` consumes. Absent means
   // 'root' — the shipped attribution, unchanged.
   agentId?: string;
+  // Issue #295 (§38.1): the explicit model pin — `--model`, else the
+  // `[model]`/KUBIC_MODEL projection runtimeModelPin makes for `kubic run`.
+  // It beats the role layer's model, which beats first-available.
+  model?: ModelSelection;
 }
 
 // Prod solo boot: same session/model setup as the headless runner
@@ -292,14 +300,54 @@ export async function bootTuiLane(
     }
     const assembled = assembleModels(process.cwd());
     const models = options.models ?? assembled.models;
-    // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
-    // picked implicitly; the footer names it (runTuiCommand).
+    // Issue #113 (§12.1): `--role` derives both halves of the boot from
+    // the role document — prompt text and tool allowlist — with the same
+    // fail-closed refusals as `kubic run`. An unknown role refuses the
+    // boot (the catch below closes the session and rethrows for the
+    // command shell to print) rather than silently booting a roleless
+    // lane. Resolved BEFORE model selection: the role layer's model pin is
+    // a selection input (issue #295).
+    const selectedRole = (() => {
+      if (options.role === undefined) return undefined;
+      const rolesCwd = options.roles?.cwd ?? process.cwd();
+      const rolesBridge = createNodeFileBridge(rolesCwd);
+      const selected = selectRole({
+        bridge: rolesBridge,
+        cwd: rolesCwd,
+        role: options.role,
+        ...(options.roles?.layers === undefined
+          ? {}
+          : { layers: options.roles.layers }),
+      });
+      const promptText = rolePromptFor(
+        selected.doc,
+        rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
+      );
+      return { resolved: selected.resolved, prompt: promptText };
+    })();
+    const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =
+      selectedRole === undefined
+        ? {}
+        : {
+            rolePrompt: selectedRole.prompt,
+            ...(selectedRole.resolved.tools.length === 0
+              ? {}
+              : { toolAllowlist: selectedRole.resolved.tools }),
+          };
+    // Issue #295 (§38.1): the same precedence as `kubic run` — the explicit
+    // pin (`--model`, `[model]`, KUBIC_MODEL), then the role layer's model,
+    // then first-available. The faux testing provider (`KUBIC_PROVIDER=faux`)
+    // is pinned, never picked implicitly; the footer names it
+    // (runTuiCommand). A ModelSelectError propagates to runTuiCommand, which
+    // reports it as exit 6 before the alt-screen opens.
     const model = selectModel(
       models,
       options.models === undefined && fauxProviderActive(process.env)
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : undefined,
+        : options.model,
+      roleModelSelection(selectedRole?.resolved.model),
     );
+    const modelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -313,6 +361,10 @@ export async function bootTuiLane(
         ...(options.classes === undefined ? {} : { classes: options.classes }),
         source: options.policySource ?? 'default',
         sessionDir: join(root, id),
+        // §60 audit identity (issue #295): every resolved ask names the
+        // session and the model the lane runs on, like `kubic run`'s.
+        sessionId: id,
+        model: modelRef,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
@@ -355,35 +407,7 @@ export async function bootTuiLane(
           ? {}
           : { promptSections: [skills.block] };
       })(),
-      // Issue #113 (§12.1): `--role` derives both halves of the boot from
-      // the role document — prompt text and tool allowlist — with the same
-      // fail-closed refusals as `kubic run`. An unknown role refuses the
-      // boot (the catch below closes the session and rethrows for the
-      // command shell to print) rather than silently booting a roleless
-      // lane.
-      ...(() => {
-        if (options.role === undefined) return {};
-        const rolesCwd = options.roles?.cwd ?? process.cwd();
-        const rolesBridge = createNodeFileBridge(rolesCwd);
-        const selected = selectRole({
-          bridge: rolesBridge,
-          cwd: rolesCwd,
-          role: options.role,
-          ...(options.roles?.layers === undefined
-            ? {}
-            : { layers: options.roles.layers }),
-        });
-        const promptText = rolePromptFor(
-          selected.doc,
-          rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
-        );
-        return {
-          rolePrompt: promptText,
-          ...(selected.resolved.tools.length === 0
-            ? {}
-            : { toolAllowlist: selected.resolved.tools }),
-        };
-      })(),
+      ...roleBoot,
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
       policy: {
@@ -396,7 +420,7 @@ export async function bootTuiLane(
     });
     return {
       sessionId: id,
-      model: `${model.provider}/${model.id}`,
+      model: modelRef,
       journal,
       loop: {
         accept: (prompt, loopContext) =>
@@ -435,6 +459,8 @@ export type TuiConfigProjection = {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
+  // Issue #295: the `[model]`/KUBIC_MODEL pin (runtimeModelPin).
+  model?: ModelSelection;
 } & ReturnType<typeof runtimeLaneDeps>;
 
 function definedOnly<T extends object>(
@@ -469,6 +495,7 @@ export function tuiDepsWithDefaults(
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,
     roles: provided.roles,
+    model: provided.model,
   } satisfies Record<keyof TuiConfigProjection, unknown>;
   const projection = definedOnly(forwarded);
   return {
@@ -489,6 +516,8 @@ export function tuiDepsWithDefaults(
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0
           ? {}
           : { skillsList: flags.skillsList }),
+        // `--model` beats the config pin (§38.1: CLI over config).
+        ...(flags?.model === undefined ? {} : { model: flags.model }),
       }),
   };
 }
@@ -716,6 +745,8 @@ export interface TuiCommandOptions {
   readonly role?: string;
   readonly skills?: readonly string[];
   readonly noSkills?: boolean;
+  // Issue #295: `--model <provider/id>`, parsed by the registrar.
+  readonly model?: ModelSelection;
 }
 
 export async function runTuiCommand(
@@ -726,6 +757,7 @@ export async function runTuiCommand(
   const flags: TuiBootFlags = {};
   if (options.role !== undefined) flags.role = options.role;
   if (options.noSkills === true) flags.noSkills = true;
+  if (options.model !== undefined) flags.model = options.model;
   const skillsList = options.skills ?? [];
   if (skillsList.length > 0) flags.skillsList = [...skillsList];
   // commander validated the id already; re-checked because it becomes a

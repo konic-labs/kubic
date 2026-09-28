@@ -20,6 +20,7 @@ import {
   parseSessionIdArg,
   shellQuote,
 } from '../../../../packages/host/src/run-cli.js';
+import { parseModelFlag } from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // A host value rule as a commander argument parser: its refusal becomes
@@ -172,9 +173,18 @@ function registerTui(program: Command, ctx: CommandContext): void {
       [] as string[],
     )
     .option('--no-skills', 'disable layered skill discovery')
+    .option(
+      '--model <provider/id>',
+      'pin the model (beats [model]/KUBIC_MODEL and the role model)',
+      rule(parseModelFlag),
+    )
     .addHelpText(
       'after',
-      examples(['kubic tui', 'kubic tui --session my-session --role reviewer']),
+      examples([
+        'kubic tui',
+        'kubic tui --session my-session --role reviewer',
+        'kubic tui --model anthropic/claude-sonnet-4-5',
+      ]),
     )
     .action(async (opts) => {
       ctx.setExitCode(
@@ -184,6 +194,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.role === undefined ? {} : { role: opts.role }),
             ...(opts.skill.length === 0 ? {} : { skills: opts.skill }),
             ...(opts.skills === false ? { noSkills: true } : {}),
+            ...(opts.model === undefined ? {} : { model: opts.model }),
           },
           ctx.config,
         ),

@@ -8,9 +8,14 @@ import {
   relative,
   resolve,
 } from 'node:path';
-import type { PermissionClasses } from '../../agents/src/policy.js';
+import type {
+  PermissionClasses,
+  UnsupportedLevel,
+} from '../../agents/src/policy.js';
 import {
   checkAgreement,
+  checkExpressible,
+  effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
 } from '../../agents/src/policy.js';
@@ -190,10 +195,16 @@ export class MemoryApprovalStore implements ApprovalStore {
 //     producer yet (orchestrator opt-in budgets #48, worker perf budgets
 //     #55). Until one wires up, the flag is test-only: documented, silent
 //     nowhere.
-//   network under allowlist/full — fires nothing by design (issue #15:
-//     no network tool exists to remove; the flag is advisory for #16).
+//   network under full — fires nothing by design (issue #15: no network
+//     tool exists to remove). A domain-less `allowlist` is enforced as
+//     `none` (issue #166, §40.2): it fires like `none`, never silently
+//     unrestricted.
 //   sensitive reads — deliberately not a trigger: §41.1 governs writes,
 //     the filesystem read class governs reads.
+function networkGated(level: TriggerContext['network']): boolean {
+  return effectiveNetworkLevel(level) === 'none';
+}
+
 export interface TriggerContext {
   workspace: string;
   network: 'none' | 'allowlist' | 'full';
@@ -510,7 +521,7 @@ export function detectTriggers(
     const spanClosers = new Set(spans.map((span) => span.closer));
     if (ctx.isDestructive(command, ctx.workspace))
       found.push('destructive-shell');
-    if (ctx.network === 'none' && ctx.isNetworkCommand(command))
+    if (networkGated(ctx.network) && ctx.isNetworkCommand(command))
       found.push('network');
     if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command))
       found.push('git-push');
@@ -571,7 +582,7 @@ export function detectTriggers(
       if (ctx.isDestructive(payload, ctx.workspace)) {
         found.push('destructive-shell');
       }
-      if (ctx.network === 'none' && ctx.isNetworkCommand(payload)) {
+      if (networkGated(ctx.network) && ctx.isNetworkCommand(payload)) {
         found.push('network');
       }
     }
@@ -858,6 +869,9 @@ export interface InstalledPolicyPosture {
   sessionScoped: boolean;
   maxPendingMs: number;
   fullAccess: boolean;
+  // §40.2 (issue #166): every declared level the tool set cannot express,
+  // with the level the lane enforces instead — reported, never silent.
+  unsupported: UnsupportedLevel[];
 }
 
 export interface RecordedApprovalDeny {
@@ -928,6 +942,7 @@ export function installedPolicyPosture(
     sessionScoped,
     maxPendingMs: input.maxPendingMs ?? 60_000,
     fullAccess,
+    unsupported: checkExpressible(classes),
   };
 }
 

@@ -58,7 +58,21 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, the answering `model` as `provider/id`, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+
+**Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
+advertised in the `<skills>` block names its absolute `<filePath>`. Paths
+outside the workspace are normally re-rooted under it, so one narrow,
+read-only exception applies to exactly the advertised skills that live
+outside the cwd: user skills (`~/.pi/agent/skills`, `~/.agents/skills`),
+trusted ancestor project skills, and explicit `--skill` paths. For a
+`SKILL.md`, `read` may open anything inside that skill's own directory
+(so the skill's relative references resolve); a flat skill file opens
+only itself. Nothing else changes: `write`, `edit`, `ls`, `find` and
+`grep` still re-root every outside path, any other outside `read` is
+still re-rooted, and skills hidden from the model
+(`disable-model-invocation`) open nothing. `kubic tui` and orchestrator
+workers (child `kubic run` processes) apply the same rule.
 
 **Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` (e.g. an orchestrator
 stopping a worker) and `SIGHUP` during a run are handled like the
@@ -111,7 +125,11 @@ otherwise — `filesystem = workspace-write`, `shell = true`,
 tool allowlist (a tool outside it is refused at execute time, not merely
 omitted), and the `destructive-guard` / `network-guard` / `confine-guard`
 interceptors wired to an approval ask. `kubic doctor` prints this same
-installed object as `policy:installed`.
+installed object as `policy:installed` — as a `WARN (unsupported-level)`
+naming each level the tool set cannot express (issue #166): network
+`allowlist` is enforced as `none` (the network guard blocks and the
+network trigger fires), credentials `allowlist` as `none`, filesystem
+`full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
 no TTY, and the TUI approval overlay has not landed, so a challenged call
@@ -221,8 +239,9 @@ exits 2 with `error: missing -p, --prompt <text> …` /
 `error: --resume needs --session <id> …`.
 
 Opt-in orchestrator mode: plans N workers, spawns one worker process per
-subagent in its own git worktree (`kubic/<agent>` at
-`<root>/.kubic/wt/<agent>`), settles/merges FIFO through the merge queue
+subagent in its own git worktree (`kubic/<session>/<agent>` at
+`<root>/.kubic/wt/<session>/<agent>`, where `<session>` is the run's
+`--session` id or the generated `orch-<ms>`), settles/merges FIFO through the merge queue
 with per-agent attribution, routes merge approvals to the user, and reaps.
 The manager authors nothing — workers commit on their own branches, the
 manager only merges. Worktrees and branches stay retained after the merge
@@ -231,6 +250,14 @@ as evidence (only `kubic clean` disposes) — that claim is asserted by
 if this sentence or the `clean` command goes missing. Requires a git repo:
 outside one the command refuses with exit 2 and never silently runs solo.
 Worker runs need a configured provider (each worker is a child `kubic run -p`).
+Worktree names carry the session, so a later run with the same agents
+(e.g. the default `worker-1`/`worker-2`) always starts on fresh worktrees at
+the current HEAD — never on an earlier run's retained, possibly dirty or
+unmerged tree — and two runs in one repo never share a worktree. Only
+`--resume --session <id>` reuses that session's own worktrees; a fresh run
+whose session-scoped worktree or branch already exists (a reused
+`--session <id>`) fails closed with `code=worktree_exists`, exit 1, naming
+the `--resume` and `kubic clean --session <id>` ways out.
 Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
@@ -383,6 +410,28 @@ omitted when empty); a status that could not be read prints `clean=unknown`
 with the reason, never a false `clean=true`. The block closes with
 `retain: worktree + branch kept as evidence — only \`kubic clean\` disposes`.
 
+**Per-worker results (§68, issue #185).** Every worker — including one that
+failed, timed out, was cancelled, ran out of budget or never spawned —
+yields one validated §68 result, built from the child's own `--json` report.
+Text mode prints one line per settled worker, `<agent> (<role>): <summary>`.
+Under `--json` each `workers[]` entry carries, next to `agentId`/`branch`/
+`hunks`: `role`, `status` (`completed`, `failed`, `timeout`, `cancelled`,
+`budget_exhausted`, `spawn_failed`), `summary`, `usage` (`inputTokens`,
+`outputTokens`, `cachedTokens`, `toolCalls`, `wallMs`, `costUsd` — the
+worker session's own usage rollup, the numbers `kubic cost` reads),
+`provenance` (`workerId`, `sessionId`, `pid` — `null` only when no process
+ever existed —, `generation`, `worktree`, `model` as `provider/id` or
+`unresolved`, `role`, optional `thinking`) and, for a failure, `error`
+(`kind` from the §68 vocabulary, `message`, `details.code`). A completed
+worker's result also names its change set as a reference
+(`diff.diffId` = `<base>...<branch>`), never the diff text; no result ever
+carries a transcript or messages (§69). The result is persisted with the run
+in `<repo>/.kubic/orchestrator/<session>.json` (`records[].result`). The
+`kubic run --json` report that feeds it carries `usage.{input, output,
+cacheRead, cacheWrite, costUsd, toolCalls}` beside `usage.ref`, and the
+`model` that answered. Not yet populated: `approvals` (routed asks) and
+parsed `tests` counts.
+
 Failures print `error: <message> code=<code>` **on stderr** and exit 1
 (session creation, spawn, worker, merge, reap and manager-toolset failures),
 2 (usage, non-git refusal), or 4 (approval denied) — see
@@ -411,8 +460,8 @@ indistinguishable from no attempt at all.
 `kubic clean --help` prints the generated help with examples and exits 0.
 
 The explicit-only disposer for retained orchestrator state. `orchestrate`
-keeps every spawned worktree (`<root>/.kubic/wt/<agent>`) and branch
-(`kubic/<agent>`) as evidence (§44.1); `clean` is the only command that
+keeps every spawned worktree (`<root>/.kubic/wt/<session>/<agent>`) and branch
+(`kubic/<session>/<agent>`) as evidence (§44.1); `clean` is the only command that
 removes them. It also carries the §42.4 journal retention prune.
 A worktree whose worker process is still live (per `workers.json`) is never
 removed: it is reported (`worker '<agent>' is still live (pid N)`), its branch
@@ -420,8 +469,9 @@ is kept, and the command exits 1 — `--force` stops the worker's process group,
 then disposes it.
 
 Refusal posture: the planned set is exactly Kubic's own spawned set — a
-worktree under `<root>/.kubic/wt/` **on a `kubic/<agent>` branch**, plus
-any other `kubic/<agent>` branch left behind. The main checkout, hand-made
+worktree under `<root>/.kubic/wt/` **on a `kubic/<session>/<agent>` branch**
+(or the unscoped `kubic/<agent>` shape runs before session scoping created),
+plus any other such branch left behind. The main checkout, hand-made
 worktrees (`git worktree add handmade-wt -b handmade`), and namespace-shaped
 checkouts sitting on a foreign branch are never planned or touched, and
 never appear in `--dry-run`.
@@ -430,7 +480,7 @@ never appear in `--dry-run`.
 | --- | --- |
 | (none) | Remove every retained worktree+branch for this repo. One `removed worktree <path>` line per worktree, one `deleted branch <branch>` line per branch; `clean: nothing to prune` (exit 0) when there is nothing left. |
 | `--all` | Explicit scope-all (the default scope). Mutually exclusive with `--session` — both exit 2. |
-| `--session <id>` | Scope to one `orchestrate` run: the agents named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. |
+| `--session <id>` | Scope to one `orchestrate` run: `kubic/<id>/<agent>` at `<root>/.kubic/wt/<id>/<agent>` for each agent named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too, and another session's same-named agent (its worktree, branch and live worker) is never planned or touched. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. |
 | `--dry-run` | Print `would remove worktree <path>` / `would delete branch <branch>` and exit 0 — mutates nothing (`git worktree list` is byte-identical before and after). |
 | `--force` | Pass `git worktree remove --force`, disposing a worktree with uncommitted worker changes. Without it a dirty worktree fails loudly: exit 1, an `error:` line per failure, and the branch is kept (never half-disposed). |
 | `--journal` | Also enforce the journal retention policy at `<root>/.kubic/journal`. Alone it prunes to the store's default byte bound; with `--max-age-ms`/`--max-bytes` it prunes to those bounds. Prints `journal: pruned <n> entr(ies), freed <b> byte(s)`. |
@@ -1203,10 +1253,17 @@ reports on its `policy:installed` line.
 Policy is deny-by-default: a tool outside the installed allowlist is
 denied. Tool names match regardless of case and surrounding whitespace.
 
+Unsupported levels are named, never silent (§40.2, issue #166): for each
+installed permission level the tool set cannot express (network or
+credentials `allowlist`, filesystem or git `full`) the command writes one
+`warn: <class> '<level>' is unsupported — enforced as '<level>': <reason>`
+line to stderr. `kubic doctor` names the same set on its
+`policy:installed` line, which is then `WARN (unsupported-level)`.
+
 | Flag | Meaning |
 | --- | --- |
 | `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
-| `--json` | Prints `{"tool", "decision"}` instead of the text line. Exits 0. |
+| `--json` | Prints `{"tool", "decision"}` instead of the text line, plus `unsupported` (`[{class, level, enforcedAs, reason}]`) when any installed level is unsupported. Exits 0. |
 
 ## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--json]`
 

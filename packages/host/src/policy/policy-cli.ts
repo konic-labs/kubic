@@ -4,6 +4,7 @@
 // arrives injected (faux in tests); deny-by-default holds — a tool with no
 // enterprise allow is denied.
 
+import { describeUnsupported } from '../../../agents/src/policy.js';
 import { EXIT_OK, EXIT_USAGE } from '../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
@@ -33,6 +34,18 @@ export interface PolicyCommandDeps {
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.
   errTheme?: CliTheme;
+  // §40.2 (issue #166): the installed classes' levels the tool set cannot
+  // express. Each is named — a `warn:` line on stderr, or the `unsupported`
+  // array in `--json` — so the decision never reads as a restriction the
+  // lane does not enforce. Absent means none.
+  unsupported?: () => readonly UnsupportedLevelView[];
+}
+
+export interface UnsupportedLevelView {
+  readonly class: string;
+  readonly level: string;
+  readonly enforcedAs: string;
+  readonly reason: string;
 }
 
 const PLAIN = createCliTheme('none');
@@ -74,10 +87,18 @@ export async function runPolicyCommand(
   // Fail-closed echo: the tool name is free-form argv and may carry
   // secret-shaped material — the offer names the decision, never the secret.
   const safeTool = redactSecretShapes(tool);
+  const unsupported = [...(deps.unsupported?.() ?? [])];
   if (json) {
-    deps.out(formatJson({ tool: safeTool, decision }));
+    deps.out(
+      formatJson({
+        tool: safeTool,
+        decision,
+        ...(unsupported.length === 0 ? {} : { unsupported }),
+      }),
+    );
     return EXIT_OK;
   }
+  for (const entry of unsupported) log.warn(describeUnsupported(entry));
   const word =
     decision === 'allow' ? theme.success(decision) : theme.error(decision);
   deps.out(`${word} ${safeTool}`);

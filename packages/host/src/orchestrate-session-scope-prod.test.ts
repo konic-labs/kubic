@@ -1,0 +1,194 @@
+// Session-scoped worktrees (issue #144; §44, §44.1, §11.1) — real git, real
+// child processes, no provider. Worktrees are retained until `kubic clean`,
+// so the names MUST be scoped by the orchestrator session: a later fresh run
+// with the same agents gets its own tree on the current HEAD, never the
+// previous run's stale (possibly dirty, possibly unmerged) one.
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { runOrchestrateCommand } from './orchestrate-cli.js';
+import { addWorktree } from './orchestrator/worktree/add.js';
+import { runCleanCommand } from './orchestrator/worktree/clean.js';
+import type { WorktreeError } from './orchestrator/worktree/errors.js';
+
+// The worker child: writes `<KUBIC_WORKER_ID>.txt` (the run commits it), then
+// reports a completed envelope.
+const WORKER_FIXTURE = `
+import { writeFileSync } from 'node:fs';
+writeFileSync((process.env.KUBIC_WORKER_ID ?? 'worker') + '.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10));
+process.exit(0);
+`;
+
+const scratchDirs: string[] = [];
+
+function scratch(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of scratchDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+function initRepo(): string {
+  const root = realpathSync(scratch('kubic-orch-144-'));
+  git(root, ['init', '-b', 'main']);
+  git(root, ['config', 'user.email', 'issue144@kubic.dev']);
+  git(root, ['config', 'user.name', 'kubic issue144']);
+  git(root, ['config', 'commit.gpgsign', 'false']);
+  writeFileSync(join(root, 'base.txt'), 'base\n');
+  git(root, ['add', 'base.txt']);
+  git(root, ['commit', '-m', 'base']);
+  return root;
+}
+
+async function depsFor(root: string, lines: string[]) {
+  const dir = scratch('kubic-orch-144-child-');
+  const fixture = join(dir, 'worker-child.mjs');
+  writeFileSync(fixture, WORKER_FIXTURE);
+  return orchestrateDepsWithDefaults({
+    out: (line) => lines.push(line),
+    err: (line) => lines.push(line),
+    cwd: root,
+    sessionsRoot: scratch('kubic-orch-144-sessions-'),
+    workerEntry: { cmd: process.execPath, args: [fixture] },
+  });
+}
+
+describe('session-scoped worktrees (issue #144)', () => {
+  it('a second fresh run gets its own worktree on the current HEAD; run 1 leftovers never reach run 2', async () => {
+    const root = initRepo();
+    const first: string[] = [];
+    const code1 = await runOrchestrateCommand(
+      { prompt: 'work', agents: ['worker-1'], session: 'runa', yes: true },
+      await depsFor(root, first),
+    );
+    expect(code1, first.join('\n')).toBe(0);
+    const runA = join(root, '.kubic', 'wt', 'runa', 'worker-1');
+    expect(existsSync(runA)).toBe(true);
+    expect(git(root, ['branch', '--list', 'kubic/runa/worker-1'])).toMatch(
+      /kubic\/runa\/worker-1/,
+    );
+    // Run 1's retained tree turns dirty after the run (§44.1 keeps it).
+    writeFileSync(join(runA, 'leftover.txt'), 'stale\n');
+    const headAfterRun1 = git(root, ['rev-parse', 'HEAD']).trim();
+
+    const second: string[] = [];
+    const code2 = await runOrchestrateCommand(
+      { prompt: 'work', agents: ['worker-1'], session: 'runb', yes: true },
+      await depsFor(root, second),
+    );
+    expect(code2, second.join('\n')).toBe(0);
+    const runB = join(root, '.kubic', 'wt', 'runb', 'worker-1');
+    expect(existsSync(runB)).toBe(true);
+    // Fresh on the current HEAD: run 2's branch forks from run 1's merge.
+    const forkPoint = git(root, [
+      'merge-base',
+      'kubic/runb/worker-1',
+      headAfterRun1,
+    ]).trim();
+    expect(forkPoint).toBe(headAfterRun1);
+    // Run 1's dirty leftover never became run 2's work.
+    const files = git(root, ['ls-tree', '-r', '--name-only', 'HEAD']);
+    expect(files).not.toMatch(/leftover\.txt/);
+    expect(existsSync(join(runB, 'leftover.txt'))).toBe(false);
+  });
+
+  it('a fresh run that finds its own session name already on disk fails closed with worktree_exists', async () => {
+    const root = initRepo();
+    await addWorktree(new NodeExecutionEnv(root), root, 'worker-1', {
+      sessionId: 'dup',
+      ownerSession: 'dup',
+    });
+    const lines: string[] = [];
+    const code = await runOrchestrateCommand(
+      { prompt: 'work', agents: ['worker-1'], session: 'dup', yes: true },
+      await depsFor(root, lines),
+    );
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toMatch(/code=worktree_exists/);
+    expect(lines.join('\n')).toMatch(/--resume/);
+  });
+
+  it('--resume of a killed run reuses that session’s own worktree', async () => {
+    const root = initRepo();
+    const added = await addWorktree(
+      new NodeExecutionEnv(root),
+      root,
+      'worker-1',
+      { sessionId: 'killed', ownerSession: 'killed' },
+    );
+    const deps = await depsFor(root, []);
+    const reused = await deps.ensureWorktree('worker-1', {
+      sessionId: 'killed',
+      resume: true,
+    });
+    expect(realpathSync(reused.path)).toBe(realpathSync(added.path));
+    expect(reused.branch).toBe('kubic/killed/worker-1');
+    // The same tree without --resume is refused, never silently reused.
+    const error = (await Promise.resolve(
+      deps.ensureWorktree('worker-1', { sessionId: 'killed', resume: false }),
+    ).catch((e: unknown) => e)) as WorktreeError;
+    expect(error.code).toBe('worktree_exists');
+  });
+
+  it('`kubic clean --session A` leaves session B’s worktree and branch untouched', async () => {
+    const root = initRepo();
+    const env = new NodeExecutionEnv(root);
+    const a = await addWorktree(env, root, 'worker-1', {
+      sessionId: 'sa',
+      ownerSession: 'sa',
+    });
+    const b = await addWorktree(env, root, 'worker-1', {
+      sessionId: 'sb',
+      ownerSession: 'sb',
+    });
+    const stateDir = join(root, '.kubic', 'orchestrator');
+    mkdirSync(stateDir, { recursive: true });
+    for (const session of ['sa', 'sb']) {
+      writeFileSync(
+        join(stateDir, `${session}.json`),
+        JSON.stringify({
+          version: 1,
+          sessionId: session,
+          agents: ['worker-1'],
+        }),
+      );
+    }
+    const out: string[] = [];
+    const code = await runCleanCommand(
+      { sessionId: 'sa', force: true },
+      { env, out: (line) => out.push(line), err: (line) => out.push(line) },
+    );
+    expect(code, out.join('\n')).toBe(0);
+    expect(existsSync(a.path)).toBe(false);
+    expect(git(root, ['branch', '--list', 'kubic/sa/worker-1']).trim()).toBe(
+      '',
+    );
+    expect(existsSync(b.path)).toBe(true);
+    expect(git(root, ['branch', '--list', 'kubic/sb/worker-1'])).toMatch(
+      /kubic\/sb\/worker-1/,
+    );
+  });
+});

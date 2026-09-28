@@ -89,6 +89,20 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // Issue #185 (§39, §68): the run's own usage rollup and the model that
+  // answered, read back from its session after the run. Absent when no
+  // session was ever created (a usage refusal before attach).
+  usage?: RunUsage;
+  model?: string;
+}
+
+export interface RunUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+  toolCalls: number;
 }
 
 export interface RunEnvelope {
@@ -98,8 +112,9 @@ export interface RunEnvelope {
   status: RunTerminusKind;
   result: { summary: string };
   journal: { ref: string };
-  usage: { ref: string };
+  usage: { ref: string } & Partial<RunUsage>;
   trajectory: { ref: string };
+  model?: string;
   error?: { kind: string; message: string };
 }
 
@@ -114,8 +129,9 @@ export function buildRunEnvelope(
     status: result.terminus,
     result: { summary: result.summary },
     journal: { ref: result.journalRef },
-    usage: { ref: result.usageRef },
+    usage: { ref: result.usageRef, ...(result.usage ?? {}) },
     trajectory: { ref: result.trajectoryRef },
+    ...(result.model === undefined ? {} : { model: result.model }),
     ...(result.error === undefined ? {} : { error: result.error }),
   };
 }

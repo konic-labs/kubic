@@ -3,7 +3,11 @@
 // validateAgentResult. A missing, unparseable, not-ok, or foreign-session
 // report is a typed `result_invalid` failure — never a silent success.
 import { describe, expect, it } from 'vitest';
-import { workerResultFromRun } from '../../../apps/kubic/src/orchestrate-run.js';
+import {
+  WorkerRunFailure,
+  workerFailureResult,
+  workerResultFromRun,
+} from '../../../apps/kubic/src/orchestrate-run.js';
 
 const envelope = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({
@@ -17,17 +21,27 @@ const envelope = (over: Record<string, unknown> = {}): string =>
 
 const run = (stdout: string) => ({ exitCode: 0, stdout, stderr: '' });
 
+// What the orchestrator itself observed about the launch (issue #185).
+const OBSERVED = {
+  filesChanged: [] as string[],
+  wallMs: 1,
+  latencyMs: 0,
+  provenance: {
+    sessionId: 's-w1',
+    pid: 4242,
+    generation: 1,
+    worktree: '/repo/.kubic/wt/orch-1/w1',
+    role: 'implementer',
+  },
+};
+
 describe('workerResultFromRun (§68)', () => {
   it('builds a validated AgentResult from the child report', () => {
     const out = workerResultFromRun(
       'w1',
       's-w1',
       run(`noise\n${envelope()}\n`),
-      {
-        filesChanged: ['a.txt'],
-        wallMs: 12,
-        latencyMs: 3,
-      },
+      { ...OBSERVED, filesChanged: ['a.txt'], wallMs: 12, latencyMs: 3 },
     );
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -45,14 +59,132 @@ describe('workerResultFromRun (§68)', () => {
     ['a report for another session', envelope({ sessionId: 'other' })],
     ['a report with an empty summary', envelope({ result: { summary: '' } })],
   ])('refuses %s as result_invalid', (_label, stdout) => {
-    const out = workerResultFromRun('w1', 's-w1', run(stdout), {
-      filesChanged: [],
-      wallMs: 1,
-      latencyMs: 0,
-    });
+    const out = workerResultFromRun('w1', 's-w1', run(stdout), OBSERVED);
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error.code).toBe('result_invalid');
     expect(out.error.message).toMatch(/§68/);
+  });
+});
+
+describe('the §68 result is complete (issue #185)', () => {
+  it('fills metrics from the child report usage, never zeros', () => {
+    const out = workerResultFromRun(
+      'w1',
+      's-w1',
+      run(
+        envelope({
+          model: 'faux/faux-1',
+          usage: {
+            ref: 'usage:s-w1',
+            input: 120,
+            output: 30,
+            cacheRead: 7,
+            cacheWrite: 0,
+            costUsd: 0.25,
+            toolCalls: 3,
+          },
+        }),
+      ),
+      OBSERVED,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.metrics).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 30,
+      cachedTokens: 7,
+      toolCalls: 3,
+      costUsd: 0.25,
+    });
+    expect(out.result.provenance).toEqual({
+      workerId: 'w1',
+      sessionId: 's-w1',
+      pid: 4242,
+      generation: 1,
+      worktree: '/repo/.kubic/wt/orch-1/w1',
+      role: 'implementer',
+      model: 'faux/faux-1',
+    });
+    expect(Object.keys(out.result)).not.toContain('transcript');
+    expect(Object.keys(out.result)).not.toContain('messages');
+  });
+
+  it('a non-zero-exit worker still yields a result with full provenance and error.kind', () => {
+    const failure = new WorkerRunFailure(
+      'worker_failed',
+      'worker run exited 6: no models available',
+    );
+    const result = workerFailureResult(
+      'w1',
+      failure,
+      {
+        exitCode: 6,
+        stdout: JSON.stringify({
+          ok: false,
+          exitCode: 6,
+          sessionId: 's-w1',
+          status: 'provider_probe_failed',
+          result: { summary: 'no models' },
+          model: 'faux/faux-1',
+        }),
+        stderr: '',
+      },
+      OBSERVED,
+      { code: 'provider_auth', kind: 'provider', message: 'x' },
+    );
+    expect(result.status).toBe('failed');
+    expect(result.error?.kind).toBe('provider');
+    expect(result.provenance).toMatchObject({
+      workerId: 'w1',
+      pid: 4242,
+      generation: 1,
+      worktree: '/repo/.kubic/wt/orch-1/w1',
+      model: 'faux/faux-1',
+    });
+  });
+
+  it.each([
+    ['spawn_failed', 'spawn_failed', 'process'],
+    ['cancelled', 'cancelled', 'process'],
+    ['result_invalid', 'failed', 'process'],
+  ] as const)(
+    'maps a %s terminus to status %s / kind %s',
+    (code, status, kind) => {
+      const result = workerFailureResult(
+        'w1',
+        new WorkerRunFailure(code, `${code} happened`),
+        undefined,
+        OBSERVED,
+      );
+      expect(result.status).toBe(status);
+      expect(result.error?.kind).toBe(kind);
+      expect(result.provenance.model).toBe('unresolved');
+    },
+  );
+
+  it('maps a child budget terminus to budget_exhausted and an approval one to failed/approval', () => {
+    const budget = workerFailureResult(
+      'w1',
+      new WorkerRunFailure('worker_failed', 'budget', {
+        code: 'BUDGET_EXHAUSTED',
+        exitCode: 3,
+      }),
+      undefined,
+      OBSERVED,
+    );
+    expect(budget.status).toBe('budget_exhausted');
+    expect(budget.error?.kind).toBe('budget');
+    const denied = workerFailureResult(
+      'w1',
+      new WorkerRunFailure('worker_failed', 'denied', {
+        code: 'approval_denied',
+        exitCode: 4,
+      }),
+      undefined,
+      OBSERVED,
+    );
+    expect(denied.status).toBe('failed');
+    expect(denied.error?.kind).toBe('approval');
   });
 });

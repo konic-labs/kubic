@@ -70,9 +70,11 @@ function plainDir(): string {
 }
 
 // Exactly how `kubic orchestrate` retains a worker (§44.1).
-function retainWorktree(root: string, agent: string): string {
-  const path = join(root, '.kubic', 'wt', agent);
-  git(root, ['worktree', 'add', path, '-b', `kubic/${agent}`]);
+// Issue #144: an orchestrate run names its trees `<session>/<agent>`.
+function retainWorktree(root: string, agent: string, session?: string): string {
+  const scoped = session === undefined ? agent : `${session}/${agent}`;
+  const path = join(root, '.kubic', 'wt', scoped);
+  git(root, ['worktree', 'add', path, '-b', `kubic/${scoped}`]);
   return path;
 }
 
@@ -222,9 +224,10 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
 
   it('--session scopes disposal to a failed orchestrate run', async () => {
     const root = scratchRepo();
-    const one = retainWorktree(root, 'worker-1');
-    const two = retainWorktree(root, 'worker-2');
-    const three = retainWorktree(root, 'worker-3');
+    const one = retainWorktree(root, 'worker-1', 'orch-fail');
+    const two = retainWorktree(root, 'worker-2', 'orch-fail');
+    // Another session's same-named agent is never planned (issue #144).
+    const three = retainWorktree(root, 'worker-1', 'orch-other');
     const stateDir = join(root, '.kubic', 'orchestrator');
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(
@@ -253,7 +256,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     expect(existsSync(one)).toBe(false);
     expect(existsSync(two)).toBe(false);
     expect(existsSync(three)).toBe(true);
-    expect(kubicBranches(root)).toEqual(['kubic/worker-3']);
+    expect(kubicBranches(root)).toEqual(['kubic/orch-other/worker-1']);
 
     const missing = await clean(root, { sessionId: 'nope', dryRun: true });
     expect(missing.code).toBe(1);

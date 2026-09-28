@@ -11,6 +11,7 @@ import {
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import { withReadRoots } from '../../../exec/src/read-roots.js';
 import {
   buildCompactPrompt,
   type CompactionCheckpoint,
@@ -179,6 +180,11 @@ export interface SoloBootOptions {
   // blocks land as suffix sections only. Ignored when `systemPrompt` is
   // given: an explicit prompt is byte-authoritative.
   promptSections?: string[];
+  // Issue #173 (§29.3): the roots of the skills advertised with absolute
+  // paths outside the workspace. The read tool (and only it) may open a
+  // path inside one — the env serves those reads and the confine guard
+  // leaves them un-rerooted; every other tool and path stays confined.
+  skillReadRoots?: readonly string[];
   // §12.1 role prompt (issue #99): replaces the hardcoded SOLO_ROLE seed
   // with the role document's own `## Prompt` text. The assembled
   // cwd/tools/meta lines are unchanged — the role supplies the instruction
@@ -372,7 +378,10 @@ export async function bootSoloLane(
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
   const toolContext: KubicToolContext = {
-    env: options.env,
+    env:
+      options.skillReadRoots === undefined
+        ? options.env
+        : withReadRoots(options.env, options.skillReadRoots),
     sessionId: options.sessionId,
     agentId: options.agentId,
     memos: options.memos ?? new MemoryMemoStore(),
@@ -455,7 +464,17 @@ export async function bootSoloLane(
     await lane.setActiveTools(effectiveToolNames, context);
   }
   if (options.policy?.interceptors !== undefined) {
-    registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
+    registerPolicyInterceptors(harness.hooks, {
+      ...options.policy.interceptors,
+      ...(options.skillReadRoots === undefined
+        ? {}
+        : {
+            readRoots: [
+              ...(options.policy.interceptors.readRoots ?? []),
+              ...options.skillReadRoots,
+            ],
+          }),
+    });
   }
   let binding: LaneBinding | undefined;
   // NIT (review, issue #82): the harness above boots BEFORE the registry

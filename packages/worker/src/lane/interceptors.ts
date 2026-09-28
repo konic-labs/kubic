@@ -12,7 +12,8 @@
 //   shell read-only-allowlist — bash present, destructive AND network
 //     commands blocked.
 //   shell false — bash absent via allowlist.
-//   network none — network-command verbs blocked in bash. allowlist/full
+//   network none (and a domain-less allowlist, enforced as none — issue
+//     #166) — network-command verbs blocked in bash. full
 //     change nothing at the tool layer (documented, not silent): there is
 //     no network tool to remove, and shell:true can still curl. The flag
 //     is consumed by approval triggers (issue #16).
@@ -30,7 +31,12 @@
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in host/approvals.ts.
 import { isAbsolute, join, resolve } from 'node:path';
-import type { NetworkLevel, ShellLevel } from '../../../agents/src/policy.js';
+import {
+  effectiveNetworkLevel,
+  type NetworkLevel,
+  type ShellLevel,
+} from '../../../agents/src/policy.js';
+import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { Hooks, JsonValue } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
@@ -45,6 +51,11 @@ export interface PolicyInterceptorOptions {
   onTrigger?: (trigger: PolicyTrigger) => void;
   shell?: ShellLevel;
   network?: NetworkLevel;
+  // Read-only confinement exception (issue #173; §29.3): the directories
+  // (or files) of the skills advertised with absolute paths outside the
+  // workspace. Only the `read` tool may open a path inside one; write,
+  // edit, ls, find and grep keep re-rooting every outside path.
+  readRoots?: readonly string[];
   isDestructive?: (command: string, workspace: string) => boolean;
   // Approval decider (issue #16, owned by the host). Consulted for every
   // call after the budget gate: denials block; approvals let the call
@@ -218,6 +229,7 @@ export function registerPolicyInterceptors(
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
+  const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
   // Tool calls a real challenge cleared. Guards below stand down for
   // exactly these ids — never by tool name or pattern. Unchallenged
   // fast-path calls never enter this set, so #15 guards stay up for them.
@@ -291,12 +303,20 @@ export function registerPolicyInterceptors(
         if (isDestructive(command, options.workspace)) {
           return block(`destructive command blocked: ${command}`);
         }
+        // A domain-less `allowlist` allows nothing (issue #166): it is
+        // enforced as `none`, never as the unrestricted `full`.
+        const network =
+          options.network === undefined
+            ? undefined
+            : effectiveNetworkLevel(options.network);
         if (
-          (options.network === 'none' ||
-            options.shell === 'read-only-allowlist') &&
+          (network === 'none' || options.shell === 'read-only-allowlist') &&
           isNetworkCommand(command)
         ) {
-          return block(`network command blocked (network: none): ${command}`);
+          const declared = options.network ?? 'none';
+          return block(
+            `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
+          );
         }
         return undefined;
       }),
@@ -307,6 +327,13 @@ export function registerPolicyInterceptors(
     hooks.on('before_tool', (event) =>
       failClosed(() => {
         if (approvedCalls.has(event.toolCallId)) return undefined;
+        if (
+          event.toolName === 'read' &&
+          typeof event.args.path === 'string' &&
+          readRootFor(readRoots, event.args.path) !== undefined
+        ) {
+          return undefined;
+        }
         const confined = confineArgs(
           event.toolName,
           event.args,

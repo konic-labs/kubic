@@ -436,7 +436,44 @@ describe('prod orchestrate path: §68 result contract', () => {
   it('settles a worker whose report is valid', async () => {
     const h = await harness();
     const request = await sessionFor(h, 'worker-1');
-    const out = await runWorkerOnce(h, request, 'say hi EXIT=0');
-    expect(Array.isArray(out)).toBe(true);
+    const out = (await runWorkerOnce(h, request, 'say hi EXIT=0')) as {
+      hunks: unknown[];
+      result?: {
+        status: string;
+        provenance: Record<string, unknown>;
+        diff?: { diffId: string };
+      };
+    };
+    expect(Array.isArray(out.hunks)).toBe(true);
+    // Issue #185: the validated §68 result travels back, not just hunks.
+    expect(out.result?.status).toBe('completed');
+    expect(out.result?.provenance).toMatchObject({
+      workerId: 'worker-1',
+      sessionId: request.workerSessionId,
+      worktree: request.worktree.path,
+    });
+    expect(typeof out.result?.provenance.pid).toBe('number');
+    expect(typeof out.result?.provenance.generation).toBe('number');
+    expect(out.result?.diff?.diffId).toMatch(/\.\.\./);
+  });
+
+  it('a non-zero-exit worker still carries a §68 result with provenance and error.kind (issue #185)', async () => {
+    const h = await harness();
+    const request = await sessionFor(h, 'worker-1');
+    const error = (await runWorkerOnce(h, request, 'say hi')) as {
+      result?: {
+        status: string;
+        error?: { kind: string };
+        provenance: Record<string, unknown>;
+      };
+    };
+    expect(error.result?.status).toBe('failed');
+    expect(typeof error.result?.error?.kind).toBe('string');
+    expect(error.result?.provenance).toMatchObject({
+      workerId: 'worker-1',
+      worktree: request.worktree.path,
+    });
+    expect(typeof error.result?.provenance.pid).toBe('number');
+    expect(typeof error.result?.provenance.model).toBe('string');
   });
 });

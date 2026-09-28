@@ -484,6 +484,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
               ...installedPolicyDeps(cliConfig),
             }).allowlist,
           ),
+        // Issue #166 (§40.2): the same posture's inexpressible levels, so
+        // `kubic policy` and `kubic doctor` name the same unsupported set.
+        unsupported: () =>
+          installedPolicyPosture({
+            workspace: process.cwd(),
+            ...installedPolicyDeps(cliConfig),
+          }).unsupported,
         ...report(),
       }),
     config: (options, cliConfig) =>

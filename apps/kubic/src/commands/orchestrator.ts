@@ -75,7 +75,7 @@ Examples:
   kubic clean --journal --max-age-ms 604800000
 
 Removes only Kubic's own retained worktrees (under the orchestrator root, on
-a kubic/<agent> branch) and kubic/<agent> branches. Exit codes: 0 ok (also a
+a kubic/<session>/<agent> branch) and those branches. Exit codes: 0 ok (also a
 dry run), 1 a hard failure, 2 usage or not a git repo.`;
 
 export const registerOrchestratorCommands: CommandRegistrar = (
@@ -126,7 +126,7 @@ export const registerOrchestratorCommands: CommandRegistrar = (
   program
     .command('clean')
     .description(
-      'remove retained orchestrator worktrees, kubic/<agent> branches and old journal entries',
+      'remove retained orchestrator worktrees, kubic/<session>/<agent> branches and old journal entries',
     )
     .addOption(
       new Option(

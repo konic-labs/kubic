@@ -6,6 +6,7 @@
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
+import { describeUnsupported } from '../../agents/src/policy.js';
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -45,6 +46,7 @@ export type DoctorReason =
   | 'deps-missing'
   | 'extension-posture'
   | 'full-access'
+  | 'unsupported-level'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -127,6 +129,13 @@ export interface InstalledPolicyPosture {
   sessionScoped: boolean;
   maxPendingMs: number;
   fullAccess: boolean;
+  // Issue #166 (§40.2): declared levels the tool set cannot express.
+  unsupported?: readonly {
+    class: string;
+    level: string;
+    enforcedAs: string;
+    reason: string;
+  }[];
 }
 
 function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
@@ -165,10 +174,17 @@ function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
         'installed policy combines credential access with full-access posture — contradictory install',
     };
   }
+  const unsupported = posture.unsupported ?? [];
+  // §40.2/§40.3: a level the lane cannot express is never printed green —
+  // the check warns and names each one with the level actually enforced.
+  const unsupportedTail =
+    unsupported.length === 0
+      ? ''
+      : `; unsupported: ${unsupported.map(describeUnsupported).join('; ')}`;
   return {
     ...base,
-    status: 'pass',
-    reason: 'ok',
+    status: unsupported.length === 0 ? 'pass' : 'warn',
+    reason: unsupported.length === 0 ? 'ok' : 'unsupported-level',
     detail:
       `source=${posture.source}, filesystem=${posture.classes.filesystem}, ` +
       `shell=${String(posture.classes.shell)}, network=${posture.classes.network}, ` +
@@ -179,7 +195,7 @@ function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
         posture.fullAccess
           ? '; FULL ACCESS recorded for this session — every guard stands down for challenged calls'
           : ''
-      }`,
+      }${unsupportedTail}`,
   };
 }
 

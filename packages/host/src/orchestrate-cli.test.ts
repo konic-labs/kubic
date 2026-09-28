@@ -1363,3 +1363,101 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     }
   });
 });
+
+describe('per-worker §68 results reach the output (issue #185)', () => {
+  const resultFor = (agentId: string, summary: string) => ({
+    status: 'completed' as const,
+    summary,
+    filesChanged: [`${agentId}.txt`],
+    provenance: {
+      workerId: agentId,
+      sessionId: `s-${agentId}`,
+      pid: 4242,
+      generation: 1,
+      worktree: `/repo/.kubic/wt/s/${agentId}`,
+      model: 'faux/faux-1',
+      role: 'implementer',
+    },
+    metrics: {
+      inputTokens: 120,
+      outputTokens: 30,
+      cachedTokens: 7,
+      toolCalls: 3,
+      latencyMs: 2,
+      wallMs: 50,
+      costUsd: 0.25,
+    },
+  });
+  const withResults = () =>
+    makeWorld({
+      runWorker: (agentId: string) => ({
+        hunks: [{ path: `${agentId}.txt`, hunk: '@@ +1 @@' }],
+        result: resultFor(agentId, agentId === 'worker-1' ? 'did X' : 'did Y'),
+      }),
+    });
+
+  it('prints one summary line per worker in text mode', async () => {
+    const world = withResults();
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1', 'worker-2'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.lines).toContain('worker-1 (implementer): did X');
+    expect(world.lines).toContain('worker-2 (implementer): did Y');
+  });
+
+  it('carries role/status/summary/usage per worker in --json and persists the result', async () => {
+    const world = withResults();
+    await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1'], yes: true, json: true },
+      world.deps,
+    );
+    const envelope = lastJsonLine(world.lines) as {
+      workers: {
+        summary?: string;
+        role?: string;
+        status?: string;
+        usage?: { inputTokens: number; toolCalls: number };
+        provenance?: { pid: number };
+      }[];
+    };
+    expect(envelope.workers[0]?.summary).toBe('did X');
+    expect(envelope.workers[0]?.role).toBe('implementer');
+    expect(envelope.workers[0]?.status).toBe('completed');
+    expect(envelope.workers[0]?.usage).toMatchObject({
+      inputTokens: 120,
+      toolCalls: 3,
+    });
+    expect(envelope.workers[0]?.provenance?.pid).toBe(4242);
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.records[0]?.result?.summary).toBe('did X');
+    expect(JSON.stringify(saved)).not.toMatch(/"transcript"|"messages"/);
+  });
+
+  it('a failed worker still reports its result with error.kind in --json', async () => {
+    const failed = {
+      ...resultFor('worker-1', 'worker run exited 6'),
+      status: 'failed' as const,
+      error: { kind: 'provider' as const, message: 'exited 6' },
+    };
+    const world = makeWorld({
+      runWorker: () => {
+        throw Object.assign(new Error('worker run exited 6'), {
+          code: 'worker_failed',
+          result: failed,
+        });
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1'], yes: true, json: true },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines) as {
+      workers: { status?: string; error?: { kind: string } }[];
+    };
+    expect(envelope.workers[0]?.status).toBe('failed');
+    expect(envelope.workers[0]?.error?.kind).toBe('provider');
+  });
+});

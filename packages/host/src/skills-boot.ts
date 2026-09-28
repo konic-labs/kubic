@@ -11,6 +11,7 @@
 // gate: project roots are traversed only under an explicit trust opt-in
 // (§29.3), and the loader is told, never asked to guess.
 
+import { basename, dirname, resolve, sep } from 'node:path';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
@@ -48,6 +49,33 @@ export interface BootSkills {
   // Model-invisible skills (disableModelInvocation). Reported so a caller
   // can name them if it needs to; never injected.
   hidden: string[];
+  // Issue #173 (§29.3): the read-only roots of every ADVERTISED skill that
+  // lives outside the cwd (user roots under $HOME, trusted ancestor project
+  // roots, explicit --skill paths): a `SKILL.md` opens its skill directory
+  // (so the model can follow the skill's own relative references), a flat
+  // skill file opens only itself. Hidden skills are never advertised, so
+  // they open nothing. The lane boot threads these into the read tool's
+  // env and confine guard; every other tool keeps the confinement.
+  readRoots: string[];
+}
+
+function isInside(root: string, path: string): boolean {
+  return path === root || path.startsWith(`${root}${sep}`);
+}
+
+export function skillReadRoots(
+  skills: readonly LoadedSkill[],
+  cwd: string,
+): string[] {
+  const workspace = resolve(cwd);
+  const roots = new Set<string>();
+  for (const skill of skills) {
+    if (skill.disableModelInvocation === true) continue;
+    const file = resolve(workspace, skill.filePath);
+    if (isInside(workspace, file)) continue;
+    roots.add(basename(file) === 'SKILL.md' ? dirname(file) : file);
+  }
+  return [...roots];
 }
 
 export function bootSkills(options: BootSkillOptions): BootSkills {
@@ -74,6 +102,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     block:
       visible.length === 0 ? undefined : formatSkillsForSystemPrompt(visible),
     hidden,
+    readRoots: skillReadRoots(skills, options.cwd),
   };
 }
 

@@ -347,7 +347,10 @@ export async function bootTuiLane(
       // runner — the <skills> block lands on the interactive lane too. A
       // loader refusal is never fatal (skills are context, never a gate);
       // it is logged to the boot's debug channel.
-      ...((): { promptSections?: string[] } => {
+      ...((): {
+        promptSections?: string[];
+        skillReadRoots?: readonly string[];
+      } => {
         const skills = bootSkills({
           bridge: createNodeFileBridge(options.skills?.cwd ?? process.cwd()),
           cwd: options.skills?.cwd ?? process.cwd(),
@@ -367,9 +370,15 @@ export async function bootTuiLane(
             // intentionally dropped (the block itself is observable).
           },
         });
-        return skills.block === undefined
-          ? {}
-          : { promptSections: [skills.block] };
+        return {
+          ...(skills.block === undefined
+            ? {}
+            : { promptSections: [skills.block] }),
+          // Issue #173: the advertised skills outside the cwd stay readable.
+          ...(skills.readRoots.length === 0
+            ? {}
+            : { skillReadRoots: skills.readRoots }),
+        };
       })(),
       // Issue #113 (§12.1): `--role` derives both halves of the boot from
       // the role document — prompt text and tool allowlist — with the same

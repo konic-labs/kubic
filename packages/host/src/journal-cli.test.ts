@@ -744,3 +744,70 @@ describe('journal CLI diff --json content bounds (issue #126)', () => {
     }
   });
 });
+
+// --json is one contract across the journal subcommands: every line a
+// subcommand prints under --json joins to exactly one valid JSON document.
+describe('journal CLI --json parity', () => {
+  async function runJson(
+    args: string[],
+    deps: { journalDir: string; root: string },
+  ): Promise<{ code: number; doc: unknown }> {
+    const lines: string[] = [];
+    const code = await runJournalCommand(args, {
+      ...deps,
+      out: (l: string) => lines.push(l),
+    });
+    return { code, doc: JSON.parse(lines.join('\n')) };
+  }
+
+  it('status --json prints a JSON object', async () => {
+    const { journalDir, root } = setup();
+    const { code, doc } = await runJson(['status', '--json'], {
+      journalDir,
+      root,
+    });
+    expect(code).toBe(0);
+    expect(doc).toMatchObject({ entries: 1, reversible: 1, nonReversible: 0 });
+  });
+
+  it('undo --json prints restored/skipped as JSON, keeping the exit code', async () => {
+    const { journalDir, root } = setup();
+    const dry = await runJson(['undo', '--dry-run', '--json'], {
+      journalDir,
+      root,
+    });
+    expect(dry.doc).toMatchObject({ dryRun: true, restored: ['a.txt'] });
+    const real = await runJson(['undo', '--json', 'a.txt'], {
+      journalDir,
+      root,
+    });
+    expect(real.code).toBe(0);
+    expect(real.doc).toMatchObject({ restored: ['a.txt'], skipped: [] });
+    const again = await runJson(['undo', '--json'], { journalDir, root });
+    expect(again.code).toBe(2);
+    expect(again.doc).toMatchObject({
+      restored: [],
+      skipped: [{ path: 'a.txt', kind: 'already-undone' }],
+    });
+  });
+
+  it('undo --json with nothing to undo is still JSON', async () => {
+    const { journalDir, root } = setup();
+    const { doc } = await runJson(['undo', '--json', 'nope.txt'], {
+      journalDir,
+      root,
+    });
+    expect(doc).toMatchObject({ restored: [], skipped: [] });
+  });
+
+  it('diff and log --json on an empty journal are JSON arrays', async () => {
+    const root = mkTmp('ws-');
+    const journalDir = mkTmp('j-');
+    expect(
+      (await runJson(['diff', '--json'], { journalDir, root })).doc,
+    ).toEqual([]);
+    expect(
+      (await runJson(['log', '--json'], { journalDir, root })).doc,
+    ).toEqual([]);
+  });
+});

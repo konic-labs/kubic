@@ -84,6 +84,9 @@ export interface JournalEntryInput {
   // above the sweep content bound, or a lossy decode. `diff` renders it as a
   // size-only change; it is never corruption.
   afterOmitted?: boolean;
+  // Designed hash-only pre-image: the file existed but its bytes were not
+  // lossless utf-8 (binary), so only the hash is kept — never corruption.
+  beforeOmitted?: boolean;
   // The observed after-side size in bytes, recorded alongside afterOmitted.
   afterBytes?: number;
   bytesDelta: number;
@@ -114,6 +117,7 @@ export interface JournalEntry {
    *  returns null; `afterHash` keeps the walk hash, so dedupe and undo
    *  staleness behave exactly as for a content-captured entry. */
   afterOmitted?: boolean;
+  beforeOmitted?: boolean;
   /** The observed size in bytes of an afterOmitted entry's file. */
   afterBytes?: number;
 }
@@ -370,6 +374,7 @@ export class FileJournalStore {
       // Issue #120: the hash-only after-side shape, carried on the entry so
       // `diff` can say why there is no content to show.
       ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
+      ...(input.beforeOmitted === true ? { beforeOmitted: true } : {}),
       ...(input.afterBytes === undefined
         ? {}
         : { afterBytes: input.afterBytes }),
@@ -1112,20 +1117,13 @@ function sweepStaleRestoreTmps(
   }
 }
 
-export function restoreEntry(
-  store: FileJournalStore,
+// Containment guard shared by every undo primitive: the resolved target
+// must sit strictly inside the root, and no existing parent component may
+// be a symlink. Returns the absolute target, or the refusal.
+function guardTarget(
   entry: JournalEntry,
   root: string,
-  options?: RestoreOptions,
-): RestoreResult {
-  const before = store.readBefore(entry);
-  if (before === null) {
-    return {
-      restored: false,
-      reason:
-        'no before-content: no retrievable pre-image for this entry — nothing to restore',
-    };
-  }
+): string | { restored: false; reason: string } {
   const target = resolve(root, entry.path);
   const rel = relative(root, target);
   if (rel === '' || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) {
@@ -1144,6 +1142,68 @@ export function restoreEntry(
       reason: `entry path crosses a symlink: ${entry.path}`,
     };
   }
+  return target;
+}
+
+// An agent-authored create: the pre-state is "absent", which the journal
+// knows exactly even though no before-blob exists — so undo reverts it by
+// removing the file (§42.2 "kubic undo reverts the run"). Unattributed
+// reconciliation creates stay non-reversible: the sweep saw the file
+// appear but cannot vouch that nothing else depends on it.
+export function isUndoableCreate(entry: JournalEntry): boolean {
+  return (
+    entry.op === 'create' &&
+    entry.beforeHash === null &&
+    entry.afterHash !== null &&
+    entry.unattributed !== true
+  );
+}
+
+// Undo primitive for an agent-authored create: removes the file. Carries
+// the same containment guards as restoreEntry; the staleness verdict is
+// the caller's (the undo walk), exactly as restoreEntry's allowStale path.
+export function removeCreatedEntry(
+  entry: JournalEntry,
+  root: string,
+): RestoreResult {
+  if (!isUndoableCreate(entry)) {
+    return {
+      restored: false,
+      reason: `not an agent-created file entry: ${entry.path}`,
+    };
+  }
+  const guarded = guardTarget(entry, root);
+  if (typeof guarded !== 'string') return guarded;
+  const bridge = createNodeFileBridge('/');
+  try {
+    bridge.remove(guarded, false, true);
+  } catch (error) {
+    return {
+      restored: false,
+      reason: `remove failed: ${(error as Error).message}`,
+    };
+  }
+  sweepStaleRestoreTmps(bridge, guarded);
+  return { restored: true };
+}
+
+export function restoreEntry(
+  store: FileJournalStore,
+  entry: JournalEntry,
+  root: string,
+  options?: RestoreOptions,
+): RestoreResult {
+  const before = store.readBefore(entry);
+  if (before === null) {
+    return {
+      restored: false,
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
+    };
+  }
+  const guarded = guardTarget(entry, root);
+  if (typeof guarded !== 'string') return guarded;
+  const target = guarded;
   if (options?.allowStale !== true) {
     // Direct-caller safety net (issue #108): the walk-aware undo planner
     // performs the same check with full plan context and then calls

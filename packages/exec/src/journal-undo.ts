@@ -1,7 +1,9 @@
 // Journal undo core (issue #18, slice B; §42.2).
 // Whole-run undo walks entries reverse-chronologically so layered edits
 // unwind in order (v1→v2→v3 restores v2, then v1). Steps without
-// before-content are skipped and reported — never guessed.
+// before-content are skipped and reported — never guessed — except an
+// agent-authored create, whose pre-state is exactly "absent": undoing it
+// removes the file (journaled as a `kubic-undo` delete, so --step redoes).
 //
 // Issue #117: a successful restore appends its inverse entry under
 // `agentId: kubic-undo`. Plain plans exclude those records — they are the
@@ -32,8 +34,10 @@ import { createNodeFileBridge } from './file-bridge.js';
 import {
   type FileCurrentState,
   type FileJournalStore,
+  isUndoableCreate,
   type JournalEntry,
   probeFileState,
+  removeCreatedEntry,
   restoreEntry,
 } from './journal.js';
 
@@ -56,6 +60,52 @@ export interface UndoPlan {
   stalePaths: string[];
 }
 
+// A step is reversible when its pre-state is recoverable: a before-blob,
+// or — for an agent-authored create — the known pre-state "absent".
+function canUndo(store: FileJournalStore, entry: JournalEntry): boolean {
+  return store.readBefore(entry) !== null || isUndoableCreate(entry);
+}
+
+// Per-path journaled before-states of a plan: content hashes, plus the
+// steps for which "absent" is a journaled earlier state — the steps at or
+// after an agent create with no delete in between. Order matters: absence
+// after a create masks nothing, but absence that follows a DELETE is that
+// delete's after-state, which undo must still restore (review fix: a later
+// create must never make an earlier delete read as already undone).
+interface PlanBefore {
+  hashes: Set<string>;
+  absentSteps: Set<JournalEntry>;
+}
+
+function collectPlanBefore(
+  store: FileJournalStore,
+  steps: JournalEntry[],
+): Map<string, PlanBefore> {
+  const out = new Map<string, PlanBefore>();
+  const sinceCreate = new Map<string, boolean>();
+  // Plans are reverse-chronological; walk forward in time.
+  for (const step of [...steps].reverse()) {
+    if (isUndoableCreate(step)) sinceCreate.set(step.path, true);
+    else if (step.afterHash === null) sinceCreate.set(step.path, false);
+    if (!canUndo(store, step)) continue;
+    const slot = out.get(step.path) ?? {
+      hashes: new Set<string>(),
+      absentSteps: new Set<JournalEntry>(),
+    };
+    if (step.beforeHash !== null) slot.hashes.add(step.beforeHash);
+    if (sinceCreate.get(step.path) === true) slot.absentSteps.add(step);
+    out.set(step.path, slot);
+  }
+  return out;
+}
+
+// The state a successful step leaves behind — what the walk simulates.
+function stateAfterUndo(step: JournalEntry): FileCurrentState {
+  return isUndoableCreate(step)
+    ? { missing: true, hash: null }
+    : { missing: false, hash: step.beforeHash };
+}
+
 type Verdict =
   | { kind: 'restore' }
   | { kind: 'already-undone'; reason: string }
@@ -67,9 +117,18 @@ type Verdict =
 function verdictFor(
   state: FileCurrentState,
   entry: JournalEntry,
-  planBeforeHashes: ReadonlySet<string> | undefined,
+  planBefore: PlanBefore | undefined,
   force: boolean,
 ): Verdict {
+  if (state.missing && planBefore?.absentSteps.has(entry) === true) {
+    // Absent is a journaled before-state for this path (an agent create
+    // is in the plan): the file already sits where undo would take it.
+    // Checked before --force — removing a missing file restores nothing.
+    return {
+      kind: 'already-undone',
+      reason: `already undone: '${entry.path}' is absent, its journaled pre-create state — nothing to restore`,
+    };
+  }
   if (force) return { kind: 'restore' };
   if (state.missing) {
     // The recreate path of the #108 matrix: a missing file can always be
@@ -85,7 +144,7 @@ function verdictFor(
   if (state.hash === entry.afterHash) return { kind: 'restore' };
   if (
     (entry.beforeHash !== null && state.hash === entry.beforeHash) ||
-    planBeforeHashes?.has(state.hash) === true
+    planBefore?.hashes.has(state.hash) === true
   ) {
     return {
       kind: 'already-undone',
@@ -133,19 +192,14 @@ export function planUndo(
   }
   let reversible = 0;
   const nonReversible: string[] = [];
-  const planBeforeHashes = new Map<string, Set<string>>();
   for (const step of steps) {
-    if (store.readBefore(step) !== null) {
+    if (canUndo(store, step)) {
       reversible++;
-      if (step.beforeHash !== null) {
-        const set = planBeforeHashes.get(step.path) ?? new Set<string>();
-        set.add(step.beforeHash);
-        planBeforeHashes.set(step.path, set);
-      }
     } else if (!nonReversible.includes(step.path)) {
       nonReversible.push(step.path);
     }
   }
+  const planBefore = collectPlanBefore(store, steps);
   // Staleness is a disk comparison, so it needs the workspace root; without
   // one (plan-only callers) the counts stay zero and the real/dry-run paths
   // compute their own verdicts. Pure read: planning never writes.
@@ -155,23 +209,15 @@ export function planUndo(
     // order): a step is stale only relative to the state the walk reaches.
     const simulated = new Map<string, FileCurrentState>();
     for (const step of steps) {
-      if (store.readBefore(step) === null) continue; // never reversible
+      if (!canUndo(store, step)) continue; // never reversible
       const state = simulated.get(step.path) ?? probeFileState(root, step.path);
-      const verdict = verdictFor(
-        state,
-        step,
-        planBeforeHashes.get(step.path),
-        false,
-      );
+      const verdict = verdictFor(state, step, planBefore.get(step.path), false);
       if (verdict.kind === 'stale' && !stalePaths.includes(step.path)) {
         stalePaths.push(step.path);
       } else if (verdict.kind === 'restore') {
-        // Restoring writes the step's before-content; its hash is the
-        // recorded beforeHash by construction.
-        simulated.set(step.path, {
-          missing: false,
-          hash: step.beforeHash,
-        });
+        // Restoring writes the step's before-content (its hash is the
+        // recorded beforeHash by construction); undoing a create removes.
+        simulated.set(step.path, stateAfterUndo(step));
       }
     }
   }
@@ -194,6 +240,8 @@ export interface UndoResult {
   skipped: string[];
   /** Why each step skipped — stale refusals and already-undone skips carry their reason. */
   skippedDetails: SkipDetail[];
+  /** Completed steps with a caveat (e.g. a removal that cannot be redone). */
+  warnings: string[];
 }
 
 export interface UndoOptions {
@@ -216,23 +264,16 @@ export function applyUndo(
   const restored: string[] = [];
   const skipped: string[] = [];
   const skippedDetails: SkipDetail[] = [];
+  const warnings: string[] = [];
   const force = options.force === true;
   const now = options.now ?? ((): number => Date.now());
-  const planBeforeHashes = new Map<string, Set<string>>();
-  for (const step of plan.steps) {
-    if (store.readBefore(step) === null) continue;
-    if (step.beforeHash !== null) {
-      const set = planBeforeHashes.get(step.path) ?? new Set<string>();
-      set.add(step.beforeHash);
-      planBeforeHashes.set(step.path, set);
-    }
-  }
+  const planBefore = collectPlanBefore(store, plan.steps);
   // Dry-run simulates the walk's writes; a real run re-probes the actual
   // disk before each step (which the walk itself is mutating). Both follow
   // the same verdict rules, so --dry-run reports what the real run does.
   const simulated = new Map<string, FileCurrentState>();
   for (const step of plan.steps) {
-    if (store.readBefore(step) === null) {
+    if (!canUndo(store, step)) {
       skipped.push(step.path);
       skippedDetails.push({
         path: step.path,
@@ -245,20 +286,61 @@ export function applyUndo(
       options.dryRun === true
         ? (simulated.get(step.path) ?? probeFileState(root, step.path))
         : probeFileState(root, step.path);
-    const verdict = verdictFor(
-      state,
-      step,
-      planBeforeHashes.get(step.path),
-      force,
-    );
+    const verdict = verdictFor(state, step, planBefore.get(step.path), force);
     if (verdict.kind !== 'restore') {
       skipped.push(step.path);
       skippedDetails.push({ path: step.path, reason: verdict.reason });
       continue;
     }
     if (options.dryRun === true) {
-      simulated.set(step.path, { missing: false, hash: step.beforeHash });
+      simulated.set(step.path, stateAfterUndo(step));
       restored.push(step.path);
+      continue;
+    }
+    if (isUndoableCreate(step)) {
+      // Undo of a create removes the file. The removed content becomes the
+      // undo record's before, so `--step` right after is the redo.
+      // Lossless check on the real bytes (the walk hash is a hash of the
+      // utf-8 decode, so it cannot detect a lossy decode): binary content
+      // is never recorded as a mangled pre-image for the redo.
+      let removedContent: string | null = null;
+      try {
+        const bytes = Buffer.from(
+          createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
+        );
+        const decoded = bytes.toString('utf8');
+        removedContent = Buffer.from(decoded, 'utf8').equals(bytes)
+          ? decoded
+          : null;
+      } catch {
+        removedContent = null;
+      }
+      const removal = removeCreatedEntry(step, root);
+      if (!removal.restored) {
+        skipped.push(step.path);
+        skippedDetails.push({ path: step.path, reason: removal.reason });
+        continue;
+      }
+      restored.push(step.path);
+      if (removedContent === null) {
+        warnings.push(
+          `removed '${step.path}' without a recoverable copy (content was not lossless utf-8 text) — this removal cannot be redone`,
+        );
+      }
+      store.append({
+        path: step.path,
+        op: 'delete',
+        before: removedContent,
+        after: null,
+        bytesDelta:
+          removedContent === null
+            ? 0
+            : -Buffer.byteLength(removedContent, 'utf8'),
+        sessionId: UNDO_AGENT_ID,
+        agentId: UNDO_AGENT_ID,
+        toolCallId: null,
+        timestamp: now(),
+      });
       continue;
     }
     // The verdict already verified the walk-aware state; restoreEntry keeps
@@ -308,5 +390,5 @@ export function applyUndo(
       });
     }
   }
-  return { restored, skipped, skippedDetails };
+  return { restored, skipped, skippedDetails, warnings };
 }

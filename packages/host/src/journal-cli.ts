@@ -41,7 +41,7 @@ export function defaultJournalDir(root: string): string {
 }
 
 const JOURNAL_USAGE =
-  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--session <id>] [--] [<path>] | log [--session <id>] | status [--session <id>]>';
+  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--json] [--session <id>] [--] [<path>] | log [--json] [--session <id>] | status [--json] [--session <id>]>';
 
 function usage(out: (line: string) => void): number {
   out(JOURNAL_USAGE);
@@ -291,7 +291,11 @@ export async function runJournalCommand(
       root,
     );
     if (plan.steps.length === 0) {
-      deps.out('nothing to undo');
+      deps.out(
+        json
+          ? JSON.stringify({ dryRun, restored: [], skipped: [] }, null, 2)
+          : 'nothing to undo',
+      );
       return 0;
     }
     const result = applyUndo(store, plan, root, { dryRun, force });
@@ -311,6 +315,33 @@ export async function runJournalCommand(
       staleCount > 0 || undoneCount > 0
         ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null].filter((s) => s !== null).join(', ')})`
         : ' non-reversible';
+    if (json) {
+      // One JSON document; the exit code keeps the human path's contract
+      // (2 when a real run skipped anything, dry-run always 0).
+      const kindOf = (p: string | undefined): string =>
+        p === 'stale'
+          ? 'stale'
+          : p === 'already undone'
+            ? 'already-undone'
+            : 'non-reversible';
+      deps.out(
+        JSON.stringify(
+          {
+            dryRun,
+            restored: result.restored,
+            warnings: result.warnings,
+            skipped: result.skippedDetails.map((d, i) => ({
+              path: d.path,
+              kind: kindOf(parts[i]),
+              reason: d.reason,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+      return !dryRun && result.skipped.length > 0 ? 2 : 0;
+    }
     if (dryRun) {
       deps.out(
         `would restore ${result.restored.length} step(s)` +
@@ -321,6 +352,7 @@ export async function runJournalCommand(
       return 0;
     }
     for (const path of result.restored) deps.out(`restored ${path}`);
+    for (const warning of result.warnings) deps.out(`warning: ${warning}`);
     for (const [detail, kind] of result.skippedDetails.map(
       (d, i) => [d, parts[i]] as const,
     )) {
@@ -377,6 +409,10 @@ export async function runJournalCommand(
 
   if (sub === 'status') {
     const status = journalStatus(store, root);
+    if (json) {
+      deps.out(JSON.stringify(status, null, 2));
+      return 0;
+    }
     deps.out(
       `entries: ${status.entries} (reversible: ${status.reversible}, non-reversible: ${status.nonReversible})`,
     );

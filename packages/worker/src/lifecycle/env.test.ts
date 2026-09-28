@@ -22,8 +22,16 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
   });
 
   it('passes KUBIC_ namespaced non-secret keys through', () => {
-    const out = filterSpawnEnv({ KUBIC_MODEL: 'faux', KUBIC_DEBUG: '1' });
-    expect(out).toEqual({ KUBIC_MODEL: 'faux', KUBIC_DEBUG: '1' });
+    const out = filterSpawnEnv({
+      KUBIC_MODEL: 'faux',
+      KUBIC_PROVIDER: 'faux',
+      KUBIC_DEBUG: '1',
+    });
+    expect(out).toEqual({
+      KUBIC_MODEL: 'faux',
+      KUBIC_PROVIDER: 'faux',
+      KUBIC_DEBUG: '1',
+    });
   });
 
   it('injects the role grant on top of the filtered base', () => {

@@ -203,34 +203,25 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
 
   it('parses --role on the run command and passes it to the runner', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    const exit = await runRunCommand(['-p', 'hi', '--role', 'reviewer'], {
-      out: () => undefined,
-      run: (prompt, options) => {
-        seen.push({ prompt, ...options });
-        return Promise.resolve({
-          terminus: 'completed',
-          summary: 'ok',
-          sessionId: 's',
-          journalRef: 'journal:s',
-          usageRef: 'usage:s',
-          trajectoryRef: 'trajectory:s',
-        });
+    const exit = await runRunCommand(
+      { prompt: 'hi', role: 'reviewer' },
+      {
+        out: () => undefined,
+        run: (prompt, options) => {
+          seen.push({ prompt, ...options });
+          return Promise.resolve({
+            terminus: 'completed',
+            summary: 'ok',
+            sessionId: 's',
+            journalRef: 'journal:s',
+            usageRef: 'usage:s',
+            trajectoryRef: 'trajectory:s',
+          });
+        },
       },
-    });
+    );
     expect(exit).toBe(0);
     expect(seen[0]?.role).toBe('reviewer');
-  });
-
-  it('rejects --role without a value as a usage error', async () => {
-    const out: string[] = [];
-    const exit = await runRunCommand(['-p', 'hi', '--role'], {
-      out: (line) => out.push(line),
-      run: () => {
-        throw new Error('the run path must not be reached');
-      },
-    });
-    expect(exit).toBe(2);
-    expect(out.join('\n')).toMatch(/--role needs a value/);
   });
 });
 
@@ -254,15 +245,18 @@ describe('kubic doctor reports every role document (issue #99, §41.4)', () => {
       bridge: createNodeFileBridge(cwd),
     });
     const lines: string[] = [];
-    return runDoctorCommand(['--json'], {
-      out: (line) => lines.push(line),
-      probeProviders: () => [
-        { id: 'faux', reachable: true, dialled: true, models: ['faux-1'] },
-      ],
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      probeRoles: () => probe,
-    }).then((code) => {
+    return runDoctorCommand(
+      { json: true },
+      {
+        out: (line) => lines.push(line),
+        probeProviders: () => [
+          { id: 'faux', reachable: true, dialled: true, models: ['faux-1'] },
+        ],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        probeRoles: () => probe,
+      },
+    ).then((code) => {
       const report = JSON.parse(lines.join('\n')) as {
         ok: boolean;
         checks: Array<{

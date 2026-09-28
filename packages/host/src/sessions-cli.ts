@@ -5,8 +5,8 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -18,6 +18,7 @@ import {
 } from '../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableFullAccess, FileApprovalStore } from './approvals.js';
+import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
   deleteSessionPruneCandidates,
@@ -26,27 +27,41 @@ import {
   SessionsRootError,
 } from './sessions-prune.js';
 
-export interface SessionsCommandDeps {
+export interface SessionsCommandDeps extends CliIo {
   sessionsRoot?: string;
-  out: (line: string) => void;
   // `session.retentionDays` (issue #119): the default keep-window for
   // `prune`. Undefined means the config sets none — prune then demands an
   // explicit --keep-days rather than inventing a window.
   retentionDays?: number;
   // Clock seam for boundary-exact age tests; real runs use Date.now().
   now?: () => number;
+  // Interactive confirmation for a `prune` that passed neither --yes nor
+  // --dry-run (TTY only — the root wires @clack/prompts there, never under
+  // a pipe). Absent means the documented default: a dry run. Resolves null
+  // when the prompt was cancelled.
+  confirm?: (message: string) => Promise<boolean | null>;
 }
+
+// The parsed `kubic sessions <sub>` invocation (commander owns the argv:
+// apps/kubic/src/commands/solo.ts).
+export type SessionsInvocation =
+  | {
+      readonly command: 'create';
+      readonly cwd?: string;
+      readonly dangerouslySkipApprovals?: boolean;
+    }
+  | { readonly command: 'list'; readonly json?: boolean }
+  | { readonly command: 'attach'; readonly id: string; readonly tail?: number }
+  | {
+      readonly command: 'prune';
+      readonly keepDays?: number;
+      readonly keepSession?: readonly string[];
+      readonly yes?: boolean;
+      readonly dryRun?: boolean;
+    };
 
 export function defaultSessionsRoot(): string {
   return join(homedir(), '.kubic', 'sessions');
-}
-
-const SESSIONS_USAGE =
-  'usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list [--json] | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>';
-
-function usage(out: (line: string) => void): number {
-  out(SESSIONS_USAGE);
-  return 1;
 }
 
 // `prune` (issue #119): explicit, opt-in session-state retention. Dry-run
@@ -56,80 +71,8 @@ function usage(out: (line: string) => void): number {
 // entries are never candidates, and the lock is re-checked immediately
 // before each delete (sessions-prune.ts owns both rails; this is
 // presentation: one line per fact, honest counts).
-interface PruneOptions {
-  keepDays?: number;
-  keep: string[];
-  yes: boolean;
-  dryRun: boolean;
-}
-
 const PRUNE_WINDOW_ERROR =
-  'error: sessions prune needs a keep window: pass --keep-days <n> or set [session] retentionDays in config (no default — deletion stays explicit)';
-
-// Issue #127: shared parser specs. `create`/`attach` keep their historical
-// leniency for unknown flags (only their own flags are read); `prune`
-// keeps its fail-closed refusal of unknown flags and stray operands.
-const PRUNE_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--keep-days', takes: 'value' },
-  { name: '--keep-session', takes: 'value', repeat: true },
-  { name: '--yes', takes: 'boolean' },
-  { name: '--dry-run', takes: 'boolean' },
-];
-
-const CREATE_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--cwd', takes: 'value' },
-  { name: '--dangerously-skip-approvals', takes: 'boolean' },
-];
-
-const LIST_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-];
-
-const ATTACH_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--tail', takes: 'value' },
-];
-
-function parsePruneArgs(
-  rest: string[],
-  out: (line: string) => void,
-): PruneOptions | undefined {
-  const parsed = parseFlagArgs(rest, PRUNE_FLAG_SPEC);
-  for (const flag of parsed.missing) {
-    out(`error: ${flag} needs a value`);
-    return undefined;
-  }
-  if (parsed.unknown.length > 0) {
-    out(`error: unknown flag ${parsed.unknown[0]}`);
-    return undefined;
-  }
-  if (parsed.positional.length > 0) {
-    out(`error: unexpected argument ${JSON.stringify(parsed.positional[0])}`);
-    return undefined;
-  }
-  const parsedOptions: PruneOptions = {
-    keep: [],
-    yes: parsed.values['--yes'] === true,
-    dryRun: parsed.values['--dry-run'] === true,
-  };
-  const keepDaysRaw = parsed.values['--keep-days'] as string | undefined;
-  if (keepDaysRaw !== undefined) {
-    if (!/^\d+$/.test(keepDaysRaw)) {
-      out('error: --keep-days needs a non-negative integer of days');
-      return undefined;
-    }
-    parsedOptions.keepDays = Number(keepDaysRaw);
-  }
-  const keepSessions =
-    (parsed.values['--keep-session'] as string[] | undefined) ?? [];
-  for (const value of keepSessions) {
-    if (!SESSION_ID_PATTERN.test(value)) {
-      out(`error: invalid --keep-session id ${JSON.stringify(value)}`);
-      return undefined;
-    }
-  }
-  parsedOptions.keep = [...keepSessions];
-  return parsedOptions;
-}
+  'sessions prune needs a keep window: pass --keep-days <n> or set [session] retentionDays in config (no default — deletion stays explicit)';
 
 function lockSince(startedAt: number | undefined): string {
   return typeof startedAt === 'number' && Number.isFinite(startedAt)
@@ -137,22 +80,23 @@ function lockSince(startedAt: number | undefined): string {
     : 'unknown start time';
 }
 
-function runPruneCommand(
-  rest: string[],
+async function runPruneCommand(
+  parsed: Extract<SessionsInvocation, { command: 'prune' }>,
   deps: SessionsCommandDeps,
   root: string,
-): number {
-  const parsed = parsePruneArgs(rest, deps.out);
-  if (parsed === undefined) return 1;
-  if (parsed.yes && parsed.dryRun) {
-    deps.out(
-      'error: --yes and --dry-run contradict — deletion is explicit, pass one',
+): Promise<number> {
+  const log = diagnosticsOf(deps);
+  // commander refuses the pair first (.conflicts); kept as the handler's
+  // own guard so a direct call cannot delete under --dry-run.
+  if (parsed.yes === true && parsed.dryRun === true) {
+    log.error(
+      '--yes and --dry-run contradict — deletion is explicit, pass one',
     );
-    return 1;
+    return 2;
   }
   const keepDays = parsed.keepDays ?? deps.retentionDays;
   if (keepDays === undefined) {
-    deps.out(PRUNE_WINDOW_ERROR);
+    log.error(PRUNE_WINDOW_ERROR);
     return 1;
   }
   if (keepDays === 0) {
@@ -166,12 +110,12 @@ function runPruneCommand(
       root,
       bridge,
       keepDays,
-      keep: parsed.keep,
+      keep: [...(parsed.keepSession ?? [])],
       ...(deps.now === undefined ? {} : { now: deps.now() }),
     });
   } catch (error) {
     if (error instanceof SessionsRootError) {
-      deps.out(`error: ${error.message}`);
+      log.error(error.message);
       return 1;
     }
     throw error;
@@ -187,14 +131,24 @@ function runPruneCommand(
     deps.out('nothing to prune');
     return 0;
   }
-  if (!parsed.yes) {
+  if (parsed.yes !== true) {
     for (const candidate of plan.candidates) {
       deps.out(`would prune ${candidate.id} (${candidate.bytes}B)`);
     }
-    deps.out(
-      `dry run: ${plan.candidates.length} session(s) would be pruned (${plan.totalBytes}B) — pass --yes to delete`,
-    );
-    return 0;
+    // Neither --yes nor --dry-run on an interactive terminal: ask once.
+    // Anywhere else (and on a no/cancel) this stays the dry run.
+    const answer =
+      parsed.dryRun !== true && deps.confirm !== undefined
+        ? await deps.confirm(
+            `Delete ${plan.candidates.length} session(s) (${plan.totalBytes}B)?`,
+          )
+        : null;
+    if (answer !== true) {
+      deps.out(
+        `dry run: ${plan.candidates.length} session(s) would be pruned (${plan.totalBytes}B) — pass --yes to delete`,
+      );
+      return 0;
+    }
   }
   const outcomes = deleteSessionPruneCandidates({
     root,
@@ -215,9 +169,7 @@ function runPruneCommand(
       continue;
     }
     if (outcome.status === 'failed') {
-      deps.out(
-        `error: could not prune ${outcome.candidate.id}: ${outcome.message}`,
-      );
+      log.error(`could not prune ${outcome.candidate.id}: ${outcome.message}`);
       failed += 1;
       continue;
     }
@@ -230,127 +182,106 @@ function runPruneCommand(
 }
 
 export async function runSessionsCommand(
-  args: string[],
+  invocation: SessionsInvocation,
   deps: SessionsCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before any subcommand dispatch (issue #100).
-  const help = answerHelp(args, deps.out, SESSIONS_USAGE);
-  if (help !== null) return help;
-  const [sub, ...rest] = args;
-  if (sub === undefined) return usage(deps.out);
+  const log = diagnosticsOf(deps);
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   // prune never opens the session repo (it reads the root's dirs directly,
   // reading no transcript at all).
-  if (sub === 'prune') return runPruneCommand(rest, deps, root);
+  if (invocation.command === 'prune') {
+    return runPruneCommand(invocation, deps, root);
+  }
   const store = openSessionStore(root, createNodeFileBridge(root));
-  if (sub === 'create') {
-    const parsed = parseFlagArgs(rest, CREATE_FLAG_SPEC);
-    if (parsed.missing.includes('--cwd')) {
-      deps.out('error: --cwd needs a value');
-      return 1;
-    }
-    const cwd = (parsed.values['--cwd'] as string | undefined) ?? process.cwd();
+  if (invocation.command === 'create') {
+    const cwd = invocation.cwd ?? process.cwd();
     const session = await createSession(store, cwd, BACKGROUND_CONTEXT);
     const id = session.metadata.id;
     await session.close(BACKGROUND_CONTEXT);
     deps.out(id);
     // Session-scoped full-access: recorded in the session dir (posture.json)
-    // and indicated on stdout. Fresh sessions start safe — the flag must be
-    // passed explicitly every time.
-    if (parsed.values['--dangerously-skip-approvals'] === true) {
+    // and announced on the diagnostics channel. Fresh sessions start safe —
+    // the flag must be passed explicitly every time.
+    if (invocation.dangerouslySkipApprovals === true) {
       const approvalStore = new FileApprovalStore(join(root, id));
       const posture = enableFullAccess(
         approvalStore,
         'cli --dangerously-skip-approvals',
       );
-      deps.out(
-        `warning: full-access approvals skipped (recorded ${posture.enabledAt})`,
-      );
+      log.warn(`full-access approvals skipped (recorded ${posture.enabledAt})`);
     }
     return 0;
   }
-  if (sub === 'list') {
-    const parsed = parseFlagArgs(rest, LIST_FLAG_SPEC);
-    if (parsed.unknown.length > 0 || parsed.positional.length > 0) {
-      return usage(deps.out);
-    }
+  if (invocation.command === 'list') {
     const sessions = await listSessions(store, BACKGROUND_CONTEXT);
-    if (parsed.values['--json'] === true) {
+    if (invocation.json === true) {
       // Always one JSON array — `[]` when there are no sessions, so a
       // `| jq` consumer never reads an empty stream (§78).
       deps.out(
-        JSON.stringify(
+        formatJson(
           sessions.map((entry) => ({ id: entry.id, cwd: entry.cwd ?? null })),
         ),
       );
       return 0;
     }
-    for (const entry of sessions) {
-      deps.out(`${entry.id}  ${entry.cwd ?? '(no cwd)'}`);
+    if (sessions.length === 0) {
+      log.info(`no sessions recorded under ${root}`);
+      return 0;
     }
+    const theme = themeOf(deps);
+    deps.out(
+      renderTable(
+        sessions.map((entry) => [
+          theme.bold(entry.id),
+          entry.cwd ?? theme.muted('(no cwd)'),
+        ]),
+        [{ header: 'SESSION' }, { header: 'CWD' }],
+        { fancy: deps.fancy === true, theme },
+      ),
+    );
     return 0;
   }
-  if (sub === 'attach') {
-    const parsed = parseFlagArgs(rest, ATTACH_FLAG_SPEC);
-    const id = parsed.positional[0];
-    if (id === undefined) {
-      deps.out('error: attach needs a session id');
-      return 1;
-    }
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) {
-      deps.out('error: invalid session id');
-      return 1;
-    }
-    let tail = 10;
-    const tailRaw = parsed.values['--tail'] as string | undefined;
-    if (tailRaw !== undefined || parsed.missing.includes('--tail')) {
-      // A starved --tail reports the same line as a malformed one (the
-      // pre-migration Number(undefined) path printed exactly this).
-      const parsedTail = Number(tailRaw);
-      if (!Number.isInteger(parsedTail) || parsedTail < 0) {
-        deps.out('error: --tail needs a non-negative integer');
-        return 1;
-      }
-      tail = parsedTail;
-    }
+  // attach
+  const { id } = invocation;
+  const tail = invocation.tail ?? 10;
+  // commander validates the id first; re-checked here because the id
+  // becomes a path segment under the sessions root.
+  if (!SESSION_ID_PATTERN.test(id)) {
+    log.error('invalid session id');
+    return 2;
+  }
+  try {
+    const session = await attachSession(store, id, BACKGROUND_CONTEXT);
     try {
-      const session = await attachSession(store, id, BACKGROUND_CONTEXT);
-      try {
-        deps.out(
-          `session ${session.metadata.id}  cwd=${session.metadata.cwd ?? '(none)'}`,
-        );
-        const posture = new FileApprovalStore(join(root, id)).loadPosture();
-        deps.out(
-          posture.fullAccess
-            ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
-            : 'posture: approvals enforced',
-        );
-        const entries = await session.findEntries(
-          undefined,
-          BACKGROUND_CONTEXT,
-        );
-        const last = entries.slice(Math.max(0, entries.length - tail));
-        for (const entry of last) {
-          deps.out(JSON.stringify(entry).slice(0, 300));
-        }
-      } finally {
-        await session.close(BACKGROUND_CONTEXT);
+      deps.out(
+        `session ${session.metadata.id}  cwd=${session.metadata.cwd ?? '(none)'}`,
+      );
+      const posture = new FileApprovalStore(join(root, id)).loadPosture();
+      deps.out(
+        posture.fullAccess
+          ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
+          : 'posture: approvals enforced',
+      );
+      const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
+      const last = entries.slice(Math.max(0, entries.length - tail));
+      for (const entry of last) {
+        deps.out(JSON.stringify(entry).slice(0, 300));
       }
-    } catch (error) {
-      // A live second attachment (issue #118): the refusal is the answer —
-      // printed as-is (it names the holder pid + start time), exit 1, and
-      // no transcript was ever read (attach acquires before it opens).
-      if (error instanceof SessionLockError) {
-        deps.out(`error: ${error.message}`);
-        return 1;
-      }
-      if (error instanceof SessionAttachError) {
-        deps.out(`error: ${error.message}`);
-        return 1;
-      }
-      throw error;
+    } finally {
+      await session.close(BACKGROUND_CONTEXT);
     }
-    return 0;
+  } catch (error) {
+    // A live second attachment (issue #118): the refusal is the answer —
+    // printed as-is (it names the holder pid + start time), exit 1, and
+    // no transcript was ever read (attach acquires before it opens).
+    if (
+      error instanceof SessionLockError ||
+      error instanceof SessionAttachError
+    ) {
+      log.error(error.message);
+      return 1;
+    }
+    throw error;
   }
-  return usage(deps.out);
+  return 0;
 }

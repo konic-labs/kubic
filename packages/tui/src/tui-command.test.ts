@@ -88,7 +88,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      [],
+      {},
       deps(terminal, { out: (l) => lines.push(l) }),
     );
     await waitFor(() => terminal.started === 1);
@@ -122,7 +122,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      ['--session', 'abc'],
+      { session: 'abc' },
       deps(terminal, {
         bootLane: async (sessionId?: string) => {
           seen.push(sessionId);
@@ -143,7 +143,7 @@ describe('kubic tui (issue #75)', () => {
       input = cb;
     });
     const pending = runTuiCommand(
-      [],
+      {},
       deps(terminal, { out: (l) => lines.push(l) }),
     );
     await waitFor(() => terminal.started === 1);
@@ -155,23 +155,11 @@ describe('kubic tui (issue #75)', () => {
     expect(doc).toContain('approvals:on');
   });
 
-  it('rejects unknown flags without opening the screen', async () => {
-    const lines: string[] = [];
-    const terminal = fakeTerminal(100);
-    const code = await runTuiCommand(
-      ['--bogus'],
-      deps(terminal, { out: (l) => lines.push(l) }),
-    );
-    expect(code).toBe(2);
-    expect(terminal.started).toBe(0);
-    expect(lines.join('\n')).toContain('error: unknown flag --bogus');
-  });
-
   it('rejects path-unsafe --session ids before the lane boots', async () => {
     let booted = 0;
     const terminal = fakeTerminal(100);
     const code = await runTuiCommand(
-      ['--session', '../evil'],
+      { session: '../evil' },
       deps(terminal, {
         bootLane: async (sessionId?: string) => {
           booted++;
@@ -192,7 +180,7 @@ describe('kubic tui (issue #75)', () => {
     const lines: string[] = [];
     const terminal = fakeTerminal(100);
     const code = await runTuiCommand(
-      [],
+      {},
       deps(terminal, {
         out: (l) => lines.push(l),
         bootLane: async () => {
@@ -213,7 +201,7 @@ describe('kubic tui (issue #75)', () => {
     };
     await expect(
       runTuiCommand(
-        [],
+        {},
         deps(terminal, {
           bootLane: async (sessionId?: string) => ({
             sessionId: sessionId ?? 's1',

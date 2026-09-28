@@ -327,7 +327,7 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
     const lines: string[] = [];
     const installed = installSoloPolicy({ workspace: '/fake' });
     const code = await runDoctorCommand(
-      [],
+      {},
       doctorDeps(lines, () => installed.posture),
     );
     expect(code).toBe(0);
@@ -342,7 +342,7 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
   it('fails the matrix with policy-mismatch when the installed policy contradicts itself', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      [],
+      {},
       doctorDeps(lines, () => {
         throw new Error(
           'installed policy contradicts itself: shell disabled but bash',
@@ -358,7 +358,7 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
   it('never claims reachability for a provider that was only listed', async () => {
     const lines: string[] = [];
     await runDoctorCommand(
-      [],
+      {},
       doctorDeps(
         lines,
         () => installSoloPolicy({ workspace: '/fake' }).posture,
@@ -373,15 +373,18 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
 
   it('states plainly when a provider line came from a real dial', async () => {
     const lines: string[] = [];
-    await runDoctorCommand([], {
-      ...doctorDeps(
-        lines,
-        () => installSoloPolicy({ workspace: '/fake' }).posture,
-      ),
-      probeProviders: () => [
-        { id: 'faux', reachable: true, models: ['faux-1'], dialled: true },
-      ],
-    });
+    await runDoctorCommand(
+      {},
+      {
+        ...doctorDeps(
+          lines,
+          () => installSoloPolicy({ workspace: '/fake' }).posture,
+        ),
+        probeProviders: () => [
+          { id: 'faux', reachable: true, models: ['faux-1'], dialled: true },
+        ],
+      },
+    );
     const printed = lines.join('\n');
     expect(printed).toContain('dialled');
     expect(printed).not.toContain('not dialled');

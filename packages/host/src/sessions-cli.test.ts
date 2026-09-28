@@ -33,20 +33,26 @@ describe('sessions CLI (issue #14, slice F)', () => {
   it('creates and lists sessions', async () => {
     const root = tmpRoot();
     const o = out();
-    const created = await runSessionsCommand(['create', '--cwd', '/work'], {
-      sessionsRoot: root,
-      out: o.write,
-    });
+    const created = await runSessionsCommand(
+      { command: 'create', cwd: '/work' },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
     expect(created).toBe(0);
     expect(o.lines.length).toBe(1);
     const id = o.lines[0] ?? '';
     expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
     // A separate sink: the listing itself must carry the session and its cwd.
     const listing = out();
-    const listed = await runSessionsCommand(['list'], {
-      sessionsRoot: root,
-      out: listing.write,
-    });
+    const listed = await runSessionsCommand(
+      { command: 'list' },
+      {
+        sessionsRoot: root,
+        out: listing.write,
+      },
+    );
     expect(listed).toBe(0);
     expect(
       listing.lines.some((line) => line.includes(id) && line.includes('/work')),
@@ -55,10 +61,13 @@ describe('sessions CLI (issue #14, slice F)', () => {
 
   it('list --json prints [] when there are no sessions', async () => {
     const o = out();
-    const code = await runSessionsCommand(['list', '--json'], {
-      sessionsRoot: tmpRoot(),
-      out: o.write,
-    });
+    const code = await runSessionsCommand(
+      { command: 'list', json: true },
+      {
+        sessionsRoot: tmpRoot(),
+        out: o.write,
+      },
+    );
     expect(code).toBe(0);
     expect(o.lines).toEqual(['[]']);
   });
@@ -66,27 +75,24 @@ describe('sessions CLI (issue #14, slice F)', () => {
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const o = out();
-    await runSessionsCommand(['create', '--cwd', '/work'], {
-      sessionsRoot: root,
-      out: o.write,
-    });
+    await runSessionsCommand(
+      { command: 'create', cwd: '/work' },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
     const listing = out();
-    await runSessionsCommand(['list', '--json'], {
-      sessionsRoot: root,
-      out: listing.write,
-    });
+    await runSessionsCommand(
+      { command: 'list', json: true },
+      {
+        sessionsRoot: root,
+        out: listing.write,
+      },
+    );
     expect(JSON.parse(listing.lines.join('\n'))).toEqual([
       { id: o.lines[0], cwd: '/work' },
     ]);
-  });
-
-  it('list refuses an unknown flag with usage, exit 1', async () => {
-    const o = out();
-    const code = await runSessionsCommand(['list', '--bogus'], {
-      sessionsRoot: tmpRoot(),
-      out: o.write,
-    });
-    expect(code).toBe(1);
   });
 
   it('attaches and shows the transcript tail', async () => {
@@ -116,50 +122,40 @@ describe('sessions CLI (issue #14, slice F)', () => {
     }, BACKGROUND_CONTEXT);
     await session.close(BACKGROUND_CONTEXT);
     const o = out();
-    const code = await runSessionsCommand(['attach', id, '--tail', '5'], {
-      sessionsRoot: root,
-      out: o.write,
-    });
+    const code = await runSessionsCommand(
+      { command: 'attach', id: id, tail: 5 },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
     expect(code).toBe(0);
     expect(o.lines.some((line) => line.includes('cli hello'))).toBe(true);
   });
 
-  it('fails cleanly for unknown sessions and bad usage', async () => {
+  it('fails cleanly for unknown sessions and unsafe ids', async () => {
     const root = tmpRoot();
     const o = out();
     expect(
-      await runSessionsCommand(['attach', 'nope'], {
-        sessionsRoot: root,
-        out: o.write,
-      }),
+      await runSessionsCommand(
+        { command: 'attach', id: 'nope' },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      ),
     ).toBe(1);
+    expect(o.lines.join('\n')).toContain('error:');
+    // The id is a path segment: a traversal is refused before any store I/O.
     expect(
-      await runSessionsCommand([], { sessionsRoot: root, out: o.write }),
-    ).toBe(1);
-    expect(
-      await runSessionsCommand(['bogus'], { sessionsRoot: root, out: o.write }),
-    ).toBe(1);
-    expect(
-      await runSessionsCommand(['create', '--cwd', '--tail'], {
-        sessionsRoot: root,
-        out: o.write,
-      }),
-    ).toBe(1);
-  });
-
-  // Issue #127 review: a starved duplicate --cwd used to be silently
-  // ignored (the first occurrence won, exit 0). The shared parser records
-  // the starved occurrence, so create now refuses it — fail-closed,
-  // pinned here as deliberate.
-  it('refuses a starved duplicate --cwd on create (exit 1, no session)', async () => {
-    const root = tmpRoot();
-    const o = out();
-    const code = await runSessionsCommand(
-      ['create', '--cwd', '/work', '--cwd'],
-      { sessionsRoot: root, out: o.write },
-    );
-    expect(code).toBe(1);
-    expect(o.lines.join('\n')).toContain('error: --cwd needs a value');
+      await runSessionsCommand(
+        { command: 'attach', id: '../x' },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      ),
+    ).toBe(2);
   });
 });
 
@@ -168,17 +164,20 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     const root = tmpRoot();
     const o = out();
     const created = await runSessionsCommand(
-      ['create', '--cwd', '/work', '--dangerously-skip-approvals'],
+      { command: 'create', cwd: '/work', dangerouslySkipApprovals: true },
       { sessionsRoot: root, out: o.write },
     );
     expect(created).toBe(0);
     expect(o.lines.some((line) => line.includes('full-access'))).toBe(true);
     const id = o.lines[0] ?? '';
     const o2 = out();
-    const attached = await runSessionsCommand(['attach', id, '--tail', '0'], {
-      sessionsRoot: root,
-      out: o2.write,
-    });
+    const attached = await runSessionsCommand(
+      { command: 'attach', id: id, tail: 0 },
+      {
+        sessionsRoot: root,
+        out: o2.write,
+      },
+    );
     expect(attached).toBe(0);
     expect(o2.lines.some((line) => line.includes('posture: full-access'))).toBe(
       true,
@@ -189,29 +188,38 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     const root = tmpRoot();
     const o = out();
     expect(
-      await runSessionsCommand(['create', '--cwd', '/work'], {
-        sessionsRoot: root,
-        out: o.write,
-      }),
+      await runSessionsCommand(
+        { command: 'create', cwd: '/work' },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      ),
     ).toBe(0);
     const id = o.lines[0] ?? '';
     const o2 = out();
     expect(
-      await runSessionsCommand(['attach', id, '--tail', '0'], {
-        sessionsRoot: root,
-        out: o2.write,
-      }),
+      await runSessionsCommand(
+        { command: 'attach', id: id, tail: 0 },
+        {
+          sessionsRoot: root,
+          out: o2.write,
+        },
+      ),
     ).toBe(0);
     expect(
       o2.lines.some((line) => line.includes('posture: approvals enforced')),
     ).toBe(true);
     const o3 = out();
     expect(
-      await runSessionsCommand(['attach', '../../etc', '--tail', '0'], {
-        sessionsRoot: root,
-        out: o3.write,
-      }),
-    ).toBe(1);
+      await runSessionsCommand(
+        { command: 'attach', id: '../../etc', tail: 0 },
+        {
+          sessionsRoot: root,
+          out: o3.write,
+        },
+      ),
+    ).toBe(2);
     expect(o3.lines.some((line) => line.includes('invalid session id'))).toBe(
       true,
     );

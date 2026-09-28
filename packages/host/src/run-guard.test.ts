@@ -20,6 +20,8 @@ import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
   mapTerminusToExitCode,
+  parseRunMaxTurns,
+  parseRunTimeout,
   runRunCommand,
 } from './run-cli.js';
 
@@ -103,85 +105,38 @@ afterEach(() => {
 });
 
 describe('run guard flags (issue #84)', () => {
-  it('rejects --timeout without a value with exit 2', async () => {
-    const o = out();
-    let called = false;
-    const exit = await runRunCommand(['-p', 'hi', '--timeout'], {
-      out: o.write,
-      run: async () => {
-        called = true;
-        return completedResult();
-      },
-    });
-    expect(exit).toBe(2);
-    expect(called).toBe(false);
-    expect(o.lines.join('\n')).toMatch(/--timeout needs a value/);
+  // The value rules commander applies to --timeout/--max-turns
+  // (apps/kubic/src/commands/solo.ts wires them; a refusal exits 2 there —
+  // pinned in solo.test.ts). A missing value is commander's own error.
+  it.each(['abc', '0', '-5', '1.5'])('refuses --timeout %s', (value) => {
+    expect(() => parseRunTimeout(value)).toThrow(/need a positive integer/);
   });
 
-  it.each(['abc', '0', '-5', '1.5'])(
-    'rejects --timeout %s with exit 2',
-    async (value) => {
-      const o = out();
-      let called = false;
-      const exit = await runRunCommand(['-p', 'hi', '--timeout', value], {
-        out: o.write,
-        run: async () => {
-          called = true;
-          return completedResult();
-        },
-      });
-      expect(exit).toBe(2);
-      expect(called).toBe(false);
-      expect(o.lines.join('\n')).toMatch(/invalid --timeout/);
-    },
-  );
+  it.each(['nope', '0', '-2', '2.5'])('refuses --max-turns %s', (value) => {
+    expect(() => parseRunMaxTurns(value)).toThrow(/need a positive integer/);
+  });
 
-  it.each(['nope', '0', '-2', '2.5'])(
-    'rejects --max-turns %s with exit 2',
-    async (value) => {
-      const o = out();
-      let called = false;
-      const exit = await runRunCommand(['-p', 'hi', '--max-turns', value], {
-        out: o.write,
-        run: async () => {
-          called = true;
-          return completedResult();
-        },
-      });
-      expect(exit).toBe(2);
-      expect(called).toBe(false);
-      expect(o.lines.join('\n')).toMatch(/invalid --max-turns/);
-    },
-  );
-
-  it('rejects --timeout above the setTimeout ceiling with exit 2', async () => {
-    const o = out();
-    let called = false;
-    const exit = await runRunCommand(['-p', 'hi', '--timeout', '3000000000'], {
-      out: o.write,
-      run: async () => {
-        called = true;
-        return completedResult();
-      },
-    });
+  it('refuses a --timeout above the setTimeout ceiling', () => {
     // Above 2^31-1 ms setTimeout clamps to 1 ms (TimeoutOverflowWarning): a
     // "bound" that fires immediately is a lie, so it is refused at parse time.
-    expect(exit).toBe(2);
-    expect(called).toBe(false);
-    expect(o.lines.join('\n')).toMatch(/invalid --timeout/);
-    expect(o.lines.join('\n')).toMatch(/2147483647/);
+    expect(() => parseRunTimeout('3000000000')).toThrow(/max 2147483647/);
+    expect(parseRunTimeout('2147483647')).toBe(2_147_483_647);
+    expect(parseRunMaxTurns('10')).toBe(10);
   });
 
   it('accepts the largest usable --timeout', async () => {
     const o = out();
     const seen: { options?: unknown } = {};
-    const exit = await runRunCommand(['-p', 'hi', '--timeout', '2147483647'], {
-      out: o.write,
-      run: async (_prompt: string, options: unknown) => {
-        seen.options = options;
-        return completedResult();
+    const exit = await runRunCommand(
+      { prompt: 'hi', timeoutMs: 2147483647 },
+      {
+        out: o.write,
+        run: async (_prompt: string, options: unknown) => {
+          seen.options = options;
+          return completedResult();
+        },
       },
-    });
+    );
     expect(exit).toBe(0);
     expect(seen.options).toEqual({
       sessionId: undefined,
@@ -194,7 +149,7 @@ describe('run guard flags (issue #84)', () => {
     const o = out();
     const seen: { prompt?: string; options?: unknown } = {};
     const exit = await runRunCommand(
-      ['-p', 'hi', '--timeout', '60000', '--max-turns', '10'],
+      { prompt: 'hi', timeoutMs: 60000, maxTurns: 10 },
       {
         out: o.write,
         run: async (prompt: string, options: unknown) => {
@@ -216,13 +171,16 @@ describe('run guard flags (issue #84)', () => {
   it('passes the guard through unset by default (headless owns the default)', async () => {
     const o = out();
     const seen: { options?: unknown } = {};
-    await runRunCommand(['-p', 'hi'], {
-      out: o.write,
-      run: async (_prompt: string, options: unknown) => {
-        seen.options = options;
-        return completedResult();
+    await runRunCommand(
+      { prompt: 'hi' },
+      {
+        out: o.write,
+        run: async (_prompt: string, options: unknown) => {
+          seen.options = options;
+          return completedResult();
+        },
       },
-    });
+    );
     expect(seen.options).toEqual({
       sessionId: undefined,
       timeoutMs: undefined,

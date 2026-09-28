@@ -43,6 +43,11 @@ is read — never half-applied.
 A malformed value fails closed with the variable named — it never silently
 falls back to a default.
 
+`KUBIC_PROVIDER` is not a config key: `KUBIC_PROVIDER=faux` selects the
+scripted **testing** provider for one invocation (no network, no model),
+and any other non-empty value is refused by name — see
+[the testing provider](commands.md#testing-provider-kubic_providerfaux).
+
 ### Seeing the effective values
 
 `kubic config` prints every value that is set, with the layer it came from,

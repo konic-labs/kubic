@@ -17,11 +17,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
-import { answerHelp } from '../../../packages/core/src/cli-help.js';
-import {
-  type FlagSpec,
-  parseFlagArgs,
-} from '../../../packages/core/src/flags.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -38,6 +33,12 @@ import {
   type InstalledSoloPolicy,
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
+import {
+  FAUX_FOOTER,
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+  fauxProviderActive,
+} from '../../../packages/host/src/faux-provider.js';
 import {
   shouldEmitSoloNotice,
   soloTuiLine,
@@ -284,7 +285,14 @@ export async function bootTuiLane(
     }
     const assembled = assembleModels(process.cwd());
     const models = options.models ?? assembled.models;
-    const model = selectModel(models);
+    // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
+    // picked implicitly; the footer names it (runTuiCommand).
+    const model = selectModel(
+      models,
+      options.models === undefined && fauxProviderActive(process.env)
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : undefined,
+    );
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -664,57 +672,28 @@ export class TuiTurnRunner {
   }
 }
 
-export const TUI_USAGE =
-  'usage: kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]';
-
-// Issue #127: the shared parser replaces the hand-rolled loop. `kubic tui`
-// takes no operands, so an unconsumed positional is refused exactly like an
-// unknown flag (the pre-migration posture).
-const TUI_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--session', takes: 'value' },
-  { name: '--role', takes: 'value' },
-  { name: '--skill', takes: 'value', repeat: true },
-  { name: '--no-skills', takes: 'boolean' },
-];
-
-const TUI_MISSING_VALUE_MESSAGES: Readonly<Record<string, string>> = {
-  '--session': 'error: --session needs a value',
-  '--role': 'error: --role needs a value',
-  '--skill': 'error: --skill needs a value',
-};
+// The parsed `kubic tui` invocation (commander owns the argv:
+// ./commands/solo.ts). The parity flags (issue #113) carry the same names
+// and value rules as their `kubic run` counterparts.
+export interface TuiCommandOptions {
+  readonly session?: string;
+  readonly role?: string;
+  readonly skills?: readonly string[];
+  readonly noSkills?: boolean;
+}
 
 export async function runTuiCommand(
-  args: string[],
+  options: TuiCommandOptions,
   deps: TuiRunDeps,
 ): Promise<number> {
-  const help = answerHelp(args, deps.out, TUI_USAGE);
-  if (help !== null) return help;
-  // Issue #113: the parity flags, parsed with the same discipline as
-  // `kubic run` — a value flag without a value is a usage error, an unknown
-  // flag is refused by name.
-  const parsed = parseFlagArgs(args, TUI_FLAG_SPEC);
-  const operands = [...parsed.positional];
-  for (const flag of parsed.missing) {
-    deps.out(
-      TUI_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
-    );
-    return RUN_EXIT_USAGE;
-  }
-  if (parsed.unknown.length > 0) {
-    deps.out(`error: unknown flag ${parsed.unknown[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  if (operands.length > 0) {
-    deps.out(`error: unknown flag ${operands[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  const sessionId = parsed.values['--session'] as string | undefined;
-  const role = parsed.values['--role'] as string | undefined;
-  const skillsList = (parsed.values['--skill'] as string[] | undefined) ?? [];
+  const sessionId = options.session;
   const flags: TuiBootFlags = {};
-  if (role !== undefined) flags.role = role;
-  if (parsed.values['--no-skills'] === true) flags.noSkills = true;
-  if (skillsList.length > 0) flags.skillsList = skillsList;
+  if (options.role !== undefined) flags.role = options.role;
+  if (options.noSkills === true) flags.noSkills = true;
+  const skillsList = options.skills ?? [];
+  if (skillsList.length > 0) flags.skillsList = [...skillsList];
+  // commander validated the id already; re-checked because it becomes a
+  // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
     deps.out(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
@@ -757,7 +736,13 @@ export async function runTuiCommand(
   // own to report. Suppressed for orchestrator-managed children
   // (KUBIC_WORKER_ID set) and for the documented KUBIC_NO_NOTICE opt-out;
   // the text is solo-warning.ts's, never re-worded here.
-  const notice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  // The faux testing provider is never silent: while it answers, the
+  // footer says so next to (or instead of) the solo notice.
+  const notice =
+    boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
+      ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
+      : soloNotice;
   const turn =
     boot.loop === undefined
       ? undefined

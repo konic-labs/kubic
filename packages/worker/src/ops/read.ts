@@ -246,7 +246,8 @@ export function readFailure(err: unknown, path: string): unknown {
 
 export const readOperation: Operation<ReadArgs, ReadResult> = {
   name: 'read',
-  description: 'Read file contents with line offset/limit',
+  description:
+    'Read a text file. Returns the raw lines under a "[read <path>: lines a-b of N]" header. offset is 1-indexed (default 1); limit defaults to and is capped at 2000 lines; at most 8 MiB is scanned. When the header ends "more: offset=N", call again with that offset.',
   replay: 'safe',
   validateArgs: validateReadArgs,
   execute: async (_inv: ToolInvocation, args: ReadArgs, ctx: OpContext) => {

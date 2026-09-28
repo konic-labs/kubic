@@ -103,6 +103,9 @@ export type {
   Model,
   ModelThinkingLevel,
   MutableModels,
+  // TSchema (issue #168): the type of the per-operation parameter schemas
+  // in ops/registry.ts — the same typebox Pi's Tool.parameters requires.
+  TSchema,
   Usage,
 } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
@@ -139,6 +142,14 @@ export type {
 //   used by: apps/kubic composition root (models assembly for `kubic models`)
 //   why Pi has no alternative: auth resolution reads this store (§37)
 //   review: issue #20
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai#validateToolArguments
+//   used by: packages/worker/src/ops/registry-schema.test.ts (issue #168 —
+//     pins that the registry schemas and the Kubic validators agree)
+//   why Pi has no alternative: it is the exact check the harness runs on
+//     every tool call before execute; a second schema checker would test a
+//     different validator than the one production uses
+//   review: issue #168
 export {
   clampThinkingLevel,
   createModels,
@@ -151,6 +162,7 @@ export {
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
   Type,
+  validateToolArguments,
 } from '@earendil-works/pi-ai';
 export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi-ai/api/openai-responses.lazy';

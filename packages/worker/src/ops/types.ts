@@ -105,6 +105,24 @@ export class OpError extends Error {
   }
 }
 
+// Strict sampling (issue #168; §37.5): an argument the tool does not
+// declare is refused by name, never silently ignored — the model then sees
+// the real argument names instead of a guess that quietly did nothing.
+export function rejectUnknownArgs(
+  op: string,
+  raw: object,
+  allowed: readonly string[],
+): void {
+  for (const key of Object.keys(raw)) {
+    if (!allowed.includes(key)) {
+      throw new OpError(
+        'invalid_args',
+        `${op}: unknown argument "${key}" (strict sampling)`,
+      );
+    }
+  }
+}
+
 export interface Operation<TArgs, TResult> {
   readonly name: string;
   readonly description: string;

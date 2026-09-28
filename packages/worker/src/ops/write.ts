@@ -45,7 +45,8 @@ export function validateWriteArgs(raw: unknown): WriteArgs {
 
 export const writeOperation: Operation<WriteArgs, WriteResult> = {
   name: 'write',
-  description: 'Write a file atomically (tmp + rename) with hashes',
+  description:
+    'Create or overwrite a file with its complete content, atomically (tmp + rename); returns before/after hashes. Use edit to change part of a file.',
   replay: 'never',
   validateArgs: validateWriteArgs,
   execute: async (_inv: ToolInvocation, args: WriteArgs, ctx: OpContext) => {

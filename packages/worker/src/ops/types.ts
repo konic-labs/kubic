@@ -73,10 +73,14 @@ export interface OpErrorDetails {
 // The named failure-code vocabulary `OpError.code` draws from (§52).
 // Model-readable and stable: the model routes on these names, so each is a
 // distinct, actionable refusal — never a generic catch-all. `file_too_large`
-// (issue #122) is the pre-allocation size refusal for edit.
+// (issue #122) is the pre-allocation size refusal for edit; `is_directory`
+// and `permission_denied` (issue #199) keep read from calling every I/O
+// failure a missing file.
 export const OP_FAILURE_CODES = [
   'invalid_args',
   'not_found',
+  'is_directory',
+  'permission_denied',
   'no_match',
   'ambiguous_match',
   'file_too_large',

@@ -543,6 +543,14 @@ export interface FakeScript {
   stderr: string;
 }
 
+// The fake's missing-path error carries Node's `ENOENT` code, so ops that
+// map errno codes (read, issue #199) see the same shape as the real seam.
+function fakeNoSuchFile(path: string): Error {
+  return Object.assign(new Error(`fake fs: no such file: ${path}`), {
+    code: 'ENOENT',
+  });
+}
+
 export class FakeExecutionEnv implements ExecutionEnv {
   readonly cwd = '/fake';
   readonly provenance: Provenance;
@@ -552,7 +560,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
   readonly fs: FileSystem = {
     readFile: (path: string) => {
       const hit = this.files.get(path);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${path}`);
+      if (hit === undefined) throw fakeNoSuchFile(path);
       return hit;
     },
     writeFile: (path: string, content: string) => {
@@ -560,7 +568,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     rename: (from: string, to: string) => {
       const hit = this.files.get(from);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${from}`);
+      if (hit === undefined) throw fakeNoSuchFile(from);
       this.files.delete(from);
       this.files.set(to, hit);
     },
@@ -591,7 +599,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
           count += 1;
         }
       }
-      if (count === 0) throw new Error(`fake fs: no such file: ${path}`);
+      if (count === 0) throw fakeNoSuchFile(path);
       return { isFile: false, isDirectory: true, size };
     },
   };

@@ -105,7 +105,12 @@ Two hard bounds keep one tool call from costing the whole file in memory
   the budget — the empty-region case, which returns empty content with
   `truncated: true`. When the scan did reach EOF, `truncated` reflects
   only output cutting (the line window and `READ_MAX_LINES`) — an explicit
-  `limit` is the requested region, not truncation.
+  `limit` is the requested region, not truncation. `readWindowed` calls
+  `fs.readFileRange` as a method (the real `NodeFileSystem` reads
+  `this.cwd`; #199), and `read` names the actual failure: a missing path
+  is `not_found`, a directory `is_directory`, an unreadable file
+  `permission_denied`, a cwd-confinement escape `invalid_args`; any other
+  error propagates as a fault instead of masquerading as a missing file.
 - **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal

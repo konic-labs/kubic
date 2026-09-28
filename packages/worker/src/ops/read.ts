@@ -122,8 +122,9 @@ export function readWindowed(
   offset: number,
   limit: number,
 ): ReadWindow {
-  const range = fs.readFileRange;
-  if (range === undefined) {
+  // Called as a method, never extracted: the real NodeFileSystem reads
+  // `this.cwd` (issue #199).
+  if (fs.readFileRange === undefined) {
     const text = fs.readFile(path);
     return {
       text: text
@@ -149,7 +150,7 @@ export function readWindowed(
       break;
     }
     const request = Math.min(READ_CHUNK_BYTES, READ_MAX_BYTES - scanned);
-    const chunk = range(path, at, at + request);
+    const chunk = fs.readFileRange(path, at, at + request);
     if (chunk.length === 0) {
       sawEof = true;
       break;
@@ -216,6 +217,33 @@ export function readWindowed(
   };
 }
 
+// Name the real failure (issue #199): only a missing path is `not_found`.
+// A directory or a permission refusal gets its own code, a cwd-confinement
+// escape is the caller's argument, and anything else propagates unchanged
+// so a regression surfaces as a fault instead of a phantom missing file.
+export function readFailure(err: unknown, path: string): unknown {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    return new OpError('not_found', `read: no such file: ${path}`);
+  }
+  if (code === 'EISDIR') {
+    return new OpError(
+      'is_directory',
+      `read: ${path} is a directory (use ls to list it)`,
+    );
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return new OpError('permission_denied', `read: permission denied: ${path}`);
+  }
+  if (
+    err instanceof Error &&
+    err.message.startsWith('path escapes cwd confinement')
+  ) {
+    return new OpError('invalid_args', `read: ${err.message}`);
+  }
+  return err;
+}
+
 export const readOperation: Operation<ReadArgs, ReadResult> = {
   name: 'read',
   description: 'Read file contents with line offset/limit',
@@ -227,8 +255,8 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
     let view: ReadWindow;
     try {
       view = readWindowed(ctx.env.fs, args.path, offset, span);
-    } catch {
-      throw new OpError('not_found', `read: no such file: ${args.path}`);
+    } catch (err) {
+      throw readFailure(err, args.path);
     }
     const lines = view.text.split('\n');
     // A trailing '\n' ends the last line; it does not start an empty one.

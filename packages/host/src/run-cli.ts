@@ -251,7 +251,10 @@ function isWorkspaceFailure(error: unknown): boolean {
     error instanceof Error ? error.message : error,
   ]
     .map((part) => String(part ?? ''))
-    .join(' ');
+    .join(' ')
+    // A path is data, not a signal: a checkout under `…/worktrees/…` or
+    // `…/workspace/…` must not classify every failure naming a file.
+    .replace(/(?:[A-Za-z]:)?[\\/]\S*/g, ' ');
   return /workspace|worktree|ENOENT|ENOTDIR|EACCES|EPERM|EROFS|ENOSPC/i.test(
     haystack,
   );

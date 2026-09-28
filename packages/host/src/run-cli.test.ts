@@ -318,6 +318,24 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
     );
     expect(mapCaughtErrorToTerminus('plain string boom')).toBe('failed');
   });
+
+  it('ignores workspace words that only appear inside a path', () => {
+    // A checkout under ~/worktrees/ or ~/workspace/ must not turn every
+    // failure that names a file into workspace_unavailable.
+    expect(
+      mapCaughtErrorToTerminus(
+        new Error(
+          'extension startup failed closed: /home/u/.claude/worktrees/wf-1/skills/budget is missing',
+        ),
+      ),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('boom at C:\\workspace\\x.ts')),
+    ).toBe('failed');
+    expect(
+      mapCaughtErrorToTerminus(new Error('ENOENT: /home/u/workspace/a')),
+    ).toBe('workspace_unavailable');
+  });
 });
 
 describe('run -p headless behavior (§17, §80)', () => {

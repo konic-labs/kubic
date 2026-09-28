@@ -33,6 +33,53 @@ function allowBash(): EffectivePolicy {
   ]).policy;
 }
 
+describe('kubic policy names unsupported levels (issue #166, §40.2)', () => {
+  const unsupported = [
+    {
+      class: 'network',
+      level: 'allowlist',
+      enforcedAs: 'none',
+      reason: 'no domain list can be supplied',
+    },
+    {
+      class: 'filesystem',
+      level: 'full',
+      enforcedAs: 'workspace-write',
+      reason: 'no outside-workspace write tool exists',
+    },
+  ];
+
+  it('warns on stderr once per unsupported level; stdout stays the decision', async () => {
+    const cap = capture();
+    const code = await runPolicyCommand(
+      { tool: 'bash' },
+      { resolvePolicy: allowBash, unsupported: () => unsupported, ...cap },
+    );
+    expect(code).toBe(0);
+    expect(cap.lines).toEqual(['allow bash']);
+    expect(cap.errs).toEqual([
+      "warn: network 'allowlist' is unsupported — enforced as 'none': no domain list can be supplied",
+      "warn: filesystem 'full' is unsupported — enforced as 'workspace-write': no outside-workspace write tool exists",
+    ]);
+  });
+
+  it('carries the unsupported levels in the --json document', async () => {
+    const cap = capture();
+    await runPolicyCommand(
+      { tool: 'bash', json: true },
+      { resolvePolicy: allowBash, unsupported: () => unsupported, ...cap },
+    );
+    const doc = JSON.parse(cap.lines.join('\n')) as {
+      unsupported: { class: string; level: string }[];
+    };
+    expect(doc.unsupported.map((u) => `${u.class}:${u.level}`)).toEqual([
+      'network:allowlist',
+      'filesystem:full',
+    ]);
+    expect(cap.errs).toEqual([]);
+  });
+});
+
 describe('kubic policy tool query (issue #79)', () => {
   it('denies by default with no enterprise allow', async () => {
     const cap = capture();

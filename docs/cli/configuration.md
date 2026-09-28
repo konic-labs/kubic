@@ -121,7 +121,13 @@ refused by name — it would match nothing.
 sessionScoped, requireJustification · `[permissions]` filesystem
 (`none`, `read`, `workspace-write`, `full`), shell (boolean or
 `read-only-allowlist`), network (`none`, `allowlist`, `full`), git
-(boolean, `workspace`, `full`), credentials (`none`, `allowlist`) ·
+(boolean, `workspace`, `full`), credentials (`none`, `allowlist`) — four
+of these cannot be expressed by the tool set and are reported as
+unsupported by `kubic doctor` and `kubic policy`, enforced as the named
+narrower level (§40.2, issue #166): network `allowlist` → `none` (no domain
+list exists, so every network command is blocked and raises the network
+approval trigger), credentials `allowlist` → `none`, filesystem `full` →
+`workspace-write`, git `full` → `workspace` ·
 `[journal]` retentionDays/outOfScope · `[roles.<name>]` model/tools ·
 `[orchestrator]` root/maxWorkers · `[ui]` theme/statusBar ·
 `[session]` store/dir/retentionDays. The canonical example is

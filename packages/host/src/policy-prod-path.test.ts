@@ -339,6 +339,30 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
     expect(printed).toContain('source=default');
   });
 
+  it('names each unsupported level instead of printing it green (issue #166)', async () => {
+    const lines: string[] = [];
+    const installed = installSoloPolicy({
+      workspace: '/fake',
+      classes: {
+        filesystem: 'full',
+        shell: true,
+        network: 'allowlist',
+        git: 'full',
+        credentials: 'allowlist',
+      },
+    });
+    await runDoctorCommand(
+      {},
+      doctorDeps(lines, () => installed.posture),
+    );
+    const printed = lines.join('\n');
+    expect(printed).toContain('WARN policy:installed (unsupported-level)');
+    expect(printed).toContain("network 'allowlist' is unsupported");
+    expect(printed).toContain("credentials 'allowlist' is unsupported");
+    expect(printed).toContain("filesystem 'full' is unsupported");
+    expect(printed).toContain("git 'full' is unsupported");
+  });
+
   it('fails the matrix with policy-mismatch when the installed policy contradicts itself', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(

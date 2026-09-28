@@ -111,7 +111,11 @@ otherwise — `filesystem = workspace-write`, `shell = true`,
 tool allowlist (a tool outside it is refused at execute time, not merely
 omitted), and the `destructive-guard` / `network-guard` / `confine-guard`
 interceptors wired to an approval ask. `kubic doctor` prints this same
-installed object as `policy:installed`.
+installed object as `policy:installed` — as a `WARN (unsupported-level)`
+naming each level the tool set cannot express (issue #166): network
+`allowlist` is enforced as `none` (the network guard blocks and the
+network trigger fires), credentials `allowlist` as `none`, filesystem
+`full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
 no TTY, and the TUI approval overlay has not landed, so a challenged call
@@ -1161,10 +1165,17 @@ reports on its `policy:installed` line.
 Policy is deny-by-default: a tool outside the installed allowlist is
 denied. Tool names match regardless of case and surrounding whitespace.
 
+Unsupported levels are named, never silent (§40.2, issue #166): for each
+installed permission level the tool set cannot express (network or
+credentials `allowlist`, filesystem or git `full`) the command writes one
+`warn: <class> '<level>' is unsupported — enforced as '<level>': <reason>`
+line to stderr. `kubic doctor` names the same set on its
+`policy:installed` line, which is then `WARN (unsupported-level)`.
+
 | Flag | Meaning |
 | --- | --- |
 | `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
-| `--json` | Prints `{"tool", "decision"}` instead of the text line. Exits 0. |
+| `--json` | Prints `{"tool", "decision"}` instead of the text line, plus `unsupported` (`[{class, level, enforcedAs, reason}]`) when any installed level is unsupported. Exits 0. |
 
 ## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--json]`
 

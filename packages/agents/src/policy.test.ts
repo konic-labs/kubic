@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkAgreement,
+  checkExpressible,
   checkGrantable,
+  effectiveNetworkLevel,
   PolicyValidationError,
   SOLO_DEFAULTS,
   toolsForClasses,
@@ -103,5 +105,47 @@ describe('permission policy model (issue #15, slice A)', () => {
       expect(err).toBeInstanceOf(PolicyValidationError);
       expect((err as Error).name).toBe('PolicyValidationError');
     }
+  });
+});
+
+describe('inexpressible levels are reported, never silent (issue #166, §40.2)', () => {
+  it('reports network allowlist with no domain list as unsupported, enforced as none', () => {
+    const found = checkExpressible(validateClasses({ network: 'allowlist' }));
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      class: 'network',
+      level: 'allowlist',
+      enforcedAs: 'none',
+    });
+    expect(found[0]?.reason).toMatch(/domain/);
+    expect(effectiveNetworkLevel('allowlist')).toBe('none');
+    expect(effectiveNetworkLevel('full')).toBe('full');
+    expect(effectiveNetworkLevel('none')).toBe('none');
+  });
+
+  it('reports credentials allowlist, filesystem full and git full by class', () => {
+    const found = checkExpressible(
+      validateClasses({
+        credentials: 'allowlist',
+        filesystem: 'full',
+        git: 'full',
+      }),
+    );
+    expect(
+      found.map((entry) => [entry.class, entry.level, entry.enforcedAs]),
+    ).toEqual([
+      ['filesystem', 'full', 'workspace-write'],
+      ['git', 'full', 'workspace'],
+      ['credentials', 'allowlist', 'none'],
+    ]);
+  });
+
+  it('reports nothing for the expressible solo defaults', () => {
+    expect(checkExpressible(SOLO_DEFAULTS)).toEqual([]);
+    expect(
+      checkExpressible(
+        validateClasses({ network: 'full', filesystem: 'read' }),
+      ),
+    ).toEqual([]);
   });
 });

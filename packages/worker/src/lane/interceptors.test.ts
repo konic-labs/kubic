@@ -151,6 +151,19 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(() => booted.env.fs.readFile('/etc/cron.d/x')).toThrow();
   });
 
+  it('blocks network commands under a domain-less allowlist (issue #166)', async () => {
+    const blocked = await boot([
+      { name: 'bash', args: { command: 'curl https://evil.example' } },
+    ]);
+    registerPolicyInterceptors(blocked.harness.hooks, {
+      workspace: '/work',
+      network: 'allowlist',
+    });
+    const ends = await driveToolEnds(blocked);
+    expect(JSON.stringify(ends[0])).toContain('network command blocked');
+    expect(JSON.stringify(ends[0])).toContain('allowlist');
+  });
+
   it('blocks network commands when network is none, allows otherwise', async () => {
     const blocked = await boot([
       { name: 'bash', args: { command: 'curl https://example.com' } },

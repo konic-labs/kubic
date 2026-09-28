@@ -12,7 +12,8 @@
 //   shell read-only-allowlist — bash present, destructive AND network
 //     commands blocked.
 //   shell false — bash absent via allowlist.
-//   network none — network-command verbs blocked in bash. allowlist/full
+//   network none (and a domain-less allowlist, enforced as none — issue
+//     #166) — network-command verbs blocked in bash. full
 //     change nothing at the tool layer (documented, not silent): there is
 //     no network tool to remove, and shell:true can still curl. The flag
 //     is consumed by approval triggers (issue #16).
@@ -30,7 +31,11 @@
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in host/approvals.ts.
 import { isAbsolute, join, resolve } from 'node:path';
-import type { NetworkLevel, ShellLevel } from '../../../agents/src/policy.js';
+import {
+  effectiveNetworkLevel,
+  type NetworkLevel,
+  type ShellLevel,
+} from '../../../agents/src/policy.js';
 import type { Hooks, JsonValue } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
@@ -291,12 +296,20 @@ export function registerPolicyInterceptors(
         if (isDestructive(command, options.workspace)) {
           return block(`destructive command blocked: ${command}`);
         }
+        // A domain-less `allowlist` allows nothing (issue #166): it is
+        // enforced as `none`, never as the unrestricted `full`.
+        const network =
+          options.network === undefined
+            ? undefined
+            : effectiveNetworkLevel(options.network);
         if (
-          (options.network === 'none' ||
-            options.shell === 'read-only-allowlist') &&
+          (network === 'none' || options.shell === 'read-only-allowlist') &&
           isNetworkCommand(command)
         ) {
-          return block(`network command blocked (network: none): ${command}`);
+          const declared = options.network ?? 'none';
+          return block(
+            `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
+          );
         }
         return undefined;
       }),

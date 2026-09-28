@@ -110,6 +110,7 @@ import {
   type MutableModels,
   type OperationAdmissionResult,
 } from '../../../packages/worker/src/pi-boundary.js';
+import type { runtimeLaneDeps } from './config-runtime.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -417,9 +418,12 @@ export async function bootTuiLane(
   }
 }
 
-export function tuiDepsWithDefaults(provided: {
-  out: (line: string) => void;
-  err?: (line: string) => void;
+// The config projections `kubic tui` consumes (issues #86, #90, #113, #115,
+// #133). The lane half is `runtimeLaneDeps`' own return type BY NAME
+// (issue #294): a key that projection gains can never be silently dropped
+// here, because the forwarding table in tuiDepsWithDefaults must name
+// every key of this type.
+export type TuiConfigProjection = {
   // Config projections (issues #86, #90): the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -431,14 +435,42 @@ export function tuiDepsWithDefaults(provided: {
   // Issue #115 (§35/§42.5): config out-of-scope paths, from that same
   // projection — the interactive lane's baseline and sweep honour them too.
   reconcileOutOfScope?: string[];
-}): TuiRunDeps {
-  const {
-    classes,
-    policySource,
-    policy,
-    journalRetention,
-    reconcileOutOfScope,
-  } = provided;
+} & ReturnType<typeof runtimeLaneDeps>;
+
+function definedOnly<T extends object>(
+  table: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  const out: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
+  for (const key of Object.keys(table) as Array<keyof T>) {
+    const value = table[key];
+    if (value !== undefined) out[key] = value as Exclude<T[keyof T], undefined>;
+  }
+  return out;
+}
+
+export function tuiDepsWithDefaults(
+  provided: {
+    out: (line: string) => void;
+    err?: (line: string) => void;
+  } & TuiConfigProjection,
+  // The boot the deps drive. Absent means the prod bootTuiLane; tests pass a
+  // wrapper to observe (or re-root) exactly what the projection forwards.
+  boot: typeof bootTuiLane = bootTuiLane,
+): TuiRunDeps {
+  // Every projection key must appear (possibly undefined): the `satisfies`
+  // makes omitting one a compile error (issue #294).
+  const forwarded = {
+    classes: provided.classes,
+    policySource: provided.policySource,
+    policy: provided.policy,
+    journalRetention: provided.journalRetention,
+    reconcileOutOfScope: provided.reconcileOutOfScope,
+    // Issue #294: `[agent].name` (journal and reconciliation attribution)
+    // and the `[roles.<name>]` layers `--role` merges under the document.
+    agentId: provided.agentId,
+    roles: provided.roles,
+  } satisfies Record<keyof TuiConfigProjection, unknown>;
+  const projection = definedOnly(forwarded);
   return {
     out: provided.out,
     ...(provided.err === undefined ? {} : { err: provided.err }),
@@ -449,13 +481,9 @@ export function tuiDepsWithDefaults(provided: {
       answer?: TuiApprovalSeat,
       flags?: TuiBootFlags,
     ) =>
-      bootTuiLane(sessionId, {
-        ...(classes === undefined ? {} : { classes }),
-        ...(policySource === undefined ? {} : { policySource }),
-        ...(policy === undefined ? {} : { policy }),
+      boot(sessionId, {
+        ...projection,
         ...(answer === undefined ? {} : { answer }),
-        ...(journalRetention === undefined ? {} : { journalRetention }),
-        ...(reconcileOutOfScope === undefined ? {} : { reconcileOutOfScope }),
         ...(flags?.role === undefined ? {} : { role: flags.role }),
         ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
         ...(flags?.skillsList === undefined || flags.skillsList.length === 0

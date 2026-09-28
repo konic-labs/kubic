@@ -388,6 +388,44 @@ describe('budget spec parsing and stored-spec validation (issue #208)', () => {
       ),
     ).toBe(false);
   });
+
+  it('__proto__ is a real agent key, never a prototype write (issue #208 review)', () => {
+    // `__proto__` satisfies the agent-id charset, but on a plain {} accumulator
+    // an assignment to it sets the PROTOTYPE instead of an own key: the clause
+    // would vanish from Object.keys and from the JSON state. The accumulators
+    // are null-prototype, so the clause survives as data.
+    const spec = parseBudgetSpec('__proto__:maxToolCalls=5');
+    if (spec === undefined) throw new Error('spec must parse');
+    expect(Object.hasOwn(spec.byAgent, '__proto__')).toBe(true);
+    expect(Object.keys(spec.byAgent)).toEqual(['__proto__']);
+    // The accumulator is null-prototype: the clause is data, and no
+    // prototype anywhere was replaced by the parsed dims.
+    expect(Object.getPrototypeOf(spec.byAgent)).toBeNull();
+    expect(
+      Object.getOwnPropertyDescriptor(spec.byAgent, '__proto__')?.value,
+    ).toEqual({ maxToolCalls: 5 });
+    expect(JSON.parse(JSON.stringify(spec)) as unknown).toEqual({
+      byAgent: { ['__proto__']: { maxToolCalls: 5 } },
+    });
+    // No pollution of anything that merely read the parsed map.
+    expect(({} as Record<string, unknown>).maxToolCalls).toBeUndefined();
+
+    // The stored-spec path has the same rule: a JSON-parsed `__proto__` key
+    // (JSON.parse creates an own property) validates and round-trips.
+    const state = parseOrchestratorRunState(
+      {
+        ...base(),
+        agents: ['__proto__'],
+        budget: JSON.parse('{"byAgent":{"__proto__":{"maxTokens":1}}}'),
+      },
+      'orch-208',
+    );
+    if (state?.budget === undefined) throw new Error('budget must parse');
+    expect(Object.hasOwn(state.budget.byAgent, '__proto__')).toBe(true);
+    expect(JSON.parse(JSON.stringify(state.budget)) as unknown).toEqual({
+      byAgent: { ['__proto__']: { maxTokens: 1 } },
+    });
+  });
 });
 
 describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC1/AC2)', () => {
@@ -545,17 +583,14 @@ describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC
   });
 });
 
-describe('the manager hands each worker its resolved budget (issue #208)', () => {
-  it('the child process receives KUBIC_BUDGET through the §3.8 allowlist, and its budget terminus maps to exit 3', async () => {
-    const root = await initRepo();
-    const scratch = scratchRoot('kubic-208-child-');
-    const fixture = join(scratch, 'budget-child.mjs');
-    // The child contract, as a real process: announce readiness (the launch
-    // waits for exactly that line), record the budget it was handed, then
-    // exit on its own §78 budget terminus with the limit named.
-    writeFileSync(
-      fixture,
-      `
+// The child contract shared by the process-boundary tests below: announce
+// readiness, record the budget it was handed beside the worktree, then exit
+// on its own §78 budget terminus.
+function writeBudgetChildFixture(dir: string): string {
+  const fixture = join(dir, 'budget-child.mjs');
+  writeFileSync(
+    fixture,
+    `
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + String.fromCharCode(10));
@@ -563,7 +598,15 @@ writeFileSync(join(process.cwd(), 'budget-seen.json'), process.env.KUBIC_BUDGET 
 process.stdout.write(JSON.stringify({ ok: false, exitCode: 3, sessionId: process.argv[process.argv.indexOf('--session') + 1], status: 'budget_exhausted', error: { kind: 'budget_exhausted', message: 'budget BUDGET_EXHAUSTED (limit=toolCalls): fixture reported the cap' } }) + String.fromCharCode(10));
 process.exit(3);
 `,
-    );
+  );
+  return fixture;
+}
+
+describe('the manager hands each worker its resolved budget (issue #208)', () => {
+  it('the child process receives KUBIC_BUDGET through the §3.8 allowlist, and its budget terminus maps to exit 3', async () => {
+    const root = await initRepo();
+    const scratch = scratchRoot('kubic-208-child-');
+    const fixture = writeBudgetChildFixture(scratch);
     const lines: string[] = [];
     const deps = await orchestrateDepsWithDefaults({
       out: (line) => lines.push(line),
@@ -604,6 +647,46 @@ process.exit(3);
         ),
       ),
     ).toEqual({ maxToolCalls: 2 });
+  }, 60_000);
+
+  it('an ambient KUBIC_BUDGET never leaks into an unbudgeted child (issue #208 review)', async () => {
+    // The manager's own environment must not become a child's budget: with no
+    // resolved plan the spawn clears KUBIC_BUDGET, so a stray ambient value
+    // (a leftover export, a parent run's env) cannot silently limit a worker
+    // the manager did not budget.
+    vi.stubEnv('KUBIC_BUDGET', JSON.stringify({ maxToolCalls: 99 }));
+    const root = await initRepo();
+    const scratch = scratchRoot('kubic-208-ambient-');
+    const fixture = writeBudgetChildFixture(scratch);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: (line) => lines.push(line),
+      debug: () => undefined,
+      cwd: root,
+      sessionsRoot: scratchRoot('kubic-208-prod-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do the work', session: 'orch-clear', agents: ['worker-1'] },
+      deps,
+    );
+    // The fixture exits 3 on its own terminus; what matters is its evidence:
+    // it was handed an EMPTY budget, never the manager's ambient one.
+    expect(code).toBe(3);
+    expect(
+      readFileSync(
+        join(
+          root,
+          '.kubic',
+          'wt',
+          'orch-clear',
+          'worker-1',
+          'budget-seen.json',
+        ),
+        'utf8',
+      ),
+    ).toBe('');
   }, 60_000);
 
   it('AC3: maxRuntimeMs is the MANAGER watchdog — a sleeping child is killed and the run reports limit=wallClock', async () => {

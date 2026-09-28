@@ -866,8 +866,13 @@ function parseBudgetDims(raw: string): Record<string, number> | undefined {
 
 export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
   // Per-agent entries are `<agent>:<dims>` clauses separated by ';' so a
-  // comma stays inside one agent's dimension list.
-  const byAgent: Record<string, Record<string, number>> = {};
+  // comma stays inside one agent's dimension list. The accumulator is
+  // null-prototype (issue #208 review): `__proto__` is a legal agent id, and
+  // on a plain {} accumulator it would set the prototype instead of an own
+  // key, so the clause would vanish from Object.keys and the JSON state.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
   let shared: Record<string, number> | undefined;
   for (const clause of raw.split(';')) {
     const trimmed = clause.trim();
@@ -928,7 +933,11 @@ export function parseStoredBudgetSpec(
   }
   const shared = storedBudgetDims(record.shared);
   if (record.shared !== undefined && shared === undefined) return undefined;
-  const byAgent: Record<string, Record<string, number>> = {};
+  // Null-prototype for the same reason as parseBudgetSpec (issue #208
+  // review): a stored `__proto__` clause must survive as data.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
   if (record.byAgent !== undefined) {
     if (
       typeof record.byAgent !== 'object' ||

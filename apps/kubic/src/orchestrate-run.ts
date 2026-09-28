@@ -1454,15 +1454,17 @@ export async function orchestrateDepsWithDefaults(
                   ),
                 }),
             ...modelsRootEnv(),
-            // §71 child-side budget (issue #208): the child's own lane
-            // enforces toolCalls/tokens/cost from this spec. maxRuntimeMs is
-            // stripped — wall clock belongs to the WATCHDOG below, never to
-            // the child (one owner per dimension).
-            ...(budgetForSpawn === undefined
-              ? {}
-              : {
-                  KUBIC_BUDGET: JSON.stringify(childBudgetOf(budgetForSpawn)),
-                }),
+            // §71 child-side budget (issue #208): ALWAYS written from the
+            // resolved plan — set when one exists, cleared otherwise — so an
+            // ambient KUBIC_BUDGET in the manager's own environment can never
+            // leak into a child the manager did not budget. The child
+            // enforces toolCalls/tokens/cost from this spec; maxRuntimeMs is
+            // stripped (wall clock belongs to the WATCHDOG below, never to
+            // the child — one owner per dimension).
+            KUBIC_BUDGET:
+              budgetForSpawn === undefined
+                ? ''
+                : JSON.stringify(childBudgetOf(budgetForSpawn)),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [

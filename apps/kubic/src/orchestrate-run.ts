@@ -713,6 +713,16 @@ export async function orchestrateDepsWithDefaults(
     return root;
   };
 
+  // Issue #222: a worker child runs in its own worktree, which holds only
+  // tracked files — so it is told the manager's repo root and resolves the
+  // SAME project models.json (still behind the inherited trust decision).
+  // An outer pin (a manager that is itself a child) is kept as-is.
+  const modelsRootEnv = (): Record<string, string> => {
+    const pinned = process.env.KUBIC_MODELS_ROOT;
+    if (pinned !== undefined && pinned !== '') return {};
+    return root === undefined ? {} : { KUBIC_MODELS_ROOT: root };
+  };
+
   // The orchestrator writes its state under `<repo>/.kubic/` from the very
   // first save (and adds worktrees under the configured `[orchestrator].root`
   // — `.kubic/wt` by default). Make sure that dir never dirties the tree it
@@ -1176,6 +1186,7 @@ export async function orchestrateDepsWithDefaults(
                   KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
                   KUBIC_ORCHESTRATOR_SESSION: workerSession,
                 }),
+            ...modelsRootEnv(),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
@@ -1441,11 +1452,14 @@ export async function orchestrateDepsWithDefaults(
           sessionId: workerSession,
           role: request.spec.role,
           owner: `orchestrate:${sessionId}`,
-          baseEnv: Object.fromEntries(
-            Object.entries(process.env).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
+          baseEnv: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
             ),
-          ),
+            ...modelsRootEnv(),
+          },
           cmd:
             options.resolverEntry?.cmd ??
             options.workerEntry?.cmd ??

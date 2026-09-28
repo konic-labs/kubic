@@ -34,6 +34,17 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     });
   });
 
+  it("passes the manager's models root and trust decision through (issue #222)", () => {
+    const out = filterSpawnEnv({
+      KUBIC_MODELS_ROOT: '/repo',
+      KUBIC_TRUST_PROJECT: '1',
+    });
+    expect(out).toEqual({
+      KUBIC_MODELS_ROOT: '/repo',
+      KUBIC_TRUST_PROJECT: '1',
+    });
+  });
+
   it('injects the role grant on top of the filtered base', () => {
     const out = buildSpawnEnv(
       { PATH: '/bin', PARENT_TOKEN: 'nope' },

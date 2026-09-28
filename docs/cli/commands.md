@@ -881,8 +881,9 @@ composition paths therefore capture a **baseline** when the lane boots and
 Catalog readout over Pi's **built-in providers** (the generated catalogue:
 `anthropic`, `openai`, `google`, `amazon-bedrock`, `openrouter`, …) plus
 `models.json` customs from `~/.kubic/models/models.json` (always) and the
-project's `models.json` (only once the project is trusted,
-`KUBIC_TRUST_PROJECT=1`). Each file found is reported as an
+project's `models.json` at the project root — the git top level or nearest
+`.kubic/`, so any subdirectory sees the same providers — only once the
+project is trusted (`KUBIC_TRUST_PROJECT=1`). Each file found is reported as an
 `info: loaded models.json: <path> (global|project, trusted): …` /
 `info: models.json ignored: <path> …` line on stderr — untrusted, invalid
 or colliding files are named, never fatal (see

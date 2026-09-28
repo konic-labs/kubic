@@ -4,7 +4,7 @@
 // only — nothing here dials a provider.
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -79,6 +79,34 @@ export interface AssembleOptions {
 // The user-global models.json (§35 global tree: ~/.kubic/models/).
 export function globalModelsPath(home: string): string {
   return join(home, '.kubic', 'models', 'models.json');
+}
+
+// The project root the project models.json lives at (issue #222): the
+// nearest ancestor of `cwd` (itself included) holding a `.git` entry (a
+// repository or worktree top level) or a `.kubic` directory — never the home
+// directory, whose `.kubic` is the GLOBAL tree. No marker: `cwd` itself.
+export function findModelsProjectRoot(cwd: string, home: string): string {
+  const bridge = createNodeFileBridge('/');
+  const homeDir = resolve(home);
+  let dir = resolve(cwd);
+  for (;;) {
+    if (
+      bridge.exists(join(dir, '.git')) ||
+      (dir !== homeDir && bridge.exists(join(dir, '.kubic')))
+    ) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(cwd);
+    dir = parent;
+  }
+}
+
+// The project models.json candidates at a root, first present wins.
+function projectModelsPath(root: string): string {
+  const bridge = createNodeFileBridge('/');
+  const dotKubic = join(root, '.kubic', 'models.json');
+  return bridge.exists(dotKubic) ? dotKubic : join(root, 'models.json');
 }
 
 function envTrustsProject(env: Env): boolean {
@@ -209,7 +237,15 @@ export async function assembleModels(
     }
   };
   load(globalModelsPath(home), 'global', true);
-  load(join(cwd, 'models.json'), 'project', projectTrusted);
+  // A worker child runs in its own worktree, which holds only tracked
+  // files: the orchestrator names the manager's root in KUBIC_MODELS_ROOT so
+  // the child resolves the same project file (issue #222).
+  const pinnedRoot = env.KUBIC_MODELS_ROOT;
+  const projectRoot =
+    pinnedRoot !== undefined && pinnedRoot !== ''
+      ? resolve(pinnedRoot)
+      : findModelsProjectRoot(cwd, home);
+  load(projectModelsPath(projectRoot), 'project', projectTrusted);
   const checks = await Promise.all(
     builtins.map(async (provider) => {
       try {

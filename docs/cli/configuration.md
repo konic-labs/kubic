@@ -231,7 +231,18 @@ of Pi's built-in providers. Files, in load order:
 | Location | Trust |
 | --- | --- |
 | `~/.kubic/models/models.json` (global) | Always loaded — it is your own machine-local file, and the recommended place for provider config. |
-| `./models.json` (project) | **Trust-gated** like the project `config.toml`: before `KUBIC_TRUST_PROJECT=1` it is never read, only named (`models.json ignored: <path> (project, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
+| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: before `KUBIC_TRUST_PROJECT=1` it is never read, only named (`models.json ignored: <path> (project, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
+
+The **project root** is the nearest directory at or above the working
+directory that holds a `.git` entry (a repository or worktree top level) or
+a `.kubic/` directory — never your home directory, whose `.kubic/` is the
+global tree; with neither, the working directory itself. So `kubic run`,
+`kubic models` and `kubic doctor` see the same providers from any
+subdirectory. `kubic orchestrate` hands each worker child the manager's
+repository root in `KUBIC_MODELS_ROOT` (and forwards `KUBIC_TRUST_PROJECT`
+when set), so a worker in its worktree resolves the manager's
+`models.json` even when that file is untracked; setting `KUBIC_MODELS_ROOT`
+yourself pins the project root the same way.
 
 A project provider overrides a global provider with the same id. Every
 file is refused whole (never half-applied) and named when:

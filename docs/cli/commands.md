@@ -513,9 +513,9 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-O` | Toggle the **diff panel** — the current run's changes, rendered as unified hunks. |
 | `Ctrl-R` | Toggle the **journal panel** — the session journal, with its path/agent filters. |
 | `Ctrl-X` | Expand / collapse every tool output block (collapsed blocks show the first 5 lines and a `… +N lines` count). |
-| `a` | Approval overlay: **allow once** the challenged call. |
-| `s` | Approval overlay: **allow for the session**. |
-| `d`, `Esc` | Approval overlay: **deny** the challenged call. |
+| `a` | Approval overlay: **allow once** — this call only. Nothing is stored: the next identical call asks again. |
+| `s` | Approval overlay: **allow for the session** — latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
+| `d`, `Esc` | Approval overlay: **deny** the challenged call. A denial latches for the session like `s`, so the same operation is refused without asking again. |
 | `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. |
 | `Esc` | Quit (while no approval is pending — during an approval it denies). |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |

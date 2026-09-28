@@ -118,6 +118,10 @@ export interface ApprovalRequest {
   justification?: string;
 }
 
+// The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
+// issue #231): approved, audited, never latched or persisted.
+export const ALLOW_ONCE = 'allow-once';
+
 export type ApprovalVerdict =
   | { approved: true; by: string; justified?: boolean }
   | { approved: false; reason: string };
@@ -1084,8 +1088,16 @@ export class ApprovalService {
     const stamped: ApprovalVerdict = verdict.approved
       ? { ...verdict, justified: request.justification !== undefined }
       : verdict;
-    this.decisions.set(request.key, stamped);
-    this.persist();
+    // Issue #231 (§41.2): only session-scoped answers enter the latch —
+    // allow-session, autoApprove, the route, and user DENIALS (a refusal
+    // latching is the fail-safe direction: the user said no to this exact
+    // operation for this session). An 'allow once' approves THIS call only:
+    // it is returned without being stored or persisted, so the next
+    // identical call asks again.
+    if (!(stamped.approved && stamped.by === ALLOW_ONCE)) {
+      this.decisions.set(request.key, stamped);
+      this.persist();
+    }
     this.pending.delete(request.key);
     this.waiters.get(request.key)?.(stamped);
     this.waiters.delete(request.key);

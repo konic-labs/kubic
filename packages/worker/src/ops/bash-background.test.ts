@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BASH_DEFAULT_TIMEOUT_SEC,
@@ -20,6 +20,7 @@ const scratchDirs: string[] = [];
 const strayPids: number[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const pid of strayPids.splice(0)) {
     try {
       process.kill(pid, 'SIGKILL');
@@ -185,6 +186,30 @@ describe.runIf(posix)('bash default and maximum timeout (issue #339)', () => {
   });
 });
 
+describe.runIf(posix)('bash policy from the environment (issue #339)', () => {
+  it('applies KUBIC_BASH_TIMEOUT when the context carries no policy', async () => {
+    vi.stubEnv('KUBIC_BASH_TIMEOUT', '0.3');
+    const started = Date.now();
+    const result = await run({ command: 'sleep 30' });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(result.timedOut).toBe(true);
+  });
+
+  it('fails the call by name on a malformed override', async () => {
+    vi.stubEnv('KUBIC_BASH_TIMEOUT', 'soon');
+    const out = await callOperation(
+      'bash',
+      { command: 'true' },
+      inv(),
+      realCtx(),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('tool_failed');
+    expect(out.error.message).toContain('KUBIC_BASH_TIMEOUT');
+  });
+});
+
 describe('resolveBashPolicy (issue #339)', () => {
   it('defaults when nothing is set', () => {
     expect(resolveBashPolicy({})).toEqual({
@@ -214,6 +239,43 @@ describe('resolveBashPolicy (issue #339)', () => {
     expect(
       resolveBashPolicy({ KUBIC_BASH_KEEP_BACKGROUND: '0' }).keepBackground,
     ).toBe(false);
+  });
+
+  it('treats empty values as unset and parses decimal seconds exactly', () => {
+    expect(
+      resolveBashPolicy({
+        KUBIC_BASH_TIMEOUT: '',
+        KUBIC_BASH_MAX_TIMEOUT: '',
+        KUBIC_BASH_KEEP_BACKGROUND: '',
+      }),
+    ).toEqual({
+      defaultTimeoutSec: BASH_DEFAULT_TIMEOUT_SEC,
+      maxTimeoutSec: BASH_MAX_TIMEOUT_SEC,
+      keepBackground: false,
+    });
+    expect(resolveBashPolicy({ KUBIC_BASH_TIMEOUT: '1.25' })).toMatchObject({
+      defaultTimeoutSec: 1.25,
+    });
+    expect(resolveBashPolicy({ KUBIC_BASH_TIMEOUT: ' 30 ' })).toMatchObject({
+      defaultTimeoutSec: 30,
+    });
+    expect(
+      resolveBashPolicy({ KUBIC_BASH_KEEP_BACKGROUND: 'false' }).keepBackground,
+    ).toBe(false);
+    // The setTimeout ceiling is inclusive.
+    expect(
+      resolveBashPolicy({ KUBIC_BASH_MAX_TIMEOUT: '2147483' }).maxTimeoutSec,
+    ).toBe(2_147_483);
+    for (const bad of ['30s', 'x30', '0x10', '1e3', '1.', '1.x', '-5', '2147484']) {
+      expect(() => resolveBashPolicy({ KUBIC_BASH_MAX_TIMEOUT: bad })).toThrow(
+        `KUBIC_BASH_MAX_TIMEOUT must be a positive number of seconds (at most 2147483), got "${bad}"`,
+      );
+    }
+    expect(() =>
+      resolveBashPolicy({ KUBIC_BASH_KEEP_BACKGROUND: 'yes' }),
+    ).toThrow(
+      'KUBIC_BASH_KEEP_BACKGROUND must be 1/true or 0/false, got "yes"',
+    );
   });
 
   it('caps the default at the maximum', () => {

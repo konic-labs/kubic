@@ -534,7 +534,14 @@ These keys are classified by the terminal library's key decoder, not by
 matching raw bytes, so they work on terminals that negotiate the Kitty
 keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
 as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
-send the legacy control bytes. A refused cancel is reported in the editor
+send the legacy control bytes. On terminals that also report key-release
+and key-repeat events (Kitty, Ghostty, WezTerm, foot, recent iTerm2), each
+key acts on its press only: a release is ignored, so a toggle never
+cancels itself on key-up and a `Ctrl-C` cancel or an `Esc` deny never
+becomes a quit. A held key repeats in the editor (held `Backspace` keeps
+deleting), but repeats of the global keys and the approval keys are
+ignored — a held `Ctrl-O` does not strobe the panel. Every key repaints
+the screen at once, including while no turn is running. A refused cancel is reported in the editor
 footer (`cancel failed: …`) instead of being swallowed — the turn keeps
 running and the key is never a silent no-op.
 

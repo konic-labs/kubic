@@ -75,7 +75,10 @@ import {
   type TuiApp,
 } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
-import { ProcessTerminal } from '../../../packages/tui/src/tui-boundary.js';
+import {
+  isKeyRelease,
+  ProcessTerminal,
+} from '../../../packages/tui/src/tui-boundary.js';
 import {
   type LaneAborter,
   type OperationKillRegistry,
@@ -831,6 +834,11 @@ export async function runTuiCommand(
     stdin?.once('close', onStdinEnd);
     booted.tui.addInputListener((data: string) => {
       if (stopped) return { consume: true };
+      // Issue #306, defence in depth: TuiApp.handleInput already drops Kitty
+      // key releases, but the quit/cancel counting below must never see one
+      // even if a future caller routes around it — a Ctrl-C release counted
+      // as the second Ctrl-C would quit the session on key-up.
+      if (isKeyRelease(data)) return { consume: true };
       const routed = app.handleInput(data);
       if (routed.quit) {
         if (routed.cancel && turn?.isRunning()) {

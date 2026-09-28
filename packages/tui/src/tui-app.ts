@@ -71,6 +71,8 @@ import { createTranscriptView, type TranscriptView } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type { Component, VStack } from './tui-boundary.js';
 import {
+  isKeyRelease,
+  isKeyRepeat,
   parseKey,
   truncateToWidth,
   visibleWidth,
@@ -150,6 +152,21 @@ function keyIdOf(data: string): string | undefined {
     // editor (parseKey throws on sequences it does not recognise).
     return undefined;
   }
+}
+
+// The keys handleInput claims before the editor (see the key map above).
+const GLOBAL_KEYS: ReadonlySet<string> = new Set([
+  'ctrl+c',
+  'escape',
+  'ctrl+d',
+  'ctrl+t',
+  'ctrl+o',
+  'ctrl+r',
+  'ctrl+x',
+]);
+
+function isGlobalKey(keyId: string | undefined): boolean {
+  return keyId !== undefined && GLOBAL_KEYS.has(keyId);
 }
 
 export interface TuiApp {
@@ -494,7 +511,25 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     handleInput: (data: string): TuiInputResult => {
       // Classified by pi-tui's parseKey so both encodings are honoured:
       // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
+      // Issue #306: a Kitty-class terminal reports key releases (and
+      // repeats) as their own events, and this listener runs before pi-tui's
+      // focused-path release filter. A release is never an action: dropping
+      // it here — before approval decide, the global keys and the editor —
+      // keeps toggles from cancelling themselves on key-up and a Ctrl-C
+      // cancel or an Esc deny from turning into a quit.
+      if (isKeyRelease(data))
+        return { quit: false, consumed: true, cancel: false };
       const keyId = keyIdOf(data);
+      // Decision (issue #306): a held key's repeats reach the draft (held
+      // backspace keeps deleting) but never the approval decision keys or a
+      // global key — a held Ctrl-O must not strobe the panel, and a held
+      // allow key must not answer the NEXT request too.
+      if (
+        isKeyRepeat(data) &&
+        (approvalSurface.isShowing() || isGlobalKey(keyId))
+      ) {
+        return { quit: false, consumed: true, cancel: false };
+      }
       // Issue #96: a shown approval owns the decision keys FIRST — above every
       // global binding. Answering with Esc must deny the request, not quit the
       // session; the operator can still quit after the request settles. A key

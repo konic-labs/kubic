@@ -108,7 +108,10 @@ async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
 // intervals, never only after some unrelated later render.
 const RENDER_TICK_STEPS = 25;
 
-type FauxStep = Parameters<typeof fauxAssistantMessage>[0];
+type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
+type FauxStep =
+  | Parameters<typeof fauxAssistantMessage>[0]
+  | (() => Promise<FauxMessage>);
 
 function fauxLaneBoot(
   root: string,
@@ -118,7 +121,11 @@ function fauxLaneBoot(
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses(steps.map((step) => fauxAssistantMessage(step)));
+  faux.setResponses(
+    steps.map((step) =>
+      typeof step === 'function' ? step : fauxAssistantMessage(step),
+    ),
+  );
   return async () => {
     const bridge = createNodeFileBridge(root);
     const store = openSessionStore(root, bridge);
@@ -280,5 +287,36 @@ describe('idle input repaints (issue #274)', () => {
     expect(await verdict).toMatchObject({ approved: true });
     fake.feed('\x1b');
     expect(await exit).toBe(0);
+  });
+});
+
+describe('Kitty key releases on the live loop (issue #306)', () => {
+  it('a Ctrl-C release after a cancel press never quits the session', async () => {
+    const root = tmpRoot();
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { fake, exit } = await startTui(
+      fauxLaneBoot(root, [
+        async () => {
+          await gated;
+          return fauxAssistantMessage('never delivered');
+        },
+      ]),
+    );
+    for (const ch of 'slow') fake.feed(ch);
+    fake.feed('\r');
+    fake.feed('\x1b[99;5u'); // press: cancel the turn
+    fake.feed('\x1b[99;5:3u'); // release: must not count as the second Ctrl-C
+    await waitFor(() => fake.since(0).includes('cancelling'));
+    expect(fake.counts.stopped).toBe(0);
+    release();
+    await waitFor(() => fake.since(0).includes('cancelled'));
+    expect(fake.counts.stopped).toBe(0);
+    fake.feed('\x1b[27u');
+    fake.feed('\x1b[27;1:3u');
+    expect(await exit).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
   });
 });

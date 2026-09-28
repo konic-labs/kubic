@@ -72,7 +72,8 @@ export function validateFindArgs(raw: unknown): FindArgs {
 
 export const findOperation: Operation<FindArgs, FindResult> = {
   name: 'find',
-  description: 'Find files and directories recursively with filters',
+  description:
+    'Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut.',
   replay: 'safe',
   validateArgs: validateFindArgs,
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {

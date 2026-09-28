@@ -92,6 +92,10 @@ import type {
 } from '../../../packages/worker/src/lane/events.js';
 import { attachLaneEvents } from '../../../packages/worker/src/lane/events.js';
 import {
+  describeSettlement,
+  settlePendingOperation,
+} from '../../../packages/worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   openSessionStore,
@@ -147,6 +151,14 @@ export interface TuiLaneBoot {
   // the existing #75 tests omit it — the loop then runs as the viewer shell,
   // which keeps the screen/restore contract testable on its own.
   loop?: TuiLaneLoop;
+  // Issue #147: the outcome line for a turn a crashed process left open on
+  // this session (durably aborted at boot). Shown in the editor footer from
+  // the first render; absent when nothing was pending.
+  pendingNotice?: string;
+  // Issue #148: the model reconciliation line for a resumed session whose
+  // stored model differs from the selection (kept or switched). Shown in
+  // the footer from the first render alongside any pending-op notice.
+  modelNotice?: string;
 }
 
 export interface TuiRunDeps {
@@ -306,9 +318,11 @@ export async function bootTuiLane(
     // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
     // picked implicitly; the footer names it (runTuiCommand). The implicit
     // pick never takes a keyless built-in (issue #221).
+    const fauxPinned =
+      options.models === undefined && fauxProviderActive(process.env);
     const model = selectModel(
       models,
-      options.models === undefined && fauxProviderActive(process.env)
+      fauxPinned
         ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
         : undefined,
       undefined,
@@ -335,10 +349,16 @@ export async function bootTuiLane(
         // (tests, and any caller that supplies its own) keep their own seat.
         ...(options.answer === undefined ? {} : { answer: options.answer }),
       });
+    // Issue #148 (§26.1): the same rule as `kubic run` — a pin (the faux
+    // pin is the TUI's only one) switches a resumed session whose stored
+    // model differs; the default pick keeps the session's own model.
+    const modelNotices: string[] = [];
     const solo = await bootSoloLane({
       session,
       models,
       model,
+      modelPolicy: fauxPinned ? 'selected' : 'stored',
+      onModelNotice: (line) => modelNotices.push(line),
       env,
       sessionId: id,
       agentId: options.agentId ?? 'root',
@@ -419,10 +439,34 @@ export async function bootTuiLane(
           : { contributions: installed.contributions }),
       },
     });
+    // Issue #147 (§21): a turn a dead process left open would refuse every
+    // prompt with LaneBusy. The interactive policy is the durable abort: its
+    // approvals would need the overlay, which is not on screen yet, and the
+    // operator is present to re-send. The outcome is named in the footer.
+    const pendingNotices: string[] = [];
+    for (const op of solo.open ?? []) {
+      pendingNotices.push(
+        describeSettlement(
+          await settlePendingOperation(solo, op, 'abort', context),
+        ),
+      );
+    }
     return {
       sessionId: id,
-      model: `${model.provider}/${model.id}`,
+      // The model the lane actually runs (issue #148): the status bar and
+      // the usage rows the turn runner records both read this.
+      model: await (async () => {
+        const live = await solo.lane.getModel(context);
+        const running = live ?? solo.model;
+        return `${running.provider}/${running.id}`;
+      })(),
       journal,
+      ...(modelNotices.length === 0
+        ? {}
+        : { modelNotice: modelNotices.join('; ') }),
+      ...(pendingNotices.length === 0
+        ? {}
+        : { pendingNotice: pendingNotices.join('; ') }),
       loop: {
         accept: (prompt, loopContext) =>
           solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
@@ -853,7 +897,13 @@ export async function runTuiCommand(
     // The trust statement is on screen before the operator types anything
     // (issue #89): the footer is set before the first render, so the very
     // first frame carries it. Empty when suppressed.
-    app.setEditorFooter(notice);
+    // Issue #147: a pending operation settled at boot is reported first;
+    // the trust statement returns as the idle footer after the next turn.
+    app.setEditorFooter(
+      [boot.pendingNotice, boot.modelNotice]
+        .filter((line): line is string => line !== undefined)
+        .join(' · ') || notice,
+    );
     booted.render();
     process.once('SIGINT', onSigint);
     stdin?.once('end', onStdinEnd);

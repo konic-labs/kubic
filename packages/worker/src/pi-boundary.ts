@@ -24,7 +24,9 @@
 //   used by: packages/worker/src/lane/* (adapter + drive wrapper typings)
 //   why Pi has no alternative: these types ARE the harness contract (§15 —
 //     Kubic defines no parallel event vocabulary)
-//   review: issue #11
+//   review: issue #11 (OpenOperation: issue #147 — the open operations Pi
+//     restores on attach, which bootSoloLane surfaces so a crashed turn is
+//     resumed or aborted instead of refusing every prompt with LaneBusy)
 export type {
   AbortRequestResult,
   AgentHarness as AgentHarnessApi,
@@ -46,6 +48,7 @@ export type {
   Hooks,
   JsonValue,
   LaneSnapshot,
+  OpenOperation,
   OperationAdmissionResult,
   OperationError,
   OperationRequest,
@@ -75,12 +78,23 @@ export type {
 //   why Pi has no alternative: session durability is a harness concern (§21 —
 //     SessionRepo.open + lane.resume); JSONL backing lands with issue #14
 //   review: issue #11
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-agent-core#laneConfig (public session value
+//     address for a lane's persisted configuration)
+//   used by: packages/worker/src/lane/solo.ts (issue #148 — read the model a
+//     resumed lane will restore BEFORE the harness boots, so the prompt
+//     metadata, reserve clamp and reports name the model the lane runs)
+//   why Pi has no alternative: Pi restores the stored model inside
+//     harness.lane(); the public value address is the only read of it that
+//     happens before the system prompt is fixed
+//   review: issue #148
 export {
   AgentHarness,
   BACKGROUND_CONTEXT,
   err,
   FileError,
   JsonlSessionRepo,
+  laneConfig,
   MemorySessionRepo,
   ok,
 } from '@earendil-works/pi-agent-core';
@@ -98,6 +112,9 @@ export type {
   Model,
   ModelThinkingLevel,
   MutableModels,
+  // TSchema (issue #168): the type of the per-operation parameter schemas
+  // in ops/registry.ts — the same typebox Pi's Tool.parameters requires.
+  TSchema,
   Usage,
 } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
@@ -135,6 +152,14 @@ export type {
 //   used by: apps/kubic composition root (models assembly for `kubic models`)
 //   why Pi has no alternative: auth resolution reads this store (§37)
 //   review: issue #20
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai#validateToolArguments
+//   used by: packages/worker/src/ops/registry-schema.test.ts (issue #168 —
+//     pins that the registry schemas and the Kubic validators agree)
+//   why Pi has no alternative: it is the exact check the harness runs on
+//     every tool call before execute; a second schema checker would test a
+//     different validator than the one production uses
+//   review: issue #168
 export {
   clampThinkingLevel,
   createModels,
@@ -147,6 +172,7 @@ export {
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
   Type,
+  validateToolArguments,
 } from '@earendil-works/pi-ai';
 export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi-ai/api/openai-responses.lazy';

@@ -218,7 +218,8 @@ export function __setResolvedShellForTests(
 
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
-  description: 'Execute a shell command with streaming, timeout, and abort',
+  description:
+    'Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds.',
   replay: 'never',
   validateArgs: validateBashArgs,
   execute: async (inv: ToolInvocation, args: BashArgs, ctx: OpContext) => {

@@ -9,31 +9,38 @@ import { OPERATIONS } from './registry.js';
 
 const EXPECTED: Record<string, { description: string; replay: string }> = {
   read: {
-    description: 'Read file contents with line offset/limit',
+    description:
+      'Read a text file. Returns the raw lines under a "[read <path>: lines a-b of N]" header. offset is 1-indexed (default 1); limit defaults to and is capped at 2000 lines; at most 8 MiB is scanned. When the header ends "more: offset=N", call again with that offset.',
     replay: 'safe',
   },
   ls: {
-    description: 'List directory entries with kinds and sizes',
+    description:
+      'List one directory (not recursive): every entry with its kind and size. path defaults to the workspace root.',
     replay: 'safe',
   },
   find: {
-    description: 'Find files and directories recursively with filters',
+    description:
+      'Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut.',
     replay: 'safe',
   },
   grep: {
-    description: 'Search file contents for a regex with line numbers',
+    description:
+      'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob).',
     replay: 'safe',
   },
   write: {
-    description: 'Write a file atomically (tmp + rename) with hashes',
+    description:
+      'Create or overwrite a file with its complete content, atomically (tmp + rename); returns before/after hashes. Use edit to change part of a file.',
     replay: 'never',
   },
   edit: {
-    description: 'Replace exact text matches atomically (tmp + rename)',
+    description:
+      'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Files over 8 MiB are refused.',
     replay: 'never',
   },
   bash: {
-    description: 'Execute a shell command with streaming, timeout, and abort',
+    description:
+      'Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds.',
     replay: 'never',
   },
   git_status: {
@@ -47,7 +54,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_log: {
     description:
-      'Recent commits (sha, author, date, message), optionally for a path',
+      'Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100',
     replay: 'safe',
   },
   git_show: {

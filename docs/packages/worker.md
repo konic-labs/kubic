@@ -19,15 +19,16 @@ diff touching the boundary for maintainer review.
 | --- | --- |
 | `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
 | `pi-boundary.ts` | Sole Pi seam: harness types (`AgentLane`, `AgentHarnessTool`, `Context`, `DriveOutcome`, `Events`, `HarnessEvent`, `Session`, `SessionRepo`, `UsageRow`, …) + values (`AgentHarness`, `BACKGROUND_CONTEXT`, `MemorySessionRepo`, `JsonlSessionRepo`, `ok`, `err`, `FileError`); model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions`, `SoloLane`, `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions` (`modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`model`: the model the lane actually runs), `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `EventSource`, `toKubicLaneEvent`, `attachLaneEvents`, `watchLane` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
-| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` |
+| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
+| `lane/pending.ts` | `PendingPolicy`, `PendingSettlement`, `PendingLane`, `PendingDriver`, `settlePendingOperation`, `pendingHead`, `describePendingOperation`, `describeSettlement`, `inspectOpenOperations`, `lastUserPromptText` — settle a turn a crashed process left open (#147: resume or durable abort) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |
@@ -105,7 +106,12 @@ Two hard bounds keep one tool call from costing the whole file in memory
   the budget — the empty-region case, which returns empty content with
   `truncated: true`. When the scan did reach EOF, `truncated` reflects
   only output cutting (the line window and `READ_MAX_LINES`) — an explicit
-  `limit` is the requested region, not truncation.
+  `limit` is the requested region, not truncation. `readWindowed` calls
+  `fs.readFileRange` as a method (the real `NodeFileSystem` reads
+  `this.cwd`; #199), and `read` names the actual failure: a missing path
+  is `not_found`, a directory `is_directory`, an unreadable file
+  `permission_denied`, a cwd-confinement escape `invalid_args`; any other
+  error propagates as a fault instead of masquerading as a missing file.
 - **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal

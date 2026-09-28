@@ -86,7 +86,8 @@ export function validateGrepArgs(raw: unknown): GrepArgs {
 
 export const grepOperation: Operation<GrepArgs, GrepResult> = {
   name: 'grep',
-  description: 'Search file contents for a regex with line numbers',
+  description:
+    'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob).',
   replay: 'safe',
   validateArgs: validateGrepArgs,
   execute: async (_inv: ToolInvocation, args: GrepArgs, ctx: OpContext) => {

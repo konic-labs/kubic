@@ -78,6 +78,12 @@ import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js'
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import {
+  describeSettlement,
+  lastUserPromptText,
+  pendingHead,
+  settlePendingOperation,
+} from '../../../packages/worker/src/lane/pending.js';
+import {
   attachSession,
   createSession,
   openSessionStore,
@@ -166,6 +172,10 @@ export interface HeadlessRunDeps {
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
+  // Operator notices (issue #147): the line naming what happened to a
+  // pending operation a crashed run left open. Defaults to stderr; tests
+  // inject a collector.
+  notice?: (line: string) => void;
   // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
   // real home directory, this process's cwd, and the documented trust
   // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
@@ -458,7 +468,12 @@ export async function runHeadlessPrompt(
     return {
       ...result,
       usage: measured.usage,
-      ...(measured.model === undefined ? {} : { model: measured.model }),
+      // Issue #148: the live lane model reported by the boot wins over the
+      // session's recorded usage model — a pin may have switched models in
+      // this run, and the result must name the one that actually ran.
+      ...(result.model !== undefined || measured.model === undefined
+        ? {}
+        : { model: measured.model }),
     };
   } catch {
     return result;
@@ -469,6 +484,21 @@ async function runHeadlessPromptOnce(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  // Issue #148: every result after the lane booted names the model the
+  // lane actually ran (the live lane model, never the bare selection).
+  const report: { model?: string } = {};
+  const result = await runHeadlessPromptImpl(prompt, options, deps, report);
+  return report.model === undefined
+    ? result
+    : { ...result, model: report.model };
+}
+
+async function runHeadlessPromptImpl(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps,
+  report: { model?: string },
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
@@ -957,40 +987,68 @@ async function runHeadlessPromptOnce(
     }
     const beforeBoot = bootInterrupted();
     if (beforeBoot !== undefined) return beforeBoot;
-    solo = await bootSoloLane({
-      session,
-      models,
-      model,
-      env,
-      sessionId: id,
-      agentId: deps.agentId ?? 'root',
-      journal,
-      ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
-      // Issue #173: the advertised skills outside the cwd stay readable.
-      ...(skills.readRoots.length === 0
-        ? {}
-        : { skillReadRoots: skills.readRoots }),
-      ...(role === undefined
-        ? {}
-        : {
-            rolePrompt: role.prompt,
-            ...(role.resolved.tools.length === 0
-              ? {}
-              : { toolAllowlist: role.resolved.tools }),
-          }),
-      // One policy object carrying all three mechanisms (#86 + #90 + #93):
-      // the classes come from the config layer when it supplies them and
-      // from the documented safe default otherwise, the interceptors are
-      // always installed, and the extension facet composes as a tool-wrap
-      // contribution on the same stack. SoloPolicyOptions has three
-      // independent fields, so this is a union, not a choice.
-      policy: {
-        classes: installed.classes,
-        interceptors: installed.interceptors,
-        ...(contributions.length === 0 ? {} : { contributions }),
-      },
-    });
+    // Issue #148 (§26.1): a pin (the faux pin, the `[model]`/env pin, or
+    // the role's model) is an explicit selection and switches a resumed
+    // session whose stored model differs; the default pick never does —
+    // the session keeps its own model. Either way it is named on stderr.
+    const notice = deps.notice ?? ((line: string) => console.error(line));
+    const explicitModel =
+      fauxPinned ||
+      deps.model !== undefined ||
+      roleModelSelection(role?.resolved.model) !== undefined;
+    try {
+      solo = await bootSoloLane({
+        session,
+        models,
+        model,
+        modelPolicy: explicitModel ? 'selected' : 'stored',
+        onModelNotice: notice,
+        env,
+        sessionId: id,
+        agentId: deps.agentId ?? 'root',
+        journal,
+        ...(skills.block === undefined
+          ? {}
+          : { promptSections: [skills.block] }),
+        // Issue #173: the advertised skills outside the cwd stay readable.
+        ...(skills.readRoots.length === 0
+          ? {}
+          : { skillReadRoots: skills.readRoots }),
+        ...(role === undefined
+          ? {}
+          : {
+              rolePrompt: role.prompt,
+              ...(role.resolved.tools.length === 0
+                ? {}
+                : { toolAllowlist: role.resolved.tools }),
+            }),
+        // One policy object carrying all three mechanisms (#86 + #90 + #93):
+        // the classes come from the config layer when it supplies them and
+        // from the documented safe default otherwise, the interceptors are
+        // always installed, and the extension facet composes as a tool-wrap
+        // contribution on the same stack. SoloPolicyOptions has three
+        // independent fields, so this is a union, not a choice.
+        policy: {
+          classes: installed.classes,
+          interceptors: installed.interceptors,
+          ...(contributions.length === 0 ? {} : { contributions }),
+        },
+      });
+    } catch (error) {
+      // A stored session model that is no longer registered (issue #148)
+      // is the same terminus as an unknown selection: exit 6, named.
+      if (error instanceof ModelSelectError) {
+        return finished(
+          id,
+          'provider_probe_failed',
+          error.message,
+          error.message,
+        );
+      }
+      throw error;
+    }
     const { harness, lane } = solo;
+    report.model = await liveModelId(solo, context);
     // Tool spans come from the harness's own hook registry, so they cover
     // every tool the lane actually executes (issue #98). Detached in the
     // finally below. A lane booted without a harness (unit stubs, future
@@ -1000,26 +1058,81 @@ async function runHeadlessPromptOnce(
     try {
       const beforeAccept = bootInterrupted();
       if (beforeAccept !== undefined) return beforeAccept;
-      const acceptSpan = spans.startLane('accept');
-      const admission = await lane.accept({ kind: 'prompt', prompt }, context);
-      if (!admission.ok) {
-        const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
-        spans.endLane(acceptSpan, message);
-        return finished(id, 'failed', message, message);
+      const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+      // Issue #147 (§21): a turn a dead process left open would refuse this
+      // prompt with LaneBusy. The documented policy: when the pending run
+      // carries this very prompt (an orchestrator worker re-launched on its
+      // reattached session, a retried script), it is resumed AS this run —
+      // never re-prompted. Otherwise it is resumed first under the same
+      // guards and then this prompt is accepted; a resume that cannot
+      // settle (guard fired, approval with no TTY) is durably aborted. Each
+      // choice is named on stderr.
+      let resumedOperationId: string | undefined;
+      const open = solo.open ?? [];
+      if (open.length > 0) {
+        const pendingPrompt = lastUserPromptText(
+          await lane.findEntries(undefined, context),
+        );
+        for (const op of open) {
+          if (
+            resumedOperationId === undefined &&
+            op.kind === 'run' &&
+            op.aborting !== true &&
+            pendingPrompt === prompt
+          ) {
+            resumedOperationId = op.operationId;
+            notice(
+              `${pendingHead(op)} carries this prompt: resuming it instead of re-prompting`,
+            );
+            continue;
+          }
+          const settled = await settlePendingOperation(
+            solo,
+            op,
+            'resume',
+            context,
+            (operationId) =>
+              driveWithGuard(
+                lane,
+                operationId,
+                context,
+                boundMs,
+                options.maxTurns,
+                interrupted,
+              ),
+          );
+          notice(describeSettlement(settled));
+        }
       }
-      spans.endLane(acceptSpan);
+      let operationId: string;
+      if (resumedOperationId !== undefined) {
+        operationId = resumedOperationId;
+      } else {
+        const acceptSpan = spans.startLane('accept');
+        const admission = await lane.accept(
+          { kind: 'prompt', prompt },
+          context,
+        );
+        if (!admission.ok) {
+          const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
+          spans.endLane(acceptSpan, message);
+          return finished(id, 'failed', message, message);
+        }
+        spans.endLane(acceptSpan);
+        operationId = admission.value.operationId;
+      }
       // Issue #109: record the admitted operation for the finally drain — a
       // guard firing mid-drive (or any later exit path) aborts and kills
       // exactly this operation's in-flight work before the sweep.
-      activeOperationId = admission.value.operationId;
+      activeOperationId = operationId;
       let driven: SettledDrive;
       const driveSpan = spans.startLane('drive');
       try {
         driven = await driveWithGuard(
           lane,
-          admission.value.operationId,
+          operationId,
           context,
-          options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+          boundMs,
           options.maxTurns,
           interrupted,
         );
@@ -1148,6 +1261,23 @@ async function runHeadlessPromptOnce(
       // Intentionally swallowed — the mapped result stands.
     }
   }
+}
+
+// The `provider/id` the lane actually runs (issue #148): the live lane
+// model, else the boot's effective model. Tolerant of stub lanes (unit
+// boots without getModel/model), which report nothing rather than fail.
+async function liveModelId(
+  solo: SoloLane,
+  context: Context,
+): Promise<string | undefined> {
+  const live =
+    typeof solo.lane.getModel === 'function'
+      ? await solo.lane.getModel(context)
+      : undefined;
+  const running = live ?? (solo.model as SoloLane['model'] | undefined);
+  return running === undefined
+    ? undefined
+    : `${running.provider}/${running.id}`;
 }
 
 // The harness hook registry for tool spans, tolerant of a harness-less lane

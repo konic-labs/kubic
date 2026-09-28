@@ -37,6 +37,7 @@ output. All command examples below assume the built binary (`./bin/kubic.js
 
 - [commands.md](commands.md) — every `kubic` command and flag
 - [exit-codes.md](exit-codes.md) — exit-code table
+- [tools.md](tools.md) — the fifteen tools the model calls: argument contract and result shapes
 - [configuration.md](configuration.md) — config precedence and secrets
 - [doctor-and-debug.md](doctor-and-debug.md) — `kubic doctor` diagnostics
 

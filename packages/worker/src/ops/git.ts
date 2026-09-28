@@ -8,7 +8,7 @@
 
 import type { ExecutionEnv, Provenance } from '../../../exec/src/env.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
-import { OpError } from './types.js';
+import { OpError, rejectUnknownArgs } from './types.js';
 
 export interface GitRun {
   exitCode: number;
@@ -109,6 +109,7 @@ export const gitStatusOperation: Operation<
   validateArgs: (raw: unknown) => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_status args must be an object');
+    rejectUnknownArgs('git_status', raw, []);
     return {};
   },
   execute: async (
@@ -155,11 +156,12 @@ const LOG_FORMAT = '%H%x1f%an%x1f%ad%x1f%s';
 export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
   name: 'git_log',
   description:
-    'Recent commits (sha, author, date, message), optionally for a path',
+    'Recent commits (sha, author, date, message), optionally only those touching path; max defaults to 20 and is capped at 100',
   replay: 'safe',
   validateArgs: (raw: unknown): GitLogArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_log args must be an object');
+    rejectUnknownArgs('git_log', raw, ['max', 'path']);
     const record = raw as Record<string, unknown>;
     if (
       record.max !== undefined &&
@@ -244,6 +246,7 @@ export const gitShowOperation: Operation<GitShowArgs, GitShowResult> = {
   validateArgs: (raw: unknown): GitShowArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_show args must be an object');
+    rejectUnknownArgs('git_show', raw, ['ref']);
     const ref = (raw as Record<string, unknown>).ref;
     if (typeof ref !== 'string' || ref.trim() === '') {
       throw new OpError(
@@ -301,6 +304,7 @@ export const gitDiffOperation: Operation<GitDiffArgs, GitDiffResult> = {
   validateArgs: (raw: unknown): GitDiffArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_diff args must be an object');
+    rejectUnknownArgs('git_diff', raw, ['staged', 'range', 'path']);
     const record = raw as Record<string, unknown>;
     if (record.staged !== undefined && typeof record.staged !== 'boolean') {
       throw new OpError('invalid_args', 'git_diff staged must be a boolean');
@@ -432,6 +436,7 @@ export const gitStageOperation: Operation<GitStageArgs, GitStageResult> = {
   validateArgs: (raw: unknown): GitStageArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_stage args must be an object');
+    rejectUnknownArgs('git_stage', raw, ['paths']);
     const paths = (raw as Record<string, unknown>).paths;
     if (!Array.isArray(paths) || paths.length === 0) {
       throw new OpError(
@@ -485,6 +490,7 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
   validateArgs: (raw: unknown): GitCommitArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_commit args must be an object');
+    rejectUnknownArgs('git_commit', raw, ['message', 'amend']);
     const record = raw as Record<string, unknown>;
     if (typeof record.message !== 'string' || record.message.trim() === '') {
       throw new OpError(
@@ -567,6 +573,7 @@ export const gitCheckpointOperation: Operation<
         'invalid_args',
         'git_checkpoint args must be an object',
       );
+    rejectUnknownArgs('git_checkpoint', raw, ['message']);
     const message = (raw as Record<string, unknown>).message;
     if (typeof message !== 'string' || message.trim() === '') {
       throw new OpError(
@@ -625,6 +632,7 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
   validateArgs: (raw: unknown): GitBranchArgs => {
     if (typeof raw !== 'object' || raw === null)
       throw new OpError('invalid_args', 'git_branch args must be an object');
+    rejectUnknownArgs('git_branch', raw, ['create']);
     const create = (raw as Record<string, unknown>).create;
     if (create !== undefined) {
       if (typeof create !== 'string' || !isValidBranchName(create)) {

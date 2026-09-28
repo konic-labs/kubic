@@ -76,10 +76,14 @@ export interface OpErrorDetails {
 // The named failure-code vocabulary `OpError.code` draws from (§52).
 // Model-readable and stable: the model routes on these names, so each is a
 // distinct, actionable refusal — never a generic catch-all. `file_too_large`
-// (issue #122) is the pre-allocation size refusal for edit.
+// (issue #122) is the pre-allocation size refusal for edit; `is_directory`
+// and `permission_denied` (issue #199) keep read from calling every I/O
+// failure a missing file.
 export const OP_FAILURE_CODES = [
   'invalid_args',
   'not_found',
+  'is_directory',
+  'permission_denied',
   'no_match',
   'ambiguous_match',
   'file_too_large',
@@ -101,6 +105,24 @@ export class OpError extends Error {
     super(message);
     this.name = 'OpError';
     this.code = code;
+  }
+}
+
+// Strict sampling (issue #168; §37.5): an argument the tool does not
+// declare is refused by name, never silently ignored — the model then sees
+// the real argument names instead of a guess that quietly did nothing.
+export function rejectUnknownArgs(
+  op: string,
+  raw: object,
+  allowed: readonly string[],
+): void {
+  for (const key of Object.keys(raw)) {
+    if (!allowed.includes(key)) {
+      throw new OpError(
+        'invalid_args',
+        `${op}: unknown argument "${key}" (strict sampling)`,
+      );
+    }
   }
 }
 

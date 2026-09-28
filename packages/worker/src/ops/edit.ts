@@ -90,7 +90,8 @@ export const EDIT_MAX_BYTES = 8 * 1024 * 1024;
 
 export const editOperation: Operation<EditArgs, EditResult> = {
   name: 'edit',
-  description: 'Replace exact text matches atomically (tmp + rename)',
+  description:
+    'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Files over 8 MiB are refused.',
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {

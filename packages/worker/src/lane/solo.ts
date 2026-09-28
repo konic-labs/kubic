@@ -22,7 +22,7 @@ import {
   shouldCompact,
 } from '../compaction.js';
 import type { EscalationLadder } from '../model-select.js';
-import { validateEscalation } from '../model-select.js';
+import { ModelSelectError, validateEscalation } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -32,7 +32,9 @@ import {
   BACKGROUND_CONTEXT,
   type Context,
   type DeferredHandle,
+  laneConfig,
   type Model,
+  type OpenOperation,
   type Session,
 } from '../pi-boundary.js';
 import {
@@ -196,12 +198,61 @@ export interface SoloBootOptions {
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
+  // Resumed-session model identity (issue #148; §21, §26.1). Pi restores a
+  // resumed lane's STORED model; `model` only seeds a new lane. When they
+  // differ: 'selected' (the caller's selection was an explicit pin) switches
+  // the lane to `model` — setModel, reserve re-clamp, notice — and 'stored'
+  // (the default: the selection was only a default pick) keeps the
+  // session's own model, which then drives the prompt metadata, the reserve
+  // clamp and every report. A stored model that is no longer registered
+  // fails the boot closed with a named ModelSelectError.
+  modelPolicy?: 'selected' | 'stored';
+  // The one-line notice for either reconciliation (stderr on `run`, the
+  // debug channel elsewhere). Absent means silent.
+  onModelNotice?: (line: string) => void;
+}
+
+// The stored lane model, read before the harness boots (issue #148):
+// undefined for a lane this session has never configured.
+async function storedLaneModel(
+  session: Session,
+  context: Context,
+): Promise<{ provider: string; modelId: string } | undefined> {
+  const stored = await session.getValue(laneConfig(SOLO_LANE_NAME), context);
+  return stored?.value.model;
+}
+
+function resolveStoredModel(
+  models: SoloBootOptions['models'],
+  stored: { provider: string; modelId: string },
+): Model<string> {
+  const id = `${stored.provider}/${stored.modelId}`;
+  const hint = '(pin a model to switch this session)';
+  if (models.getProvider(stored.provider) === undefined) {
+    throw new ModelSelectError(
+      `session model '${id}' is unavailable: provider '${stored.provider}' is not registered ${hint}`,
+    );
+  }
+  const model = models.getModel(stored.provider, stored.modelId);
+  if (model === undefined) {
+    throw new ModelSelectError(
+      `session model '${id}' is unavailable: model '${stored.modelId}' is not registered on provider '${stored.provider}' ${hint}`,
+    );
+  }
+  return model as Model<string>;
 }
 
 export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
   kills: OperationKillRegistry;
+  // The model the lane actually runs after boot (issue #148): the selection
+  // for a new lane or an explicit switch, else the session's stored model.
+  // Every report (prompt metadata, status, usage, envelope) names this one.
+  model: Model<string>;
+  // Issue #147: operations Pi restored open on this lane at boot (a turn a
+  // dead process left mid-flight). Absent on stub lanes.
+  open?: OpenOperation[];
   sessionId: string;
   binding?: LaneBinding;
   affinity?: TaskAffinity;
@@ -406,11 +457,30 @@ export async function bootSoloLane(
       : classAllowed === undefined
         ? [...options.toolAllowlist]
         : options.toolAllowlist.filter((tool) => classAllowed.includes(tool));
-  const { harness } = await AgentHarness.create(
+  // Issue #148: reconcile the stored lane model with the selection BEFORE
+  // the harness fixes the system prompt and the reserve.
+  const selectedId = defaultSoloModelId(options.model);
+  const stored = await storedLaneModel(options.session, context);
+  const storedId =
+    stored === undefined ? undefined : `${stored.provider}/${stored.modelId}`;
+  const keep =
+    stored !== undefined &&
+    storedId !== selectedId &&
+    options.modelPolicy !== 'selected'
+      ? stored
+      : undefined;
+  const differs = storedId !== undefined && storedId !== selectedId;
+  const switchToSelected = differs && keep === undefined;
+  const effectiveModel =
+    keep === undefined
+      ? options.model
+      : resolveStoredModel(options.models, keep);
+  const effectiveId = defaultSoloModelId(effectiveModel);
+  const { harness, open } = await AgentHarness.create(
     {
       session: options.session,
       models: options.models,
-      model: options.model,
+      model: effectiveModel,
       tools: composeTools(baseTools, withPolicyContributions(options.policy)),
       toolContext,
       systemPrompt:
@@ -421,7 +491,7 @@ export async function bootSoloLane(
           metadata: {
             agent: options.agentId,
             lane: SOLO_LANE_NAME,
-            model: defaultSoloModelId(options.model),
+            model: effectiveId,
           },
           // §12.1 role prompt (issue #99): the document's own text replaces
           // the solo constant; absent, the constant stands.
@@ -441,7 +511,7 @@ export async function bootSoloLane(
         // Clamped to the model's window: a small-window model must not
         // compact every turn (see effectiveReserveTokens).
         reserveTokens: effectiveReserveTokens(
-          options.model.contextWindow,
+          effectiveModel.contextWindow,
           options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
         ),
         keepRecentTokens:
@@ -451,6 +521,21 @@ export async function bootSoloLane(
     context,
   );
   const lane = await harness.lane(SOLO_LANE_NAME, context);
+  if (switchToSelected) {
+    // An explicit selection is an explicit model change (§26.1): applied
+    // to the restored lane (and persisted by Pi) and announced.
+    await lane.setModel(
+      { provider: options.model.provider, modelId: options.model.id },
+      context,
+    );
+    options.onModelNotice?.(
+      `model: session model '${storedId}' switched to '${selectedId}' (explicit selection)`,
+    );
+  } else if (differs) {
+    options.onModelNotice?.(
+      `model: session keeps its own model '${storedId}' (selected default '${selectedId}' not applied; pin a model to switch)`,
+    );
+  }
   if (options.policy?.classes !== undefined) {
     await applyToolPolicy(harness, lane, options.policy.classes, context);
   }
@@ -486,7 +571,7 @@ export async function bootSoloLane(
     const candidate: LaneBinding = {
       sessionId: options.sessionId,
       lane: SOLO_LANE_NAME,
-      modelId: defaultSoloModelId(options.model),
+      modelId: effectiveId,
     };
     let existing: LaneBinding | undefined;
     try {
@@ -524,6 +609,11 @@ export async function bootSoloLane(
     harness,
     lane,
     kills,
+    model: effectiveModel,
+    // Issue #147 (§21): the operations Pi restored open on this lane — a
+    // turn a dead process left mid-flight. Callers settle them (resume or
+    // durable abort, lane/pending.ts) before admitting a new prompt.
+    open: open.filter((op) => op.lane === SOLO_LANE_NAME),
     sessionId: options.sessionId,
     configuredReserveTokens:
       options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
@@ -534,10 +624,7 @@ export async function bootSoloLane(
     ...(options.taskId === undefined
       ? {}
       : {
-          affinity: pinModelForTask(
-            options.taskId,
-            defaultSoloModelId(options.model),
-          ),
+          affinity: pinModelForTask(options.taskId, effectiveId),
         }),
   };
 }

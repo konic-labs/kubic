@@ -1,20 +1,32 @@
-// Kubic operations as Pi harness tools (issue #11, slice A).
+// Kubic operations as Pi harness tools (issue #11, slice A; issue #168).
 // One AgentHarnessTool per OPERATIONS entry: name/description/replay map
 // straight across (§20.2 alignment is structural, not coincidental).
-// Argument strictness stays in Kubic validators — the Pi parameter schema is
-// intentionally a loose record until provider-level constrainedSampling
-// lands with issue #20. Structured op errors are returned as model-readable
-// content (Pi's own tools report exit codes the same way); only unexpected
-// throws propagate to the harness as faults.
+// Issue #168 (§37.5, §40.3): every tool carries its real parameter schema
+// from ops/registry.ts (OPERATION_PARAMETERS — the single source) and
+// declares json_schema constrained sampling with strict 'prefer', so capable
+// providers enforce valid arguments; Pi validates against the same schema
+// before execute, and Kubic's validators stay authoritative after it.
+// read/bash/grep results reach the model as plain text under a short header
+// (raw lines, never JSON-escaped); the other ops keep their JSON result.
+// Structured op errors are returned as model-readable content (Pi's own
+// tools report exit codes the same way); only unexpected throws propagate
+// to the harness as faults.
 
 import type { CheckpointStore, ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
-import { callOperation, OPERATIONS } from '../ops/registry.js';
-import type { MemoStore, OpContext, ToolInvocation } from '../ops/types.js';
+import type { BashResult } from '../ops/bash.js';
+import type { GrepResult } from '../ops/grep.js';
+import type { ReadResult } from '../ops/read.js';
 import {
-  type AgentHarnessTool,
-  type AgentHarnessToolInvocation,
-  Type,
+  callOperation,
+  OPERATION_PARAMETERS,
+  OPERATIONS,
+  type OperationName,
+} from '../ops/registry.js';
+import type { MemoStore, OpContext, ToolInvocation } from '../ops/types.js';
+import type {
+  AgentHarnessTool,
+  AgentHarnessToolInvocation,
 } from '../pi-boundary.js';
 import type { OperationKillRegistry } from './abort.js';
 
@@ -51,12 +63,86 @@ function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
   };
 }
 
+function lineCount(text: string): number {
+  if (text.length === 0) return 0;
+  const lines = text.split('\n');
+  return lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+}
+
+function withNewline(text: string): string {
+  return text.length === 0 || text.endsWith('\n') ? text : `${text}\n`;
+}
+
+// `[read <path>: lines a-b of N]` + the raw lines. `of at least N` when the
+// read was cut (totalLines is then a lower bound); `more: offset=K` whenever
+// lines remain past the window, so the model knows how to continue.
+export function renderReadText(result: ReadResult): string {
+  const shown = lineCount(result.content);
+  const total = `${result.truncated ? 'at least ' : ''}${result.totalLines}`;
+  if (shown === 0) {
+    return result.totalLines === 0 && !result.truncated
+      ? `[read ${result.path}: empty (0 lines)]\n`
+      : `[read ${result.path}: no lines at offset ${result.offset} (file has ${total} lines)]\n`;
+  }
+  const end = result.offset + shown - 1;
+  const more =
+    result.truncated || end < result.totalLines
+      ? `; more: offset=${end + 1}`
+      : '';
+  return `[read ${result.path}: lines ${result.offset}-${end} of ${total}${more}]\n${withNewline(result.content)}`;
+}
+
+// `[grep /<pattern>/: N matches]` + one `path:line: text` per match.
+export function renderGrepText(result: GrepResult): string {
+  const count = result.matches.length;
+  const head = `[grep /${result.pattern}/: ${count} ${count === 1 ? 'match' : 'matches'}${
+    result.truncated ? ', truncated (narrow pattern, root or include)' : ''
+  }]\n`;
+  return (
+    head +
+    result.matches
+      .map((match) => `${match.path}:${match.line}: ${match.text}\n`)
+      .join('')
+  );
+}
+
+// `[bash exit <code> (<shell>)]` + the raw streams, each under its own
+// marker; flags name a timeout, an abort, or a clipped stream.
+export function renderBashText(result: BashResult): string {
+  const flags = [
+    result.timedOut ? 'timed out' : undefined,
+    result.aborted ? 'aborted' : undefined,
+    result.truncated ? 'output truncated' : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
+  const head = `[bash exit ${result.exitCode ?? 'none'} (${result.shell})${
+    flags.length === 0 ? '' : `, ${flags.join(', ')}`
+  }]\n`;
+  const streams = [
+    result.stdout.length === 0
+      ? ''
+      : `--- stdout ---\n${withNewline(result.stdout)}`,
+    result.stderr.length === 0
+      ? ''
+      : `--- stderr ---\n${withNewline(result.stderr)}`,
+  ].join('');
+  return head + (streams.length === 0 ? '(no output)\n' : streams);
+}
+
+// The model-facing text for a successful op result.
+export function renderToolText(name: string, result: unknown): string {
+  if (name === 'read') return renderReadText(result as ReadResult);
+  if (name === 'grep') return renderGrepText(result as GrepResult);
+  if (name === 'bash') return renderBashText(result as BashResult);
+  return JSON.stringify(result);
+}
+
 export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
   return Object.values(OPERATIONS).map((op) => ({
     name: op.name,
     label: op.name,
     description: op.description,
-    parameters: Type.Record(Type.String(), Type.Unknown()),
+    parameters: OPERATION_PARAMETERS[op.name as OperationName],
+    constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     replay: op.replay,
     execute: async (toolCallId, params, onUpdate, toolContext, invocation) => {
       const inv = toInvocation(invocation);
@@ -79,7 +165,9 @@ export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
       const out = await callOperation(op.name, params, inv, ctx);
       if (out.ok) {
         return {
-          content: [{ type: 'text', text: JSON.stringify(out.result) }],
+          content: [
+            { type: 'text', text: renderToolText(op.name, out.result) },
+          ],
           details: { ok: true, toolCallId, invocationId: inv.invocationId },
         };
       }

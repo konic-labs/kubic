@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { readOperation } from './read.js';
+import { readFailure, readOperation, validateReadArgs } from './read.js';
 import type { OpContext, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 
@@ -117,5 +117,70 @@ describe('read on the unwrapped NodeExecutionEnv (issue #199)', () => {
     await expect(
       readOperation.execute(inv(), { path: 'a.txt' }, ctxFor(env)),
     ).rejects.toThrow(TypeError);
+  });
+
+  it('names each errno mapping with its own message', async () => {
+    writeFileSync(join(dir, 'file.txt'), 'x\n');
+    const notDir = await failure('file.txt/inner');
+    expect(notDir.code).toBe('not_found');
+    expect(notDir.message).toBe('read: no such file: file.txt/inner');
+    mkdirSync(join(dir, 'sub'));
+    expect((await failure('sub')).message).toBe(
+      'read: sub is a directory (use ls to list it)',
+    );
+    const perm = readFailure(
+      Object.assign(new Error('nope'), { code: 'EPERM' }),
+      'p.txt',
+    );
+    expect(perm).toBeInstanceOf(OpError);
+    expect((perm as OpError).code).toBe('permission_denied');
+    expect((perm as OpError).message).toBe('read: permission denied: p.txt');
+    const acces = readFailure({ code: 'EACCES' }, 'q.txt');
+    expect((acces as OpError).code).toBe('permission_denied');
+  });
+
+  it('reports a cwd-confinement escape as invalid_args', async () => {
+    const err = await failure('../outside.txt');
+    expect(err.code).toBe('invalid_args');
+    expect(err.message).toBe(
+      'read: path escapes cwd confinement: ../outside.txt',
+    );
+    // Only a message that STARTS with the marker is a confinement refusal.
+    const other = new Error('boom: path escapes cwd confinement');
+    expect(readFailure(other, 'x')).toBe(other);
+  });
+
+  it('propagates non-Error throws and code-less errors unchanged', () => {
+    expect(readFailure(null, 'x')).toBeNull();
+    const plain = new Error('plain');
+    expect(readFailure(plain, 'x')).toBe(plain);
+    const odd = { code: 'EIO' };
+    expect(readFailure(odd, 'x')).toBe(odd);
+  });
+});
+
+describe('read argument validation', () => {
+  it.each([
+    [{ path: 'a', offset: 0 }, 'read: offset must be a 1-indexed integer'],
+    [{ path: 'a', offset: 1.5 }, 'read: offset must be a 1-indexed integer'],
+    [{ path: 'a', limit: 0 }, 'read: limit must be a positive integer'],
+    [{ path: 'a', limit: 2.5 }, 'read: limit must be a positive integer'],
+    [{ path: '' }, 'read: path must be a non-empty string'],
+    [
+      { path: 'a', extra: 1 },
+      'read: unknown argument "extra" (strict sampling)',
+    ],
+    [null, 'read args must be an object'],
+    [[], 'read args must be an object'],
+  ])('refuses %j', (raw, message) => {
+    expect(() => validateReadArgs(raw)).toThrow(message);
+  });
+
+  it('accepts offset 1 and limit 1', () => {
+    expect(validateReadArgs({ path: 'a', offset: 1, limit: 1 })).toEqual({
+      path: 'a',
+      offset: 1,
+      limit: 1,
+    });
   });
 });

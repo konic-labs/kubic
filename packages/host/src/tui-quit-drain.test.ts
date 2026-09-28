@@ -310,7 +310,8 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       }, 30);
     });
     process.emit('SIGINT');
-    expect(await exit).toBe(0);
+    // Issue #313: a signalled quit exits 128+signo (SIGINT → 130).
+    expect(await exit).toBe(130);
     const sessionId = h.boots[0]?.sessionId ?? '';
     const paths = new FileJournalStore(
       join(h.sessionsRoot, sessionId, 'journal'),

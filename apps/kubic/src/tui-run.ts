@@ -4,7 +4,7 @@
 // alt-screen on the replicated presentation, routes keyboard input through
 // the tui controller, drives the lane for whatever the user submits, feeds
 // lane events into the tree and usage rows into the status bar, and restores
-// the main screen with the final document printed — on quit, on SIGINT,
+// the main screen with the final document printed — on quit, on a signal,
 // and exactly once. `kubic run` is untouched (headless regression:
 // tui-command.test.ts + binary exit codes).
 //
@@ -14,7 +14,7 @@
 // first Ctrl-C quits. Esc and Ctrl-D-on-an-empty-draft quit too, so no
 // honoured key is a silent no-op.
 
-import { homedir } from 'node:os';
+import { homedir, constants as osConstants } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
@@ -187,6 +187,35 @@ export interface TuiRunDeps {
   // deterministic. It returns a canceller.
   drainTimeoutMs?: number;
   setDrainTimer?: (ms: number, fire: () => void) => () => void;
+  // Issue #313: the process-level event source — SIGINT/SIGTERM/SIGHUP and
+  // uncaughtException/unhandledRejection. Absent means the real process;
+  // tests inject an emitter so the runner itself is never signalled.
+  signals?: TuiProcessEvents;
+  // Issue #313: how a fatal error (an exception in input or render, an
+  // unhandled rejection) ends the process once the terminal is restored.
+  // Absent means process.exit; tests inject a recorder.
+  exit?: (code: number) => void;
+}
+
+export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+export type TuiProcessEvent =
+  | TuiSignal
+  | 'uncaughtException'
+  | 'unhandledRejection';
+
+export interface TuiProcessEvents {
+  on(event: TuiProcessEvent, listener: (value: unknown) => void): unknown;
+  off(event: TuiProcessEvent, listener: (value: unknown) => void): unknown;
+}
+
+const TUI_SIGNALS: readonly TuiSignal[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const TUI_FATAL_EVENTS = ['uncaughtException', 'unhandledRejection'] as const;
+
+// Issue #313: a signalled quit exits 128+signo (SIGHUP 129, SIGINT 130,
+// SIGTERM 143) — the shell convention, so a supervisor can tell a signalled
+// TUI from a clean quit.
+export function signalExitCode(signal: TuiSignal): number {
+  return 128 + osConstants.signals[signal];
 }
 
 // Issue #312: how long a quit waits for an aborted turn to settle. The kills
@@ -1005,12 +1034,77 @@ export async function runTuiCommand(
   };
   let screen: Screen | undefined;
   let stopped = false;
+  let exitCode = RUN_EXIT_OK;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
-  const onSigint = (): void => {
-    shutdown();
+  // Issue #313 (§16.1, §18): SIGINT, SIGTERM and SIGHUP all run the same
+  // shutdown (mid-turn drain, restore, sweep, close) and exit 128+signo. The
+  // listeners stay attached until the terminal is restored, so a second
+  // signal during the drain only shortens it; they are detached before the
+  // session close, so a signal after that takes the default disposition.
+  const signals: TuiProcessEvents = deps.signals ?? process;
+  const signalListeners = new Map<TuiSignal, (value: unknown) => void>();
+  for (const name of TUI_SIGNALS) {
+    signalListeners.set(name, () => {
+      if (!stopped) exitCode = signalExitCode(name);
+      shutdown();
+    });
+  }
+  let signalsAttached = false;
+  const attachSignals = (): void => {
+    if (signalsAttached) return;
+    signalsAttached = true;
+    for (const [name, listener] of signalListeners) signals.on(name, listener);
+  };
+  const detachSignals = (): void => {
+    if (!signalsAttached) return;
+    signalsAttached = false;
+    for (const [name, listener] of signalListeners) signals.off(name, listener);
+  };
+  // Issue #313: the last-resort restore. An exception in input or render, or
+  // an unhandled rejection, would otherwise kill the process with the alt
+  // screen, raw mode, mouse tracking and the Kitty protocol still active.
+  // The terminal is restored first (nothing is printed — the layout may be
+  // what threw), then the error is reported and the process exits 1.
+  let fatalHandled = false;
+  const fatal = (error: unknown): void => {
+    if (fatalHandled) return;
+    fatalHandled = true;
+    stopped = true;
+    exitCode = RUN_EXIT_FAILED;
+    stopSpinner();
+    endDrain?.();
+    try {
+      screen?.restore();
+    } catch {
+      // Best effort: the report below must still happen.
+    }
+    detachSignals();
+    detachFatal();
+    stdin?.removeListener('end', onStdinEnd);
+    stdin?.removeListener('close', onStdinEnd);
+    surface.cancelPending('the session ended before the approval was answered');
+    const detail =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
+    (deps.err ?? deps.out)(`error: kubic tui crashed: ${detail}`);
+    (deps.exit ?? ((code: number) => process.exit(code)))(RUN_EXIT_FAILED);
+    resolveExit();
+  };
+  const fatalListener = (value: unknown): void => {
+    fatal(value);
+  };
+  let fatalAttached = false;
+  const attachFatal = (): void => {
+    if (fatalAttached) return;
+    fatalAttached = true;
+    for (const name of TUI_FATAL_EVENTS) signals.on(name, fatalListener);
+  };
+  const detachFatal = (): void => {
+    if (!fatalAttached) return;
+    fatalAttached = false;
+    for (const name of TUI_FATAL_EVENTS) signals.off(name, fatalListener);
   };
   // Stdin EOF (a closed pty, `kubic tui < /dev/null`, or a shell that
   // detached the tty) is a quit: Pi's terminal never reports it, so a
@@ -1023,9 +1117,6 @@ export async function runTuiCommand(
   // Issue #312: set while a quit drains a running turn; calling it ends the
   // wait at once (a second Ctrl-C, a second SIGINT, or the bound firing).
   let endDrain: (() => void) | undefined;
-  const onDrainSigint = (): void => {
-    endDrain?.();
-  };
   const shutdown = (): void => {
     if (stopped) {
       // A second quit while the drain waits shortens it: the kills already
@@ -1040,7 +1131,6 @@ export async function runTuiCommand(
     // would otherwise sit until the lane's timeout, and the operator gets no
     // second chance to answer a screen they have left.
     surface.cancelPending('the session quit before the approval was answered');
-    process.removeListener('SIGINT', onSigint);
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
     // Issue #312 (§18, §42.5, #109): a turn still running is aborted and
@@ -1053,7 +1143,6 @@ export async function runTuiCommand(
     if (draining) {
       app.setEditorFooter('cancelling…');
       screen?.render();
-      process.on('SIGINT', onDrainSigint);
     }
     void (async () => {
       if (draining && turn !== undefined) {
@@ -1072,18 +1161,29 @@ export async function runTuiCommand(
         }
         cancelTimer();
         endDrain = undefined;
-        process.removeListener('SIGINT', onDrainSigint);
       }
+      if (fatalHandled) return;
+      // Issue #313: pop the Kitty protocol and let late input (the quitting
+      // key's release, especially over SSH) arrive and be swallowed here
+      // instead of printing as `[27;1:3u` in the operator's shell.
+      try {
+        await terminal.drainInput();
+      } catch {
+        // Draining is best effort; the restore below still runs.
+      }
+      if (fatalHandled) return;
       try {
         screen?.stop((line: string) => deps.out(line));
       } catch {
         // Restore failures never mask the clean quit.
       }
+      detachSignals();
       try {
         await boot.close?.();
       } catch {
         // Close failures never mask the clean quit.
       }
+      detachFatal();
       resolveExit();
     })();
   };
@@ -1102,11 +1202,22 @@ export async function runTuiCommand(
     // (issue #89): the footer is set before the first render, so the very
     // first frame carries it. Empty when suppressed.
     app.setEditorFooter(notice);
+    attachFatal();
     booted.render();
-    process.once('SIGINT', onSigint);
+    attachSignals();
     stdin?.once('end', onStdinEnd);
     stdin?.once('close', onStdinEnd);
     booted.tui.addInputListener((data: string) => {
+      // Issue #313: an exception anywhere in input handling (including the
+      // synchronous paints it triggers) restores the terminal first.
+      try {
+        return routeInput(data);
+      } catch (error) {
+        fatal(error);
+        return { consume: true };
+      }
+    });
+    const routeInput = (data: string): { consume: true } | undefined => {
       if (stopped) {
         // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
         if (!isKeyRelease(data) && keyIs(data, 'ctrl+c')) shutdown();
@@ -1163,7 +1274,7 @@ export async function runTuiCommand(
         return { consume: true };
       }
       return undefined;
-    });
+    };
     if (turn !== undefined) {
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
@@ -1199,7 +1310,8 @@ export async function runTuiCommand(
     // after the alt-screen went active — restore the main screen and
     // close the lane so the reject never strands either. The setup
     // error stands.
-    process.removeListener('SIGINT', onSigint);
+    detachSignals();
+    detachFatal();
     stdin?.removeListener('end', onStdinEnd);
     stdin?.removeListener('close', onStdinEnd);
     try {
@@ -1215,5 +1327,5 @@ export async function runTuiCommand(
     throw error;
   }
   await exited;
-  return RUN_EXIT_OK;
+  return exitCode;
 }

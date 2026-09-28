@@ -578,9 +578,20 @@ the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
 the end-of-run reconciliation sweep and the session close — so a killed
 tool's last write is still journaled and no child keeps running after the
 TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once.
-Only `SIGINT` (`Ctrl-C`) and stdin EOF are handled —
-`SIGTERM`/`SIGHUP` have no handler and exit without restoring the
-alt-screen. Solo mode runs in-process with your user authority: no
+Before the screen is restored the quit drains stdin for a moment (the Kitty
+keyboard protocol is popped first), so the release of the quitting key —
+which can arrive late over SSH — is swallowed instead of printing as
+`[27;1:3u` in your shell.
+
+**Signals and crashes.** `SIGINT`, `SIGTERM` (a supervisor `kill`) and
+`SIGHUP` (a closed terminal tab) all take the same quit path — mid-turn
+drain, terminal restore, sweep, session close — run it once however many
+arrive, and exit `128+signo` (130, 143, 129). A second signal during the
+drain ends the wait. An exception in input or render, or an unhandled
+promise rejection, restores the terminal first (alt screen left, autowrap
+back on, cursor shown, mouse tracking and the Kitty protocol off, cooked
+mode), then prints `error: kubic tui crashed: …` on stderr and exits 1.
+`Ctrl-Z` suspend is not supported. Solo mode runs in-process with your user authority: no
 isolation, no containment. The no-isolation statement is on screen from the
 first frame: the editor footer carries the one-line form at startup and
 returns after every completed turn (a cancelled or failed turn reports that

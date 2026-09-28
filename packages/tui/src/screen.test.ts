@@ -89,4 +89,31 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     expect(terminal.stopped).toBe(1);
     expect(terminal.started).toBe(1);
   });
+
+  // Issue #313: the last-resort path (a signal or an exception) restores the
+  // terminal without printing anything, and every stop is idempotent — a
+  // crash that lands during a quit must never stop the terminal twice.
+  it('restore leaves the alt screen without printing, and stop after restore is a no-op', () => {
+    const terminal = fakeTerminal(100);
+    const root = buildLayoutRoot({
+      tree: new Text('tree'),
+      transcript: new Text('body'),
+      status: new Text('status'),
+      editor: new Text('editor'),
+    });
+    const screen = bootScreen(terminal, root);
+    screen.render();
+    const beforeRestore = terminal.writes.join('').length;
+    screen.restore();
+    const tail = terminal.writes.join('').slice(beforeRestore);
+    expect(tail).toContain('?1049l');
+    expect(tail).toContain('?7h');
+    expect(tail).not.toContain('body');
+    const printed: string[] = [];
+    screen.stop((line) => printed.push(line));
+    screen.restore();
+    expect(printed).toEqual([]);
+    expect(terminal.stopped).toBe(1);
+    expect(terminal.writes.join('').split('?1049l').length - 1).toBe(1);
+  });
 });

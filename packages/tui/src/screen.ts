@@ -14,6 +14,11 @@ export interface Screen {
   // flicker on terminals without synchronized output.
   update: () => void;
   stop: (print: (line: string) => void) => void;
+  // Issue #313: the last-resort restore (a signal or an exception): leave
+  // the alt screen and restore every terminal mode, printing nothing — the
+  // layout may be what threw. Idempotent with stop: whichever runs first
+  // restores, the other is a no-op, so the terminal is stopped exactly once.
+  restore: () => void;
   // The live alt-screen (issue #75): the composition root needs
   // setFocus/addInputListener to route keyboard input. Additive — the
   // boot/render/stop lifecycle above is unchanged.
@@ -36,14 +41,23 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
     }
     throw error;
   }
+  let stopped = false;
   return {
     tui: screen,
     render: () => screen.renderNow(true),
     update: () => screen.requestRender(),
     stop: (print: (line: string) => void) => {
+      if (stopped) return;
+      stopped = true;
       for (const line of root.render(terminal.columns)) print(line);
       screen.setLayoutRoot(undefined);
       screen.stop();
+    },
+    restore: () => {
+      if (stopped) return;
+      stopped = true;
+      screen.setLayoutRoot(undefined);
+      screen.stop({ preserveScreen: true });
     },
   };
 }

@@ -41,7 +41,37 @@ caseId, labels }`, null-labelled until #53 fills it) is reserved.
 | --- | --- |
 | `schema.ts` | `TrajectoryExport` + all section interfaces, `TRAJECTORY_FIELDS`, `SCHEMA_VERSION/MAJOR/MINOR`, `TRAJECTORY_STABILITY`, `TRAJECTORY_CHANGELOG`, `TRAJECTORY_FAILURE_CODES`, `isTrajectoryFailureCode`, `RESULT_STATUSES`, `TrajectorySchemaError`, `TrajectorySchemaErrorCode`, `parseTrajectoryExport`, `parseTrajectoryExportJSON` |
 | `export.ts` | `BuildTrajectoryInput`, `RawObservation`, `buildTrajectoryExport`, `MAX_OBSERVATION_BYTES`, `TrajectoryExportError`, `TrajectoryExportErrorCode` |
-| `index.ts` | Re-exports the full surface above |
+| `index.ts` | Re-exports the full surface above (a §64 skeleton path; live callers import `export.ts`/`schema.ts` per module) |
+
+## Producers (issue #383)
+
+The shipped binary writes one record per settled run at
+`<sessions-root>/<id>/trajectory.json`. The file holds the session's
+latest settled run, and the `trajectory` ref `kubic run` prints is its
+absolute path. The producers are:
+
+- `kubic run -p` (solo)
+- each `kubic orchestrate` worker child (a `kubic run` under its worker
+  session)
+- each settled `kubic tui` turn
+
+The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
+(`assembleRunTrajectory`, `trajectoryResultFor`, `taskIdForPrompt`,
+`writeRunTrajectory`). The composition root gathers the I/O evidence in
+`apps/kubic/src/run-trajectory.ts` (`persistRunTrajectory`,
+`resolveSessionTrajectory`). What each section is built from:
+
+| Section | Source |
+| --- | --- |
+| `actions` / `observations` | This run's session entries, in `seq` order: assistant `toolCall` parts and their `toolResult` messages. Entries older than the run's start (a resumed session) are left out. |
+| `usage` | The per-request `usage` on this run's assistant messages; `byModel` is keyed `provider/model`. |
+| `diff` | This session's journal changes since the run started (`unifiedHunks`). An omitted after-side keeps its path with no hunks. |
+| `approvals` | This session's audit-ledger records since the run started: `ok` becomes approved, a timeout reason becomes timed-out, anything else denied. |
+| `provenance` | Session and agent ids; `pid` = the process; `generation` = `KUBIC_WORKER_GENERATION` (set by the lifecycle layer for a worker, 0 solo); `worktree` = the run's cwd; `model` = `provider/id`, or `none/none` when the run ended before a model was selected. |
+| `worktree` | `git rev-parse HEAD` and the branch (null when detached); `no-vcs` outside a git checkout. |
+| `environment` | `toolSpawnEnv()`: exactly the env the lane spawns tools with, so no secrets. |
+| `task` / `transfer` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can form a §74 pair. `grantRef` is `role:<role>` (`role:solo` without `--role`). |
+| `result` | The §78 terminus mapped to a §46 status and §52 category. Lane failures go through `classifyFailure`, a guard timeout is `timeout`, and a boot failure or interrupt is `process_crashed` (an interrupt is `cancelled`). |
 
 ## Contracts
 

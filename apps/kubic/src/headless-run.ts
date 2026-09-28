@@ -74,6 +74,7 @@ import {
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
+import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import {
   attachSession,
   createSession,
@@ -101,6 +102,7 @@ import {
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
 import { loadExtensionStartup } from './extension-startup.js';
+import { persistRunTrajectory } from './run-trajectory.js';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -373,7 +375,9 @@ export const NO_ASSISTANT_TEXT_SUMMARY =
 // Final assistant text of the settled run for the result summary. A lane
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
-function assistantSummary(entries: readonly unknown[]): string | undefined {
+export function assistantSummary(
+  entries: readonly unknown[],
+): string | undefined {
   let best: string | undefined;
   let bestSeq = -1;
   for (const entry of entries) {
@@ -434,10 +438,75 @@ async function recordPrompt(
   }, context);
 }
 
+// What the settled run leaves for its §46 trajectory (issue #383): filled
+// as the run boots, read once after it settles.
+interface RunCapture {
+  startedAt: number;
+  sessionsRoot?: string;
+  sessionId?: string;
+  cwd?: string;
+  model?: { provider: string; id: string };
+  role?: string;
+  skills: string[];
+  entries: unknown[];
+  lane?: RunOutcome['lane'];
+  interrupted: boolean;
+}
+
+// kubic run -p (issue #28) plus its §46 trajectory (issue #383): every run
+// that attached a session writes <sessions-root>/<id>/trajectory.json when
+// it settles — completed or not — and the result's trajectory ref names
+// that file. A trajectory that cannot be written is reported on the warning
+// channel; it never changes the run's own result.
 export async function runHeadlessPrompt(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  const capture: RunCapture = {
+    startedAt: Date.now(),
+    skills: [],
+    entries: [],
+    interrupted: false,
+  };
+  const result = await runHeadlessPromptCore(prompt, options, deps, capture);
+  if (capture.sessionId === undefined || capture.sessionsRoot === undefined) {
+    return result;
+  }
+  try {
+    const path = persistRunTrajectory({
+      sessionsRoot: capture.sessionsRoot,
+      sessionId: capture.sessionId,
+      agentId: deps.agentId ?? 'root',
+      role: capture.role ?? 'solo',
+      prompt,
+      entries: capture.entries,
+      ...(capture.model === undefined ? {} : { model: capture.model }),
+      cwd: capture.cwd ?? deps.env?.cwd ?? process.cwd(),
+      skills: capture.skills,
+      startedAt: capture.startedAt,
+      endedAt: Date.now(),
+      outcome: {
+        terminus: result.terminus,
+        summary: result.summary,
+        ...(capture.lane === undefined ? {} : { lane: capture.lane }),
+        interrupted: capture.interrupted,
+      },
+    });
+    return { ...result, trajectoryRef: path };
+  } catch (error) {
+    (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+      `trajectory not written for session ${capture.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return result;
+  }
+}
+
+async function runHeadlessPromptCore(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps,
+  capture: RunCapture,
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
@@ -532,6 +601,8 @@ export async function runHeadlessPrompt(
     return storeFailure(options.sessionId, error);
   }
   const id = session.metadata.id;
+  capture.sessionId = id;
+  capture.sessionsRoot = root;
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
@@ -607,6 +678,7 @@ export async function runHeadlessPrompt(
   };
   const bootInterrupted = (): HeadlessRunResult | undefined => {
     if (interruptedBy === undefined) return undefined;
+    capture.interrupted = true;
     const message = new InterruptedError(interruptedBy).message;
     return finished(id, 'failed', message, message);
   };
@@ -697,6 +769,7 @@ export async function runHeadlessPrompt(
         `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
       );
       role = { resolved: selected.resolved, prompt: promptText };
+      capture.role = selected.resolved.name;
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a
@@ -758,7 +831,9 @@ export async function runHeadlessPrompt(
       }
       throw error;
     }
+    capture.model = { provider: model.provider, id: model.id };
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    capture.cwd = env.cwd;
     // Installed policy (issue #86; §40, §41): the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
     // same function doctor reads (host/approvals.installSoloPolicy). Config-
@@ -882,6 +957,7 @@ export async function runHeadlessPrompt(
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
       log: (line) => debug?.(`skills: ${line}`),
     });
+    capture.skills = skills.skills.map((skill) => skill.name);
     if (skills.skills.length > 0) {
       debug?.(
         `skills: ${skills.skills.length} loaded (${skills.skills
@@ -957,6 +1033,7 @@ export async function runHeadlessPrompt(
         // Guard exhaustion or an interrupt only: any other throw re-enters
         // the outer storeFailure path below.
         if (error instanceof InterruptedError) {
+          capture.interrupted = true;
           spans.endLane(driveSpan, error.message);
           return finished(id, 'failed', error.message, error.message);
         }
@@ -1013,6 +1090,10 @@ export async function runHeadlessPrompt(
         const malformed = `lane yielded a malformed outcome: ${detail}`;
         return finished(id, 'failed', malformed, malformed);
       }
+      capture.lane = {
+        status: record.status,
+        ...(record.error === undefined ? {} : { error: record.error }),
+      };
       const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
       if (terminus === 'completed') {
         const entries = await lane.findEntries(undefined, context);
@@ -1070,6 +1151,14 @@ export async function runHeadlessPrompt(
       }
     }
     flushSpans();
+    // The §46 trajectory's entries (issue #383), read while the session is
+    // still open; a read failure leaves the trajectory without actions,
+    // never the run without its result.
+    try {
+      capture.entries = await session.findEntries(undefined, context);
+    } catch {
+      capture.entries = [];
+    }
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {

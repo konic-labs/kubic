@@ -52,6 +52,7 @@ import {
 } from '../../../packages/host/src/roles/roles-boot.js';
 import {
   mapCaughtErrorToTerminus,
+  mapLaneOutcomeToTerminus,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
   RUN_EXIT_PROVIDER_PROBE_FAILED,
@@ -61,6 +62,7 @@ import {
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
+import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
@@ -92,6 +94,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../../packages/worker/src/lane/session-store.js';
+import type { OperationErrorLike } from '../../../packages/worker/src/lane/settle.js';
 import {
   bootSoloLane,
   driveToSettled,
@@ -106,7 +109,10 @@ import {
   type Context,
   type MutableModels,
   type OperationAdmissionResult,
+  type TerminalStatus,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
+import { persistRunTrajectory } from './run-trajectory.js';
 
 // The interaction surface the root shares with the app (issue #96): the seat
 // the installed policy consults and the surface the loop renders are the SAME
@@ -129,6 +135,20 @@ export interface TuiLaneLoop {
   events: EventSource['events'];
   kills: OperationKillRegistry;
   context: Context;
+  // §46 trajectory per settled turn (issue #383): the prod boot persists
+  // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
+  // means no trajectory; a failure never changes the turn's outcome.
+  recordTurn?: (turn: TuiTurnRecord) => Promise<void> | void;
+}
+
+// One settled turn as the runner saw it: the prompt, when it started, the
+// footer outcome, and the lane's own terminal record when it settled (or
+// 'deferred' when the lane suspended the operation).
+export interface TuiTurnRecord {
+  prompt: string;
+  startedAt: number;
+  outcome: TuiTurnOutcome;
+  lane?: { status: TerminalStatus; error?: OperationErrorLike } | 'deferred';
 }
 
 export interface TuiLaneBoot {
@@ -297,6 +317,8 @@ export async function bootTuiLane(
         : undefined,
     );
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
+    // The loaded skill names, for the §46 trajectory's resources (#383).
+    let skillNames: string[] = [];
     // Installed policy (issue #86): `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
     // (host/approvals.installSoloPolicy), which is also what `doctor`
@@ -347,6 +369,7 @@ export async function bootTuiLane(
             // intentionally dropped (the block itself is observable).
           },
         });
+        skillNames = skills.skills.map((skill) => skill.name);
         return skills.block === undefined
           ? {}
           : { promptSections: [skills.block] };
@@ -405,6 +428,25 @@ export async function bootTuiLane(
         events: solo.harness.events,
         kills: solo.kills,
         context,
+        // §46 trajectory per settled turn (issue #383): the same record
+        // `kubic run` writes, holding the session's latest settled turn.
+        recordTurn: async (turn) => {
+          const entries = await solo.lane.findEntries(undefined, context);
+          persistRunTrajectory({
+            sessionsRoot: root,
+            sessionId: id,
+            agentId: options.agentId ?? 'root',
+            role: options.role ?? 'solo',
+            prompt: turn.prompt,
+            entries,
+            model: { provider: model.provider, id: model.id },
+            cwd: env.cwd,
+            skills: skillNames,
+            startedAt: turn.startedAt,
+            endedAt: Date.now(),
+            outcome: tuiTurnOutcome(turn, entries),
+          });
+        },
       },
       close,
     };
@@ -412,6 +454,35 @@ export async function bootTuiLane(
     await close();
     throw error;
   }
+}
+
+// A settled TUI turn → the §78 outcome its trajectory records (#383): the
+// lane's own terminal record decides, exactly as it does for `kubic run`; a
+// deferred operation is an approval that could not be answered; a refused
+// admission is a plain failure.
+export function tuiTurnOutcome(
+  turn: TuiTurnRecord,
+  entries: readonly unknown[],
+): RunOutcome {
+  const lane = turn.lane;
+  if (lane === 'deferred') {
+    return {
+      terminus: 'approval_timed_out',
+      summary: turn.outcome.detail ?? 'turn deferred',
+    };
+  }
+  if (lane === undefined) {
+    return {
+      terminus: 'failed',
+      summary: turn.outcome.detail ?? 'the turn failed',
+    };
+  }
+  const terminus = mapLaneOutcomeToTerminus(lane.status, lane.error);
+  const summary =
+    terminus === 'completed'
+      ? (assistantSummary(entries) ?? NO_ASSISTANT_TEXT_SUMMARY)
+      : (turn.outcome.detail ?? footerForOutcome(turn.outcome));
+  return { terminus, summary, lane };
 }
 
 export function tuiDepsWithDefaults(provided: {
@@ -568,7 +639,27 @@ export class TuiTurnRunner {
   private readonly usageRows: Array<Parameters<TuiApp['setUsage']>[0][number]> =
     [];
 
+  // The lane's terminal record of the turn in flight (issue #383).
+  private settledLane: TuiTurnRecord['lane'];
+
   async run(prompt: string): Promise<TuiTurnOutcome> {
+    const startedAt = Date.now();
+    this.settledLane = undefined;
+    const outcome = await this.runTurn(prompt);
+    try {
+      await this.loop.recordTurn?.({
+        prompt,
+        startedAt,
+        outcome,
+        ...(this.settledLane === undefined ? {} : { lane: this.settledLane }),
+      });
+    } catch {
+      // The trajectory observes the turn; it never changes its outcome.
+    }
+    return outcome;
+  }
+
+  private async runTurn(prompt: string): Promise<TuiTurnOutcome> {
     this.starting = true;
     this.aborted = false;
     this.detach = attachLaneEvents(
@@ -600,6 +691,7 @@ export class TuiTurnRunner {
       // 'aborted'. `this.aborted` only decides the footer when the record is
       // silent, which cannot happen on a settled drive.
       if (driven.kind === 'waiting-deferred') {
+        this.settledLane = 'deferred';
         return {
           status: 'failed',
           // Issue #113: the TUI HAS a TTY — the old message blamed a
@@ -611,6 +703,18 @@ export class TuiTurnRunner {
         };
       }
       const record = driven.outcome as { status?: unknown; error?: unknown };
+      if (
+        record.status === 'completed' ||
+        record.status === 'aborted' ||
+        record.status === 'declined' ||
+        record.status === 'failed'
+      ) {
+        const laneError = record.error as OperationErrorLike | undefined;
+        this.settledLane = {
+          status: record.status,
+          ...(laneError === undefined ? {} : { error: laneError }),
+        };
+      }
       if (record.status === 'completed') return { status: 'completed' };
       if (record.status === 'aborted' || record.status === 'declined') {
         return { status: 'cancelled' };

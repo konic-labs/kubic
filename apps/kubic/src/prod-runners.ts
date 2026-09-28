@@ -10,6 +10,7 @@
 // fail-closed instead of scoring fiction (the refusal is pinned verbatim
 // by dispatch.test.ts).
 
+import { EXIT_USAGE } from '../../../packages/core/src/cli/exit-codes.js';
 import {
   type CliLogger,
   createLineLogger,
@@ -101,6 +102,7 @@ import {
 import { runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
+import { resolveSessionTrajectory } from './run-trajectory.js';
 import { runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
 
 // The two channels the root wired: `kubic` output on stdout, diagnostics
@@ -552,12 +554,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
         ...report(),
       }),
-    replay: (options, cliConfig) =>
+    replay: (options, cliConfig) => {
+      // `--session <id>` (issue #383): the session's own trajectory file.
+      const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
+      if ('error' in resolved) return usageError(resolved.error);
       // Replay at a declared tier (issue #78): recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
-      runReplayCommand(
-        options,
+      return runReplayCommand(
+        resolved.options,
         {
           ...report(),
           run: (request, runtime) => runProdReplay(request, runtime),
@@ -565,16 +570,26 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         // Issue #114: the re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
         runtimeRunDeps(cliConfig),
-      ),
-    export: (options) =>
+      );
+    },
+    export: (options) => {
+      const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
+      if ('error' in resolved) return usageError(resolved.error);
       // Trajectory inspection + RL dataset export (issue #78): reads
       // trajectory export file(s) through the exec FileBridge.
-      runTrajectoryExportCommand(options, {
+      return runTrajectoryExportCommand(resolved.options, {
         // Relative to the user's working directory (a '/'-rooted bridge
         // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
         ...report(),
-      }),
+      });
+    },
   };
+
+  // A usage refusal the handler never sees: one `error:` line, exit 2.
+  function usageError(message: string): number {
+    createLineLogger(debug, { theme: stderrTheme() }).error(message);
+    return EXIT_USAGE;
+  }
 }

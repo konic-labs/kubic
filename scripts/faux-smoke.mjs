@@ -12,15 +12,30 @@
 //   - text mode prints the result block on stdout;
 //   - an unknown KUBIC_PROVIDER is refused by name (exit 6), never a
 //     silent fall-through to a real provider;
+//   - the tool run's §46 trajectory (issue #383): the envelope's trajectory
+//     ref is the absolute path of `<sessions-root>/<id>/trajectory.json`,
+//     the file parses, and `replay <file> --tier recorded`, `eval
+//     --trajectory <json>` and `export --trajectory <file> --type sft` all
+//     succeed on it;
 //   - `orchestrate -p … --yes --json` in a scratch git repo: the manager
 //     delegates, every worker process answers from the faux provider (the
-//     switch crosses the §3.8 spawn allowlist), and the run completes.
+//     switch crosses the §3.8 spawn allowlist), and the run completes; each
+//     `kubic workers` row's session holds a trajectory whose worker id,
+//     generation and pid match the row, recorded in the worker's own
+//     worktree.
 //
-// The checks are pure (`fauxSmoke({ run })`) so scripts/faux-smoke.test.mjs
-// pins them with canned probes; the real runner spawns bin/kubic.js.
+// The checks are pure (`fauxSmoke({ run, readFile, sessionsRoot, cwd })`)
+// so scripts/faux-smoke.test.mjs pins them with canned probes; the real
+// runner spawns bin/kubic.js.
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +57,112 @@ function envelopeOf(label, probe, problems) {
   }
 }
 
-export function fauxSmoke({ run }) {
+// A run's trajectory file, parsed; a problem (and undefined) when the ref
+// does not name a readable §46 record.
+function trajectoryAt(label, path, readFile, problems) {
+  if (typeof path !== 'string' || !path.endsWith('/trajectory.json')) {
+    problems.push(
+      `${label}: trajectory ref ${JSON.stringify(path)} does not name a trajectory.json file`,
+    );
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(readFile(path));
+    if (parsed?.schema_version !== '1.0' || parsed?.provenance === undefined) {
+      problems.push(`${label}: ${path} is not a §46 trajectory export`);
+      return undefined;
+    }
+    return parsed;
+  } catch (error) {
+    problems.push(`${label}: cannot read ${path} (${error.message})`);
+    return undefined;
+  }
+}
+
+// Replay, eval and export all consume the run-produced file (issue #383):
+// the analysis surfaces are no longer fixture-only.
+function consumeTrajectory(run, path, readFile, problems) {
+  const replay = run(['replay', path, '--tier', 'recorded', '--json'], {
+    env: FAUX_ENV,
+  });
+  if (replay.code !== 0) {
+    problems.push(
+      `replay of a run trajectory: exit ${replay.code}, want 0 (${replay.stdout.trim().slice(-300)} ${replay.stderr.trim().slice(-300)})`,
+    );
+  }
+  const scored = run(
+    [
+      'eval',
+      '--trajectory',
+      readFile(path),
+      '--suite',
+      'bugfix-repro',
+      '--tier',
+      'smoke',
+      '--json',
+    ],
+    { env: FAUX_ENV },
+  );
+  if (scored.code !== 0) {
+    problems.push(
+      `eval --trajectory of a run trajectory: exit ${scored.code}, want 0 (${scored.stdout.trim().slice(-300)} ${scored.stderr.trim().slice(-300)})`,
+    );
+  }
+  const exported = run(['export', '--trajectory', path, '--type', 'sft'], {
+    env: FAUX_ENV,
+  });
+  if (exported.code !== 0) {
+    problems.push(
+      `export --type sft of a run trajectory: exit ${exported.code}, want 0 (${exported.stdout.trim().slice(-300)} ${exported.stderr.trim().slice(-300)})`,
+    );
+  }
+}
+
+// Each worker row's own trajectory (issue #383, §74): written by the worker
+// child into its session, with the row's identity as provenance.
+function checkWorkerTrajectories(run, readFile, sessionsRoot, cwd, problems) {
+  const workers = run(['workers', '--json'], { env: FAUX_ENV });
+  const rows = envelopeOf('kubic workers --json', workers, problems);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    problems.push('kubic workers --json: no worker rows after orchestrate');
+    return;
+  }
+  for (const row of rows) {
+    const label = `worker ${row.workerId} trajectory`;
+    const trajectory = trajectoryAt(
+      label,
+      `${sessionsRoot}/${row.sessionId}/trajectory.json`,
+      readFile,
+      problems,
+    );
+    if (trajectory === undefined) continue;
+    if (trajectory.identity?.workerId !== row.workerId) {
+      problems.push(
+        `${label}: workerId ${JSON.stringify(trajectory.identity?.workerId)}, row ${JSON.stringify(row.workerId)}`,
+      );
+    }
+    if (trajectory.provenance.generation !== row.generation) {
+      problems.push(
+        `${label}: generation ${trajectory.provenance.generation}, row ${row.generation}`,
+      );
+    }
+    if (row.pid !== undefined && trajectory.provenance.pid !== row.pid) {
+      problems.push(
+        `${label}: pid ${trajectory.provenance.pid}, row ${row.pid}`,
+      );
+    }
+    if (
+      typeof trajectory.provenance.worktree !== 'string' ||
+      trajectory.provenance.worktree === cwd
+    ) {
+      problems.push(
+        `${label}: worktree ${JSON.stringify(trajectory.provenance.worktree)} is not the worker's own worktree`,
+      );
+    }
+  }
+}
+
+export function fauxSmoke({ run, readFile, sessionsRoot, cwd }) {
   const problems = [];
 
   const echo = run(['run', '-p', 'hello', '--json'], { env: FAUX_ENV });
@@ -81,6 +201,21 @@ export function fauxSmoke({ run }) {
       `faux tool run: summary ${JSON.stringify(toolEnvelope.result?.summary)} does not report the ls result`,
     );
   }
+  if (toolEnvelope !== undefined) {
+    const path = toolEnvelope.trajectory?.ref;
+    const trajectory = trajectoryAt('faux tool run', path, readFile, problems);
+    if (trajectory !== undefined) {
+      if (trajectory.provenance.sessionId !== toolEnvelope.sessionId) {
+        problems.push(
+          `faux tool run trajectory: session ${JSON.stringify(trajectory.provenance.sessionId)}, envelope ${JSON.stringify(toolEnvelope.sessionId)}`,
+        );
+      }
+      if (!trajectory.actions?.some((action) => action.tool === 'ls')) {
+        problems.push('faux tool run trajectory: the ls call is not an action');
+      }
+      consumeTrajectory(run, path, readFile, problems);
+    }
+  }
 
   const text = run(['run', '-p', 'hi'], { env: FAUX_ENV });
   if (text.code !== 0 || !/^result: faux echo: hi$/m.test(text.stdout)) {
@@ -108,6 +243,8 @@ export function fauxSmoke({ run }) {
     problems.push(
       `faux orchestrate: exit ${orchestrate.code} status ${JSON.stringify(orchestrated?.status)}, want 0/completed (${JSON.stringify(orchestrated?.error?.message ?? orchestrate.stderr.trim().slice(-300))})`,
     );
+  } else {
+    checkWorkerTrajectories(run, readFile, sessionsRoot, cwd, problems);
   }
   return { problems };
 }
@@ -177,13 +314,18 @@ if (import.meta.main) {
     mkdirSync(home);
     writeFileSync(join(cwd, 'README.txt'), 'faux smoke fixture\n');
     initRepo(cwd, home);
-    const { problems } = fauxSmoke({ run: realRunner(root, { cwd, home }) });
+    const { problems } = fauxSmoke({
+      run: realRunner(root, { cwd, home }),
+      readFile: (path) => readFileSync(path, 'utf8'),
+      sessionsRoot: join(home, '.kubic', 'sessions'),
+      cwd,
+    });
     if (problems.length > 0) {
       for (const problem of problems) console.error(`faux smoke: ${problem}`);
       process.exitCode = 1;
     } else {
       console.log(
-        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), text result block, unknown provider refused (exit 6), orchestrate --yes completed across worker processes',
+        'faux smoke OK: KUBIC_PROVIDER=faux run --json completed (echo + ls tool call), its trajectory.json read by replay/eval/export, text result block, unknown provider refused (exit 6), orchestrate --yes completed across worker processes, each worker trajectory matching its kubic workers row',
       );
     }
   } finally {

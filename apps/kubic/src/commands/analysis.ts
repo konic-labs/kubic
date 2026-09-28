@@ -44,9 +44,19 @@ export interface AnalysisRunners {
   readonly audit: AnalysisRunner<AuditOptions>;
   readonly eval: AnalysisRunner<EvalOptions>;
   readonly benchmark: AnalysisRunner<EvalOptions>;
-  readonly replay: AnalysisRunner<ReplayCommandOptions>;
-  readonly export: AnalysisRunner<ExportCommandOptions>;
+  readonly replay: AnalysisRunner<ReplayCommandOptions & SessionOption>;
+  readonly export: AnalysisRunner<ExportCommandOptions & SessionOption>;
 }
+
+// `--session <id>` (issue #383): read the session's own §46 trajectory
+// (<sessions-root>/<id>/trajectory.json) instead of naming the file. The
+// prod runner resolves it (./run-trajectory.ts resolveSessionTrajectory).
+export interface SessionOption {
+  readonly session?: string;
+}
+
+const SESSION_TRAJECTORY_HELP =
+  "read that run's trajectory: <sessions-root>/<id>/trajectory.json";
 
 const JSON_HELP = 'print one JSON document on stdout';
 const ENVELOPE_HELP =
@@ -186,11 +196,13 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     'replay a recorded trajectory at a declared determinism tier',
     [
       'kubic replay traj.json',
+      'kubic replay --session 3f2a',
       'kubic replay traj.json --tier deterministic --model faux/faux --lockfile pins.lock',
       'kubic replay traj.json --diff-against other.json --json',
     ],
   )
     .argument('[trajectory]', 'trajectory export file (.json)')
+    .option('--session <id>', SESSION_TRAJECTORY_HELP)
     .option('--tier <tier>', 'recorded|deterministic|live (default recorded)')
     .option('--model <provider/id>', 'deterministic tier: the pinned model')
     .option('--lockfile <path>', 'deterministic tier: the pin lockfile')
@@ -216,10 +228,12 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     'describe a trajectory export or build one RL dataset record from it',
     [
       'kubic export --trajectory t.json',
+      'kubic export --session 3f2a --type sft',
       'kubic export --trajectory a.json --type dpo --against b.json --json',
     ],
   )
-    .requiredOption('--trajectory <file>', 'trajectory export file')
+    .option('--trajectory <file>', 'trajectory export file')
+    .option('--session <id>', SESSION_TRAJECTORY_HELP)
     .option('--type <type>', `dataset record: ${DATASET_TYPES.join('|')}`)
     .option(
       '--against <other.json>',

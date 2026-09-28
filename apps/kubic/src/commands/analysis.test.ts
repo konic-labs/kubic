@@ -324,7 +324,6 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
     const cases: [readonly string[], string][] = [
       [['perf', '--samples', '1'], '--budget <kind>'],
       [['policy'], '--tool <name>'],
-      [['export'], '--trajectory <file>'],
       [['eval', '--task', 'x', '--generation', '1'], '--suite <id>'],
       [['benchmark'], '--generation <n>'],
     ];
@@ -336,6 +335,28 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
       ]);
       expect(run.calls).toEqual([]);
     }
+  });
+
+  it('export and replay take --session <id> as the trajectory source (#383)', async () => {
+    const exported = await kubic([
+      'export',
+      '--session',
+      'abc',
+      '--type',
+      'sft',
+    ]);
+    expect(exported.err).toEqual([]);
+    expect(exported.calls).toEqual([
+      { name: 'export', options: { session: 'abc', type: 'sft' } },
+    ]);
+    const replayed = await kubic(['replay', '--session', 'abc']);
+    expect(replayed.err).toEqual([]);
+    expect(replayed.calls).toEqual([
+      { name: 'replay', options: { session: 'abc' } },
+    ]);
+    // Neither source: the handler (not commander) names the missing one.
+    const neither = await kubic(['export']);
+    expect(neither.calls).toEqual([{ name: 'export', options: {} }]);
   });
 
   it('eval --trajectory needs no provenance flags at the commander layer (#256)', async () => {

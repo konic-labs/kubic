@@ -186,8 +186,14 @@ export function launchWorker(
     cmd: request.cmd,
     args: request.args,
     // The worker's own identity travels with the allowlist (§3.8): the
-    // child prints its readiness marker under this id.
-    baseEnv: { ...request.baseEnv, KUBIC_WORKER_ID: request.workerId },
+    // child prints its readiness marker under this id, and records this
+    // generation — the one its `kubic workers` row carries — in the §46
+    // trajectory it writes (issue #383).
+    baseEnv: {
+      ...request.baseEnv,
+      KUBIC_WORKER_ID: request.workerId,
+      KUBIC_WORKER_GENERATION: String(generation),
+    },
     ...(request.credentials === undefined
       ? {}
       : { credentials: request.credentials }),

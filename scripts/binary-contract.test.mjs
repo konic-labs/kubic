@@ -102,7 +102,7 @@ function runOut(code = 6) {
     `session: ${SESSION}`,
     `journal: journal:${SESSION}`,
     `usage: usage:${SESSION}`,
-    `trajectory: trajectory:${SESSION}`,
+    `trajectory: /home/.kubic/sessions/${SESSION}/trajectory.json`,
   ];
   return { code, stdout: `${lines.join('\n')}\n`, stderr: '', error: null };
 }
@@ -553,6 +553,28 @@ describe('binary contract provider-less run probe', () => {
     });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /does not point at session/);
+  });
+
+  // Issue #383: the trajectory ref is the written file, never the old
+  // `trajectory:<id>` string that resolved to nothing.
+  it("fails when the trajectory ref is not that session's trajectory.json", () => {
+    for (const ref of [
+      `trajectory:${SESSION}`,
+      '/home/.kubic/sessions/deadbeef/trajectory.json',
+    ]) {
+      const base = runOut();
+      const result = contractWith({
+        run: {
+          ...base,
+          stdout: base.stdout.replace(/^trajectory: .*/m, `trajectory: ${ref}`),
+        },
+      });
+      assert.equal(result.problems.length, 1, ref);
+      assert.match(
+        result.problems[0],
+        /`trajectory:` ref .* does not point at session/,
+      );
+    }
   });
 
   it('fails when the provider message changes', () => {

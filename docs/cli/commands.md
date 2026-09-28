@@ -70,10 +70,36 @@ closed, and the run prints its normal result with `status: failed`,
 runs takes the default path and ends the process immediately.
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
-`usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`) on stdout (the
-labels are dimmed and the result coloured on a colour terminal; plain text
-under a pipe or `NO_COLOR`); on failure an `error:` line goes to stderr
-first. Exit code is the §78 terminus map — see [exit codes](exit-codes.md).
+`usage:` (`usage:<id>`), `trajectory:` (the absolute path of the run's
+trajectory file) on stdout (the labels are dimmed and the result coloured
+on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
+`error:` line goes to stderr first. Exit code is the §78 terminus map — see
+[exit codes](exit-codes.md).
+
+**Trajectories (§46).** Every run that attached a session writes
+`<sessions-root>/<id>/trajectory.json` when it settles, completed or not,
+and the `trajectory` ref (text line and `--json` envelope) is that file's
+absolute path. The file holds the session's latest settled run; a resumed
+`--session` run replaces it. It records:
+
+- the prompt, its tool calls (actions) and their results (observations)
+- per-request token and cost usage
+- the journal diff of this run
+- this session's approvals from the audit ledger
+- provenance: session, agent, pid, worker generation (0 for a solo run),
+  worktree, and `provider/id` model
+- the git base revision (`no-vcs` outside a git checkout) and branch
+- the used tool environment (`toolSpawnEnv`, so no secrets)
+- a result with a §52 `failureCategory` on every non-completed status
+
+The file is readable by `kubic replay <file>` (or `--session <id>`),
+`kubic export --trajectory <file>` (or `--session <id>`) and
+`kubic eval --trajectory "$(cat <file>)"`. A run that fails before any
+session exists (an invalid `--session` id, a missing session) writes none,
+and its ref stays `trajectory:<id>`. A trajectory that cannot be written is
+reported on stderr and never changes the run's exit code.
+`kubic tui` writes the same file after each settled turn, and each
+`kubic orchestrate` worker writes its own under its worker session.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
 (`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
@@ -1026,12 +1052,17 @@ The flags are the same as `kubic eval` without `--task` and
 `--trajectory`; each matrix row runs `benchmark:<suite-id>` as its task.
 `--json` prints `{ok, exitCode, results}`.
 
-## `kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
+## `kubic replay ([--] <trajectory.json> | --session <id>) [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
 Replays a versioned trajectory at a declared determinism tier. The tier
 is printed, and it is present in `--json` for every result. A tier never
 silently downgrades: a tier that needs pins refuses with exit 2 when
 they are missing.
+
+`--session <id>` replays that session's own trajectory
+(`<sessions-root>/<id>/trajectory.json`, written when a `kubic run` or
+TUI turn settles). Giving both a file and `--session`, or a path-unsafe
+id, exits 2 with one `error:` line.
 
 | Invocation | Meaning |
 | --- | --- |
@@ -1063,10 +1094,13 @@ A refused config also blocks the log-only tiers (`recorded` and
 `compare`): the command exits 1 before any tier runs, so the config has
 to be fixed first.
 
-## `kubic export --trajectory <file> [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
+## `kubic export (--trajectory <file> | --session <id>) [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
 
 Inspects trajectory export files and exports RL dataset records from
-them.
+them. `--session <id>` stands for `--trajectory
+<sessions-root>/<id>/trajectory.json`, the file a settled `kubic run` or
+TUI turn writes. Giving both, or a path-unsafe id, exits 2 with one
+`error:` line.
 
 - **Without `--type`**, the file is validated and described: schema,
   task, model, provenance, result and usage.
@@ -1078,7 +1112,7 @@ them.
 These invocations exit 2 with an `error:` line on stderr, and no file is
 read:
 
-- a missing `--trajectory`
+- a missing `--trajectory` (and no `--session`)
 - an unknown `--type`
 - a pair or group type without `--against`
 - `--against` on any other type

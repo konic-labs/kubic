@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { isGitWorktreeClean } from './git-clean.js';
+import { gitHeadOf, isGitWorktreeClean } from './git-clean.js';
 
 const roots: string[] = [];
 
@@ -64,5 +64,31 @@ describe('isGitWorktreeClean (issue #78)', () => {
   it('fail-closes on a non-repo dir and a missing path', () => {
     expect(isGitWorktreeClean(tmpRoot())).toBe(false);
     expect(isGitWorktreeClean(join(tmpRoot(), 'no-such-dir'))).toBe(false);
+  });
+});
+
+describe('gitHeadOf (issue #383): the §46 trajectory base revision', () => {
+  it('names the HEAD sha and the current branch', () => {
+    const dir = tmpRoot();
+    initRepo(dir);
+    spawnSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: dir });
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: dir,
+      encoding: 'utf8',
+    }).stdout.trim();
+    expect(gitHeadOf(dir)).toEqual({ revision: sha, branch: 'feature' });
+  });
+
+  it('names no branch on a detached HEAD', () => {
+    const dir = tmpRoot();
+    initRepo(dir);
+    spawnSync('git', ['checkout', '-q', '--detach'], { cwd: dir });
+    expect(gitHeadOf(dir)?.branch).toBeNull();
+    expect(gitHeadOf(dir)?.revision).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('is null outside a repository and on a missing path', () => {
+    expect(gitHeadOf(tmpRoot())).toBeNull();
+    expect(gitHeadOf(join(tmpRoot(), 'no-such-dir'))).toBeNull();
   });
 });

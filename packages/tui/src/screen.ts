@@ -8,6 +8,11 @@ import { TuiAltScreen } from './tui-boundary.js';
 
 export interface Screen {
   render: () => void;
+  // Differential frame (only changed rows are written), coalesced to one
+  // per tick. For high-frequency repaints — the spinner, mid-turn
+  // transcript refreshes — where a forced full clear on every frame would
+  // flicker on terminals without synchronized output.
+  update: () => void;
   stop: (print: (line: string) => void) => void;
   // The live alt-screen (issue #75): the composition root needs
   // setFocus/addInputListener to route keyboard input. Additive — the
@@ -34,6 +39,7 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
   return {
     tui: screen,
     render: () => screen.renderNow(true),
+    update: () => screen.requestRender(),
     stop: (print: (line: string) => void) => {
       for (const line of root.render(terminal.columns)) print(line);
       screen.setLayoutRoot(undefined);

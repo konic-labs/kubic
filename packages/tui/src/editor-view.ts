@@ -9,6 +9,7 @@
 // Presentation only (§66): the editor holds a draft string and a submit
 // callback. It never knows what a lane is.
 
+import { tuiTheme } from './theme.js';
 import type { Component, EditorTheme, Focusable, TUI } from './tui-boundary.js';
 import { Editor } from './tui-boundary.js';
 
@@ -43,7 +44,8 @@ export const EDITOR_FALLBACK_ROWS = 24;
 export function editorTheme(): EditorTheme {
   const identity = (text: string): string => text;
   return {
-    borderColor: identity,
+    // Read per call so a theme set after construction applies.
+    borderColor: (text: string): string => tuiTheme().accent(text),
     selectList: {
       selectedPrefix: identity,
       selectedText: identity,

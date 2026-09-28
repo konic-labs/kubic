@@ -1,0 +1,394 @@
+// TUI polish: Konic palette, transcript tool blocks, streaming echo,
+// working indicator, header, compact tree. Headless snapshots of pure
+// render functions only (no terminal, no network).
+import { afterEach, describe, expect, it } from 'vitest';
+import { TuiTurnRunner } from '../../../apps/kubic/src/tui-run.js';
+import { sanitizeLaneText } from './lane-cells.js';
+import { buildLayoutRoot, renderLayout, TREE_MAX_ROWS } from './layout.js';
+import { bootScreen } from './screen.js';
+import {
+  createTuiTheme,
+  detectColorLevel,
+  formatElapsed,
+  setTuiTheme,
+  spinnerFrame,
+} from './theme.js';
+import {
+  createTranscriptView,
+  TOOL_OUTPUT_PREVIEW_LINES,
+} from './transcript.js';
+import { applyLaneEvent, createTreeState, renderTreeLines } from './tree.js';
+import {
+  createTuiApp,
+  renderHeader,
+  renderKeyHints,
+  renderWorkingLine,
+} from './tui-app.js';
+import type { Terminal } from './tui-boundary.js';
+import { Text, visibleWidth } from './tui-boundary.js';
+
+const ESC = String.fromCharCode(27);
+const plain = (line: string): string =>
+  line.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+
+afterEach(() => {
+  setTuiTheme(createTuiTheme('none'));
+});
+
+describe('colour level detection', () => {
+  it('honours NO_COLOR, FORCE_COLOR, TTY and TERM', () => {
+    expect(
+      detectColorLevel({ NO_COLOR: '1', COLORTERM: 'truecolor' }, true),
+    ).toBe('none');
+    expect(detectColorLevel({ COLORTERM: 'truecolor' }, false)).toBe('none');
+    expect(detectColorLevel({ COLORTERM: 'truecolor' }, true)).toBe(
+      'truecolor',
+    );
+    expect(detectColorLevel({ TERM: 'xterm-256color' }, true)).toBe('256');
+    expect(detectColorLevel({ TERM: 'xterm' }, true)).toBe('16');
+    expect(detectColorLevel({ TERM: 'dumb' }, true)).toBe('none');
+    expect(detectColorLevel({ FORCE_COLOR: '0' }, true)).toBe('none');
+    expect(detectColorLevel({ FORCE_COLOR: '3' }, false)).toBe('truecolor');
+  });
+
+  it('maps the Konic red onto every depth, identity when off', () => {
+    expect(createTuiTheme('truecolor').accent('x')).toBe(
+      `${ESC}[38;2;255;0;77mx${ESC}[39m`,
+    );
+    expect(createTuiTheme('256').accent('x')).toBe(
+      `${ESC}[38;5;197mx${ESC}[39m`,
+    );
+    expect(createTuiTheme('16').accent('x')).toBe(`${ESC}[91mx${ESC}[39m`);
+    expect(createTuiTheme('none').accent('x')).toBe('x');
+  });
+
+  it('animates the spinner and formats elapsed time', () => {
+    expect(spinnerFrame(0)).not.toBe(spinnerFrame(80));
+    expect(formatElapsed(3_400)).toBe('3s');
+    expect(formatElapsed(75_000)).toBe('1m 15s');
+  });
+});
+
+function toolTranscript() {
+  const view = createTranscriptView();
+  const output = Array.from({ length: 9 }, (_, i) => `row ${i}`).join('\n');
+  view.applyLaneSnapshot(
+    { laneId: 'l' },
+    [
+      { id: 'u', kind: 'prompt', markdown: '› list files' },
+      { id: 'a', kind: 'text', markdown: 'Looking **now**.' },
+      {
+        id: 'c1',
+        kind: 'tool',
+        markdown: 'tool bash',
+        detail: 'ls',
+        toolCallId: 'c1',
+      },
+      {
+        id: 'c2',
+        kind: 'tool',
+        markdown: 'tool read',
+        detail: 'x.ts',
+        toolCallId: 'c2',
+      },
+      { id: 'r1', kind: 'output', markdown: output, toolCallId: 'c1' },
+      {
+        id: 'r2',
+        kind: 'output',
+        markdown: 'no such file',
+        toolCallId: 'c2',
+        isError: true,
+      },
+    ],
+    1,
+  );
+  return view;
+}
+
+describe('transcript blocks', () => {
+  it('renders prompt, prose, and each call with its output folded under it', () => {
+    expect(toolTranscript().render(60).map(plain)).toEqual([
+      '› list files',
+      '',
+      '▪ Looking now.',
+      '',
+      '● bash ls',
+      '  ⎿  row 0',
+      '     row 1',
+      '     row 2',
+      '     row 3',
+      '     row 4',
+      '     … +4 lines (ctrl+x to expand)',
+      '',
+      '● read x.ts',
+      '  ⎿  no such file',
+    ]);
+    expect(TOOL_OUTPUT_PREVIEW_LINES).toBe(5);
+  });
+
+  it('expands every output block on toggle', () => {
+    const view = toolTranscript();
+    expect(view.toggleExpanded()).toBe(true);
+    const doc = view.render(60).join('\n');
+    expect(doc).toContain('row 8');
+    expect(doc).not.toContain('to expand');
+  });
+
+  it('colours the call glyph by outcome under the Konic palette', () => {
+    setTuiTheme(createTuiTheme('truecolor'));
+    const lines = toolTranscript().render(60);
+    const ok = lines.find((l) => plain(l) === '● bash ls') ?? '';
+    const failed = lines.find((l) => plain(l) === '● read x.ts') ?? '';
+    expect(ok).toContain('38;2;94;214;140m●');
+    expect(failed).toContain('38;2;255;42;31m●');
+    for (const line of lines)
+      expect(plain(line).length).toBeLessThanOrEqual(60);
+  });
+
+  it('shows a pending call in amber until its output lands', () => {
+    setTuiTheme(createTuiTheme('truecolor'));
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 'c', kind: 'tool', markdown: 'tool bash', toolCallId: 'c' }],
+      1,
+    );
+    expect(view.render(40)[0]).toContain('38;2;255;122;46m●');
+  });
+
+  it('truncates long lines to the width instead of wrapping tool output', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        {
+          id: 'c',
+          kind: 'tool',
+          markdown: 'tool bash',
+          detail: 'x'.repeat(80),
+          toolCallId: 'c',
+        },
+        { id: 'r', kind: 'output', markdown: 'y'.repeat(80), toolCallId: 'c' },
+      ],
+      1,
+    );
+    const lines = view.render(30);
+    expect(lines).toHaveLength(2);
+    for (const line of lines)
+      expect(plain(line).length).toBeLessThanOrEqual(30);
+    expect(plain(lines[0] ?? '').endsWith('…')).toBe(true);
+  });
+});
+
+describe('app chrome', () => {
+  it('echoes a submitted prompt before the lane commits it', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    app.onSubmit(() => {});
+    for (const ch of 'hello there') app.handleInput(ch);
+    app.handleInput('\r');
+    expect(app.transcript.render(80)).toContain('› hello there');
+    app.applyLaneEntries([
+      {
+        id: 'u1',
+        seq: 1,
+        type: 'message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello there' }],
+        },
+      },
+    ]);
+    const doc = app.transcript.render(80).join('\n');
+    expect(doc.split('› hello there')).toHaveLength(2);
+  });
+
+  it('shows the working indicator while busy and key hints when idle', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    expect(app.render(100).at(-1)).toContain('enter send');
+    app.setBusy(true);
+    expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
+    expect(app.render(100).at(-1)).toMatch(/working… \ds · ctrl\+c cancels/);
+    app.setBusy(false);
+    expect(app.busyElapsedMs()).toBeUndefined();
+  });
+
+  it('toggles tool output expansion with Ctrl-X', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    expect(app.handleInput('\x18')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
+    expect(app.transcript.expanded).toBe(true);
+  });
+
+  it('wraps a long footer onto a second row instead of cutting it', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
+    const tail = app.render(60).slice(-2);
+    expect(tail[0]).toContain('solo:');
+    expect(tail[1]).toContain('end');
+  });
+
+  it('renders the header, hints and working line within the width', () => {
+    expect(renderHeader(60, { mode: 'solo', model: 'faux/m' })).toBe(
+      `■ kubic by konic${' '.repeat(60 - 16 - 13)}solo · faux/m`,
+    );
+    expect(renderHeader(20, { mode: 'solo', model: 'faux/m' })).toBe(
+      '■ kubic by konic',
+    );
+    expect(renderKeyHints(20)).toBe('enter send');
+    expect(plain(renderWorkingLine(1500, 80))).toBe(
+      `${spinnerFrame(1500)} working… 1s · ctrl+c cancels`,
+    );
+  });
+});
+
+describe('compact tree', () => {
+  it('folds older calls so the row never exceeds its cap', () => {
+    const state = createTreeState();
+    for (let i = 0; i < 9; i += 1) {
+      applyLaneEvent(
+        state,
+        { type: 'tool-start', toolCallId: `t${i}`, toolName: `tool${i}` },
+        () => 0,
+      );
+    }
+    const lines = renderTreeLines(state, 80);
+    expect(lines).toHaveLength(TREE_MAX_ROWS);
+    expect(lines[1]).toBe('  … 5 earlier calls');
+    expect(lines.at(-1)).toContain('tool8');
+  });
+
+  it('sizes the tree row to its content under a header', () => {
+    const rows = renderLayout(
+      buildLayoutRoot({
+        header: new Text('head', 0, 0),
+        tree: new Text('tree', 0, 0),
+        transcript: new Text('body', 0, 0),
+        status: new Text('status', 0, 0),
+        editor: new Text('editor', 0, 0),
+      }),
+      100,
+    ).map((row) => row.trim());
+    expect(rows.filter((row) => row !== '')).toEqual([
+      'head',
+      'tree',
+      'body',
+      'status',
+      'editor',
+    ]);
+  });
+});
+
+describe('review fixes', () => {
+  const userEntry = (id: string, seq: number, text: string) => ({
+    id,
+    seq,
+    type: 'message',
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  });
+
+  it('keeps a resubmitted identical prompt echoed until the NEW cell lands', () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    app.onSubmit(() => {});
+    app.applyLaneEntries([userEntry('u1', 1, 'again')]);
+    for (const ch of 'again') app.handleInput(ch);
+    app.handleInput('\r');
+    // A refresh that still only holds the OLD prompt must not clear the echo.
+    app.applyLaneEntries([userEntry('u1', 1, 'again')]);
+    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+      3,
+    );
+    app.applyLaneEntries([
+      userEntry('u1', 1, 'again'),
+      userEntry('u2', 2, 'again'),
+    ]);
+    expect(app.transcript.render(80).join('\n').split('› again')).toHaveLength(
+      3,
+    );
+  });
+
+  it('measures the header by visible width', () => {
+    const line = renderHeader(60, { mode: 'solo', model: 'faux/m' });
+    expect(visibleWidth(line)).toBe(60);
+  });
+
+  it('expands tabs to 8-column stops in lane text', () => {
+    expect(sanitizeLaneText('a\tb')).toBe('a       b');
+    expect(sanitizeLaneText('abcdefgh\tx\n\ty')).toBe(
+      'abcdefgh        x\n        y',
+    );
+  });
+
+  it('drops a transcript read that resolves after a newer one', async () => {
+    const app = createTuiApp({ sessionId: 's', model: 'faux/m' });
+    const resolvers: Array<(entries: unknown[]) => void> = [];
+    const loop = {
+      findEntries: () =>
+        new Promise<unknown[]>((resolve) => {
+          resolvers.push(resolve);
+        }),
+      context: {},
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
+    const runner = new TuiTurnRunner(app, loop, 'faux/m');
+    const older = runner.refreshTranscript();
+    const newer = runner.refreshTranscript();
+    resolvers[1]?.([userEntry('u2', 2, 'fresh')]);
+    await newer;
+    resolvers[0]?.([userEntry('u1', 1, 'stale')]);
+    await older;
+    const doc = app.transcript.render(80).join('\n');
+    expect(doc).toContain('› fresh');
+    expect(doc).not.toContain('stale');
+  });
+
+  it('fully redraws on a width change even through the differential update', async () => {
+    const writes: string[] = [];
+    let columns = 80;
+    const terminal = {
+      start: () => {},
+      stop: () => {},
+      drainInput: () => Promise.resolve(),
+      write: (data: string) => writes.push(data),
+      get columns() {
+        return columns;
+      },
+      get rows() {
+        return 20;
+      },
+      get kittyProtocolActive() {
+        return false;
+      },
+      moveBy: () => {},
+      hideCursor: () => {},
+      showCursor: () => {},
+      clearLine: () => {},
+      clearFromCursor: () => {},
+      clearScreen: () => {},
+      setTitle: () => {},
+      setProgress: () => {},
+    } as unknown as Terminal;
+    const screen = bootScreen(
+      terminal,
+      buildLayoutRoot({
+        tree: new Text('tree', 0, 0),
+        transcript: new Text('body', 0, 0),
+        status: new Text('status', 0, 0),
+        editor: new Text('editor', 0, 0),
+      }),
+    );
+    screen.render();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const before = writes.join('').length;
+    screen.update();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(writes.join('').slice(before)).not.toContain(`${ESC}[2J`);
+    columns = 60;
+    const mark = writes.join('').length;
+    screen.update();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(writes.join('').slice(mark)).toContain(`${ESC}[2J`);
+    screen.stop(() => {});
+  });
+});

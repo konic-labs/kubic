@@ -106,9 +106,11 @@ describe('kubic tui (issue #75)', () => {
     );
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
-    const order = ['◌ solo', 'session s1', 'approvals:on'].map((m) =>
-      doc.indexOf(m),
-    );
+    const order = [
+      '◌ solo',
+      'Kubic — terminal coding agent',
+      'approvals:on',
+    ].map((m) => doc.indexOf(m));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

@@ -65,6 +65,11 @@ import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
+  createTuiTheme,
+  detectColorLevel,
+  setTuiTheme,
+} from '../../../packages/tui/src/theme.js';
+import {
   createTuiApp,
   type TuiApp,
 } from '../../../packages/tui/src/tui-app.js';
@@ -473,10 +478,45 @@ export class TuiTurnRunner {
   private starting = false;
   private aborted = false;
 
-  constructor(app: TuiApp, loop: TuiLaneLoop, model: string) {
+  // Called after a mid-turn transcript refresh lands (the root repaints).
+  private readonly onUpdate: (() => void) | undefined;
+  private refreshing = false;
+  private refreshAgain = false;
+
+  constructor(
+    app: TuiApp,
+    loop: TuiLaneLoop,
+    model: string,
+    onUpdate?: () => void,
+  ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
+    this.onUpdate = onUpdate;
+  }
+
+  // TUI polish: the transcript follows the turn instead of appearing only
+  // at settlement. Every lane event (tool start/end, usage = one model
+  // step) re-reads the committed entries; refreshes never overlap, and a
+  // burst of events collapses into one trailing refresh.
+  private scheduleRefresh(): void {
+    if (this.refreshing) {
+      this.refreshAgain = true;
+      return;
+    }
+    this.refreshing = true;
+    void this.refreshTranscript()
+      .catch(() => {
+        // A mid-turn read failure is not fatal: settlement refreshes again.
+      })
+      .finally(() => {
+        this.refreshing = false;
+        this.onUpdate?.();
+        if (this.refreshAgain) {
+          this.refreshAgain = false;
+          this.scheduleRefresh();
+        }
+      });
   }
 
   get operationId(): string | undefined {
@@ -496,6 +536,7 @@ export class TuiTurnRunner {
   // with no model field of their own) so the bar can group them.
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     this.app.applyLaneEvent(event);
+    if (event.type !== 'run-start') this.scheduleRefresh();
     if (event.type === 'usage') {
       this.usageRows.push({
         model: this.model,
@@ -607,8 +648,18 @@ export class TuiTurnRunner {
     return true;
   }
 
+  // Reads are tagged in issue order: a background refresh that resolves
+  // after a newer one (e.g. the settlement refresh) is dropped instead of
+  // overwriting the fresher transcript.
+  private readSeq = 0;
+  private appliedSeq = 0;
+
   async refreshTranscript(): Promise<void> {
+    this.readSeq += 1;
+    const seq = this.readSeq;
     const entries = await this.loop.findEntries(undefined, this.loop.context);
+    if (seq < this.appliedSeq) return;
+    this.appliedSeq = seq;
     this.app.applyLaneEntries(entries);
   }
 }
@@ -688,6 +739,12 @@ export async function runTuiCommand(
       ? RUN_EXIT_WORKSPACE_UNAVAILABLE
       : RUN_EXIT_FAILED;
   }
+  // Colour only for a real terminal; NO_COLOR / FORCE_COLOR honoured.
+  setTuiTheme(
+    createTuiTheme(
+      detectColorLevel(process.env, process.stdout.isTTY === true),
+    ),
+  );
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
@@ -704,7 +761,26 @@ export async function runTuiCommand(
   const turn =
     boot.loop === undefined
       ? undefined
-      : new TuiTurnRunner(app, boot.loop, boot.model);
+      : new TuiTurnRunner(app, boot.loop, boot.model, () => {
+          if (!stopped) screen?.update();
+        });
+  // The working indicator animates while a turn runs.
+  let spinner: ReturnType<typeof setInterval> | undefined;
+  const stopSpinner = (): void => {
+    if (spinner !== undefined) clearInterval(spinner);
+    spinner = undefined;
+  };
+  const startSpinner = (): void => {
+    stopSpinner();
+    spinner = setInterval(() => {
+      if (stopped || app.busyElapsedMs() === undefined) {
+        stopSpinner();
+        return;
+      }
+      screen?.update();
+    }, 100);
+    spinner.unref?.();
+  };
   let screen: Screen | undefined;
   let stopped = false;
   let resolveExit: () => void = () => {};
@@ -725,6 +801,7 @@ export async function runTuiCommand(
   const shutdown = (): void => {
     if (stopped) return;
     stopped = true;
+    stopSpinner();
     // Issue #96: a quit (SIGINT, stdin EOF, or the loop's own quit path) must
     // settle a pending approval as a deny — the turn that is waiting on it
     // would otherwise sit until the lane's timeout, and the operator gets no
@@ -806,12 +883,13 @@ export async function runTuiCommand(
       app.onSubmit((prompt: string) => {
         if (stopped || turn.isRunning()) return;
         app.setBusy(true);
-        app.setEditorFooter('working… Ctrl-C cancels');
+        startSpinner();
         screen?.render();
         void turn
           .run(prompt)
           .then((outcome) => {
             app.setBusy(false);
+            stopSpinner();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the trust statement instead of going blank
             // (issue #89) — a cancelled/failed turn keeps its own report.
@@ -820,6 +898,7 @@ export async function runTuiCommand(
           })
           .catch((error: unknown) => {
             app.setBusy(false);
+            stopSpinner();
             const message =
               error instanceof Error ? error.message : String(error);
             app.setEditorFooter(`error: ${message}`);

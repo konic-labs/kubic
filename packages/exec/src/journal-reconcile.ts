@@ -28,6 +28,7 @@ import {
   type BaselineOptions,
   captureBaseline,
   type FileJournalStore,
+  journalRunStart,
   reconcile,
   saveBaseline,
 } from './journal.js';
@@ -87,6 +88,10 @@ export function beginReconciliation(
   if (options.onNotice !== undefined) {
     baselineOptions.onNotice = options.onNotice;
   }
+  // Issue #341: the journal position at boot scopes the sweep's expected
+  // state to entries this run appended — a resumed session shares the
+  // journal with every earlier run.
+  const runStart = journalRunStart(options.store);
   const baseline = captureBaseline(options.root, baselineOptions);
   saveBaseline(dir, options.runId, baseline);
   const now = options.now ?? Date.now;
@@ -102,6 +107,7 @@ export function beginReconciliation(
           sessionId: options.sessionId,
           agentId: options.agentId,
           timestamp: now(),
+          runStart,
         },
         baselineOptions,
       ),

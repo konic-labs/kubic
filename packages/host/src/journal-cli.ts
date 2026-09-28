@@ -14,7 +14,7 @@
 // completed with skipped steps; an IO failure propagates (root catch-all,
 // exit 1).
 
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import {
   CliUsageError,
   EXIT_OK,
@@ -37,6 +37,11 @@ import {
   reconciliationSummary,
 } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
+import {
+  listSessions,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { MS_PER_DAY } from './config/runtime.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
@@ -62,6 +67,9 @@ export interface JournalCommandDeps {
   // Box-drawn `log` table (an interactive, coloured terminal). Default:
   // plain aligned columns.
   fancy?: boolean;
+  // Issue #362: session id → recorded workspace (the cwd the session was
+  // created in). Default: the local session store's own listing.
+  sessionWorkspaces?: (sessionsRoot: string) => Promise<Map<string, string>>;
 }
 
 // The store selector every journal command shares.
@@ -112,18 +120,66 @@ function hasJournalIndex(dir: string): boolean {
   return createNodeFileBridge(dir).exists('index.jsonl');
 }
 
+// Issue #362: the session store's recorded cwd per session id. An
+// unlistable store (no sessions root yet, a torn transcript) is "nothing
+// recorded" — never a throw, never a guess.
+async function defaultSessionWorkspaces(
+  sessionsRoot: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const listed = await listSessions(
+      openSessionStore(sessionsRoot, createNodeFileBridge(sessionsRoot)),
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of listed) {
+      if (entry.cwd !== undefined && entry.cwd !== '') {
+        out.set(entry.id, entry.cwd);
+      }
+    }
+  } catch {
+    // No readable sessions root — no recorded workspaces.
+  }
+  return out;
+}
+
+// Canonical form for the workspace comparison (symlinks resolved, e.g.
+// macOS /var → /private/var). A path that no longer exists keeps its
+// lexical form — it can then only match itself.
+function canonical(path: string): string {
+  try {
+    return createNodeFileBridge('/').realPath?.(path) ?? path;
+  } catch {
+    return path;
+  }
+}
+
+// True when `root` is the recorded workspace or inside it: `kubic diff`
+// from a project's subdirectory still belongs to that project.
+function workspaceContains(recorded: string, root: string): boolean {
+  const r = canonical(recorded);
+  const c = canonical(root);
+  return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
+}
+
 // The most recent run journal under the sessions root (issue #125): one
 // level of session ids (the shared SESSION_ID_PATTERN, checked before any
 // path join — contained by construction, same rule as --session), newest
-// `journal/index.jsonl` mtime wins. A session whose journal index cannot
-// be statted is skipped (no journal there); a missing sessions root is
-// simply "nothing here" (fresh machine), never a throw.
-function latestSessionJournal(sessionsRoot: string): string | undefined {
+// `journal/index.jsonl` mtime wins among the sessions `accept` admits
+// (issue #362: only those recorded for the current workspace). A session
+// whose journal index cannot be statted is skipped (no journal there); a
+// missing sessions root is simply "nothing here" (fresh machine), never a
+// throw.
+function latestSessionJournal(
+  sessionsRoot: string,
+  accept: (id: string) => boolean,
+): string | undefined {
   const bridge = createNodeFileBridge(sessionsRoot);
   let best: { dir: string; mtime: number } | undefined;
   try {
     for (const info of bridge.listDir('.')) {
       if (!info.isDirectory || !SESSION_ID_PATTERN.test(info.name)) continue;
+      if (!accept(info.name)) continue;
       const idx = join(info.name, 'journal', 'index.jsonl');
       try {
         const mtime = bridge.fileInfo(idx).mtimeMs;
@@ -148,14 +204,19 @@ interface ResolvedStore {
   // `session.retentionDays`.
   sessionId?: string;
   latestSessionId?: string;
+  // Issue #362: the workspace the store's relative paths resolve against.
+  // A session store takes the session's recorded cwd; undefined means the
+  // session recorded none (undo/status then refuse by name).
+  workspace?: string;
 }
 
 // Throws CliUsageError for a bad or conflicting --session (exit 2).
-function resolveJournalDir(
+async function resolveJournalDir(
   deps: JournalCommandDeps,
   root: string,
   session: string | undefined,
-): ResolvedStore {
+): Promise<ResolvedStore> {
+  const workspacesOf = deps.sessionWorkspaces ?? defaultSessionWorkspaces;
   if (session === undefined) {
     const dir = deps.journalDir ?? defaultJournalDir(root);
     // Issue #125: the bare default is a store nothing writes (runs journal
@@ -165,16 +226,27 @@ function resolveJournalDir(
     // invocation, fail-closed — the same rule as the --session conflict
     // below), and keeping the scan off that path keeps pinned-store tests
     // hermetic (no walk of the real sessions root).
+    // Issue #362: only sessions recorded for THIS workspace are
+    // candidates — another project's newer journal is never picked, and
+    // its relative paths never resolve against this cwd.
     if (deps.journalDir === undefined && !hasJournalIndex(dir)) {
-      const fallback = latestSessionJournal(
-        deps.sessionsRoot ?? defaultSessionsRoot(),
-      );
+      const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
+      const workspaces = await workspacesOf(sessionsRoot);
+      const fallback = latestSessionJournal(sessionsRoot, (id) => {
+        const recorded = workspaces.get(id);
+        return recorded !== undefined && workspaceContains(recorded, root);
+      });
       if (fallback !== undefined) {
         const id = basename(dirname(fallback));
-        return { dir: fallback, sessionId: id, latestSessionId: id };
+        return {
+          dir: fallback,
+          sessionId: id,
+          latestSessionId: id,
+          workspace: workspaces.get(id) as string,
+        };
       }
     }
-    return { dir };
+    return { dir, workspace: root };
   }
   const id = session.startsWith(JOURNAL_REF_PREFIX)
     ? session.slice(JOURNAL_REF_PREFIX.length)
@@ -193,13 +265,25 @@ function resolveJournalDir(
     );
   }
   const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
-  return { dir: join(sessionsRoot, id, 'journal'), sessionId: id };
+  // Issue #362: an explicit session operates on its OWN recorded
+  // workspace, whatever the invocation cwd (`--session` works from any
+  // cwd, and restores land where the session wrote).
+  const workspace = (await workspacesOf(sessionsRoot)).get(id);
+  return {
+    dir: join(sessionsRoot, id, 'journal'),
+    sessionId: id,
+    ...(workspace === undefined ? {} : { workspace }),
+  };
 }
 
 // Everything one invocation shares after the store is resolved.
 interface JournalRun {
   readonly deps: JournalCommandDeps;
+  // The workspace root the store's paths resolve against (issue #362) —
+  // the invocation cwd only for a workspace store.
   readonly root: string;
+  // The resolved session id and root, as `--json` reports them.
+  readonly ref: { session: string | null; root: string | null };
   readonly resolved: ResolvedStore;
   readonly store: FileJournalStore;
   readonly theme: CliTheme;
@@ -228,19 +312,44 @@ export async function runJournalCommand(
       '--max-content-bytes needs a non-negative integer (0 = unlimited)',
     );
   }
-  const resolved = resolveJournalDir(deps, root, request.session);
+  const resolved = await resolveJournalDir(deps, root, request.session);
   const json = request.json === true;
   const log = loggerFor(deps);
-  // Issue #125: a fallback store is named before any subcommand output so
-  // the resolution is never silent. It is a diagnostic (stderr), and
-  // `--json` stays silent there too — the refs in the document are
-  // self-describing.
-  if (resolved.latestSessionId !== undefined && !json) {
-    log.info(`session: ${resolved.latestSessionId} (latest session journal)`);
+  // Issue #125/#362: a session store is named — with the workspace its
+  // paths resolve against — before any subcommand output, so the
+  // resolution is never silent. It is a diagnostic (stderr), and `--json`
+  // stays silent there too: the document carries `session` and `root`.
+  if (resolved.sessionId !== undefined && !json) {
+    const where =
+      resolved.workspace === undefined
+        ? 'no recorded workspace'
+        : `workspace ${resolved.workspace}`;
+    log.info(
+      resolved.latestSessionId !== undefined
+        ? `session: ${resolved.sessionId} (latest session journal for this workspace) — ${where}`
+        : `session: ${resolved.sessionId} — ${where}`,
+    );
+  }
+  // Issue #362: undo writes and status reads the workspace, so both refuse
+  // (exit 2, named) when a session's workspace is unknown or gone — its
+  // relative paths must never land in the invocation cwd instead.
+  if (
+    resolved.sessionId !== undefined &&
+    (request.command === 'undo' || request.command === 'status')
+  ) {
+    const refusal = workspaceRefusal(resolved.sessionId, resolved.workspace);
+    if (refusal !== undefined) {
+      log.error(refusal);
+      return EXIT_USAGE;
+    }
   }
   const run: JournalRun = {
     deps,
-    root,
+    root: resolved.workspace ?? root,
+    ref: {
+      session: resolved.sessionId ?? null,
+      root: resolved.workspace ?? null,
+    },
     resolved,
     store: new FileJournalStore(resolved.dir),
     theme: json ? PLAIN : (deps.theme ?? PLAIN),
@@ -256,6 +365,19 @@ export async function runJournalCommand(
     case 'status':
       return journalStatusCommand(run, request);
   }
+}
+
+function workspaceRefusal(
+  sessionId: string,
+  workspace: string | undefined,
+): string | undefined {
+  if (workspace === undefined) {
+    return `session ${sessionId}: no recorded workspace — refusing to resolve its paths against the current directory`;
+  }
+  if (!createNodeFileBridge('/').exists(workspace)) {
+    return `session ${sessionId}: recorded workspace ${workspace} no longer exists — refusing to resolve its paths elsewhere`;
+  }
+  return undefined;
 }
 
 // One rendered diff line, coloured by its role: file headers bold, hunk
@@ -285,7 +407,12 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
     // scripting. The bound applies to `--json` only — the human path
     // renders hunks, not whole files.
     const maxBytes = request.maxContentBytes ?? DEFAULT_MAX_CONTENT_BYTES;
-    deps.out(formatJson(changes.map((c) => clipChangeContent(c, maxBytes))));
+    deps.out(
+      formatJson({
+        ...run.ref,
+        changes: changes.map((c) => clipChangeContent(c, maxBytes)),
+      }),
+    );
     return EXIT_OK;
   }
   if (changes.length === 0) {
@@ -300,8 +427,8 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
     if (
       request.session === undefined &&
       deps.journalDir === undefined &&
-      store.entries().length === 0 &&
-      latestSessionJournal(sessionsRoot) === undefined
+      run.resolved.sessionId === undefined &&
+      store.entries().length === 0
     ) {
       run.log.info(
         `no journal under ${run.resolved.dir} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
@@ -337,7 +464,7 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   if (plan.steps.length === 0) {
     deps.out(
       request.json === true
-        ? formatJson({ dryRun, restored: [], skipped: [] })
+        ? formatJson({ ...run.ref, dryRun, restored: [], skipped: [] })
         : 'nothing to undo',
     );
     return EXIT_OK;
@@ -358,6 +485,7 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   if (request.json === true) {
     deps.out(
       formatJson({
+        ...run.ref,
         dryRun,
         restored: result.restored,
         warnings: result.warnings,
@@ -437,7 +565,7 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
   // `--json` stays the raw entries array (the count is derivable from the
   // `unattributed` flags there); the human path gains the summary line.
   if (request.json === true) {
-    deps.out(formatJson(entries));
+    deps.out(formatJson({ ...run.ref, entries }));
     return EXIT_OK;
   }
   if (entries.length === 0) {
@@ -473,7 +601,7 @@ function journalStatusCommand(
   const { deps, theme } = run;
   const status = journalStatus(run.store, run.root);
   if (request.json === true) {
-    deps.out(formatJson(status));
+    deps.out(formatJson({ ...run.ref, ...status }));
     return EXIT_OK;
   }
   deps.out(

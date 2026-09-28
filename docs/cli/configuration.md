@@ -48,6 +48,34 @@ scripted **testing** provider for one invocation (no network, no model),
 and any other non-empty value is refused by name — see
 [the testing provider](commands.md#testing-provider-kubic_providerfaux).
 
+### The `bash` tool: timeouts and background jobs
+
+The agent's `bash` tool runs each command in its own process group with
+stdin closed (`/dev/null`). A command that reads stdin (`cat`, `read -p`, a
+REPL, `npm init`, a hook that reads stdin) sees end-of-input at once and
+never blocks the turn. There is no interactive terminal (PTY) or job
+control.
+
+The tool settles when the command's own shell exits, after a short drain
+(150 ms) for output that is still in the pipes. Anything the command
+backgrounded (`npm run dev &`, `sleep 30 >/dev/null &`) is **killed with
+the group** by default: SIGTERM, then SIGKILL after a 2 s grace. The result
+says so with a `background: "killed"` field and a `[kubic: background
+processes …]` line on stderr, so nothing started by a tool outlives Kubic
+unannounced. A command killed by a signal reports `128 + signal`
+(`kill -9 $$` → `137`), the shell convention.
+
+Every command has a timeout, even when the model gives none:
+
+| Variable | Effect |
+| --- | --- |
+| `KUBIC_BASH_TIMEOUT` | Timeout in seconds when the model supplies none (default `120`; capped at the maximum). |
+| `KUBIC_BASH_MAX_TIMEOUT` | Upper bound on any bash timeout in seconds, the model's included (default `600`). |
+| `KUBIC_BASH_KEEP_BACKGROUND` | `1`/`true` leaves background jobs running, detached (`background: "detached"`); they outlive Kubic. `0`/`false` or unset kills them. |
+
+These are read by the process that runs the tool. A malformed value fails
+the bash call with the variable named.
+
 ### Seeing the effective values
 
 `kubic config` prints every value that is set, with the layer it came from,

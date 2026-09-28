@@ -27,6 +27,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -80,6 +81,14 @@ export interface ShellResult {
   stdout: string;
   stderr: string;
   provenance: Provenance;
+  /**
+   * Issue #339: set when processes of the command's group outlived the
+   * leader. `killed` — the group was signalled (SIGTERM, then SIGKILL
+   * after KILL_GRACE_MS) before settling; `detached` — the caller opted
+   * into keeping background jobs, so they were left running. Absent when
+   * nothing outlived the leader.
+   */
+  background?: 'killed' | 'detached';
 }
 
 export interface ProcessSnapshot {
@@ -118,6 +127,12 @@ export interface SpawnOptions {
    * settles. Default: KILL_GRACE_MS.
    */
   killGraceMs?: number;
+  /**
+   * Issue #339: leave processes the command backgrounded running after the
+   * leader exits (they are detached, and outlive Kubic). Default false —
+   * the whole group is signalled once the leader exits, so no orphans.
+   */
+  keepBackground?: boolean;
 }
 
 export interface ProcessHandle {
@@ -346,6 +361,67 @@ export function toolSpawnEnv(
   return out;
 }
 
+// Issue #339: once the leader exits, pipe data it wrote is drained for at
+// most this long. Anything still holding stdout/stderr after the window is
+// a background job, never the command's own output, so the streams are
+// destroyed instead of waiting for 'close' (which never comes while a
+// backgrounded `sleep` inherits the pipe).
+export const EXIT_DRAIN_MS = 150;
+
+const GROUP_POLL_MS = 10;
+
+// 128+signal, the shell convention (`kill -9 $$` → 137), instead of a
+// flattening `code ?? 1` that makes a signal exit look like a plain error.
+export function exitCodeFor(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): number {
+  if (code !== null) return code;
+  if (signal !== null) {
+    const number = osConstants.signals[signal];
+    if (typeof number === 'number') return 128 + number;
+  }
+  return 1;
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // Group already gone.
+  }
+}
+
+const delay = (ms: number) =>
+  new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms));
+
+async function waitGroupGone(pgid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (groupAlive(pgid)) {
+    if (Date.now() >= deadline) return false;
+    await delay(GROUP_POLL_MS);
+  }
+  return true;
+}
+
+// SIGTERM the group, escalate to SIGKILL after KILL_GRACE_MS, and wait
+// until no member is left (bounded).
+async function reapGroup(pgid: number, graceMs: number): Promise<void> {
+  signalGroup(pgid, 'SIGTERM');
+  if (await waitGroupGone(pgid, graceMs)) return;
+  signalGroup(pgid, 'SIGKILL');
+  await waitGroupGone(pgid, graceMs);
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -356,11 +432,16 @@ class NodeShell implements Shell {
   spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
     // Detached process group: kill() signals the whole group so spawned
     // grandchildren die too (§9 leak cleanup) — no orphans.
+    // Issue #339: stdin is 'ignore' — a stdin reader (cat, read -p, a
+    // REPL, a commit hook) sees EOF at once instead of blocking the turn
+    // on a pipe nobody ever ends.
+    const groups = process.platform !== 'win32';
     const child = spawn(cmd, args, {
       cwd: this.cwd,
-      detached: process.platform !== 'win32',
+      detached: groups,
       // §3.8: an explicit allowlisted env, never the inherited one.
       env: toolSpawnEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Issue #121: capped accumulation. The tail is kept — endings carry
     // the error — and the final result names exactly what was dropped.
@@ -456,18 +537,55 @@ class NodeShell implements Shell {
         options.onUpdate?.({ ...result }, undefined);
         resolveDone(result);
       });
-      child.on('close', (code) => {
+      // Issue #339: settle on the leader's 'exit' plus a short drain
+      // window, not on 'close' — 'close' waits for every holder of the
+      // pipes, and a backgrounded job inherits them. After the drain the
+      // process group is reaped (unless keepBackground), so the tool never
+      // returns with an orphan still running in the detached group.
+      let leaderExit: number | undefined;
+      let streamsClosed = false;
+      let finishing = false;
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = async () => {
+        if (finishing || settled) return;
+        finishing = true;
+        if (drainTimer !== undefined) clearTimeout(drainTimer);
+        const heldPipes = !streamsClosed;
+        if (heldPipes) {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
+        let background: ShellResult['background'];
+        const pgid = child.pid;
+        if (groups && pgid !== undefined && groupAlive(pgid)) {
+          if (options.keepBackground === true) background = 'detached';
+          else {
+            background = 'killed';
+            await reapGroup(pgid, options.killGraceMs ?? KILL_GRACE_MS);
+          }
+        } else if (heldPipes) {
+          // A pipe holder that left the group (setsid) is out of reach.
+          background = 'detached';
+        }
         if (settled) return;
         settled = true;
         // Flush any trailing incomplete byte sequence (decoder.end() emits
         // it as U+FFFD, never throws) before the result is built.
         stdoutAcc.push(outDec.end());
         stderrAcc.push(errDec.end());
+        if (background !== undefined) {
+          stderrAcc.push(
+            background === 'killed'
+              ? '[kubic: background processes started by this command were killed after it exited (KUBIC_BASH_KEEP_BACKGROUND=1 keeps them)]\n'
+              : '[kubic: background processes started by this command were left running, detached]\n',
+          );
+        }
         const result: ShellResult = {
-          exitCode: code ?? 1,
+          exitCode: leaderExit ?? 1,
           stdout: stdoutAcc.final(),
           stderr: stderrAcc.final(),
           provenance: options.provenance,
+          ...(background === undefined ? {} : { background }),
         };
         if (options.checkpointKey && options.checkpointStore) {
           options.checkpointStore.recordFinal(options.checkpointKey, {
@@ -477,6 +595,21 @@ class NodeShell implements Shell {
         options.onUpdate?.({ ...result }, undefined);
         child.unref();
         resolveDone(result);
+      };
+      child.on('exit', (code, signal) => {
+        if (settled || finishing) return;
+        leaderExit = exitCodeFor(code, signal);
+        if (streamsClosed) {
+          void finish();
+          return;
+        }
+        drainTimer = setTimeout(() => void finish(), EXIT_DRAIN_MS);
+      });
+      child.on('close', (code, signal) => {
+        streamsClosed = true;
+        if (settled || finishing) return;
+        if (leaderExit === undefined) leaderExit = exitCodeFor(code, signal);
+        void finish();
       });
     });
     return {

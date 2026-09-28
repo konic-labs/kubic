@@ -340,6 +340,13 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
         new Error("ENOENT: no such file or directory, open '/tmp/worktree/x'"),
       ),
     ).toBe('workspace_unavailable');
+    expect(
+      mapCaughtErrorToTerminus(new Error('boom at C:\\workspace\\x.ts')),
+    ).toBe('failed');
+    // ENOENT itself is a workspace-class signal, even under a blanked path.
+    expect(
+      mapCaughtErrorToTerminus(new Error('ENOENT: /home/u/workspace/a')),
+    ).toBe('workspace_unavailable');
   });
 
   it('ignores workspace keywords in paths with spaces or relative paths', () => {

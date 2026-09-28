@@ -15,6 +15,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -98,6 +99,12 @@ export interface FileBridge {
   fileInfo(path: string): BridgeFileInfo;
   listDir(path: string): BridgeFileInfo[];
   exists(path: string): boolean;
+  /**
+   * Canonical absolute path (symlinks resolved; issue #362 compares a
+   * session's recorded cwd with the invocation cwd). Optional so test
+   * doubles stay valid; throws when the path does not exist.
+   */
+  realPath?(path: string): string;
   createDir(path: string, recursive?: boolean): void;
   remove(path: string, recursive?: boolean, force?: boolean): void;
   createTempDir(prefix?: string): string;
@@ -228,6 +235,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       readdirSync(absolutePath(path)).map((name) =>
         infoOf(join(absolutePath(path), name)),
       ),
+    realPath: (path: string): string => realpathSync(absolutePath(path)),
     exists: (path: string): boolean => {
       try {
         lstatSync(absolutePath(path));

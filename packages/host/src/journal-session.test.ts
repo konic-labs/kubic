@@ -69,7 +69,13 @@ describe('session journal reachability (issue #83)', () => {
     const sessionsRoot = tmpDir('sess-root-');
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
-    const deps = { root, sessionsRoot };
+    // Issue #362: the session recorded `root` as its workspace — undo
+    // plans against that, whatever the invocation cwd.
+    const deps = {
+      root,
+      sessionsRoot,
+      sessionWorkspaces: async () => new Map([['sess-1', root]]),
+    };
     const diffOut = out();
     expect(
       await runJournalCommand(

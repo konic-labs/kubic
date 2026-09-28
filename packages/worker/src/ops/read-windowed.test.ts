@@ -195,16 +195,33 @@ describe('bounded read windowing (issue #122)', () => {
     );
     expect(stats.wholeReads).toBe(1);
     expect(stats.rangeCalls).toBe(0);
-    // Exact shape — the fallback gains no new fields (required or not).
-    // (content carries today's trailing-newline normalization quirk: the
-    // phantom trailing entry joins, then the body gains its own '\n'.)
+    // Exact shape — the fallback gains no new fields (required or not),
+    // and the file's trailing '\n' is not doubled.
     expect(out).toEqual({
       path: 'plain.txt',
-      content: 'red\ngreen\n\n',
+      content: 'red\ngreen\n',
       offset: 1,
       totalLines: 2,
       truncated: false,
     });
+  });
+
+  it('keeps a blank line distinct from an empty file', async () => {
+    writeFileSync(join(dir, 'blank.txt'), '\n');
+    writeFileSync(join(dir, 'empty.txt'), '');
+    const ctx = countingEnv(false);
+    const blank = await readOperation.execute(
+      inv(),
+      { path: 'blank.txt' },
+      ctx,
+    );
+    const empty = await readOperation.execute(
+      inv(),
+      { path: 'empty.txt' },
+      ctx,
+    );
+    expect(blank.content).toBe('\n');
+    expect(empty.content).toBe('');
   });
 });
 

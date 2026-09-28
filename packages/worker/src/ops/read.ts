@@ -231,6 +231,8 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
       throw new OpError('not_found', `read: no such file: ${args.path}`);
     }
     const lines = view.text.split('\n');
+    // A trailing '\n' ends the last line; it does not start an empty one.
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
     const window = lines.slice(0, span);
     const body = window.slice(0, READ_MAX_LINES).join('\n');
     // truncated is honest (issue #122): true whenever the scan stopped
@@ -245,7 +247,9 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
       window.length > READ_MAX_LINES;
     return {
       path: args.path,
-      content: body.length > 0 ? `${body}\n` : '',
+      // Empty only when the window holds no text at all: a lone blank line
+      // is '\n', not an empty file.
+      content: view.text.length > 0 ? `${body}\n` : '',
       offset,
       totalLines: view.totalLines,
       truncated: !view.sawEof || outputCut,

@@ -100,14 +100,17 @@ describe('tui entry regression (issue #75)', () => {
   it('routes input and restores the main screen on quit', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: async (sessionId?: string) => ({
-        sessionId: sessionId ?? 's1',
-        model: 'faux/test',
-      }),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+        }),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -118,20 +121,23 @@ describe('tui entry regression (issue #75)', () => {
 
   it('headless `kubic run` mounts no screen beside the tui entry', async () => {
     const lines: string[] = [];
-    const code = await runRunCommand(['-p', 'hi'], {
-      out: (line: string) => lines.push(line),
-      run: async () => ({
-        terminus: 'completed' as const,
-        summary: 'hi',
-        sessionId: 's',
-        journalRef: 'journal:s',
-        usageRef: 'usage:s',
-        trajectoryRef: 'trajectory:s',
-      }),
-      onScreenMount: () => {
-        throw new Error('alt-screen mounted on the headless path');
+    const code = await runRunCommand(
+      { prompt: 'hi' },
+      {
+        out: (line: string) => lines.push(line),
+        run: async () => ({
+          terminus: 'completed' as const,
+          summary: 'hi',
+          sessionId: 's',
+          journalRef: 'journal:s',
+          usageRef: 'usage:s',
+          trajectoryRef: 'trajectory:s',
+        }),
+        onScreenMount: () => {
+          throw new Error('alt-screen mounted on the headless path');
+        },
       },
-    });
+    );
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('result: hi');
     // The hook is inert on this path (run-cli never calls it), so the
@@ -148,19 +154,22 @@ describe('tui entry regression (issue #75)', () => {
     // the emitted output — the only thing a user could actually observe.
     const root = tmpRoot();
     const lines: string[] = [];
-    const code = await runRunCommand(['-p', 'headless hi'], {
-      out: (line: string) => lines.push(line),
-      run: (prompt: string) =>
-        runHeadlessPrompt(
-          prompt,
-          {},
-          {
-            sessionsRoot: root,
-            models: fauxModels(['headless answer']),
-            env: new FakeExecutionEnv({}),
-          },
-        ),
-    });
+    const code = await runRunCommand(
+      { prompt: 'headless hi' },
+      {
+        out: (line: string) => lines.push(line),
+        run: (prompt: string) =>
+          runHeadlessPrompt(
+            prompt,
+            {},
+            {
+              sessionsRoot: root,
+              models: fauxModels(['headless answer']),
+              env: new FakeExecutionEnv({}),
+            },
+          ),
+      },
+    );
     expect(code).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('result: headless answer');
@@ -184,20 +193,23 @@ describe('tui entry regression (issue #75)', () => {
     ];
     for (const [terminus, expected] of cases) {
       const lines: string[] = [];
-      const code = await runRunCommand(['-p', 'x'], {
-        out: (line: string) => lines.push(line),
-        run: async () => ({
-          terminus: terminus as never,
-          summary: 's',
-          sessionId: 's',
-          journalRef: 'journal:s',
-          usageRef: 'usage:s',
-          trajectoryRef: 'trajectory:s',
-          ...(terminus === 'failed'
-            ? { error: { kind: 'failed' as const, message: 's' } }
-            : {}),
-        }),
-      });
+      const code = await runRunCommand(
+        { prompt: 'x' },
+        {
+          out: (line: string) => lines.push(line),
+          run: async () => ({
+            terminus: terminus as never,
+            summary: 's',
+            sessionId: 's',
+            journalRef: 'journal:s',
+            usageRef: 'usage:s',
+            trajectoryRef: 'trajectory:s',
+            ...(terminus === 'failed'
+              ? { error: { kind: 'failed' as const, message: 's' } }
+              : {}),
+          }),
+        },
+      );
       expect([terminus, code]).toEqual([terminus, expected]);
     }
   });

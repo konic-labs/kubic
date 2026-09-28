@@ -186,11 +186,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('approved turn done'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -225,11 +228,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('after the denial'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -261,11 +267,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([fauxAssistantMessage('hello there')]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -286,11 +295,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('unreachable'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -319,11 +331,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('narrow done'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');

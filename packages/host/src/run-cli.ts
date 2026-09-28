@@ -8,11 +8,10 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import { settleTerminalStatus } from '../../worker/src/lane/settle.js';
 import type { TerminalStatus } from '../../worker/src/pi-boundary.js';
+import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
 export const RUN_EXIT_OK = 0;
 export const RUN_EXIT_FAILED = 1;
@@ -112,8 +111,7 @@ export function buildRunEnvelope(
   };
 }
 
-export interface RunCommandDeps {
-  out: (line: string) => void;
+export interface RunCommandDeps extends CliIo {
   run: (
     prompt: string,
     options: {
@@ -153,60 +151,78 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 // ceiling, not a clamp: a silently shortened bound is worse than a refusal.
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
-const RUN_USAGE =
-  'usage: kubic run -p <prompt> [--] [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>] [--no-skills] [--debug] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(RUN_USAGE);
-  return RUN_EXIT_USAGE;
+// The parsed `kubic run` invocation. commander owns the argv
+// (apps/kubic/src/commands/solo.ts): flag syntax, unknown flags and
+// missing values are its usage errors (exit 2); the value rules below are
+// this command's own semantics, applied as commander argument parsers.
+export interface RunCommandOptions {
+  readonly prompt: string;
+  readonly session?: string;
+  readonly timeoutMs?: number;
+  readonly maxTurns?: number;
+  readonly role?: string;
+  readonly skills?: readonly string[];
+  readonly noSkills?: boolean;
+  readonly debug?: boolean;
+  readonly json?: boolean;
 }
 
-// Issue #127: the shared parser (core/src/flags.ts) replaces the hand-rolled
-// loop. The parser does syntax; this command keeps its semantics — the
-// positive-int bounds, the session-id pattern, and the exact error lines
-// below (output strings are part of the CLI contract).
-const RUN_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--prompt', takes: 'value', aliases: ['-p'] },
-  { name: '--session', takes: 'value' },
-  { name: '--timeout', takes: 'value' },
-  { name: '--max-turns', takes: 'value' },
-  { name: '--role', takes: 'value' },
-  { name: '--skill', takes: 'value', repeat: true },
-  { name: '--no-skills', takes: 'boolean' },
-  { name: '--debug', takes: 'boolean' },
-  { name: '--json', takes: 'boolean' },
-];
+// A value the command refuses (exit 2). The message is the whole reason;
+// the parser layer adds which flag carried it.
+export class RunArgumentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunArgumentError';
+  }
+}
 
-// One line per value flag, verbatim from the loop this replaced (the
-// short-form spelling `-p` included: it is the documented flag name).
-const RUN_MISSING_VALUE_MESSAGES: Readonly<Record<string, string>> = {
-  '--prompt': 'error: -p needs a value',
-  '--session': 'error: --session needs a value',
-  '--timeout': 'error: --timeout needs a value',
-  '--max-turns': 'error: --max-turns needs a value',
-  '--role': 'error: --role needs a value',
-  '--skill': 'error: --skill needs a value',
-};
-
-function parsePositiveInt(
-  flag: string,
-  value: string,
-  out: (line: string) => void,
-  max?: number,
-): number | null {
-  // null = unusable (error already reported); the caller exits 2.
+function positiveInt(value: string, max?: number): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    out(
-      `error: invalid ${flag} ${JSON.stringify(value)} (need a positive integer)`,
-    );
-    return null;
+    throw new RunArgumentError('need a positive integer');
   }
   if (max !== undefined && parsed > max) {
-    out(`error: invalid ${flag} ${JSON.stringify(value)} (max ${max})`);
-    return null;
+    throw new RunArgumentError(`max ${max}`);
   }
   return parsed;
+}
+
+// `--timeout <ms>`: a positive integer no larger than setTimeout's ceiling.
+export function parseRunTimeout(value: string): number {
+  return positiveInt(value, MAX_RUN_TIMEOUT_MS);
+}
+
+// `--max-turns <n>`: a positive integer.
+export function parseRunMaxTurns(value: string): number {
+  return positiveInt(value);
+}
+
+// `--session <id>` (and every other session-id argument): a path segment
+// under the sessions root, so only [A-Za-z0-9_-] — never a traversal.
+export function parseSessionIdArg(value: string): string {
+  if (!SESSION_ID_PATTERN.test(value)) {
+    throw new RunArgumentError('use [A-Za-z0-9_-]');
+  }
+  return value;
+}
+
+// `-p/--prompt <text>`: a non-empty prompt. A separate-token value that
+// starts with `--` is the flagship typo (`kubic run -p --json`) and is
+// refused; a prompt that really begins with `--` is written in the
+// attached form (`--prompt=--text`), which the caller detects from argv.
+// A value rule, not argv parsing: commander has already bound the token to
+// `-p` (a required option-argument takes the next token unconditionally),
+// so this refuses a bound value that is really a mistyped flag.
+const FLAG_LIKE_VALUE = /^--/;
+
+export function checkPromptValue(value: string, attached: boolean): string {
+  if (value.trim() === '') throw new RunArgumentError('the prompt is empty');
+  if (!attached && FLAG_LIKE_VALUE.test(value)) {
+    throw new RunArgumentError(
+      `${JSON.stringify(value)} looks like a flag, not a prompt — write a prompt that starts with '--' as --prompt=${shellQuote(value)}`,
+    );
+  }
+  return value;
 }
 
 // Store/attach/runner rejections never escape past the CLI (E2): a
@@ -256,171 +272,69 @@ function runFailure(
   };
 }
 
-// POSIX single-quote escaping for the suggested command: nothing inside
-// '…' expands ($, backticks, !), and an embedded ' becomes '\''.
-function shellQuote(value: string): string {
+// POSIX single-quote escaping for suggested commands: nothing inside '…'
+// expands ($, backticks, !), and an embedded ' becomes '\''.
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export async function runRunCommand(
-  args: string[],
+  options: RunCommandOptions,
   deps: RunCommandDeps,
 ): Promise<number> {
-  // `--help` is answered before any argv validation (issue #100).
-  const help = answerHelp(args, deps.out, RUN_USAGE);
-  if (help !== null) return help;
-  const parsed = parseFlagArgs(args, RUN_FLAG_SPEC);
-  const values = parsed.values;
-  // `-p -- <prompt>` (issue #127): the end-of-flags terminator is the
-  // escape hatch — the next raw token is the prompt, so a prompt that
-  // begins with `--` is expressible. Two guards keep it from weakening
-  // the typo rule:
-  //   * the operand is taken only when the terminator directly answers a
-  //     starved `-p`/`--prompt`: that starved entry is the last one
-  //     `missing` records (nothing flag-like parses after `--`), and the
-  //     parser saw the flag's OWN token immediately before the `--`
-  //     (`missingAt` — flag-ness, not argv token text: a `-p` the parser
-  //     consumed as another value flag's VALUE, e.g. `--session -p`, is
-  //     no flag occurrence and never answers the terminator). So a bare
-  //     `kubic run -- <x>` never silently becomes the prompt (exit 2),
-  //     neither does an operand after a terminator that answered some
-  //     other flag (`kubic run -p --json -- x` → exit 2), and neither
-  //     does `kubic run -p --session -p -- x` (the second `-p` is
-  //     `--session`'s value → exit 2);
-  //   * the skip below applies to that one entry alone — a `-p` starved
-  //     after a prompt is already set, or a starved duplicate ahead of the
-  //     terminator-answered one, is still reported
-  //     (`kubic run --prompt ok -p`, `kubic run -p --json -p -- x` →
-  //     'error: -p needs a value', exit 2).
-  // `kubic run -p --json` has no terminator, so `-p` is still missing.
-  const operands = [...parsed.positional];
-  let prompt = values['--prompt'] as string | undefined;
-  let promptFromTerminator = false;
-  const terminatorAt = args.indexOf('--');
-  const lastMissingAt = parsed.missingAt[parsed.missingAt.length - 1];
-  const terminatorAnswersPrompt =
-    terminatorAt > 0 &&
-    parsed.missing[parsed.missing.length - 1] === '--prompt' &&
-    lastMissingAt === terminatorAt - 1;
-  if (prompt === undefined && terminatorAnswersPrompt && operands.length > 0) {
-    prompt = operands.shift();
-    promptFromTerminator = true;
-  }
-  // Missing values first, then unknown flags, then stray operands — each
-  // keeps the exact line the old inline loop printed. A `-p` starved by a
-  // flag-like token is the flagship typo (`kubic run -p --json`), so the
-  // missing-value class is reported before the unknown class.
-  for (let index = 0; index < parsed.missing.length; index += 1) {
-    const flag = parsed.missing[index] as string;
-    // The escape above answered exactly one entry: the last one. Only it
-    // is skipped; a starved duplicate ahead of it keeps its report.
-    if (
-      flag === '--prompt' &&
-      promptFromTerminator &&
-      index === parsed.missing.length - 1
-    ) {
-      continue;
-    }
-    deps.out(
-      RUN_MISSING_VALUE_MESSAGES[flag] ?? `error: ${flag} needs a value`,
+  const log = diagnosticsOf(deps);
+  // commander validated these already; re-checked because the session id
+  // becomes a path segment and a direct caller skips the parser.
+  if (
+    options.session !== undefined &&
+    !SESSION_ID_PATTERN.test(options.session)
+  ) {
+    log.error(
+      `invalid --session id ${JSON.stringify(options.session)} (use [A-Za-z0-9_-])`,
     );
     return RUN_EXIT_USAGE;
   }
-  // An empty prompt is no prompt: the old loop refused `--prompt=` as an
-  // unknown flag (exit 2), so the equals form is refused here with the
-  // missing-value line instead of booting a lane with a blank prompt.
-  if (prompt === '') {
-    deps.out(
-      RUN_MISSING_VALUE_MESSAGES['--prompt'] ?? 'error: -p needs a value',
-    );
-    return RUN_EXIT_USAGE;
-  }
-  if (parsed.unknown.length > 0) {
-    deps.out(`error: unknown flag ${parsed.unknown[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  if (operands.length > 0) {
-    // Operands are not part of this command's surface (the prompt is a
-    // flag), so an unconsumed one is refused exactly like an unknown flag.
-    // `kubic run -- <x>` lands here now; the old loop named `--` itself,
-    // but `--` is accepted syntax since #127, so the stray operand is the
-    // token named (exit 2 either way).
-    // `kubic run "fix tests"` (no -p, no terminator) is the natural first
-    // try: name the operand and the exact flag form instead of calling a
-    // prompt a "flag". Still exit 2 — the prompt stays a flag (#127 typo rule).
-    if (prompt === undefined && terminatorAt === -1) {
-      deps.out(
-        `error: unexpected argument ${JSON.stringify(operands[0])} — the prompt is a flag: kubic run -p ${shellQuote(operands.join(' '))}`,
-      );
-      return RUN_EXIT_USAGE;
-    }
-    deps.out(`error: unknown flag ${operands[0]}`);
-    return RUN_EXIT_USAGE;
-  }
-  let timeoutMs: number | undefined;
-  let maxTurns: number | undefined;
-  const timeoutRaw = values['--timeout'] as string | undefined;
-  if (timeoutRaw !== undefined) {
-    const parsedTimeout = parsePositiveInt(
-      '--timeout',
-      timeoutRaw,
-      deps.out,
-      MAX_RUN_TIMEOUT_MS,
-    );
-    if (parsedTimeout === null) return RUN_EXIT_USAGE;
-    timeoutMs = parsedTimeout;
-  }
-  const maxTurnsRaw = values['--max-turns'] as string | undefined;
-  if (maxTurnsRaw !== undefined) {
-    const parsedMaxTurns = parsePositiveInt(
-      '--max-turns',
-      maxTurnsRaw,
-      deps.out,
-    );
-    if (parsedMaxTurns === null) return RUN_EXIT_USAGE;
-    maxTurns = parsedMaxTurns;
-  }
-  if (prompt === undefined) return usage(deps.out);
-  const sessionId = values['--session'] as string | undefined;
-  const role = values['--role'] as string | undefined;
-  const skills = (values['--skill'] as string[] | undefined) ?? [];
-  const noSkills = values['--no-skills'] === true;
-  const debug = values['--debug'] === true;
-  const json = values['--json'] === true;
-  if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
-    deps.out(
-      `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
-    );
+  if (options.prompt.trim() === '') {
+    log.error('-p needs a value (the prompt is empty)');
     return RUN_EXIT_USAGE;
   }
   // Headless path never mounts an alt-screen; the hook exists only so
   // tests can fail closed if a future edit wires one in.
   void deps.onScreenMount;
+  const skills = options.skills ?? [];
   let result: HeadlessRunResult;
   try {
-    result = await deps.run(prompt, {
-      sessionId,
-      timeoutMs,
-      maxTurns,
-      ...(role === undefined ? {} : { role }),
-      ...(noSkills ? { noSkills: true } : {}),
+    result = await deps.run(options.prompt, {
+      sessionId: options.session,
+      timeoutMs: options.timeoutMs,
+      maxTurns: options.maxTurns,
+      ...(options.role === undefined ? {} : { role: options.role }),
+      ...(options.noSkills === true ? { noSkills: true } : {}),
       ...(skills.length === 0 ? {} : { skills: [...skills] }),
-      ...(debug ? { debug: true } : {}),
+      ...(options.debug === true ? { debug: true } : {}),
     });
     await deps.persist?.(result);
   } catch (error) {
-    result = runFailure(sessionId, error);
+    result = runFailure(options.session, error);
   }
   const exitCode = mapTerminusToExitCode(result.terminus);
-  if (json) {
+  if (options.json === true) {
+    // One compact line, deliberately not pretty-printed: `kubic
+    // orchestrate` reads a worker's envelope as the LAST stdout line.
     deps.out(JSON.stringify(buildRunEnvelope(result, exitCode)));
     return exitCode;
   }
-  if (result.error !== undefined) deps.out(`error: ${result.error.message}`);
-  deps.out(`result: ${result.summary}`);
-  deps.out(`session: ${result.sessionId}`);
-  deps.out(`journal: ${result.journalRef}`);
-  deps.out(`usage: ${result.usageRef}`);
-  deps.out(`trajectory: ${result.trajectoryRef}`);
+  if (result.error !== undefined) log.error(result.error.message);
+  const theme = themeOf(deps);
+  const label = (name: string): string => theme.muted(`${name}:`);
+  const summary =
+    exitCode === RUN_EXIT_OK
+      ? theme.success(result.summary)
+      : theme.error(result.summary);
+  deps.out(`${label('result')} ${summary}`);
+  deps.out(`${label('session')} ${theme.bold(result.sessionId)}`);
+  deps.out(`${label('journal')} ${result.journalRef}`);
+  deps.out(`${label('usage')} ${result.usageRef}`);
+  deps.out(`${label('trajectory')} ${result.trajectoryRef}`);
   return exitCode;
 }

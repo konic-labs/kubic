@@ -180,7 +180,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
     const seen: Array<Record<string, unknown>> = [];
     const out: string[] = [];
     const exit = await runRunCommand(
-      ['-p', 'hi', '--no-skills', '--skill', '/tmp/one', '--skill', '/tmp/two'],
+      { prompt: 'hi', noSkills: true, skills: ['/tmp/one', '/tmp/two'] },
       {
         out: (line) => out.push(line),
         run: (prompt, options) => {
@@ -203,20 +203,23 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
 
   it('leaves skills unset when the flags are absent', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    await runRunCommand(['-p', 'hi'], {
-      out: () => undefined,
-      run: (prompt, options) => {
-        seen.push({ prompt, ...options });
-        return Promise.resolve({
-          terminus: 'completed',
-          summary: 'ok',
-          sessionId: 's',
-          journalRef: 'journal:s',
-          usageRef: 'usage:s',
-          trajectoryRef: 'trajectory:s',
-        });
+    await runRunCommand(
+      { prompt: 'hi' },
+      {
+        out: () => undefined,
+        run: (prompt, options) => {
+          seen.push({ prompt, ...options });
+          return Promise.resolve({
+            terminus: 'completed',
+            summary: 'ok',
+            sessionId: 's',
+            journalRef: 'journal:s',
+            usageRef: 'usage:s',
+            trajectoryRef: 'trajectory:s',
+          });
+        },
       },
-    });
+    );
     expect(seen[0]?.noSkills).toBeUndefined();
     expect(seen[0]?.skills).toBeUndefined();
   });

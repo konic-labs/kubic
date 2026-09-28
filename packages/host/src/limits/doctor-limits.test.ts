@@ -165,12 +165,15 @@ describe('§78 exit mapping (issue #58)', () => {
 
   it('a clean run with warn notices exits 0 end-to-end', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand([], {
-      out: (line: string) => lines.push(line),
-      probeProviders: () => [{ id: 'local', reachable: true }],
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
+    const code = await runDoctorCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        probeProviders: () => [{ id: 'local', reachable: true }],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      },
+    );
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('WARN limit:solo-no-isolation');
@@ -179,12 +182,15 @@ describe('§78 exit mapping (issue #58)', () => {
 
   it('provider-down exits 6 end-to-end via runDoctorCommand (§78)', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand([], {
-      out: (line: string) => lines.push(line),
-      probeProviders: () => [{ id: 'local', reachable: false }],
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
+    const code = await runDoctorCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        probeProviders: () => [{ id: 'local', reachable: false }],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      },
+    );
     expect(code).toBe(6);
     expect(code).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
     expect(lines.join('\n')).toContain('provider-down');
@@ -206,12 +212,15 @@ describe('limits --json shape §50/78 (issue #58)', () => {
 
   it('matches the #29 doctor --json key shape check-for-check', async () => {
     const jsonLines: string[] = [];
-    await runDoctorCommand(['--json'], {
-      out: (line: string) => jsonLines.push(line),
-      probeProviders: () => [{ id: 'local', reachable: true }],
-      checkDeps: () => [{ id: 'node', ok: true }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
+    await runDoctorCommand(
+      { json: true },
+      {
+        out: (line: string) => jsonLines.push(line),
+        probeProviders: () => [{ id: 'local', reachable: true }],
+        checkDeps: () => [{ id: 'node', ok: true }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      },
+    );
     const doctorReport = JSON.parse(jsonLines.join('\n')) as {
       ok: boolean;
       exitCode: number;

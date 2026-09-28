@@ -62,7 +62,7 @@ interface Report {
 
 async function report(cwd: string): Promise<Report> {
   const lines: string[] = [];
-  await runDoctorCommand(['--json'], doctorDeps(cwd, lines));
+  await runDoctorCommand({ json: true }, doctorDeps(cwd, lines));
   return JSON.parse(lines.join('\n')) as Report;
 }
 

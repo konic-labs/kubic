@@ -32,6 +32,13 @@ import {
   installSoloPolicy,
 } from '../../../packages/host/src/approvals.js';
 import {
+  FAUX_MODEL_ID,
+  FAUX_NOTICE,
+  FAUX_PROVIDER_ID,
+  invalidProviderMessage,
+  providerOverrideFromEnv,
+} from '../../../packages/host/src/faux-provider.js';
+import {
   emitSoloWarning,
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
@@ -710,6 +717,22 @@ export async function runHeadlessPrompt(
     } else {
       models = deps.models;
     }
+    // The faux testing provider (`KUBIC_PROVIDER=faux`): registered by
+    // assembleModels and pinned here, so it is the model that answers —
+    // announced on the warning channel before the first turn (never
+    // silent). Any other KUBIC_PROVIDER value is refused by name.
+    const providerOverride = providerOverrideFromEnv(process.env);
+    if (providerOverride.kind === 'invalid') {
+      const message = invalidProviderMessage(providerOverride.value);
+      return finished(id, 'provider_probe_failed', message, message);
+    }
+    const fauxPinned =
+      providerOverride.kind === 'faux' && deps.models === undefined;
+    if (fauxPinned) {
+      (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+        FAUX_NOTICE,
+      );
+    }
     let model: ReturnType<typeof selectModel>;
     try {
       // An explicit pin (replay re-execution at the declared model, or the
@@ -719,7 +742,9 @@ export async function runHeadlessPrompt(
       // first-registered-provider pick.
       model = selectModel(
         models,
-        deps.model,
+        fauxPinned
+          ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+          : deps.model,
         roleModelSelection(role?.resolved.model),
       );
     } catch (error) {

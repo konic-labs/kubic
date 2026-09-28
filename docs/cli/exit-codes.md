@@ -41,12 +41,17 @@
   overrides per-invocation); and `already undone (skipped)` — a previous
   undo already unwound the step, nothing is rewritten. In every skipped
   class the exit is 2 and nothing is written for that step.
-- **`kubic git` / `kubic sessions` / `kubic models`**: 0 success, 1
-  usage or op failure (`models --resolve` failure exits 1). `sessions
-  prune` keeps that shape: 0 for a dry run, `nothing to prune`, and a
+- **`kubic git`**: 0 success, 1 usage or op failure.
+- **`kubic sessions` / `kubic models` / `kubic config`**: 0 success; 2
+  usage errors (unknown option, missing or invalid value, stray operand,
+  a missing `sessions` subcommand, `prune --yes --dry-run`); 1 op
+  failure (`models --resolve` failure, a refused config, attaching a
+  missing or live-locked session). An unknown `sessions` subcommand exits
+  1 like an unknown top-level command. `sessions prune`: 0 for a dry run
+  (including a declined terminal prompt), `nothing to prune`, and a
   completed prune; 1 for a missing keep window (no `--keep-days`, no
-  `session.retentionDays`), bad flags, a malformed sessions root, or a
-  session that could not be removed.
+  `session.retentionDays`), a malformed sessions root, or a session that
+  could not be removed.
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
   listing (the same usage line an unknown command gets).
@@ -62,7 +67,10 @@
   before loading anything —
   `kubic: node >= 22.19 required (running <version>) — see the README
   install section`, exit 1.
-- **`kubic run --json`**: the envelope's `ok` field is `exitCode === 0`.
+- **`kubic run`**: 2 for every usage error (missing `-p`, unknown option,
+  missing or invalid value, stray operand), before any lane boots.
+  `KUBIC_PROVIDER` set to anything but `faux` ends `provider_probe_failed`
+  (6). `--json`: the envelope's `ok` field is `exitCode === 0`.
 - **`kubic run` approvals (exit 4)**: the code is 4 for the whole approval
   terminus; the `status` string is the honest half — `approval_denied` for a
   recorded refusal (no installed approval surface, a policy route, a
@@ -97,8 +105,8 @@
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
-  errors (unknown flags, bad `--session`), 5 missing session, 6 no
-  reachable provider, 1 any other lane boot failure.
+  errors (unknown options, missing values, operands, bad `--session`), 5
+  missing session, 6 no reachable provider, 1 any other lane boot failure.
 - **`kubic cost`**: 0 success (including `no cost rows` on an empty
   store), 1 unknown session / store failure, 2 usage errors. `--json`
   emits the `toCostJson` shape field-for-field.

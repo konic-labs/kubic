@@ -37,7 +37,7 @@ describe('runDoctorCommand', () => {
   it('clean run passes with exit 0', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      [],
+      {},
       cleanDeps((line: string) => lines.push(line)),
     );
     expect(code).toBe(0);
@@ -47,12 +47,12 @@ describe('runDoctorCommand', () => {
   it('--json output parses and matches the text run check-for-check', async () => {
     const textLines: string[] = [];
     await runDoctorCommand(
-      [],
+      {},
       cleanDeps((line: string) => textLines.push(line)),
     );
     const jsonLines: string[] = [];
     const code = await runDoctorCommand(
-      ['--json'],
+      { json: true },
       cleanDeps((line: string) => jsonLines.push(line)),
     );
     expect(code).toBe(0);
@@ -100,14 +100,14 @@ describe('runDoctorCommand', () => {
     });
     const textLines: string[] = [];
     const textCode = await runDoctorCommand(
-      [],
+      {},
       deps((line: string) => textLines.push(line)),
     );
     expect(textCode).toBe(6);
     expect(textLines.join('\n')).toContain('provider-down');
     const jsonLines: string[] = [];
     const jsonCode = await runDoctorCommand(
-      ['--json'],
+      { json: true },
       deps((line: string) => jsonLines.push(line)),
     );
     expect(jsonCode).toBe(6);
@@ -129,7 +129,7 @@ describe('runDoctorCommand', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'ask-user', autoApprove: ['bogus-cap'] });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('policy-mismatch');
@@ -139,7 +139,7 @@ describe('runDoctorCommand', () => {
   it('--skip reports skipped checks and still passes clean', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      ['--skip', 'policy:approvals'],
+      { skip: ['policy:approvals'] },
       cleanDeps((line: string) => lines.push(line)),
     );
     expect(code).toBe(0);
@@ -151,7 +151,7 @@ describe('runDoctorCommand', () => {
   it('unknown --skip id is a usage error', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      ['--skip', 'nope:missing'],
+      { skip: ['nope:missing'] },
       cleanDeps((line: string) => lines.push(line)),
     );
     expect(code).toBe(2);
@@ -177,19 +177,22 @@ describe('runDoctorCommand', () => {
     );
     const assembled = assembleModels(dir);
     const lines: string[] = [];
-    const code = await runDoctorCommand([], {
-      out: (line: string) => lines.push(line),
-      probeProviders: () =>
-        assembled.models.getProviders().map((provider) => ({
-          id: provider.id,
-          reachable: true,
-          models: assembled.models
-            .getModels(provider.id)
-            .map((model) => model.id),
-        })),
-      checkDeps: () => [{ id: 'node', ok: true, detail: 'test runtime' }],
-      loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-    });
+    const code = await runDoctorCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        probeProviders: () =>
+          assembled.models.getProviders().map((provider) => ({
+            id: provider.id,
+            reachable: true,
+            models: assembled.models
+              .getModels(provider.id)
+              .map((model) => model.id),
+          })),
+        checkDeps: () => [{ id: 'node', ok: true, detail: 'test runtime' }],
+        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+      },
+    );
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('0 fail');
   });
@@ -200,7 +203,7 @@ describe('runDoctorCommand', () => {
     deps.probeProviders = () => {
       throw new Error('probe exploded');
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(6);
     const text = lines.join('\n');
     expect(text).toContain('FAIL');
@@ -210,7 +213,7 @@ describe('runDoctorCommand', () => {
   it('reports the MIT license as a passing check (issue #59)', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      [],
+      {},
       cleanDeps((line: string) => lines.push(line)),
     );
     expect(code).toBe(0);
@@ -229,7 +232,7 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
       detail:
         'loaded 1 (kubic/budget: budget: none configured), refused 2 (owned-path traversal, remote-flag use)',
     });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       'PASS extension:bundle (ok): loaded 1 (kubic/budget: budget: none configured), refused 2 (owned-path traversal, remote-flag use)',
@@ -246,7 +249,7 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
       detail:
         'extension bundle dir missing: "skills/budget" not found (first-party bundle kubic/budget unavailable — refusing startup, not running bare)',
     });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL extension:bundle (extension-posture): extension bundle dir missing',
@@ -262,7 +265,7 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
       refusedCount: 0,
       detail: 'loaded 1 (kubic/budget: budget: none configured), refused 0',
     });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL extension:bundle (extension-posture)',
@@ -278,7 +281,7 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
       refusedCount: 2,
       detail: 'loaded 0, refused 2 (owned-path traversal, remote-flag use)',
     });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL extension:bundle (extension-posture)',
@@ -291,7 +294,7 @@ describe('runDoctorCommand extension posture (issue #80)', () => {
     deps.probeExtensions = () => {
       throw new Error('bundle disk gone');
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL extension:bundle (extension-posture): bundle disk gone',
@@ -304,7 +307,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => [{ id: 'local', reachable: true }];
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
     // Issue #86 honesty: the default probe never dialled, and the line says
     // so — a fabricated "reachable" would be a claim nothing measured.
@@ -319,7 +322,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     deps.probeProviders = () => [
       { id: 'local', reachable: true, detail: 'custom ok' },
     ];
-    await runDoctorCommand([], deps);
+    await runDoctorCommand({}, deps);
     expect(lines.join('\n')).toContain('PASS provider:local (ok): custom ok');
   });
 
@@ -333,7 +336,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
         detail: 'ECONNREFUSED 127.0.0.1:11434',
       },
     ];
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(6);
     expect(lines.join('\n')).toContain(
       'FAIL provider:local (provider-down): ECONNREFUSED 127.0.0.1:11434',
@@ -347,7 +350,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
       { id: 'node', ok: true },
       { id: 'git', ok: false },
     ];
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('PASS dep:node (ok): present');
@@ -360,7 +363,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     deps.checkDeps = () => {
       throw new Error('deps exploded');
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL dep:check (deps-missing): deps exploded',
@@ -373,7 +376,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     deps.loadPolicy = () => {
       throw new Error('policy disk gone');
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL policy:approvals (policy-mismatch): policy disk gone',
@@ -384,7 +387,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'deny', autoApprove: ['network'] });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain('route=deny ignores autoApprove');
   });
@@ -393,7 +396,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'deny', autoApprove: [] });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       'PASS policy:approvals (ok): route=deny, 0 auto-approved',
@@ -407,7 +410,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
       route: 'ask-user',
       autoApprove: ['requires:exec'],
     });
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       'PASS policy:approvals (ok): route=ask-user, 1 auto-approved',
@@ -417,7 +420,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
   it('skips a comma list with whitespace around each id', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
-      ['--skip', 'dep:node, policy:approvals'],
+      { skip: ['dep:node, policy:approvals'] },
       cleanDeps((line: string) => lines.push(line)),
     );
     expect(code).toBe(0);
@@ -427,35 +430,13 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     expect(text).toContain('2 skip');
   });
 
-  it('rejects --skip without a value or with a flag-like value', async () => {
-    for (const args of [['--skip'], ['--skip', '--json']]) {
-      const lines: string[] = [];
-      const code = await runDoctorCommand(
-        args,
-        cleanDeps((line: string) => lines.push(line)),
-      );
-      expect(code).toBe(2);
-      expect(lines.join('\n')).toContain('--skip needs a value');
-    }
-  });
-
-  it('rejects an unknown flag as a usage error', async () => {
-    const lines: string[] = [];
-    const code = await runDoctorCommand(
-      ['--bogus'],
-      cleanDeps((line: string) => lines.push(line)),
-    );
-    expect(code).toBe(2);
-    expect(lines.join('\n')).toContain('unknown flag --bogus');
-  });
-
   it('stringifies a non-Error probe failure instead of crashing', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => {
       throw 'string boom';
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(6);
     expect(lines.join('\n')).toContain(
       'FAIL provider:probe (provider-down): string boom',

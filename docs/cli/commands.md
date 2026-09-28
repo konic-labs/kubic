@@ -12,11 +12,15 @@ the version comes from the nearest `kubic` package manifest
 and exits 0.
 
 **`--help` is uniform across the commands.** Every command below answers
-`kubic <command> --help` (or `-h`) with exactly its own usage line and **exit 0**
-— the convention lives once in `packages/core/src/cli-help.ts` and is applied
-before any argv validation. Usage *errors* keep their own exit codes (a bad flag
-is still an error; a help request is not); each command's usage line lists
-exactly the flags its parser accepts.
+`kubic <command> --help` (or `-h`) with **exit 0**. Commands parsed by
+commander (`run`, `tui`, `doctor`, `models`, `config`, `sessions` and its
+subcommands) print commander's generated help — `Usage: kubic <command>
+[options]`, every option with its description, and examples where useful;
+the rest still print their one usage line (`packages/core/src/cli-help.ts`).
+Usage *errors* keep their own exit codes (a bad flag is still an error; a
+help request is not). For the commander-parsed commands every usage error —
+an unknown option, a missing value, a value the command's rules refuse, a
+stray operand — prints one `error: …` line on **stderr** and exits **2**.
 
 The **root dispatcher** follows the same convention (issue #128):
 `kubic --help` / `kubic -h` prints the top-level command listing — the
@@ -36,7 +40,7 @@ and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--] [--session <id>] [--timeout <ms>] [--max-turns <n>] [--debug] [--json]`
+## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--skill <path>]... [--no-skills] [--debug] [--json]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
@@ -46,8 +50,11 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. |
 | `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
 | `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
+| `--role <name>` | Boot as the role document `.kubic/roles/<name>.md` (prompt text, tool set, model pin). |
+| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
+| `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs, optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` (e.g. an orchestrator
 stopping a worker) and `SIGHUP` during a run are handled like the
@@ -59,45 +66,37 @@ closed, and the run prints its normal result with `status: failed`,
 runs takes the default path and ends the process immediately.
 
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
-`usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`); on failure an
-`error:` line comes first. Exit code is the §78 terminus map — see
-[exit codes](exit-codes.md). Missing `-p`, a `-p`/`--session` without a
-value, an invalid `--session` id, a non-positive or non-integer
-`--timeout`/`--max-turns`, or an unknown flag all exit 2.
+`usage:` (`usage:<id>`), `trajectory:` (`trajectory:<id>`) on stdout (the
+labels are dimmed and the result coloured on a colour terminal; plain text
+under a pipe or `NO_COLOR`); on failure an `error:` line goes to stderr
+first. Exit code is the §78 terminus map — see [exit codes](exit-codes.md).
 
-**Value syntax (issue #127).** Every command parses argv through the shared
-parser (`packages/core/src/flags.ts`): `--flag value`, `--flag=value` (the
-value is everything after `=` — verbatim, so it may itself start with `--`),
-and the POSIX end-of-flags `--`. In the positional form a next token
-starting with `--` still means "missing value" — that is the typo guard
-(`kubic run -p --json` exits 2 with `-p needs a value`), not a value. A
-value that begins with `--` is expressible two ways:
+**Usage errors (exit 2, stderr, no lane).** commander parses the argv
+(`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
+value, an unknown option, an invalid `--session` id, a non-positive or
+non-integer `--timeout`/`--max-turns` (or a `--timeout` above
+`2147483647`), and a stray operand all exit 2 with one `error: …` line.
+
+**Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>` and
+`-p<text>` all work. The typo guard stays: a separate-token value that
+starts with `--` is a mistyped flag, not a prompt — `kubic run -p --json`
+exits 2 with `looks like a flag, not a prompt` and the exact form to use.
+A prompt that really begins with `--` is written in the attached form:
 
 ```console
-$ kubic run --prompt="--help"           # equals form: value is everything after '='
-$ kubic run -p -- --json-experiment     # end-of-flags: the next raw token is the value
+$ kubic run --prompt='--help'            # the value is everything after '='
+$ kubic run --prompt='--json-experiment'
 ```
 
-The end-of-flags form is the value escape for a `-p`/`--prompt` that was
-left without one: `kubic run -p -- <prompt>` takes the next raw token as
-the prompt — and only when the terminator directly answers the starved
-`-p`/`--prompt`: the parser recorded that flag's own token immediately
-before the `--` (flag-ness, not token text — a `-p` the parser consumed
-as another flag's value, as in `kubic run -p --session -p -- x`, is not a
-flag occurrence and never answers the terminator; exit 2).
-Anything else keeps the typo guard: no terminator means no promotion
-(`kubic run -p --json x` exits 2), a `-p` starved by another flag is not
-rescued by a later `--` (`kubic run -p --json -- x` exits 2), a `-p`
-starved *after* a prompt is already set or a starved duplicate ahead of
-the terminator-answered one is still `-p needs a value` (exit 2), and a
-bare `kubic run -- <x>` is a stray operand (exit 2), never a prompt. A
-positional prompt without `-p` (`kubic run "fix tests"`) is refused the
-same way (exit 2) with the exact form to use:
+A single-dash value (`-p '- fix the tests'`, a markdown bullet) is a
+normal prompt. The old `-p -- <prompt>` escape is gone: after `--` every
+token is an operand, and `run` takes none. A positional prompt without
+`-p` (`kubic run "fix tests"`) is refused with the exact form to use:
 `error: unexpected argument "fix tests" — the prompt is a flag: kubic run -p 'fix tests'`
 (single-quoted, so nothing in the suggestion expands when pasted). An
-empty prompt (`--prompt=`, `-p ''`) is refused the same way. Note
-`--help`/`-h` anywhere in argv is answered by the help convention before
-parsing (issue #100) — a literal `--help` prompt needs the equals form.
+empty prompt (`--prompt=`, `-p ''`) is refused (`the prompt is empty`).
+`--help` anywhere after `run` is commander's help (exit 0); a literal
+`--help` prompt needs the attached form.
 
 **Installed policy** (issue #86). A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
@@ -168,6 +167,43 @@ worktree limit is what `kubic doctor` reports) and by the opt-out
 per process start, not per session. `kubic tui` shows the same statement
 as its one-line form in the editor footer, and the re-execution tiers of
 `kubic replay` announce it too (they drive this same run path).
+
+### Testing provider: `KUBIC_PROVIDER=faux`
+
+**For testing only.** `KUBIC_PROVIDER=faux` swaps every model call for
+Pi's faux provider with a scripted reply, so the shipped binary can be
+driven end to end — `run`, `tui`, and `orchestrate` (the switch crosses the
+§3.8 worker spawn allowlist) — with no network, no credentials and no paid
+tokens. Everything else is real: the lane, the tools, the installed
+policy, the session store and the journal.
+
+- **Never implicit.** Only the exact value `faux` turns it on. Unset or
+  empty means no override; any other value is refused by name — `run`
+  ends `provider_probe_failed` (exit 6) with
+  `unsupported KUBIC_PROVIDER "<value>" (the only override is 'faux', the testing provider)`.
+- **Always announced.** `run` prints
+  `warn: provider: faux/echo (testing provider: scripted replies, no model is called; KUBIC_PROVIDER=faux)`
+  on stderr before the first turn (stdout and `--json` stay clean); the
+  TUI footer reads `faux/echo: testing provider, no model is called`;
+  `kubic models` and `kubic doctor` list the `faux` provider and print the
+  same warning.
+- **Pinned.** The model is `faux/echo`; a configured `[model]` pin or
+  `KUBIC_MODEL` does not apply while the switch is on.
+- **Script.** Each model call answers by the transcript: after a tool
+  result, `faux: <tool> returned <n> chars` (ending the turn); a prompt
+  with a line `faux:tool <name> <json-args>` makes one real call to that
+  tool (for example `faux:tool ls {"path":"."}`); anything else is echoed
+  as `faux echo: <prompt>`.
+
+```console
+$ KUBIC_PROVIDER=faux kubic run -p hello --json
+{"ok":true,"exitCode":0,"sessionId":"…","status":"completed","result":{"summary":"faux echo: hello"},…}
+$ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
+```
+
+`npm run test:binary-contract` runs `scripts/faux-smoke.mjs` against the
+built binary: a faux `run --json` (echo and a tool call), text mode, the
+unknown-value refusal, and an `orchestrate --yes` across worker processes.
 
 ## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--json]`
 
@@ -384,15 +420,16 @@ a git repo it prints `error: … needs a git repository … nothing was removed`
 and exits 2 without touching anything (§78). See
 [exit codes](exit-codes.md).
 
-## `kubic tui [--session <id>]`
+## `kubic tui [--session <id>] [--role <name>] [--skill <path>]... [--no-skills]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
 transcript, and status rows render in root order, with the prompt editor
 on the bottom row. Below 80 columns the tree hides and transcript plus
 status stay. `--session <id>` resumes into an existing session (same
 `[A-Za-z0-9_-]` rule as `run` — anything else exits 2 before the lane
-boots). Lane boot failure exits 5 on a missing session, 6 with no
-provider available, 1 otherwise.
+boots). Usage errors (unknown option, missing value, any operand) exit 2
+on stderr before the screen opens. Lane boot failure exits 5 on a missing
+session, 6 with no provider available, 1 otherwise.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
@@ -492,24 +529,25 @@ terminal. The renderer's own styling is unaffected.
 
 ## `kubic sessions`
 
-Sessions live under `~/.kubic/sessions` by default.
-
-```
-usage: kubic sessions <create [--cwd <path>] [--dangerously-skip-approvals] | list [--json] | attach [--] <id> [--tail <n>] | prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]>
-```
+Sessions live under `~/.kubic/sessions` by default. Each subcommand has
+its own generated help (`kubic sessions prune --help`).
 
 | Subcommand | Meaning |
 | --- | --- |
-| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a warning — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list [--json]` | One `<id>  <cwd>` line per session. `--json` prints one array of `{id, cwd}` objects — `[]` when there are none. An unknown flag prints the usage and exits 1. |
+| `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
-| `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`**. See [Session retention](#session-retention-prune) below. |
+| `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
-Missing subcommand exits 1 with the usage line; `attach` without an id
-or with an id outside `[A-Za-z0-9_-]` exits 1; attaching a missing
-session exits 1; attaching a session another process holds live prints
-the lock refusal (issue #118 — the holder's pid and start time are named)
-and exits 1 without reading the transcript.
+Usage errors exit 2 on stderr: a missing subcommand (commander prints the
+subcommand list), an unknown option, a missing value, `attach` without an
+id or with an id outside `[A-Za-z0-9_-]`, a malformed `--tail`,
+`--keep-days` or `--keep-session`, and `--yes` with `--dry-run`. An
+unknown subcommand exits 1 (`error: unknown command '<name>'`), like an
+unknown top-level command. Attaching a missing session exits 1; attaching
+a session another process holds live prints the lock refusal (issue #118 —
+the holder's pid and start time are named) and exits 1 without reading
+the transcript.
 
 ### Session retention (`prune`)
 
@@ -525,7 +563,11 @@ journal entries at read time (see the read-time self-heal note under
 - **Dry-run is the default.** Without `--yes`, `prune` lists every
   candidate as `would prune <id> (<bytes>B)` plus the summary
   `dry run: N session(s) would be pruned (NB) — pass --yes to delete`, and
-  removes nothing. `--dry-run` is the explicit synonym of that default;
+  removes nothing. On an interactive terminal (stdin and stdout both a
+  TTY) and without `--dry-run`, it asks once after the list —
+  `Delete N session(s) (NB)?` — and deletes only on yes; no, Ctrl-C or Esc
+  keeps everything and prints the dry-run summary. Off a terminal it
+  never asks. `--dry-run` is the explicit synonym of that default;
   `--yes` deletes the listed set (`pruned <id> (<bytes>B)` per session,
   then `pruned N session(s), NB reclaimed`; a candidate whose lock goes
   live in between is skipped and never counted — see the lock bullet
@@ -534,7 +576,7 @@ journal entries at read time (see the read-time self-heal note under
 - **The keep window is never invented.** `--keep-days <n>` (a
   non-negative integer of days) wins; without it, `session.retentionDays`
   from config supplies the window; with neither, `prune` exits 1 naming
-  both ways to set one. `--keep-days 0` — or `retentionDays = 0` — means
+  both ways to set one (on stderr). `--keep-days 0` — or `retentionDays = 0` — means
   retention is off: nothing is ever pruned.
 - **Age is the session dir's own mtime** (create, attach, and close all
   bump it): a session is a candidate when that mtime is at or before
@@ -767,32 +809,42 @@ composition paths therefore capture a **baseline** when the lane boots and
 `kubic status` names it in the summary. `--json` keeps the raw entry array (the
 `unattributed` flag is on each entry there).
 
-## `kubic models`
+## `kubic models [--json] [--resolve <provider/id>]`
 
 Catalog readout over built-ins plus `models.json` customs in the
-current directory (absent or invalid `models.json` is reported as a
-`loaded models.json: …` / `models.json ignored: …` note, never fatal).
+current directory (absent or invalid `models.json` is reported as an
+`info: loaded models.json: …` / `info: models.json ignored: …` line on
+stderr, never fatal). Under `KUBIC_PROVIDER=faux` the catalog also lists
+the `faux` testing provider and a `warn:` line names it.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | `provider <id> (<name>)` plus one `  <model> — thinking: <levels> — $in/$out per 1M in/out` line per model; `no providers registered (add models.json or set provider env keys)` when empty. Exits 0. |
-| `--json` | The same catalog as JSON. Exits 0. |
-| `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` or `error: …`. Needs a value; resolution failure exits 1. |
+| (none) | A `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table, one row per model (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). An empty catalog leaves stdout empty and prints `info: no providers registered (add models.json or set provider env keys)` on stderr. Exits 0. |
+| `--json` | The same catalog as one pretty-printed JSON document. Exits 0. |
+| `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)`; a resolution failure prints `error: …` on stderr and exits 1. |
 
-An unknown flag prints `usage: kubic models [--json] [--resolve <provider/id>]`
-and exits 1 (it used to be silently ignored). `--help`/`-h` prints the same line
-and exits 0.
+Usage errors (unknown option, `--resolve` without a value, an operand)
+exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
 
-## `kubic doctor`
+## `kubic config [--json]`
+
+The effective configuration with the layer each value came from — see
+[configuration](configuration.md#seeing-the-effective-values). `--json`
+prints one pretty-printed JSON document. A refused config prints
+`error: <reason>` on stderr and exits 1; usage errors exit 2.
+
+## `kubic doctor [--skip <id[,id…]>]... [--json]`
 
 Health readout — see [doctor and debug](doctor-and-debug.md).
 
 | Flag | Meaning |
 | --- | --- |
-| `--skip <id[,id…]>` | Mark checks skipped (comma-separated). An id that matches no check exits 2; `--skip` without a value exits 2. |
-| `--json` | Emit `{ok, exitCode, checks}` instead of human lines. Same exit code either way. |
+| `--skip <id[,id…]>` | Mark checks skipped (comma-separated, repeatable). An id that matches no check exits 2 (`error: unknown check "<id>"` on stderr); `--skip` without a value exits 2. |
+| `--json` | Emit `{ok, exitCode, checks}` as one pretty-printed JSON document instead of human lines. Same exit code either way. |
 
-Unknown flags exit 2. Full exit-code contract is on the
+Human lines keep the `STATUS id (reason): detail` shape; on a colour
+terminal the status is coloured (pass green, warn amber, fail red, skip
+grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
 
 ## `kubic workers [--json] [--debug]`

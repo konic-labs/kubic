@@ -9,14 +9,16 @@
 // handler that only pretends to short-circuit fails here. Usage *errors*
 // (unknown flag, missing value) keep their own exit codes — this file
 // pins the request path only.
+//
+// Commands migrated to commander (run, tui, doctor, models, config,
+// sessions) answer `--help` with commander's generated help instead; their
+// help and usage-error exits are pinned at the program level in
+// apps/kubic/src/commands/solo.test.ts.
 import { describe, expect, it } from 'vitest';
-import { runTuiCommand } from '../../../apps/kubic/src/tui-run.js';
 import { runBenchmarkCommand, runEvalCommand } from '../../eval/src/cli.js';
 import { runExportCommand } from '../../eval/src/export-cli.js';
-import { runDoctorCommand } from './doctor.js';
 import { runGitCommand } from './git-cli.js';
 import { runJournalCommand } from './journal-cli.js';
-import { runModelsCommand } from './models-cli.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
 import { runPerfCommand } from './ops/perf/perf-cli.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
@@ -24,8 +26,6 @@ import { runCleanCommand } from './orchestrator/worktree/clean.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import { runPolicyCommand } from './policy/policy-cli.js';
 import { runReplayCommand } from './replay/replay.js';
-import { runRunCommand } from './run-cli.js';
-import { runSessionsCommand } from './sessions-cli.js';
 import { runWorkersCommand } from './workers-cli.js';
 
 const USAGE_PREFIX = 'usage: kubic';
@@ -49,11 +49,6 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    command: 'run',
-    run: (args, out) =>
-      runRunCommand(args, { out, run: never('the run path') }),
-  },
-  {
     command: 'orchestrate',
     run: (args, out) =>
       runOrchestrateCommand(args, {
@@ -75,27 +70,9 @@ const CASES: Case[] = [
       }),
   },
   {
-    command: 'tui',
-    run: (args, out) =>
-      runTuiCommand(args, {
-        out,
-        createTerminal: never('the terminal'),
-        bootLane: never('the lane boot'),
-      }),
-  },
-  {
-    command: 'sessions',
-    run: (args, out) => runSessionsCommand(args, { out }),
-  },
-  {
     command: 'git',
     run: (args, out) =>
       runGitCommand(args, { out, env: never('the execution env') }),
-  },
-  {
-    command: 'models',
-    run: (args, out) =>
-      runModelsCommand(args, { out, models: never('the model catalog') }),
   },
   // diff/undo/log/status are one handler; the subcommand is argv[0].
   ...['diff', 'undo', 'log', 'status'].map((sub) => ({
@@ -103,16 +80,6 @@ const CASES: Case[] = [
     run: (args: string[], out: (line: string) => void) =>
       runJournalCommand([sub, ...args], { out }),
   })),
-  {
-    command: 'doctor',
-    run: (args, out) =>
-      runDoctorCommand(args, {
-        out,
-        probeProviders: never('the provider probe'),
-        checkDeps: never('the dep probe'),
-        loadPolicy: never('the policy load'),
-      }),
-  },
   {
     command: 'workers',
     run: (args, out) =>
@@ -161,21 +128,16 @@ const CASES: Case[] = [
 
 describe('--help convention (issue #100)', () => {
   it('covers every shipped command', () => {
-    // The 21 commands the binary dispatches; a new command must be added
+    // The forwarded commands the binary dispatches; a new command must be added
     // here or it ships without the convention.
     expect(CASES.map((c) => c.command)).toEqual([
-      'run',
       'orchestrate',
       'clean',
-      'tui',
-      'sessions',
       'git',
-      'models',
       'diff',
       'undo',
       'log',
       'status',
-      'doctor',
       'workers',
       'eval',
       'benchmark',
@@ -225,16 +187,4 @@ describe('--help convention (issue #100)', () => {
       expect(failures).toEqual([]);
     });
   }
-
-  it('keeps usage errors on their own exit codes (help did not swallow them)', async () => {
-    // The convention covers the REQUEST, not errors: an unknown flag must
-    // still fail. `run` is the reference — its usage errors are 2.
-    const lines: string[] = [];
-    const code = await runRunCommand(['--nope'], {
-      out: (line: string) => lines.push(line),
-      run: never('the run path'),
-    });
-    expect(code).toBe(2);
-    expect(lines.join('\n')).toContain('unknown flag --nope');
-  });
 });

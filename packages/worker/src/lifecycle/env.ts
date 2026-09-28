@@ -15,6 +15,10 @@ export const ENV_ALLOWLIST: readonly string[] = [
   'NO_COLOR',
   'CLICOLOR',
   'KUBIC_MODEL',
+  // The faux testing provider switch (`KUBIC_PROVIDER=faux`): a worker of a
+  // faux orchestration must answer from the same scripted provider as its
+  // manager, never fall through to a real one. Not a secret.
+  'KUBIC_PROVIDER',
   'KUBIC_DEBUG',
   // The worker's own identity (issue #94): the child prints its readiness
   // marker under this id and the orchestrator matches it, so the id is

@@ -28,7 +28,6 @@ import {
   runtimeExcludeEntriesFor,
 } from './config-runtime.js';
 import {
-  type CommandRunner,
   type DispatchDeps,
   type DispatchRunners,
   dispatchCommand,
@@ -92,9 +91,27 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
 
 const JOURNAL_COMMANDS = new Set(['diff', 'undo', 'log', 'status']);
 
+// Commands migrated to real commander definitions (commands/solo.ts): their
+// runner receives the parsed options for the ROUTES argv, never argv.
+const PARSED: Readonly<Record<string, unknown>> = {
+  sessions: { command: 'list' },
+  models: { json: true },
+  run: { prompt: 'hi' },
+  tui: {},
+  doctor: { skip: [] },
+  config: { json: true },
+};
+
+// A forwarded runner receives argv; a migrated one (the solo group:
+// run, tui, doctor, models, config, sessions) the options commander parsed.
+type AnyRunner = (
+  input: unknown,
+  config: CliConfigResult,
+) => number | Promise<number>;
+
 interface RunnerCall {
   readonly key: RunnerKey;
-  readonly rest: readonly string[];
+  readonly rest: unknown;
   readonly config: CliConfigResult;
 }
 
@@ -113,7 +130,7 @@ interface Harness {
 // `version` is a constant, `loadConfig` answers the given result.
 function harness(
   options: {
-    runners?: Partial<Record<RunnerKey, CommandRunner>>;
+    runners?: Partial<Record<RunnerKey, AnyRunner>>;
     config?: CliConfigResult;
     version?: string;
   } = {},
@@ -124,11 +141,15 @@ function harness(
     excludeCalls: 0,
     excludeEntries: undefined,
   };
-  const runners = {} as Record<RunnerKey, CommandRunner>;
+  const runners = {} as Record<RunnerKey, AnyRunner>;
   for (const key of RUNNER_KEYS) {
     const override = options.runners?.[key];
     runners[key] = (rest, config) => {
-      calls.push({ key, rest: [...rest], config });
+      calls.push({
+        key,
+        rest: Array.isArray(rest) ? [...(rest as string[])] : rest,
+        config,
+      });
       return override === undefined ? 0 : override(rest, config);
     };
   }
@@ -142,7 +163,7 @@ function harness(
       state.excludeCalls += 1;
       state.excludeEntries = entries;
     },
-    runners,
+    runners: runners as unknown as DispatchRunners,
   };
   return { deps, calls, lines, state };
 }
@@ -205,7 +226,11 @@ describe('dispatch routing (issue #135)', () => {
         label,
       ).toEqual([key]);
       expect(h.calls[0]?.rest, label).toEqual(
-        JOURNAL_COMMANDS.has(command) ? [command, ...rest] : rest,
+        command in PARSED
+          ? PARSED[command]
+          : JOURNAL_COMMANDS.has(command)
+            ? [command, ...rest]
+            : rest,
       );
       expect(code, `${label} — exit code must flow back`).toBe(0);
     }
@@ -213,7 +238,7 @@ describe('dispatch routing (issue #135)', () => {
 
   it('returns the runner exit code verbatim', async () => {
     const h = harness({ runners: { sessions: () => 42 } });
-    expect(await dispatchCommand('sessions', [], h.deps)).toBe(42);
+    expect(await dispatchCommand('sessions', ['list'], h.deps)).toBe(42);
   });
 
   it('hands the runner the process-wide config load', async () => {
@@ -267,7 +292,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
     expect(await dispatchCommand(undefined, [], deps)).toBe(0);
-    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([['tui', []]]);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([['tui', {}]]);
     // Same boot as `kubic tui`: the runtime ignore rules ship first.
     expect(h.state.excludeCalls).toBe(1);
     expect(h.lines).toEqual([]);
@@ -317,12 +342,18 @@ describe('front door (issue #128 behavior, moved)', () => {
   });
 
   it('root options after the command reach the command (positional options)', async () => {
-    const h = harness();
-    expect(await dispatchCommand('doctor', ['-V', '--help'], h.deps)).toBe(0);
-    expect(h.calls).toEqual([
-      expect.objectContaining({ key: 'doctor', rest: ['-V', '--help'] }),
-    ]);
-    expect(h.lines).toEqual([]);
+    // `--help` after a command is that command's generated help, never the
+    // root listing; `-V` after it is the command's (unknown) option, never
+    // the root version.
+    const help = harness();
+    expect(await dispatchCommand('doctor', ['--help'], help.deps)).toBe(0);
+    expect(help.calls).toEqual([]);
+    expect(help.lines.join('\n')).toContain('Usage: kubic doctor');
+    expect(help.lines).not.toContain(ROOT_USAGE);
+    const version = harness();
+    expect(await dispatchCommand('doctor', ['-V'], version.deps)).toBe(2);
+    expect(version.calls).toEqual([]);
+    expect(version.lines.join('\n')).toContain("unknown option '-V'");
   });
 
   it('forwards a leading `--` verbatim (commander would drop it)', async () => {
@@ -365,7 +396,8 @@ describe('config refusal (issue #90 policy, moved)', () => {
     expect(others).toHaveLength(16);
     for (const command of others) {
       const h = harness({ config: refusedConfig() });
-      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      const argv = ROUTES.find(([name]) => name === command)?.[1] ?? [];
+      expect(await dispatchCommand(command, argv, h.deps), command).toBe(0);
       expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
       expect(h.lines, `${command} must not print a refusal`).toEqual([]);
     }
@@ -402,14 +434,14 @@ describe('runtime exclude (issue #91, moved order)', () => {
   });
 
   it('runs the exclude step before the runner, even for a --help argv', async () => {
-    // `kubic run --help` is the RUNNER's help (its own usage line), not the
-    // root's: the root's help check is argv[0]-only, and the moved order
-    // ships the exclude rules before the runner is reached.
+    // `kubic run --help` is the command's generated help, not the root's:
+    // the root's help check is argv[0]-only, and the moved order ships the
+    // exclude rules before commander answers (the runner is never reached).
     const h = harness();
     expect(await dispatchCommand('run', ['--help'], h.deps)).toBe(0);
     expect(h.state.excludeCalls).toBe(1);
-    expect(h.calls.map((call) => call.key)).toEqual(['run']);
-    expect(h.calls[0]?.rest).toEqual(['--help']);
+    expect(h.calls).toEqual([]);
+    expect(h.lines.join('\n')).toContain('Usage: kubic run');
   });
 
   it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {

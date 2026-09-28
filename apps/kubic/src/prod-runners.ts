@@ -11,6 +11,16 @@
 // by dispatch.test.ts).
 
 import {
+  createLogger,
+  debugEnabled,
+} from '../../../packages/core/src/cli/logger.js';
+import { outputModeFor } from '../../../packages/core/src/cli/output.js';
+import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
+import {
+  createCliTheme,
+  detectColorLevel,
+} from '../../../packages/core/src/cli/theme.js';
+import {
   runBenchmarkCommand,
   runEvalCommand,
 } from '../../../packages/eval/src/cli.js';
@@ -22,6 +32,10 @@ import { installedPolicyPosture } from '../../../packages/host/src/approvals.js'
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import type { SessionOverlapProbe } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
+import {
+  FAUX_NOTICE,
+  fauxProviderActive,
+} from '../../../packages/host/src/faux-provider.js';
 import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
@@ -105,17 +119,80 @@ async function refuseLiveSuite(): Promise<never> {
   throw new Error(LIVE_SUITE_REFUSAL);
 }
 
+// The presentation seams of one solo-command invocation, derived once from
+// the real streams: colour for stdout data (none off a TTY, under NO_COLOR,
+// or for --json), the stderr diagnostics logger (debug lines under
+// KUBIC_DEBUG=1), box-drawn tables and prompts only on an interactive
+// terminal. `--json` keeps stdout to exactly one document.
+function presentation(
+  out: (line: string) => void,
+  diagnostics: (line: string) => void,
+  json: boolean,
+): {
+  out: (line: string) => void;
+  logger: ReturnType<typeof createLogger>;
+  theme: ReturnType<typeof createCliTheme>;
+  fancy: boolean;
+  interactive: boolean;
+} {
+  const stdoutTTY = process.stdout.isTTY === true;
+  const stdinTTY = process.stdin.isTTY === true;
+  const theme = createCliTheme(
+    json ? 'none' : detectColorLevel(process.env, stdoutTTY),
+  );
+  const logTheme = createCliTheme(
+    json
+      ? 'none'
+      : detectColorLevel(process.env, process.stderr.isTTY === true),
+  );
+  const mode = outputModeFor({
+    json,
+    stdinTTY,
+    stdoutTTY,
+    colorEnabled: theme.enabled,
+  });
+  return {
+    out,
+    logger: createLogger({
+      write: (chunk) =>
+        diagnostics(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk),
+      theme: logTheme,
+      debug: debugEnabled({}),
+    }),
+    theme,
+    fancy: mode.fancy,
+    interactive: mode.interactive,
+  };
+}
+
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
   return {
-    sessions: (rest, cliConfig) => {
+    sessions: (invocation, cliConfig) => {
       // Issue #119: `sessions prune`'s default keep-window comes from config
       // when it sets one; with none, prune demands an explicit --keep-days
       // rather than inventing a window.
       const retentionDays = sessionRetentionDays(cliConfig);
-      return runSessionsCommand([...rest], {
+      const view = presentation(
         out,
+        debug,
+        invocation.command === 'list' && invocation.json === true,
+      );
+      return runSessionsCommand(invocation, {
+        ...view,
         ...(retentionDays === undefined ? {} : { retentionDays }),
+        // A prune with neither --yes nor --dry-run asks on a TTY; off a
+        // TTY it stays the documented dry run.
+        ...(view.interactive
+          ? {
+              confirm: (message: string) =>
+                promptConfirm({
+                  message,
+                  interactive: true,
+                  nonInteractive: false,
+                }),
+            }
+          : {}),
       });
     },
     git: (rest) =>
@@ -134,17 +211,19 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },
-    models: (rest) => {
+    models: (options) => {
+      const view = presentation(out, debug, options.json === true);
       const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) out(assembled.note);
-      return runModelsCommand([...rest], {
+      if (assembled.note !== null) view.logger.info(assembled.note);
+      if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
+      return runModelsCommand(options, {
+        ...view,
         models: assembled.models,
-        out,
       });
     },
-    run: (rest, cliConfig) =>
-      runRunCommand([...rest], {
-        out,
+    run: (options, cliConfig) =>
+      runRunCommand(options, {
+        ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, {
             model: runtimeModelPin(cliConfig),
@@ -155,7 +234,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             ...runtimeLaneDeps(cliConfig),
           }),
       }),
-    tui: async (rest, cliConfig) => {
+    tui: async (options, cliConfig) => {
       // Extension startup (issue #93): the TUI lane loads the first-party
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
@@ -164,7 +243,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         receipt: debug,
       });
       return runTuiCommand(
-        [...rest],
+        options,
         tuiDepsWithDefaults({
           out,
           // Same policy install as `kubic run` (issue #86; #90 classes): the
@@ -185,12 +264,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         }),
       );
     },
-    doctor: async (rest, cliConfig) => {
+    doctor: async (options, cliConfig) => {
       // Default probes are faux-only: providers are listed (never dialed),
       // deps check the live node runtime, policy falls back to host
       // defaults until config-sourced policy lands.
+      const view = presentation(out, debug, options.json === true);
       const assembled = assembleModels(process.cwd());
-      if (assembled.note !== null) out(assembled.note);
+      if (assembled.note !== null) view.logger.info(assembled.note);
+      if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       const [major = 0, minor = 0] = process.versions.node
         .split('.')
         .map((part) => Number(part));
@@ -218,8 +299,8 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       } catch {
         sessionOverlapProbe = undefined;
       }
-      return runDoctorCommand([...rest], {
-        out,
+      return runDoctorCommand(options, {
+        ...view,
         probeProviders: () =>
           assembled.models.getProviders().map((provider) => ({
             id: provider.id,
@@ -347,13 +428,13 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ),
         out,
       }),
-    config: (rest, cliConfig) =>
+    config: (options, cliConfig) =>
       // Effective configuration with the layer each value came from (issue
       // #90): human lines, or --json for machines. Fails closed on a broken
       // config instead of printing defaults.
-      runConfigCommand([...rest], {
+      runConfigCommand(options, {
+        ...presentation(out, debug, options.json === true),
         load: kubicConfigLoader(cliConfig),
-        out,
       }),
     audit: (rest) =>
       // Audit query over the repo-root §60 ledger (one OrgAuditRecord per

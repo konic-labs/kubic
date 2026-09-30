@@ -29,7 +29,6 @@
     "dist/**",
     "reports/**",
     ".beads/**",
-    ".serena/**",
     ".claude/**"
   ],
   "plugins": ["@stryker-mutator/tap-runner"],

@@ -53,7 +53,6 @@ coverage/
 # Agent tooling (worktrees, local settings) — never tracked
 # ---------------------------------------------------------------------------
 .claude/
-.serena/
 
 # ---------------------------------------------------------------------------
 # Editors and OS

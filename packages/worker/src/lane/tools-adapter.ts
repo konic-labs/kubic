@@ -102,9 +102,15 @@ export function renderReadText(result: ReadResult): string {
 // `[grep /<pattern>/: N matches]` + one `path:line: text` per match.
 export function renderGrepText(result: GrepResult): string {
   const count = result.matches.length;
-  const head = `[grep /${result.pattern}/: ${count} ${count === 1 ? 'match' : 'matches'}${
-    result.truncated ? ', truncated (narrow pattern, root or include)' : ''
-  }]\n`;
+  // A cut result names WHICH cap stopped it (issue #172): the walk's entry
+  // cap with the directory it exhausted, the depth cap with where it pruned,
+  // or maxMatches — the model narrows differently for each.
+  const cut = result.truncated
+    ? `, truncated (narrow pattern, root or include)${
+        result.notice === undefined ? '' : `: ${result.notice}`
+      }`
+    : '';
+  const head = `[grep /${result.pattern}/: ${count} ${count === 1 ? 'match' : 'matches'}${cut}]\n`;
   return (
     head +
     result.matches

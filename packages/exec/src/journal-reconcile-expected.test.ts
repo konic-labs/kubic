@@ -3,12 +3,21 @@
 // the boot baseline when there is none — never against the whole journal
 // history. A same-run revert, a resumed session's change back to an older
 // hash, and a repeat delete must all be journaled.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type BridgeFileInfo, createNodeFileBridge } from './file-bridge.js';
 import {
+  captureBaseline,
   FileJournalStore,
+  reconcile,
   type FileJournalStore as Store,
   sha256Hex,
 } from './journal.js';
@@ -191,5 +200,216 @@ describe('reconcile expected state (issue #341)', () => {
     // An entry outside the workspace is never a sweep candidate.
     toolWrite(store, join(tmpRoot('out-341h-'), 'x.txt'), null, 'x\n');
     expect(run.sweep()).toBe(0);
+  });
+
+  it('records no delete for a tool-written path the walk skips but that still exists', () => {
+    // #341 regression: sinceStart paths became delete candidates, but the
+    // sweep walk never sees gitignored / `.git/` / `.kubic/` files, so they
+    // read as absent from `current` — a FALSE unattributed delete for a
+    // file that is right there on disk.
+    const root = tmpRoot('ws-341i-');
+    const store = new FileJournalStore(tmpRoot('j-341i-'));
+    writeFileSync(join(root, '.gitignore'), 'dist/\n*.log\n');
+    writeFileSync(join(root, 'keep.txt'), 'k\n');
+    const run = begin(store, root, 'run-1');
+    mkdirSync(join(root, 'dist'));
+    mkdirSync(join(root, '.kubic'));
+    const skipped: Array<[string, string]> = [
+      ['dist/out.js', 'built\n'],
+      ['debug.log', 'noise\n'],
+      ['.kubic/state.json', '{}\n'],
+    ];
+    for (const [path, content] of skipped) {
+      writeFileSync(join(root, path), content);
+      toolWrite(store, path, null, content);
+    }
+    const before = store.entries().length;
+    expect(run.sweep()).toBe(0);
+    expect(store.entries()).toHaveLength(before);
+  });
+
+  it('still journals the delete of a skipped tool-written path once it is really gone', () => {
+    const root = tmpRoot('ws-341j-');
+    const store = new FileJournalStore(tmpRoot('j-341j-'));
+    writeFileSync(join(root, '.gitignore'), 'dist/\n');
+    const run = begin(store, root, 'run-1');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(join(root, 'dist', 'out.js'), 'built\n');
+    toolWrite(store, 'dist/out.js', null, 'built\n');
+    rmSync(join(root, 'dist', 'out.js'));
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries().at(-1);
+    expect(entry?.path).toBe('dist/out.js');
+    expect(entry?.op).toBe('delete');
+    expect(entry?.unattributed).toBe(true);
+    expect(entry?.beforeHash).toBe(sha256Hex('built\n'));
+    expect(entry?.afterHash).toBe(null);
+  });
+
+  it('journals the delete of a skipped tool-written path whose parent directory became a file (ENOTDIR)', () => {
+    // lstat reports ENOTDIR — not ENOENT — when a path component is a regular
+    // file. The path cannot exist, so this is a proven delete, not "cannot tell".
+    const root = tmpRoot('ws-341n-');
+    const store = new FileJournalStore(tmpRoot('j-341n-'));
+    writeFileSync(join(root, '.gitignore'), 'dist/\n');
+    const run = begin(store, root, 'run-1');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(join(root, 'dist', 'out.js'), 'built\n');
+    toolWrite(store, 'dist/out.js', null, 'built\n');
+    rmSync(join(root, 'dist'), { recursive: true });
+    writeFileSync(join(root, 'dist'), 'now a file\n');
+    // `dist/` (a directory rule) no longer ignores the new FILE `dist`, so the
+    // walk journals its create next to the proven delete.
+    expect(run.sweep()).toBe(2);
+    expect(
+      store
+        .entries()
+        .slice(-2)
+        .map((entry) => `${entry.op}:${entry.path}`)
+        .sort(),
+    ).toEqual(['create:dist', 'delete:dist/out.js']);
+  });
+
+  it('keeps the old rule for baseline paths: a regular file replaced by a link the walk skips is a delete', () => {
+    // The still-exists guard is for paths ONLY a tool journaled; a boot
+    // baseline key that the sweep walk no longer sees is journaled as before.
+    const root = tmpRoot('ws-341l-');
+    const store = new FileJournalStore(tmpRoot('j-341l-'));
+    writeFileSync(join(root, 'a.txt'), 'v1\n');
+    writeFileSync(join(root, 'keep.txt'), 'k\n');
+    const run = begin(store, root, 'run-1');
+    rmSync(join(root, 'a.txt'));
+    symlinkSync('keep.txt', join(root, 'a.txt'));
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries().at(-1);
+    expect(entry?.path).toBe('a.txt');
+    expect(entry?.op).toBe('delete');
+    expect(entry?.beforeHash).toBe(sha256Hex('v1\n'));
+  });
+
+  it('records no delete for a tool-written path whose existence probe cannot answer', () => {
+    // EACCES on a parent (not ENOENT) means "cannot tell": never record a
+    // delete the sweep cannot prove.
+    const root = tmpRoot('ws-341k-');
+    const store = new FileJournalStore(tmpRoot('j-341k-'));
+    writeFileSync(join(root, '.gitignore'), 'dist/\n');
+    const inner = createNodeFileBridge('/');
+    const bridge = {
+      ...inner,
+      exists: (path: string): boolean => {
+        if (path === join(root, 'dist', 'out.js')) {
+          throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        }
+        return inner.exists(path);
+      },
+    };
+    const baseline = captureBaseline(root, { bridge });
+    toolWrite(store, 'dist/out.js', null, 'built\n');
+    const ctx = { sessionId: 'sess-1', agentId: 'root', timestamp: NOW };
+    expect(reconcile(store, baseline, root, ctx, { bridge })).toBe(0);
+    // The same journal with a probe that answers "gone" records the delete.
+    const gone = { ...inner, exists: () => false };
+    expect(reconcile(store, baseline, root, ctx, { bridge: gone })).toBe(1);
+    expect(store.entries().at(-1)?.op).toBe('delete');
+  });
+
+  it('journals the delete of a tool-written file replaced by a directory', () => {
+    const root = tmpRoot('ws-341o-');
+    const store = new FileJournalStore(tmpRoot('j-341o-'));
+    const run = begin(store, root, 'run-1');
+    writeFileSync(join(root, 'x'), 'built\n');
+    toolWrite(store, 'x', null, 'built\n');
+    rmSync(join(root, 'x'));
+    mkdirSync(join(root, 'x'));
+    // An empty directory is no walk entry: the only event is x's delete.
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries().at(-1);
+    expect(entry?.path).toBe('x');
+    expect(entry?.op).toBe('delete');
+    expect(entry?.unattributed).toBe(true);
+    expect(entry?.beforeHash).toBe(sha256Hex('built\n'));
+  });
+
+  it('journals the delete of a tool-written file replaced by a symlink', () => {
+    const root = tmpRoot('ws-341p-');
+    const store = new FileJournalStore(tmpRoot('j-341p-'));
+    writeFileSync(join(root, 'keep.txt'), 'k\n');
+    const run = begin(store, root, 'run-1');
+    writeFileSync(join(root, 'y.txt'), 'built\n');
+    toolWrite(store, 'y.txt', null, 'built\n');
+    rmSync(join(root, 'y.txt'));
+    symlinkSync('keep.txt', join(root, 'y.txt'));
+    // The walk skips the link, so y.txt reads as absent from `current`.
+    expect(run.sweep()).toBe(1);
+    const entry = store.entries().at(-1);
+    expect(entry?.path).toBe('y.txt');
+    expect(entry?.op).toBe('delete');
+    expect(entry?.beforeHash).toBe(sha256Hex('built\n'));
+  });
+
+  describe('the still-a-regular-file probe for a skipped tool-written path', () => {
+    // dist/ is ignored, so the walk never sees dist/out.js whatever it is.
+    function setup(fileInfo: (path: string) => BridgeFileInfo) {
+      const root = tmpRoot('ws-341q-');
+      const store = new FileJournalStore(tmpRoot('j-341q-'));
+      writeFileSync(join(root, '.gitignore'), 'dist/\n');
+      mkdirSync(join(root, 'dist'));
+      writeFileSync(join(root, 'dist', 'out.js'), 'built\n');
+      const inner = createNodeFileBridge('/');
+      const target = join(root, 'dist', 'out.js');
+      const bridge = {
+        ...inner,
+        fileInfo: (path: string): BridgeFileInfo =>
+          path === target ? fileInfo(path) : inner.fileInfo(path),
+      };
+      const baseline = captureBaseline(root, { bridge });
+      toolWrite(store, 'dist/out.js', null, 'built\n');
+      const ctx = { sessionId: 'sess-1', agentId: 'root', timestamp: NOW };
+      return () => reconcile(store, baseline, root, ctx, { bridge });
+    }
+    const info = (over: Partial<BridgeFileInfo>): BridgeFileInfo => ({
+      name: 'out.js',
+      path: '',
+      isDirectory: false,
+      isSymbolicLink: false,
+      isFile: true,
+      mode: 0o644,
+      size: 6,
+      mtimeMs: 0,
+      ...over,
+    });
+    const failing = (code: string) => () => {
+      throw Object.assign(new Error(code), { code });
+    };
+
+    it('treats a classified regular file as present', () => {
+      expect(setup(() => info({}))()).toBe(0);
+    });
+
+    it('treats an unclassified entry (isFile undefined) as a regular file', () => {
+      expect(setup(() => info({ isFile: undefined }))()).toBe(0);
+    });
+
+    it.each([
+      ['a directory', { isDirectory: true, isFile: false }],
+      ['a symlink', { isSymbolicLink: true, isFile: false }],
+      ['a FIFO/socket/device (isFile false)', { isFile: false }],
+    ])(
+      'reports %s as no longer the regular file: the delete is journaled',
+      (_name, over) => {
+        expect(setup(() => info(over))()).toBe(1);
+      },
+    );
+
+    it.each(['ENOENT', 'ENOTDIR'])(
+      'treats %s from the probe as gone',
+      (code) => {
+        expect(setup(failing(code))()).toBe(1);
+      },
+    );
+
+    it('cannot tell on any other probe failure: present, no delete', () => {
+      expect(setup(failing('EACCES'))()).toBe(0);
+    });
   });
 });

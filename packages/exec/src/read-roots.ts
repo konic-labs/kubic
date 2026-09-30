@@ -4,8 +4,11 @@
 // would refuse every one of them, so the advertised skills could never be
 // loaded. This seam opens EXACTLY those roots (a skill's directory, or the
 // skill file itself) for the read-shaped calls — readFile, readFileRange,
-// stat — and nothing else: writes, renames, chmod and listings keep the
-// cwd confinement, and any path outside a root falls through to it.
+// stat, lstat — and nothing else: writes, renames, chmod and listings keep
+// the cwd confinement, and any path outside a root falls through to it.
+// Every optional method the base seam offers is forwarded (issue #172): the
+// wrapper once dropped `lstat`, so a walk fell back to `stat` and followed
+// symlink loops for any user with a skill outside the workspace.
 // Lexical like the cwd guard (no symlink resolution, §3.7).
 
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
@@ -47,6 +50,18 @@ export function withReadRoots(
     writeFile: (path, content) => base.writeFile(path, content),
     rename: (from, to) => base.rename(from, to),
     listDir: (path) => base.listDir(path),
+    ...(base.lstat === undefined
+      ? {}
+      : {
+          lstat: (path: string) => {
+            const rooted = via(path);
+            if (rooted?.lstat !== undefined) return rooted.lstat(path);
+            return (base.lstat as NonNullable<FileSystem['lstat']>).call(
+              base,
+              path,
+            );
+          },
+        }),
     ...(base.readFileRange === undefined
       ? {}
       : {

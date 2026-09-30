@@ -4,7 +4,13 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkCapNotice, walkDepthNotice, walkFiles } from './walk.js';
+import {
+  WALK_MAX_DEPTH,
+  WALK_MAX_ENTRIES,
+  walkCapNotice,
+  walkDepthNotice,
+  walkFiles,
+} from './walk.js';
 
 export const GREP_DEFAULT_MAX = 100;
 
@@ -88,8 +94,9 @@ export function validateGrepArgs(raw: unknown): GrepArgs {
 
 export const grepOperation: Operation<GrepArgs, GrepResult> = {
   name: 'grep',
-  description:
-    'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob).',
+  // Walk rules and caps (issue #172) are part of what the model must know:
+  // a silent skip or a silent cut reads as "no such file / no more matches".
+  description: `Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob). The search skips .git, node_modules and paths a .gitignore excludes, and never follows symlinks; it walks at most ${WALK_MAX_ENTRIES} entries and ${WALK_MAX_DEPTH} directory levels, and when a cap stops it the header names which one.`,
   replay: 'safe',
   validateArgs: validateGrepArgs,
   execute: async (_inv: ToolInvocation, args: GrepArgs, ctx: OpContext) => {

@@ -398,6 +398,126 @@ describe('git read/effect ops over real git (issue #193)', () => {
     expect(relisted.branches).toContain('feature/x');
   });
 
+  it('lists only real branches on a detached HEAD, never the "(HEAD detached at …)" pseudo-entry', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+    git(repo, ['branch', 'feature/x']);
+    git(repo, ['checkout', '-q', '--detach', 'HEAD']);
+
+    const listed = await ok('git_branch', {}, repo.path, 'branch-detached');
+    expect(listed.branches).toEqual(['feature/x', 'main']);
+  });
+
+  it('lists a branch by its full name even when a tag shares it', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+    git(repo, ['tag', 'main']);
+
+    const listed = await ok('git_branch', {}, repo.path, 'branch-tag-clash');
+    expect(listed.branches).toEqual(['main']);
+  });
+
+  it('lists nothing on an unborn branch', async () => {
+    const repo = scratchRepo();
+
+    const listed = await ok('git_branch', {}, repo.path, 'branch-unborn');
+    expect(listed.branches).toEqual([]);
+  });
+
+  it('git_commit with nothing staged says why (git prints it on stdout)', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+
+    const out = await callOperation(
+      'git_commit',
+      { message: 'empty' },
+      inv('commit-nothing'),
+      ctx(repo.path),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('tool_failed');
+    expect(out.error.message).toMatch(
+      /^git_commit failed \(exit 1\): On branch main\nnothing to commit, working tree clean$/,
+    );
+  });
+
+  it('git_commit keeps stderr as the reason when git wrote one', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+    git(repo, ['config', 'user.useConfigOnly', 'true']);
+    git(repo, ['config', '--unset', 'user.email']);
+    writeFileSync(join(repo.path, 'a.txt'), 'b\n');
+    git(repo, ['add', '--', 'a.txt']);
+
+    const out = await callOperation(
+      'git_commit',
+      { message: 'no identity' },
+      inv('commit-stderr'),
+      ctx(repo.path),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.message).toMatch(/^git_commit failed \(exit 128\): /);
+    expect(out.error.message.length).toBeGreaterThan(
+      'git_commit failed (exit 128): '.length,
+    );
+  });
+
+  // Follow-up audit: git_stage / git_branch create / git_checkpoint failures
+  // were suspected of an empty reason like git_commit's (stdout-only). Real
+  // git writes every one of these to stderr, so each reason is already
+  // informative; pinned so a git or wiring change cannot silently blank them.
+  async function failure(
+    name: OperationName,
+    args: unknown,
+    dir: string,
+    id: string,
+  ): Promise<string> {
+    const out = await callOperation(name, args, inv(id), ctx(dir));
+    if (out.ok) throw new Error(`${name} unexpectedly succeeded`);
+    expect(out.error.code).toBe('tool_failed');
+    return out.error.message;
+  }
+
+  it('git_stage of a nonexistent path names the pathspec git rejected', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+
+    expect(
+      await failure('git_stage', { paths: ['nope.txt'] }, repo.path, 'stage-x'),
+    ).toBe(
+      "git_stage failed (exit 128): fatal: pathspec 'nope.txt' did not match any files",
+    );
+  });
+
+  it('git_branch create of an existing name says the branch exists', async () => {
+    const repo = scratchRepo();
+    commitFile(repo, 'a.txt', 'a\n');
+
+    expect(
+      await failure('git_branch', { create: 'main' }, repo.path, 'branch-dup'),
+    ).toBe(
+      "git_branch failed (exit 128): fatal: a branch named 'main' already exists",
+    );
+  });
+
+  it("git_checkpoint names a clean tree, and an unborn branch by git's own words", async () => {
+    const repo = scratchRepo();
+    writeFileSync(join(repo.path, 'a.txt'), 'a\n');
+    git(repo, ['add', '--', 'a.txt']);
+    expect(
+      await failure('git_checkpoint', { message: 'm' }, repo.path, 'cp-unborn'),
+    ).toBe(
+      'git_checkpoint failed (exit 1): You do not have the initial commit yet',
+    );
+
+    git(repo, ['commit', '-q', '-m', 'first']);
+    expect(
+      await failure('git_checkpoint', { message: 'm' }, repo.path, 'cp-clean'),
+    ).toBe('git_checkpoint: no changes to checkpoint (clean tree)');
+  });
+
   it('returns the patch for a ref', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'one\n');

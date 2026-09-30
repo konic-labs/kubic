@@ -1247,6 +1247,37 @@ function rootRelativeKey(root: string, path: string): string | null {
   return rel.split(sep).join('/');
 }
 
+// Whether the sweep-relative path is still present on disk AS A REGULAR FILE
+// (lstat: never through a link). A directory, a symlink or a FIFO/socket in
+// its place means the file the tool wrote is gone — a real delete the walk
+// cannot report, since it skips links and never journals a directory. A probe
+// that cannot answer (EACCES) reads as "present": the sweep never records a
+// delete it cannot prove. ENOENT and ENOTDIR (a parent component is a regular
+// file) prove absence.
+function regularFileStillThere(
+  bridge: FileBridge,
+  root: string,
+  relPath: string,
+): boolean {
+  const abs = join(root, relPath);
+  const cannotTell = (error: unknown): boolean => {
+    const code = (error as { code?: string } | null)?.code;
+    return code !== 'ENOENT' && code !== 'ENOTDIR';
+  };
+  try {
+    if (!bridge.exists(abs)) return false;
+  } catch (error) {
+    return cannotTell(error);
+  }
+  try {
+    const info = bridge.fileInfo(abs);
+    // `isFile` undefined = the bridge did not classify it: a regular file.
+    return !info.isDirectory && !info.isSymbolicLink && info.isFile !== false;
+  } catch (error) {
+    return cannotTell(error);
+  }
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
 // Before-content is unknowable for these (the baseline holds hashes, not
@@ -1376,6 +1407,16 @@ export function reconcile(
     if (current[relPath] !== undefined) continue;
     const expected = expectedHash(relPath);
     if (expected === null) continue;
+    // A path only a tool journaled (not in the boot baseline) is absent from
+    // `current` whenever the walk skips it — gitignored, `.git/`, `.kubic/` —
+    // while the regular file is still on disk: no delete happened, so none is
+    // recorded (issue #341 regression). Replaced by a directory or a link it
+    // IS a delete. Baseline keys keep the old rule.
+    if (
+      baseline[relPath] === undefined &&
+      regularFileStillThere(bridge, root, relPath)
+    )
+      continue;
     record({
       path: relPath,
       op: 'delete',

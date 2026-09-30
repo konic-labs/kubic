@@ -218,8 +218,14 @@ export function __setResolvedShellForTests(
 
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
-  description:
-    'Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds.',
+  // The limits the model must plan around (issue #339): the default and the
+  // ceiling are the shipped constants and the override names come from
+  // BASH_POLICY_ENV, so this text cannot drift from them. The description is
+  // static (a policy can also arrive per call via OpContext.bashPolicy), so
+  // it names the operator overrides instead of claiming the live values. The
+  // three variables are not in the worker env allowlist (issue #201), so
+  // they reach `kubic run` / `kubic tui` but not orchestrator workers.
+  description: `Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds (default ${BASH_DEFAULT_TIMEOUT_SEC}, at most ${BASH_MAX_TIMEOUT_SEC}, unless the operator overrides them with ${BASH_POLICY_ENV.defaultTimeoutSec} / ${BASH_POLICY_ENV.maxTimeoutSec} in kubic run or kubic tui); a command that runs past it is killed and the header says "timed out". Jobs the command backgrounds are killed when it ends unless the operator sets ${BASH_POLICY_ENV.keepBackground}=1 (the output says which happened), so do not rely on a server started with & outliving the call.`,
   replay: 'never',
   validateArgs: validateBashArgs,
   execute: async (inv: ToolInvocation, args: BashArgs, ctx: OpContext) => {

@@ -333,6 +333,33 @@ describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
   );
 });
 
+describe('a settled process handle', () => {
+  it.runIf(process.platform !== 'win32')(
+    'kill() is a no-op: it never signals a group whose pid may be recycled',
+    async () => {
+      const { env } = makeNodeEnv();
+      const handle = env.shell.spawn(process.execPath, ['-e', ''], {
+        provenance: PROV,
+      });
+      await handle.wait();
+      const signalled: Array<[number, unknown]> = [];
+      const spy = vi.spyOn(process, 'kill').mockImplementation(((
+        pid: number,
+        signal?: string | number,
+      ) => {
+        signalled.push([pid, signal]);
+        return true;
+      }) as typeof process.kill);
+      try {
+        handle.kill();
+      } finally {
+        spy.mockRestore();
+      }
+      expect(signalled).toEqual([]);
+    },
+  );
+});
+
 describe('execution env spawn failures (issue #85)', () => {
   it('settles wait() with a named error instead of crashing on a missing binary', async () => {
     // A spawn that cannot start the child emits 'error' (ENOENT) and never

@@ -20,12 +20,12 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   find: {
     description:
-      'Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut.',
+      'Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut. The walk skips .git, node_modules and paths a .gitignore excludes, and never follows or lists symlinks; it visits at most 10000 entries and 100 directory levels, and the result\'s notice names the cap that stopped it.',
     replay: 'safe',
   },
   grep: {
     description:
-      'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob).',
+      'Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob). The search skips .git, node_modules and paths a .gitignore excludes, and never follows symlinks; it walks at most 10000 entries and 100 directory levels, and when a cap stops it the header names which one.',
     replay: 'safe',
   },
   write: {
@@ -40,7 +40,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   bash: {
     description:
-      'Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds.',
+      'Run a shell command in the workspace root (bash, else sh). Returns the exit code and the raw stdout/stderr under a header; each stream keeps its last 64 KiB. timeout is in seconds (default 120, at most 600, unless the operator overrides them with KUBIC_BASH_TIMEOUT / KUBIC_BASH_MAX_TIMEOUT in kubic run or kubic tui); a command that runs past it is killed and the header says "timed out". Jobs the command backgrounds are killed when it ends unless the operator sets KUBIC_BASH_KEEP_BACKGROUND=1 (the output says which happened), so do not rely on a server started with & outliving the call.',
     replay: 'never',
   },
   git_status: {

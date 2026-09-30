@@ -91,13 +91,18 @@ until the cap or the depth bound stopped it. The walk now:
   explicit target and is read as given (a symlinked root path still walks);
   only links below it are skipped. Seams without `lstat` cannot tell
   a link from its target (the documented widening; `FakeExecutionEnv` has no
-  links to make).
+  links to make). The skill read-roots wrapper (`withReadRoots`,
+  `exec/read-roots.ts`) forwards `lstat`, so a user with skills outside the
+  workspace keeps this protection; it once dropped the method and the walk
+  fell back to `stat`.
 - **Says when a bound stopped it.** `truncated: true` now always carries an
   optional, additive `notice` naming the bound: `walk entry cap 10000
   reached while listing <dir>; results may be incomplete` for the entry
   bound, `walk depth cap 100 reached at <dir>; results may be incomplete`
   for the depth bound, or `result cap <n> reached (maxResults); results may
-  be incomplete` / `(maxMatches)` for the op's own limit. The match cap is
+  be incomplete` / `(maxMatches)` for the op's own limit. `grep`'s
+  model-facing text carries the notice after the `truncated` marker (`find`'s
+  JSON result already did). The match cap is
   exact: `truncated` is set only once a match beyond `maxMatches` was
   actually seen, never merely because the cap filled on the last match.
   Tool names, argument shapes, and the
@@ -129,6 +134,13 @@ retry handle is re-registered via `ctx.trackHandle` so
 timeout/abort kill whichever handle is live. The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.
+
+The op also bounds a call in time (issue #339): with no `timeout` the command
+gets `BASH_DEFAULT_TIMEOUT_SEC` (120 s), any timeout is clamped to
+`BASH_MAX_TIMEOUT_SEC` (600 s), and processes the command backgrounded are
+killed when it exits unless `KUBIC_BASH_KEEP_BACKGROUND` opts in. Both limits
+and the model-facing description come from those constants; the user-facing
+statement is in [tools](../cli/tools.md#bash-limits).
 
 ### Read/edit bounds (issue #122)
 

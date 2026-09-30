@@ -32,11 +32,11 @@ workspace.
 | --- | --- | --- |
 | `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
 | `ls` | `path?` (default `.`) | One directory, not recursive. |
-| `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive. |
-| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob. |
+| `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
+| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`. |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename). |
 | `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused. |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. |
+| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | |
 | `git_diff` | `staged?`, `range?`, `path?` | |
 | `git_log` | `max?` (default 20, cap 100), `path?` | |
@@ -85,11 +85,63 @@ src/b.ts:3: // TODO remove
   line (N lines total)`; and a binary file — NUL byte or invalid UTF-8 in
   the first chunk — is refused with `binary file (NB, <reason>) — …` and
   empty content.
-- `grep` adds `, truncated (narrow pattern, root or include)` at the match
-  cap; `bash` adds `, timed out`, `, aborted` or `, output truncated`, and
-  `(no output)` when both streams are empty.
+- `grep` adds `, truncated (narrow pattern, root or include)` when a cap
+  stopped it, followed by `: <notice>` naming the cap — for example
+  `walk entry cap 10000 reached while listing src/gen; results may be
+  incomplete`, `walk depth cap 100 reached at <dir>; results may be
+  incomplete`, or `result cap 100 reached (maxMatches); results may be
+  incomplete`. `find` returns its structured result as JSON with the same
+  `truncated` and `notice` fields. `bash` adds `, timed out`, `, aborted` or
+  `, output truncated`, and `(no output)` when both streams are empty.
 - Every other tool returns its structured result as JSON.
+- A refused `git_commit` carries git's own reason: stderr when git wrote
+  one, else stdout (an empty index prints `nothing to commit` on stdout).
+  `git_branch` (list) reads `refs/heads`, so it names only real branches —
+  never the `(HEAD detached at …)` line `git branch` prints — and a branch
+  that shares its name with a tag is listed by its plain name.
 - A refused call is one line: `error <code>: <message>` — the codes are
   `invalid_args`, `not_found`, `is_directory`, `permission_denied`,
   `no_match`, `ambiguous_match`, `file_too_large`, `journal_failed`,
   `not_a_repo`, `tool_failed` (and `unknown_tool` / `internal`).
+
+## Search walk (`find` and `grep`)
+
+`find` and `grep` share one recursive walk (issue
+[#172](https://github.com/konic-labs/kubic/issues/172)), started at `root`
+(default `.`):
+
+- **Skipped:** `.git` (always, whatever a `.gitignore` says), `node_modules`,
+  and every path a `.gitignore` on the way down excludes (each file's rules
+  scope to its own subtree; a nested `!` can re-include a broader ignore). A
+  `.gitignore` in a directory *above* the walk root is not read.
+- **Symlinks are never followed** and never listed — file or directory,
+  dangling or not — so a link loop cannot return the same file under many
+  paths. The `root` you name is read as given, even if it is itself a link.
+- **Caps:** at most **10,000** entries and **100** directory levels, plus the
+  op's own `maxResults` / `maxMatches` (default 100). A result a cap cut is
+  marked `truncated` and names the cap and where it hit, as shown above.
+
+## Bash limits
+
+- **Timeout:** `timeout` is in seconds. Without one the command gets **120
+  s**; a model-supplied value is clamped to **600 s**. A command still
+  running at the limit is killed and the header says `timed out`. Operators
+  change the two limits with `KUBIC_BASH_TIMEOUT` and
+  `KUBIC_BASH_MAX_TIMEOUT` (see
+  [configuration](configuration.md)); a malformed value fails the call
+  naming the variable rather than falling back.
+- **Background jobs:** processes the command backgrounds (`cmd &`) are killed
+  when the command ends **unless the operator sets
+  `KUBIC_BASH_KEEP_BACKGROUND=1`** (or `true`). When they are killed, the
+  stderr stream ends with `[kubic: background processes started by this
+  command were killed after it exited (KUBIC_BASH_KEEP_BACKGROUND=1 keeps
+  them)]`; when kept, they are left running, detached, outlive Kubic, and the
+  stream says so instead.
+- **Scope of the overrides:** the three `KUBIC_BASH_*` variables are read by
+  the bash tool from its own process environment, so they apply to
+  `kubic run` and `kubic tui`. They are **not yet forwarded to orchestrator
+  workers** (the worker environment allowlist does not carry them; issue
+  [#201](https://github.com/konic-labs/kubic/issues/201)), so a worker
+  always uses the 120 s / 600 s limits and kills its background jobs.
+- **Output:** each stream keeps its last 64 KiB (`[kubic: N leading chars
+  dropped]` header, `, output truncated` flag).

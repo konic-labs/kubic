@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
+import { withReadRoots } from '../../../exec/src/read-roots.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -206,6 +207,43 @@ describe('walk ignore rules on the node seam (issue #172)', () => {
     expect(files.ok).toBe(true);
     if (!files.ok) return;
     expect(files.result.paths.sort()).toEqual(['a/one.txt']);
+  });
+
+  it('keeps symlink-loop protection when the env is wrapped with skill read roots', async () => {
+    // bootSoloLane applies withReadRoots whenever a skill lives outside the
+    // workspace (every user with global skills). The wrapper once built an fs
+    // WITHOUT lstat, so the walk fell back to stat() and followed `loop`.
+    const root = tmp('walk-roots-ws-');
+    const skills = tmp('walk-roots-skill-');
+    writeFileSync(join(root, 'a.txt'), 'needle\n');
+    symlinkSync('.', join(root, 'loop'));
+    const wrapped = {
+      env: withReadRoots(new NodeExecutionEnv(root), [skills]),
+      sessionId: 's1',
+      agentId: 'a1',
+    };
+    const plain = await callOperation(
+      'grep',
+      { pattern: 'needle' },
+      inv(),
+      ctx(root),
+    );
+    const viaRoots = await callOperation(
+      'grep',
+      { pattern: 'needle' },
+      inv(),
+      wrapped,
+    );
+    expect(plain.ok && viaRoots.ok).toBe(true);
+    if (!plain.ok || !viaRoots.ok) return;
+    expect(plain.result.matches).toEqual([
+      { path: 'a.txt', line: 1, text: 'needle' },
+    ]);
+    expect(viaRoots.result).toEqual(plain.result);
+    const found = await callOperation('find', {}, inv(), wrapped);
+    expect(found.ok).toBe(true);
+    if (!found.ok) return;
+    expect(found.result.paths).toEqual(['a.txt']);
   });
 
   it('survives a dangling symlink: find skips it and ls lists the real entries', async () => {

@@ -579,9 +579,13 @@ export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
     );
     if (run.exitCode !== 0) {
       if (isNotARepo(run.stderr)) throw notARepoError('git_commit', run.stderr);
+      // `git commit` with nothing staged exits 1 having written "nothing to
+      // commit" to STDOUT and nothing to stderr: fall back to stdout so the
+      // model sees why instead of an empty reason.
+      const reason = run.stderr.trim() === '' ? run.stdout : run.stderr;
       throw new OpError(
         'tool_failed',
-        `git_commit failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
+        `git_commit failed (exit ${run.exitCode}): ${reason.trim().slice(0, 200)}`,
       );
     }
     const head = await runGit(
@@ -728,7 +732,11 @@ export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
     }
     const run = await runGit(
       ctx.env,
-      ['branch', '--format=%(refname:short)'],
+      // for-each-ref over refs/heads, not `git branch`: on a detached HEAD
+      // `git branch` prints a "(HEAD detached at …)" pseudo-entry, and
+      // `:short` would render a branch that shares its name with a tag as
+      // `heads/<name>`. lstrip=2 drops exactly `refs/heads/`.
+      ['for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads'],
       gitEffectProvenance(inv, ctx, 'git_branch'),
     );
     if (run.exitCode !== 0) {

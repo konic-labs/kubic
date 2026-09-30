@@ -160,6 +160,19 @@ follow-up, not a behavior change here). Cost: one `exists('.gitignore')` per
 directory entered — the same order as the `listDir` already paid, with no read
 at all for a directory without an ignore file.
 
+Sweep delete candidates (issue #341): a path is journaled as deleted when its
+expected state is a file and the sweep walk no longer sees it. The candidates
+are the baseline keys plus every path a tool journaled this run. A path only a
+tool journaled (not in the boot baseline) can be absent from the walk while
+the file is still there — gitignored, under `.git/` or `.kubic/` — so for
+those the sweep asks the bridge (`exists`, then `fileInfo` — both `lstat`) and
+records no delete while the path is still a REGULAR file. A directory, a
+symlink or a FIFO/socket/device in its place is a real delete (the walk skips
+links and never journals directories, so nothing else would report it), and so
+is ENOENT or ENOTDIR (a parent component is now a regular file). A probe that
+cannot answer (EACCES) counts as present. A tool-written ignored file that is
+really removed afterwards is still journaled as an unattributed delete.
+
 Sweep after-content bound (issue #120): `reconcile`'s record path reads a
 changed file once, bounded by `MAX_SWEEP_CONTENT_BYTES` (4 MiB). Above the
 bound — or when the utf-8 decode is lossy — the entry is hash-only:

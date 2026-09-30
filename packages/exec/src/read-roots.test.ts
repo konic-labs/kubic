@@ -2,11 +2,17 @@
 // outside the workspace are advertised with absolute paths, so exactly those
 // paths are readable through the env — every other outside path, and every
 // write, keeps the cwd confinement.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from './env.js';
+import { type FileSystem, NodeExecutionEnv } from './env.js';
 import { readRootFor, withReadRoots } from './read-roots.js';
 
 const made: string[] = [];
@@ -71,5 +77,64 @@ describe('read roots (issue #173)', () => {
     // The workspace itself is untouched.
     env.fs.writeFile('inside.txt', 'ok');
     expect(env.fs.readFile('inside.txt')).toBe('ok');
+  });
+
+  it('forwards lstat so symlinks stay visible in the workspace and inside a root (issue #172)', () => {
+    const { workspace, skillDir } = skillTree();
+    symlinkSync('.', join(workspace, 'loop'));
+    writeFileSync(join(workspace, 'real.txt'), 'x');
+    symlinkSync('SKILL.md', join(skillDir, 'link.md'));
+    const env = withReadRoots(new NodeExecutionEnv(workspace), [skillDir]);
+    // A workspace path falls through to the base seam …
+    expect(env.fs.lstat?.('loop')).toMatchObject({
+      isSymbolicLink: true,
+      isDirectory: false,
+    });
+    expect(env.fs.lstat?.('real.txt')).toMatchObject({
+      isSymbolicLink: false,
+      isFile: true,
+    });
+    // … and a path inside a read root goes through the root's own seam.
+    expect(env.fs.lstat?.(join(skillDir, 'link.md'))?.isSymbolicLink).toBe(
+      true,
+    );
+    expect(env.fs.lstat?.(join(skillDir, 'SKILL.md'))).toMatchObject({
+      isSymbolicLink: false,
+      isFile: true,
+    });
+    // Survives the per-call provenance re-derivation the tools perform.
+    const derived = env.withProvenance({ ...env.provenance, agentId: 'x' });
+    expect(derived.fs.lstat?.('loop')?.isSymbolicLink).toBe(true);
+  });
+
+  it('keeps lstat confined outside every root', () => {
+    const { workspace, skillDir } = skillTree();
+    const env = withReadRoots(new NodeExecutionEnv(workspace), [skillDir]);
+    expect(() =>
+      env.fs.lstat?.(join(skillDir, '..', '..', '..', 'secret.txt')),
+    ).toThrow(/confinement/);
+  });
+
+  it('offers lstat only when the base seam does, never inventing one', () => {
+    const { workspace, skillDir } = skillTree();
+    const bare: FileSystem = {
+      readFile: () => '',
+      writeFile: () => undefined,
+      rename: () => undefined,
+      listDir: () => [],
+      stat: () => ({ isFile: true, isDirectory: false, size: 0 }),
+    };
+    const base = new NodeExecutionEnv(workspace);
+    const env = withReadRoots(
+      {
+        cwd: base.cwd,
+        fs: bare,
+        shell: base.shell,
+        provenance: base.provenance,
+        withProvenance: () => base,
+      },
+      [skillDir],
+    );
+    expect(env.fs.lstat).toBeUndefined();
   });
 });

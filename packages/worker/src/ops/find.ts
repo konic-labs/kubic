@@ -4,7 +4,13 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkCapNotice, walkDepthNotice, walkFiles } from './walk.js';
+import {
+  WALK_MAX_DEPTH,
+  WALK_MAX_ENTRIES,
+  walkCapNotice,
+  walkDepthNotice,
+  walkFiles,
+} from './walk.js';
 
 export const FIND_DEFAULT_MAX = 100;
 
@@ -74,8 +80,9 @@ export function validateFindArgs(raw: unknown): FindArgs {
 
 export const findOperation: Operation<FindArgs, FindResult> = {
   name: 'find',
-  description:
-    'Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut.',
+  // Walk rules and caps (issue #172), stated so a skipped or cut listing is
+  // never mistaken for "nothing there".
+  description: `Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut. The walk skips .git, node_modules and paths a .gitignore excludes, and never follows or lists symlinks; it visits at most ${WALK_MAX_ENTRIES} entries and ${WALK_MAX_DEPTH} directory levels, and the result's notice names the cap that stopped it.`,
   replay: 'safe',
   validateArgs: validateFindArgs,
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {

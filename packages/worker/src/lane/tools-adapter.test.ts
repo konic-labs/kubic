@@ -7,13 +7,18 @@ import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv, type ProcessHandle } from '../../../exec/src/env.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import { OPERATION_PARAMETERS, OPERATIONS } from '../ops/registry.js';
+import { WALK_MAX_DEPTH, WALK_MAX_ENTRIES } from '../ops/walk.js';
 import type {
   AgentHarnessTool,
   AgentHarnessToolInvocation,
 } from '../pi-boundary.js';
 import { BACKGROUND_CONTEXT } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
-import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
+import {
+  type KubicToolContext,
+  kubicToolsToPiTools,
+  renderGrepText,
+} from './tools-adapter.js';
 
 function invocation(id = 'inv-1'): AgentHarnessToolInvocation {
   const memos = new Map<string, unknown>();
@@ -108,6 +113,36 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     expect(byName.edit).toMatch(/oldText/);
   });
 
+  it('bash states its default and maximum timeout and the background-job rule (issue #339)', () => {
+    const bash = tools.find((t) => t.name === 'bash')?.description;
+    // Literal numbers on purpose: the text must track the shipped limits.
+    expect(bash).toContain(
+      'timeout is in seconds (default 120, at most 600, unless the operator overrides them with KUBIC_BASH_TIMEOUT / KUBIC_BASH_MAX_TIMEOUT in kubic run or kubic tui)',
+    );
+    expect(bash).toContain('is killed and the header says "timed out"');
+    expect(bash).toContain(
+      'Jobs the command backgrounds are killed when it ends unless the operator sets KUBIC_BASH_KEEP_BACKGROUND=1 (the output says which happened)',
+    );
+  });
+
+  it.each([
+    ['find', 'never follows or lists symlinks', "the result's notice names"],
+    ['grep', 'never follows symlinks', 'the header names which one'],
+  ])(
+    '%s states its ignore rules, symlink rule and walk caps (issue #172)',
+    (name, symlinks, cap) => {
+      const description = tools.find((t) => t.name === name)?.description;
+      expect(description).toContain(
+        'skips .git, node_modules and paths a .gitignore excludes',
+      );
+      expect(description).toContain(symlinks);
+      expect(description).toContain(
+        'at most 10000 entries and 100 directory levels',
+      );
+      expect(description).toContain(cap);
+    },
+  );
+
   it('read returns raw file lines under a short header, not JSON', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'say "hi"\n\tindented\nlast\n');
@@ -201,6 +236,51 @@ describe('kubicToolsToPiTools (issue #168)', () => {
     );
   });
 
+  it('grep names the walk entry cap and the directory that exhausted it (issue #172)', async () => {
+    const env = new FakeExecutionEnv({});
+    for (let i = 0; i < WALK_MAX_ENTRIES + 10; i += 1) {
+      env.fs.writeFile(`zzz/f${i}.txt`, 'nothing\n');
+    }
+    expect(await text('grep', { pattern: 'needle' }, context(env))).toBe(
+      `[grep /needle/: 0 matches, truncated (narrow pattern, root or include): walk entry cap ${WALK_MAX_ENTRIES} reached while listing zzz; results may be incomplete]\n`,
+    );
+  });
+
+  it('grep names the depth cap and where the walk was pruned (issue #172)', async () => {
+    const env = new FakeExecutionEnv({});
+    const deep = Array.from({ length: WALK_MAX_DEPTH + 2 }, () => 'd').join(
+      '/',
+    );
+    env.fs.writeFile(`${deep}/x.txt`, 'needle\n');
+    const out = await text('grep', { pattern: 'needle' }, context(env));
+    expect(out).toBe(
+      `[grep /needle/: 0 matches, truncated (narrow pattern, root or include): walk depth cap ${WALK_MAX_DEPTH} reached at ${Array.from({ length: WALK_MAX_DEPTH + 1 }, () => 'd').join('/')}; results may be incomplete]\n`,
+    );
+  });
+
+  it('grep names maxMatches as the limit when the match cap stopped the search (issue #172)', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'hit 1\nhit 2\nhit 3\n');
+    expect(
+      await text('grep', { pattern: 'hit', maxMatches: 2 }, context(env)),
+    ).toBe(
+      '[grep /hit/: 2 matches, truncated (narrow pattern, root or include): result cap 2 reached (maxMatches); results may be incomplete]\na.txt:1: hit 1\na.txt:2: hit 2\n',
+    );
+  });
+
+  it('find carries the same cap notices in its JSON result (issue #172)', async () => {
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'x');
+    env.fs.writeFile('b.txt', 'x');
+    const out = JSON.parse(
+      await text('find', { maxResults: 1 }, context(env)),
+    ) as { truncated: boolean; notice?: string };
+    expect(out.truncated).toBe(true);
+    expect(out.notice).toBe(
+      'result cap 1 reached (maxResults); results may be incomplete',
+    );
+  });
+
   it('bash returns raw stdout/stderr under an exit header', async () => {
     const base = new FakeExecutionEnv({});
     const env = Object.assign(Object.create(base) as FakeExecutionEnv, {
@@ -237,5 +317,34 @@ describe('kubicToolsToPiTools (issue #168)', () => {
   it('an op error stays a model-readable error line', async () => {
     const out = await text('read', { path: 'missing.txt' }, context());
     expect(out).toBe('error not_found: read: no such file: missing.txt');
+  });
+});
+
+describe('renderGrepText (issue #172)', () => {
+  const match = { path: 'a.ts', line: 3, text: 'x' };
+
+  it('appends the notice after the truncated marker', () => {
+    expect(
+      renderGrepText({
+        pattern: 'p',
+        matches: [match],
+        truncated: true,
+        notice: 'why it stopped',
+      }),
+    ).toBe(
+      '[grep /p/: 1 match, truncated (narrow pattern, root or include): why it stopped]\na.ts:3: x\n',
+    );
+  });
+
+  it('keeps the bare truncated marker when no notice came with it', () => {
+    expect(renderGrepText({ pattern: 'p', matches: [], truncated: true })).toBe(
+      '[grep /p/: 0 matches, truncated (narrow pattern, root or include)]\n',
+    );
+  });
+
+  it('says nothing about caps for a complete result', () => {
+    expect(
+      renderGrepText({ pattern: 'p', matches: [match], truncated: false }),
+    ).toBe('[grep /p/: 1 match]\na.ts:3: x\n');
   });
 });

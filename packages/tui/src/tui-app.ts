@@ -52,6 +52,9 @@ import type {
 import {
   APPROVAL_PAGE_KEY,
   ApprovalView,
+  approvalFitsOverlay,
+  approvalOverlayRows,
+  approvalOverlayWidth,
   showApprovalOverlay,
 } from './approval-view.js';
 import { PromptEditor } from './editor-view.js';
@@ -549,20 +552,29 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (overlayView?.getRequest().key === request.key) return;
       dismissOverlay();
     }
-    if (overlayHost === undefined) return;
+    const host = overlayHost;
+    if (host === undefined) return;
     const view = new ApprovalView({
       request,
       // The decision itself is taken by the app (it owns the loop); this
       // callback exists because ApprovalView requires the seat, and it must
-      // not double-apply — the loop's own handler is the single path.
+      // not double-apply — the loop's own handler is the single path, and it
+      // is where allow keys are gated while the dialog cannot show the whole
+      // command (the surface's fitCheck, issue #316).
       onDecision: () => {},
       // Issue #315: the hints stay locked until the surface arms.
       isArmed: () => approvalSurface.isArmed(),
       commandPage: () => approvalSurface.commandPage(),
+      // Issue #316: Pi cuts the overlay from the bottom at its height cap, so
+      // the dialog fits the rows the live terminal leaves it.
+      maxRows: () =>
+        host.terminal === undefined
+          ? undefined
+          : approvalOverlayRows(host.terminal.rows),
       keyOverrides: approvalSurface.keys() as ApprovalKeyOverrides,
     });
     overlayView = view;
-    overlayHandle = showApprovalOverlay(overlayHost, view);
+    overlayHandle = showApprovalOverlay(host, view);
   };
   const settleApproval = (): void => {
     syncOverlay();
@@ -594,6 +606,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         isKeyRepeat(data) &&
         (approvalSurface.isShowing() || isGlobalKey(keyId))
       ) {
+        // Issue #315: a dropped repeat is still typing — it never reaches
+        // decide(), so the surface is told to restart its arming window.
+        approvalSurface.noteDroppedKey();
         return { quit: false, consumed: true, cancel: false };
       }
       // Issue #96: a shown approval owns the decision keys FIRST — above every
@@ -796,6 +811,22 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // the overlay, just drawn on the next frame the loop already renders.
       approvalSurface.renderRequest = (): void => {
         host.requestRender?.();
+      };
+      // Issue #316: whether the shown dialog fits the overlay the live
+      // terminal leaves it (the same width and row rule Pi applies). Below
+      // APPROVAL_MIN_WIDTH the inline slot takes its place in the transcript,
+      // which has no height cap; a host that reports no size keeps the fixed
+      // layout.
+      approvalSurface.fitCheck = (): boolean => {
+        const request = approvalSurface.pending();
+        const terminal = host.terminal;
+        if (request === undefined || terminal === undefined) return true;
+        if (approvalSurface.usesInlineFallback(terminal.columns)) return true;
+        return approvalFitsOverlay(
+          request,
+          approvalOverlayWidth(terminal.columns),
+          approvalOverlayRows(terminal.rows),
+        );
       };
       // A request that arrived before boot finished is shown now.
       syncOverlay();

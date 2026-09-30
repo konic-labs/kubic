@@ -448,7 +448,14 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('a');
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(fake.frame).not.toContain('armed turn done');
+    // The dropped `a` restarted the window for the longer quiet period
+    // (APPROVAL_QUIET_MS = 1500): the 400 ms arming delay is not enough now,
+    // and neither is the same key inside the repeat window (700 ms).
     now += 400;
+    fake.feed('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.frame).not.toContain('armed turn done');
+    now += 1500;
     fake.feed('a');
     await waitFor(() => fake.frame.includes('armed turn done'));
     fake.feed('\x03');

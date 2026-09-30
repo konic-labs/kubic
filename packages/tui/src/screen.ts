@@ -4,7 +4,26 @@
 // through the caller's printer (stdout in prod, capture in tests).
 
 import type { Terminal, VStack } from './tui-boundary.js';
-import { TuiAltScreen } from './tui-boundary.js';
+import { CURSOR_MARKER, TuiAltScreen } from './tui-boundary.js';
+
+// The inverse-video cell the editor draws for its cursor: it directly follows
+// the hardware-cursor marker and wraps the one grapheme the cursor sits on (a
+// space at the end of the draft).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the SGR escapes is the point
+const FAKE_CURSOR_CELL = /^\x1b\[7m([^\x1b]*)\x1b\[0m/;
+
+// The final document is the layout's own render, so it still carries the
+// focused editor's cursor: CURSOR_MARKER (an APC sequence a plain terminal or
+// log shows as garbage) and the fake cursor cell. Pi's own stop path strips
+// the marker before it prints; this path prints on the caller's channel, so it
+// strips the marker AND the cell — keeping the grapheme underneath. Inverse
+// text that does not follow a marker is content and stays.
+function stripCursor(line: string): string {
+  const [head = '', ...tails] = line.split(CURSOR_MARKER);
+  return (
+    head + tails.map((tail) => tail.replace(FAKE_CURSOR_CELL, '$1')).join('')
+  );
+}
 
 export interface Screen {
   render: () => void;
@@ -55,7 +74,7 @@ export function bootScreen(terminal: Terminal, root: VStack): Screen {
       // in the buffer `?1049l` discards, so the main screen never showed it.
       // preserveScreen: Pi's own reprint is skipped; the caller's printer
       // is the one channel the document takes.
-      const document = root.render(terminal.columns);
+      const document = root.render(terminal.columns).map(stripCursor);
       screen.setLayoutRoot(undefined);
       screen.stop({ preserveScreen: true });
       for (const line of document) print(line);

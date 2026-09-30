@@ -119,16 +119,21 @@ export class DiffPanel implements Component {
     if (matched.length > 0 || this.selected !== null) return matched;
     // Issue #311: following the run, the call the run last touched may have
     // written nothing (a read, a listing). The panel then shows the most
-    // recent call that DID change something instead of blanking.
+    // recent change instead of blanking. A `bash` write is journaled only by
+    // the sweep, as unattributed rows (toolCallId null) that share one
+    // timestamp per sweep: they are candidates too, grouped by that sweep, or
+    // a shell edit would leave the panel on `no changes`.
     let latest: JournalChangeLike | undefined;
     for (const row of this.rows) {
-      if (row.toolCallId === null) continue;
       if (latest === undefined || row.timestamp >= latest.timestamp)
         latest = row;
     }
     if (latest === undefined) return [];
-    const id = latest.toolCallId;
-    return this.rows.filter((row) => row.toolCallId === id);
+    const { toolCallId: id, timestamp } = latest;
+    return this.rows.filter(
+      (row) =>
+        row.toolCallId === id && (id !== null || row.timestamp === timestamp),
+    );
   }
 
   render(width: number): string[] {

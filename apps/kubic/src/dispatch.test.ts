@@ -889,9 +889,19 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
 
   it('audit receives { loadRecords, loadSecrets, out } (zero rows is a clean report)', async () => {
     const cap = capture();
-    const code = await createProdRunners(cap.io).audit({}, loadedConfig());
-    expect(code).toBe(0);
-    expect(cap.lines).toEqual(['no audit records']);
+    // The ledger is the REPO's (`<repo>/.kubic/orchestrator/approvals/`),
+    // resolved from the cwd. Run from an empty scratch dir so the developer's
+    // own ledger — or rows a mutation-run sandbox leaked into the enclosing
+    // checkout — can never change the answer.
+    const scratch = mkdtempSync(join(FIXTURE, 'audit-cwd-'));
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(scratch);
+    try {
+      const code = await createProdRunners(cap.io).audit({}, loadedConfig());
+      expect(code).toBe(0);
+      expect(cap.lines).toEqual(['no audit records']);
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it('export receives { readFile, out } (a missing trajectory is a named failure)', async () => {

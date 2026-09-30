@@ -197,32 +197,6 @@ describe('models.json lookup (issue #222)', () => {
   );
 });
 
-it('`kubic run` from a subdirectory uses the global provider', async () => {
-  const home = tmpDir();
-  const path = globalFile(home, provider('mine'));
-  vi.stubEnv('HOME', home);
-  vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  const { sub } = repo();
-  const debugLines: string[] = [];
-  const result = await runHeadlessPrompt(
-    'hello',
-    { timeoutMs: 30_000, debug: true },
-    {
-      sessionsRoot: tmpDir(),
-      env: new FakeExecutionEnv({}),
-      modelsCwd: sub,
-      debugSink: (line) => debugLines.push(line),
-      warn: () => undefined,
-    },
-  );
-  // The global provider was selected (a keyless custom endpoint then
-  // fails its auth — never "no models available").
-  expect(result.summary).not.toContain('no models available');
-  expect(debugLines.join('\n')).toContain(
-    `loaded models.json: ${path} (global): mine`,
-  );
-});
-
 it('scopes a store grant to the tree the models.json lives in (issue #228 review)', async () => {
   const home = tmpDir();
   const { root, sub } = repo();

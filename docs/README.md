@@ -58,7 +58,7 @@ owner issue replaces the stub notice with content.
 | [exit-codes.md](cli/exit-codes.md) | Exit-code table (all six codes) |
 | [configuration.md](cli/configuration.md) | Config precedence and secrets |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
-| [contributing.md](contributing.md) | Contributor workflow (mirrors `AGENTS.md` LC0–LC6) |
+| [contributing.md](contributing.md) | Contributor workflow (LC0–LC6) |
 | [contributing-cli.md](contributing-cli.md) | Building CLI commands: commander registry, exit codes, `--json`, output helpers |
 | [design-drift.md](design-drift.md) | Design-vs-shipped reconciliation: what the design says, what the tree does, who owns each gap |
 

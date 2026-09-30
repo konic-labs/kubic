@@ -43,7 +43,7 @@ function codeOf(text: string): string {
     .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
 }
 
-// Source-text scans skip under Stryker (instrumented sources, AGENTS.md).
+// Source-text scans skip under Stryker (instrumented sources).
 const scan = process.env.STRYKER_MUTATOR_WORKER === undefined ? it : it.skip;
 
 describe('secrets.ts export surface (issue #359)', () => {

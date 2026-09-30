@@ -86,7 +86,6 @@ const SCANNED_ROOTS = [
   'bin',
   '.github',
   'README.md',
-  'AGENTS.md',
   'package.json',
   '.gitignore',
 ];

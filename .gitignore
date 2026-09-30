@@ -124,3 +124,10 @@ kubic-architecture.html
 .kubic/artifacts/
 .kubic/wt/
 .kubic/orchestrator/
+
+# ---------------------------------------------------------------------------
+# Private agent instructions: the development process of the AI agents that
+# build Kubic. Local only, deliberately not part of the released codebase
+# (public files must not reference or depend on it).
+# ---------------------------------------------------------------------------
+AGENTS.md

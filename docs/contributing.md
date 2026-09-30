@@ -1,8 +1,8 @@
 # Contributing
 
 > Owner: issue [#64](https://github.com/konic-labs/kubic/issues/64).
-> `AGENTS.md` at the repo root is the authority — this page mirrors it
-> for humans. If the two ever disagree, `AGENTS.md` wins.
+> The contributor workflow (LC0–LC6), commit rules and CI gates for this
+> repository.
 
 Kubic is Konic's open-source terminal coding agent: model-agnostic,
 with a VCS-independent change journal and an opt-in orchestrator mode.
@@ -32,7 +32,7 @@ Every issue, every wave, no freelancing:
   security scan of added lines (secrets, shell/SQL injection,
   eval/exec, unsafe deserialization), baseline tests + lint (only NEW
   failures block), then one brief solo self-review of the staged diff
-  (no reviewer subagent — see "No subagents" in `AGENTS.md`), max 2
+  (solo, no reviewer subagent), max 2
   auto-fix cycles; say what you did not verify. Lint gate is `biome ci`
   (exact CI parity).
 - **LC4 Simplify** — only on explicit request, per wave, never bundled

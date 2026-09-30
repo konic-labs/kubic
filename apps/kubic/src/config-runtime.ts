@@ -70,6 +70,7 @@ import {
   selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
 
 export interface CliConfigResult {
   // Present only when the load succeeded. A refusal leaves it undefined:
@@ -265,8 +266,14 @@ export async function resolveInteractiveProjectTrust(
   // A recorded decline is an answer: the refusal stands silently, and the
   // remedies are named by the refusal itself.
   if (report.decision === false) return false;
+  // The grant is one decision for the whole project tree, so the question
+  // names all of it (issue #228 review): the config.toml, the project
+  // models.json — whose provider URL receives the key of ANY `*_API_KEY` or
+  // `KUBIC_*` variable it names (`KUBIC_API_KEY` when it names none), so a
+  // "yes" lets the repository choose where a key you have set is sent — and
+  // the project skills the model is told to follow.
   const answer = await deps.confirm(
-    `Trust project ${report.key}? Kubic will load ${report.configPath}, which can set the model, approvals, permissions and journal retention for runs in this project.`,
+    `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).`,
   );
   if (answer === null) return false;
   store.set(cwd, answer);
@@ -340,9 +347,53 @@ export function doctorPolicyLoader(result: CliConfigResult): () => unknown {
 export function runtimeModelPin(
   result: CliConfigResult,
 ): ModelSelection | undefined {
-  const selection = result.runtime?.model;
-  if (selection === undefined) return undefined;
-  return { provider: selection.provider, id: selection.id };
+  const runtime = result.runtime;
+  const selection = runtime?.model;
+  if (runtime === undefined || selection === undefined) return undefined;
+  // The pin carries the input it came from (issue #295), so a refusal of an
+  // unknown model says `KUBIC_MODEL`/`--model`/the config layer — not `--model`
+  // for every explicit selection.
+  return withSelectionOrigin(
+    { provider: selection.provider, id: selection.id },
+    modelPinOrigin(runtime),
+  );
+}
+
+// The label the named model refusal shows for the runtime pin: the flag, the
+// env variable, or the config layer whose `[model]` carried it.
+function modelPinOrigin(runtime: RuntimeConfig): string {
+  switch (runtime.modelSource) {
+    case 'cli':
+      return '--model';
+    case 'env':
+      return 'KUBIC_MODEL';
+    default:
+      return `[model] in ${runtime.modelSource} config`;
+  }
+}
+
+// Whether a frozen enterprise `[model]` is the effective pin (issue #295;
+// §35.1): every cli/env pin is dropped, in this process and in every worker
+// child it starts — so the consumers that reason about which model runs
+// (the worker credential preflight, the orchestrate child env, the TUI
+// `/model` switch) follow the pin, never a raw KUBIC_MODEL.
+export function runtimeModelFrozen(result: CliConfigResult): boolean {
+  return result.runtime?.modelSource === 'enterprise';
+}
+
+// One stderr line per cli/env model pin a frozen enterprise `[model]`
+// overrode (issue #295; §35.1) — the composition root prints them once at the
+// boot of run/tui/orchestrate, so `kubic run --model x` against an enterprise
+// pin says it ran the pin instead of dropping `x` silently. Empty when
+// nothing was overridden (no freeze, no cli/env pin, or the same pin).
+export function runtimeModelPinNotes(result: CliConfigResult): string[] {
+  return (result.runtime?.modelPinOverrides ?? []).map((entry) => {
+    const input =
+      entry.source === 'cli'
+        ? `--model ${entry.requested}`
+        : `KUBIC_MODEL=${entry.requested}`;
+    return `note: ${input} ignored: model pinned by enterprise policy (${entry.pinned})`;
+  });
 }
 
 // §58 enterprise policy (issue #288): the EffectivePolicy resolved once at
@@ -355,6 +406,31 @@ export function runtimePolicy(
   result: CliConfigResult,
 ): EffectivePolicy | undefined {
   return result.runtime?.policy;
+}
+
+// selectModel words every explicit pin `(--model)` and every config default
+// `(config default)`; when the selection carries its real origin (issue #295;
+// model-projection's withSelectionOrigin) the suffix names that instead. Only
+// the pick that was actually attempted can have failed: an explicit pin is
+// tried first and alone.
+function relabelRefusal(
+  error: ModelSelectError,
+  explicit: ModelSelection | undefined,
+  configDefault: ModelSelection | undefined,
+): ModelSelectError {
+  const attempted =
+    explicit !== undefined
+      ? { selection: explicit, wording: '--model' }
+      : configDefault !== undefined
+        ? { selection: configDefault, wording: 'config default' }
+        : undefined;
+  if (attempted === undefined) return error;
+  const origin = selectionOrigin(attempted.selection);
+  const suffix = ` (${attempted.wording})`;
+  if (origin === undefined || !error.message.endsWith(suffix)) return error;
+  return new ModelSelectError(
+    `${error.message.slice(0, -suffix.length)} (${origin})`,
+  );
 }
 
 // The named refusal both solo entry points share (issue #288): one text, so
@@ -398,7 +474,14 @@ export function selectModelUnderPolicy(
           fallbackProviders ??
           models.getProviders().map((provider) => provider.id)
         ).filter((provider) => isProviderAllowed(gate, provider));
-  const picked = selectModel(models, explicit, configDefault, candidates);
+  let picked: ReturnType<typeof selectModel>;
+  try {
+    picked = selectModel(models, explicit, configDefault, candidates);
+  } catch (error) {
+    throw error instanceof ModelSelectError
+      ? relabelRefusal(error, explicit, configDefault)
+      : error;
+  }
   if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
     throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
   }

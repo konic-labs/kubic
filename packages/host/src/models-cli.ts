@@ -116,6 +116,22 @@ export function findModelsProjectRoot(cwd: string, home: string): string {
   }
 }
 
+// The project root the project models.json is resolved at (issue #222): the
+// manager's root when `KUBIC_MODELS_ROOT` names it (a worker child), else the
+// ancestor walk from `cwd`. One derivation for the assembly AND for any caller
+// that must decide project trust for THAT root (the orchestrator's child env
+// opt-in): trust is per-root, never a boolean for the launch cwd.
+export function modelsProjectRootFor(
+  cwd: string,
+  env: Env,
+  home: string,
+): string {
+  const pinnedRoot = env.KUBIC_MODELS_ROOT;
+  return pinnedRoot !== undefined && pinnedRoot !== ''
+    ? resolve(pinnedRoot)
+    : findModelsProjectRoot(cwd, home);
+}
+
 // The project models.json candidates at a root, first present wins.
 function projectModelsPath(root: string): string {
   const bridge = createNodeFileBridge('/');
@@ -157,6 +173,58 @@ function authContextFor(env: Env, home: string): AuthContext {
       ),
   };
 }
+
+// §36.3 (issue #200): built-ins whose credential a worker CANNOT be handed.
+// A worker gets its provider key through the KUBIC_ROLE_* grant namespace,
+// which only Pi's auth resolution reads; these providers' request paths read
+// their configuration straight from `process.env` (AWS SDK credentials and
+// region, the Azure base URL, Vertex project/location), and the worker env
+// allowlist carries none of it. Forwarding the vars Pi's auth check names
+// would pass the manager's preflight and still die in the worker (`Provider
+// is not configured`), so the plan refuses by name instead.
+//
+// `viaKey` names the ONE auth source that IS deliverable for a provider that
+// also has a process-level form: Vertex authenticated by `GOOGLE_CLOUD_API_KEY`
+// gets its `apiKey` from the grant view and its client needs no project or
+// location, so that source forwards like any single-key provider; only the
+// application-default-credentials form (project + location + a credentials
+// file) is refused.
+const PROCESS_LEVEL_AUTH: ReadonlyMap<
+  string,
+  { reason: string; viaKey?: string }
+> = new Map([
+  [
+    'amazon-bedrock',
+    {
+      reason:
+        'it authenticates from process-level AWS configuration (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, AWS_BEARER_TOKEN_BEDROCK, AWS_REGION) that the worker env allowlist does not carry; pin a provider authenticated by a single API key env var',
+    },
+  ],
+  [
+    'azure-openai-responses',
+    {
+      reason:
+        'it needs AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME from the process environment, which the worker env allowlist does not carry; pin a provider authenticated by a single API key env var',
+    },
+  ],
+  [
+    'google-vertex',
+    {
+      reason:
+        'without GOOGLE_CLOUD_API_KEY it needs GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION and application default credentials from the process environment, which the worker env allowlist does not carry; set GOOGLE_CLOUD_API_KEY or pin a provider authenticated by a single API key env var',
+      viaKey: 'GOOGLE_CLOUD_API_KEY',
+    },
+  ],
+]);
+
+// Built-ins whose auth reads more than one env var, all of which the grant
+// CAN carry: Pi resolves them through the same auth context the worker sees,
+// so each is forwarded next to the key (the plan refuses naming any that is
+// unset).
+const COMPANION_AUTH_ENV: ReadonlyMap<string, readonly string[]> = new Map([
+  ['cloudflare-workers-ai', ['CLOUDFLARE_ACCOUNT_ID']],
+  ['cloudflare-ai-gateway', ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_GATEWAY_ID']],
+]);
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -270,11 +338,7 @@ export async function assembleModels(
   // A worker child runs in its own worktree, which holds only tracked
   // files: the orchestrator names the manager's root in KUBIC_MODELS_ROOT so
   // the child resolves the same project file (issue #222).
-  const pinnedRoot = env.KUBIC_MODELS_ROOT;
-  const projectRoot =
-    pinnedRoot !== undefined && pinnedRoot !== ''
-      ? resolve(pinnedRoot)
-      : findModelsProjectRoot(cwd, home);
+  const projectRoot = modelsProjectRootFor(cwd, env, home);
   load(
     projectModelsPath(projectRoot),
     'project',
@@ -303,10 +367,27 @@ export async function assembleModels(
       env[check.source] !== ''
         ? check.source
         : undefined;
-    keyEnv.set(provider.id, {
-      envVars: envSource === undefined ? [] : [envSource],
-      noKeyNeeded: check !== undefined && envSource === undefined,
-    });
+    // A provider whose credential is process-level configuration the grant
+    // namespace cannot carry is refused by name up front (issue #200); one
+    // whose auth reads companion vars beside the key forwards all of them.
+    const processLevel = PROCESS_LEVEL_AUTH.get(provider.id);
+    const undeliverable =
+      processLevel !== undefined &&
+      !(processLevel.viaKey !== undefined && envSource === processLevel.viaKey)
+        ? processLevel.reason
+        : undefined;
+    keyEnv.set(
+      provider.id,
+      undeliverable !== undefined
+        ? { envVars: [], noKeyNeeded: false, undeliverable }
+        : {
+            envVars:
+              envSource === undefined
+                ? []
+                : [envSource, ...(COMPANION_AUTH_ENV.get(provider.id) ?? [])],
+            noKeyNeeded: check !== undefined && envSource === undefined,
+          },
+    );
     providers.set(provider.id, {
       origin: 'built-in',
       usable: check !== undefined,

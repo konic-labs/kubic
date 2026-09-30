@@ -3,6 +3,7 @@
 // parity flags; this pins what reaches `bootTuiLane` — including the model
 // pin — without opening a terminal.
 import { describe, expect, it } from 'vitest';
+import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { tuiBootOptions, tuiDepsWithDefaults } from './tui-run.js';
 
 describe('tuiBootOptions (issue #227)', () => {
@@ -22,6 +23,22 @@ describe('tuiBootOptions (issue #227)', () => {
     expect(options.policySource).toBe('config');
     expect(options.journalRetention).toEqual({ maxAgeMs: 1000 });
     expect(options.reconcileOutOfScope).toEqual(['dist']);
+  });
+
+  it('forwards the §58 enterprise policy the run path gates with (issue #288)', () => {
+    const modelPolicy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const options = tuiBootOptions(
+      { out: () => {}, modelPolicy },
+      undefined,
+      undefined,
+    );
+    expect(options.modelPolicy).toBe(modelPolicy);
+    // Absent means absent: no key, so the boot gates nothing.
+    expect(
+      'modelPolicy' in tuiBootOptions({ out: () => {} }, undefined, undefined),
+    ).toBe(false);
   });
 
   it('omits the model when no pin is configured', () => {

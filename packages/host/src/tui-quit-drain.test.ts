@@ -21,6 +21,7 @@ import {
   bootTuiLane,
   runTuiCommand,
   type TuiLaneBoot,
+  TuiOrchestratorTurn,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
@@ -349,6 +350,227 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     expect(fake.counts.stopped).toBe(1);
   });
 
+  // Issue #306 decision: a held key's repeats never act as a global key.
+  // While a quit drains, only a real second Ctrl-C press ends the wait: the
+  // Kitty release (`:3`) and repeat (`:2`) events of the SAME key must not.
+  it('a held Ctrl-C (Kitty repeat) or its release does not end the drain; a real second press does', async () => {
+    const h = harness([
+      async () => {
+        await new Promise(() => {});
+        return fauxAssistantMessage('never');
+      },
+    ]);
+    const { fake, exit } = start(h, {
+      setDrainTimer: () => () => {},
+    });
+    await submit(fake, 'hang');
+    await waitFor(() => h.admitted.length === 1);
+    fake.feed('\x1b');
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    for (const heldOrReleased of [
+      '\x1b[99;5:2u', // Ctrl-C key repeat
+      '\x1b[99;5:2u',
+      '\x1b[99;5:3u', // Ctrl-C key release
+    ]) {
+      fake.feed(heldOrReleased);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Still draining: the terminal was not restored, the session not closed.
+    expect(fake.counts.stopped).toBe(0);
+    expect(h.events).not.toContain('close');
+    fake.feed('\x1b[99;5u'); // a real Ctrl-C press (Kitty)
+    expect(await exit).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
+  });
+
+  // Issue #312 review: the bound used to cover only the wait AFTER the abort
+  // request. A requestAbort that never settles blocked the quit (and the kill
+  // drain queued behind it) with no way out — a second Ctrl-C ended a wait
+  // nobody was in.
+  describe('a requestAbort that never settles', () => {
+    function hungAbort(h: Harness): void {
+      const inner = h.bootLane;
+      h.bootLane = async (sessionId, answer, flags) => {
+        const boot = await inner(sessionId, answer, flags);
+        const loop = boot.loop;
+        if (loop === undefined) throw new Error('no loop');
+        return {
+          ...boot,
+          loop: {
+            ...loop,
+            requestAbort: () => new Promise(() => {}),
+          },
+        };
+      };
+    }
+    const settled = async (exit: Promise<number>): Promise<number | 'hung'> =>
+      Promise.race([
+        exit,
+        new Promise<'hung'>((resolve) => setTimeout(resolve, 1500, 'hung')),
+      ]);
+
+    it('the drain bound still ends the quit, and the registered kills still run', async () => {
+      const h = harness([
+        async () => {
+          await new Promise(() => {});
+          return fauxAssistantMessage('never');
+        },
+      ]);
+      hungAbort(h);
+      const timers: Array<() => void> = [];
+      const { fake, exit } = start(h, {
+        setDrainTimer: (_ms, fire) => {
+          timers.push(fire);
+          return () => {};
+        },
+      });
+      await submit(fake, 'hang');
+      await waitFor(() => h.admitted.length === 1);
+      h.boots[0]?.loop?.kills.track(h.admitted[0] ?? '', () => {
+        h.events.push('kill');
+      });
+      fake.feed('\x1b');
+      await waitFor(() => timers.length === 1);
+      timers[0]?.();
+      expect(await settled(exit)).toBe(0);
+      // The kill drain is the backstop: it does not wait on the abort request.
+      expect(h.events).toEqual(['kill', 'close']);
+    });
+
+    // The bound won over the hung abort request and the kills were drained
+    // once. A tool that registers its kill AFTER that drain (it was between
+    // spawning and tracking) must still be killed before the process exits:
+    // the session close drains every admitted operation once more.
+    it('a kill registered after the bound fired is still run at the session close', async () => {
+      const h = harness([
+        async () => {
+          await new Promise(() => {});
+          return fauxAssistantMessage('never');
+        },
+      ]);
+      hungAbort(h);
+      const inner = h.bootLane;
+      h.bootLane = async (sessionId, answer, flags) => {
+        const boot = await inner(sessionId, answer, flags);
+        return {
+          ...boot,
+          close: async () => {
+            // Registered after the quit's drain, before the session closes.
+            boot.loop?.kills.track(h.admitted[0] ?? '', () => {
+              h.events.push('late-kill');
+            });
+            await boot.close?.();
+          },
+        };
+      };
+      const timers: Array<() => void> = [];
+      const { fake, exit } = start(h, {
+        setDrainTimer: (_ms, fire) => {
+          timers.push(fire);
+          return () => {};
+        },
+      });
+      await submit(fake, 'hang');
+      await waitFor(() => h.admitted.length === 1);
+      h.boots[0]?.loop?.kills.track(h.admitted[0] ?? '', () => {
+        h.events.push('kill');
+      });
+      fake.feed('\x1b');
+      await waitFor(() => timers.length === 1);
+      timers[0]?.();
+      expect(await settled(exit)).toBe(0);
+      expect(h.events).toEqual(['kill', 'close', 'late-kill']);
+    });
+
+    it('a second Ctrl-C ends the wait', async () => {
+      const h = harness([
+        async () => {
+          await new Promise(() => {});
+          return fauxAssistantMessage('never');
+        },
+      ]);
+      hungAbort(h);
+      const { fake, exit } = start(h, { setDrainTimer: () => () => {} });
+      await submit(fake, 'hang');
+      await waitFor(() => h.admitted.length === 1);
+      fake.feed('\x1b');
+      await waitFor(() => fake.writes.join('').includes('cancelling'));
+      fake.feed('\x03');
+      expect(await settled(exit)).toBe(0);
+      expect(fake.counts.stopped).toBe(1);
+    });
+  });
+
+  it('an orchestrator drive whose abort never settles is still released by the bound', async () => {
+    let releaseBound: () => void = () => {};
+    const bound = new Promise<void>((resolve) => {
+      releaseBound = resolve;
+    });
+    const turn = new TuiOrchestratorTurn(
+      {
+        run: () => new Promise(() => {}),
+        abort: () => new Promise<void>(() => {}),
+      },
+      () => {},
+    );
+    void turn.run('objective');
+    expect(turn.isRunning()).toBe(true);
+    let drained = false;
+    const draining = turn.drainForQuit(bound).then(() => {
+      drained = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(drained).toBe(false);
+    releaseBound();
+    await draining;
+    expect(drained).toBe(true);
+  });
+
+  // Issue #311: the settlement sweep is for a session that goes on. A quit
+  // that drains a turn which already ran bash owns its own final sweep
+  // (close); the settlement handler must not run a second one.
+  it('a turn settled by a quit does not also run the settlement sweep', async () => {
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = harness([
+      // Step 1 ends a bash call (tool-end: the sweep is now "due") ...
+      [fauxToolCall('bash', { command: 'true' })],
+      // ... and step 2 holds the turn open until the quit kills it.
+      async () => {
+        await gated;
+        return fauxAssistantMessage('never delivered');
+      },
+    ]);
+    let sweeps = 0;
+    const inner = h.bootLane;
+    h.bootLane = async (sessionId, answer, flags) => {
+      const boot = await inner(sessionId, answer, flags);
+      const reconcile = boot.reconcile;
+      expect(reconcile).toBeDefined();
+      return {
+        ...boot,
+        reconcile: () => {
+          sweeps += 1;
+          reconcile?.();
+        },
+      };
+    };
+    const { fake, exit } = start(h);
+    await submit(fake, 'run bash then hold');
+    await waitFor(() => h.admitted.length === 1);
+    const opId = h.admitted[0] ?? '';
+    // The bash call has ended (the tree row turns ✓): the model's second step
+    // is the gated one, so the turn is still running.
+    await waitFor(() => fake.writes.join('').includes('✓ bash'));
+    h.boots[0]?.loop?.kills.track(opId, release);
+    fake.feed('\x1b'); // Esc quits mid-turn; the kill releases the gate
+    expect(await exit).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sweeps).toBe(0);
+  });
+
   it('the drain bound ends a wait that never settles', async () => {
     const h = harness([
       async () => {
@@ -370,5 +592,55 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     timers[0]?.();
     expect(await exit).toBe(0);
     expect(h.events.at(-1)).toBe('close');
+  });
+});
+
+// A quit's last-resort kill (the session close) covers only the operations
+// still in flight when the quit starts. A turn that already settled left its
+// `KUBIC_BASH_KEEP_BACKGROUND=1` job running on purpose (docs/cli/
+// configuration.md: it outlives Kubic), and a settled turn's stale kill could
+// also hit a recycled pid's process group.
+describe('quitting after a settled turn leaves kept background jobs alone', () => {
+  it('a KUBIC_BASH_KEEP_BACKGROUND job of a completed turn survives /quit', async () => {
+    vi.stubEnv('KUBIC_BASH_KEEP_BACKGROUND', '1');
+    const h = harness([
+      [
+        fauxToolCall('bash', {
+          command: 'sleep 30 >/dev/null 2>&1 & echo $! > bg.txt',
+        }),
+      ],
+      'done',
+    ]);
+    // The runner records the turn only after it settled it, so the wrapped
+    // `recordTurn` is the deterministic "turn finished" signal.
+    let recorded = false;
+    const inner = h.bootLane;
+    h.bootLane = async (sessionId, answer, flags) => {
+      const boot = await inner(sessionId, answer, flags);
+      const loop = boot.loop;
+      if (loop === undefined) throw new Error('the prod boot returned no loop');
+      return {
+        ...boot,
+        loop: {
+          ...loop,
+          recordTurn: async (turn) => {
+            await loop.recordTurn?.(turn);
+            recorded = true;
+          },
+        },
+      };
+    };
+    const { fake, exit } = start(h);
+    await submit(fake, 'start a server');
+    await waitFor(() => recorded);
+    const bgFile = join(h.workspace, 'bg.txt');
+    expect(existsSync(bgFile)).toBe(true);
+    const bg = Number(readFileSync(bgFile, 'utf8').trim());
+    pids.push(bg);
+    expect(alive(bg)).toBe(true);
+    fake.feed('\x1b'); // Esc quits while idle: nothing is in flight
+    expect(await exit).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(alive(bg)).toBe(true);
   });
 });

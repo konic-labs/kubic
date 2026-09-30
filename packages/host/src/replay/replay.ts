@@ -50,6 +50,7 @@ import {
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
 import type { SoloApprovalConfig } from '../approvals.js';
+import type { EffectivePolicy } from '../policy/enterprise.js';
 import {
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -100,6 +101,11 @@ export interface ReplayRuntimeDeps {
   journalRetention?: JournalRetention;
   // Issue #230: the config `[approvals]` policy, as `kubic run` installs it.
   approvals?: SoloApprovalConfig;
+  // §58 enterprise policy (issue #288): the same resolved EffectivePolicy
+  // `kubic run` gates with — the model/provider gate, the role-grant check and
+  // the lane tool intersection all derive from it inside the headless runner
+  // the re-execution drives, so a live replay is not an ungated lane.
+  modelPolicy?: EffectivePolicy;
   // Issue #228 (§35.1): the per-path trust check (store resolved-root +
   // env), from the same config load the re-execution tier runs under — it
   // gates the project models.json of the assembled catalog. Absent falls

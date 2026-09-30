@@ -54,6 +54,7 @@ describe('kubic run surfaces the models.json note', () => {
         sessionsRoot: tmpRoot('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
+        skills: { cwd, homeDir: cwd, trusted: false },
         warn: (line) => warnings.push(line),
       },
     );
@@ -77,6 +78,7 @@ describe('kubic run surfaces the models.json note', () => {
         sessionsRoot: tmpRoot('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
+        skills: { cwd, homeDir: cwd, trusted: false },
         warn: (line) => warnings.push(line),
       },
     );
@@ -87,6 +89,12 @@ describe('kubic run surfaces the models.json note', () => {
   });
 
   it('keeps a successful load quiet without --debug', async () => {
+    // The faux testing provider answers, so nothing is ever dialed: the file
+    // still names a custom provider (at a host that cannot resolve), and the
+    // run must not warn about it. No real provider, no loopback server, no
+    // network — the hermetic env guard exempts loopback, so a test that
+    // dialed one would go unnoticed.
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
     const cwd = tmpRoot('models-note-ok-');
     writeFileSync(
       join(cwd, 'models.json'),
@@ -94,7 +102,7 @@ describe('kubic run surfaces the models.json note', () => {
         providers: [
           {
             id: 'fake',
-            baseUrl: 'http://127.0.0.1:1/v1',
+            baseUrl: 'https://models.invalid/v1',
             api: 'openai-completions',
             models: [{ id: 'm' }],
           },
@@ -102,20 +110,28 @@ describe('kubic run surfaces the models.json note', () => {
       }),
     );
     const warnings: string[] = [];
-    // A safety net only, never the thing under test: a 1 ms bound races the
-    // boot-phase note sinks under coverage instrumentation, so the quiet-load
-    // assertion would read an unfinished boot. The unreachable keyless
-    // endpoint ends the run on its own.
-    await runHeadlessPrompt(
+    const receipts: string[] = [];
+    const result = await runHeadlessPrompt(
       'hello',
-      { timeoutMs: 30_000 },
+      {},
       {
         sessionsRoot: tmpRoot('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
+        skills: { cwd, homeDir: cwd, trusted: false },
         warn: (line) => warnings.push(line),
+        debug: (line) => receipts.push(line),
       },
     );
+    expect(result.terminus).toBe('completed');
     expect(warnings.filter((line) => line.includes('models.json'))).toEqual([]);
+    // Quiet means loaded fine, not never read: the load left its receipt on
+    // the debug channel.
+    expect(
+      receipts.some(
+        (line) =>
+          line.startsWith('loaded models.json:') && line.includes('fake'),
+      ),
+    ).toBe(true);
   });
 });

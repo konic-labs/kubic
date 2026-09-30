@@ -213,3 +213,51 @@ describe('resumed session model identity (issue #148)', () => {
     expect(switched.model.id).toBe('small');
   });
 });
+
+describe('a resumed session never keeps a model the enterprise gate refuses (issue #288)', () => {
+  it('drops a refused stored model for the (already gated) selection and says so', async () => {
+    const session = await sessionOnBig();
+    const { models, small } = catalog();
+    const notices: string[] = [];
+    const asked: string[] = [];
+    const solo = await bootSoloLane({
+      session,
+      models,
+      model: small,
+      onModelNotice: (line) => notices.push(line),
+      policy: {
+        modelAllowed: (provider, modelId) => {
+          asked.push(`${provider}/${modelId}`);
+          return modelId !== 'big';
+        },
+      },
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
+    expect(`${live?.provider}/${live?.id}`).toBe('faux/small');
+    expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/small');
+    // The gate is asked about the STORED model, and only that one.
+    expect(asked).toEqual(['faux/big']);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("'faux/big'");
+    expect(notices[0]).toContain("'faux/small'");
+  });
+
+  it('keeps an allowed stored model exactly as before', async () => {
+    const session = await sessionOnBig();
+    const { models, small } = catalog();
+    const solo = await bootSoloLane({
+      session,
+      models,
+      model: small,
+      policy: { modelAllowed: () => true },
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+    });
+    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
+    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+  });
+});

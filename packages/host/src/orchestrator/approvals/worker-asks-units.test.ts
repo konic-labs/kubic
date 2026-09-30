@@ -451,3 +451,188 @@ describe('takeTermination (issue #379)', () => {
     }
   });
 });
+
+// Two orchestrate runs share one repo runtime root (`.kubic/orchestrator`):
+// two runs in one checkout, or in different linked worktrees of one repo
+// (issue #279). Their default worker ids collide (`worker-1`), and a worker
+// ask is matched by agent id — so a run that pumps a shared mailbox would
+// answer ANOTHER run's ask (a `--full-access` run would approve it). Each run
+// owns its mailbox and decision store; only the §60 ledger is shared.
+describe('an approvals run answers only its own workers (issue #279)', () => {
+  const scopeOf = (sessionId: string) => ({
+    sessionId,
+    agentId: 'worker-1',
+    worktree: `/wt/${sessionId}/worker-1`,
+  });
+  const askFor = (sessionId: string) =>
+    input({
+      sessionId: 'worker-1',
+      agentId: 'worker-1',
+      worktree: `/wt/${sessionId}/worker-1`,
+      provenance: { parentSessionId: `${sessionId}-worker-1` },
+    });
+
+  it('a full-access run never answers a sibling run\u2019s ask, though both use worker-1', async () => {
+    const shared = tmpDir();
+    const runA = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'sess-a',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+    });
+    const runB = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'sess-b',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+      fullAccess: true,
+    });
+    // The child of run A publishes where run A told it to.
+    const published = publishWorkerAsk(runA.mailboxDir(), askFor('sess-a'));
+    // Run B's pump for ITS worker-1 must not see it, let alone approve it.
+    const termination = await runB.pump(scopeOf('sess-b'));
+    expect(termination).toBeUndefined();
+    expect(
+      readWorkerAskAnswer(runA.mailboxDir(), published.request.key),
+    ).toBeUndefined();
+    expect(
+      readWorkerAskAnswer(runB.mailboxDir(), published.request.key),
+    ).toBeUndefined();
+    // Run A's own pump still finds and settles it: unanswered (no seat), it is
+    // routed by A alone — pending asks are per run.
+    expect(readPendingWorkerAsks(runA.mailboxDir())).toHaveLength(1);
+    expect(readPendingWorkerAsks(runB.mailboxDir())).toEqual([]);
+  });
+
+  it('each run\u2019s mailbox is its own directory under the shared approvals dir, and a run answers its own worker', async () => {
+    const shared = tmpDir();
+    const runA = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'sess-a',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+    });
+    const runB = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'sess-b',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+      fullAccess: true,
+    });
+    expect(runA.mailboxDir()).not.toBe(runB.mailboxDir());
+    expect(runA.mailboxDir().startsWith(join(shared, 'approvals'))).toBe(true);
+    expect(runB.mailboxDir().startsWith(join(shared, 'approvals'))).toBe(true);
+    const own = publishWorkerAsk(runB.mailboxDir(), askFor('sess-b'));
+    expect(await runB.pump(scopeOf('sess-b'))).toBeUndefined();
+    expect(readWorkerAskAnswer(runB.mailboxDir(), own.request.key)).toEqual({
+      approved: true,
+      by: 'user',
+    });
+  });
+
+  it('the §60 ledger stays at the shared approvals dir: one trail for every run', async () => {
+    const shared = tmpDir();
+    const seat = async () => ({ approved: true as const, by: 'user' as const });
+    const runA = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'sess-a',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+      seat,
+    });
+    const published = publishWorkerAsk(runA.mailboxDir(), askFor('sess-a'));
+    expect(await runA.pump(scopeOf('sess-a'))).toBeUndefined();
+    expect(
+      readWorkerAskAnswer(runA.mailboxDir(), published.request.key),
+    ).toEqual({ approved: true, by: 'user' });
+    // `kubic audit` reads `<repo>/.kubic/orchestrator/approvals/audit.jsonl`.
+    const ledger = readFileSync(
+      join(shared, 'approvals', 'audit.jsonl'),
+      'utf8',
+    );
+    expect(ledger.trim().split('\n')).toHaveLength(1);
+    expect(existsSync(join(runA.mailboxDir(), 'audit.jsonl'))).toBe(false);
+  });
+});
+
+// A reused `--session` id must not inherit an earlier run's approvals state: the
+// full-access record and the memoized decisions live in `approvals/<session>/`,
+// so a FRESH run that finds them would auto-approve a destructive ask with no
+// warning. `--resume` is the only run that continues that state.
+describe('a fresh run starts with an empty approvals state for a reused session id', () => {
+  const scope = {
+    sessionId: 'reused',
+    agentId: 'worker-1',
+    worktree: '/wt/reused/worker-1',
+  };
+  const ask = () =>
+    input({
+      sessionId: 'worker-1',
+      agentId: 'worker-1',
+      worktree: scope.worktree,
+      provenance: { parentSessionId: 'reused-worker-1' },
+    });
+  const open = (dir: string, extra: { fresh?: boolean } = {}) =>
+    createOrchestratorApprovalsRun({
+      dir,
+      sessionId: 'reused',
+      maxPendingMs: 30,
+      pollMs: 5,
+      ...extra,
+    });
+
+  it('does not inherit an old full-access grant, which a resume still continues', async () => {
+    const shared = tmpDir();
+    // An earlier run of this id opted into full access.
+    const earlier = createOrchestratorApprovalsRun({
+      dir: shared,
+      sessionId: 'reused',
+      maxPendingMs: 30,
+      pollMs: 5,
+      fullAccess: true,
+    });
+    expect(earlier.fullAccessGrant()).toBeDefined();
+    const recordFile = join(shared, 'approvals', 'reused', 'skip-records.json');
+    expect(existsSync(recordFile)).toBe(true);
+
+    // A resume (no `fresh`) continues the grant.
+    const resumed = open(shared);
+    expect(resumed.fullAccessGrant()).toBeDefined();
+    const resumedAsk = publishWorkerAsk(resumed.mailboxDir(), ask());
+    await resumed.pump(scope);
+    expect(
+      readWorkerAskAnswer(resumed.mailboxDir(), resumedAsk.request.key),
+    ).toEqual({
+      approved: true,
+      by: 'user',
+    });
+
+    // A fresh run of the same id starts empty: no grant, no memoized
+    // decision, and the destructive ask is not auto-approved.
+    const fresh = open(shared, { fresh: true });
+    expect(fresh.fullAccessGrant()).toBeUndefined();
+    expect(existsSync(recordFile)).toBe(false);
+    expect(
+      new FileDecisionStore(join(shared, 'approvals', 'reused')).load(),
+    ).toEqual({});
+    expect(readPendingWorkerAsks(fresh.mailboxDir())).toEqual([]);
+    const freshAsk = publishWorkerAsk(fresh.mailboxDir(), ask());
+    await fresh.pump(scope);
+    expect(
+      readWorkerAskAnswer(fresh.mailboxDir(), freshAsk.request.key),
+    ).not.toEqual({ approved: true, by: 'user' });
+  });
+
+  it('keeps the repo-wide ledger and other sessions\u2019 state', () => {
+    const shared = tmpDir();
+    const ledger = join(shared, 'approvals', 'audit.jsonl');
+    mkdirSync(join(shared, 'approvals', 'other'), { recursive: true });
+    writeFileSync(ledger, '{"row":1}\n');
+    writeFileSync(join(shared, 'approvals', 'other', DECISIONS_FILE), '{}');
+    open(shared, { fresh: true });
+    expect(readFileSync(ledger, 'utf8')).toBe('{"row":1}\n');
+    expect(existsSync(join(shared, 'approvals', 'other', DECISIONS_FILE))).toBe(
+      true,
+    );
+  });
+});

@@ -25,8 +25,16 @@ import {
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import type { AgentResult } from '../../worker/src/result.js';
-import { validateAgentResult } from '../../worker/src/result.js';
+import type {
+  AgentResult,
+  ResultErrorKind,
+  ResultStatus,
+} from '../../worker/src/result.js';
+import {
+  buildAgentResult,
+  UNRESOLVED_MODEL,
+  validateAgentResult,
+} from '../../worker/src/result.js';
 // §36.3 provider-credential scoping (issue #200): the run's pre-state check
 // names a provider and fails closed before any worktree exists. Host-local
 // contract (the composition root resolves the grants); host never spawns.
@@ -34,10 +42,12 @@ import type {
   WorkerCredentialRefusal,
   WorkerCredentialRequest,
 } from './config/role-credentials.js';
+import { BUDGET_EXHAUSTED } from './orchestrator/approvals/budgets.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
   type WorkerApprovalsRun,
+  type WorkerApprovalTermination,
 } from './orchestrator/approvals/worker-asks.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
@@ -218,10 +228,17 @@ export function workerSummaryLine(
   agentId: string,
   result: AgentResult,
 ): string {
-  const firstLine = result.summary.split('\n')[0]?.trim() ?? '';
+  // The summary is untrusted model text drawn on the operator's terminal: an
+  // ESC / CR / C1 control in it could clear or repaint the screen or
+  // overwrite this line from column 0. The same strip set the scheduler's
+  // reasons and the retained-file lines use, applied to what is DRAWN — so
+  // the 200-character budget counts visible characters.
+  const firstLine = sanitizeReasonField(
+    result.summary.split('\n')[0] ?? '',
+  ).trim();
   const summary =
     firstLine.length > 200 ? `${firstLine.slice(0, 200)}…` : firstLine;
-  return `${agentId} (${result.provenance.role ?? 'worker'}): ${summary}`;
+  return `${agentId} (${sanitizeReasonField(result.provenance.role ?? 'worker')}): ${summary}`;
 }
 
 export interface OrchestratorRunState {
@@ -377,6 +394,11 @@ export interface WorktreeRequest {
 // A fresh run that finds its own session-scoped worktree already on disk is
 // refused with this named code, never silently reused (issue #144).
 export const WORKTREE_EXISTS_CODE = 'worktree_exists';
+
+// §68 provenance needs a non-empty worktree; a worker that failed before a
+// worktree was handed to it names this instead of inventing a path
+// (issue #185).
+const NO_WORKTREE = '(no worktree)';
 
 function worktreeFailureCode(error: unknown): string {
   return typeof error === 'object' &&
@@ -698,6 +720,11 @@ export interface OrchestrateCommandDeps {
   // who answered the prompt, so the ledger never records an inferred
   // approval as a user decision.
   auditMerge?: (record: MergeDecisionRecord) => void;
+  // Whether a merge-gate refusal points the operator at `--yes` (default
+  // true). A surface with no such flag — the TUI, whose merge asks go through
+  // its own approval overlay — passes false so the message never names a flag
+  // that does not exist there (issue #327).
+  yesHint?: boolean;
   // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
   // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
   // composition root owns construction (its dir, its TTY seat, its debug
@@ -711,6 +738,9 @@ export interface OrchestrateCommandDeps {
     /** Per-spawn override: the budget for THAT worker's gate (§71). */
     budgetForAgent?: (agentId: string) => unknown;
     fullAccess?: boolean;
+    /** A fresh (non-`--resume`) run: start with an empty approvals state, so
+     *  an earlier run of the same id's full-access record is never inherited. */
+    fresh?: boolean;
   }) => WorkerApprovalsRun;
   loadState?: (
     sessionId: string,
@@ -1286,6 +1316,20 @@ export async function runOrchestrateCommand(
     }
     state = resumed;
   } else {
+    // A fresh run never adopts a session name that already holds state
+    // (issue #144): the first save below would overwrite the stored run
+    // (prompt, merged list, records) BEFORE the worktree stage fails closed
+    // on the retained tree — leaving a corrupted session that `--resume`
+    // would then continue as the wrong run. Refused here, before anything is
+    // saved. State that does not parse is not state (the same reading
+    // `--resume` gives it), so a torn file is replaced, not a dead end.
+    if ((await deps.loadState?.(sessionId)) !== undefined) {
+      return fail(
+        RUN_EXIT_USAGE,
+        'session_exists',
+        `session '${sessionId}' already has orchestrator state — continue it with \`kubic orchestrate --resume --session ${sessionId}\`, choose another --session id, or dispose it with \`kubic clean --session ${sessionId}\` (a fresh run never overwrites a stored session)`,
+      );
+    }
     state = {
       version: 1,
       sessionId,
@@ -1517,6 +1561,9 @@ export async function runOrchestrateCommand(
     budgetForAgent: (agentId: string) =>
       effectiveBudget?.byAgent[agentId] ?? effectiveBudget?.shared,
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
+    // A fresh run of a reused id must not find the old run's full-access
+    // record or memoized decisions; only `--resume` continues them.
+    ...(parsed.resume ? {} : { fresh: true }),
   });
   const approvalScopeFor = (
     agentId: string,
@@ -1588,6 +1635,113 @@ export async function runOrchestrateCommand(
     }
   };
 
+  // §68 failure results in the SAVED state (issue #185). A worker's failure
+  // used to reach only the run's envelope: its `records` entry never existed,
+  // so a failing run left `records: 0`, and a worker that never launched (the
+  // worktree stage, admission, session creation) had no result at all. Every
+  // worker-stage failure now records what the worker reported — or, when it
+  // reported nothing, a result synthesized in the same AgentResult shape —
+  // next to the run state. The record is an upsert keyed by agent: a resumed
+  // retry replaces it instead of listing the worker twice. The worker stays
+  // `pending`: it was not merged, and `--resume` retries it.
+  // The result a manager-side approval/budget termination stands for: a
+  // budget hit is a `budget_exhausted` result of kind `budget`, anything else
+  // (a denial, a bound that elapsed) a failed result of kind `approval`.
+  const terminationOutcome = (termination: {
+    code: string;
+    message: string;
+  }) => ({
+    status: (termination.code === BUDGET_EXHAUSTED
+      ? 'budget_exhausted'
+      : 'failed') as ResultStatus,
+    kind: (termination.code === BUDGET_EXHAUSTED
+      ? 'budget'
+      : 'approval') as ResultErrorKind,
+    code: termination.code,
+    message: termination.message,
+    override: true,
+  });
+  const upsertRecord = (record: OrchestratedWorkerRecord): void => {
+    const at = state.records.findIndex(
+      (entry) => entry.agentId === record.agentId,
+    );
+    if (at === -1) state.records.push(record);
+    else state.records[at] = record;
+  };
+  const recordFailure = async (
+    agentId: string,
+    worktree: OrchestrateWorktree | undefined,
+    fallback: {
+      status: ResultStatus;
+      kind: ResultErrorKind;
+      code: string;
+      message: string;
+      // A manager-side termination decided the run's outcome: what the worker
+      // itself reported (provenance, metrics) is kept, but the status and
+      // error say what the run exits on.
+      override?: boolean;
+    },
+  ): Promise<void> => {
+    let result = resultsByAgent.get(agentId);
+    if (result !== undefined && fallback.override === true) {
+      result = {
+        ...result,
+        status: fallback.status,
+        summary: fallback.message,
+        error: {
+          kind: fallback.kind,
+          message: fallback.message,
+          details: { code: fallback.code },
+        },
+      };
+      resultsByAgent.set(agentId, result);
+    }
+    if (result === undefined) {
+      try {
+        result = buildAgentResult({
+          status: fallback.status,
+          summary: fallback.message,
+          provenance: {
+            workerId: agentId,
+            sessionId: workerSessionFor(sessionId, agentId),
+            // No process ever existed for a worker that never launched.
+            pid: null,
+            generation: 0,
+            worktree: worktree?.path ?? NO_WORKTREE,
+            model: UNRESOLVED_MODEL,
+          },
+          metrics: { wallMs: 0, latencyMs: 0 },
+          error: {
+            kind: fallback.kind,
+            message: fallback.message,
+            details: { code: fallback.code },
+          },
+        });
+      } catch (error) {
+        debug(
+          `result: could not build the failure result for '${agentId}': ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+      resultsByAgent.set(agentId, result);
+    }
+    upsertRecord({
+      agentId,
+      branch: worktree?.branch ?? `kubic/${sessionId}/${agentId}`,
+      hunks: [],
+      result,
+    });
+    try {
+      await deps.saveState?.(state);
+    } catch (error) {
+      // Best-effort: the failure already owns the run's exit and envelope;
+      // an unsaved record must not replace it with a save error.
+      debug(
+        `state: failure record for '${agentId}' not saved — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+
   // Reconcile a leftover write-ahead merge intent (issue #76 fix b).
   // A kill between merge success and the post-merge save leaves the
   // branch merged on disk but still pending in state. When the intent
@@ -1607,11 +1761,20 @@ export async function runOrchestrateCommand(
       state = { ...state, merging: undefined };
       return undefined;
     }
+    // The in-flight worker's earlier failure result is not this attempt's
+    // (issue #185): the worktree stage below records its own.
+    resultsByAgent.delete(inFlight);
     let worktree: OrchestrateWorktree;
     try {
       worktree = await deps.ensureWorktree(inFlight, worktreeRequest);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await recordFailure(inFlight, undefined, {
+        status: 'spawn_failed',
+        kind: 'workspace',
+        code: worktreeFailureCode(error),
+        message: `spawn failed for worker '${inFlight}': ${message}`,
+      });
       return fail(
         RUN_EXIT_FAILED,
         worktreeFailureCode(error),
@@ -1631,12 +1794,18 @@ export async function runOrchestrateCommand(
       state = { ...state, merging: undefined };
       return undefined;
     }
-    if (!state.records.some((record) => record.agentId === inFlight)) {
-      state.records.push({
-        agentId: inFlight,
-        branch: worktree.branch,
-        hunks: [],
-      });
+    // A failure record (issue #185) is not a merge record: an earlier failed
+    // attempt of this worker is replaced by the merge record (its result
+    // unknown — the process that produced it died before the save).
+    const existing = state.records.find(
+      (record) => record.agentId === inFlight,
+    );
+    if (
+      existing === undefined ||
+      (existing.result !== undefined && existing.result.status !== 'completed')
+    ) {
+      resultsByAgent.delete(inFlight);
+      upsertRecord({ agentId: inFlight, branch: worktree.branch, hunks: [] });
     }
     state.merged.push(inFlight);
     state.pending = state.pending.filter((entry) => entry !== inFlight);
@@ -1662,6 +1831,11 @@ export async function runOrchestrateCommand(
     if (saveFailure !== undefined) return saveFailure;
   }
   for (const agentId of state.pending) {
+    // This attempt's own result: a failure record kept from an earlier run of
+    // the same session is not this attempt's outcome (issue #185). Cleared
+    // BEFORE any stage can fail — the worktree stage records its own failure
+    // and must not inherit the earlier attempt's result.
+    resultsByAgent.delete(agentId);
     // Resume may already hold this worktree (intent reconciliation
     // resolved it for the isBranchMerged probe) — never ensure twice.
     let worktree = worktrees.get(agentId);
@@ -1672,6 +1846,12 @@ export async function runOrchestrateCommand(
         const message = error instanceof Error ? error.message : String(error);
         const failure = await reapSpawned(spawned);
         void failure;
+        await recordFailure(agentId, undefined, {
+          status: 'spawn_failed',
+          kind: 'workspace',
+          code: worktreeFailureCode(error),
+          message: `spawn failed for worker '${agentId}': ${message}`,
+        });
         return fail(
           RUN_EXIT_FAILED,
           worktreeFailureCode(error),
@@ -1693,6 +1873,12 @@ export async function runOrchestrateCommand(
     if (admission.outcome === 'denied') {
       const failure = await reapSpawned(spawned);
       void failure;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_denied',
+        message: `spawn denied for worker '${agentId}': ${admission.reason}`,
+      });
       return fail(
         RUN_EXIT_FAILED,
         'spawn_denied',
@@ -1745,23 +1931,27 @@ export async function runOrchestrateCommand(
       if (created === undefined) {
         const failure = await reapSpawned(spawned);
         void failure;
-        return fail(
-          RUN_EXIT_FAILED,
-          'spawn_failed',
-          `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`,
-          partial(),
-        );
+        const noHook = `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`;
+        await recordFailure(agentId, worktree, {
+          status: 'spawn_failed',
+          kind: 'process',
+          code: 'spawn_failed',
+          message: noHook,
+        });
+        return fail(RUN_EXIT_FAILED, 'spawn_failed', noHook, partial());
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failure = await reapSpawned(spawned);
       void failure;
-      return fail(
-        RUN_EXIT_FAILED,
-        'spawn_failed',
-        `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`,
-        partial(),
-      );
+      const notCreated = `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_failed',
+        message: notCreated,
+      });
+      return fail(RUN_EXIT_FAILED, 'spawn_failed', notCreated, partial());
     }
     try {
       // The worker runs ITS plan step's prompt (issue #103) — never the
@@ -1797,6 +1987,11 @@ export async function runOrchestrateCommand(
         const termination = raced ?? approvalsRun.takeTermination(agentId);
         if (termination !== undefined) {
           await reapSpawned(spawned);
+          await recordFailure(
+            agentId,
+            worktree,
+            terminationOutcome(termination),
+          );
           return fail(
             termination.exitCode,
             termination.code,
@@ -1816,22 +2011,53 @@ export async function runOrchestrateCommand(
       if (failed !== undefined && validateAgentResult(failed).valid) {
         resultsByAgent.set(agentId, failed as AgentResult);
       }
+      // The manager-side terminus is decided FIRST: when the approvals layer
+      // ended this worker on a named code, the run exits on that code and the
+      // saved result must say the same (issue #185) — not the generic process
+      // failure the child's own report may carry.
+      let termination: WorkerApprovalTermination | undefined;
+      if (approvalsRun !== undefined) {
+        approvalsRun.endWorker(agentId);
+        termination = approvalsRun.takeTermination(agentId);
+      }
+      // The result reaches the SAVED state whichever named terminus below the
+      // run then ends on. When the worker reported none, a result is
+      // synthesized from the failure itself.
+      const failureMessage =
+        error instanceof Error ? error.message : String(error);
+      const failureApproval = (
+        error as { approval?: { code: string; exitCode: number } }
+      ).approval;
+      const failureCode =
+        failureApproval?.code ??
+        (typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : 'worker_failed');
+      await recordFailure(
+        agentId,
+        worktree,
+        termination !== undefined
+          ? terminationOutcome(termination)
+          : {
+              status:
+                failureCode === 'spawn_failed' ? 'spawn_failed' : 'failed',
+              kind: failureApproval === undefined ? 'process' : 'approval',
+              code: failureCode,
+              message: `worker '${agentId}' failed: ${failureMessage}`,
+            },
+      );
       // A worker that exited non-zero because the USER denied it (or because a
       // configured budget ran out) reports the approval layer's named status in
       // the child's own §78 terminus; that code wins over the generic
       // worker_failed so the run's exit stays 3/4-bound instead of 1-bound.
-      if (approvalsRun !== undefined) {
-        approvalsRun.endWorker(agentId);
-        const termination = approvalsRun.takeTermination(agentId);
-        if (termination !== undefined) {
-          await reapSpawned(spawned);
-          return fail(
-            termination.exitCode,
-            termination.code,
-            termination.message,
-            partial(),
-          );
-        }
+      if (termination !== undefined) {
+        await reapSpawned(spawned);
+        return fail(
+          termination.exitCode,
+          termination.code,
+          termination.message,
+          partial(),
+        );
       }
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
@@ -1954,6 +2180,11 @@ export async function runOrchestrateCommand(
     return { outcome: 'delegated' };
   };
 
+  // The `--yes` pointer on a merge-gate refusal exists only where that flag
+  // does (issue #327).
+  const yesHintText =
+    deps.yesHint === false ? '' : ' — rerun with --yes to auto-approve merges';
+
   // Settle FIFO: approve → persist the write-ahead merge intent →
   // pre-merge guard → prove the manager trace write-free → merge →
   // attribute → record. Each merge is atomic per candidate and recorded
@@ -2001,14 +2232,14 @@ export async function runOrchestrateCommand(
         return fail(
           RUN_EXIT_APPROVAL_DENIED,
           APPROVAL_TIMEOUT_CODE,
-          `approval timed out after ${verdict.maxPendingMs}ms for worker '${agentId}': nobody answered the merge gate — rerun with --yes to auto-approve merges`,
+          `approval timed out after ${verdict.maxPendingMs}ms for worker '${agentId}': nobody answered the merge gate${yesHintText}`,
           partial(),
         );
       }
       return fail(
         RUN_EXIT_APPROVAL_DENIED,
         'approval_denied',
-        `approval denied for worker '${agentId}': the decider is the user — rerun with --yes to auto-approve merges`,
+        `approval denied for worker '${agentId}': the decider is the user${yesHintText}`,
         partial(),
       );
     }
@@ -2130,7 +2361,9 @@ export async function runOrchestrateCommand(
     }
     const hunks = hunksByAgent.get(agentId) ?? [];
     const result = resultsByAgent.get(agentId);
-    state.records.push({
+    // An upsert: a resumed retry replaces the failure record kept from the
+    // attempt that failed (issue #185) instead of listing the worker twice.
+    upsertRecord({
       agentId,
       branch: worktree.branch,
       hunks,

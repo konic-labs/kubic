@@ -30,6 +30,28 @@ export interface LaneModelInput {
   fallbackProviders: readonly string[] | undefined;
 }
 
+// Where a selection came from, keyed by the selection OBJECT (issue #295): the
+// named "unknown model/provider" refusal says which input carried the bad pin
+// (`--model`, `KUBIC_MODEL`, a config layer, a role) instead of calling every
+// explicit selection `--model`. The label rides beside the object, never on
+// it, so a selection still compares equal to a plain `{ provider, id }` and
+// the two boots (`kubic run`, `kubic tui`) need no extra dep to carry it; a
+// selection copied on the way loses its label and falls back to selectModel's
+// own wording.
+const selectionOrigins = new WeakMap<object, string>();
+
+export function withSelectionOrigin<T extends ModelSelection>(
+  selection: T,
+  origin: string,
+): T {
+  selectionOrigins.set(selection, origin);
+  return selection;
+}
+
+export function selectionOrigin(selection: ModelSelection): string | undefined {
+  return selectionOrigins.get(selection);
+}
+
 // `[roles.<name>].model` is written as one `provider/id` string; split it
 // with the same rule — and the same named refusal — as `--model`.
 export function roleModelSelection(
@@ -42,7 +64,10 @@ export function roleModelSelection(
       `[roles.<name>].model must be 'provider/id' (got ${JSON.stringify(ref)})`,
     );
   }
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
+  return withSelectionOrigin(
+    { provider: ref.slice(0, slash), id: ref.slice(slash + 1) },
+    'role model',
+  );
 }
 
 export function selectLaneModel(input: LaneModelInput): AnyModel {

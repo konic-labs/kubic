@@ -36,7 +36,12 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
-import { redactSecretValues } from '../../../packages/host/src/config/secrets.js';
+import {
+  matchableSecrets,
+  redactBridgeWrites,
+  redactingSink,
+  redactSecretValues,
+} from '../../../packages/host/src/config/secrets.js';
 import {
   FAUX_MODEL_ID,
   FAUX_NOTICE,
@@ -70,7 +75,9 @@ import {
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
 import {
   type EffectivePolicy,
+  hasModelPolicy,
   hasToolPolicy,
+  isModelAllowed,
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
 import type {
@@ -537,6 +544,10 @@ interface RunCapture {
   entries: unknown[];
   lane?: RunOutcome['lane'];
   interrupted: boolean;
+  // Every provider key the request-time resolver has handed out so far
+  // (issue #359): what the debug channel, the session writes, the result and
+  // the trajectory are scrubbed of. Empty until a models.json key is used.
+  liveSecrets: () => string[];
 }
 
 // kubic run -p (issue #28) plus its §46 trajectory (issue #383): every run
@@ -556,6 +567,7 @@ export async function runHeadlessPrompt(
     skills: [],
     entries: [],
     interrupted: false,
+    liveSecrets: () => [],
   };
   // Issue #148/#308: the live lane model and the approval posture the lane
   // was installed with travel on the result (and so the --json envelope),
@@ -598,6 +610,15 @@ export async function runHeadlessPrompt(
       settled = withPosture;
     }
   }
+  // Issue #359: a provider that echoes the key it rejected puts the value in
+  // the run's own failure text. The result (the --json envelope) and the
+  // trajectory's prompt are scrubbed of every live provider key before either
+  // leaves the run; the session JSONL (which the trajectory's entries are
+  // read back from) is scrubbed at its write bridge.
+  const liveKeys = matchableSecrets(capture.liveSecrets());
+  const scrub = <T>(value: T): T =>
+    liveKeys.length === 0 ? value : (redactSecretValues(value, liveKeys) as T);
+  settled = scrub(settled);
   // kubic run -p plus its §46 trajectory (issue #383): every run that
   // attached a session writes <sessions-root>/<id>/trajectory.json when it
   // settles — completed or not — and the result's trajectory ref names that
@@ -612,7 +633,7 @@ export async function runHeadlessPrompt(
       sessionId: capture.sessionId,
       agentId: deps.agentId ?? 'root',
       role: capture.role ?? 'solo',
-      prompt,
+      prompt: scrub(prompt),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
       cwd: capture.cwd ?? deps.env?.cwd ?? process.cwd(),
@@ -733,7 +754,6 @@ async function runHeadlessPromptImpl(
   // Issue #359: every resolved provider key is redacted from the debug
   // channel — the values are known only once the resolver has run, so the
   // redaction reads them at emit time.
-  let liveSecrets: () => string[] = () => [];
   const rawDebug: ((line: string) => void) | undefined =
     deps.debug ??
     (debugSink === undefined
@@ -743,8 +763,7 @@ async function runHeadlessPromptImpl(
   const debug: ((line: string) => void) | undefined =
     rawDebug === undefined
       ? undefined
-      : (line: string) =>
-          rawDebug(String(redactSecretValues(line, liveSecrets())));
+      : redactingSink(rawDebug, () => capture.liveSecrets());
   // Extension startup (issue #93): the solo lane loads the first-party
   // bundle set through the trust gates BEFORE any store or lane exists — a
   // missing/refused bundle fails this run closed (ExtensionStartupError maps
@@ -770,7 +789,13 @@ async function runHeadlessPromptImpl(
   // (run-only) trace behind.
   const spans = new RunSpans(Date.now, debugSink);
   const runSpan = spans.startRun();
-  const bridge = createNodeFileBridge(root);
+  // Every session write goes through the one bridge, so it is the choke
+  // point for scrubbing the live provider keys out of the session JSONL and
+  // the span artifact (issue #359): a provider echoing a rejected key in its
+  // error body must not persist it.
+  const bridge = redactBridgeWrites(createNodeFileBridge(root), () =>
+    capture.liveSecrets(),
+  );
   const store = openSessionStore(root, bridge);
   let session: Session;
   try {
@@ -920,6 +945,13 @@ async function runHeadlessPromptImpl(
         ? (tool: string): boolean =>
             isToolAllowedByEnterprise(enterprisePolicy, tool)
         : undefined;
+    // The stored model of a resumed session is gated too (issue #288): the
+    // selection is checked at boot, the stored one only by this closure.
+    const modelGate =
+      enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
+        ? (provider: string, modelId: string): boolean =>
+            isModelAllowed(enterprisePolicy, provider, modelId)
+        : undefined;
     if (options.role !== undefined) {
       const rolesBridge = createNodeFileBridge(
         deps.roles?.cwd ?? process.cwd(),
@@ -973,6 +1005,7 @@ async function runHeadlessPromptImpl(
       // resolved per request and each use lands in the §60 ledger of the
       // run's workspace — a worker's under its own worktree root.
       const worker = process.env.KUBIC_WORKER_ID;
+      let identityWords: string[] | undefined;
       const keyResolver = createLedgerModelKeyResolver({
         workspace: deps.env?.cwd ?? process.cwd(),
         role:
@@ -982,8 +1015,19 @@ async function runHeadlessPromptImpl(
         mode: worker === undefined || worker === '' ? 'solo' : 'orchestrator',
         onError: (message) =>
           debug?.(`[session] credential use not audited: ${message}`),
+        // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
+        // is identity, not a secret (issue #359): the catalog's provider and
+        // model ids are read once assembled — a line emitted before that
+        // (the models receipts) has nothing to exempt yet.
+        identity: () => {
+          if (identityWords !== undefined) return identityWords;
+          const catalog = models as MutableModels | undefined;
+          if (catalog === undefined) return [];
+          identityWords = catalogIdentity(catalog);
+          return identityWords;
+        },
       });
-      liveSecrets = keyResolver.live;
+      capture.liveSecrets = keyResolver.live;
       // Worker role credentials (issue #200; §36.3): when this process IS an
       // orchestrator worker, its provider key travelled as a
       // KUBIC_ROLE_<role>_* grant. The models assembly reads the grant back
@@ -1119,6 +1163,12 @@ async function runHeadlessPromptImpl(
               debug?.(`audit: ledger append failed: ${message}`),
           })
         : undefined;
+    // The `provider/id` the §60 rows name (issue #148): seeded with the
+    // selection and re-pointed at the model the lane REPORTS once the boot
+    // has applied the stored-model rule — the policy is installed before the
+    // lane exists, so it reads this at record time instead of freezing the
+    // pre-boot pick.
+    let liveModelRef = `${model.provider}/${model.id}`;
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -1136,7 +1186,7 @@ async function runHeadlessPromptImpl(
         sessionsRoot: root,
         // §60 audit identity for the ledger record of each resolved ask.
         sessionId: id,
-        model: `${model.provider}/${model.id}`,
+        model: () => liveModelRef,
         // Per-worker approvals (issue #105): an orchestrator-managed child
         // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
         // seat, so a challenged call it cannot answer itself reaches the USER
@@ -1332,6 +1382,7 @@ async function runHeadlessPromptImpl(
           // §58 enterprise tool gate (issue #288): the same predicate drives
           // the active tool set and the prompt tools line.
           ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
+          ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
         },
       });
     } catch (error) {
@@ -1348,6 +1399,14 @@ async function runHeadlessPromptImpl(
       throw error;
     }
     const { harness, lane } = solo;
+    // The boot reconciled the selection with the session's stored model
+    // (issue #148): the trajectory and the audit rows name what the lane
+    // reports, the same source as the envelope and the usage rows.
+    const running = await liveModel(solo, context);
+    if (running !== undefined) {
+      capture.model = { provider: running.provider, id: running.id };
+      liveModelRef = `${running.provider}/${running.id}`;
+    }
     report.model = await liveModelId(solo, context);
     // Tool spans come from the harness's own hook registry, so they cover
     // every tool the lane actually executes (issue #98). Detached in the
@@ -1596,18 +1655,37 @@ async function runHeadlessPromptImpl(
   }
 }
 
+// The provider ids and model ids a run names (issue #359): the words a live
+// key value must not be scrubbed out of. Empty before the catalog exists.
+function catalogIdentity(models: MutableModels | undefined): string[] {
+  if (models === undefined) return [];
+  return models
+    .getProviders()
+    .flatMap((provider) => [
+      provider.id,
+      ...models.getModels(provider.id).map((model) => model.id),
+    ]);
+}
+
 // The `provider/id` the lane actually runs (issue #148): the live lane
 // model, else the boot's effective model. Tolerant of stub lanes (unit
 // boots without getModel/model), which report nothing rather than fail.
-async function liveModelId(
+async function liveModel(
   solo: SoloLane,
   context: Context,
-): Promise<string | undefined> {
+): Promise<{ provider: string; id: string } | undefined> {
   const live =
     typeof solo.lane.getModel === 'function'
       ? await solo.lane.getModel(context)
       : undefined;
-  const running = live ?? (solo.model as SoloLane['model'] | undefined);
+  return live ?? (solo.model as SoloLane['model'] | undefined);
+}
+
+async function liveModelId(
+  solo: SoloLane,
+  context: Context,
+): Promise<string | undefined> {
+  const running = await liveModel(solo, context);
   return running === undefined
     ? undefined
     : `${running.provider}/${running.id}`;

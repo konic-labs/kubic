@@ -107,6 +107,7 @@ import { workersListFromRepo } from '../../../packages/worker/src/lifecycle/rows
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   approvalSnapshotFrom,
+  type CliConfigResult,
   doctorConfigProbe,
   doctorPolicyLoader,
   installedPolicyClasses,
@@ -115,7 +116,9 @@ import {
   projectTrustFor,
   runtimeApprovalDeps,
   runtimeLaneDeps,
+  runtimeModelFrozen,
   runtimeModelPin,
+  runtimeModelPinNotes,
   runtimePolicy,
   runtimeRunDeps,
   sessionRetentionDays,
@@ -125,11 +128,15 @@ import {
   extensionPostureForDoctor,
   loadExtensionStartup,
 } from './extension-startup.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { orchestrateDepsWithDefaults } from './orchestrate-run.js';
 import { runProdReplay } from './replay-run.js';
 import { resolveSessionTrajectory } from './run-trajectory.js';
-import { runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
+import {
+  runTuiCommand,
+  type TuiDepsInput,
+  tuiDepsWithDefaults,
+} from './tui-run.js';
 
 // The two channels the root wired: `kubic` output on stdout, diagnostics
 // (workers/orchestrate debug lines, the TUI extension receipt) on stderr.
@@ -220,6 +227,96 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
   return { theme, fancy: mode.fancy };
 }
 
+// The lane deps `kubic run` boots the headless runner with: every config
+// projection the solo lane consumes, from the ONE config load. Exported so
+// the wiring is tested through the same builder the runner calls — a test
+// that hand-spreads these keys stays green when the production spread is
+// dropped (the defect class of issues #288/#294).
+export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
+  const enterprisePolicy = runtimePolicy(cliConfig);
+  return {
+    model: runtimeModelPin(cliConfig),
+    // §58 enterprise policy (issue #288): the model gate, the role grant
+    // check and the lane tool intersection all read this one resolved
+    // object.
+    ...(enterprisePolicy === undefined
+      ? {}
+      : { modelPolicy: enterprisePolicy }),
+    ...runtimeRunDeps(cliConfig),
+    // Issue #228 review: one per-path check gates the project models.json
+    // and each ancestor skill root on the tree the files live in — never a
+    // cwd boolean applied to ancestors.
+    trustProject: projectTrustFor(cliConfig),
+    // Issue #133: the shared lane projections — the configured agent id
+    // (journal attribution, `kubic diff --agent`) and the config-sourced
+    // role layers `--role` merges under the document.
+    ...runtimeLaneDeps(cliConfig),
+  };
+}
+
+// The deps `kubic tui` (and the bare interactive `kubic`) hands
+// `tuiDepsWithDefaults`: the SAME projections `prodRunDeps` threads, from the
+// same config load, plus the interactive-only ones (`[modes]`, the
+// orchestrator manager lane). Exported for the same reason as `prodRunDeps`.
+export function prodTuiDeps(
+  io: ProdRunnerIo,
+  cliConfig: CliConfigResult,
+): TuiDepsInput {
+  const enterprisePolicy = runtimePolicy(cliConfig);
+  return {
+    out: io.out,
+    // `error:` lines (unknown session, no models) are diagnostics.
+    err: io.debug,
+    // Same policy install as `kubic run` (issue #86; #90 classes): the TUI
+    // drives the same solo lane, so a config that names classes must reach
+    // it here too.
+    ...installedPolicyClasses(cliConfig),
+    policySource: installedPolicyDeps(cliConfig).source,
+    // Issue #230: the config `[approvals]` policy, same as `kubic run`.
+    approvals: runtimeApprovalDeps(cliConfig),
+    // Issue #113 (§42.4): the same journal retention projection `kubic run`
+    // threads — a TUI session's journal age-prunes under config.
+    journalRetention: runtimeRunDeps(cliConfig).journalRetention,
+    // Issue #115 (§35/§42.5): the same out-of-scope projection — the
+    // interactive lane's baseline and sweep exclude what `kubic run`
+    // excludes.
+    reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
+    // Issue #295 with #227 (§38.1): the SAME model projection `kubic run`
+    // consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`) included.
+    // Without it the TUI ignored those pins and ran the first registered
+    // provider.
+    model: runtimeModelPin(cliConfig),
+    // §58 enterprise policy (issue #288): the interactive lane gates role
+    // grants, model selection and its tool set identically.
+    ...(enterprisePolicy === undefined
+      ? {}
+      : { modelPolicy: enterprisePolicy }),
+    // §35.1 (issue #295): a frozen enterprise `[model]` also binds `/model`.
+    ...(runtimeModelFrozen(cliConfig) ? { modelPinFrozen: true } : {}),
+    // Issue #327: the config `[modes]` default — `orchestrator = true` starts
+    // bare `kubic` and `kubic tui` in orchestrator mode (the --orchestrator
+    // flag still wins), so the documented key selects something instead of
+    // being parsed and ignored.
+    modes: cliConfig.runtime?.modes,
+    // Issue #327: the manager-lane projections the interactive orchestrator
+    // drive consumes — the same `[orchestrator]` worktree/cap values and the
+    // same approval snapshot the CLI orchestrate runner threads (never a
+    // second policy).
+    ...(cliConfig.runtime === undefined
+      ? {}
+      : {
+          orchestratorRuntime: cliConfig.runtime.orchestrator,
+          approvalPolicy: approvalSnapshotFrom(cliConfig.runtime),
+        }),
+    // Issue #228 review: the same per-path check gates the project models.json
+    // and each ancestor skill root on the interactive lane.
+    trustProject: projectTrustFor(cliConfig),
+    // Issue #133: the SAME lane projections `kubic run` consumes — the
+    // interactive lane names itself and layers `--role` identically.
+    ...runtimeLaneDeps(cliConfig),
+  };
+}
+
 export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
   const { out, debug } = io;
   // The analysis handlers' channels: the report on stdout, diagnostics on
@@ -240,6 +337,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         colorEnabled: theme.enabled,
       }).fancy,
     };
+  };
+  // §35.1 (issue #295): a frozen enterprise `[model]` drops a cli/env pin; the
+  // boot of every agent-running command says so once, on stderr — never on
+  // stdout, so a `--json` envelope stays exactly one document.
+  const noteOverriddenModelPins = (cliConfig: CliConfigResult): void => {
+    for (const line of runtimeModelPinNotes(cliConfig)) debug(line);
   };
   return {
     sessions: (invocation, cliConfig) => {
@@ -315,32 +418,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         cwd: process.cwd(),
       }),
     run: (options, cliConfig) => {
-      const enterprisePolicy = runtimePolicy(cliConfig);
+      noteOverriddenModelPins(cliConfig);
       return runRunCommand(options, {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
-          runHeadlessPrompt(prompt, options, {
-            model: runtimeModelPin(cliConfig),
-            // §58 enterprise policy (issue #288): the model gate, the role
-            // grant check and the lane tool intersection all read this one
-            // resolved object.
-            ...(enterprisePolicy === undefined
-              ? {}
-              : { modelPolicy: enterprisePolicy }),
-            ...runtimeRunDeps(cliConfig),
-            // Issue #228 review: one per-path check gates the project
-            // models.json and each ancestor skill root on the tree the
-            // files live in — never a cwd boolean applied to ancestors.
-            trustProject: projectTrustFor(cliConfig),
-            // Issue #133: the shared lane projections — the configured agent
-            // id (journal attribution, `kubic diff --agent`) and the
-            // config-sourced role layers `--role` merges under the document.
-            ...runtimeLaneDeps(cliConfig),
-          }),
+          runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
       });
     },
     tui: async (options, cliConfig) => {
-      const enterprisePolicy = runtimePolicy(cliConfig);
+      noteOverriddenModelPins(cliConfig);
       // Extension startup (issue #93): the TUI lane loads the first-party
       // bundle set at dispatch, through the same gates — a degraded load
       // throws here (named ExtensionStartupError) instead of opening the
@@ -350,59 +436,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       });
       return runTuiCommand(
         options,
-        tuiDepsWithDefaults({
-          out,
-          // `error:` lines (unknown session, no models) are diagnostics.
-          err: debug,
-          // Same policy install as `kubic run` (issue #86; #90 classes): the
-          // TUI drives the same solo lane, so a config that names classes
-          // must reach it here too.
-          ...installedPolicyClasses(cliConfig),
-          policySource: installedPolicyDeps(cliConfig).source,
-          // Issue #230: the config `[approvals]` policy, same as `kubic run`.
-          approvals: runtimeApprovalDeps(cliConfig),
-          // Issue #113 (§42.4): the same journal retention projection `kubic
-          // run` threads — a TUI session's journal age-prunes under config.
-          journalRetention: runtimeRunDeps(cliConfig).journalRetention,
-          // Issue #115 (§35/§42.5): the same out-of-scope projection — the
-          // interactive lane's baseline and sweep exclude what `kubic run`
-          // excludes.
-          reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
-          // Issue #295 with #227 (§38.1): the SAME model projection `kubic
-          // run` consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`)
-          // included. Without it the TUI ignored those pins and ran the first
-          // registered provider.
-          model: runtimeModelPin(cliConfig),
-          // §58 enterprise policy (issue #288): the interactive lane gates
-          // role grants, model selection and its tool set identically.
-          ...(enterprisePolicy === undefined
-            ? {}
-            : { modelPolicy: enterprisePolicy }),
-          // Issue #327: the config `[modes]` default — `orchestrator = true`
-          // starts bare `kubic` and `kubic tui` in orchestrator mode (the
-          // --orchestrator flag still wins), so the documented key selects
-          // something instead of being parsed and ignored.
-          modes: cliConfig.runtime?.modes,
-          // Issue #327: the manager-lane projections the interactive
-          // orchestrator drive consumes — the same `[orchestrator]`
-          // worktree/cap values and the same approval snapshot the CLI
-          // orchestrate runner threads (never a second policy).
-          ...(cliConfig.runtime === undefined
-            ? {}
-            : {
-                orchestratorRuntime: cliConfig.runtime.orchestrator,
-                approvalPolicy: approvalSnapshotFrom(cliConfig.runtime),
-              }),
-          // Issue #228 review: the same per-path check gates the project
-          // models.json and each ancestor skill root on the interactive lane.
-          trustProject: projectTrustFor(cliConfig),
-          // Issue #133: the SAME lane projections `kubic run` consumes — the
-          // interactive lane names itself and layers `--role` identically.
-          ...runtimeLaneDeps(cliConfig),
-        }),
+        tuiDepsWithDefaults(prodTuiDeps({ out, debug }, cliConfig)),
       );
     },
     doctor: async (options, cliConfig) => {
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
       // Default probes are faux-only: providers are listed (never dialed),
       // deps check the live node runtime, policy falls back to host
       // defaults until config-sourced policy lands.
@@ -451,6 +490,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           bridge: createNodeFileBridge(cwd),
           cwd,
           agents: ORCHESTRATE_DEFAULT_AGENTS,
+          // The same enterprise role gate the orchestrate run applies, so the
+          // posture describes the assignments that run would actually make.
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { toolPolicy: enterprisePolicy }),
+          ...(roleLayers === undefined ? {} : { layers: roleLayers }),
         });
         const requests: WorkerCredentialRequest[] = plan.assignments.map(
           (assignment) => ({
@@ -466,6 +511,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             keyEnv: assembled.keyEnv,
             env: process.env,
             resolution: {
+              // A frozen enterprise `[model]` drops KUBIC_MODEL and the role
+              // defaults in every worker: the pin below decides (issue #295).
+              ...(runtimeModelFrozen(cliConfig) ? { modelFrozen: true } : {}),
               ...(process.env.KUBIC_MODEL === undefined ||
               process.env.KUBIC_MODEL === ''
                 ? {}
@@ -541,6 +589,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           rolesDoctorProbe({
             cwd: process.cwd(),
             bridge: createNodeFileBridge(process.cwd()),
+            // §58 (issue #288): a role declaring an enterprise-denied tool is
+            // refused by `kubic run --role`, so it is red here too.
+            ...(enterprisePolicy === undefined
+              ? {}
+              : { toolPolicy: enterprisePolicy }),
+            // The config `[roles.<name>]` layers `kubic run --role` merges
+            // under each document: a role is judged as it would run.
+            ...(roleLayers === undefined ? {} : { layers: roleLayers }),
           }),
         // Repo-level session overlap (issue #118): warning only — the check
         // reports warn (never exit-flipping) when 2+ sessions are recorded
@@ -558,7 +614,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // the run so a delegated conflict resolver is spawned under exactly
       // the policy the manager holds — the same config load this process
       // already consumed, never a second default.
+      noteOverriddenModelPins(cliConfig);
       const modelPin = runtimeModelPin(cliConfig);
+      const enterprisePolicy = runtimePolicy(cliConfig);
+      const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
       return runOrchestrateCommand(
         options,
         await orchestrateDepsWithDefaults({
@@ -576,11 +635,21 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(cliConfig.runtime === undefined
             ? {}
             : { approvalPolicy: approvalSnapshotFrom(cliConfig.runtime) }),
-          // Issue #228 (§35.1): a store-granted decision must reach every
-          // worker child; the child's worktree path is not the key the
-          // manager's decision is recorded under, so the child inherits the
-          // env opt-in exactly as it does when the operator exported it.
-          trustProjectEnv: cliConfig.trust.trusted,
+          // §58 enterprise policy (issue #288): the manager refuses an
+          // assignment whose role declares a denied tool, up front.
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { toolPolicy: enterprisePolicy }),
+          // A frozen enterprise `[model]` binds every worker (issue #295).
+          ...(runtimeModelFrozen(cliConfig) ? { modelPinFrozen: true } : {}),
+          // The config `[roles.<name>]` layers: the manager judges each
+          // assigned role as the worker's own `kubic run --role` resolves it.
+          ...(roleLayers === undefined ? {} : { roleLayers }),
+          // Issue #228 (§35.1): the per-ROOT trust check — a store grant is
+          // keyed to one exact directory, so the run evaluates it for the
+          // models root it loads (never the launch cwd) and only a trusted
+          // root's decision reaches the worker children as the env opt-in.
+          projectTrust: projectTrustFor(cliConfig),
           // Issue #133: the runtime `[orchestrator]` projection (worktree
           // parent + worker cap, validated at load) — the same values the
           // dispatch shipped to the repo's exclude rules above.
@@ -715,6 +784,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...report(),
       }),
     replay: (options, cliConfig) => {
+      const enterprisePolicy = runtimePolicy(cliConfig);
       // `--session <id>` (issue #383): the session's own trajectory file.
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
@@ -731,9 +801,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         // like `kubic run` — same runtime projections, same lane policy.
         // Issue #228 review: and the same per-path trust check, so the
         // assembled catalog gates the project models.json on its own root.
+        // §58 enterprise policy (issue #288): and the same model/tool/role
+        // gates — a live re-execution is not an ungated lane.
         {
           ...runtimeRunDeps(cliConfig),
           trustProject: projectTrustFor(cliConfig),
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { modelPolicy: enterprisePolicy }),
         },
       );
     },

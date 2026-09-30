@@ -351,6 +351,77 @@ describe('runtime config load (issue #90)', () => {
     expect(tail({}, { agent })).toBe('a');
   });
 
+  it('reports the cli/env model pins a frozen enterprise pin overrode (issue #295)', () => {
+    const base = {
+      bridge: fakeBridge({
+        '/etc/kubic/config.toml': '[model]\nprovider = "ent"\nid = "m"\n',
+      }),
+      home: HOME,
+      cwd: CWD,
+      projectTrusted: true,
+    };
+    // The flag alone: named by its flag spelling, in both the structured
+    // field and the attempts `kubic config` prints.
+    const cli = loadRuntimeConfig({
+      ...base,
+      cli: { model: { provider: 'cli', id: 'x' } },
+    });
+    expect(cli.model).toEqual({ provider: 'ent', id: 'm' });
+    expect(cli.modelPinOverrides).toEqual([
+      { source: 'cli', requested: 'cli/x', pinned: 'ent/m' },
+    ]);
+    expect(cli.overriddenAttempts).toEqual([
+      "model: --model 'cli/x' rejected: enterprise pin 'ent/m' holds",
+    ]);
+    // The env pin alone: named by its variable.
+    const env = loadRuntimeConfig({
+      ...base,
+      env: { [RUNTIME_ENV_OVERRIDES.model]: 'e/y' },
+    });
+    expect(env.modelPinOverrides).toEqual([
+      { source: 'env', requested: 'e/y', pinned: 'ent/m' },
+    ]);
+    expect(env.overriddenAttempts).toEqual([
+      "model: KUBIC_MODEL 'e/y' rejected: enterprise pin 'ent/m' holds",
+    ]);
+    // Both, flag first (the precedence order they would have applied in).
+    const both = loadRuntimeConfig({
+      ...base,
+      cli: { model: { provider: 'cli', id: 'x' } },
+      env: { [RUNTIME_ENV_OVERRIDES.model]: 'e/y' },
+    });
+    expect(both.modelPinOverrides.map((entry) => entry.source)).toEqual([
+      'cli',
+      'env',
+    ]);
+    // A pin equal to the enterprise one overrode nothing.
+    expect(
+      loadRuntimeConfig({
+        ...base,
+        cli: { model: { provider: 'ent', id: 'm' } },
+        env: { [RUNTIME_ENV_OVERRIDES.model]: 'ent/m' },
+      }).modelPinOverrides,
+    ).toEqual([]);
+    // No cli/env pin: nothing to report.
+    expect(loadRuntimeConfig(base).modelPinOverrides).toEqual([]);
+    expect(loadRuntimeConfig(base).overriddenAttempts).toEqual([]);
+    // No freeze (a non-enterprise layer set the pin): the flag simply wins.
+    const free = loadRuntimeConfig({
+      bridge: fakeBridge({ [GLOBAL]: '[model]\nprovider = "g"\nid = "m"\n' }),
+      home: HOME,
+      cwd: CWD,
+      enterprisePath: '/nonexistent/config.toml',
+      projectTrusted: true,
+      // The env pin under the flag is the ordinary precedence order, not an
+      // enterprise override: nothing is reported without a freeze.
+      env: { [RUNTIME_ENV_OVERRIDES.model]: 'e/y' },
+      cli: { model: { provider: 'cli', id: 'x' } },
+    });
+    expect(free.model?.provider).toBe('cli');
+    expect(free.modelPinOverrides).toEqual([]);
+    expect(free.overriddenAttempts).toEqual([]);
+  });
+
   it('reports the override attempts it refused to apply', () => {
     const runtime = load(
       {

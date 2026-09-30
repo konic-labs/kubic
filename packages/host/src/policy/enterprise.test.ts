@@ -5,6 +5,7 @@ import {
   assertToolGrantable,
   isNetworkAllowed,
   isToolAllowed,
+  isToolAllowedByEnterprise,
   POLICY_LAYERS,
   PolicyDeniedError,
   PolicyError,
@@ -207,6 +208,31 @@ describe('enterprise precedence', () => {
     ).toThrow(PolicyDeniedError);
     expect(() =>
       assertToolGrantable(policy, 'bash', { layer: 'agent', model: 'evil' }),
+    ).toThrow(PolicyDeniedError);
+  });
+
+  it('a grant follows the lane gate: a deny-only policy grants what it does not deny (issue #288)', () => {
+    const { policy } = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]);
+    // No allow list: the enterprise layer says nothing about `grep`, so the
+    // grant path agrees with the lane's own gate instead of refusing it.
+    expect(isToolAllowedByEnterprise(policy, 'grep')).toBe(true);
+    expect(() =>
+      assertToolGrantable(policy, 'grep', { layer: 'agent', role: 'reviewer' }),
+    ).not.toThrow();
+    expect(() =>
+      assertToolGrantable(policy, 'bash', { layer: 'agent', role: 'reviewer' }),
+    ).toThrow(/role 'reviewer'.*enterprise denial holds/);
+    // With an allow list, an unlisted tool is still refused.
+    const allowed = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { allow: ['read'] } } },
+    ]).policy;
+    expect(() =>
+      assertToolGrantable(allowed, 'read', { layer: 'agent' }),
+    ).not.toThrow();
+    expect(() =>
+      assertToolGrantable(allowed, 'grep', { layer: 'agent' }),
     ).toThrow(PolicyDeniedError);
   });
 

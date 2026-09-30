@@ -12,6 +12,7 @@
 // through the assertManagerZeroWrites gate in orchestrate-cli.ts.
 
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
@@ -33,6 +34,7 @@ import { buildOrchestratorWorktreeNotice } from '../../../packages/host/src/limi
 import {
   type AssembledModels,
   assembleModels,
+  modelsProjectRootFor,
 } from '../../../packages/host/src/models-cli.js';
 import type {
   MergeApprovalVerdict,
@@ -74,6 +76,7 @@ import type {
   ResolverRequest,
 } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { hashApprovalPolicy } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
+import { sanitizeReasonField } from '../../../packages/host/src/orchestrator/parallel/limits.js';
 import { ParallelScheduler } from '../../../packages/host/src/orchestrator/parallel/scheduler.js';
 import type { ParallelTrajectoryEvent } from '../../../packages/host/src/orchestrator/parallel/visibility.js';
 import { addWorktree } from '../../../packages/host/src/orchestrator/worktree/add.js';
@@ -89,9 +92,12 @@ import {
 import { getWorktreeStatus } from '../../../packages/host/src/orchestrator/worktree/status.js';
 import {
   appendToLedger,
-  auditLedgerDir,
+  auditLedgerDirFor,
   mergeDecisionAudit,
+  resolveRepoRuntimeRoot,
 } from '../../../packages/host/src/policy/audit-ledger.js';
+import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
@@ -183,6 +189,20 @@ export interface OrchestrateRunOptions {
    */
   approvalPolicy?: ApprovalSnapshot;
   /**
+   * The §58 enterprise policy (issue #288), the same resolved object `kubic
+   * run` gates with. The manager judges each ASSIGNED role's declared tools
+   * against it and refuses the run (`role_refused`, before any worktree or
+   * process) for the assignment a worker's own `kubic run --role` would
+   * refuse. Absent means no enterprise tool policy is applied.
+   */
+  toolPolicy?: EffectivePolicy;
+  /**
+   * The config `[roles.<name>]` layers (issue #133) `kubic run --role` merges
+   * under each role document, so the manager's role plan resolves an assigned
+   * role exactly as its worker will. Absent means the documents alone.
+   */
+  roleLayers?: RoleLayerInput[];
+  /**
    * Where the §49.1 parallel trajectory records go (issue #106). Absent
    * defaults to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl`
    * (appended, best-effort — telemetry never fails a run).
@@ -193,6 +213,20 @@ export interface OrchestrateRunOptions {
    *  bound, which is what a non-interactive run keeps. */
   approvalsSeat?: WorkerAskSeat;
   /**
+   * The merge gate's decider (issue #327). A caller that OWNS the terminal —
+   * the TUI, whose alt-screen and raw stdin a readline would corrupt —
+   * supplies its own seat here, and it is used verbatim: the stdio readline
+   * below never runs when this is set. Absent keeps the shipped behaviour
+   * (a TTY is asked per merge, a headless run denies closed).
+   */
+  mergeApproval?: OrchestrateCommandDeps['requestApproval'];
+  /**
+   * Whether a merge-gate refusal tells the operator to rerun with `--yes`
+   * (default true). The TUI has no such flag — its merge asks go through the
+   * approval overlay — so it passes false (issue #327).
+   */
+  yesHint?: boolean;
+  /**
    * The runtime `[orchestrator]` projection (issue #133), validated at
    * config load: `root` is the worktree parent the spawned set lives under
    * (`.kubic/wt` when absent) and `maxWorkers` is the admission cap the run
@@ -201,13 +235,17 @@ export interface OrchestrateRunOptions {
    */
   orchestrator?: RuntimeOrchestrator;
   /**
-   * Issue #228 (§35.1): the manager's trust decision, propagated to every
-   * spawned child as the `KUBIC_TRUST_PROJECT=1` env opt-in unless the
-   * operator exported it already — the child's worktree path is not the key
-   * the manager's decision is recorded under, so the child must be told
-   * exactly as it was before this store existed.
+   * Issue #228 (§35.1): the PER-ROOT project-trust check (the store's
+   * decision for an exact directory plus the env opt-in — `projectTrustFor`).
+   * It is evaluated for the models root the run actually loads
+   * (`/repo/models.json` from `/repo/pkg`), never for the launch cwd: a grant
+   * for `/repo/pkg` does not reach `/repo`. The manager loads the project
+   * models.json only when that root is trusted, and only then are the
+   * children handed the `KUBIC_TRUST_PROJECT=1` env opt-in (their worktree
+   * path is not the key the decision is recorded under). Absent leaves the
+   * env opt-in alone: nothing is granted on the store's behalf.
    */
-  trustProjectEnv?: boolean;
+  projectTrust?: (path: string) => boolean;
   /**
    * The process-signal seam the live-worker guard hangs off. Prod uses the
    * real process (SIGINT/SIGTERM/SIGHUP + 'exit'); tests inject a fake so
@@ -220,6 +258,14 @@ export interface OrchestrateRunOptions {
    * model, so it decides which provider's key the worker is granted.
    */
   model?: { provider: string; id: string };
+  /**
+   * A frozen enterprise `[model]` is the manager's effective pin (issue #295;
+   * §35.1): every worker child runs the enterprise model whatever `KUBIC_MODEL`
+   * says, so the manager injects no role-default pin (the child would drop it
+   * and print a misleading "ignored" note), strips the operator's from the
+   * child env, and resolves the credential preflight from `model` alone.
+   */
+  modelPinFrozen?: boolean;
   /**
    * The manager's assembled models (issue #200): the provider key-env index
    * and the first usable provider the workers fall back to. Tests inject;
@@ -566,15 +612,15 @@ export function workerResultFromRun(
   const report = childReportOf(done.stdout);
   if (report === undefined)
     return invalid(
-      `the last output line is not a JSON report object: ${last.slice(0, 120)}`,
+      `the last output line is not a JSON report object: ${drawableText(last).slice(0, 120)}`,
     );
   if (report.ok !== true || report.status !== 'completed')
     return invalid(
-      `the report is not a completed run (status ${String(report.status)})`,
+      `the report is not a completed run (status ${drawableText(String(report.status))})`,
     );
   if (report.sessionId !== workerSession)
     return invalid(
-      `the report names session '${String(report.sessionId)}', not '${workerSession}'`,
+      `the report names session '${drawableText(String(report.sessionId))}', not '${workerSession}'`,
     );
   const summary = report.result?.summary;
   if (typeof summary !== 'string' || summary.trim().length === 0)
@@ -654,6 +700,16 @@ export function wallClockBudgetMessage(
   return `worker '${agentId}' exceeded maxRuntimeMs=${maxRuntimeMs}: budget ${BUDGET_EXHAUSTED} (limit=wallClock), exit ${RUN_EXIT_BUDGET}`;
 }
 
+// A child's own words are untrusted: this text reaches the operator's
+// terminal (`error:` lines) and the stored failure result. Line breaks become
+// spaces so a multi-line stderr stays one readable line; then ESC / CR / C0 /
+// DEL / C1 / bidi controls are stripped (the strip set the scheduler's
+// reasons and the worker summary line use), BEFORE the length cap so the cap
+// counts what is drawn.
+function drawableText(text: string): string {
+  return sanitizeReasonField(text.replace(/\r?\n/g, ' '));
+}
+
 function workerRunError(
   agentId: string,
   done: { exitCode: number; stdout: string; stderr: string },
@@ -683,7 +739,7 @@ function workerRunError(
   const suffix = failure === undefined ? '' : ` [${failure.code}]`;
   return new WorkerRunFailure(
     'worker_failed',
-    `worker run exited ${done.exitCode}: ${detail.slice(0, 300)}${suffix}`,
+    `worker run exited ${done.exitCode}: ${drawableText(detail).slice(0, 300)}${suffix}`,
     approval,
   );
 }
@@ -938,14 +994,21 @@ export async function orchestrateDepsWithDefaults(
     return root === undefined ? {} : { KUBIC_MODELS_ROOT: root };
   };
 
-  // Issue #228: the manager's trust decision travels to the children as the
-  // same env opt-in the operator would export. A child runs in its own
-  // worktree, whose path is not the key the manager's decision is recorded
+  // Issue #228: the decision for the models root the run loads travels to the
+  // children as the same env opt-in the operator would export. A child runs
+  // in its own worktree, whose path is not the key the decision is recorded
   // under — without this, a committed `.kubic/config.toml` (which IS in the
   // worktree) would refuse every worker while the manager loads trusted.
+  // The opt-in follows THAT root's decision only: the launch cwd's decision
+  // (`/repo/pkg`) never stands in for the root's (`/repo`), or a grant for a
+  // subdirectory would let every worker load an untrusted repo-root
+  // models.json and hand it the operator's key.
+  const modelsRootTrusted =
+    options.projectTrust?.(
+      modelsProjectRootFor(root ?? cwd, process.env, homedir()),
+    ) === true;
   const trustEnv = (): Record<string, string> =>
-    options.trustProjectEnv === true &&
-    process.env.KUBIC_TRUST_PROJECT === undefined
+    modelsRootTrusted && process.env.KUBIC_TRUST_PROJECT === undefined
       ? { KUBIC_TRUST_PROJECT: '1' }
       : {};
 
@@ -1169,6 +1232,8 @@ export async function orchestrateDepsWithDefaults(
   // type-annotated `async` arrow directly inside a conditional
   // (`cond ? async (input: { … }) => … : undefined`).
   const mergeApprovalSeat = ((): OrchestrateCommandDeps['requestApproval'] => {
+    // An embedder that owns the terminal decides for itself (issue #327).
+    if (options.mergeApproval !== undefined) return options.mergeApproval;
     if (process.stdin.isTTY !== true || approvalSnapshot === undefined) {
       return undefined;
     }
@@ -1190,8 +1255,22 @@ export async function orchestrateDepsWithDefaults(
   // memoized lookup, so what the preflight approves is exactly what a launch
   // delivers. Values never leave this closure except through the role grant
   // (redacted on every log surface by key provenance).
+  //
+  // The manager loads the project models.json under the SAME per-root trust
+  // decision every worker child receives (issue #200/#222): a `kubic trust`
+  // grant for the models root reaches the child as the env opt-in, so the
+  // manager must not treat the file as untrusted while the worker loads it —
+  // that left the manager's grant empty and the worker exiting 6 `Provider
+  // is not configured`. The check is the per-root one (never the launch
+  // cwd's boolean); without a grant the file stays ignored (the env opt-in
+  // itself is honoured inside assembleModels).
   const assembledModels =
-    options.models ?? (await assembleModels(root ?? cwd, process.env, {}));
+    options.models ??
+    (await assembleModels(root ?? cwd, process.env, {
+      ...(options.projectTrust === undefined
+        ? {}
+        : { projectTrust: options.projectTrust }),
+    }));
   for (const note of assembledModels.notes) debug(note);
   const credentialBrokerOption =
     options.requireCredentialBroker === true
@@ -1213,7 +1292,9 @@ export async function orchestrateDepsWithDefaults(
       ...credentialBrokerOption,
     },
   );
+  const modelFrozen = options.modelPinFrozen === true;
   const credentialResolution = {
+    ...(modelFrozen ? { modelFrozen: true } : {}),
     ...(process.env.KUBIC_MODEL === undefined || process.env.KUBIC_MODEL === ''
       ? {}
       : { envModel: process.env.KUBIC_MODEL }),
@@ -1334,6 +1415,12 @@ export async function orchestrateDepsWithDefaults(
         bridge: createNodeFileBridge(cwd),
         cwd,
         agents,
+        ...(options.toolPolicy === undefined
+          ? {}
+          : { toolPolicy: options.toolPolicy }),
+        ...(options.roleLayers === undefined
+          ? {}
+          : { layers: options.roleLayers }),
       });
     },
     // §36.3 credential preflight (issue #200): the same memoized lookup the
@@ -1421,6 +1508,7 @@ export async function orchestrateDepsWithDefaults(
       budget?: unknown;
       budgetForAgent?: (agentId: string) => unknown;
       fullAccess?: boolean;
+      fresh?: boolean;
     }): WorkerApprovalsRun => {
       // §41.4 (issue #308): the shared enable path — one §60 row naming the
       // orchestration session and the command, and the common stderr
@@ -1437,7 +1525,10 @@ export async function orchestrateDepsWithDefaults(
         options.err(`warning: ${grant.warning}`);
       }
       const run = createOrchestratorApprovalsRun({
-        dir: join(needRoot(), '.kubic', 'orchestrator'),
+        // The router's §60 decisions land in `<dir>/approvals/audit.jsonl`:
+        // the repo runtime root's ledger (issue #279), the one `kubic audit`
+        // reads, whichever checkout the run started from.
+        dir: join(resolveRepoRuntimeRoot(needRoot()), '.kubic', 'orchestrator'),
         sessionId: approvalOptions.sessionId,
         maxPendingMs: approvalOptions.maxPendingMs,
         ...(approvalOptions.budget === undefined
@@ -1450,6 +1541,7 @@ export async function orchestrateDepsWithDefaults(
           ? {}
           : { budgetForAgent: approvalOptions.budgetForAgent }),
         ...(approvalOptions.fullAccess ? { fullAccess: true } : {}),
+        ...(approvalOptions.fresh ? { fresh: true } : {}),
         // The TTY seat when this run has a user attached; without one a
         // worker ask denies closed on the router's own bound (never a silent
         // hang). `--yes` never replaces it (issue #323): the standing answer
@@ -1540,7 +1632,11 @@ export async function orchestrateDepsWithDefaults(
         workerSessionFor(info?.sessionId ?? 'orch', agentId);
       // §68 provenance (issue #185): the model the child was pinned to (its
       // own report names the one it actually ran, and wins) and thinking.
-      const modelPin = process.env.KUBIC_MODEL ?? info?.modelRef;
+      const modelPin = modelFrozen
+        ? options.model === undefined
+          ? undefined
+          : `${options.model.provider}/${options.model.id}`
+        : (process.env.KUBIC_MODEL ?? info?.modelRef);
       const thinking = process.env.KUBIC_MODEL_THINKING;
       // Issue #94: the worker starts through the lifecycle layer, never by
       // reaching for the exec Shell here. launchWorker refuses a stale
@@ -1600,10 +1696,15 @@ export async function orchestrateDepsWithDefaults(
           baseEnv: {
             ...Object.fromEntries(
               Object.entries(process.env).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined,
+                (entry): entry is [string, string] =>
+                  entry[1] !== undefined &&
+                  // A frozen enterprise pin makes the operator's KUBIC_MODEL
+                  // dead weight in the child (its own load drops it).
+                  !(modelFrozen && entry[0] === 'KUBIC_MODEL'),
               ),
             ),
-            ...(info?.modelRef === undefined ||
+            ...(modelFrozen ||
+            info?.modelRef === undefined ||
             process.env.KUBIC_MODEL !== undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
@@ -2153,12 +2254,16 @@ export async function orchestrateDepsWithDefaults(
       debug(`reaped: ${agentId} (worktree + branch retained)`);
     },
     requestApproval: mergeApprovalSeat,
+    ...(options.yesHint === false ? { yesHint: false } : {}),
     // Every settled merge decision lands in the §60 ledger (issue #323),
     // naming who decided: `--yes` for the standing answer, `user` otherwise.
     auditMerge: (record): void => {
       const repo = needRoot();
+      // The repo runtime root's ledger (issue #279): a run started from a
+      // LINKED worktree still records where the workers' own records and
+      // `kubic audit` look — the main checkout — not in its own `.kubic/`.
       appendToLedger(
-        auditLedgerDir(repo),
+        auditLedgerDirFor(repo),
         mergeDecisionAudit({
           ...record,
           workspace: repo,

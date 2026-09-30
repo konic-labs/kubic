@@ -311,7 +311,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
   program
     .command('trust')
     .description(
-      'record, revoke or list project trust for a committed .kubic/config.toml',
+      "record, revoke or list project trust — one grant covers the project's .kubic/config.toml, its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names) and its project skills",
     )
     .argument(
       '[path]',

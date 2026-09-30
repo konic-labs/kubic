@@ -1,0 +1,862 @@
+// The interactive lane under the §58 enterprise policy, built through the REAL
+// production deps builder (`prodTuiDeps`, issues #288, #294, #295, #227): the
+// audit found the enterprise model/tool/role gates inert on `kubic tui` and
+// bare `kubic` because `modelPolicy` was spread into `tuiDepsWithDefaults` but
+// missing from the projection's forwarding table — and every test hand-spread
+// the deps, so dropping the production spread stayed green. These tests build
+// the deps with `prodTuiDeps(io, cliConfig)` (the function the runner calls)
+// and boot the real `bootTuiLane`.
+//
+// Faux provider only: zero network, zero paid tokens.
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import { driveToSettled } from '../../../packages/worker/src/lane/solo.js';
+import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
+import {
+  AgentHarness,
+  type Context,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/worker/src/pi-boundary.js';
+import {
+  type CliConfigResult,
+  runtimeApprovalDeps,
+  runtimeModelPin,
+} from './config-runtime.js';
+import { prodTuiDeps } from './prod-runners.js';
+import {
+  bootTuiLane,
+  runTuiCommand,
+  type TuiBootFlags,
+  type TuiRunOptions,
+  tuiBootOptions,
+  tuiDepsWithDefaults,
+} from './tui-run.js';
+
+const tempDirs: string[] = [];
+
+function tmpRoot(prefix = 'kubic-tui-policy-'): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+beforeEach(() => {
+  vi.stubEnv('KUBIC_NO_NOTICE', '1');
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
+const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
+
+// The effective config exactly as the composition root wraps it: a real
+// `loadRuntimeConfig` over in-memory layer files (the enterprise layer at a
+// fake path, so nothing reads /etc).
+function cliConfig(
+  files: Record<string, string>,
+  options: {
+    env?: Record<string, string>;
+    cliModel?: { provider: string; id: string };
+  } = {},
+): CliConfigResult {
+  const runtime = loadRuntimeConfig({
+    bridge: {
+      exists: (path: string): boolean => path in files,
+      readTextFile: (path: string): string => files[path] as string,
+    },
+    home: '/nonexistent-home',
+    cwd: '/nonexistent-cwd',
+    enterprisePath: ENTERPRISE,
+    productPath: '/nonexistent/product.toml',
+    projectTrusted: true,
+    env: options.env ?? {},
+    ...(options.cliModel === undefined
+      ? {}
+      : { cli: { model: options.cliModel } }),
+  });
+  return {
+    runtime,
+    error: undefined,
+    ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
+  };
+}
+
+function providers(
+  spec: { provider: string; models: string[] }[],
+): MutableModels {
+  const models = createModels();
+  for (const entry of spec) {
+    const faux = fauxProvider({
+      provider: entry.provider,
+      models: entry.models.map((id) => ({ id })),
+    });
+    faux.setResponses([fauxAssistantMessage('ok')]);
+    models.setProvider(faux.provider);
+  }
+  return models;
+}
+
+// The prod boot, re-rooted onto temp state: whatever the production deps
+// builder forwards reaches the real bootTuiLane unchanged.
+function rerooted(
+  workspace: string,
+  sessionsRoot: string,
+  models: MutableModels,
+): typeof bootTuiLane {
+  return (sessionId?: string, options: TuiRunOptions = {}) =>
+    bootTuiLane(sessionId, {
+      ...options,
+      sessionsRoot,
+      models,
+      env: new NodeExecutionEnv(workspace),
+      skills: { homeDir: workspace, cwd: workspace, trusted: false },
+      roles: { ...options.roles, cwd: workspace },
+    });
+}
+
+const IO = { out: (): void => {}, debug: (): void => {} };
+
+// The real solo lane behind the loop's narrower LaneDriver view: the two
+// reads the assertions below need.
+interface LiveLane {
+  getActiveTools(context: Context): Promise<string[]>;
+  getModel(
+    context: Context,
+  ): Promise<{ provider: string; id: string } | undefined>;
+}
+const liveLane = (lane: unknown): LiveLane => lane as LiveLane;
+
+describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #295)', () => {
+  it('forwards the enterprise policy, the model pin, the approvals and the journal projections', async () => {
+    const cfg = cliConfig({
+      [ENTERPRISE]:
+        '[policy]\nallowed_models = ["corp/approved"]\ndenied_tools = ["bash"]\n',
+      [PROJECT]:
+        '[model]\nprovider = "corp"\nid = "approved"\n[approvals]\nroute = "deny"\nmaxPendingMs = 1234\n[journal]\nretentionDays = 2\noutOfScope = ["dist"]\n',
+    });
+    let seen: TuiRunOptions | undefined;
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      async (_id, opts) => {
+        seen = opts;
+        return { sessionId: 's', model: 'corp/approved' };
+      },
+    );
+    await deps.bootLane();
+    // The SAME resolved object the headless runner gates with (identity, not
+    // a copy that could drift).
+    expect(seen?.modelPolicy).toBe(cfg.runtime?.policy);
+    expect(seen?.modelPolicy?.tools.deny).toEqual(['bash']);
+    expect(seen?.model).toEqual({ provider: 'corp', id: 'approved' });
+    expect(seen?.model).toEqual(runtimeModelPin(cfg));
+    expect(seen?.approvals).toEqual(runtimeApprovalDeps(cfg));
+    expect(seen?.approvals?.route).toBe('deny');
+    expect(seen?.approvals?.maxPendingMs).toBe(1234);
+    expect(seen?.journalRetention).toEqual({ maxAgeMs: 2 * 86_400_000 });
+    expect(seen?.reconcileOutOfScope).toEqual(['dist']);
+  });
+
+  it('forwards the empty policy and no pin when the config declares none (control)', async () => {
+    const cfg = cliConfig({});
+    let seen: TuiRunOptions | undefined;
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      async (_id, opts) => {
+        seen = opts;
+        return { sessionId: 's', model: 'x/y' };
+      },
+    );
+    await deps.bootLane();
+    // An empty [policy] resolves to an empty effective policy, which still
+    // travels (hasModelPolicy/hasToolPolicy decide whether any gate applies).
+    expect(seen?.modelPolicy).toBe(cfg.runtime?.policy);
+    expect(seen?.model).toBeUndefined();
+  });
+});
+
+describe('the prod tui builder enforces the enterprise gates on the real boot (issue #288)', () => {
+  it('refuses a pinned model outside allowed_models before any provider call', async () => {
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+      [PROJECT]: '[model]\nprovider = "fx"\nid = "a"\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        tmpRoot(),
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a', 'b'] }]),
+      ),
+    );
+    await expect(deps.bootLane()).rejects.toThrow(
+      "model 'fx/a' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
+    );
+  });
+
+  it('does not pick an implicit provider the policy disallows', async () => {
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+    });
+    const models = providers([{ provider: 'fx', models: ['a', 'b'] }]);
+    const gated = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(tmpRoot(), tmpRoot(), models),
+    );
+    // With no explicit pin the pool of implicit providers is empty under the
+    // policy, so the boot refuses with the named no-models error (the
+    // implicit pick never falls back to a disallowed provider).
+    await expect(gated.bootLane()).rejects.toThrow(
+      /no models available: register a provider first/,
+    );
+    // Control: with no policy the same catalog boots on the first provider.
+    const open = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig({})),
+      rerooted(tmpRoot(), tmpRoot(), models),
+    );
+    const boot = await open.bootLane();
+    await boot.close?.();
+    expect(boot.model).toBe('fx/a');
+  });
+
+  it('activates only the tools the enterprise deny list leaves (active tools and prompt line)', async () => {
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+    });
+    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        tmpRoot(),
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a'] }]),
+      ),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    const active = await liveLane(loop.lane).getActiveTools(loop.context);
+    await boot.close?.();
+    expect(active).not.toContain('bash');
+    expect(active).toContain('read');
+    const calls = (createSpy as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls;
+    const prompt =
+      (calls.at(-1)?.[0] as { systemPrompt?: string } | undefined)
+        ?.systemPrompt ?? '';
+    const advertised = (/^tools: (.*)$/m.exec(prompt)?.[1] ?? '')
+      .split(',')
+      .map((name) => name.trim());
+    expect(advertised).not.toContain('bash');
+    expect(advertised).toContain('read');
+  });
+
+  it('leaves the tool set alone when no tool policy is configured (control)', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig({})),
+      rerooted(
+        tmpRoot(),
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a'] }]),
+      ),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    const active = await liveLane(loop.lane).getActiveTools(loop.context);
+    await boot.close?.();
+    expect(active).toContain('bash');
+  });
+
+  it('refuses a --role that declares an enterprise-denied tool', async () => {
+    const workspace = tmpRoot();
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, write, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n## Prompt\n\nImplement the step.\n',
+    );
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        workspace,
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a'] }]),
+      ),
+    );
+    await expect(
+      deps.bootLane(undefined, undefined, { role: 'implementer' }),
+    ).rejects.toThrow(/role 'implementer'.*'bash' denied/);
+  });
+});
+
+describe('`kubic tui --model` cannot bypass the projected pin (issues #227, #295)', () => {
+  // What runTuiCommand really builds from commander's parsed options, with a
+  // boot that stops right after capturing the flags (exit 6, no terminal).
+  async function flagsFor(model: {
+    provider: string;
+    id: string;
+  }): Promise<TuiBootFlags | undefined> {
+    let seen: TuiBootFlags | undefined;
+    const code = await runTuiCommand(
+      { model },
+      {
+        out: () => {},
+        err: () => {},
+        createTerminal: () => {
+          throw new Error('the boot stops before a terminal opens');
+        },
+        bootLane: async (_sid, _answer, flags) => {
+          seen = flags;
+          throw new ModelSelectError('stop after capturing the flags');
+        },
+      },
+    );
+    expect(code).toBe(6);
+    return seen;
+  }
+
+  it('a frozen enterprise pin holds against --model: the projected value wins', async () => {
+    // Dispatch pre-scans `--model` into the config load (the cli layer); the
+    // enterprise freeze keeps its own pin, and that projection is the pin the
+    // boot must use — a flag patched over it afterwards would bypass the
+    // freeze that `kubic run` honours.
+    const cfg = cliConfig(
+      { [ENTERPRISE]: '[model]\nprovider = "corp"\nid = "approved"\n' },
+      { cliModel: { provider: 'evil', id: 'other' } },
+    );
+    expect(runtimeModelPin(cfg)).toEqual({ provider: 'corp', id: 'approved' });
+    const flags = await flagsFor({ provider: 'evil', id: 'other' });
+    const options = tuiBootOptions(prodTuiDeps(IO, cfg), flags, undefined);
+    expect(options.model).toEqual({ provider: 'corp', id: 'approved' });
+  });
+
+  it('an unfrozen --model still selects through the config load (cli above env and file)', async () => {
+    const cfg = cliConfig(
+      { [PROJECT]: '[model]\nprovider = "fx"\nid = "a"\n' },
+      { cliModel: { provider: 'fx', id: 'b' } },
+    );
+    const flags = await flagsFor({ provider: 'fx', id: 'b' });
+    const options = tuiBootOptions(prodTuiDeps(IO, cfg), flags, undefined);
+    expect(options.model).toEqual({ provider: 'fx', id: 'b' });
+  });
+});
+
+describe('/model switch under the enterprise policy (issue #288)', () => {
+  const POLICY = { [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' };
+  const twoProviders = (): MutableModels =>
+    providers([
+      { provider: 'faux', models: ['big', 'small'] },
+      { provider: 'other', models: ['m1'] },
+    ]);
+
+  it('refuses a switch outside allowed_models, naming the boot-time refusal, and keeps the live model', async () => {
+    const cfg = cliConfig({
+      ...POLICY,
+      [PROJECT]: '[model]\nprovider = "faux"\nid = "big"\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    expect(boot.model).toBe('faux/big');
+    await expect(
+      loop.switchModel({ provider: 'other', modelId: 'm1' }, loop.context),
+    ).rejects.toThrow(
+      "model 'other/m1' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
+    );
+    // The lane kept the model it had.
+    const live = await liveLane(loop.lane).getModel(loop.context);
+    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    // A switch the policy allows still works (the gate is not a blanket block).
+    await expect(
+      loop.switchModel({ provider: 'faux', modelId: 'small' }, loop.context),
+    ).resolves.toBe('faux/small');
+    const moved = await liveLane(loop.lane).getModel(loop.context);
+    expect(`${moved?.provider}/${moved?.id}`).toBe('faux/small');
+    await boot.close?.();
+  });
+
+  it('switches freely when the config declares no model policy (control)', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig({})),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    await expect(
+      loop.switchModel({ provider: 'other', modelId: 'm1' }, loop.context),
+    ).resolves.toBe('other/m1');
+    await boot.close?.();
+  });
+
+  it('still names an unknown model on an allowed provider (the catalog check stands)', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig(POLICY)),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    await expect(
+      loop.switchModel({ provider: 'faux', modelId: 'nope' }, loop.context),
+    ).rejects.toThrow("unknown model 'nope' on provider 'faux'");
+    await boot.close?.();
+  });
+});
+
+// §35.1/§38.1: `--model` and `/model` are the one "session override" level,
+// and enterprise restrictions cannot be overridden by any lower layer — so a
+// frozen enterprise `[model]` binds the live switch exactly as it binds the
+// flag (a `/model` away from it would be the bypass the freeze exists to stop).
+describe('/model cannot leave a frozen enterprise model pin (issues #227, #295)', () => {
+  const twoProviders = (): MutableModels =>
+    providers([
+      { provider: 'faux', models: ['big', 'small'] },
+      { provider: 'other', models: ['m1'] },
+    ]);
+  const FROZEN = '[model]\nprovider = "faux"\nid = "big"\n';
+
+  it('refuses a switch away from the frozen pin by name and keeps the live model', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig({ [ENTERPRISE]: FROZEN })),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    expect(boot.model).toBe('faux/big');
+    for (const target of [
+      { provider: 'faux', modelId: 'small' },
+      { provider: 'other', modelId: 'm1' },
+    ]) {
+      await expect(loop.switchModel(target, loop.context)).rejects.toThrow(
+        `model '${target.provider}/${target.modelId}' refused: the model is pinned by enterprise policy (faux/big); /model cannot change it`,
+      );
+    }
+    const live = await liveLane(loop.lane).getModel(loop.context);
+    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    // Naming the pin itself changes nothing, so it is not refused.
+    await expect(
+      loop.switchModel({ provider: 'faux', modelId: 'big' }, loop.context),
+    ).resolves.toBe('faux/big');
+    await boot.close?.();
+  });
+
+  it('keeps `/model` free under a pin nobody froze (control)', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cliConfig({ [PROJECT]: FROZEN })),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    await expect(
+      loop.switchModel({ provider: 'faux', modelId: 'small' }, loop.context),
+    ).resolves.toBe('faux/small');
+    await boot.close?.();
+  });
+
+  it('a flag or env pin that the freeze dropped does not unfreeze the switch', async () => {
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(
+        IO,
+        cliConfig(
+          { [ENTERPRISE]: FROZEN },
+          { cliModel: { provider: 'other', id: 'm1' } },
+        ),
+      ),
+      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+    );
+    const boot = await deps.bootLane();
+    const loop = boot.loop;
+    if (loop?.switchModel === undefined) {
+      throw new Error('the prod boot returned no switchable loop');
+    }
+    expect(boot.model).toBe('faux/big');
+    await expect(
+      loop.switchModel({ provider: 'other', modelId: 'm1' }, loop.context),
+    ).rejects.toThrow(/pinned by enterprise policy \(faux\/big\)/);
+    await boot.close?.();
+  });
+});
+
+describe('advertised skills outside the workspace stay readable on the tui lane (issue #173)', () => {
+  function writeSkill(root: string, name: string): string {
+    const dir = join(root, name);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'SKILL.md');
+    writeFileSync(
+      file,
+      `---\nname: ${name}\ndescription: Skill ${name}\n---\n\nBody for ${name}.\n`,
+    );
+    return file;
+  }
+
+  it('reads a user skill by its absolute path; an unrelated outside read stays re-rooted', async () => {
+    const home = tmpRoot('kubic-tui-skill-home-');
+    const workspace = tmpRoot('kubic-tui-skill-ws-');
+    const skillFile = writeSkill(join(home, '.agents', 'skills'), 'a');
+    writeFileSync(join(home, 'secret.txt'), 'top secret\n');
+    const faux = fauxProvider({ provider: 'fx', models: [{ id: 'a' }] });
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('read', { path: skillFile }),
+        fauxToolCall('read', { path: join(home, 'secret.txt') }),
+      ]),
+      fauxAssistantMessage('done'),
+    ]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot(),
+      models,
+      env: new NodeExecutionEnv(workspace),
+      skills: { homeDir: home, cwd: workspace, trusted: false },
+    });
+    const loop = boot.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    const admitted = await loop.accept('load the skill', loop.context);
+    if (!admitted.ok) throw new Error('prompt refused');
+    await driveToSettled(loop.lane, admitted.value.operationId, loop.context);
+    const entries = (await loop.findEntries(undefined, loop.context)) as {
+      message?: {
+        role?: string;
+        isError?: boolean;
+        content?: { type: string; text?: string }[];
+      };
+    }[];
+    await boot.close?.();
+    const results = entries
+      .filter((entry) => entry.message?.role === 'toolResult')
+      .map((entry) => ({
+        isError: entry.message?.isError,
+        text: JSON.stringify(entry.message?.content ?? []),
+      }));
+    expect(results).toHaveLength(2);
+    const skillRead = results.find((r) => r.text.includes('Body for a.'));
+    expect(skillRead?.isError, JSON.stringify(results)).toBe(false);
+    expect(results.some((r) => r.text.includes('top secret'))).toBe(false);
+    expect(results.some((r) => r.text.includes('not_found'))).toBe(true);
+  });
+});
+
+// A recording terminal, as tui-model-switch-prod.test.ts drives the alt-screen
+// key path: the frame text is everything the app wrote.
+function fakeTerminal() {
+  const writes: string[] = [];
+  const counts = { started: 0 };
+  let handler: ((data: string) => void) | undefined;
+  return {
+    counts,
+    get frame(): string {
+      return writes.join('');
+    },
+    feed: (data: string) => {
+      handler?.(data);
+    },
+    terminal: {
+      start: (input: (data: string) => void) => {
+        counts.started += 1;
+        handler = input;
+      },
+      stop: () => {},
+      drainInput: () => Promise.resolve(),
+      write: (data: string) => writes.push(data),
+      // Wide enough that the whole refusal fits on one footer line.
+      get columns(): number {
+        return 240;
+      },
+      get rows(): number {
+        return 30;
+      },
+      get kittyProtocolActive(): boolean {
+        return false;
+      },
+      moveBy: () => {},
+      hideCursor: () => {},
+      showCursor: () => {},
+      clearLine: () => {},
+      clearFromCursor: () => {},
+      clearScreen: () => {},
+      setTitle: () => {},
+      setProgress: () => {},
+    },
+  };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 2000 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  expect(condition()).toBe(true);
+}
+
+describe('a refused /model switch is named in the footer and the lane keeps its model (issue #288)', () => {
+  it('prints the boot-time refusal text and answers the next prompt on the original model', async () => {
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n',
+      [PROJECT]: '[model]\nprovider = "faux"\nid = "big"\n',
+    });
+    const models = createModels();
+    const faux = fauxProvider({
+      provider: 'faux',
+      models: [{ id: 'big' }, { id: 'small' }],
+    });
+    faux.setResponses([fauxAssistantMessage('from faux')]);
+    models.setProvider(faux.provider);
+    const other = fauxProvider({ provider: 'other', models: [{ id: 'm1' }] });
+    other.setResponses([fauxAssistantMessage('from other')]);
+    models.setProvider(other.provider);
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(tmpRoot(), tmpRoot(), models),
+    );
+    const fake = fakeTerminal();
+    const pending = runTuiCommand(
+      {},
+      { ...deps, createTerminal: () => fake.terminal },
+    );
+    await waitFor(() => fake.counts.started === 1);
+
+    for (const ch of '/model other/m1') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.frame.includes(
+        "model switch failed: model 'other/m1' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
+      ),
+    );
+    // The lane never moved: the next prompt is answered by the pinned model,
+    // and the refused provider was never called.
+    for (const ch of 'hello') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('from faux'));
+    expect(other.state.callCount).toBe(0);
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+});
+
+describe('the interactive orchestrator refuses a denied role like `kubic orchestrate` (issue #288)', () => {
+  it('a Ctrl-G turn is refused role_refused before anything spawns when an assigned role declares a denied tool', async () => {
+    const workspace = tmpRoot('kubic-tui-orch-roles-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'planner.md'),
+      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
+    );
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
+    );
+    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        workspace,
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a'] }]),
+      ),
+    );
+    const boot = await deps.bootLane();
+    const lines: string[] = [];
+    const outcome = await boot.orchestrator?.run('do the thing', (line) =>
+      lines.push(line),
+    );
+    await boot.close?.();
+    expect(outcome?.status).toBe('failed');
+    const report = lines.join('\n');
+    expect(report).toContain('code=role_refused');
+    expect(report).toMatch(
+      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
+    );
+  });
+});
+
+describe('a resumed TUI session never keeps a model the enterprise gate refuses (issue #288)', () => {
+  it('boots the resumed session on the gated selection, not its stored provider', async () => {
+    const workspace = tmpRoot();
+    const sessionsRoot = tmpRoot();
+    const models = providers([
+      { provider: 'faux', models: ['a'] },
+      { provider: 'other', models: ['m1'] },
+    ]);
+    // Session created on `other/m1` (an explicit pin, no policy yet).
+    const created = await rerooted(
+      workspace,
+      sessionsRoot,
+      models,
+    )(undefined, { model: { provider: 'other', id: 'm1' } });
+    await created.close?.();
+    expect(created.model).toBe('other/m1');
+
+    // Resumed under an enterprise allowlist that only admits `faux/*`, with
+    // no pin: the stored `other/m1` must not survive the gate.
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n',
+    });
+    const resumed = await rerooted(
+      workspace,
+      sessionsRoot,
+      models,
+    )(created.sessionId, { modelPolicy: cfg.runtime?.policy });
+    const loop = resumed.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    const live = await liveLane(loop.lane).getModel(loop.context);
+    await resumed.close?.();
+    expect(`${live?.provider}/${live?.id}`).toBe('faux/a');
+    expect(resumed.model).toBe('faux/a');
+  });
+
+  it('keeps the stored model when it is allowed (control)', async () => {
+    const workspace = tmpRoot();
+    const sessionsRoot = tmpRoot();
+    const models = providers([
+      { provider: 'faux', models: ['a'] },
+      { provider: 'other', models: ['m1'] },
+    ]);
+    const created = await rerooted(
+      workspace,
+      sessionsRoot,
+      models,
+    )(undefined, { model: { provider: 'other', id: 'm1' } });
+    await created.close?.();
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*", "other/*"]\n',
+    });
+    const resumed = await rerooted(
+      workspace,
+      sessionsRoot,
+      models,
+    )(created.sessionId, { modelPolicy: cfg.runtime?.policy });
+    const loop = resumed.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    const live = await liveLane(loop.lane).getModel(loop.context);
+    await resumed.close?.();
+    expect(`${live?.provider}/${live?.id}`).toBe('other/m1');
+  });
+});
+
+describe('the interactive orchestrator judges a role after the config layers (issue #288)', () => {
+  it('does not refuse an implementer whose [roles.implementer] layer narrows the denied tool away', async () => {
+    const workspace = tmpRoot('kubic-tui-orch-layers-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'planner.md'),
+      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
+    );
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
+    );
+    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    const cfg = cliConfig({
+      [ENTERPRISE]: '[policy]\ndenied_tools = ["bash"]\n',
+      [PROJECT]: '[roles.implementer]\ntools = ["read"]\n',
+    });
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        workspace,
+        tmpRoot(),
+        providers([{ provider: 'fx', models: ['a'] }]),
+      ),
+    );
+    const boot = await deps.bootLane();
+    const lines: string[] = [];
+    await boot.orchestrator?.run('do the thing', (line) => lines.push(line));
+    await boot.close?.();
+    expect(lines.join('\n')).not.toContain('role_refused');
+  });
+});
+
+// §35.1 (issue #295): the interactive orchestrator's workers run the frozen
+// enterprise model too, so its credential preflight follows the pin — not a
+// KUBIC_MODEL the freeze dropped.
+describe('the interactive orchestrator follows a frozen enterprise model (issue #295)', () => {
+  it('does not refuse the run over the provider of a dropped KUBIC_MODEL', async () => {
+    const workspace = tmpRoot('kubic-tui-orch-frozen-');
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'planner.md'),
+      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
+    );
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
+    );
+    writeFileSync(
+      join(workspace, 'models.json'),
+      JSON.stringify({
+        providers: ['gw', 'other'].map((id) => ({
+          id,
+          baseUrl: 'https://models.invalid/v1',
+          api: 'openai-completions',
+          apiKeyEnv: `${id.toUpperCase()}_API_KEY`,
+          models: [{ id: 'm1' }],
+        })),
+      }),
+    );
+    execFileSync('git', ['init', '-q'], { cwd: workspace });
+    // Only the enterprise model's provider has a key on this host.
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.stubEnv('GW_API_KEY', 'sk-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'other/m1');
+    const cfg = cliConfig(
+      {
+        [ENTERPRISE]: '[model]\nprovider = "gw"\nid = "m1"\n',
+      },
+      { env: { KUBIC_MODEL: 'other/m1' } },
+    );
+    const deps = tuiDepsWithDefaults(
+      prodTuiDeps(IO, cfg),
+      rerooted(
+        workspace,
+        tmpRoot(),
+        providers([{ provider: 'gw', models: ['m1'] }]),
+      ),
+    );
+    const boot = await deps.bootLane();
+    const lines: string[] = [];
+    await boot.orchestrator?.run('do the thing', (line) => lines.push(line));
+    await boot.close?.();
+    const report = lines.join('\n');
+    expect(report).not.toContain('credential_unavailable');
+    expect(report).not.toContain("provider 'other'");
+  });
+});

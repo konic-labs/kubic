@@ -12,7 +12,9 @@ import {
 import {
   hasExplicitModelSelection,
   roleModelSelection,
+  selectionOrigin,
   selectLaneModel,
+  withSelectionOrigin,
 } from './model-projection.js';
 
 // Two providers: `faux` (first registered, the default pick) and `alt`.
@@ -50,6 +52,30 @@ describe('roleModelSelection (issue #227)', () => {
         `[roles.<name>].model must be 'provider/id' (got ${JSON.stringify(bad)})`,
       );
     }
+  });
+});
+
+describe('selection origin labels (issue #295)', () => {
+  it('rides beside the selection: the object stays a plain { provider, id }', () => {
+    const plain = { provider: 'alt', id: 'm1' };
+    expect(selectionOrigin(plain)).toBeUndefined();
+    const tagged = withSelectionOrigin(plain, 'KUBIC_MODEL');
+    // The same object, now labelled — and still equal to a plain selection.
+    expect(tagged).toBe(plain);
+    expect(selectionOrigin(tagged)).toBe('KUBIC_MODEL');
+    expect(tagged).toEqual({ provider: 'alt', id: 'm1' });
+    expect(Object.keys(tagged)).toEqual(['provider', 'id']);
+    // A copy is a different selection: it loses the label (falls back to
+    // selectModel's own wording) instead of inheriting a stale one.
+    expect(selectionOrigin({ ...tagged })).toBeUndefined();
+  });
+
+  it('labels a role model pin as `role model`', () => {
+    const role = roleModelSelection('alt/m1');
+    expect(role).toEqual({ provider: 'alt', id: 'm1' });
+    expect(role === undefined ? undefined : selectionOrigin(role)).toBe(
+      'role model',
+    );
   });
 });
 

@@ -65,8 +65,10 @@ function namedRuntime(
   workspace: string,
   toml: string,
   env: Record<string, string> = {},
+  cliModel?: { provider: string; id: string },
 ): RuntimeConfig {
   return loadRuntimeConfig({
+    ...(cliModel === undefined ? {} : { cli: { model: cliModel } }),
     bridge: {
       exists: (path: string): boolean =>
         path === `${workspace}/.kubic/config.toml`,
@@ -327,9 +329,10 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     workspace: string,
     toml: string,
     env: Record<string, string> = {},
+    cliModel?: { provider: string; id: string },
   ) {
     const cliConfig = {
-      runtime: namedRuntime(workspace, toml, env),
+      runtime: namedRuntime(workspace, toml, env, cliModel),
       error: undefined,
       ignoreSplit: NO_SPLIT,
       trust: NO_PROJECT_TRUST,
@@ -410,11 +413,15 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     await pinnedBoot.close?.();
     expect(pinnedBoot.model).toBe('fx/a');
 
-    // The --model flag beats both.
-    const flagged = await pinned.deps.bootLane(undefined, undefined, {
-      role: 'implementer',
-      model: { provider: 'fx', id: 'b' },
-    });
+    // The --model flag beats both — as the `cli` layer of the config load
+    // (dispatch pre-scans it), never as a boot flag patched over the
+    // projected pin (issue #227; a frozen enterprise pin must hold).
+    const flagged = await tuiWith(
+      workspace,
+      `[model]\nprovider = "fx"\nid = "a"\n${roleToml}`,
+      {},
+      { provider: 'fx', id: 'b' },
+    ).deps.bootLane(undefined, undefined, { role: 'implementer' });
     await flagged.close?.();
     expect(flagged.model).toBe('fx/b');
   });

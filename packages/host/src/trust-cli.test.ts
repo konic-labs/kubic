@@ -1,7 +1,14 @@
 // `kubic trust` (issue #228): grant, revoke and list the persistent
 // project-trust decision. RED first.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,6 +64,23 @@ describe('kubic trust command (issue #228)', () => {
     expect(h.lines.join('\n')).toContain('trusted project');
     expect(h.lines.join('\n')).toContain('.kubic/config.toml will load');
     expect(h.lines.join('\n')).toContain(projectTrustStorePath(home));
+  });
+
+  // One grant unlocks the whole project tree, not just config.toml: the
+  // project models.json (a provider URL and the `*_API_KEY` sent to it) and
+  // the project skills. The output says so, on the grant and not on revoke.
+  it('names everything the grant covers, models.json and skills included', () => {
+    const home = tmpDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
+    const granted = harness(store, project);
+    expect(runTrustCommand({}, granted.deps)).toBe(0);
+    expect(granted.lines).toContain(
+      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
+    );
+    const revoked = harness(store, project);
+    expect(runTrustCommand({ revoke: true }, revoked.deps)).toBe(0);
+    expect(revoked.lines.join('\n')).not.toContain('models.json');
   });
 
   it('grants for an explicit path operand', () => {
@@ -152,6 +176,67 @@ describe('kubic trust command (issue #228)', () => {
     expect(() =>
       runTrustCommand({ path: join(home, 'absent') }, h.deps),
     ).toThrow(/no such directory/);
+  });
+
+  // The store canonicalises symlinks, so the operand check follows them too:
+  // a symlink to a project directory is a project directory (issue #228
+  // review). It used to be refused as "not a directory" (lstat).
+  describe('a symlink operand', () => {
+    it('to a directory is granted, under the canonical (resolved) path', () => {
+      const home = tmpDir('kubic-trust-home-');
+      const project = projectWithConfig();
+      const link = join(home, 'project-link');
+      symlinkSync(project, link, 'dir');
+      const store = new ProjectTrustStore(projectTrustStorePath(home));
+      const h = harness(store, home);
+      expect(runTrustCommand({ path: link }, h.deps)).toBe(0);
+      expect(store.get(project)).toBe(true);
+      expect(store.get(link)).toBe(true);
+      expect(store.entries().map((entry) => entry.path)).toEqual([
+        realpathSync(project),
+      ]);
+      expect(h.lines.join('\n')).toContain(
+        `trusted project ${realpathSync(project)}`,
+      );
+    });
+
+    it('to a directory can be revoked', () => {
+      const home = tmpDir('kubic-trust-home-');
+      const project = projectWithConfig();
+      const link = join(home, 'project-link');
+      symlinkSync(project, link, 'dir');
+      const store = new ProjectTrustStore(projectTrustStorePath(home));
+      store.set(project, true);
+      const h = harness(store, home);
+      expect(runTrustCommand({ path: link, revoke: true }, h.deps)).toBe(0);
+      expect(store.get(project)).toBe(null);
+    });
+
+    it('to a file is still refused as not a directory', () => {
+      const home = tmpDir('kubic-trust-home-');
+      const file = join(home, 'notes.txt');
+      writeFileSync(file, 'x');
+      const link = join(home, 'file-link');
+      symlinkSync(file, link);
+      const store = new ProjectTrustStore(projectTrustStorePath(home));
+      const h = harness(store, home);
+      expect(() => runTrustCommand({ path: link }, h.deps)).toThrow(
+        /not a directory/,
+      );
+      expect(store.entries()).toEqual([]);
+    });
+
+    it('that dangles is refused as no such directory', () => {
+      const home = tmpDir('kubic-trust-home-');
+      const link = join(home, 'dangling');
+      symlinkSync(join(home, 'gone'), link, 'dir');
+      const store = new ProjectTrustStore(projectTrustStorePath(home));
+      const h = harness(store, home);
+      expect(() => runTrustCommand({ path: link }, h.deps)).toThrow(
+        /no such directory/,
+      );
+      expect(store.entries()).toEqual([]);
+    });
   });
 
   it('fails closed with the named file when the store is corrupt (exit 1)', () => {

@@ -36,6 +36,14 @@ export interface ProviderKeyEnv {
    * in this environment — a registration, not a deliverable key.
    */
   readonly noKeyNeeded: boolean;
+  /**
+   * Set when the provider authenticates from process-level configuration (a
+   * region, a profile, several vars read straight from `process.env`) that
+   * the grant namespace cannot carry into a worker: the reason, naming what
+   * is missing. A worker pinned to it is refused before any worktree exists
+   * instead of passing the preflight and dying `Provider is not configured`.
+   */
+  readonly undeliverable?: string;
 }
 
 /** provider id → how its key reaches the process. */
@@ -69,11 +77,23 @@ export interface WorkerProviderResolution {
   readonly managerModel?: string;
   /** First usable provider of the manager's catalog (the child's fallback). */
   readonly fallbackProvider?: string;
+  /**
+   * A frozen enterprise `[model]` (issue #295; §35.1) is in force: every
+   * worker child's own config load drops `KUBIC_MODEL` — the operator's and
+   * the role default the manager would inject — in favour of the enterprise
+   * pin, which is `managerModel`. Only that pin (then the fallback) decides
+   * the provider; resolving from a pin the child never runs would check, or
+   * refuse on, the wrong provider's credential.
+   */
+  readonly modelFrozen?: boolean;
 }
 
 export function resolveWorkerProvider(
   input: WorkerProviderResolution & { readonly modelRef?: string },
 ): string | undefined {
+  if (input.modelFrozen === true) {
+    return providerOfModelRef(input.managerModel) ?? input.fallbackProvider;
+  }
   return (
     providerOfModelRef(input.envModel) ??
     providerOfModelRef(input.modelRef) ??
@@ -108,6 +128,13 @@ export function resolveProviderGrant(
   if (provider === undefined) return { kind: 'grant', grant: {} };
   const keyEnv = deps.keyEnv.get(provider);
   if (keyEnv === undefined) return { kind: 'grant', grant: {} };
+  if (keyEnv.undeliverable !== undefined) {
+    return {
+      kind: 'refusal',
+      provider,
+      message: `no credential for provider '${provider}': ${keyEnv.undeliverable}`,
+    };
+  }
   if (keyEnv.noKeyNeeded) return { kind: 'grant', grant: {} };
   if (keyEnv.envVars.length === 0) {
     return {

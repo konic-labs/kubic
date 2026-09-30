@@ -24,7 +24,7 @@
 //   - the manager's only view of an ask: buildManagerBlockedIndicator
 //     (read-only). attemptManagerApprove is refused and audited.
 
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { FileBridge } from '../../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
@@ -375,6 +375,12 @@ export interface WorkerAskRouter {
 export interface WorkerAskRouterOptions {
   /** Directory for decisions, audit and the ask mailbox. */
   dir: string;
+  /**
+   * Where the §60 ledger records land, when that differs from `dir`
+   * (issue #279): the approvals run keeps its mailbox and decisions per
+   * session but the repo's ledger in ONE place. Absent means `dir`.
+   */
+  ledgerDir?: string;
   maxPendingMs: number;
   /** Where the user's answer comes from. Absent = no surface (denies closed). */
   seat?: WorkerAskSeat;
@@ -414,7 +420,7 @@ export function createWorkerAskRouter(
     verdict: OrchestratorVerdict,
   ): void => {
     appendToLedger(
-      mailboxDir,
+      options.ledgerDir ?? mailboxDir,
       orchestratorDecisionAudit(request, verdict, {
         posture: options.posture?.() ?? POSTURE_APPROVALS,
       }),
@@ -737,10 +743,40 @@ export interface WorkerApprovalsRunOptions {
   budgetForAgent?: (agentId: string) => unknown;
   /** User opt-in full-access posture for THIS session (§41.4). */
   fullAccess?: boolean;
+  /**
+   * A FRESH (non-`--resume`) run of this session id: discards the approvals
+   * state an earlier run of the same id left in `approvals/<session>/` (the
+   * full-access record, memoized decisions, the ask mailbox) so the run starts
+   * enforced with no inherited grant. A resume leaves it unset and continues
+   * that state. The repo-wide ledger is never touched.
+   */
+  fresh?: boolean;
   /** Poll cadence used by beginWorker's interval. */
   pollMs?: number;
   debug?: (line: string) => void;
   audit?: (event: RouterAuditEvent) => void;
+}
+
+// `<dir>/approvals/<session>/`: one session's approvals state (ask mailbox,
+// decision store, full-access record), beside the repo-wide ledger.
+export function approvalsSessionDir(dir: string, sessionId: string): string {
+  return join(
+    dir,
+    APPROVALS_DIR,
+    sessionId.replace(/[^A-Za-z0-9_-]/g, '_') || '_',
+  );
+}
+
+// Removes exactly one session's approvals directory — never the ledger
+// (`<dir>/approvals/audit.jsonl`) or a sibling session. A missing directory is
+// fine. Used when a session's state is retired (`kubic clean --session`) and
+// when a fresh run reuses the id.
+export function removeSessionApprovalsState(
+  dir: string,
+  sessionId: string,
+): void {
+  const target = approvalsSessionDir(dir, sessionId);
+  createNodeFileBridge(dirname(target)).remove(basename(target), true, true);
 }
 
 // One approvals run: the router, the mailbox pump, the per-spawn budget gates
@@ -750,7 +786,19 @@ export interface WorkerApprovalsRunOptions {
 export function createOrchestratorApprovalsRun(
   options: WorkerApprovalsRunOptions,
 ): WorkerApprovalsRun {
-  const dir = join(options.dir, APPROVALS_DIR);
+  // The §60 ledger is the repo's ONE trail (`<dir>/approvals/audit.jsonl`,
+  // what `kubic audit` reads). The ask mailbox, the decision store and the
+  // full-access record are THIS run's own, one directory per session: two runs
+  // share a repo runtime root — in one checkout or across linked worktrees
+  // (issue #279) — and their default worker ids collide (`worker-1`), so a
+  // shared mailbox would let one run answer another's asks (a `--full-access`
+  // run would approve them). The children are told this directory, so nothing
+  // else needs to know the layout.
+  const ledgerDir = join(options.dir, APPROVALS_DIR);
+  const dir = approvalsSessionDir(options.dir, options.sessionId);
+  if (options.fresh === true) {
+    removeSessionApprovalsState(options.dir, options.sessionId);
+  }
   const bridge = createNodeFileBridge(dir);
   bridge.createDir(ASKS_DIR, true);
   const debug = options.debug ?? (() => undefined);
@@ -764,6 +812,7 @@ export function createOrchestratorApprovalsRun(
   };
   const decisions = createWorkerAskRouter({
     dir,
+    ledgerDir,
     maxPendingMs: options.maxPendingMs,
     posture: () =>
       fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,

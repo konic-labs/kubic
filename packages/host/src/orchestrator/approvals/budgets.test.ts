@@ -232,6 +232,30 @@ describe('child run budget enforcement (issue #208)', () => {
     );
   });
 
+  // The env is user-facing (every `kubic run` reads it), so a typo must never
+  // be a silently dropped limit and every refusal names the variable.
+  it('parseWorkerBudgetEnv refuses an unknown key and names KUBIC_BUDGET in every refusal', () => {
+    expect(() => parseWorkerBudgetEnv('{"maxToolcalls":5}')).toThrow(
+      'KUBIC_BUDGET: unknown budget key "maxToolcalls" (known: maxTokens, maxCostUsd, maxRuntimeMs, maxToolCalls, retryBudget)',
+    );
+    expect(() =>
+      parseWorkerBudgetEnv('{"maxToolCalls":5,"bogus":1,"other":2}'),
+    ).toThrow(/unknown budget key "bogus"/);
+    for (const raw of ['{"maxTokens":-1}', '[]', '"x"', '{"maxToolCalls":0}']) {
+      expect(() => parseWorkerBudgetEnv(raw)).toThrow(/^KUBIC_BUDGET: /);
+    }
+    expect(() => parseWorkerBudgetEnv('{oops')).toThrow(/^worker budget env/);
+    // The valid shapes are untouched, including the retry sub-object.
+    expect(
+      parseWorkerBudgetEnv(
+        '{"maxTokens":10,"retryBudget":{"maxAttempts":2,"maxCostUsd":1}}',
+      ),
+    ).toEqual({
+      maxTokens: 10,
+      retryBudget: { maxAttempts: 2, maxCostUsd: 1 },
+    });
+  });
+
   it('createRunBudgetEnforcer counts every tool attempt and stops at the cap', () => {
     // The real BEFORE_TOOL semantics: the cap-th attempt runs and the next
     // is blocked with the named limit — the wiring, not just the meter.

@@ -232,7 +232,7 @@ export async function dispatchCommand(
   // read from the raw argv (issue #227) and becomes the `cli` layer of this
   // same load; the interactive trust answer (issue #228) is an explicit gate
   // on that same load.
-  const cliModel = cliModelFromArgs(command, rest);
+  const cliModel = cliModelFromArgs(command, args);
   const cliConfig = deps.loadConfig(
     cliModel === undefined && trust === undefined
       ? undefined

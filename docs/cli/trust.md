@@ -21,7 +21,12 @@ error: project-local config refused pre-trust: <path>/.kubic/config.toml — run
 
 The same gate covers the project `models.json` and ancestor project skills,
 so a repository cannot point a provider — and your API key — at its own URL
-either. Those consumers resolve their files by walking up to the repository
+either. The flip side is what a grant means: **one `yes` covers all three**.
+A trusted project's `models.json` may name any `*_API_KEY` (or `KUBIC_*`)
+variable as its provider's key, and that key — the real one, if you have it
+set — is sent to the provider URL the file names; trusted project skills
+are instructions the model follows. Grant trust only to a repository whose
+`models.json` and skills you would run yourself. Those consumers resolve their files by walking up to the repository
 root, so the decision is checked against **the directory the file lives
 in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
 skills even when a run starts in `/repo/pkg`, while a grant for `/repo/pkg`
@@ -34,7 +39,7 @@ children).
 | Invocation | Effect |
 | --- | --- |
 | `kubic trust` | Records trust for the current directory. |
-| `kubic trust <path>` | Records trust for that directory (must exist). |
+| `kubic trust <path>` | Records trust for that directory (must exist and be a directory; a symlink to one is followed and recorded under its resolved path). |
 | `kubic trust --revoke` | Removes the recorded decision; the refusal comes back. |
 | `kubic trust --list` | Prints every recorded decision (`trusted <path>` / `declined <path>`), sorted. |
 
@@ -45,6 +50,7 @@ project config is waiting there:
 $ kubic trust
 trusted project /Users/you/src/app (store: /Users/you/.kubic/trust.json)
 project config /Users/you/src/app/.kubic/config.toml will load
+this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills
 ```
 
 Exit codes: **0** recorded, revoked or listed; **1** an unreadable or
@@ -91,8 +97,7 @@ trust before the config load and before the alt-screen opens. When a
 project `config.toml` is present and no decision is recorded, it asks once:
 
 ```
-Trust project /Users/you/src/app? Kubic will load
-/Users/you/src/app/.kubic/config.toml, which can set the model, approvals, permissions and journal retention for runs in this project.
+Trust project /Users/you/src/app? This lets the project's own files take effect for runs here: /Users/you/src/app/.kubic/config.toml (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).
 ```
 
 (One line on screen — wrapped here for readability.)
@@ -118,10 +123,17 @@ other than `1`/`true` contributes nothing (the store's decision, if any,
 still applies). This is the escape hatch for scripts and CI; `kubic trust`
 is the durable form.
 
-`kubic orchestrate` inherits this to its worker children: when the manager
-is trusted (by the store or the env var), each child is spawned with
-`KUBIC_TRUST_PROJECT=1` unless it was already exported, because a child runs
-in its own worktree — a different path from the manager's recorded decision.
+`kubic orchestrate` inherits this to its worker children, decided **per root**:
+a store grant is keyed to one exact directory (a grant for `/repo/pkg` never
+reaches `/repo`), so the run checks the decision for the repository root whose
+`models.json` it loads — not for the directory you launched from. When that
+root is trusted (by the store or the env var), the manager loads its project
+`models.json` and each child is spawned with `KUBIC_TRUST_PROJECT=1` unless it
+was already exported, because a child runs in its own worktree — a different
+path from the recorded decision. A grant for a subdirectory, run from that
+subdirectory, therefore trusts nothing at the repo root: the root's
+`models.json` stays ignored and the children receive no trust. `kubic tui`'s
+orchestrator mode uses the same per-root check.
 
 ## Reporting
 

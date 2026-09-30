@@ -9,6 +9,7 @@
 // accessor) — this module is the delegation-side assignment, never a second
 // loader. Faux/in-memory only: zero network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
+import { resolveEffectivePolicy } from '../policy/enterprise.js';
 import { createRoleToolGuard } from './resolver.js';
 import {
   composeWorkerPrompt,
@@ -238,5 +239,153 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
         (verdict as { block: { reason: string } }).block.reason,
       ).not.toMatch(/approval/i);
     }
+  });
+});
+
+// §58 enterprise policy on the manager side (issue #288): the workers' own
+// `kubic run --role` refuses a role that declares a denied tool, so the
+// manager's plan must refuse the same assignment up front — before a
+// worktree or a process exists — instead of gating roles not at all.
+describe('delegation-path role assignment under the enterprise tool policy (issue #288)', () => {
+  const denyBash = resolveEffectivePolicy([
+    { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+  ]).policy;
+
+  it('refuses the assignment of a role declaring a denied tool; the innocuous role stays assigned', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: denyBash,
+    });
+    // planner (read/ls/find/grep) passes a deny-only policy; the implementer
+    // declares bash and is refused by name, its worker left unassigned.
+    expect(plan.assignments.map((entry) => entry.role)).toEqual(['planner']);
+    expect(plan.refused).toHaveLength(1);
+    expect(plan.refused[0]?.name).toBe('implementer');
+    expect(plan.refused[0]?.reason).toMatch(
+      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
+    );
+  });
+
+  it('refuses nothing when the policy denies a tool no assigned role declares', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: resolveEffectivePolicy([
+        { layer: 'enterprise', policy: { tools: { deny: ['git_push'] } } },
+      ]).policy,
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'planner',
+      'implementer',
+    ]);
+  });
+
+  it('an allow list refuses a role tool outside it, and a policy with no tool gate leaves the plan alone', () => {
+    const outside = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: resolveEffectivePolicy([
+        {
+          layer: 'enterprise',
+          policy: { tools: { allow: ['read', 'ls', 'find', 'grep'] } },
+        },
+      ]).policy,
+    });
+    expect(outside.assignments.map((entry) => entry.role)).toEqual(['planner']);
+    expect(outside.refused.map((entry) => entry.name)).toEqual(['implementer']);
+    const ungated = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: resolveEffectivePolicy([
+        { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+      ]).policy,
+    });
+    expect(ungated.refused).toEqual([]);
+    expect(ungated.assignments).toHaveLength(2);
+  });
+
+  it('judges a role AFTER the config [roles.<name>] layers: a layer narrowing the denied tool away keeps the assignment', () => {
+    // `kubic run --role implementer` resolves the same layers, so a layer that
+    // replaces the document's tool list with [read] passes the deny; the
+    // manager must not refuse what the worker would accept.
+    const layers = [
+      {
+        layer: 'project' as const,
+        roles: { implementer: { tools: ['read'] } },
+      },
+    ];
+    const layered = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: denyBash,
+      layers,
+    });
+    expect(layered.refused).toEqual([]);
+    expect(layered.assignments.map((entry) => entry.role)).toEqual([
+      'planner',
+      'implementer',
+    ]);
+    expect(layered.assignments[1]?.tools).toEqual(['read']);
+    // Control: without the layer the same policy refuses the implementer.
+    const bare = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      toolPolicy: denyBash,
+    });
+    expect(bare.refused.map((entry) => entry.name)).toEqual(['implementer']);
+  });
+
+  it('loads every document under the same layers, so a layer that fixes a contradictory document is not refused', () => {
+    // `tools: [read, write]` under `filesystem: read` contradicts (§40.3) on
+    // its own; the config layer replaces the tool list, and `kubic run --role`
+    // accepts the result — so must the manager's document load.
+    const files = {
+      [`${CWD}/.kubic/roles/planner.md`]: roleText(
+        'planner',
+        'tools: [read, write]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
+        'Plan it.',
+      ),
+    };
+    const layers = [
+      { layer: 'project' as const, roles: { planner: { tools: ['read'] } } },
+    ];
+    const layered = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      agents: ['alpha'],
+      layers,
+    });
+    expect(layered.refused).toEqual([]);
+    expect(layered.assignments.map((entry) => entry.tools)).toEqual([['read']]);
+    // Control: the document alone is refused by name.
+    const bare = planWorkerRoles({
+      bridge: memBridge(files),
+      cwd: CWD,
+      agents: ['alpha'],
+    });
+    expect(bare.assignments).toEqual([]);
+    expect(bare.refused[0]?.name).toBe('planner');
+  });
+
+  it('does not refuse the run over a denied role no worker is assigned to', () => {
+    // One worker: only the planner is assigned. The implementer document
+    // declares a denied tool but nobody runs it, so it must not refuse the
+    // run (an enterprise deny gates grants, not the mere presence of a file).
+    const plan = planWorkerRoles({
+      bridge: memBridge(twoRoleCwd()),
+      cwd: CWD,
+      agents: ['alpha'],
+      toolPolicy: denyBash,
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments.map((entry) => entry.role)).toEqual(['planner']);
   });
 });

@@ -50,6 +50,7 @@ function runtime(): RuntimeConfig {
     },
     projectTrusted: true,
     overriddenAttempts: [],
+    modelPinOverrides: [],
     layers: [
       {
         layer: 'global',

@@ -293,11 +293,13 @@ describe('the run attaches a seat when a user is present (issue #105)', () => {
     // evidence: it received the injected seat's verdict under the same key.
     const evidence = JSON.parse(
       readFileSync(
+        // The run's own mailbox: per session (issue #279).
         join(
           h.root,
           '.kubic',
           'orchestrator',
           'approvals',
+          'orch-105',
           'worker-1.child.json',
         ),
         'utf8',
@@ -377,11 +379,13 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     // key the router recomputed, and exited 0 on it.
     const evidence = JSON.parse(
       readFileSync(
+        // The run's own mailbox: per session (issue #279).
         join(
           h.root,
           '.kubic',
           'orchestrator',
           'approvals',
+          'orch-105',
           'worker-1.child.json',
         ),
         'utf8',
@@ -422,11 +426,13 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     expect(elapsed).toBeLessThan(30_000);
     const evidence = JSON.parse(
       readFileSync(
+        // The run's own mailbox: per session (issue #279).
         join(
           h.root,
           '.kubic',
           'orchestrator',
           'approvals',
+          'orch-105',
           'worker-1.child.json',
         ),
         'utf8',

@@ -10,7 +10,13 @@
 // --model` are one input to the ONE load dispatch performs, so the model
 // the projection hands the lane is the same model `kubic config` reports —
 // never two derivations that can drift.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -170,6 +176,36 @@ describe('interactive trust prompt (issue #228)', () => {
     expect(
       loadCliConfig({ cwd: project, home, env: {} }).error,
     ).toBeUndefined();
+  });
+
+  // The grant is one decision for the whole project tree: it also unlocks
+  // the project models.json (a provider URL plus the `*_API_KEY` variable it
+  // sends to it) and the project skills. The question must say so — a "yes"
+  // that reads as "load config.toml" is not informed consent.
+  it('the question names everything the grant unlocks: config.toml, models.json (with the key risk) and skills', async () => {
+    const home = tmpDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const asked: string[] = [];
+    await resolveInteractiveProjectTrust({
+      home,
+      cwd: project,
+      env: {},
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    });
+    expect(asked).toHaveLength(1);
+    const question = asked[0] ?? '';
+    const key = realpathSync(project);
+    expect(question).toContain(`Trust project ${key}?`);
+    expect(question).toContain(join(project, '.kubic', 'config.toml'));
+    expect(question).toContain('models.json');
+    expect(question).toContain('any *_API_KEY or KUBIC_* variable it names');
+    expect(question).toContain('KUBIC_API_KEY by default');
+    expect(question).toContain('project skills');
+    // One line: it is a single confirm prompt on the terminal.
+    expect(question).not.toContain('\n');
   });
 
   it('declining records the decision and the lane refuses accordingly', async () => {

@@ -473,6 +473,17 @@ describe('kubic models / config', () => {
 });
 
 describe('kubic trust', () => {
+  // One grant covers the whole project tree; the help says what "yes" means
+  // (issue #228 review) — not only the committed config.toml.
+  it('its help names everything a grant covers: config.toml, models.json and skills', async () => {
+    const help = (await kubic(['trust', '--help'])).out.join('\n');
+    expect(help).toContain('.kubic/config.toml');
+    expect(help).toContain('models.json');
+    expect(help).toContain('*_API_KEY');
+    expect(help).toContain('KUBIC_*');
+    expect(help).toContain('project skills');
+  });
+
   it('parses the grant form with no flags', async () => {
     expect((await kubic(['trust'])).calls).toEqual([
       { key: 'trust', input: {} },

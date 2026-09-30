@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -129,6 +130,135 @@ describe('session-scoped worktrees (issue #144)', () => {
     expect(code).toBe(1);
     expect(lines.join('\n')).toMatch(/code=worktree_exists/);
     expect(lines.join('\n')).toMatch(/--resume/);
+  });
+
+  it('a fresh run under a session name that already has state is refused with exit 2 and never overwrites that state (issue #144)', async () => {
+    const root = initRepo();
+    const first: string[] = [];
+    const code1 = await runOrchestrateCommand(
+      {
+        prompt: 'do something',
+        agents: ['worker-1'],
+        session: 's1',
+        yes: true,
+      },
+      await depsFor(root, first),
+    );
+    expect(code1, first.join('\n')).toBe(0);
+    const statePath = join(root, '.kubic', 'orchestrator', 's1.json');
+    const before = readFileSync(statePath, 'utf8');
+    expect(JSON.parse(before)).toMatchObject({
+      prompt: 'do something',
+      merged: ['worker-1'],
+    });
+
+    const second: string[] = [];
+    const code2 = await runOrchestrateCommand(
+      { prompt: 'again', agents: ['worker-1'], session: 's1', yes: true },
+      await depsFor(root, second),
+    );
+    const text = second.join('\n');
+    expect(code2, text).toBe(2);
+    expect(text).toMatch(/code=session_exists/);
+    expect(text).toContain("session 's1' already has orchestrator state");
+    // The message names every way out.
+    expect(text).toContain('--resume --session s1');
+    expect(text).toContain('another --session');
+    expect(text).toContain('kubic clean --session s1');
+    // The stored run is byte-for-byte what run 1 left: prompt, merged list.
+    expect(readFileSync(statePath, 'utf8')).toBe(before);
+    // Nothing was spawned for the refused run.
+    expect(text).not.toMatch(/spawn:/);
+  });
+
+  it('`kubic clean --session s1` makes the id reusable: the retired state no longer refuses a fresh run', async () => {
+    const root = initRepo();
+    const first: string[] = [];
+    expect(
+      await runOrchestrateCommand(
+        { prompt: 'first', agents: ['worker-1'], session: 's1', yes: true },
+        await depsFor(root, first),
+      ),
+      first.join('\n'),
+    ).toBe(0);
+    const statePath = join(root, '.kubic', 'orchestrator', 's1.json');
+    expect(existsSync(statePath)).toBe(true);
+    const out: string[] = [];
+    const cleaned = await runCleanCommand(
+      { sessionId: 's1' },
+      {
+        env: new NodeExecutionEnv(root),
+        out: (line) => out.push(line),
+        err: (line) => out.push(line),
+      },
+    );
+    expect(cleaned, out.join('\n')).toBe(0);
+    expect(existsSync(statePath)).toBe(false);
+    expect(existsSync(join(root, '.kubic', 'wt', 's1'))).toBe(false);
+    const again: string[] = [];
+    const code = await runOrchestrateCommand(
+      { prompt: 'again', agents: ['worker-1'], session: 's1', yes: true },
+      await depsFor(root, again),
+    );
+    expect(code, again.join('\n')).toBe(0);
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({
+      prompt: 'again',
+    });
+  });
+
+  it('the refusal is a machine-readable usage envelope under --json', async () => {
+    const root = initRepo();
+    const first: string[] = [];
+    await runOrchestrateCommand(
+      {
+        prompt: 'do something',
+        agents: ['worker-1'],
+        session: 's1',
+        yes: true,
+      },
+      await depsFor(root, first),
+    );
+    const out: string[] = [];
+    const deps = await depsFor(root, []);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'again',
+        agents: ['worker-1'],
+        session: 's1',
+        yes: true,
+        json: true,
+      },
+      { ...deps, out: (line) => out.push(line) },
+    );
+    expect(code).toBe(2);
+    const envelope = JSON.parse(out.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      status: string;
+      error: { code: string };
+    };
+    expect(envelope).toMatchObject({
+      ok: false,
+      exitCode: 2,
+      status: 'usage',
+      error: { code: 'session_exists' },
+    });
+  });
+
+  it('a session file that is not valid state (torn write) is not state: a fresh run replaces it', async () => {
+    const root = initRepo();
+    const stateDir = join(root, '.kubic', 'orchestrator');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, 's2.json'), '{"version": 1, "sess');
+    const lines: string[] = [];
+    const code = await runOrchestrateCommand(
+      { prompt: 'work', agents: ['worker-1'], session: 's2', yes: true },
+      await depsFor(root, lines),
+    );
+    expect(code, lines.join('\n')).toBe(0);
+    expect(
+      JSON.parse(readFileSync(join(stateDir, 's2.json'), 'utf8')),
+    ).toMatchObject({ prompt: 'work', merged: ['worker-1'] });
   });
 
   it('--resume of a killed run reuses that session’s own worktree', async () => {

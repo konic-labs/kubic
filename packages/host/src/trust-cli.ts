@@ -45,12 +45,19 @@ function projectConfigPath(dir: string): string {
 
 // The grant target must be a directory: a project root is what later
 // invocations resolve, and recording a file path would be a decision no
-// load could ever honour. The probe resolves against the process cwd (the
-// bridge itself is `/`-rooted), so a relative operand works.
+// load could ever honour. The probe resolves against the process cwd, so a
+// relative operand works, and it FOLLOWS symlinks: the store keys a grant by
+// the canonical path, so a symlink to a project directory is a project
+// directory. The bridge only lstats, so the operand is canonicalised first
+// (realpath) and the real path is what gets inspected.
 function requireDirectory(dir: string): void {
   let isDirectory = false;
   try {
-    isDirectory = BRIDGE.fileInfo(resolve(dir)).isDirectory;
+    const absolute = resolve(dir);
+    // realPath throws for a missing or dangling operand: no such directory.
+    isDirectory = BRIDGE.fileInfo(
+      BRIDGE.realPath?.(absolute) ?? absolute,
+    ).isDirectory;
   } catch {
     throw new CliUsageError(`no such directory: ${dir}`);
   }
@@ -101,6 +108,10 @@ export function runTrustCommand(
       BRIDGE.exists(configPath)
         ? `project config ${configPath} will load`
         : `no project config at ${configPath} yet — this grant applies when one appears`,
+    );
+    // The grant is per project tree, not per file: say what else it unlocks.
+    deps.out(
+      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
     );
     return EXIT_OK;
   } catch (error) {

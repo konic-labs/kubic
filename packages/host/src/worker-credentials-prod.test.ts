@@ -167,6 +167,9 @@ describe('worker child provider credentials (issue #200)', () => {
         sessionsRoot,
         modelsCwd: workspace,
         roles: { cwd: workspace },
+        // Skills discovery defaults to process.cwd(); the run must read the
+        // workspace only (a Stryker sandbox lives inside the real checkout).
+        skills: { cwd: workspace, homeDir: workspace, trusted: false },
         model: { provider: 'gw', id: 'm1' },
         env: new NodeExecutionEnv(workspace),
       },
@@ -187,6 +190,9 @@ describe('worker child provider credentials (issue #200)', () => {
         sessionsRoot,
         modelsCwd: workspace,
         roles: { cwd: workspace },
+        // Skills discovery defaults to process.cwd(); the run must read the
+        // workspace only (a Stryker sandbox lives inside the real checkout).
+        skills: { cwd: workspace, homeDir: workspace, trusted: false },
         model: { provider: 'gw', id: 'm1' },
         env: new NodeExecutionEnv(workspace),
       },
@@ -207,6 +213,9 @@ describe('worker child provider credentials (issue #200)', () => {
         sessionsRoot,
         modelsCwd: workspace,
         roles: { cwd: workspace },
+        // Skills discovery defaults to process.cwd(); the run must read the
+        // workspace only (a Stryker sandbox lives inside the real checkout).
+        skills: { cwd: workspace, homeDir: workspace, trusted: false },
         model: { provider: 'gw', id: 'm1' },
         env: new NodeExecutionEnv(workspace),
       },

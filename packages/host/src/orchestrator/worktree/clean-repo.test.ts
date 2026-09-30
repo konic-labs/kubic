@@ -265,6 +265,318 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     );
   });
 
+  it('--session removes the session directory it emptied, and only that one (issue #144)', async () => {
+    const root = scratchRepo();
+    const one = retainWorktree(root, 'worker-1', 'orch-fail');
+    retainWorktree(root, 'worker-2', 'orch-fail');
+    const other = retainWorktree(root, 'worker-1', 'orch-other');
+    const stateDir = join(root, '.kubic', 'orchestrator');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, 'orch-fail.json'),
+      JSON.stringify({
+        version: 1,
+        sessionId: 'orch-fail',
+        prompt: 'demo prompt',
+        agents: ['worker-1', 'worker-2'],
+        merged: [],
+        pending: ['worker-1', 'worker-2'],
+        stopped: true,
+        records: [],
+      }),
+    );
+    const sessionDir = join(root, '.kubic', 'wt', 'orch-fail');
+    expect(existsSync(sessionDir)).toBe(true);
+
+    // A dry run mutates nothing, the session directory included.
+    await clean(root, { sessionId: 'orch-fail', dryRun: true });
+    expect(existsSync(one)).toBe(true);
+    expect(existsSync(sessionDir)).toBe(true);
+
+    const real = await clean(root, { sessionId: 'orch-fail' });
+    expect(real.code).toBe(0);
+    expect(existsSync(one)).toBe(false);
+    // The emptied session directory is gone; nothing else is.
+    expect(existsSync(sessionDir)).toBe(false);
+    expect(existsSync(other)).toBe(true);
+    expect(existsSync(join(root, '.kubic', 'wt', 'orch-other'))).toBe(true);
+    expect(existsSync(join(root, '.kubic', 'wt'))).toBe(true);
+  });
+
+  describe('a full --session clean retires the session state so the id can be reused (issue #144)', () => {
+    const writeState = (root: string, session: string, agents: string[]) => {
+      const stateDir = join(root, '.kubic', 'orchestrator');
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        join(stateDir, `${session}.json`),
+        JSON.stringify({
+          version: 1,
+          sessionId: session,
+          prompt: 'p',
+          agents,
+          merged: [],
+          pending: agents,
+          stopped: false,
+          records: [],
+        }),
+      );
+      return join(stateDir, `${session}.json`);
+    };
+
+    // Approvals state a run leaves under `approvals/<session>/` (the full-access
+    // record, memoized decisions, the ask mailbox) beside the repo-wide ledger.
+    const writeApprovals = (root: string, session: string) => {
+      const dir = join(root, '.kubic', 'orchestrator', 'approvals', session);
+      mkdirSync(join(dir, 'asks'), { recursive: true });
+      writeFileSync(join(dir, 'skip-records.json'), '[{"sessionId":"x"}]');
+      writeFileSync(join(dir, 'decisions.json'), '{"k":{"approved":true}}');
+      writeFileSync(join(dir, 'asks', 'a.json'), '{}');
+      return dir;
+    };
+    const writeLedger = (root: string) => {
+      const ledger = join(
+        root,
+        '.kubic',
+        'orchestrator',
+        'approvals',
+        'audit.jsonl',
+      );
+      mkdirSync(join(ledger, '..'), { recursive: true });
+      writeFileSync(ledger, '{"row":1}\n');
+      return ledger;
+    };
+
+    it('removes exactly that session\u2019s state file once all its worktrees are gone', async () => {
+      const root = scratchRepo();
+      retainWorktree(root, 'worker-1', 'sess-a');
+      retainWorktree(root, 'worker-2', 'sess-a');
+      retainWorktree(root, 'worker-1', 'sess-b');
+      const stateA = writeState(root, 'sess-a', ['worker-1', 'worker-2']);
+      const stateB = writeState(root, 'sess-b', ['worker-1']);
+      const real = await clean(root, { sessionId: 'sess-a' });
+      expect(real.code, real.errs.join('\n')).toBe(0);
+      expect(existsSync(stateA)).toBe(false);
+      // Another session's state is never touched.
+      expect(existsSync(stateB)).toBe(true);
+      expect(kubicBranches(root)).toEqual(['kubic/sess-b/worker-1']);
+    });
+
+    it('a session whose later worker never spawned still cleans fully and is retired', async () => {
+      // The usual shape of a failed run: worker-1 failed and stayed retained,
+      // worker-2 was never given a worktree or a branch.
+      const root = scratchRepo();
+      retainWorktree(root, 'worker-1', 'sess-a');
+      const state = writeState(root, 'sess-a', ['worker-1', 'worker-2']);
+      const real = await clean(root, { sessionId: 'sess-a' });
+      expect(real.errs).toEqual([]);
+      expect(real.code).toBe(0);
+      expect(kubicBranches(root)).toEqual([]);
+      expect(existsSync(join(root, '.kubic', 'wt', 'sess-a'))).toBe(false);
+      expect(existsSync(state)).toBe(false);
+    });
+
+    it('keeps the state on a dry run', async () => {
+      const root = scratchRepo();
+      retainWorktree(root, 'worker-1', 'sess-a');
+      const state = writeState(root, 'sess-a', ['worker-1']);
+      await clean(root, { sessionId: 'sess-a', dryRun: true });
+      expect(existsSync(state)).toBe(true);
+    });
+
+    it('keeps the state while any worktree of the session remains (a dirty tree without --force)', async () => {
+      const root = scratchRepo();
+      const one = retainWorktree(root, 'worker-1', 'sess-a');
+      retainWorktree(root, 'worker-2', 'sess-a');
+      writeFileSync(join(one, 'dirty.txt'), 'uncommitted\n');
+      const state = writeState(root, 'sess-a', ['worker-1', 'worker-2']);
+      const approvals = writeApprovals(root, 'sess-a');
+      const real = await clean(root, { sessionId: 'sess-a' });
+      expect(real.code).toBe(1);
+      expect(existsSync(one)).toBe(true);
+      expect(existsSync(state)).toBe(true);
+      // A partial clean keeps the approvals state with the session state.
+      expect(existsSync(approvals)).toBe(true);
+      // Forced, the rest goes and the state is retired.
+      const forced = await clean(root, { sessionId: 'sess-a', force: true });
+      expect(forced.code, forced.errs.join('\n')).toBe(0);
+      expect(existsSync(state)).toBe(false);
+      expect(existsSync(approvals)).toBe(false);
+    });
+
+    it('retires the state when the session has nothing left to dispose (workers never got a worktree), approvals dir included', async () => {
+      const root = scratchRepo();
+      const state = writeState(root, 'sess-a', ['worker-1']);
+      const otherState = writeState(root, 'sess-b', ['worker-1']);
+      const approvals = writeApprovals(root, 'sess-a');
+      const otherApprovals = writeApprovals(root, 'sess-b');
+      const ledger = writeLedger(root);
+      const real = await clean(root, { sessionId: 'sess-a' });
+      expect(real.errs).toEqual([]);
+      expect(real.code).toBe(0);
+      expect(existsSync(state)).toBe(false);
+      expect(existsSync(approvals)).toBe(false);
+      expect(real.lines.join('\n')).toContain('retired session state');
+      expect(real.lines.join('\n')).not.toContain('nothing to prune');
+      // Only that session: another session's state and approvals, and the
+      // repo-wide audit ledger, are never touched.
+      expect(existsSync(otherState)).toBe(true);
+      expect(existsSync(otherApprovals)).toBe(true);
+      expect(existsSync(ledger)).toBe(true);
+      // The loop is closed: a second clean of the retired id has no state.
+      const again = await clean(root, { sessionId: 'sess-a' });
+      expect(again.code).toBe(1);
+    });
+
+    it('retires the approvals dir with a disposing clean, and tolerates a run that never wrote one', async () => {
+      const root = scratchRepo();
+      retainWorktree(root, 'worker-1', 'sess-a');
+      const state = writeState(root, 'sess-a', ['worker-1']);
+      const approvals = writeApprovals(root, 'sess-a');
+      const ledger = writeLedger(root);
+      const real = await clean(root, { sessionId: 'sess-a' });
+      expect(real.code, real.errs.join('\n')).toBe(0);
+      expect(existsSync(state)).toBe(false);
+      expect(existsSync(approvals)).toBe(false);
+      expect(existsSync(ledger)).toBe(true);
+      retainWorktree(root, 'worker-1', 'sess-c');
+      writeState(root, 'sess-c', ['worker-1']);
+      const noApprovals = await clean(root, { sessionId: 'sess-c' });
+      expect(noApprovals.code, noApprovals.errs.join('\n')).toBe(0);
+    });
+
+    it('--dry-run says it would retire the session state and its approvals dir, and changes nothing', async () => {
+      const root = scratchRepo();
+      const state = writeState(root, 'sess-a', ['worker-1']);
+      const approvals = writeApprovals(root, 'sess-a');
+      const dry = await clean(root, { sessionId: 'sess-a', dryRun: true });
+      expect(dry.code).toBe(0);
+      const text = dry.lines.join('\n');
+      expect(text).toContain(`would retire session state ${state}`);
+      expect(text).toContain(approvals);
+      expect(text).not.toContain('nothing to prune');
+      expect(existsSync(state)).toBe(true);
+      expect(existsSync(approvals)).toBe(true);
+    });
+  });
+
+  it('a session directory that holds anything else is left in place', async () => {
+    const root = scratchRepo();
+    retainWorktree(root, 'worker-1', 'orch-keep');
+    const sessionDir = join(root, '.kubic', 'wt', 'orch-keep');
+    writeFileSync(join(sessionDir, 'notes.txt'), 'not a worktree\n');
+    const stateDir = join(root, '.kubic', 'orchestrator');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, 'orch-keep.json'),
+      JSON.stringify({
+        version: 1,
+        sessionId: 'orch-keep',
+        prompt: 'p',
+        agents: ['worker-1'],
+        merged: [],
+        pending: ['worker-1'],
+        stopped: false,
+        records: [],
+      }),
+    );
+    const real = await clean(root, { sessionId: 'orch-keep' });
+    expect(real.code).toBe(0);
+    expect(existsSync(join(sessionDir, 'worker-1'))).toBe(false);
+    expect(existsSync(join(sessionDir, 'notes.txt'))).toBe(true);
+  });
+
+  it('removes the emptied session directory with a NON-recursive rmdir, so a worker dir a concurrent resume adds is never wiped', async () => {
+    const root = scratchRepo();
+    retainWorktree(root, 'worker-1', 'orch-race');
+    const stateDir = join(root, '.kubic', 'orchestrator');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, 'orch-race.json'),
+      JSON.stringify({
+        version: 1,
+        sessionId: 'orch-race',
+        prompt: 'p',
+        agents: ['worker-1'],
+        merged: [],
+        pending: ['worker-1'],
+        stopped: false,
+        records: [],
+      }),
+    );
+    const sessionDir = join(root, '.kubic', 'wt', 'orch-race');
+    const env = new NodeExecutionEnv(root);
+    const commands: string[][] = [];
+    // A `--resume` of the same session lands `<wt>/S/worker-2` after the
+    // disposal emptied the directory and before the directory is removed: the
+    // hook fires on the rmdir itself, exactly in that window.
+    const racing = {
+      ...env,
+      cwd: env.cwd,
+      shell: {
+        ...env.shell,
+        spawn: (
+          cmd: string,
+          args: string[],
+          options: Parameters<typeof env.shell.spawn>[2],
+        ) => {
+          if (cmd === 'rmdir') {
+            commands.push([cmd, ...args]);
+            mkdirSync(join(sessionDir, 'worker-2'), { recursive: true });
+            writeFileSync(join(sessionDir, 'worker-2', 'late.txt'), 'late\n');
+          }
+          return env.shell.spawn(cmd, args, options);
+        },
+      },
+    } as unknown as NodeExecutionEnv;
+    const out: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { sessionId: 'orch-race' },
+      {
+        env: racing,
+        out: (line: string) => out.push(line),
+        err: (line: string) => errs.push(line),
+      },
+    );
+    // The disposal itself succeeded, silently leaving the busy directory.
+    expect(code, errs.join('\n')).toBe(0);
+    expect(errs).toEqual([]);
+    expect(commands).toEqual([['rmdir', sessionDir]]);
+    expect(existsSync(join(sessionDir, 'worker-2', 'late.txt'))).toBe(true);
+  });
+
+  it('--all removes every session directory it emptied but never the worktree root', async () => {
+    const root = scratchRepo();
+    retainWorktree(root, 'worker-1', 'sess-a');
+    retainWorktree(root, 'worker-1', 'sess-b');
+    const real = await clean(root, {});
+    expect(real.code).toBe(0);
+    expect(kubicBranches(root)).toEqual([]);
+    expect(existsSync(join(root, '.kubic', 'wt', 'sess-a'))).toBe(false);
+    expect(existsSync(join(root, '.kubic', 'wt', 'sess-b'))).toBe(false);
+    expect(existsSync(join(root, '.kubic', 'wt'))).toBe(true);
+  });
+
+  it('a legacy unscoped worktree leaves the worktree root itself in place', async () => {
+    const root = scratchRepo();
+    retainWorktree(root, 'worker-1');
+    const real = await clean(root, {});
+    expect(real.code).toBe(0);
+    expect(existsSync(join(root, '.kubic', 'wt', 'worker-1'))).toBe(false);
+    expect(existsSync(join(root, '.kubic', 'wt'))).toBe(true);
+  });
+
+  it('removes the emptied session directory under a configured worktree root too', async () => {
+    const root = scratchRepo();
+    const custom = join(root, '.kubic-custom', 'wt', 'sess-c', 'worker-1');
+    git(root, ['worktree', 'add', custom, '-b', 'kubic/sess-c/worker-1']);
+    const real = await clean(root, {}, '.kubic-custom/wt');
+    expect(real.code).toBe(0);
+    expect(existsSync(custom)).toBe(false);
+    expect(existsSync(join(root, '.kubic-custom', 'wt', 'sess-c'))).toBe(false);
+    expect(existsSync(join(root, '.kubic-custom', 'wt'))).toBe(true);
+  });
+
   it('--json emits the envelope for dry-run and for real removal', async () => {
     const root = scratchRepo();
     const retained = retainWorktree(root, 'worker-1');

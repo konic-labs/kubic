@@ -120,7 +120,10 @@ function harness(
   const merges: MergeDecisionRecord[] = [];
   let mergeAskCount = 0;
   let built: WorkerApprovalsRun | undefined;
-  const mailbox = join(dir, 'approvals');
+  // The child is told the run's own mailbox (`KUBIC_APPROVALS_DIR`), which is
+  // per session (issue #279): read it from the run once the CLI built it.
+  const mailbox = (): string =>
+    built === undefined ? join(dir, 'approvals') : built.mailboxDir();
   const deps: OrchestrateCommandDeps = {
     out: (line) => lines.push(line),
     err: (line) => lines.push(line),
@@ -142,7 +145,7 @@ function harness(
         (agentId === 'worker-2' ? 'destructive-shell' : 'network');
       const count = options.asksPerWorker ?? 1;
       for (let index = 0; index < count; index += 1) {
-        const publishedAsk = publishWorkerAsk(mailbox, {
+        const publishedAsk = publishWorkerAsk(mailbox(), {
           trigger,
           toolName: 'bash',
           args: {
@@ -160,7 +163,7 @@ function harness(
         });
         published.push(publishedAsk);
         const answer = await awaitWorkerAskAnswer(
-          mailbox,
+          mailbox(),
           publishedAsk.request.key,
           { maxPendingMs: 1_000, pollMs: 5 },
         );
@@ -388,7 +391,7 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
       runWorker: async (agentId, worktree, _prompt, info) => {
         // Publish the ask WITHOUT answering it yet, so the manager's read-only
         // view and its refused attempt are observed while it is pending.
-        const published = publishWorkerAsk(join(h.dir, 'approvals'), {
+        const published = publishWorkerAsk(h.approvals.mailboxDir(), {
           trigger: 'install',
           toolName: 'bash',
           args: { command: 'npm install left-pad' },
@@ -404,7 +407,7 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
         refusal = h.approvals.managerApprove(published.request.key);
         auditAtRefusal = h.approvals.audit();
         await awaitWorkerAskAnswer(
-          join(h.dir, 'approvals'),
+          h.approvals.mailboxDir(),
           published.request.key,
           { maxPendingMs: 1_000, pollMs: 5 },
         );
@@ -655,6 +658,46 @@ describe('the worker-ask bound reads config maxPendingMs (issue #230)', () => {
       },
     });
     expect(bounds).toEqual([ORCHESTRATE_APPROVAL_BOUND_MS]);
+  });
+
+  it('a fresh run asks for an empty approvals state; a --resume run continues the stored one', async () => {
+    const seen = async (
+      args: OrchestrateCliOptions,
+      overrides: Partial<Parameters<typeof runOrchestrateCommand>[1]> = {},
+    ): Promise<(boolean | undefined)[]> => {
+      const h = harness(() => ({ approved: true }), { agents: ['worker-1'] });
+      const fresh: (boolean | undefined)[] = [];
+      const build = h.deps.approvals;
+      if (build === undefined) throw new Error('harness has no approvals seam');
+      const code = await runOrchestrateCommand(args, {
+        ...h.deps,
+        ...overrides,
+        approvals: (options) => {
+          fresh.push(options.fresh);
+          return build(options);
+        },
+      });
+      expect(code).toBe(0);
+      return fresh;
+    };
+    expect(await seen(ORCHESTRATE_ARGS)).toEqual([true]);
+    expect(
+      await seen(
+        { resume: true, session: 'orch-105' },
+        {
+          loadState: () => ({
+            version: 1,
+            sessionId: 'orch-105',
+            prompt: 'do the work',
+            agents: ['worker-1'],
+            merged: [],
+            pending: ['worker-1'],
+            stopped: false,
+            records: [],
+          }),
+        },
+      ),
+    ).toEqual([undefined]);
   });
 
   it('keeps the child bound strictly below the manager bound', () => {

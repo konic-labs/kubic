@@ -95,3 +95,55 @@ describe('the --model flag feeds the one config load (issue #227)', () => {
     expect(seen).toBe('faux/small');
   });
 });
+
+// Issue #295: on a terminal the bare `kubic --model p/id` IS `kubic tui --model
+// p/id`. The pre-scan must read the SAME argv the runner receives — for the bare
+// form the flag is the requested "command" token, not part of `rest` — or the
+// interactive session boots the default model with no error and no note (the
+// TUI no longer patches the flag over the loaded config).
+describe('the bare `kubic --model` form feeds the one config load (issue #295)', () => {
+  async function bareLoad(
+    requested: string,
+    rest: string[],
+    interactive: boolean,
+  ): Promise<string | undefined> {
+    let seen: string | undefined;
+    const deps: DispatchDeps = {
+      out: () => {},
+      err: () => {},
+      loadConfig: (input) =>
+        loadCliConfig({
+          cwd: fixture,
+          home: fixture,
+          env: {},
+          ...(input?.model === undefined ? {} : { model: input.model }),
+        }),
+      version: () => '9.9.9',
+      ensureRuntimeExclude: () => {},
+      isInteractive: () => interactive,
+      runners: {
+        tui: (_options: unknown, config: CliConfigResult) => {
+          const pin = runtimeModelPin(config);
+          seen = pin === undefined ? undefined : `${pin.provider}/${pin.id}`;
+          return 0;
+        },
+      } as unknown as DispatchRunners,
+    };
+    await dispatchCommand(requested, rest, deps);
+    return seen;
+  }
+
+  it('`kubic --model faux/small` on a terminal reaches the config load', async () => {
+    expect(await bareLoad('--model', ['faux/small'], true)).toBe('faux/small');
+  });
+
+  it('`kubic --model=faux/big` on a terminal reaches the config load', async () => {
+    expect(await bareLoad('--model=faux/big', [], true)).toBe('faux/big');
+  });
+
+  it('the explicit `kubic tui --model` control agrees', async () => {
+    expect(await bareLoad('tui', ['--model', 'faux/small'], true)).toBe(
+      'faux/small',
+    );
+  });
+});

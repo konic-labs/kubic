@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -176,7 +177,11 @@ interface Harness {
 
 async function harness(
   root: string,
-  options: { requireCredentialBroker?: boolean } = {},
+  options: {
+    requireCredentialBroker?: boolean;
+    projectTrust?: (path: string) => boolean;
+    modelPinFrozen?: boolean;
+  } = {},
 ): Promise<Harness> {
   const sessionsRoot = scratchRoot('kubic-orch-200-sessions-');
   const fixtureDir = scratchRoot('kubic-orch-200-child-');
@@ -200,6 +205,12 @@ async function harness(
     ...(options.requireCredentialBroker === true
       ? { requireCredentialBroker: true }
       : {}),
+    ...(options.modelPinFrozen === true ? { modelPinFrozen: true } : {}),
+    // What prod passes (`projectTrustFor(cliConfig)`): the persistent
+    // store's per-root decision, with the env opt-in NOT exported.
+    ...(options.projectTrust === undefined
+      ? {}
+      : { projectTrust: options.projectTrust }),
   });
   return {
     root,
@@ -294,6 +305,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
         sessionsRoot,
         modelsCwd: root,
         roles: { cwd: worktree },
+        skills: { cwd: worktree, homeDir: worktree, trusted: false },
         env: new NodeExecutionEnv(worktree),
       },
     );
@@ -349,5 +361,183 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     // Nothing was created and nothing spawned.
     expect(existsSync(join(root, '.kubic', 'wt'))).toBe(false);
     expect(readdirSync(h.dumpDir)).toEqual([]);
+  });
+});
+
+// Issue #200/#222: the manager's models trust is the SAME decision the
+// workers get. `kubic trust` (the persistent store) grants a project without
+// exporting KUBIC_TRUST_PROJECT; prod passes the store's per-root check as
+// `projectTrust`, and the decision for the models root is exactly what every
+// worker child receives — so the manager must load the project models.json
+// under it, or its credential grant is empty while the worker (trusted)
+// loads the provider.
+describe('prod orchestrate worker credentials under a store trust grant (issue #200)', () => {
+  beforeEach(() => {
+    // The env opt-in is NOT exported: only the store decision exists.
+    vi.stubEnv('KUBIC_TRUST_PROJECT', undefined);
+  });
+
+  it('a store-granted project loads its models.json for the manager and grants the worker its key', async () => {
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    vi.stubEnv('GW_API_KEY', SECRET);
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    const h = await harness(root, {
+      // The store keys a grant to the canonical repo root the run loads.
+      projectTrust: (path) => realpathSync(path) === realpathSync(root),
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'storetrust1',
+      },
+      h.deps,
+    );
+    expect(h.errLines.join('\n')).not.toMatch(/Provider is not configured/);
+    expect(h.debugLines.join('\n')).not.toContain('models.json ignored');
+    expect(code).toBe(0);
+    const env = dumpOf(h, 'alpha');
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+    // The child is told the manager's decision as the env opt-in.
+    expect(env.KUBIC_TRUST_PROJECT).toBe('1');
+  });
+
+  it('an undecided project stays untrusted: models.json ignored, no key granted, no trust handed down', async () => {
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    vi.stubEnv('GW_API_KEY', SECRET);
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    const h = await harness(root, { projectTrust: () => false });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'storetrust2',
+      },
+      h.deps,
+    );
+    // The manager holds no `gw` registration, so it grants nothing (the
+    // child's own probe names the provider) — and it tells the child no
+    // trust it does not itself hold.
+    expect(code).toBe(0);
+    expect(h.debugLines.join('\n')).toContain('models.json ignored');
+    expect(h.debugLines.join('\n')).toContain('untrusted');
+    const env = dumpOf(h, 'alpha');
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBeUndefined();
+    expect(env.KUBIC_TRUST_PROJECT).toBeUndefined();
+  });
+});
+
+// Issue #200: a built-in whose credential is several process-level vars
+// (AWS access keys + region) cannot be handed to a worker through the grant
+// namespace, and the worker env allowlist strips the rest — so the run is
+// refused up front by provider name (exit 6), not started and then killed by
+// the worker's `Provider is not configured`.
+describe('prod orchestrate worker credentials for multi-variable providers (issue #200)', () => {
+  it('refuses amazon-bedrock with exit 6 naming the provider, before any worktree', async () => {
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    vi.stubEnv('AWS_ACCESS_KEY_ID', 'AKIA-orch-200');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'aws-orch-secret-200');
+    vi.stubEnv('AWS_REGION', 'us-east-1');
+    vi.stubEnv('KUBIC_MODEL', 'amazon-bedrock/anthropic.claude-sonnet-4');
+    const h = await harness(root);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'bedrocksession',
+      },
+      h.deps,
+    );
+    expect(code).toBe(6);
+    const text = h.errLines.join('\n');
+    expect(text).toMatch(/code=credential_unavailable/);
+    expect(text).toContain("provider 'amazon-bedrock'");
+    expect(text).toContain('AWS_REGION');
+    // No secret value in any output, and nothing spawned or created.
+    expect(text).not.toContain('aws-orch-secret-200');
+    expect(h.debugLines.join('\n')).not.toContain('aws-orch-secret-200');
+    expect(existsSync(join(root, '.kubic', 'wt'))).toBe(false);
+    expect(readdirSync(h.dumpDir)).toEqual([]);
+  });
+});
+
+// Issue #295 (§35.1): a frozen enterprise `[model]` binds every worker child —
+// the child's own config load drops KUBIC_MODEL (the operator's or the
+// manager's injected role default) in favour of the enterprise pin. So the
+// manager must neither inject a pin the child will drop (each child would
+// print a confusing "ignored" note on its first stderr line) nor resolve the
+// credential preflight from a pin the child never runs: the provider that
+// needs a key is the enterprise model's.
+describe('prod orchestrate under a frozen enterprise model (issue #295)', () => {
+  async function run(
+    options: { modelPinFrozen: boolean },
+    operatorModel: string | undefined,
+  ): Promise<{ env: Record<string, string>; code: number }> {
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    vi.stubEnv('GW_API_KEY', SECRET);
+    vi.stubEnv('KUBIC_MODEL', operatorModel);
+    const h = await harness(root, options);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'frozenmodel',
+      },
+      h.deps,
+    );
+    return { env: dumpOf(h, 'alpha'), code };
+  }
+
+  it('injects no role-default KUBIC_MODEL and grants the enterprise model provider its key', async () => {
+    const { env, code } = await run({ modelPinFrozen: true }, undefined);
+    expect(code).toBe(0);
+    expect(env.KUBIC_MODEL).toBeUndefined();
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+  });
+
+  it('drops an operator KUBIC_MODEL from the child env and ignores it for the credential grant', async () => {
+    const { env, code } = await run({ modelPinFrozen: true }, 'other/m1');
+    expect(code).toBe(0);
+    expect(env.KUBIC_MODEL).toBeUndefined();
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+  });
+
+  it('still injects the role default and follows the operator pin without a freeze (control)', async () => {
+    const unpinned = await run({ modelPinFrozen: false }, undefined);
+    expect(unpinned.env.KUBIC_MODEL).toBe('local/llama3');
+    // The operator's own pin travels as it always did.
+    const pinned = await run({ modelPinFrozen: false }, 'gw/m1');
+    expect(pinned.env.KUBIC_MODEL).toBe('gw/m1');
+    expect(pinned.env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+  });
+  it('lets google-vertex through on GOOGLE_CLOUD_API_KEY: the key rides the role grant', async () => {
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    vi.stubEnv('GOOGLE_CLOUD_API_KEY', 'vertex-orch-key-200');
+    vi.stubEnv('KUBIC_MODEL', 'google-vertex/gemini-2.5-pro');
+    const h = await harness(root);
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha'],
+        yes: true,
+        session: 'vertexsession',
+      },
+      h.deps,
+    );
+    expect(code, h.errLines.join('\n')).toBe(0);
+    const env = dumpOf(h, 'alpha');
+    expect(env.KUBIC_ROLE_PLANNER_GOOGLE_CLOUD_API_KEY).toBe(
+      'vertex-orch-key-200',
+    );
+    expect(env.GOOGLE_CLOUD_API_KEY).toBeUndefined();
   });
 });

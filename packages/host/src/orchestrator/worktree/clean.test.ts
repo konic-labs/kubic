@@ -500,6 +500,17 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
         err: (line: string) => errs.push(line),
         repoRoot: '/repo',
         sessionAgents: () => ['worker-1'],
+        // What session `sa` left behind: its own retained tree and branch.
+        lister: async () => [
+          {
+            path: '/repo/.kubic/wt/sa/worker-1',
+            branch: 'kubic/sa/worker-1',
+            bare: false,
+            detached: false,
+          },
+        ],
+        branchLister: async () => ['kubic/sa/worker-1'],
+        retireSessionState: () => undefined,
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
@@ -518,6 +529,70 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
     );
     return { code, removed, deleted, killed, errs };
   };
+
+  it('retires the session state only after a failure-free disposal, naming the session and repo', async () => {
+    const retired: string[][] = [];
+    const runWith = async (
+      overrides: Partial<Parameters<typeof runCleanCommand>[1]>,
+    ) => {
+      const out: string[] = [];
+      const errs: string[] = [];
+      const code = await runCleanCommand(
+        { sessionId: 'sa', force: true },
+        {
+          env: new FakeExecutionEnv(repoScripts()),
+          out: (line: string) => out.push(line),
+          err: (line: string) => errs.push(line),
+          repoRoot: '/repo',
+          sessionAgents: () => ['worker-1'],
+          lister: async () => [
+            {
+              path: '/repo/.kubic/wt/sa/worker-1',
+              branch: 'kubic/sa/worker-1',
+              bare: false,
+              detached: false,
+            },
+          ],
+          branchLister: async () => ['kubic/sa/worker-1'],
+          remover: async () => undefined,
+          branchDeleter: async () => undefined,
+          pruner: async () => undefined,
+          pruneJournal: () => ({ entries: 0, bytes: 0 }),
+          liveWorkers: () => new Map(),
+          retireSessionState: (session: string, repo: string) => {
+            retired.push([session, repo]);
+          },
+          ...overrides,
+        },
+      );
+      return { code, out, errs };
+    };
+    const ok = await runWith({});
+    expect(ok.code).toBe(0);
+    expect(retired).toEqual([['sa', '/repo']]);
+    expect(ok.out).toContain(
+      'retired session state /repo/.kubic/orchestrator/sa.json',
+    );
+    // A failing branch delete leaves the worktree gone but the disposal
+    // incomplete: the state stays.
+    retired.length = 0;
+    const failed = await runWith({
+      branchDeleter: async () => {
+        throw new Error('branch is checked out elsewhere');
+      },
+    });
+    expect(failed.code).toBe(1);
+    expect(retired).toEqual([]);
+    expect(failed.out.join('\n')).not.toContain('retired session state');
+    // A state that cannot be removed is a reported failure, not silence.
+    const stuck = await runWith({
+      retireSessionState: () => {
+        throw new Error('read-only file system');
+      },
+    });
+    expect(stuck.code).toBe(1);
+    expect(stuck.errs.join('\n')).toContain('read-only file system');
+  });
 
   it('plans only kubic/<session>/<agent> and never kills another session’s same-named worker', async () => {
     const other = await run('sb-worker-1');

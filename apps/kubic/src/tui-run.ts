@@ -61,7 +61,9 @@ import {
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import {
   type EffectivePolicy,
+  hasModelPolicy,
   hasToolPolicy,
+  isModelAllowed,
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
@@ -103,6 +105,7 @@ import {
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
   isKeyRelease,
+  isKeyRepeat,
   ProcessTerminal,
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
@@ -137,7 +140,6 @@ import {
   ModelSelectError,
   type ModelSelection,
   parseModelFlag,
-  selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
   BACKGROUND_CONTEXT,
@@ -158,6 +160,7 @@ import {
 import { persistRunTrajectory } from './run-trajectory.js';
 import {
   createProdTuiOrchestrator,
+  mergeSeatFromAnswer,
   workerAskSeatFromAnswer,
 } from './tui-orchestrator.js';
 
@@ -194,6 +197,12 @@ export interface TuiLaneLoop {
   events: EventSource['events'];
   kills: OperationKillRegistry;
   context: Context;
+  // The runner calls this once an operation's turn settled on the lane and
+  // no quit is under way: the boot forgets that operation's kills (without
+  // running them) so the session close's last-resort kill never reaches a
+  // finished turn — a kept background job outlives Kubic, and a recycled pid
+  // must not receive a stale group SIGTERM. Absent on injected loops.
+  settled?: (operationId: string) => void;
   // §46 trajectory per settled turn (issue #383): the prod boot persists
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
@@ -292,7 +301,9 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
   async drainForQuit(bound: Promise<void>): Promise<void> {
     if (!this.isRunning()) return;
     this.aborted = true;
-    await this.drive.abort?.();
+    // The abort is a call into the drive and can hang: the bound covers it,
+    // not only the wait for the run to settle (issue #312).
+    await Promise.race([Promise.resolve(this.drive.abort?.()), bound]);
     const settled = (this.running ?? Promise.resolve()).then(
       () => undefined,
       () => undefined,
@@ -309,6 +320,13 @@ export interface TuiLaneBoot {
   // tests) can observe the retention policy the boot installed. The loop
   // itself uses the lane's own recording; this is the same store.
   journal?: FileJournalStore;
+  // Issue #311 (§42.5): the mid-session reconcile sweep. A `bash` write is not
+  // intercepted by the file tools, so it reaches the journal only through the
+  // sweep; the root runs it when a turn that used the shell settles, so the
+  // Ctrl-O / Ctrl-R panels show that change now instead of at quit. Safe to
+  // repeat (a path's expected state is its last journaled entry, so an
+  // unchanged tree appends nothing); a failure never reaches the loop.
+  reconcile?: () => void;
   // Issue #307: the installed policy's own full-access predicate (the SAME
   // one its ask auto-approves on), read for the mode indicator at boot and
   // after every turn. Absent (a viewer boot with no policy) means approvals
@@ -362,6 +380,9 @@ export interface TuiRunDeps {
     // the command shell owns parsing, the boot owner owns the defaults.
     options?: TuiBootFlags,
   ) => Promise<TuiLaneBoot>;
+  // Issue #311: observes a failed journal-panel read or apply (tests; the
+  // loop itself swallows it — the journal is observed, never a gate).
+  journalFeedError?: (error: unknown) => void;
   // Issue #312: the bound on the quit-time drain (a turn still running when
   // the operator quits is aborted, its kills run, and the loop waits at most
   // this long for it to settle before the sweep and session close). Absent
@@ -463,8 +484,11 @@ export interface TuiBootFlags {
   skillsList?: string[];
   // Issue #308: `--dangerously-skip-approvals` for the booted session.
   dangerouslySkipApprovals?: boolean;
-  // Issue #295: `--model <provider/id>` — the explicit pin, above config.
-  model?: ModelSelection;
+  // `--model` is deliberately NOT a boot flag (issues #227, #295): dispatch
+  // pre-scans it from the raw argv into the ONE config load as the `cli`
+  // layer, so `TuiConfigProjection.model` already carries cli > env > file
+  // precedence and the enterprise freeze. A flag patched over that
+  // projection afterwards would bypass the freeze `kubic run` honours.
 }
 
 export interface TuiRunOptions {
@@ -534,6 +558,10 @@ export interface TuiRunOptions {
   // headless runner gates with — the interactive lane is not the
   // unprotected one.
   modelPolicy?: EffectivePolicy;
+  // §35.1 (issue #295): the runtime pin above is a frozen enterprise `[model]`
+  // — the session override (`/model`, the same level as `--model`, §38.1)
+  // cannot leave it, exactly as the flag cannot.
+  modelPinFrozen?: boolean;
   // Issue #327: the config `[orchestrator]` projection (worktree parent and
   // worker cap) the interactive drive hands the manager lane, and the
   // approval snapshot a delegated conflict resolver runs under.
@@ -574,7 +602,21 @@ export async function bootTuiLane(
   let reconciliation: RunReconciliation | undefined;
   // Issue #325: the installed policy's end-of-session posture check.
   let settlePolicy: (() => void) | undefined;
+  // Issue #312: the operations this session admitted that have not settled,
+  // and the kill registry that tracks their process groups (set once the
+  // lane boots). The quit's drain kills what is registered when it runs; a
+  // tool that registers its kill AFTER it (between spawning and tracking, or
+  // behind an abort request the bound gave up on) is killed here, before the
+  // sweep and the close. A settled turn leaves the set (`settled` below): its
+  // kept background jobs are not this quit's to kill.
+  const admittedOperations = new Set<string>();
+  let killRemaining: (() => void) | undefined;
   const close = async (): Promise<void> => {
+    try {
+      killRemaining?.();
+    } catch {
+      // A kill that already exited is not a reason to skip the sweep.
+    }
     try {
       reconciliation?.sweep();
     } catch {
@@ -653,6 +695,13 @@ export async function bootTuiLane(
         ? (tool: string): boolean =>
             isToolAllowedByEnterprise(enterprisePolicy, tool)
         : undefined;
+    // The stored model of a resumed session is gated too (issue #288): the
+    // selection is checked at boot, the stored one only by this closure.
+    const modelGate =
+      enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
+        ? (provider: string, modelId: string): boolean =>
+            isModelAllowed(enterprisePolicy, provider, modelId)
+        : undefined;
     const selectedRole = (() => {
       if (options.role === undefined) return undefined;
       const rolesCwd = options.roles?.cwd ?? process.cwd();
@@ -709,7 +758,12 @@ export async function bootTuiLane(
       pin: options.model,
       roleModel: selectedRole?.resolved.model,
     });
-    const modelRef = `${model.provider}/${model.id}`;
+    // The `provider/id` the §60 rows name (issues #148, #227): seeded with
+    // the selection, re-pointed at the model the lane reports once the boot
+    // has applied the stored-model rule and again on every `/model` switch —
+    // the policy is installed before the lane exists, so it reads this at
+    // record time instead of freezing the pre-boot pick.
+    let liveModelRef = `${model.provider}/${model.id}`;
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // The loaded skill names, for the §46 trajectory's resources (#383).
     let skillNames: string[] = [];
@@ -742,7 +796,7 @@ export async function bootTuiLane(
         // §60 audit identity (issue #295): every resolved ask names the
         // session and the model the lane runs on, like `kubic run`'s.
         sessionId: id,
-        model: modelRef,
+        model: () => liveModelRef,
         // The answer seat (issue #96): with the overlay's surface attached,
         // `kubic tui` is the command that can actually collect a verdict on a
         // challenged call instead of refusing it unseen. Injected policies
@@ -821,8 +875,24 @@ export async function bootTuiLane(
         // §58 enterprise tool gate (issue #288): the same active-tools /
         // prompt-tools intersection the headless lane installs.
         ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
+        ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
       },
     });
+    {
+      const running = (await solo.lane.getModel(context)) ?? solo.model;
+      liveModelRef = `${running.provider}/${running.id}`;
+    }
+    killRemaining = (): void => {
+      for (const operationId of admittedOperations) {
+        for (const kill of solo.kills.drain(operationId)) {
+          try {
+            kill();
+          } catch {
+            // Already exited — the registry drains every entry regardless.
+          }
+        }
+      }
+    };
     // Issue #147 (§21): a turn a dead process left open would refuse every
     // prompt with LaneBusy. The interactive policy is the durable abort: its
     // approvals would need the overlay, which is not on screen yet, and the
@@ -847,6 +917,9 @@ export async function bootTuiLane(
         return `${running.provider}/${running.id}`;
       })(),
       journal,
+      reconcile: () => {
+        reconciliation?.sweep();
+      },
       ...(modelNotices.length === 0
         ? {}
         : { modelNotice: modelNotices.join('; ') }),
@@ -875,32 +948,83 @@ export async function bootTuiLane(
         },
         ...(options.answer === undefined
           ? {}
-          : { seat: workerAskSeatFromAnswer(options.answer) }),
+          : {
+              seat: workerAskSeatFromAnswer(options.answer),
+              // The merge gate's ask goes through the same surface, never a
+              // readline over the stdin the TUI owns (issue #327).
+              mergeSeat: mergeSeatFromAnswer(options.answer),
+            }),
         ...(options.orchestratorRuntime === undefined
           ? {}
           : { orchestrator: options.orchestratorRuntime }),
         ...(options.approvalPolicy === undefined
           ? {}
           : { approvalPolicy: options.approvalPolicy }),
+        // §58 enterprise policy (issue #288): the manager lane refuses an
+        // assignment whose role declares a denied tool, as `kubic
+        // orchestrate` does.
+        ...(enterprisePolicy === undefined
+          ? {}
+          : { toolPolicy: enterprisePolicy }),
+        ...(options.roles?.layers === undefined
+          ? {}
+          : { roleLayers: options.roles.layers }),
+        // A frozen enterprise `[model]` binds the workers too (issue #295).
+        ...(options.modelPinFrozen === true && options.model !== undefined
+          ? { frozenModel: options.model }
+          : {}),
+        // The per-root trust check (issue #228), as `kubic orchestrate` gets
+        // it: the run evaluates it for the models root it loads, so a `kubic
+        // trust` grant reaches the manager and the workers from the TUI too —
+        // and a grant for a subdirectory never stands in for the repo root.
+        ...(options.trustProject === undefined
+          ? {}
+          : { projectTrust: options.trustProject }),
       }),
 
       loop: {
-        accept: (prompt, loopContext) =>
-          solo.lane.accept({ kind: 'prompt', prompt }, loopContext),
+        accept: async (prompt, loopContext) => {
+          const admitted = await solo.lane.accept(
+            { kind: 'prompt', prompt },
+            loopContext,
+          );
+          if (admitted.ok) admittedOperations.add(admitted.value.operationId);
+          return admitted;
+        },
         lane: solo.lane,
         // Issue #227: resolve against the live catalog before touching the
         // lane, so `/model typo/nope` fails by name and the lane keeps the
         // model it had; setModel then records the config_update in the
-        // session, and the read-back is the label every surface shows.
+        // session, and the read-back is the label every surface shows. The
+        // §58 enterprise gate (issue #288) is the boot's own: a switch outside
+        // `allowed_models`/`allowed_providers` is refused with the same named
+        // error before the lane is touched, so the live model stays put.
         switchModel: async (selection, loopContext) => {
-          const resolved = selectModel(models, {
-            provider: selection.provider,
-            id: selection.modelId,
-          });
+          // §35.1/§38.1 (issue #295): `/model` is the session override, and a
+          // frozen enterprise `[model]` cannot be overridden by it — refused
+          // by name before the catalog or the lane is touched. Naming the pin
+          // itself changes nothing and passes.
+          if (options.modelPinFrozen === true && options.model !== undefined) {
+            const pinned = `${options.model.provider}/${options.model.id}`;
+            const requested = `${selection.provider}/${selection.modelId}`;
+            if (requested !== pinned) {
+              throw new ModelSelectError(
+                `model '${requested}' refused: the model is pinned by enterprise policy (${pinned}); /model cannot change it`,
+              );
+            }
+          }
+          const resolved = selectModelUnderPolicy(
+            models,
+            { provider: selection.provider, id: selection.modelId },
+            undefined,
+            undefined,
+            enterprisePolicy,
+          );
           await solo.lane.setModel(
             { provider: resolved.provider, modelId: resolved.id },
             loopContext,
           );
+          liveModelRef = `${resolved.provider}/${resolved.id}`;
           // Pi stores exactly the identity it is given, so the resolved id
           // IS the live label — no read-back branch to keep honest.
           return `${resolved.provider}/${resolved.id}`;
@@ -912,6 +1036,10 @@ export async function bootTuiLane(
         events: solo.harness.events,
         kills: solo.kills,
         context,
+        settled: (operationId) => {
+          admittedOperations.delete(operationId);
+          solo.kills.drain(operationId);
+        },
         // §46 trajectory per settled turn (issue #383): the same record
         // `kubic run` writes, holding the session's latest settled turn.
         recordTurn: async (turn) => {
@@ -1002,14 +1130,23 @@ export type TuiConfigProjection = {
   // (cli `--model` > `KUBIC_MODEL` > `[model]`), from the SAME runtimeModelPin
   // projection `kubic run` consumes, so the interactive boot selects what the
   // headless one selects.
-  //
+  model?: ModelSelection;
+  // §58 enterprise policy (issue #288): the SAME resolved EffectivePolicy
+  // `kubic run` gates with (`HeadlessRunDeps.modelPolicy`). It is the only
+  // §58 dep the run path threads — the role-grant check, the model gate and
+  // the lane tool intersection all derive from it — so a projection that
+  // drops it (the audit's finding) leaves every enterprise gate inert on the
+  // interactive lane.
+  modelPolicy?: EffectivePolicy;
+  // §35.1 (issue #295): the pin above is a frozen enterprise `[model]`, so the
+  // live `/model` switch is bound by it too (see TuiRunOptions.modelPinFrozen).
+  modelPinFrozen?: boolean;
   // Issue #327: the manager lane's projections for the interactive
   // orchestrator drive — the `[orchestrator]` worktree/cap values and the
   // approval snapshot the resolver path carries. Absent means the shipped
   // defaults (and, for the snapshot, no delegation of conflicts).
   orchestratorRuntime?: RuntimeOrchestrator;
   approvalPolicy?: ApprovalSnapshot;
-  model?: ModelSelection;
   // Issue #327: the config `[modes]` projection (issue #90's runtime load).
   // Consumed by runTuiCommand: `orchestrator = true` starts the session in
   // orchestrator mode; the flag still beats it.
@@ -1062,6 +1199,10 @@ export function tuiBootOptions(
     agentId: provided.agentId,
     roles: provided.roles,
     model: provided.model,
+    // §58 enterprise policy (issue #288): the role-grant, model and tool
+    // gates of the interactive boot all read this one object.
+    modelPolicy: provided.modelPolicy,
+    modelPinFrozen: provided.modelPinFrozen,
     // Issue #327: the `[modes]` session default and the manager-lane
     // projections the interactive orchestrator drive consumes.
     modes: provided.modes,
@@ -1083,8 +1224,6 @@ export function tuiBootOptions(
     ...(flags?.dangerouslySkipApprovals === true
       ? { dangerouslySkipApprovals: true }
       : {}),
-    // `--model` beats the config pin (§38.1: CLI over config).
-    ...(flags?.model === undefined ? {} : { model: flags.model }),
   };
 }
 
@@ -1119,10 +1258,15 @@ export function tuiDepsWithDefaults(
 // loop — the panels keep their last rows.
 export const JOURNAL_REFRESH_MS = 100;
 
+// The one builtin whose writes bypass the journal's own recording (issue
+// #311): a turn that ran it needs the reconcile sweep at settlement.
+const SHELL_TOOL_NAME = 'bash';
+
 export class JournalPanelFeed {
   private readonly read: () => ReadonlyArray<JournalChangeLike>;
   private readonly apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
   private readonly schedule: (fn: () => void) => void;
+  private readonly onError: (error: unknown) => void;
   private pending = false;
   private token = 0;
 
@@ -1131,9 +1275,15 @@ export class JournalPanelFeed {
     apply: (rows: ReadonlyArray<JournalChangeLike>) => void;
     // Injectable window (tests); absent means a JOURNAL_REFRESH_MS timer.
     schedule?: (fn: () => void) => void;
+    // Observes a failed read or apply. The feed still swallows it (the
+    // journal is observed, never a gate); the hook exists so a defect in
+    // `apply` (a TDZ read at boot, a throwing render) is testable instead of
+    // silently indistinguishable from "the journal was unreadable".
+    onError?: (error: unknown) => void;
   }) {
     this.read = options.read;
     this.apply = options.apply;
+    this.onError = options.onError ?? ((): void => undefined);
     this.schedule =
       options.schedule ??
       ((fn: () => void): void => {
@@ -1165,9 +1315,10 @@ export class JournalPanelFeed {
   private load(): void {
     try {
       this.apply(this.read());
-    } catch {
+    } catch (error) {
       // The journal is observed, never a gate: a failed read keeps the
       // panels on their last rows.
+      this.onError(error);
     }
   }
 }
@@ -1208,6 +1359,9 @@ export class TuiTurnRunner {
   private detach: (() => void) | undefined;
   private starting = false;
   private aborted = false;
+  // Set once a quit starts draining: from then on the operation's kills stay
+  // registered for the session close's backstop even if the turn settles.
+  private quitting = false;
 
   // Called after a mid-turn transcript refresh lands (the root repaints).
   private readonly onUpdate: (() => void) | undefined;
@@ -1334,14 +1488,30 @@ export class TuiTurnRunner {
   async drainForQuit(bound: Promise<void>): Promise<void> {
     if (!this.isRunning()) return;
     this.aborted = true;
+    this.quitting = true;
     const operationId = this.activeOperationId;
     if (operationId !== undefined) {
-      await drainOperation(
-        this.loop,
-        this.loop.kills,
-        operationId,
-        this.loop.context,
-      );
+      // The durable abort request is itself a lane call and can hang; the
+      // bound (the timer, or a second quit) covers it too, never only the
+      // wait after it. When the bound wins, the registered kills run anyway:
+      // the kill drain is the backstop and must not queue behind a request
+      // that may never answer (drainOperation drains them again — a no-op).
+      await Promise.race([
+        drainOperation(
+          this.loop,
+          this.loop.kills,
+          operationId,
+          this.loop.context,
+        ),
+        bound,
+      ]);
+      for (const kill of this.loop.kills.drain(operationId)) {
+        try {
+          kill();
+        } catch {
+          // Already exited — the registry drains every entry regardless.
+        }
+      }
     }
     const settled = (this.running ?? Promise.resolve()).then(
       () => undefined,
@@ -1395,6 +1565,12 @@ export class TuiTurnRunner {
         admission.value.operationId,
         this.loop.context,
       );
+      // A settled turn's kills are forgotten, not run: a kept background job
+      // outlives Kubic. A deferred operation is not settled, and a quit keeps
+      // its kills for the session close.
+      if (driven.kind !== 'waiting-deferred' && !this.quitting) {
+        this.loop.settled?.(admission.value.operationId);
+      }
       await this.refreshTranscript();
       // The lane's own terminal status is authoritative: an abort that raced
       // a completing turn must not be relabelled as cancelled (the work
@@ -1532,7 +1708,9 @@ export interface TuiCommandOptions {
   readonly noSkills?: boolean;
   // §41.4 (issue #308): session-scoped full access (bare `kubic` and `tui`).
   readonly dangerouslySkipApprovals?: boolean;
-  // Issue #295: `--model <provider/id>`, parsed by the registrar.
+  // Issue #295: `--model <provider/id>`, parsed by the registrar for help and
+  // validation only — dispatch already fed it to the config load as the `cli`
+  // layer, so the boot reads it from the projected pin, never from here.
   readonly model?: ModelSelection;
   // Issue #327 (§17, §81): `--orchestrator` — start the session in
   // orchestrator mode (delegation stays opt-in; solo is the default).
@@ -1565,7 +1743,6 @@ export async function runTuiCommand(
   const flags: TuiBootFlags = {};
   if (options.role !== undefined) flags.role = options.role;
   if (options.noSkills === true) flags.noSkills = true;
-  if (options.model !== undefined) flags.model = options.model;
   const skillsList = options.skills ?? [];
   if (skillsList.length > 0) flags.skillsList = [...skillsList];
   if (options.dangerouslySkipApprovals === true) {
@@ -1663,6 +1840,11 @@ export async function runTuiCommand(
   // Issue #311: the Ctrl-O / Ctrl-R panels read the session journal the
   // boot created — loaded once now (a resumed session shows its earlier
   // turns), after each tool call (throttled) and at every settlement.
+  // Declared before the feed: its `apply` reads both, and the boot read below
+  // runs synchronously — a `let` declared later is a TDZ ReferenceError there
+  // that the feed's catch would swallow on every boot.
+  let screen: Screen | undefined;
+  let stopped = false;
   const journalStore = boot.journal;
   const journalFeed =
     journalStore === undefined
@@ -1673,8 +1855,16 @@ export async function runTuiCommand(
             app.setJournalChanges(rows);
             if (!stopped) screen?.update();
           },
+          ...(deps.journalFeedError === undefined
+            ? {}
+            : { onError: deps.journalFeedError }),
         });
   journalFeed?.now();
+  // Issue #311: set when a shell tool ended in the turn in flight — the only
+  // builtin whose writes bypass the journal, so the only reason a settlement
+  // needs the reconcile sweep (which walks and hashes the whole workspace:
+  // not free, so file-tool and read-only turns skip it).
+  let shellRanThisTurn = false;
   const turn =
     boot.loop === undefined
       ? undefined
@@ -1687,7 +1877,10 @@ export async function runTuiCommand(
             if (!stopped) screen?.update();
           },
           (event) => {
-            if (event.type === 'tool-end') journalFeed?.request();
+            if (event.type === 'tool-end') {
+              if (event.toolName === SHELL_TOOL_NAME) shellRanThisTurn = true;
+              journalFeed?.request();
+            }
           },
         );
   // Issue #327: the orchestrator turn the toggle switches to. Absent means
@@ -1719,8 +1912,6 @@ export async function runTuiCommand(
     }, 100);
     spinner.unref?.();
   };
-  let screen: Screen | undefined;
-  let stopped = false;
   let exitCode = RUN_EXIT_OK;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
@@ -1914,7 +2105,11 @@ export async function runTuiCommand(
     const routeInput = (data: string): { consume: true } | undefined => {
       if (stopped) {
         // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
-        if (!isKeyRelease(data) && keyIs(data, 'ctrl+c')) shutdown();
+        // Only a real press counts (issue #306): a held key's repeats and
+        // its release are the same key, and repeats of global keys are
+        // ignored everywhere else, so a held Ctrl-C must not cut the drain.
+        if (!isKeyRelease(data) && !isKeyRepeat(data) && keyIs(data, 'ctrl+c'))
+          shutdown();
         return { consume: true };
       }
       // Issue #306, defence in depth: TuiApp.handleInput already drops Kitty
@@ -2049,6 +2244,19 @@ export async function runTuiCommand(
             app.setBusy(false);
             stopSpinner();
             syncPosture();
+            // Issue #311: a bash-made change is journaled only by the sweep;
+            // run it BEFORE the panel read so this turn's shell effects are
+            // on screen at settlement, not just at quit. A quit in progress
+            // owns its own final sweep (close), and a failed sweep leaves
+            // the panels on the rows they have.
+            if (shellRanThisTurn && !stopped) {
+              shellRanThisTurn = false;
+              try {
+                boot.reconcile?.();
+              } catch {
+                // Reconciliation observes, it never gates the loop.
+              }
+            }
             journalFeed?.now();
             // A completed turn has no outcome line of its own, so the footer
             // falls back to the lane's trust statement instead of going

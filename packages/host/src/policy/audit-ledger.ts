@@ -12,6 +12,7 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import { matchableSecrets } from '../config/secrets.js';
 import type { OrchestratorApprovalRequest } from '../orchestrator/approvals/request.js';
 import type { OrchestratorVerdict } from '../orchestrator/approvals/routing.js';
 import {
@@ -263,7 +264,21 @@ export interface SoloDecisionInput {
   worker?: { id: string; orchestratorSession: string; generation?: number };
 }
 
-export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
+// The generation the lifecycle layer stamped on this worker child
+// (KUBIC_WORKER_GENERATION, the §3.8 allowlist): a non-negative integer, else
+// 0 — the same reading the §46 trajectory's provenance uses.
+export function workerGenerationFromEnv(
+  env: Record<string, string | undefined>,
+): number {
+  const raw = env.KUBIC_WORKER_GENERATION;
+  const parsed = raw === undefined || raw === '' ? Number.NaN : Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+export function soloDecisionAudit(
+  input: SoloDecisionInput,
+  env: Record<string, string | undefined> = process.env,
+): AuditInput {
   const { approval, result, reason } = verdictFields(
     input.approved
       ? { approved: true, by: input.by ?? 'user' }
@@ -282,7 +297,16 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
         : { parent: worker.orchestratorSession }),
     },
     model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
-    worker: { pid: process.pid, generation: worker?.generation ?? 0, role },
+    // A worker child's generation comes from the env its lifecycle layer set
+    // (issue #279) unless the caller supplies one; a solo run is generation 0.
+    worker: {
+      pid: process.pid,
+      generation:
+        worker === undefined
+          ? 0
+          : (worker.generation ?? workerGenerationFromEnv(env)),
+      role,
+    },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: { permission: `trigger:${input.trigger || UNKNOWN}`, approval },
     credential: { sentinel: 'none' },
@@ -465,9 +489,13 @@ export function appendToLedger(
     // must not vanish because a free-text field (a deny reason echoing a
     // command) looked like a secret, so every string leaf is redacted first:
     // the record survives, the material never reaches the ledger.
-    // `secrets` (live values) make emitAudit refuse a record carrying one.
+    // `secrets` (live values) make emitAudit refuse a record carrying one —
+    // but only values long enough to be matched as a substring: a short or
+    // dummy key (`gw`, `ollama` for provider `ollama`) is a word the record
+    // legitimately carries, and refusing over it silently dropped the
+    // credential-use row (issue #359).
     return emitAudit([createLedgerSink(dir)], redactInput(input), {
-      secrets: [...secrets],
+      secrets: matchableSecrets(secrets),
     });
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error));

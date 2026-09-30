@@ -137,6 +137,15 @@ export interface SoloPolicyOptions {
    * model may call. Absent means no enterprise tool policy is configured.
    */
   toolAllowed?: (tool: string) => boolean;
+  /**
+   * §58 enterprise model gate (issue #288): closed over
+   * `isModelAllowed(effectivePolicy, provider, id)` by the composition root.
+   * The stored-model rule (issue #148) lets a resumed session keep its own
+   * model, and the boot selection is gated but the stored one never was — a
+   * session file could carry a refused provider past the policy. A stored
+   * model the gate refuses is dropped for the selected (gated) one.
+   */
+  modelAllowed?: (provider: string, modelId: string) => boolean;
 }
 
 // Harness compaction budget overrides. keepRecentTokens mirrors Pi's
@@ -498,10 +507,14 @@ export async function bootSoloLane(
   const stored = await storedLaneModel(options.session, context);
   const storedId =
     stored === undefined ? undefined : `${stored.provider}/${stored.modelId}`;
+  const storedRefused =
+    stored !== undefined &&
+    options.policy?.modelAllowed?.(stored.provider, stored.modelId) === false;
   const keep =
     stored !== undefined &&
     storedId !== selectedId &&
-    options.modelPolicy !== 'selected'
+    options.modelPolicy !== 'selected' &&
+    !storedRefused
       ? stored
       : undefined;
   const differs = storedId !== undefined && storedId !== selectedId;
@@ -564,7 +577,11 @@ export async function bootSoloLane(
       context,
     );
     options.onModelNotice?.(
-      `model: session model '${storedId}' switched to '${selectedId}' (explicit selection)`,
+      `model: session model '${storedId}' switched to '${selectedId}' (${
+        storedRefused && options.modelPolicy !== 'selected'
+          ? 'enterprise policy'
+          : 'explicit selection'
+      })`,
     );
   } else if (differs) {
     options.onModelNotice?.(

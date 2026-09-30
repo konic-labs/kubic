@@ -66,6 +66,42 @@ describe('provider resolution for a worker role (issue #200)', () => {
     expect(resolveWorkerProvider({ fallbackProvider: 'local' })).toBe('local');
     expect(resolveWorkerProvider({})).toBeUndefined();
   });
+
+  it('a frozen enterprise pin decides alone: the env pin and the role pin are dropped by the child (issue #295)', () => {
+    expect(
+      resolveWorkerProvider({
+        modelFrozen: true,
+        envModel: 'anthropic/claude',
+        modelRef: 'gw/m1',
+        managerModel: 'openai/gpt-5',
+        fallbackProvider: 'local',
+      }),
+    ).toBe('openai');
+    // No usable manager pin: the fallback, never the dropped pins.
+    expect(
+      resolveWorkerProvider({
+        modelFrozen: true,
+        envModel: 'anthropic/claude',
+        modelRef: 'gw/m1',
+        fallbackProvider: 'local',
+      }),
+    ).toBe('local');
+    expect(
+      resolveWorkerProvider({
+        modelFrozen: true,
+        envModel: 'anthropic/claude',
+        modelRef: 'gw/m1',
+      }),
+    ).toBeUndefined();
+    // Not frozen (explicitly false): the ordinary precedence stands.
+    expect(
+      resolveWorkerProvider({
+        modelFrozen: false,
+        envModel: 'anthropic/claude',
+        managerModel: 'openai/gpt-5',
+      }),
+    ).toBe('anthropic');
+  });
 });
 
 describe('resolveProviderGrant (issue #200)', () => {
@@ -102,6 +138,74 @@ describe('resolveProviderGrant (issue #200)', () => {
     expect(result).toMatchObject({ kind: 'refusal', provider: 'unusable' });
     if (result.kind !== 'refusal') return;
     expect(result.message).toContain("provider 'unusable'");
+  });
+
+  it('refuses by name, stating why, when the credential cannot reach a worker at all', () => {
+    // A provider authenticated from process-level configuration the worker
+    // env cannot carry: its `envVars` are empty and `noKeyNeeded` is false
+    // is not enough to say WHY — the reason travels with the entry.
+    const index: ProviderKeyIndex = new Map([
+      [
+        'cloudy',
+        {
+          envVars: [],
+          noKeyNeeded: false,
+          undeliverable: 'reads CLOUDY_* from the process environment',
+        },
+      ],
+    ]);
+    expect(resolveProviderGrant('cloudy', { keyEnv: index, env: ENV })).toEqual(
+      {
+        kind: 'refusal',
+        provider: 'cloudy',
+        message:
+          "no credential for provider 'cloudy': reads CLOUDY_* from the process environment",
+      },
+    );
+  });
+
+  it('an undeliverable credential wins over a keyless flag and over a set key', () => {
+    const index: ProviderKeyIndex = new Map([
+      [
+        'both',
+        {
+          envVars: ['GW_API_KEY'],
+          noKeyNeeded: true,
+          undeliverable: 'process-level configuration',
+        },
+      ],
+    ]);
+    const result = resolveProviderGrant('both', { keyEnv: index, env: ENV });
+    expect(result).toMatchObject({ kind: 'refusal', provider: 'both' });
+  });
+
+  it('forwards every companion env var alongside the key, and refuses naming the missing one', () => {
+    const index: ProviderKeyIndex = new Map([
+      [
+        'cf',
+        {
+          envVars: ['CF_API_KEY', 'CF_ACCOUNT_ID'],
+          noKeyNeeded: false,
+        },
+      ],
+    ]);
+    expect(
+      resolveProviderGrant('cf', {
+        keyEnv: index,
+        env: { CF_API_KEY: 'k', CF_ACCOUNT_ID: 'acc' },
+      }),
+    ).toEqual({
+      kind: 'grant',
+      grant: { CF_API_KEY: 'k', CF_ACCOUNT_ID: 'acc' },
+    });
+    const refused = resolveProviderGrant('cf', {
+      keyEnv: index,
+      env: { CF_API_KEY: 'k' },
+    });
+    expect(refused).toMatchObject({ kind: 'refusal', provider: 'cf' });
+    if (refused.kind !== 'refusal') return;
+    expect(refused.message).toContain('$CF_ACCOUNT_ID');
+    expect(refused.message).not.toContain('$CF_API_KEY');
   });
 
   it('a keyless provider needs nothing and is not a refusal', () => {

@@ -26,6 +26,7 @@ import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   createProdTuiOrchestrator,
+  mergeSeatFromAnswer,
   workerAskSeatFromAnswer,
 } from './tui-orchestrator.js';
 import {
@@ -455,6 +456,7 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     const drive = createProdTuiOrchestrator({
       sessionId: 'orch-9',
       out: () => {},
+      now: () => 1_000_000,
       seat: async () => ({ approved: true, by: 'user' }),
       createDeps: async (options) => {
         seen.depsOptions = options;
@@ -470,9 +472,11 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     const outcome = await drive.run('refactor the parser', (line) =>
       seen.lines.push(line),
     );
+    // Each turn is its own orchestrator session, named after the TUI session
+    // plus a time stamp (issue #327): worktrees are retained per session.
     expect(seen.options).toEqual({
       prompt: 'refactor the parser',
-      session: 'orch-9',
+      session: `orch-9-o${(1_000_000).toString(36)}`,
     });
     expect(typeof seen.depsOptions?.approvalsSeat).toBe('function');
     expect(seen.lines).toEqual(['session: orch-9']);
@@ -508,6 +512,131 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     expect(built).toBe(2);
   });
 
+  it('gives every prompt its OWN orchestrator session id: retained worktrees are session-scoped (issue #327)', async () => {
+    const sessions: string[] = [];
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      // A frozen clock: the second prompt still gets a different id.
+      now: () => 5_000,
+      createDeps: async () => ({}) as OrchestrateCommandDeps,
+      runCommand: async (options) => {
+        sessions.push(options.session as string);
+        return 0;
+      },
+    });
+    await drive.run('first objective');
+    await drive.run('second objective');
+    await drive.run('third objective');
+    expect(new Set(sessions).size).toBe(3);
+    for (const session of sessions) {
+      // Valid for worktree/branch names and the worker session ids.
+      expect(session).toMatch(/^orch-9-o[a-z0-9]+$/);
+    }
+    // Strictly increasing stamps, never the bare TUI session id.
+    const stamps = sessions.map((id) => Number.parseInt(id.slice(8), 36));
+    expect(stamps).toEqual([5_000, 5_001, 5_002]);
+    expect(sessions).not.toContain('orch-9');
+  });
+
+  it('a resumed TUI session (a fresh drive, same session id) never reuses an earlier run\u2019s orchestrator session', async () => {
+    const earlier: string[] = [];
+    const later: string[] = [];
+    const build = (now: () => number, into: string[]): TuiOrchestratorRun =>
+      createProdTuiOrchestrator({
+        sessionId: 'orch-9',
+        out: () => {},
+        now,
+        createDeps: async () => ({}) as OrchestrateCommandDeps,
+        runCommand: async (options) => {
+          into.push(options.session as string);
+          return 0;
+        },
+      });
+    await build(() => 1_700_000_000_000, earlier).run('one');
+    await build(() => 1_700_000_060_000, later).run('one again');
+    expect(later[0]).not.toBe(earlier[0]);
+  });
+
+  it('attaches the TUI merge seat to the run and never leaves the stdio readline as the merge decider (issue #327)', async () => {
+    const asked: string[] = [];
+    let attached: unknown;
+    const mergeSeat = async (input: { agentId: string; branch: string }) => {
+      asked.push(`${input.agentId}@${input.branch}`);
+      return { verdict: 'approve' } as const;
+    };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      mergeSeat,
+      createDeps: async (options) => {
+        attached = options.mergeApproval;
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('go');
+    expect(attached).toBe(mergeSeat);
+  });
+
+  it('tells the run it has no --yes flag, so a merge refusal never names one (issue #327)', async () => {
+    let seen: boolean | undefined;
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      createDeps: async (options) => {
+        seen = options.yesHint;
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('go');
+    expect(seen).toBe(false);
+  });
+
+  it('with no merge seat wired the TUI run denies a merge closed instead of falling back to the readline (issue #327)', async () => {
+    let attached:
+      | ((input: { agentId: string; branch: string }) => unknown)
+      | undefined;
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      createDeps: async (options) => {
+        attached = options.mergeApproval;
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('go');
+    expect(typeof attached).toBe('function');
+    expect(
+      await attached?.({ agentId: 'worker-1', branch: 'kubic/s/w' }),
+    ).toEqual({ verdict: 'deny' });
+  });
+
+  it('hands the TUI\u2019s per-root trust check to every turn\u2019s run deps (issue #228)', async () => {
+    const seen: (((path: string) => boolean) | undefined)[] = [];
+    const check = (path: string): boolean => path === '/repo';
+    const build = (projectTrust?: (path: string) => boolean) =>
+      createProdTuiOrchestrator({
+        sessionId: 'orch-9',
+        out: () => {},
+        ...(projectTrust === undefined ? {} : { projectTrust }),
+        createDeps: async (options) => {
+          seen.push(options.projectTrust);
+          return {} as OrchestrateCommandDeps;
+        },
+        runCommand: async () => 0,
+      });
+    await build(check).run('one');
+    await build().run('two');
+    // The very check the TUI holds (per-path, not a cwd boolean) reaches the
+    // run; without one the option is left unset.
+    expect(seen).toEqual([check, undefined]);
+    expect(seen[0]?.('/repo')).toBe(true);
+    expect(seen[0]?.('/repo/pkg')).toBe(false);
+  });
+
   it('a deps failure is a failed turn, not an exception into the loop', async () => {
     const drive = createProdTuiOrchestrator({
       sessionId: 'orch-9',
@@ -520,6 +649,47 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     expect(await drive.run('anything')).toEqual({
       status: 'failed',
       detail: 'not a git repository',
+    });
+  });
+});
+
+describe('mergeSeatFromAnswer (issue #327)', () => {
+  it('renders the merge ask on the TUI approval surface, naming the worker and its branch', async () => {
+    const requests: unknown[] = [];
+    const seat = mergeSeatFromAnswer(async (request) => {
+      requests.push(request);
+      return { approved: true, by: 'allow-once' };
+    });
+    const verdict = await seat({
+      agentId: 'worker-1',
+      branch: 'kubic/orch-9-o1/worker-1',
+    });
+    expect(verdict).toEqual({ verdict: 'approve' });
+    expect(requests).toEqual([
+      {
+        key: 'merge:kubic/orch-9-o1/worker-1',
+        capability: 'merge',
+        toolName: 'merge',
+        summary:
+          "merge worker 'worker-1' (kubic/orch-9-o1/worker-1) into your working branch",
+      },
+    ]);
+  });
+
+  it('a refusal denies the merge', async () => {
+    const seat = mergeSeatFromAnswer(async () => ({
+      approved: false,
+      reason: 'not now',
+    }));
+    expect(await seat({ agentId: 'a', branch: 'b' })).toEqual({
+      verdict: 'deny',
+    });
+  });
+
+  it('a seat that answers nothing is not consent', async () => {
+    const seat = mergeSeatFromAnswer(async () => undefined);
+    expect(await seat({ agentId: 'a', branch: 'b' })).toEqual({
+      verdict: 'deny',
     });
   });
 });

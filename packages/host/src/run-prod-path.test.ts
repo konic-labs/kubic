@@ -358,6 +358,50 @@ describe('enterprise policy gate on model selection (issue #288)', () => {
     expect(denied.state.callCount).toBe(0);
   });
 
+  it('does not let a resumed session keep a stored model the policy refuses', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const other = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    models.setProvider(allowed.provider);
+    models.setProvider(other.provider);
+    allowed.setResponses([fauxAssistantMessage('allowed answer')]);
+    other.setResponses([fauxAssistantMessage('created')]);
+    // A session created on `other` (an explicit pin, no policy yet)...
+    const created = await runHeadlessPrompt(
+      'first',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        model: { provider: 'other', id: other.getModel().id },
+      },
+    );
+    expect(created.terminus).toBe('completed');
+    expect(created.model).toContain('other/');
+    const otherCalls = other.state.callCount;
+    // ...resumed under an enterprise allowlist that only admits `faux/*`, no
+    // pin: the stored `other/*` model must not survive the gate (the session
+    // file is user-writable, so it cannot be trusted to carry a compliant one).
+    const resumed = await runHeadlessPrompt(
+      'second',
+      { sessionId: created.sessionId },
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        modelPolicy: resolveEffectivePolicy([
+          { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+        ]).policy,
+      },
+    );
+    expect(resumed.terminus).toBe('completed');
+    expect(resumed.model).toContain('faux/');
+    expect(resumed.summary).toBe('allowed answer');
+    expect(other.state.callCount).toBe(otherCalls);
+  });
+
   it('runs a model the policy allows, unchanged (control)', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(

@@ -3,7 +3,7 @@
 // the machine's own keys never decide an outcome, and nothing is dialled
 // (auth checks read the stubbed env only; streams are never opened).
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -329,5 +329,142 @@ describe('provider key env index for worker grants (issue #200)', () => {
       envVars: [],
       noKeyNeeded: true,
     });
+  });
+});
+
+// Issue #200 (§36.3): a worker is granted through the KUBIC_ROLE_* namespace
+// under exact provider-key names; it never receives the operator's process
+// environment. A built-in whose credential is process-level configuration
+// (several vars, a profile, a region) therefore cannot be delivered in full,
+// and the index says so by name instead of passing the manager's preflight
+// and dying in the worker with `Provider is not configured`.
+describe('provider key env index for multi-variable built-ins (issue #200)', () => {
+  it('marks amazon-bedrock undeliverable for AWS access keys + region', async () => {
+    const assembled = await assemble({
+      AWS_ACCESS_KEY_ID: 'AKIA-test',
+      AWS_SECRET_ACCESS_KEY: 'secret-test',
+      AWS_REGION: 'us-east-1',
+    });
+    expect(assembled.providers.get('amazon-bedrock')?.authSource).toBe(
+      'AWS access keys',
+    );
+    const entry = assembled.keyEnv.get('amazon-bedrock');
+    expect(entry?.noKeyNeeded).toBe(false);
+    expect(entry?.envVars).toEqual([]);
+    expect(entry?.undeliverable).toContain('AWS_');
+    expect(entry?.undeliverable).toContain('allowlist');
+  });
+
+  it('marks amazon-bedrock undeliverable even for a single-var bearer token or profile', async () => {
+    for (const env of [
+      { AWS_BEARER_TOKEN_BEDROCK: 'tok' },
+      { AWS_PROFILE: 'work' },
+    ]) {
+      const entry = (await assemble(env)).keyEnv.get('amazon-bedrock');
+      expect(entry?.undeliverable).toContain('AWS_');
+      expect(entry?.envVars).toEqual([]);
+    }
+  });
+
+  it('marks azure-openai-responses undeliverable: the base URL is process-level configuration', async () => {
+    const entry = (
+      await assemble({
+        AZURE_OPENAI_API_KEY: 'k',
+        AZURE_OPENAI_BASE_URL: 'https://example.openai.azure.com',
+      })
+    ).keyEnv.get('azure-openai-responses');
+    expect(entry?.noKeyNeeded).toBe(false);
+    expect(entry?.envVars).toEqual([]);
+    expect(entry?.undeliverable).toContain('AZURE_OPENAI_BASE_URL');
+  });
+
+  it('forwards GOOGLE_CLOUD_API_KEY for google-vertex: the key rides the grant view and needs no project or location', async () => {
+    // Pi's Vertex auth returns `auth.apiKey` from the auth context (the grant
+    // view) and `createClientWithApiKey` never reads project/location.
+    const entry = (
+      await assemble({
+        GOOGLE_CLOUD_API_KEY: 'k',
+        GOOGLE_CLOUD_PROJECT: 'p',
+        GOOGLE_CLOUD_LOCATION: 'us-central1',
+      })
+    ).keyEnv.get('google-vertex');
+    expect(entry).toEqual({
+      envVars: ['GOOGLE_CLOUD_API_KEY'],
+      noKeyNeeded: false,
+    });
+    const keyOnly = (await assemble({ GOOGLE_CLOUD_API_KEY: 'k' })).keyEnv.get(
+      'google-vertex',
+    );
+    expect(keyOnly).toEqual({
+      envVars: ['GOOGLE_CLOUD_API_KEY'],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('marks google-vertex undeliverable when it authenticates from application default credentials: project and location are process-level configuration', async () => {
+    const home = tmpDir();
+    mkdirSync(join(home, '.config', 'gcloud'), { recursive: true });
+    writeFileSync(
+      join(home, '.config', 'gcloud', 'application_default_credentials.json'),
+      '{}',
+    );
+    const assembled = await assembleModels(
+      tmpDir(),
+      { GOOGLE_CLOUD_PROJECT: 'p', GOOGLE_CLOUD_LOCATION: 'us-central1' },
+      { home },
+    );
+    expect(assembled.providers.get('google-vertex')?.authSource).toBe(
+      'gcloud application default credentials',
+    );
+    const entry = assembled.keyEnv.get('google-vertex');
+    expect(entry?.noKeyNeeded).toBe(false);
+    expect(entry?.envVars).toEqual([]);
+    expect(entry?.undeliverable).toContain('GOOGLE_CLOUD_PROJECT');
+    expect(entry?.undeliverable).toContain('GOOGLE_CLOUD_API_KEY');
+  });
+
+  it('a google-vertex with no credential at all is refused with the key remedy named', async () => {
+    const entry = (await assemble({})).keyEnv.get('google-vertex');
+    expect(entry?.envVars).toEqual([]);
+    expect(entry?.undeliverable).toContain('GOOGLE_CLOUD_API_KEY');
+  });
+
+  it('forwards the account id next to the key for cloudflare-workers-ai', async () => {
+    const entry = (
+      await assemble({
+        CLOUDFLARE_API_KEY: 'k',
+        CLOUDFLARE_ACCOUNT_ID: 'acc',
+      })
+    ).keyEnv.get('cloudflare-workers-ai');
+    expect(entry).toEqual({
+      envVars: ['CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID'],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('forwards the account and gateway ids next to the key for cloudflare-ai-gateway', async () => {
+    const entry = (
+      await assemble({
+        CLOUDFLARE_API_KEY: 'k',
+        CLOUDFLARE_ACCOUNT_ID: 'acc',
+        CLOUDFLARE_GATEWAY_ID: 'gw',
+      })
+    ).keyEnv.get('cloudflare-ai-gateway');
+    expect(entry).toEqual({
+      envVars: [
+        'CLOUDFLARE_API_KEY',
+        'CLOUDFLARE_ACCOUNT_ID',
+        'CLOUDFLARE_GATEWAY_ID',
+      ],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('leaves a plain single-key built-in exactly as before', async () => {
+    const entry = (await assemble({ OPENAI_API_KEY: 'k' })).keyEnv.get(
+      'openai',
+    );
+    expect(entry).toEqual({ envVars: ['OPENAI_API_KEY'], noKeyNeeded: false });
+    expect(entry).not.toHaveProperty('undeliverable');
   });
 });

@@ -184,7 +184,8 @@ describe("prod orchestrate path: workers resolve the manager's models.json (issu
       sessionsRoot: scratchRoot('kubic-orch-trust-sessions-'),
       registry: new WorkerRegistry(),
       workerEntry: { cmd: process.execPath, args: [fixture] },
-      trustProjectEnv: true,
+      // The store's per-root decision for the repo root the run loads.
+      projectTrust: (path) => realpathSync(path) === realpathSync(root),
     });
     await runOrchestrateCommand(
       {

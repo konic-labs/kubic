@@ -6,7 +6,7 @@
 // Real code end to end: the prod bootTuiLane re-rooted onto temp state, the
 // real NodeExecutionEnv inside a temp workspace, a recording fake Terminal
 // under the real alt-screen. Faux provider only: zero network.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -119,6 +119,7 @@ async function openTui(
   workspace: string,
   steps: Step[],
   session?: string,
+  extra: Partial<TuiRunDeps> = {},
 ) {
   const fake = recordingTerminal();
   const lines: string[] = [];
@@ -127,6 +128,7 @@ async function openTui(
     createTerminal: () => fake.terminal,
     colorLevel: 'none',
     bootLane: prodBoot(sessionsRoot, workspace, steps),
+    ...extra,
   });
   await waitFor(() => fake.counts.started === 1);
   return { fake, lines, exit };
@@ -197,6 +199,199 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     expect(fake.since(mark)).not.toContain('no changes');
     fake.feed('\x1b');
     expect(await exit).toBe(0);
+  });
+
+  // Issue #311: a `bash` write is not intercepted by the file tools, so the
+  // change reaches the journal only through the §42.5 sweep. It used to run
+  // at quit alone, so both panels said `no changes` (Ctrl-O) / listed
+  // nothing (Ctrl-R) for a change the user had just watched happen.
+  it('a change made with bash shows in Ctrl-R and Ctrl-O when the turn settles, before any quit', async () => {
+    const workspace = tmpRoot();
+    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+      [
+        fauxToolCall('bash', {
+          command: "printf 'made by bash\\n' > shellfile.txt",
+        }),
+      ],
+      'shell done',
+    ]);
+    await submit(fake, 'make a file', 'shell done');
+    expect(readFileSync(join(workspace, 'shellfile.txt'), 'utf8')).toBe(
+      'made by bash\n',
+    );
+    let mark = fake.mark();
+    fake.feed('\x0f');
+    await waitFor(() => fake.since(mark).includes('shellfile.txt'));
+    expect(fake.since(mark)).toContain('made by bash');
+    expect(fake.since(mark)).not.toContain('no changes');
+    // Switching panels needs no Esc: Ctrl-R opens the journal listing.
+    mark = fake.mark();
+    fake.feed('\x12');
+    await waitFor(() => fake.since(mark).includes('shellfile.txt'));
+    // The journal listing is `kubic diff`'s text: the swept row is named as
+    // what it is (unattributed: the sweep cannot know which call wrote it).
+    expect(fake.since(mark)).toContain('+++ b/shellfile.txt');
+    expect(fake.since(mark)).toContain('unattributed, non-reversible');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('the settlement sweep runs only after a turn that used the shell, once per such turn', async () => {
+    const workspace = tmpRoot();
+    let sweeps = 0;
+    const fake = recordingTerminal();
+    const steps: Step[] = [
+      [fauxToolCall('write', { path: 'plain.txt', content: 'p\n' })],
+      'wrote',
+      [fauxToolCall('bash', { command: 'true' })],
+      'ran shell',
+      [fauxToolCall('write', { path: 'again.txt', content: 'q\n' })],
+      'wrote again',
+    ];
+    const boot = prodBoot(tmpRoot(), workspace, steps);
+    const exit = runTuiCommand(
+      {},
+      {
+        out: () => undefined,
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId, answer) => {
+          const real = await boot(sessionId, answer);
+          const reconcile = real.reconcile;
+          expect(reconcile).toBeDefined();
+          return {
+            ...real,
+            reconcile: () => {
+              sweeps += 1;
+              reconcile?.();
+            },
+          };
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // A file-tool turn: journaled by the tool itself, nothing to sweep.
+    await submit(fake, 'write plain', 'wrote');
+    expect(sweeps).toBe(0);
+    // A shell turn: swept exactly once at its settlement.
+    await submit(fake, 'run the shell', 'ran shell');
+    expect(sweeps).toBe(1);
+    // The next file-tool turn does not inherit the shell flag.
+    await submit(fake, 'write again', 'wrote again');
+    expect(sweeps).toBe(1);
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  it('a failing sweep never reaches the loop: the turn still settles and the panels keep working', async () => {
+    const workspace = tmpRoot();
+    const fake = recordingTerminal();
+    const boot = prodBoot(tmpRoot(), workspace, [
+      [fauxToolCall('bash', { command: 'true' })],
+      'shell done',
+    ]);
+    const exit = runTuiCommand(
+      {},
+      {
+        out: () => undefined,
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId, answer) => ({
+          ...(await boot(sessionId, answer)),
+          reconcile: () => {
+            throw new Error('sweep exploded');
+          },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    await submit(fake, 'run the shell', 'shell done');
+    expect(fake.since(0)).not.toContain('sweep exploded');
+    const mark = fake.mark();
+    fake.feed('\x12');
+    await waitFor(() => fake.since(mark).includes('no changes'));
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  // The tool-end wiring (issue #311): a tool that ends mid-turn asks the feed
+  // for a (throttled) journal read, so the panels are current DURING a long
+  // turn, not only at its settlement. Observed by counting the reads the
+  // panel feed makes of the boot's journal store.
+  it('a tool-end refreshes the panels while the turn is still running', async () => {
+    const workspace = tmpRoot();
+    const fake = recordingTerminal();
+    let reads = 0;
+    const boot = prodBoot(tmpRoot(), workspace, [
+      [fauxToolCall('write', { path: 'early.txt', content: 'e\n' })],
+      [fauxToolCall('bash', { command: 'sleep 1.5' })],
+      'slept',
+    ]);
+    const exit = runTuiCommand(
+      {},
+      {
+        out: () => undefined,
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId, answer) => {
+          const real = await boot(sessionId, answer);
+          const store = real.journal;
+          if (store === undefined) throw new Error('no journal store');
+          return {
+            ...real,
+            journal: new Proxy(store, {
+              get: (target, prop) => {
+                const value = Reflect.get(target, prop, target);
+                if (prop === 'entries') {
+                  return (...args: []) => {
+                    reads += 1;
+                    return target.entries(...args);
+                  };
+                }
+                return typeof value === 'function' ? value.bind(target) : value;
+              },
+            }),
+          };
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    const atBoot = reads;
+    expect(atBoot).toBeGreaterThanOrEqual(1);
+    for (const ch of 'write then sleep') fake.feed(ch);
+    fake.feed('\r');
+    // The write's tool-end schedules one read within the refresh window,
+    // while the bash call is still sleeping.
+    for (let i = 0; i < 700 && reads <= atBoot; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(reads).toBeGreaterThan(atBoot);
+    expect(fake.since(0)).not.toContain('slept');
+    await waitFor(() => fake.since(0).includes('slept'));
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+  });
+
+  // Issue #311 review: `apply` reads `stopped` / `screen`, which used to be
+  // declared AFTER the synchronous boot read — a TDZ ReferenceError on every
+  // boot that the feed's catch swallowed. Nothing may be swallowed now.
+  it('the feed swallows nothing at boot or at a settlement (no TDZ in the apply path)', async () => {
+    const workspace = tmpRoot();
+    const failures: unknown[] = [];
+    const { fake, exit } = await openTui(
+      tmpRoot(),
+      workspace,
+      [
+        [fauxToolCall('write', { path: 'hello.txt', content: 'hi\n' })],
+        'wrote it',
+      ],
+      undefined,
+      { journalFeedError: (error) => failures.push(error) },
+    );
+    await submit(fake, 'write hello', 'wrote it');
+    fake.feed('\x1b');
+    expect(await exit).toBe(0);
+    expect(failures).toEqual([]);
   });
 
   it('resuming a session shows its earlier journal entries on the first Ctrl-R', async () => {

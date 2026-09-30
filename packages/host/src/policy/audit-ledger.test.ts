@@ -12,9 +12,11 @@ import {
   appendToLedger,
   auditLedgerDir,
   auditLedgerDirFor,
+  credentialUseAudit,
   mergeDecisionAudit,
   readAuditLedger,
   soloDecisionAudit,
+  workerGenerationFromEnv,
 } from './audit-ledger.js';
 
 const roots: string[] = [];
@@ -160,6 +162,119 @@ describe('§60 audit ledger', () => {
     const [stored] = readAuditLedger(dir);
     expect(stored?.reason).toContain('[redacted-secret]');
     expect(JSON.stringify(stored)).not.toContain('sk-live-abcdef1234567890');
+  });
+
+  // Issue #359: the live-value refusal is a substring match, so a short or
+  // dummy key (`gw`, `solo`, `1`, or `ollama` for provider `ollama`) matched
+  // the record's own provider name and the credential-use row was silently
+  // dropped. Below the minimum length nothing is matched and the row lands.
+  it('never drops a credential-use row over a short or provider-named live key', () => {
+    const root = repo();
+    const dir = auditLedgerDir(root);
+    const errors: string[] = [];
+    for (const [provider, key] of [
+      ['ollama', 'ollama'],
+      ['gw', 'gw'],
+      ['solo', 'solo'],
+      ['root', '1'],
+    ] as const) {
+      const record = appendToLedger(
+        dir,
+        credentialUseAudit({
+          sessionId: 's',
+          role: 'root',
+          provider,
+          ref: '$KEY',
+          purpose: `model-request:${provider}`,
+          workspace: root,
+        }),
+        (message) => errors.push(message),
+        [key],
+      );
+      expect(record?.what).toBe(`credential:${provider}`);
+    }
+    expect(errors).toEqual([]);
+    expect(readAuditLedger(dir).map((r) => r.what)).toEqual([
+      'credential:ollama',
+      'credential:gw',
+      'credential:solo',
+      'credential:root',
+    ]);
+  });
+
+  it('still refuses a record carrying a live value of the minimum length, and only then', () => {
+    const root = repo();
+    const dir = auditLedgerDir(root);
+    const input = (reason: string) =>
+      soloDecisionAudit({
+        sessionId: 's',
+        toolName: 'bash',
+        trigger: 'credentials',
+        workspace: root,
+        approved: false,
+        reason,
+        posture: 'approvals',
+      });
+    const errors: string[] = [];
+    // 8 characters: matched, so the record is refused (and reported).
+    expect(
+      appendToLedger(
+        dir,
+        input('denied: echoed abcd1234'),
+        (message) => errors.push(message),
+        ['abcd1234'],
+      ),
+    ).toBeUndefined();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('secret material');
+    expect(readAuditLedger(dir)).toEqual([]);
+    // 7 characters: below the minimum, so the same shape is written.
+    expect(
+      appendToLedger(
+        dir,
+        input('denied: echoed abcd123'),
+        (message) => errors.push(message),
+        ['abcd123'],
+      )?.reason,
+    ).toBe('denied: echoed abcd123');
+    expect(errors).toHaveLength(1);
+  });
+
+  // Issue #279: the generation a worker child records is the one its
+  // lifecycle layer stamped (KUBIC_WORKER_GENERATION); a solo row is 0.
+  it("reads a worker child's generation from its env, exactly", () => {
+    const base = {
+      sessionId: 's',
+      toolName: 'bash',
+      trigger: 'destructive-shell',
+      workspace: '/w',
+      approved: false,
+      reason: 'no',
+      posture: 'approvals',
+    };
+    const worker = { id: 'w-1', orchestratorSession: 'orch' };
+    const generationFor = (env: Record<string, string | undefined>) =>
+      soloDecisionAudit({ ...base, worker }, env).worker.generation;
+    expect(generationFor({ KUBIC_WORKER_GENERATION: '3' })).toBe(3);
+    expect(generationFor({ KUBIC_WORKER_GENERATION: '0' })).toBe(0);
+    expect(generationFor({ KUBIC_WORKER_GENERATION: '12' })).toBe(12);
+    for (const bad of ['', 'x', '-2', '1.5', ' ']) {
+      expect(generationFor({ KUBIC_WORKER_GENERATION: bad })).toBe(0);
+    }
+    expect(generationFor({})).toBe(0);
+    // An explicit generation from the caller wins over the env.
+    expect(
+      soloDecisionAudit(
+        { ...base, worker: { ...worker, generation: 5 } },
+        { KUBIC_WORKER_GENERATION: '3' },
+      ).worker.generation,
+    ).toBe(5);
+    // A solo row never inherits a stray env value.
+    expect(
+      soloDecisionAudit(base, { KUBIC_WORKER_GENERATION: '3' }).worker
+        .generation,
+    ).toBe(0);
+    expect(workerGenerationFromEnv({ KUBIC_WORKER_GENERATION: '7' })).toBe(7);
   });
 
   it('resolves the ledger at the repo root from any subdirectory', () => {

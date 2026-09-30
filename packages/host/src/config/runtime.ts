@@ -23,7 +23,7 @@ import {
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { validatePolicy } from '../approvals.js';
+import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,
   layerPolicyFromConfig,
@@ -211,8 +211,9 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
-  // policy`). The rest are resolved into the effective policy and reported by
-  // doctor: parsing them is the contract, enforcement is not invented.
+  // policy`). The rest are resolved into the effective policy and only listed
+  // here (`kubic config`): parsing them is the contract, enforcement is not
+  // invented, and `kubic doctor` does not report them yet.
   policy: {
     kept: '§58 enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
   },
@@ -233,19 +234,19 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'lane tool intersection; the deny holds against every lower layer, role document and model grant',
   },
   'policy.network_policy': {
-    kept: 'resolved into the effective policy; proxy-mediated enforcement is a named follow-up, reported by doctor rather than silently ignored',
+    kept: 'resolved into the effective policy but NOT enforced: proxy-mediated enforcement is a named follow-up, listed here rather than silently ignored (doctor does not report it yet)',
   },
   'policy.allowed_domains': {
     kept: 'resolved into the effective policy alongside network_policy; no live network enforcement exists yet',
   },
   'policy.filesystem_policy': {
-    kept: 'resolved into the effective policy; the lane derives filesystem reach from [permissions] classes today',
+    kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
   },
   'policy.require_credential_broker': {
-    kept: 'resolved into the effective policy; the broker is not yet on the worker spawn path, so doctor reports it',
+    kept: 'resolved into the effective policy but NOT enforced: the credential broker is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
   },
   'policy.deny_local_credentials': {
-    kept: 'resolved into the effective policy; the check is not yet on the worker spawn path, so doctor reports it',
+    kept: 'resolved into the effective policy but NOT enforced: the local-credential check is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
   },
   'policy.data_policy': {
     kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
@@ -254,7 +255,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
   },
   'policy.agent_policy': {
-    kept: 'max_agents/max_cost_usd resolve into the effective policy; the orchestrator cap is a named follow-up, reported by doctor',
+    kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
   },
   audit: {
     kept: '[[audit]] sinks are parsed and validated; sink construction is a named follow-up, so the CLI cannot write to them yet',
@@ -265,6 +266,19 @@ export interface RuntimeModelSelection {
   provider: string;
   id: string;
   thinking?: string;
+}
+
+// A cli/env model pin the frozen enterprise `[model]` overrode (issue #295;
+// §35.1): reported instead of being dropped silently, so `kubic run --model x`
+// against an enterprise pin says it ran the pin, not `x`.
+export interface ModelPinOverride {
+  // The input that carried the ignored pin: `--model` (cli layer) or
+  // `KUBIC_MODEL` (env layer).
+  source: 'cli' | 'env';
+  // The ignored `provider/id`.
+  requested: string;
+  // The enterprise `provider/id` that ran instead.
+  pinned: string;
 }
 
 export interface RuntimeApprovals {
@@ -364,6 +378,10 @@ export interface RuntimeConfig {
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
+  // The cli/env model pins a frozen enterprise `[model]` overrode (also named
+  // in `overriddenAttempts`); empty when nothing was overridden — the same pin
+  // named twice, no freeze, or no cli/env pin.
+  modelPinOverrides: ModelPinOverride[];
   layers: ConfigLayerReport[];
   // Leaf path → source, for every key the effective view reports.
   sources: Record<string, ConfigValueSource>;
@@ -759,6 +777,26 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     modelSource = 'defaults';
   }
 
+  // §35.1 (issue #295): a frozen enterprise pin drops every cli/env pin
+  // without a word unless it is recorded here — the composition root turns
+  // each entry into one stderr note. A pin equal to the enterprise one
+  // overrode nothing.
+  const modelPinOverrides: ModelPinOverride[] = [];
+  if (modelSource === 'enterprise' && model !== undefined) {
+    const pinned = `${model.provider}/${model.id}`;
+    const attempts: Array<['cli' | 'env', RuntimeModelSelection | undefined]> =
+      [
+        ['cli', cliModel],
+        ['env', envModel],
+      ];
+    for (const [source, attempt] of attempts) {
+      if (attempt === undefined) continue;
+      const requested = `${attempt.provider}/${attempt.id}`;
+      if (requested === pinned) continue;
+      modelPinOverrides.push({ source, requested, pinned });
+    }
+  }
+
   const envRouteRaw = env[RUNTIME_ENV_OVERRIDES.approvalsRoute];
   const approvals = approvalsFrom(
     config,
@@ -865,7 +903,14 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         'no budgets are defaulted by config (§71): nothing is capped until you configure a limit, and [budgets] keys are refused outright',
     },
     projectTrusted,
-    overriddenAttempts: merged.overriddenAttempts,
+    overriddenAttempts: [
+      ...merged.overriddenAttempts,
+      ...modelPinOverrides.map(
+        (entry) =>
+          `model: ${entry.source === 'cli' ? '--model' : 'KUBIC_MODEL'} '${entry.requested}' rejected: enterprise pin '${entry.pinned}' holds`,
+      ),
+    ],
+    modelPinOverrides,
     layers: loaded.reports,
     sources: loaded.sources,
   };
@@ -964,8 +1009,20 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       `selected model: first available provider (${view.modelSource}) — no model pin configured`,
     );
   }
+  // An always-ask capability in autoApprove never applies (issue #324): named
+  // and left out of the count, never printed as an approval nothing grants.
+  const ignoredAutoApprove = [
+    ...new Set(alwaysAskAutoApprove(view.approvals.autoApprove)),
+  ];
+  const effectiveAutoApprove = view.approvals.autoApprove.filter(
+    (capability) => !ignoredAutoApprove.includes(capability),
+  );
   lines.push(
-    `approvals: route=${view.approvals.route} (${view.approvals.source}), ${view.approvals.autoApprove.length} auto-approved, maxPendingMs=${view.approvals.maxPendingMs}`,
+    `approvals: route=${view.approvals.route} (${view.approvals.source}), ${effectiveAutoApprove.length} auto-approved${
+      ignoredAutoApprove.length === 0
+        ? ''
+        : ` (${ignoredAutoApprove.join(', ')} always asks — ignored)`
+    }, maxPendingMs=${view.approvals.maxPendingMs}`,
   );
   lines.push(
     `permissions: filesystem=${view.permissions.classes.filesystem}, shell=${String(view.permissions.classes.shell)}, network=${view.permissions.classes.network}, git=${String(view.permissions.classes.git)}, credentials=${view.permissions.classes.credentials} (${view.permissions.source})`,

@@ -9,7 +9,11 @@ import {
   auditLedgerDirFor,
   credentialUseAudit,
 } from '../policy/audit-ledger.js';
-import { createModelKeyResolver, type ModelKeyResolver } from './secrets.js';
+import {
+  createModelKeyResolver,
+  type ModelKeyResolver,
+  withoutIdentity,
+} from './secrets.js';
 
 export interface LedgerModelKeyResolverOptions {
   /** The run's workspace; the ledger is the one `kubic audit` reads there. */
@@ -18,6 +22,8 @@ export interface LedgerModelKeyResolverOptions {
   sessionId: () => string;
   mode?: 'solo' | 'orchestrator';
   onError?: (message: string) => void;
+  /** The run's provider/model ids: a key that is one of them is identity. */
+  identity?: () => readonly string[];
 }
 
 export function createLedgerModelKeyResolver(
@@ -27,6 +33,7 @@ export function createLedgerModelKeyResolver(
   let live: () => string[] = () => [];
   const resolver = createModelKeyResolver({
     role: options.role,
+    ...(options.identity === undefined ? {} : { identity: options.identity }),
     audit: (event) => {
       appendToLedger(
         dir,
@@ -41,7 +48,9 @@ export function createLedgerModelKeyResolver(
           ...(options.mode === undefined ? {} : { mode: options.mode }),
         }),
         options.onError,
-        live(),
+        // The row names its provider: a dummy key equal to that name (LM
+        // Studio's `lm-studio`) is not material the row can leak.
+        withoutIdentity(live(), [event.provider]),
       );
     },
   });

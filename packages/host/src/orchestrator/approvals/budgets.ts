@@ -39,6 +39,15 @@ function assertPositive(name: string, value: unknown): void {
   }
 }
 
+// The keys a budget object may carry (the validator's own set).
+const BUDGET_KEYS: readonly string[] = [
+  'maxTokens',
+  'maxCostUsd',
+  'maxRuntimeMs',
+  'maxToolCalls',
+  'retryBudget',
+];
+
 export function validateOrchestratorBudget(input: unknown): OrchestratorBudget {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new OrchestratorBudgetError('orchestrator budget must be an object');
@@ -324,7 +333,28 @@ export function parseWorkerBudgetEnv(
       `worker budget env (${AGENT_BUDGET_ENV}) is not valid JSON`,
     );
   }
-  return validateOrchestratorBudget(parsed);
+  // Every refusal names the variable, and an unknown key is refused: the
+  // validator copies only the keys it knows, so a typo'd `maxToolcalls`
+  // would otherwise run with NO limit while looking configured.
+  try {
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
+      for (const key of Object.keys(parsed)) {
+        if (!BUDGET_KEYS.includes(key)) {
+          throw new OrchestratorBudgetError(
+            `unknown budget key ${JSON.stringify(key)} (known: ${BUDGET_KEYS.join(', ')})`,
+          );
+        }
+      }
+    }
+    return validateOrchestratorBudget(parsed);
+  } catch (error) {
+    if (!(error instanceof OrchestratorBudgetError)) throw error;
+    throw new OrchestratorBudgetError(`${AGENT_BUDGET_ENV}: ${error.message}`);
+  }
 }
 
 // The harness seams the child enforcement attaches to. Structural (never a

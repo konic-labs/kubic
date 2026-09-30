@@ -18,7 +18,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadCliConfig } from '../../../apps/kubic/src/config-runtime.js';
+import { dispatchCommand } from '../../../apps/kubic/src/dispatch.js';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
+import { createProdRunners } from '../../../apps/kubic/src/prod-runners.js';
 import {
   bootTuiLane,
   runTuiCommand,
@@ -55,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of made.splice(0))
     rmSync(dir, { recursive: true, force: true });
@@ -184,26 +188,75 @@ describe('kubic run --dangerously-skip-approvals (issue #308)', () => {
     expect(fullAccessRows(workspace)).toHaveLength(1);
   });
 
-  it('never persists the flag to any config file', async () => {
+  it('never persists the flag to any config file (driven through dispatch, the shipped path)', async () => {
+    // A test that calls runHeadlessPrompt directly never touches config, so a
+    // regression that persisted the flag would stay green. This drives the
+    // real `dispatchCommand` -> prod runner -> config load -> lane path with
+    // both a global and a project config on disk, then proves the flag DID
+    // take effect (posture.json + the §60 row) while neither file changed.
     const home = tmpRoot('home-');
+    const workspace = tmpRoot('ws-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
-    writeFileSync(join(home, '.kubic', 'config.toml'), '[agent]\n');
+    mkdirSync(join(workspace, '.kubic'), { recursive: true });
+    const globalConfig = join(home, '.kubic', 'config.toml');
+    const projectConfig = join(workspace, '.kubic', 'config.toml');
+    writeFileSync(globalConfig, '[agent]\nname = "global"\n');
+    writeFileSync(projectConfig, '[journal]\nretentionDays = 30\n');
     vi.stubEnv('HOME', home);
-    const before = readdirSync(join(home, '.kubic'));
-    await runHeadlessPrompt(
-      'hello',
-      { dangerouslySkipApprovals: true },
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    vi.stubEnv('NO_COLOR', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(workspace);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const lines: string[] = [];
+    const diagnostics: string[] = [];
+    const code = await dispatchCommand(
+      'run',
+      ['-p', 'hello', '--dangerously-skip-approvals', '--json'],
       {
-        sessionsRoot: tmpRoot('sessions-'),
-        models: modelsWith([fauxAssistantMessage('hi')]),
-        env: new NodeExecutionEnv(tmpRoot('ws-')),
-        warn: () => undefined,
+        out: (line) => lines.push(line),
+        err: (line) => diagnostics.push(line),
+        loadConfig: (input) =>
+          loadCliConfig({
+            cwd: workspace,
+            home,
+            env: {},
+            projectTrusted: true,
+            ...(input?.model === undefined ? {} : { model: input.model }),
+          }),
+        version: () => '9.9.9',
+        ensureRuntimeExclude: () => undefined,
+        runners: createProdRunners({
+          out: (line) => lines.push(line),
+          debug: (line) => diagnostics.push(line),
+        }),
       },
     );
-    expect(readdirSync(join(home, '.kubic'))).toEqual(before);
-    expect(readFileSync(join(home, '.kubic', 'config.toml'), 'utf8')).toBe(
-      '[agent]\n',
+    expect(code, diagnostics.join('\n')).toBe(0);
+    // The flag took effect for the session the run created...
+    const posture = JSON.parse(lines.join('\n')) as {
+      approvals?: { posture?: string };
+    };
+    expect(posture.approvals).toEqual({ posture: 'full-access' });
+    expect(fullAccessRows(workspace)).toHaveLength(1);
+    // ...and reached neither config file (nor a stray new one beside them).
+    expect(readFileSync(globalConfig, 'utf8')).toBe(
+      '[agent]\nname = "global"\n',
     );
+    expect(readFileSync(projectConfig, 'utf8')).toBe(
+      '[journal]\nretentionDays = 30\n',
+    );
+    // The two config directories hold exactly what they held: the only new
+    // entries are the run's own runtime state (the session store under the
+    // home, the §60 ledger under the workspace) — never a config-shaped file.
+    const RUNTIME_STATE = new Set(['sessions', 'orchestrator']);
+    for (const dir of [join(home, '.kubic'), join(workspace, '.kubic')]) {
+      expect(
+        readdirSync(dir)
+          .filter((entry) => !RUNTIME_STATE.has(entry))
+          .sort(),
+        dir,
+      ).toEqual(['config.toml']);
+    }
   });
 });
 

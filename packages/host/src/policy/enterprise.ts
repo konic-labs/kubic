@@ -1028,13 +1028,17 @@ export function isToolAllowedByEnterprise(
 }
 
 // A denied tool is not re-enableable by project, role, or model: any grant
-// path funnels through this gate and the enterprise denial holds.
+// path funnels through this gate and the enterprise denial holds. The
+// predicate is the LANE's (`isToolAllowedByEnterprise`, issue #288): a deny
+// list narrows and an absent allow list says nothing about a tool — the
+// engine's deny-by-default reading (`isToolAllowed`) would refuse every role
+// under a deny-only policy while the lane gate still admits its tools.
 export function assertToolGrantable(
   policy: EffectivePolicy,
   tool: string,
   requester: { layer: string; role?: string; model?: string },
 ): void {
-  if (isToolAllowed(policy, tool)) return;
+  if (isToolAllowedByEnterprise(policy, tool)) return;
   const who =
     requester.role !== undefined
       ? `role '${requester.role}'`

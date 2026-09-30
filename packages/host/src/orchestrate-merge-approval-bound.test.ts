@@ -170,6 +170,59 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     expect(written).toContain('alpha');
   });
 
+  it('uses an embedder-supplied merge seat verbatim and never opens the stdio readline (issue #327)', async () => {
+    // A terminal-owning embedder (the TUI) with a TTY stdin AND a snapshot:
+    // exactly the conditions under which the readline would otherwise run.
+    const tty = stubStdin(true);
+    restores.push(tty.restore);
+    const stderr = captureStderr();
+    restores.push(stderr.restore);
+    const seat = async () => ({ verdict: 'approve' }) as const;
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+      approvalPolicy: policy(25),
+      mergeApproval: seat,
+    });
+    expect(deps.requestApproval).toBe(seat);
+    expect(
+      await deps.requestApproval?.({ agentId: 'alpha', branch: 'kubic/alpha' }),
+    ).toEqual({ verdict: 'approve' });
+    // No prompt was written and no stdin listener was taken.
+    expect(stderr.text()).toBe('');
+    expect(tty.stdin.listenerCount('end')).toBe(0);
+    expect(tty.stdin.listenerCount('data')).toBe(0);
+  });
+
+  it('carries the surface\u2019s no-flag hint onto the run deps only when it is false', async () => {
+    restores.push(stubStdin(false).restore);
+    const base = {
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+    };
+    expect((await orchestrateDepsWithDefaults(base)).yesHint).toBeUndefined();
+    expect(
+      (await orchestrateDepsWithDefaults({ ...base, yesHint: false })).yesHint,
+    ).toBe(false);
+    expect(
+      (await orchestrateDepsWithDefaults({ ...base, yesHint: true })).yesHint,
+    ).toBeUndefined();
+  });
+
+  it('the embedder seat applies without a TTY or a snapshot too', async () => {
+    restores.push(stubStdin(false).restore);
+    const seat = async () => ({ verdict: 'deny' }) as const;
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+      mergeApproval: seat,
+    });
+    expect(deps.requestApproval).toBe(seat);
+  });
+
   it('keeps the seat undefined without a TTY — the shipped deny-closed path', async () => {
     restores.push(stubStdin(false).restore);
     const deps = await orchestrateDepsWithDefaults({

@@ -21,6 +21,7 @@ import {
   triggerContextFor,
 } from './approvals.js';
 import { loadRuntimeConfig, type RuntimeConfig } from './config/runtime.js';
+import { NO_PROJECT_TRUST } from './config/trust-store.js';
 
 // The shape the composition root hands the projection: the load's own result
 // plus the fields `run`/`tui` do not read. Only `runtime` matters here.
@@ -29,6 +30,7 @@ function cliResult(runtime: RuntimeConfig | undefined): CliConfigResult {
     runtime,
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 

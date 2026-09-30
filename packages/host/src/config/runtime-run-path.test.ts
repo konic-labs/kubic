@@ -33,6 +33,7 @@ import {
 } from '../../../worker/src/pi-boundary.js';
 import { runJournalCommand } from '../journal-cli.js';
 import { loadRuntimeConfig, type RuntimeConfig } from './runtime.js';
+import { NO_PROJECT_TRUST } from './trust-store.js';
 
 const tempDirs: string[] = [];
 
@@ -202,6 +203,7 @@ describe('config feeds the live run path (issue #90)', () => {
       runtime,
       error: undefined,
       ignoreSplit: { missing: [], checked: [], applicable: false },
+      trust: NO_PROJECT_TRUST,
     });
     // The projection the composition root spreads into the runner deps.
     expect(deps.reconcileOutOfScope).toEqual(['vendor']);
@@ -326,6 +328,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
       runtime,
       error: undefined,
       ignoreSplit: NO_SPLIT,
+      trust: NO_PROJECT_TRUST,
     });
     // The composition-root projection `kubic run` spreads into the runner.
     expect(lane.agentId).toBe('kubic-solo');
@@ -389,6 +392,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
       runtime: bare,
       error: undefined,
       ignoreSplit: NO_SPLIT,
+      trust: NO_PROJECT_TRUST,
     });
     expect(bareLane.agentId).toBeUndefined();
     const bareFaux = fauxProvider();
@@ -435,6 +439,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
       runtime,
       error: undefined,
       ignoreSplit: NO_SPLIT,
+      trust: NO_PROJECT_TRUST,
     });
     // The projection carries the config table as a layer input, attributed to
     // the layer that set each leaf — the resolver's own merge consumes it.

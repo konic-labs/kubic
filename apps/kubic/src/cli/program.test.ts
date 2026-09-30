@@ -189,7 +189,7 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(22);
+    expect(COMMAND_NAMES.size).toBe(23);
     expect(ROOT_USAGE).toContain('sessions | git');
   });
 
@@ -212,6 +212,7 @@ describe('command registry', () => {
       'models',
       'run',
       'sessions',
+      'trust',
       'tui',
     ]);
     expect(owned(registerOrchestratorCommands)).toEqual([

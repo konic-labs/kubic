@@ -1377,7 +1377,8 @@ export interface LayerInput {
   layer: ConfigLayer;
   config: KubicConfig;
   // Project-local config is trust-gated: callers must pass trusted: true
-  // only after the workspace trust prompt was accepted.
+  // only after the project was trusted (`kubic trust`, the TUI prompt, or
+  // KUBIC_TRUST_PROJECT=1 for the invocation).
   trusted?: boolean;
 }
 
@@ -1434,7 +1435,7 @@ export function mergeLayered(inputs: LayerInput[]): MergeResult {
       Object.keys(input.config).length > 0
     ) {
       throw new ProjectUntrustedError(
-        'project-local config refused: accept the workspace trust prompt first (issue #38)',
+        "project-local config refused: the project layer is untrusted — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation",
       );
     }
   }
@@ -1551,7 +1552,7 @@ export function loadLayered(
     if (layer === 'project' && opts.projectTrusted !== true) {
       if (bridge.exists(path)) {
         throw new ProjectUntrustedError(
-          `project-local config refused pre-trust: ${path} (issue #38)`,
+          `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
         );
       }
       continue;

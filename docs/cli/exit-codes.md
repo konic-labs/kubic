@@ -58,6 +58,11 @@
   completed prune; 1 for a missing keep window (no `--keep-days`, no
   `session.retentionDays`), a malformed sessions root, or a session that
   could not be removed.
+- **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
+  (unknown option, a path that is not a directory, `--list` combined with
+  `--revoke` or a path, stray operands); 1 an unreadable or corrupt store
+  (the file is named). It runs even when the project config is refused —
+  it is the repair path for exactly that refusal.
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
   listing (the same usage line an unknown command gets).

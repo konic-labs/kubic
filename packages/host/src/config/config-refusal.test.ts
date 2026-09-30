@@ -13,12 +13,14 @@ import {
   configRefusalExit,
   requireRuntimeConfig,
 } from '../../../../apps/kubic/src/config-runtime.js';
+import { NO_PROJECT_TRUST } from './trust-store.js';
 
 function refused(reason: string): CliConfigResult {
   return {
     runtime: undefined,
     error: reason,
     ignoreSplit: { missing: [], checked: [], applicable: true },
+    trust: NO_PROJECT_TRUST,
   };
 }
 
@@ -27,6 +29,7 @@ function loaded(): CliConfigResult {
     runtime: {} as CliConfigResult['runtime'],
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: true },
+    trust: NO_PROJECT_TRUST,
   };
 }
 

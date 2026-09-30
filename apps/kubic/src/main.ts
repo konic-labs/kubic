@@ -6,10 +6,14 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
-import { loadCliConfig } from './config-runtime.js';
+import {
+  loadCliConfig,
+  resolveInteractiveProjectTrust,
+} from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';
 import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
@@ -49,6 +53,8 @@ function cliVersion(): string {
 const out = (line: string) => console.log(line);
 const err = (line: string) => console.error(line);
 const [command, ...rest] = process.argv.slice(2);
+const interactive = () =>
+  process.stdin.isTTY === true && process.stdout.isTTY === true;
 try {
   const code = await dispatchCommand(command, rest, {
     out,
@@ -57,8 +63,20 @@ try {
     version: cliVersion,
     ensureRuntimeExclude: (entries) =>
       ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
-    isInteractive: () =>
-      process.stdin.isTTY === true && process.stdout.isTTY === true,
+    isInteractive: interactive,
+    // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
+    // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
+    // hands it back to this invocation's config load; a non-TTY caller keeps
+    // the refusal with both remedies named.
+    resolveProjectTrust: () =>
+      resolveInteractiveProjectTrust({
+        confirm: (message) =>
+          promptConfirm({
+            message,
+            interactive: true,
+            nonInteractive: false,
+          }),
+      }),
     runners: createProdRunners({
       out,
       debug: err,

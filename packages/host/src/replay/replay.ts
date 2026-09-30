@@ -100,6 +100,11 @@ export interface ReplayRuntimeDeps {
   journalRetention?: JournalRetention;
   // Issue #230: the config `[approvals]` policy, as `kubic run` installs it.
   approvals?: SoloApprovalConfig;
+  // Issue #228 (§35.1): the per-path trust check (store resolved-root +
+  // env), from the same config load the re-execution tier runs under — it
+  // gates the project models.json of the assembled catalog. Absent falls
+  // back to the env opt-in inside assembleModels.
+  trustProject?: (path: string) => boolean;
 }
 
 export interface ReplayCommandDeps {

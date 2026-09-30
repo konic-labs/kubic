@@ -304,6 +304,44 @@ function registerConfig(program: Command, ctx: CommandContext): void {
     });
 }
 
+// `kubic trust` (issue #228): the durable project-trust grant. It is a
+// config-command sibling — it must run while the project layer is refused
+// (that is the case it repairs), so `configRefusalExit` lets it through.
+function registerTrust(program: Command, ctx: CommandContext): void {
+  program
+    .command('trust')
+    .description(
+      'record, revoke or list project trust for a committed .kubic/config.toml',
+    )
+    .argument(
+      '[path]',
+      'the project directory to trust (default: the current directory)',
+    )
+    .option('--revoke', 'remove the recorded decision — the refusal comes back')
+    .option('--list', 'list every recorded decision')
+    .addHelpText(
+      'after',
+      examples([
+        'kubic trust',
+        'kubic trust --list',
+        'kubic trust --revoke',
+        'kubic trust ../another-repo',
+      ]),
+    )
+    .action(async (path, opts) => {
+      ctx.setExitCode(
+        await ctx.runners.trust(
+          {
+            ...(path === undefined ? {} : { path }),
+            ...(opts.revoke === true ? { revoke: true } : {}),
+            ...(opts.list === true ? { list: true } : {}),
+          },
+          ctx.config,
+        ),
+      );
+    });
+}
+
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
@@ -403,5 +441,6 @@ export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerDoctor(program, ctx);
   registerModels(program, ctx);
   registerConfig(program, ctx);
+  registerTrust(program, ctx);
   registerSessions(program, ctx);
 };

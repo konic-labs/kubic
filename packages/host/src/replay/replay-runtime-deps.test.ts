@@ -37,6 +37,7 @@ import {
   type MutableModels,
 } from '../../../worker/src/pi-boundary.js';
 import { loadRuntimeConfig } from '../config/runtime.js';
+import { NO_PROJECT_TRUST } from '../config/trust-store.js';
 import {
   type ReplayRunRequest,
   type ReplayRuntimeDeps,
@@ -141,6 +142,7 @@ function cliResult(runtime: unknown): CliConfigResult {
     runtime: runtime as CliConfigResult['runtime'],
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 

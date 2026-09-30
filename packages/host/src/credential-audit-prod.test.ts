@@ -253,7 +253,7 @@ describe('kubic run: models.json key use is audited (issue #359)', () => {
       workspace,
       {},
       {
-        projectTrusted: true,
+        projectTrust: () => true,
       },
     );
     expect(assembled.models.getProvider('gw')).toBeDefined();

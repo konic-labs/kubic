@@ -201,6 +201,14 @@ export interface OrchestrateRunOptions {
    */
   orchestrator?: RuntimeOrchestrator;
   /**
+   * Issue #228 (§35.1): the manager's trust decision, propagated to every
+   * spawned child as the `KUBIC_TRUST_PROJECT=1` env opt-in unless the
+   * operator exported it already — the child's worktree path is not the key
+   * the manager's decision is recorded under, so the child must be told
+   * exactly as it was before this store existed.
+   */
+  trustProjectEnv?: boolean;
+  /**
    * The process-signal seam the live-worker guard hangs off. Prod uses the
    * real process (SIGINT/SIGTERM/SIGHUP + 'exit'); tests inject a fake so
    * the test runner itself is never signalled.
@@ -930,6 +938,17 @@ export async function orchestrateDepsWithDefaults(
     return root === undefined ? {} : { KUBIC_MODELS_ROOT: root };
   };
 
+  // Issue #228: the manager's trust decision travels to the children as the
+  // same env opt-in the operator would export. A child runs in its own
+  // worktree, whose path is not the key the manager's decision is recorded
+  // under — without this, a committed `.kubic/config.toml` (which IS in the
+  // worktree) would refuse every worker while the manager loads trusted.
+  const trustEnv = (): Record<string, string> =>
+    options.trustProjectEnv === true &&
+    process.env.KUBIC_TRUST_PROJECT === undefined
+      ? { KUBIC_TRUST_PROJECT: '1' }
+      : {};
+
   // The orchestrator writes its state under `<repo>/.kubic/` from the very
   // first save (and adds worktrees under the configured `[orchestrator].root`
   // — `.kubic/wt` by default). Make sure that dir never dirties the tree it
@@ -1610,6 +1629,9 @@ export async function orchestrateDepsWithDefaults(
               budgetForSpawn === undefined
                 ? ''
                 : JSON.stringify(childBudgetOf(budgetForSpawn)),
+            // Issue #228: the trust decision the child's project layers
+            // (config, models.json, skills) are gated on, per resolved root.
+            ...trustEnv(),
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
@@ -1991,6 +2013,7 @@ export async function orchestrateDepsWithDefaults(
               ),
             ),
             ...modelsRootEnv(),
+            ...trustEnv(),
           },
           cmd:
             options.resolverEntry?.cmd ??

@@ -20,7 +20,7 @@ against every override attempt, the environment and the CLI included.
 | 1 | `enterprise` | `/etc/kubic/config.toml` (or an explicit `enterprisePath` override) | Highest. Never overridden — by a file, the environment, or a flag. |
 | 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
 | 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
-| 4 | `project` | `<projectRoot>/.kubic/config.toml` | **Trust-gated**: refused before you accept the workspace trust prompt (`ProjectUntrustedError`); absent file counts as an empty layer. |
+| 4 | `project` | `<projectRoot>/.kubic/config.toml` | **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation); absent file counts as an empty layer. |
 | 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. |
 | 6 | `session` | Supplied programmatically | Never a file. |
 | 7 | `agent` | Supplied programmatically | Never a file. Lowest. |
@@ -34,10 +34,33 @@ frozen `enterprise` key. The flag is an input to the one config load, so
 `kubic config --model <provider/id>` shows the same `(cli)` source the
 `run`/`tui` lane boots with.
 
-Trust is accepted per workspace: `KUBIC_TRUST_PROJECT=1` records the project
-layer as trusted for that invocation. Anything else leaves it distrusted,
-and a project `config.toml` that exists is then **refused by path** before it
-is read — never half-applied.
+### Project trust
+
+A project-local `config.toml` (and the project `models.json`) is
+configuration the repository controls, so it is gated: an untrusted
+project `config.toml` is **refused by path before it is read** — never
+half-applied — with the remedies named in the refusal:
+
+- `kubic trust` records a durable grant for the current directory (or an
+explicit `[path]`); `kubic trust --revoke` removes the decision and the
+refusal comes back; `kubic trust --list` prints every recorded decision.
+- On `kubic tui` — and a bare interactive `kubic` — a present, undecided
+project config prompts once before the lane boots. Accepting or declining
+is recorded under `~/.kubic/`, so the next invocation does not ask again;
+a cancelled prompt records nothing and fails closed.
+- `KUBIC_TRUST_PROJECT=1` accepts the project layer for one invocation,
+above the persistent store, and records nothing.
+
+Trust is exact-path: a decision names the tree its files live in and never
+applies to a parent or sibling directory (`/a` does not trust `/a-sibling`,
+and a grant for `/a/b` never unlocks `/a`'s committed files). Consumers that
+walk up to the repository root — the project `models.json`, project skills —
+check the store for the directory they resolved, so a grant for the root
+still applies from a subdirectory. A symlinked path is the same decision as
+its target. `kubic doctor`'s `config-load` check names the
+trust state and where it came from. Full detail — the store file, its
+concurrency posture and every message — is on
+[project trust](trust.md).
 
 ### Environment overrides
 
@@ -47,7 +70,7 @@ is read — never half-applied.
 | `KUBIC_MODEL_THINKING` | Thinking level for the selected model (`off`…`max`). |
 | `KUBIC_APPROVALS_ROUTE` | `ask-user` or `deny`. |
 | `KUBIC_JOURNAL_RETENTION_DAYS` | Journal age bound, in days (non-negative integer). |
-| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation. |
+| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation, above the persistent store and without recording anything. |
 
 A malformed value fails closed with the variable named — it never silently
 falls back to a default.
@@ -375,7 +398,7 @@ of Pi's built-in providers. Files, in load order:
 | Location | Trust |
 | --- | --- |
 | `~/.kubic/models/models.json` (global) | Always loaded — it is your own machine-local file, and the recommended place for provider config. |
-| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: before `KUBIC_TRUST_PROJECT=1` it is never read, only named (`models.json ignored: <path> (project, untrusted — set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
+| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: before it is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1`) it is never read, only named (`models.json ignored: <path> (project, untrusted — run 'kubic trust' or set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
 
 The **project root** is the nearest directory at or above the working
 directory that holds a `.git` entry (a repository or worktree top level) or

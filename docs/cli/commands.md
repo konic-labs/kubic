@@ -43,7 +43,7 @@ dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command (or
 the bare invocation) prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
+`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
 and exits 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
@@ -1244,6 +1244,16 @@ the config as if that session override were passed, so the `model.*` rows
 and the `selected model:` line carry the `(cli)` source the `run`/`tui`
 lane would use. A refused config prints
 `error: <reason>` on stderr and exits 1; usage errors exit 2.
+
+## `kubic trust [--revoke] [--list] [path]`
+
+Record, revoke or list the durable project-trust decision that makes a
+committed `.kubic/config.toml` usable — see [project trust](trust.md).
+`kubic trust` grants trust for the current directory (or the `[path]`
+operand), `--revoke` removes the recorded decision so the pre-trust refusal
+comes back, and `--list` prints every recorded decision. Exit 0 on
+success; a corrupt store is named and exits 1; a path that is not a
+directory, or `--list` combined with `--revoke`/a path, exits 2.
 
 ## `kubic doctor [--skip <id[,id…]>]... [--json]`
 

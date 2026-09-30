@@ -177,6 +177,50 @@ describe('skill discovery (issue #36)', () => {
     );
   });
 
+  it('checks trust per ancestor: a child grant never reaches the parent (issue #228 review)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    // The grant names /repo/pkg only: the parent's skill is out of scope
+    // even though the child's cwd sits under it.
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo/pkg',
+    });
+    expect(result.skills.map((skill) => skill.name).sort()).toEqual(['near']);
+  });
+
+  it('lets a parent grant cover the parent tree from a child cwd (issue #228 review)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    // The grant names /repo: its skills load from a child cwd, while the
+    // child's own (untrusted) dir stays out.
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo',
+    });
+    expect(result.skills.map((skill) => skill.name).sort()).toEqual(['far']);
+  });
+
   it('loads ancestor project dirs far-to-near with nearer shadowing', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(

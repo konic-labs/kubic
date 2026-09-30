@@ -226,7 +226,13 @@ export interface HeadlessRunDeps {
     homeDir?: string;
     cwd?: string;
     trusted?: boolean;
+    trustProject?: (dir: string) => boolean;
   };
+  // Issue #228 (§35.1): the per-path trust check (the store's resolved-root
+  // decision plus the env opt-in), threaded from the composition root's
+  // config load. It gates the project models.json and the ancestor project
+  // skills on the path each resolves to. Absent falls back to the env flag.
+  trustProject?: (path: string) => boolean;
   // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
   // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
   // through the real FileBridge. Tests inject a fixture cwd.
@@ -995,7 +1001,12 @@ async function runHeadlessPromptImpl(
       const assembled = await assembleModels(
         deps.modelsCwd ?? process.cwd(),
         modelsEnv,
-        { resolveApiKey: keyResolver.resolve },
+        {
+          resolveApiKey: keyResolver.resolve,
+          ...(deps.trustProject === undefined
+            ? {}
+            : { projectTrust: deps.trustProject }),
+        },
       );
       for (const note of assembled.notes) {
         if (note.startsWith('models.json ignored')) {
@@ -1222,6 +1233,7 @@ async function runHeadlessPromptImpl(
     // the assembled system prompt as a suffix section. A refusal here is
     // not fatal by design (skills are context, never a gate) — the loader
     // reports unreadable skills on the debug channel and continues.
+    const trustProject = deps.trustProject ?? deps.skills?.trustProject;
     const skills = bootSkills({
       bridge,
       cwd: deps.skills?.cwd ?? process.cwd(),
@@ -1230,6 +1242,7 @@ async function runHeadlessPromptImpl(
         deps.skills?.trusted ??
         (process.env.KUBIC_TRUST_PROJECT === '1' ||
           process.env.KUBIC_TRUST_PROJECT === 'true'),
+      ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
       log: (line) => debug?.(`skills: ${line}`),

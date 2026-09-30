@@ -42,6 +42,10 @@ import {
   type WorkerCredentialRequest,
   workerCredentialDoctorProbe,
 } from '../../../packages/host/src/config/role-credentials.js';
+import {
+  ProjectTrustStore,
+  projectTrustStorePath,
+} from '../../../packages/host/src/config/trust-store.js';
 import type {
   DepProbe,
   SessionOverlapProbe,
@@ -93,6 +97,7 @@ import {
   defaultSessionsRoot,
   runSessionsCommand,
 } from '../../../packages/host/src/sessions-cli.js';
+import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
 import { runWorkersCommand } from '../../../packages/host/src/workers-cli.js';
 import {
   openSessionStore,
@@ -107,6 +112,7 @@ import {
   installedPolicyClasses,
   installedPolicyDeps,
   kubicConfigLoader,
+  projectTrustFor,
   runtimeApprovalDeps,
   runtimeLaneDeps,
   runtimeModelPin,
@@ -283,9 +289,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         ...(retentionDays === undefined ? {} : { retentionDays }),
       });
     },
-    models: async (options) => {
+    models: async (options, cliConfig) => {
       const view = presentation(out, debug, options.json === true);
-      const assembled = await assembleModels(process.cwd());
+      // Issue #228 (§35.1): the store's decision gates the project
+      // models.json exactly as the env opt-in does — the composition root
+      // passes the one report the config load already consumed.
+      const assembled = await assembleModels(process.cwd(), process.env, {
+        home: cliConfig.trust.home,
+        projectTrust: projectTrustFor(cliConfig),
+      });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       return runModelsCommand(options, {
@@ -294,6 +306,14 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         providers: assembled.providers,
       });
     },
+    trust: (options, cliConfig) =>
+      runTrustCommand(options, {
+        ...presentation(out, debug, false),
+        store: new ProjectTrustStore(
+          projectTrustStorePath(cliConfig.trust.home),
+        ),
+        cwd: process.cwd(),
+      }),
     run: (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
       return runRunCommand(options, {
@@ -308,6 +328,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
               ? {}
               : { modelPolicy: enterprisePolicy }),
             ...runtimeRunDeps(cliConfig),
+            // Issue #228 review: one per-path check gates the project
+            // models.json and each ancestor skill root on the tree the
+            // files live in — never a cwd boolean applied to ancestors.
+            trustProject: projectTrustFor(cliConfig),
             // Issue #133: the shared lane projections — the configured agent
             // id (journal attribution, `kubic diff --agent`) and the
             // config-sourced role layers `--role` merges under the document.
@@ -369,6 +393,9 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
                 orchestratorRuntime: cliConfig.runtime.orchestrator,
                 approvalPolicy: approvalSnapshotFrom(cliConfig.runtime),
               }),
+          // Issue #228 review: the same per-path check gates the project
+          // models.json and each ancestor skill root on the interactive lane.
+          trustProject: projectTrustFor(cliConfig),
           // Issue #133: the SAME lane projections `kubic run` consumes — the
           // interactive lane names itself and layers `--role` identically.
           ...runtimeLaneDeps(cliConfig),
@@ -380,7 +407,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       // deps check the live node runtime, policy falls back to host
       // defaults until config-sourced policy lands.
       const view = presentation(out, debug, options.json === true);
-      const assembled = await assembleModels(process.cwd());
+      const assembled = await assembleModels(process.cwd(), process.env, {
+        home: cliConfig.trust.home,
+        projectTrust: projectTrustFor(cliConfig),
+      });
       for (const note of assembled.notes) view.logger.info(note);
       if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
       const [major = 0, minor = 0] = process.versions.node
@@ -546,6 +576,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(cliConfig.runtime === undefined
             ? {}
             : { approvalPolicy: approvalSnapshotFrom(cliConfig.runtime) }),
+          // Issue #228 (§35.1): a store-granted decision must reach every
+          // worker child; the child's worktree path is not the key the
+          // manager's decision is recorded under, so the child inherits the
+          // env opt-in exactly as it does when the operator exported it.
+          trustProjectEnv: cliConfig.trust.trusted,
           // Issue #133: the runtime `[orchestrator]` projection (worktree
           // parent + worker cap, validated at load) — the same values the
           // dispatch shipped to the repo's exclude rules above.
@@ -694,7 +729,12 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         },
         // Issue #114: the re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
-        runtimeRunDeps(cliConfig),
+        // Issue #228 review: and the same per-path trust check, so the
+        // assembled catalog gates the project models.json on its own root.
+        {
+          ...runtimeRunDeps(cliConfig),
+          trustProject: projectTrustFor(cliConfig),
+        },
       );
     },
     export: (options) => {

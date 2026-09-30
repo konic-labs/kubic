@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
   appendToLedger,
   auditLedgerDir,
@@ -29,6 +30,7 @@ const noConfig: CliConfigResult = {
   runtime: undefined,
   error: undefined,
   ignoreSplit: { missing: [], checked: [], applicable: false },
+  trust: NO_PROJECT_TRUST,
 };
 
 // The prod runners colour from the real stdout; NO_COLOR pins plain text
@@ -86,6 +88,7 @@ describe('kubic policy (prod wiring)', () => {
         runtime: undefined,
         error: "layer 'enterprise': unknown key 'bogus_key'",
         ignoreSplit: { missing: [], checked: [], applicable: false },
+        trust: NO_PROJECT_TRUST,
       },
     );
     expect(code).toBe(1);

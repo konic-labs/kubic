@@ -35,6 +35,7 @@ import { runJournalCommand } from '../journal-cli.js';
 import { auditLedgerDir, readAuditLedger } from '../policy/audit-ledger.js';
 import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../run-cli.js';
 import { loadRuntimeConfig, type RuntimeConfig } from './runtime.js';
+import { NO_PROJECT_TRUST } from './trust-store.js';
 
 const tempDirs: string[] = [];
 
@@ -84,6 +85,7 @@ function laneFor(workspace: string, toml: string) {
     runtime: namedRuntime(workspace, toml),
     error: undefined,
     ignoreSplit: NO_SPLIT,
+    trust: NO_PROJECT_TRUST,
   });
 }
 
@@ -330,6 +332,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
       runtime: namedRuntime(workspace, toml, env),
       error: undefined,
       ignoreSplit: NO_SPLIT,
+      trust: NO_PROJECT_TRUST,
     };
     const lines: string[] = [];
     const errs: string[] = [];

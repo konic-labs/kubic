@@ -39,7 +39,11 @@ export async function runProdReplay(
       model: string,
       runRuntime: ReplayRuntimeDeps,
     ) => {
-      const assembled = await assembleModels(process.cwd());
+      const assembled = await assembleModels(process.cwd(), process.env, {
+        ...(runtime.trustProject === undefined
+          ? {}
+          : { projectTrust: runtime.trustProject }),
+      });
       try {
         const selection = parseModelFlag(model);
         if (

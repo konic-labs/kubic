@@ -29,6 +29,7 @@ import {
   vi,
 } from 'vitest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
   type CliConfigResult,
   loadCliConfig,
@@ -60,6 +61,7 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
   'perf',
   'policy',
   'config',
+  'trust',
   'audit',
   'workers',
   'eval',
@@ -88,6 +90,7 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['perf', ['--budget', 'spawn', '--samples', '1'], 'perf'],
   ['policy', ['--tool', 'shell'], 'policy'],
   ['config', ['--json'], 'config'],
+  ['trust', [], 'trust'],
   ['audit', [], 'audit'],
   ['workers', ['--json'], 'workers'],
   [
@@ -109,6 +112,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
   tui: {},
   doctor: { skip: [] },
   config: { json: true },
+  trust: {},
   orchestrate: {},
   clean: { dryRun: true },
   workers: { json: true },
@@ -150,6 +154,9 @@ interface Harness {
   readonly deps: DispatchDeps;
   readonly calls: RunnerCall[];
   readonly lines: string[];
+  // The options each `loadConfig` call received (issue #228: the accepted
+  // trust answer is threaded into the load as an explicit decision).
+  readonly loadOptions: ReadonlyArray<{ projectTrusted?: boolean } | undefined>;
   readonly state: {
     excludeCalls: number;
     excludeEntries: readonly string[] | undefined;
@@ -164,10 +171,13 @@ function harness(
     runners?: Partial<Record<RunnerKey, AnyRunner>>;
     config?: CliConfigResult;
     version?: string;
+    interactive?: boolean;
+    resolveTrust?: () => Promise<boolean | undefined>;
   } = {},
 ): Harness {
   const calls: RunnerCall[] = [];
   const lines: string[] = [];
+  const loadOptions: Array<{ projectTrusted?: boolean } | undefined> = [];
   const state: Harness['state'] = {
     excludeCalls: 0,
     excludeEntries: undefined,
@@ -188,15 +198,22 @@ function harness(
     out: (line) => {
       lines.push(line);
     },
-    loadConfig: () => options.config ?? loadedConfig(),
+    loadConfig: (load) => {
+      loadOptions.push(load);
+      return options.config ?? loadedConfig();
+    },
     version: () => options.version ?? '9.9.9',
     ensureRuntimeExclude: (entries) => {
       state.excludeCalls += 1;
       state.excludeEntries = entries;
     },
     runners: runners as unknown as DispatchRunners,
+    isInteractive: () => options.interactive === true,
+    ...(options.resolveTrust === undefined
+      ? {}
+      : { resolveProjectTrust: options.resolveTrust }),
   };
-  return { deps, calls, lines, state };
+  return { deps, calls, lines, loadOptions, state };
 }
 
 // Fixture home/cwd for the real config load and the prod cost store: an
@@ -213,6 +230,7 @@ function refusedConfig(error = 'unknown key [nope]'): CliConfigResult {
     runtime: undefined,
     error,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 
@@ -222,6 +240,7 @@ function refusedConfigWithoutReason(): CliConfigResult {
     runtime: undefined,
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 
@@ -240,9 +259,9 @@ function loadedConfig(): CliConfigResult {
 }
 
 describe('dispatch routing (issue #135)', () => {
-  it('pins the roster: 22 commands, 19 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(22);
-    expect(RUNNER_KEYS).toHaveLength(19);
+  it('pins the roster: 23 commands, 20 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(23);
+    expect(RUNNER_KEYS).toHaveLength(20);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
   });
@@ -448,7 +467,7 @@ describe('front door (issue #128 behavior, moved)', () => {
 
 describe('config refusal (issue #90 policy, moved)', () => {
   const CONSUMING = ['run', 'orchestrate', 'tui', 'replay'];
-  const REPORTING = ['config', 'doctor'];
+  const REPORTING = ['config', 'doctor', 'trust'];
 
   it('refuses the agent-executing modes with exit 1 and the named reason', async () => {
     for (const command of CONSUMING) {
@@ -506,6 +525,96 @@ describe('config refusal (issue #90 policy, moved)', () => {
     const h = harness({ config: refusedConfigWithoutReason() });
     expect(await dispatchCommand('run', [], h.deps)).toBe(1);
     expect(h.lines).toEqual(['error: config refused']);
+  });
+});
+
+describe('interactive project trust (issue #228)', () => {
+  it('asks `kubic tui` on a TTY and loads with the accepted decision', async () => {
+    const h = harness({ interactive: true, resolveTrust: async () => true });
+    expect(await dispatchCommand('tui', [], h.deps)).toBe(0);
+    expect(h.loadOptions).toEqual([{ projectTrusted: true }]);
+    expect(h.calls.map((call) => call.key)).toEqual(['tui']);
+  });
+
+  it('a declined answer stops the lane through the refusal path', async () => {
+    const reason =
+      "project-local config refused pre-trust: /repo/.kubic/config.toml — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation";
+    const h = harness({
+      interactive: true,
+      resolveTrust: async () => false,
+      config: refusedConfig(reason),
+    });
+    expect(await dispatchCommand('tui', [], h.deps)).toBe(1);
+    expect(h.loadOptions).toEqual([{ projectTrusted: false }]);
+    expect(h.calls).toEqual([]);
+    expect(h.lines).toEqual([`error: ${reason}`]);
+  });
+
+  it('asks the bare interactive invocation too', async () => {
+    const h = harness({ interactive: true, resolveTrust: async () => true });
+    expect(await dispatchCommand(undefined, [], h.deps)).toBe(0);
+    expect(h.calls.map((call) => call.key)).toEqual(['tui']);
+    expect(h.loadOptions).toEqual([{ projectTrusted: true }]);
+  });
+
+  it('never asks off a TTY or for a non-tui command', async () => {
+    for (const [command, rest, interactive] of [
+      ['tui', [], false],
+      ['run', ['-p', 'hi'], true],
+    ] as const) {
+      let asks = 0;
+      const h = harness({
+        interactive,
+        resolveTrust: async () => {
+          asks += 1;
+          return true;
+        },
+      });
+      await dispatchCommand(command, rest, h.deps);
+      expect(asks, command).toBe(0);
+      expect(h.loadOptions, command).toEqual([undefined]);
+    }
+  });
+
+  it('loads unmodified when the resolver has nothing to ask', async () => {
+    let asks = 0;
+    const h = harness({
+      interactive: true,
+      resolveTrust: async () => {
+        asks += 1;
+        return undefined;
+      },
+    });
+    expect(await dispatchCommand('tui', [], h.deps)).toBe(0);
+    expect(asks).toBe(1);
+    expect(h.loadOptions).toEqual([undefined]);
+  });
+
+  it('never asks for a help request', async () => {
+    let asks = 0;
+    const h = harness({
+      interactive: true,
+      resolveTrust: async () => {
+        asks += 1;
+        return true;
+      },
+    });
+    expect(await dispatchCommand('tui', ['--help'], h.deps)).toBe(0);
+    expect(asks).toBe(0);
+    expect(h.loadOptions).toEqual([undefined]);
+  });
+
+  it('fails closed when the resolver throws — a broken store must not boot', async () => {
+    const h = harness({
+      interactive: true,
+      resolveTrust: async () => {
+        throw new Error('trust store /h/.kubic/trust.json is not valid JSON');
+      },
+    });
+    await expect(dispatchCommand('tui', [], h.deps)).rejects.toThrow(
+      'trust store',
+    );
+    expect(h.calls).toEqual([]);
   });
 });
 

@@ -14,7 +14,7 @@ import {
   EXIT_OK,
   EXIT_PROVIDER,
 } from '../../../core/src/cli/exit-codes.js';
-import { validatePolicy } from '../approvals.js';
+import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import type { DoctorCheck } from '../doctor.js';
 
 // §78 provider-failure code, mirroring kubic run (§78): a doctor matrix
@@ -203,11 +203,15 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
       detail: `${refused.join(', ')} unsupported in v1: no third-party tools or MCP servers (Phase-4 arrival; §33, §59.1)`,
     };
   }
+  // Same honest count as policy:approvals and `kubic config` (issue #324): an
+  // always-ask capability in autoApprove never applies, so it is not counted.
+  const ignored = alwaysAskAutoApprove(autoApprove);
+  const effective = autoApprove.filter((cap) => !ignored.includes(cap)).length;
   return {
     ...base,
     status: 'pass',
     reason: 'ok',
-    detail: `route=${route}, ${autoApprove.length} auto-approved — policy offers routing, not enforcement`,
+    detail: `route=${route}, ${effective} auto-approved — policy offers routing, not enforcement`,
   };
 }
 

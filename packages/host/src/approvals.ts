@@ -80,6 +80,14 @@ export const CAPABILITIES = [
 export const KUBIC_STATE_WRITE = 'kubic-state-write';
 const ALWAYS_ASK: ReadonlySet<string> = new Set([KUBIC_STATE_WRITE]);
 
+// The `autoApprove` entries that can never apply because the capability
+// always asks (issue #324). Config keeps accepting them (rejecting would break
+// an existing config that never worked); `kubic doctor` and `kubic config`
+// name them instead of counting them as auto-approved.
+export function alwaysAskAutoApprove(autoApprove: readonly string[]): string[] {
+  return autoApprove.filter((capability) => ALWAYS_ASK.has(capability));
+}
+
 // Subtrees of `.kubic/` an agent may never write at all (a tool error, not an
 // ask): the change journal, the orchestrator's state (approvals, audit ledger,
 // decisions, mailbox) and session state.
@@ -247,21 +255,168 @@ export interface TriggerContext {
 
 // git push / remote mutation in ANY command segment (issue #357): the
 // verb is matched after a command-position boundary (start, `|;&`,
-// newline, whitespace or a subshell paren) and after any run of git global
+// newline, whitespace, a subshell paren — `$(git push)` included — and, from
+// the re-audit, `/` (`/usr/bin/git push`), a quote (`bash -c 'git push'`), a
+// backslash (`\git push`), a backtick or a `!` — `-c alias.p='!git push'`) and
+// after any run of git global
 // options (`-C <dir>`, `-c <k=v>`, `--git-dir=…`, `--work-tree …`,
-// `--no-pager`, …) — so `ls; git push`, `cd x && git push` and
-// `git -C . push` all raise. A push named inside a quoted argument
+// `--no-pager`, …, an argument may be quoted: `git -C "my dir" push`) — so
+// `ls; git push`, `cd x && git push` and `git -C . push` all raise. The word
+// must be exactly `git` followed by whitespace: `mygit push`, `digit push`
+// and `git-lfs push` never raise. A push named inside a quoted argument
 // (`echo "git push later"`) raises too: the literal scan cannot see
 // quotes, and an over-trigger is an ask, never a silent grant.
-const GIT_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
-const GIT_PUSH = new RegExp(
-  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+push\b`,
-  'i',
-);
-const GIT_REMOTE_MUTATION = new RegExp(
-  String.raw`(^|[|;&\s(])git${GIT_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
-  'i',
-);
+//
+// The option run is walked token by token, never by one regex: the old
+// repeated alternation (`--namespace` as an option OR as the previous
+// option's argument) backtracked exponentially — 34 repeats stalled a real
+// `kubic run` for 14 s, and this scan runs before EVERY bash call. Walking is
+// a two-state automaton (expecting an option-or-verb / expecting an option
+// argument) and the states already explored at a token are remembered across
+// every `git` occurrence, so the whole scan is linear in the command.
+//
+// Words are read TWICE, and either reading reaching `push` raises: quote-aware
+// (a quoted option argument is one word, a backslash escapes the next
+// character outside single quotes) and plain whitespace-split (the reading the
+// original regex had). The quote-aware one catches `git -C "my dir" push`; the
+// plain one is the safety net for shell syntax the tokenizer misreads —
+// `git -c user.name=O\'Brien push # it's fine` reads `'` as an opening quote
+// only when the backslash is ignored. The plain walk is exactly the original
+// regex's language, so this only ever widens what raises (fail toward asking);
+// the over-trigger it keeps is the original's: a quoted option argument that
+// merely contains the word (`git -c "a push" status`) still reads as a push.
+const GIT_WORD = /(^|[|;&\s(/'"\\`!])git(?=\s)/gi;
+const GIT_ARG_OPTION = /^-c$/i;
+const GIT_FLAG = /^(?:-p|--[a-z][a-z-]*)$/i;
+const GIT_VALUE_OPTION =
+  /^--(?:git-dir|work-tree|namespace|exec-path|config-env)$/i;
+const GIT_VALUE_ASSIGNED =
+  /^--(?:git-dir|work-tree|namespace|exec-path|config-env)=[\s\S]+$/i;
+const GIT_PUSH_VERB = /^push\b/i;
+const GIT_REMOTE_VERB = /^remote$/i;
+const GIT_REMOTE_ACTION = /^(?:add|set-url|remove|rename)\b/i;
+const WHITESPACE_CHAR = /\s/;
+const EXPECT_OPTION = 1;
+const EXPECT_ARGUMENT = 2;
+
+interface ShellToken {
+  text: string;
+  start: number;
+  end: number;
+}
+
+type TokenReader = (command: string, from: number) => ShellToken | undefined;
+
+// The next whitespace-delimited word at or after `from`, quote-aware: a
+// balanced `"…"` or `'…'` run belongs to the word even when it holds spaces,
+// a backslash outside single quotes escapes the next character (`\'`, `\ `,
+// and `\"` inside double quotes), and a quote with no closer is an ordinary
+// character. Stateless from a token start, so a position always tokenizes the
+// same way whichever `git` reached it.
+function nextShellToken(command: string, from: number): ShellToken | undefined {
+  let start = from;
+  while (start < command.length && WHITESPACE_CHAR.test(command[start] ?? '')) {
+    start += 1;
+  }
+  if (start >= command.length) return undefined;
+  let end = start;
+  while (end < command.length && !WHITESPACE_CHAR.test(command[end] ?? '')) {
+    const char = command[end];
+    if (char === '\\') {
+      end = Math.min(end + 2, command.length);
+    } else if (char === "'") {
+      const close = command.indexOf("'", end + 1);
+      end = close < 0 ? end + 1 : close + 1;
+    } else if (char === '"') {
+      end = afterDoubleQuoted(command, end);
+    } else {
+      end += 1;
+    }
+  }
+  return { text: command.slice(start, end), start, end };
+}
+
+// The index after the double-quoted run opening at `open` (a backslash inside
+// escapes the next character), or after the lone quote when nothing closes it.
+function afterDoubleQuoted(command: string, open: number): number {
+  for (let index = open + 1; index < command.length; index += 1) {
+    if (command[index] === '\\') index += 1;
+    else if (command[index] === '"') return index + 1;
+  }
+  return open + 1;
+}
+
+// The original reading: a word is a run of non-whitespace, quotes and
+// backslashes included.
+function nextPlainToken(command: string, from: number): ShellToken | undefined {
+  let start = from;
+  while (start < command.length && WHITESPACE_CHAR.test(command[start] ?? '')) {
+    start += 1;
+  }
+  if (start >= command.length) return undefined;
+  let end = start;
+  while (end < command.length && !WHITESPACE_CHAR.test(command[end] ?? '')) {
+    end += 1;
+  }
+  return { text: command.slice(start, end), start, end };
+}
+
+function gitVerbFollows(
+  command: string,
+  from: number,
+  explored: Map<number, number>,
+  read: TokenReader,
+): boolean {
+  let states = EXPECT_OPTION;
+  let position = from;
+  for (;;) {
+    const token = read(command, position);
+    if (token === undefined) return false;
+    const seen = explored.get(token.start) ?? 0;
+    // Everything reachable from these states here was already walked by an
+    // earlier `git` — and it did not accept, or the scan would have stopped.
+    states &= ~seen;
+    if (states === 0) return false;
+    explored.set(token.start, seen | states);
+    let next = 0;
+    if ((states & EXPECT_OPTION) !== 0) {
+      if (GIT_PUSH_VERB.test(token.text)) return true;
+      if (GIT_REMOTE_VERB.test(token.text)) {
+        const action = read(command, token.end);
+        if (action !== undefined && GIT_REMOTE_ACTION.test(action.text)) {
+          return true;
+        }
+      }
+      if (GIT_ARG_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
+      // `-C <dir>` — the regex flag was case-insensitive, so `-C` is `-c`.
+      if (GIT_FLAG.test(token.text) || GIT_VALUE_ASSIGNED.test(token.text)) {
+        next |= EXPECT_OPTION;
+      }
+      // A value option may take the next word or stand alone.
+      if (GIT_VALUE_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
+    }
+    if ((states & EXPECT_ARGUMENT) !== 0) next |= EXPECT_OPTION;
+    if (next === 0) return false;
+    states = next;
+    position = token.end;
+  }
+}
+
+function gitPushOrRemoteMutation(command: string): boolean {
+  const quoted = new Map<number, number>();
+  const plain = new Map<number, number>();
+  for (const origin of command.matchAll(GIT_WORD)) {
+    const from = origin.index + origin[0].length;
+    if (
+      gitVerbFollows(command, from, quoted, nextShellToken) ||
+      gitVerbFollows(command, from, plain, nextPlainToken)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Package installs and fetch-and-run launchers (issue #357): every one can
 // run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
 // npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
@@ -418,7 +573,9 @@ function stripQuotes(target: string): string {
 // The write target of a detector segment: the last whitespace-separated
 // token (last-argument heuristic; segmentEnd is the segment's absolute end
 // index in the raw command, so token characters tie back to command
-// positions). Quotes always come off (shell syntax). A trailing delimiter
+// positions). Quotes and backslash escapes always come off, wherever they sit
+// in the token (`".."/x`, `.."/x"`, `\../x` all name `../x`; issue #355 — the
+// same shell reading the control-plane targets get). A trailing delimiter
 // comes off ONLY when it is the closing `)` of a `$(…)` span the token was
 // lifted from — `$(cp a /work)` names `/work`, because that `)` is
 // substitution syntax, not path text — and then exactly the recorded
@@ -439,7 +596,7 @@ function targetToken(
   while (cut < raw.length && spanClosers.has(end - 1 - cut)) {
     cut += 1;
   }
-  return stripQuotes(raw.slice(0, raw.length - cut));
+  return shellUnquote(raw.slice(0, raw.length - cut));
 }
 
 // Kubic state that does not live under `<workspace>/.kubic/` (issue #324
@@ -449,6 +606,28 @@ function targetToken(
 export interface ControlPlaneRoots {
   home?: string;
   sessionsRoot?: string;
+}
+
+// A path the shell would expand from the home directory — `~`, `$HOME`,
+// `${HOME}` or `${HOME:-…}`, alone or followed by `/…` — as the part below home
+// ('' for home itself); undefined for anything else (`~root`, `$HOMEDIR`,
+// `$HOME2`, a plain path). One rule for the control-plane class and for `cd`
+// tracking, so `$HOME/.kubic` can never be read differently from `~/.kubic`
+// (issue #324).
+const HOME_PREFIXED = /^(?:~|\$HOME|\$\{HOME(?::?-[^}]*)?\})(?:\/([\s\S]*))?$/;
+function homeRelative(path: string): string | undefined {
+  const match = HOME_PREFIXED.exec(path);
+  return match === null ? undefined : (match[1] ?? '');
+}
+
+// The shell's CURRENT directory — `~+`, `$PWD`, `${PWD}` — as the relative path
+// below it ('' for the directory itself); undefined for anything else. The
+// previous directory (`~-`, `$OLDPWD`) is not knowable from the text.
+const PWD_PREFIXED = /^(?:~\+|\$PWD|\$\{PWD(?::?-[^}]*)?\})(?:\/([\s\S]*))?$/;
+const OLDPWD_PREFIXED = /^(?:~-|\$OLDPWD|\$\{OLDPWD\})(?:\/|$)/;
+function pwdRelative(path: string): string | undefined {
+  const match = PWD_PREFIXED.exec(path);
+  return match === null ? undefined : (match[1] ?? '');
 }
 
 // The path of `target` below `root` as case-folded segments, or undefined
@@ -469,8 +648,10 @@ function segmentsBelow(root: string, target: string): string[] | undefined {
 // `<repo>/.kubic/wt/<agent>`, so the manager's journal and orchestrator state
 // sit above it; a solo run from a subdirectory has the project's `.kubic/`
 // above it) and `~/.kubic` (global config.toml, the session root). An
-// overridden session root is refused wholesale. A leading `~/` is the home
-// directory, as the shell expands it. Case-folded, because the default
+// overridden session root is refused wholesale. A leading `~/`, `$HOME/` or
+// `${HOME}/` is the home directory, as the shell expands it (issue #324: the
+// variable forms used to slip through as plain outside-writes, which full
+// access auto-approves). Case-folded, because the default
 // macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml` IS the
 // config file there). Symlinks are not followed — lexical, like every shell
 // detector in this module.
@@ -483,25 +664,51 @@ function controlPlaneClass(
   if (path === '') return undefined;
   const home = roots.home ?? homedir();
   const ws = resolve(workspace);
+  const belowHome = homeRelative(path);
   const abs =
-    path === '~' || path.startsWith('~/')
-      ? resolve(home, `.${path.slice(1)}`)
-      : resolve(ws, path);
+    belowHome === undefined ? resolve(ws, path) : resolve(home, belowHome);
+  const literal = literalControlPlaneClass(ws, abs, home, roots);
+  if (literal === 'refuse') return literal;
+  // A glob (or brace list) that COULD expand into state is refused, not just
+  // asked: `rm .kubic/journa?/*` names no file the scan can see, but it is the
+  // journal. The bash tool's shell would expand it; we cannot, so every
+  // expansion the pattern allows counts (issue #324).
+  return GLOB_CHARS.test(abs) && globReachesState(abs, ws, home, roots)
+    ? 'refuse'
+    : literal;
+}
+
+// The Kubic state directories a path can fall under: the workspace's own
+// `.kubic`, and — when the path is OUTSIDE the workspace — every ancestor's and
+// the home's.
+function stateDirsFor(ws: string, home: string, outside: boolean): string[] {
+  const dirs = [join(ws, '.kubic')];
+  if (!outside) return dirs;
+  for (let dir = dirname(ws); ; dir = dirname(dir)) {
+    dirs.push(join(dir, '.kubic'));
+    if (dirname(dir) === dir) break;
+  }
+  dirs.push(join(resolve(home), '.kubic'));
+  return dirs;
+}
+
+function literalControlPlaneClass(
+  ws: string,
+  abs: string,
+  home: string,
+  roots: ControlPlaneRoots,
+): 'refuse' | 'ask' | undefined {
   if (
     roots.sessionsRoot !== undefined &&
     segmentsBelow(resolve(roots.sessionsRoot), abs) !== undefined
   ) {
     return 'refuse';
   }
-  const stateDirs = [join(ws, '.kubic')];
-  if (segmentsBelow(ws, abs) === undefined) {
-    for (let dir = dirname(ws); ; dir = dirname(dir)) {
-      stateDirs.push(join(dir, '.kubic'));
-      if (dirname(dir) === dir) break;
-    }
-    stateDirs.push(join(resolve(home), '.kubic'));
-  }
-  for (const stateDir of stateDirs) {
+  for (const stateDir of stateDirsFor(
+    ws,
+    home,
+    segmentsBelow(ws, abs) === undefined,
+  )) {
     const parts = segmentsBelow(stateDir, abs);
     if (parts === undefined) continue;
     const sub = parts[0];
@@ -510,35 +717,315 @@ function controlPlaneClass(
   return undefined;
 }
 
-// Every write target a call names: write/edit's `path`, and for bash every
-// redirect (`>`, `>>`, `>|`, `N>`), tee and cp/mv/install target — the same
-// lexical shapes the outside-write detector reads. Redirects are scanned
-// one by one, so a trailing `2>/dev/null` cannot mask an earlier target.
+// Glob matching for the control-plane guard. Metacharacters: `*`, `?`, `[…]`
+// and `{a,b}`. Deliberately conservative: a leading `*` may match a dotfile
+// (`shopt -s dotglob` exists), and an enumeration that overflows is refused
+// whenever the path names `.kubic`.
+const GLOB_CHARS = /[*?[{]/;
+const PROTECTED_SUBS = [
+  'journal',
+  'orchestrator',
+  'sessions',
+  'config.toml',
+  'roles',
+];
+const BRACE_LIMIT = 32;
+
+function globReachesState(
+  abs: string,
+  ws: string,
+  home: string,
+  roots: ControlPlaneRoots,
+): boolean {
+  const variants = expandBraces(abs);
+  if (variants === undefined) return /\.kubic/i.test(abs);
+  const dirs = stateDirsFor(ws, home, true).map(pathSegments);
+  const sessions =
+    roots.sessionsRoot === undefined
+      ? undefined
+      : pathSegments(resolve(roots.sessionsRoot));
+  return variants.some((variant) => {
+    const segments = pathSegments(variant);
+    return (
+      dirs.some((dir) => globReaches(segments, dir, PROTECTED_SUBS)) ||
+      (sessions !== undefined && globReaches(segments, sessions, undefined))
+    );
+  });
+}
+
+function pathSegments(path: string): string[] {
+  return path
+    .toLowerCase()
+    .split(/[\\/]/)
+    .filter((part) => part !== '');
+}
+
+// Can the (possibly globbed) path `segments` name `dir` itself or something
+// below it that is protected? `subs` lists the protected first-level names;
+// undefined protects everything below (the session root).
+function globReaches(
+  segments: readonly string[],
+  dir: readonly string[],
+  subs: readonly string[] | undefined,
+): boolean {
+  // A path shorter than `dir` runs out of segments: '' matches no name.
+  for (let index = 0; index < dir.length; index += 1) {
+    if (!globMatches(segments[index] ?? '', dir[index] ?? '')) return false;
+  }
+  if (segments.length === dir.length || subs === undefined) return true;
+  const next = segments[dir.length] ?? '';
+  return subs.some((sub) => globMatches(next, sub));
+}
+
+// fnmatch for one path segment (both sides case-folded): `*`, `?`, `[set]`,
+// `[!set]` / `[^set]` and ranges. Iterative with one backtrack point, so it is
+// O(pattern x name) whatever the pattern.
+function globMatches(pattern: string, name: string): boolean {
+  if (!/[*?[]/.test(pattern)) return pattern === name;
+  let p = 0;
+  let n = 0;
+  let starAt = -1;
+  let starName = 0;
+  while (n < name.length) {
+    if (pattern[p] === '*') {
+      starAt = p;
+      starName = n;
+      p += 1;
+      continue;
+    }
+    const next = p < pattern.length ? matchOne(pattern, p, name[n] ?? '') : -1;
+    if (next >= 0) {
+      p = next;
+      n += 1;
+    } else if (starAt >= 0) {
+      p = starAt + 1;
+      starName += 1;
+      n = starName;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[p] === '*') p += 1;
+  return p === pattern.length;
+}
+
+// One pattern element against one character: the pattern index after it, or -1.
+function matchOne(pattern: string, at: number, char: string): number {
+  const first = pattern[at];
+  if (first === '?') return at + 1;
+  if (first === '[') {
+    const negate = pattern[at + 1] === '!' || pattern[at + 1] === '^';
+    const start = at + (negate ? 2 : 1);
+    const close = pattern.indexOf(']', start + 1);
+    if (close > 0) {
+      let inSet = false;
+      for (let index = start; index < close; index += 1) {
+        const from = pattern[index] ?? '';
+        if (pattern[index + 1] === '-' && index + 2 < close) {
+          if (char >= from && char <= (pattern[index + 2] ?? '')) inSet = true;
+          index += 2;
+        } else if (char === from) {
+          inSet = true;
+        }
+      }
+      return inSet === !negate ? close + 1 : -1;
+    }
+  }
+  return first === char ? at + 1 : -1;
+}
+
+// `a{b,c}d` -> `abd`, `acd` (nested and multiple groups; a group with no comma
+// is literal). undefined when the enumeration would pass BRACE_LIMIT or the
+// text is too long to scan.
+function expandBraces(text: string): string[] | undefined {
+  if (text.length > 2048) return undefined;
+  const pending = [text];
+  const done: string[] = [];
+  while (pending.length > 0) {
+    const current = pending.pop() ?? '';
+    const group = firstBraceGroup(current);
+    if (group === undefined) {
+      done.push(current);
+    } else {
+      for (const option of group.options) {
+        pending.push(group.before + option + group.after);
+      }
+    }
+    if (done.length + pending.length > BRACE_LIMIT) return undefined;
+  }
+  return done;
+}
+
+function firstBraceGroup(
+  text: string,
+): { before: string; options: string[]; after: string } | undefined {
+  for (
+    let open = text.indexOf('{');
+    open >= 0;
+    open = text.indexOf('{', open + 1)
+  ) {
+    let depth = 0;
+    const commas: number[] = [];
+    for (let index = open; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === '{') depth += 1;
+      else if (char === ',' && depth === 1) commas.push(index);
+      else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          if (commas.length === 0) break;
+          const bounds = [open, ...commas, index];
+          return {
+            before: text.slice(0, open),
+            options: bounds
+              .slice(0, -1)
+              .map((from, at) => text.slice(from + 1, bounds[at + 1])),
+            after: text.slice(index + 1),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+// Every path a call writes or destroys: write/edit's `path`, and for bash every
+// redirect (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), tee and cp/mv/install
+// target — the same lexical shapes the outside-write detector reads — plus the
+// operands of `rm` and `mv` (deleting or moving `.kubic/journal` is tampering
+// exactly like writing it; a `cp` SOURCE is only read, so it is not one).
+// Redirects are scanned one by one, so a trailing `2>/dev/null` cannot mask an
+// earlier target. A bash token is read the way the shell would: inner quotes
+// and backslash escapes come off (`".kubic"/roles/r.md`).
+//
+// Each bash target yields TWO candidates and either one being control-plane is
+// enough: the token as typed against the workspace, and the token resolved
+// against the directory the preceding `cd`/`pushd` trail leaves (the cdEvents
+// machinery the outside-write detector uses). The trail is lexical — it cannot
+// tell a subshell, a conditional or a quoted `cd` from a real one — so it must
+// only ever ADD a candidate; replacing the typed path with it let `(cd x);
+// echo p > .kubic/journal/y` through. After a `cd` to an unknown place a
+// relative token naming a `.kubic` segment is read as the workspace's own —
+// fail-closed (an agent has no business in any `.kubic/journal`, so even the
+// refusal class costs nothing).
+const WRITE_TARGETS_MEMO = new Map<string, string[]>();
 function writeTargets(
   toolName: string,
   args: Record<string, unknown>,
+  workspace: string,
+  home: string,
 ): string[] {
   if (toolName === 'write' || toolName === 'edit') {
     return typeof args.path === 'string' ? [args.path] : [];
   }
   if (toolName !== 'bash' || typeof args.command !== 'string') return [];
   const command = args.command;
-  const targets: string[] = [];
-  for (const match of command.matchAll(ALL_REDIRECT_TARGETS)) {
-    targets.push(match[1] ?? '');
-  }
-  for (const tee of command.matchAll(TEE_TARGET)) {
-    targets.push((tee[1] ?? '').trim().split(/\s+/).pop() ?? '');
-  }
-  for (const copy of command.matchAll(COPY_TARGET)) {
-    targets.push((copy[2] ?? '').trim().split(/\s+/).pop() ?? '');
-  }
-  return targets.map((target) => target.replace(/[)`]+$/, ''));
+  return memoised(WRITE_TARGETS_MEMO, `${workspace}\0${home}\0${command}`, () =>
+    bashWriteTargets(command, workspace, home),
+  );
 }
 
-// Every redirect target in a command (see writeTargets). `&N` duplications
-// and process substitutions are not file targets and are skipped.
-const ALL_REDIRECT_TARGETS = />{1,2}\|?\s*([^\s|;&<>()]+)/g;
+function bashWriteTargets(
+  command: string,
+  workspace: string,
+  home: string,
+): string[] {
+  const found: Array<{ raw: string; index: number }> = [];
+  for (const match of command.matchAll(ALL_REDIRECT_TARGETS)) {
+    const raw = match[2] ?? '';
+    if (match[1] === '&' && FD_DUPLICATION.test(raw)) continue;
+    found.push({ raw, index: match.index });
+  }
+  for (const tee of command.matchAll(TEE_TARGET)) {
+    found.push({
+      raw: (tee[1] ?? '').trim().split(/\s+/).pop() ?? '',
+      index: tee.index,
+    });
+  }
+  for (const copy of command.matchAll(COPY_TARGET)) {
+    found.push({
+      raw: (copy[2] ?? '').trim().split(/\s+/).pop() ?? '',
+      index: copy.index,
+    });
+  }
+  for (const removal of command.matchAll(REMOVE_MOVE_OPERANDS)) {
+    for (const operand of (removal[2] ?? '').trim().split(/\s+/)) {
+      if (operand !== '' && !operand.startsWith('-')) {
+        found.push({ raw: operand, index: removal.index });
+      }
+    }
+  }
+  const trail = cdEvents(command, workspace, home);
+  const ws = resolve(workspace);
+  const targets = new Set<string>();
+  for (const { raw, index } of found) {
+    const token = shellUnquote(raw.replace(/[)`]+$/, ''));
+    targets.add(pathAtCwd(token, ws, workspace));
+    targets.add(pathAtCwd(token, cwdAt(trail, index, workspace), workspace));
+  }
+  return [...targets];
+}
+
+// A relative bash token joined onto the directory it is written from; shell
+// expansions and absolute paths are left for controlPlaneClass. `~+`/`$PWD`
+// are the directory itself. The cwd IS the workspace hands the token over
+// exactly as typed. An unknown directory (`cd $X`, `~-`, `$OLDPWD`) reads a
+// `.kubic` segment as the workspace's own.
+function pathAtCwd(
+  token: string,
+  cwd: string | null,
+  workspace: string,
+): string {
+  if (token === '' || homeRelative(token) !== undefined || isAbsolute(token)) {
+    return token;
+  }
+  const ws = resolve(workspace);
+  if (OLDPWD_PREFIXED.test(token)) return failClosedKubic(token, ws);
+  const here = pwdRelative(token);
+  const local = here ?? token;
+  if (cwd === ws) return local;
+  if (cwd !== null) return resolve(cwd, local);
+  return failClosedKubic(local, ws);
+}
+
+function failClosedKubic(token: string, ws: string): string {
+  const segments = token.split('/');
+  const at = segments.findIndex(
+    (segment) => segment.toLowerCase() === '.kubic',
+  );
+  return at < 0 ? token : join(ws, ...segments.slice(at));
+}
+
+// A tiny bounded memo for per-command scans: the same bash command is read by
+// the control-plane refusal and by trigger detection, and an 8000-target
+// command made each of them re-scan every earlier `cd`.
+const MEMO_LIMIT = 8;
+function memoised<T>(cache: Map<string, T>, key: string, compute: () => T): T {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const value = compute();
+  if (cache.size >= MEMO_LIMIT) cache.clear();
+  cache.set(key, value);
+  return value;
+}
+
+// Every redirect target in a command (see writeTargets), with the operator's
+// `&` when it has one: `>&` names a file unless the target is an fd
+// duplication (`2>&1`, `>&-` — skipped by the caller), `&>`/`&>>` are plain
+// redirects. Process substitutions are not file targets and are skipped.
+const ALL_REDIRECT_TARGETS = />{1,2}([|&])?\s*([^\s|;&<>()]+)/g;
+// rm/mv operands: the whole argument run of the segment (flags are dropped by
+// the caller). Sources are included because removing or moving state is a
+// write to it.
+const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&]*)/gi;
+
+// A bash token as the shell reads it: quotes come off wherever they sit
+// (`".kubic"/roles`, `.k"ub"ic`) and a backslash escapes the next character
+// (`\.kubic`). Over-approximate on purpose — a quote is never part of a path
+// worth telling apart from the state dir, and a wrong read only asks.
+function shellUnquote(token: string): string {
+  return token.replace(/\\(.)/g, '$1').replace(/["']/g, '');
+}
 
 // The named refusal for a write into refused control-plane state (issue
 // #324), or undefined. The caller returns it as a tool error without asking.
@@ -548,7 +1035,8 @@ export function controlPlaneRefusal(
   workspace: string,
   roots: ControlPlaneRoots = {},
 ): string | undefined {
-  for (const target of writeTargets(toolName, args)) {
+  const home = roots.home ?? homedir();
+  for (const target of writeTargets(toolName, args, workspace, home)) {
     if (controlPlaneClass(workspace, target, roots) === 'refuse') {
       return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it`;
     }
@@ -561,63 +1049,143 @@ export function controlPlaneRefusal(
 // with `~` (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
 // any `$VAR/...`) names a path the workspace check cannot know — it counts
 // as OUTSIDE, fail-closed, never joined under the workspace. A preceding
-// `cd <dir>` / `pushd <dir>` (at a command start) moves the cwd relative
+// `cd <dir>` / `pushd <dir>` at a command start moves the cwd relative
 // targets resolve against for the rest of the command: into an outside dir
 // they resolve outside, and to an unknown one (bare `cd`, `cd ~`, `cd $X`,
-// `cd -`, any `popd`) every later relative target fails closed. Subshell
-// scoping is not modelled — a `(cd /etc)` still moves the tracked cwd,
-// which over-triggers, never under-triggers.
+// `cd -`, any `popd`) every later relative target fails closed.
+//
+// The trail is lexical, so it is only ever ONE of two candidates: a target is
+// outside if it is outside as typed against the workspace OR as resolved
+// against the tracked cwd. A subshell `(cd /etc)`, a conditional `false && cd
+// /etc` or a `cd` quoted into an argument therefore over-triggers and can
+// never hide a write (the tracked cwd alone let `(cd sub); echo x > ../y`
+// through).
+//
+// A `cd` is only a cd at a COMMAND START: after `^`, `;`, `&`, `|`, a newline or
+// `(`, then any run of the reserved words that run the next command in the
+// current shell — `if`/`elif`/`then`/`do`/`else`/`while`/`until`, `{`, `!` — and
+// the `command`/`builtin` wrappers. Each needs trailing whitespace, and a
+// keyword in the middle of an argument (`git commit -m 'then cd /x'`) starts
+// nothing. Not modelled, stated: `time cd`, `eval cd`, `bash -c 'cd …'`, and a
+// subshell `cd` that undoes an earlier one. The command's own text runs to
+// the next `;`, `|`, newline or `)` — and to a `&` only when it belongs to a
+// redirection (`2>&1`, `>&`, `&>`), so `cd 2>&1 .kubic` keeps its directory.
 const CD_COMMAND =
-  /(^|[;&|\n(])[ \t]*(cd|pushd|popd)(?=$|[\s;&|)])([^;&|\n)]*)/g;
+  /(^|[;&|\n(])[ \t]*(?:(?:if|elif|then|do|else|while|until|\{|!|command|builtin)[ \t]+)*(cd|pushd|popd)(?=$|[\s;&|)])((?:[^;&|\n)]|&(?=>)|(?<=[<>])&)*)/g;
 const SHELL_EXPANDED = /^[~$]/;
 // Stream pseudo-devices persist nothing: `2>/dev/null` or `> /dev/stderr`
 // anywhere in a command is not an outside write (exact paths only — any
 // other /dev target is a real device and still raises).
 const STREAM_DEVICE = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 
+// `end` is where the cd command's own text stops: a redirect inside it
+// (`cd .. > config.toml`) is applied BEFORE the cd runs.
 interface CdEvent {
   index: number;
+  end: number;
   cwd: string | null;
 }
 
+// A redirection word: `>`, `>>`, `2>`, `&>`, `>&`, `>|`, `<`, `<<`, `<&`, `N>&M`…
+// When the operator stands alone the NEXT word is its target.
+const REDIRECT_WORD = /^(?:&>>?|\d*(?:>>|>&|>\||>|<&|<>|<<<|<<|<))/;
+
+// The directory a `cd` names: the first word that is neither a redirection
+// (`cd 2>/dev/null .kubic`) nor an option (`-L`, `-P`, `-e`, `-@`, `--`),
+// quote-aware, read the way the shell would.
 function cdArgument(rest: string): string {
-  const args = rest.trim().replace(/^(-[LPe@]+\s+)+/, '');
-  const quote = args[0];
-  if (quote === '"' || quote === "'") {
-    const close = args.indexOf(quote, 1);
-    return close < 0 ? args.slice(1) : args.slice(1, close);
+  let at = 0;
+  for (;;) {
+    const token = nextShellToken(rest, at);
+    if (token === undefined) return '';
+    at = token.end;
+    const redirect = REDIRECT_WORD.exec(token.text);
+    if (redirect !== null) {
+      if (redirect[0].length === token.text.length) {
+        at = nextShellToken(rest, at)?.end ?? at;
+      }
+      continue;
+    }
+    if (token.text === '--' || /^-[LPe@]+$/.test(token.text)) continue;
+    return shellUnquote(token.text);
   }
-  return args.split(/\s+/)[0] ?? '';
 }
 
-function cdEvents(command: string, workspace: string): CdEvent[] {
+const CD_EVENTS_MEMO = new Map<string, CdEvent[]>();
+const MAX_TRACKED_CWD = 1024;
+
+// `home` is optional: given (the control-plane detector), `cd ~` and
+// `cd $HOME/x` resolve against it; absent (the outside-write detector),
+// they stay an unknown place and every later relative target fails closed, as
+// documented. `cd "$PWD/x"` and `cd ~+/x` are relative to the tracked cwd.
+function cdEvents(
+  command: string,
+  workspace: string,
+  home?: string,
+): CdEvent[] {
+  return memoised(
+    CD_EVENTS_MEMO,
+    `${workspace}\0${home ?? '\u0001'}\0${command}`,
+    () => computeCdEvents(command, workspace, home),
+  );
+}
+
+function computeCdEvents(
+  command: string,
+  workspace: string,
+  home?: string,
+): CdEvent[] {
   const events: CdEvent[] = [];
   let cwd: string | null = resolve(workspace);
   for (const match of command.matchAll(CD_COMMAND)) {
     const dir = match[2] === 'popd' ? '' : cdArgument(match[3] ?? '');
-    if (dir === '' || dir.startsWith('-') || /[~$`]/.test(dir[0] ?? '')) {
+    const belowHome = home === undefined ? undefined : homeRelative(dir);
+    const belowPwd = pwdRelative(dir);
+    if (home !== undefined && belowHome !== undefined) {
+      cwd = resolve(home, belowHome);
+    } else if (belowPwd !== undefined) {
+      cwd = cwd === null ? null : resolve(cwd, belowPwd);
+    } else if (
+      dir === '' ||
+      dir.startsWith('-') ||
+      /[~$`]/.test(dir[0] ?? '')
+    ) {
       cwd = null;
     } else if (isAbsolute(dir)) {
       cwd = resolve(dir);
     } else if (cwd !== null) {
       cwd = resolve(cwd, dir);
     }
-    events.push({ index: match.index + (match[1] ?? '').length, cwd });
+    // A tracked directory past 1 KiB is not a real one (`cd a` repeated 8000
+    // times built a 16 KiB path that every later target re-resolved): treated
+    // as unknown, which fails closed.
+    if (cwd !== null && cwd.length > MAX_TRACKED_CWD) cwd = null;
+    events.push({
+      index: match.index + (match[1] ?? '').length,
+      end: match.index + match[0].length,
+      cwd,
+    });
   }
   return events;
 }
 
+// The tracked cwd at `position`: the last cd that starts before it — unless
+// the position is inside that cd's own text, where it has not run yet.
 function cwdAt(
   events: readonly CdEvent[],
   position: number,
   workspace: string,
 ): string | null {
-  let cwd: string | null = resolve(workspace);
-  for (const event of events) {
-    if (event.index >= position) break;
-    cwd = event.cwd;
+  let low = 0;
+  let high = events.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if ((events[mid]?.index ?? 0) < position) low = mid + 1;
+    else high = mid;
   }
-  return cwd;
+  let last = low - 1;
+  if (last >= 0 && position < (events[last]?.end ?? 0)) last -= 1;
+  return last < 0 ? resolve(workspace) : (events[last]?.cwd ?? null);
 }
 
 function underKubicHome(path: string, home: string | undefined): boolean {
@@ -671,24 +1239,25 @@ export function detectTriggers(
       found.push('destructive-shell');
     if (networkGated(ctx.network) && ctx.isNetworkCommand(command))
       found.push('network');
-    if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command))
-      found.push('git-push');
+    if (gitPushOrRemoteMutation(command)) found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
     // Every write target (redirect, tee, cp/mv/install) goes through one
     // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
     // failing closed on shell-expanded prefixes (issue #355).
     const cdTrail = cdEvents(command, ctx.workspace);
+    const typedCwd = resolve(ctx.workspace);
     const outside = (raw: string, end: number, start: number): boolean => {
       // Targets arrive raw: quotes always come off, and a lifted token also
       // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
       // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
-      // plain literal `)`/`]` stays part of the path.
+      // plain literal `)`/`]` stays part of the path. Outside if EITHER the
+      // token as typed OR its cd-tracked resolution is (see the cd notes above).
       const target = targetToken(raw, end, spanClosers);
-      return (
-        target !== '' &&
-        shellTargetOutside(target, cwdAt(cdTrail, start, ctx.workspace), ctx)
-      );
+      if (target === '') return false;
+      if (shellTargetOutside(target, typedCwd, ctx)) return true;
+      const tracked = cwdAt(cdTrail, start, ctx.workspace);
+      return tracked !== typedCwd && shellTargetOutside(target, tracked, ctx);
     };
     const targets: Array<[string, number, number]> = [];
     for (const redirect of command.matchAll(REDIRECT)) {
@@ -742,7 +1311,12 @@ export function detectTriggers(
     }
   }
   if (
-    writeTargets(toolName, args).some(
+    writeTargets(
+      toolName,
+      args,
+      ctx.workspace,
+      ctx.controlPlane?.home ?? homedir(),
+    ).some(
       (target) =>
         controlPlaneClass(ctx.workspace, target, ctx.controlPlane) !==
         undefined,
@@ -1081,8 +1655,13 @@ export interface SoloPolicyInput {
   clock?: () => number;
   /** §60 audit identity: the session (absent: sessionDir's basename). */
   sessionId?: string;
-  /** §60 audit identity: the `provider/id` the lane runs on. */
-  model?: string;
+  /**
+   * §60 audit identity: the `provider/id` the lane runs on. A function is
+   * read at RECORD time, so a policy installed before the lane boots (the
+   * stored-model rule, issue #148) or a model switched mid-session (`/model`,
+   * issue #227) is still recorded under the model the lane runs now.
+   */
+  model?: string | (() => string);
   /** A failed ledger append lands here; it never reaches the approval. */
   onAuditError?: (message: string) => void;
   /**
@@ -1288,6 +1867,8 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
   ): void => {
     const onError = input.onAuditError ?? (() => undefined);
     try {
+      const model =
+        typeof input.model === 'function' ? input.model() : input.model;
       appendToLedger(
         ledgerDir,
         soloDecisionAudit({
@@ -1295,7 +1876,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           toolName,
           trigger,
           workspace: input.workspace,
-          ...(input.model === undefined ? {} : { model: input.model }),
+          ...(model === undefined ? {} : { model }),
           approved: decision.approved,
           ...(decision.approved
             ? decision.by === undefined
@@ -1460,11 +2041,25 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
         );
         continue;
       }
+      // route=deny refuses everything challenged — autoApprove entries never
+      // apply under it, which is exactly what `kubic doctor` says (`route=deny
+      // ignores autoApprove`); the lane used to approve them (issue #230).
+      if (posture.route === 'deny') {
+        // Configured refusal: named as the route, never as a timeout.
+        const reason = `denied by policy route (capability: ${capability})`;
+        return deny(capability, call.toolName, reason);
+      }
       // Config autoApprove (issue #230; §41.2): explicit-only, decided by
       // the service (which also enforces requireJustification), and
-      // consulted BEFORE the route and the no-surface refusal, so a headless
-      // run honours it exactly like an interactive one.
-      if (posture.autoApprove.includes(capability)) {
+      // consulted BEFORE the no-surface refusal, so a headless run honours it
+      // exactly like an interactive one. An always-ask capability never takes
+      // this branch (issue #324): it behaves as if autoApprove were empty for
+      // it — the seat below, or the instant no-surface refusal — instead of
+      // waiting out maxPendingMs with no seat to answer.
+      if (
+        !ALWAYS_ASK.has(capability) &&
+        posture.autoApprove.includes(capability)
+      ) {
         const verdict = await service.request({
           key,
           capability,
@@ -1481,11 +2076,6 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           false,
         );
         continue;
-      }
-      if (posture.route === 'deny') {
-        // Configured refusal: named as the route, never as a timeout.
-        const reason = `denied by policy route (capability: ${capability})`;
-        return deny(capability, call.toolName, reason);
       }
       // An answer seat is attached (issue #96): the TUI is a command with a
       // user attached, so the verdict can be collected instead of refused.
@@ -1673,6 +2263,13 @@ export class ApprovalService {
       // persists — so the eviction is durable and the denial is recorded.
       this.decisions.delete(request.key);
     }
+    // route=deny first: autoApprove entries never apply under it (issue #230).
+    if (this.policy.route === 'deny') {
+      return this.submit(request, {
+        approved: false,
+        reason: `denied by policy route (capability: ${request.capability})`,
+      });
+    }
     if (
       this.policy.autoApprove.includes(request.capability) &&
       !ALWAYS_ASK.has(request.capability)
@@ -1687,12 +2284,6 @@ export class ApprovalService {
         });
       }
       return this.submit(request, { approved: true, by: 'autoApprove' });
-    }
-    if (this.policy.route === 'deny') {
-      return this.submit(request, {
-        approved: false,
-        reason: `denied by policy route (capability: ${request.capability})`,
-      });
     }
     this.pending.set(request.key, request);
     try {

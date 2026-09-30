@@ -18,7 +18,11 @@ import {
 } from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
-import { CAPABILITIES, validatePolicy } from './approvals.js';
+import {
+  alwaysAskAutoApprove,
+  CAPABILITIES,
+  validatePolicy,
+} from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
@@ -325,7 +329,9 @@ function depChecks(probes: DepProbe[]): DoctorCheck[] {
 // Policy mismatches (§41): unknown autoApprove capabilities (anything
 // outside CAPABILITIES and the dynamic `requires:<tool>` triggers),
 // autoApprove entries that can never apply under route=deny, and any
-// policy that fails host validation outright.
+// policy that fails host validation outright. An always-ask capability
+// (kubic-state-write) in autoApprove is a named warning, not a failure: the
+// config contract keeps accepting it and the lane ignores it.
 function policyCheck(raw: unknown): DoctorCheck {
   const base = {
     id: 'policy:approvals',
@@ -368,11 +374,27 @@ function policyCheck(raw: unknown): DoctorCheck {
       detail: 'route=deny ignores autoApprove — entries can never apply',
     };
   }
+  // An always-ask capability in autoApprove (issue #324) can never apply:
+  // named as a warning (informational, exit-neutral) and left out of the
+  // count, so the line never claims an approval the lane will not grant.
+  const ignored = [...new Set(alwaysAskAutoApprove(policy.autoApprove))];
+  const effective = policy.autoApprove.filter(
+    (cap) => !ignored.includes(cap),
+  ).length;
+  const summary = `route=${policy.route}, ${effective} auto-approved, maxPendingMs=${policy.maxPendingMs}`;
+  if (ignored.length > 0) {
+    return {
+      ...base,
+      status: 'warn',
+      reason: 'policy-mismatch',
+      detail: `${ignored.join(', ')} always asks — an autoApprove entry never answers it and is ignored; ${summary}`,
+    };
+  }
   return {
     ...base,
     status: 'pass',
     reason: 'ok',
-    detail: `route=${policy.route}, ${policy.autoApprove.length} auto-approved, maxPendingMs=${policy.maxPendingMs}`,
+    detail: summary,
   };
 }
 

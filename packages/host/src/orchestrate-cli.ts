@@ -22,12 +22,32 @@ import {
   createGraph,
   renderDag,
 } from '../../agents/src/graph.js';
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import type {
+  AgentResult,
+  ResultErrorKind,
+  ResultStatus,
+} from '../../worker/src/result.js';
+import {
+  buildAgentResult,
+  UNRESOLVED_MODEL,
+  validateAgentResult,
+} from '../../worker/src/result.js';
+// §36.3 provider-credential scoping (issue #200): the run's pre-state check
+// names a provider and fails closed before any worktree exists. Host-local
+// contract (the composition root resolves the grants); host never spawns.
+import type {
+  WorkerCredentialRefusal,
+  WorkerCredentialRequest,
+} from './config/role-credentials.js';
+import { BUDGET_EXHAUSTED } from './orchestrator/approvals/budgets.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   type WorkerApprovalScope,
   type WorkerApprovalsRun,
+  type WorkerApprovalTermination,
 } from './orchestrator/approvals/worker-asks.js';
 import type { ManagerLane, ManagerPlanStep } from './orchestrator/manager.js';
 import {
@@ -74,13 +94,22 @@ import {
   workerRoleAssignment,
 } from './roles/worker-roles.js';
 import {
+  MAX_RUN_TIMEOUT_MS,
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
+  RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
   SESSION_ID_PATTERN,
 } from './run-cli.js';
 import type { WorkerListRow } from './workers-cli.js';
+
+// The §36.3 credential contracts the preflight dep speaks (issue #200),
+// re-exported so composition roots and tests import one module.
+export type {
+  WorkerCredentialRefusal,
+  WorkerCredentialRequest,
+} from './config/role-credentials.js';
 
 export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 
@@ -89,25 +118,32 @@ export const ORCHESTRATE_DEFAULT_AGENTS: string[] = ['worker-1', 'worker-2'];
 // must deny closed on a human timescale, never hang the run headless.
 export const ORCHESTRATE_APPROVAL_BOUND_MS = 60_000;
 
-export const ORCHESTRATE_USAGE =
-  'usage: kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--full-access] [--json]';
-
-export function orchestrateUsage(out: (line: string) => void): number {
-  out(ORCHESTRATE_USAGE);
-  return RUN_EXIT_USAGE;
+// The bound a worker CHILD waits for the manager's answer (issue #230): kept
+// strictly BELOW the manager's own bound, so the child denies closed with its
+// named status before the run that would answer it gives up. The margin is a
+// tenth of the bound, capped at 5 s; a 1 ms manager bound leaves 1 ms.
+export function workerApprovalBoundMs(managerBoundMs: number): number {
+  const margin = Math.min(5_000, Math.floor(managerBoundMs / 10));
+  return Math.max(1, managerBoundMs - Math.max(1, margin));
 }
 
-// Issue #127: the shared parser's spec for this command's flags.
-const ORCHESTRATE_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--prompt', takes: 'value', aliases: ['-p'] },
-  { name: '--agents', takes: 'value' },
-  { name: '--session', takes: 'value' },
-  { name: '--resume', takes: 'boolean' },
-  { name: '--yes', takes: 'boolean' },
-  { name: '--full-access', takes: 'boolean' },
-  { name: '--budget', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
+// The parsed `kubic orchestrate` options, as the commander program
+// (apps/kubic/src/commands/orchestrator.ts) hands them over: argv syntax,
+// `--help`, unknown flags, and malformed `--agents` / `--budget` /
+// `--session` values are refused there (exit 2) before this runs — the
+// value parsers below (`parseAgentList`, `parseBudgetSpec`) are the ones
+// it calls. The cross-option rules (`-p` unless `--resume`, `--resume`
+// needs `--session`) stay here, with the run.
+export interface OrchestrateCliOptions {
+  readonly prompt?: string;
+  readonly agents?: readonly string[];
+  readonly session?: string;
+  readonly resume?: boolean;
+  readonly yes?: boolean;
+  readonly budget?: ParsedBudgetSpec;
+  readonly fullAccess?: boolean;
+  readonly json?: boolean;
+}
 
 export class MergeConflictError extends Error {
   agentId: string;
@@ -132,6 +168,77 @@ export interface OrchestratedWorkerRecord {
   agentId: string;
   branch: string;
   hunks: MergedHunk[];
+  // The worker's §68 result (issue #185): status, summary, provenance and
+  // metrics — persisted with the run so resume, handoff and replay can read
+  // what each worker did and cost. Absent on state written before #185.
+  result?: AgentResult;
+}
+
+// What a worker run hands back (issue #185): the hunks it produced plus its
+// validated §68 result. A bare hunk list is still accepted (older seams and
+// fakes) and simply carries no result.
+export interface WorkerRunOutput {
+  hunks: MergedHunk[];
+  result?: AgentResult;
+}
+
+function runOutputOf(output: MergedHunk[] | WorkerRunOutput): WorkerRunOutput {
+  return Array.isArray(output) ? { hunks: output } : output;
+}
+
+// The per-worker view the envelope and the text line carry (issue #185).
+export interface WorkerResultView {
+  role: string;
+  status: string;
+  summary: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    toolCalls: number;
+    wallMs: number;
+    costUsd?: number;
+  };
+  provenance: AgentResult['provenance'];
+  error?: AgentResult['error'];
+}
+
+export function workerResultView(result: AgentResult): WorkerResultView {
+  return {
+    role: result.provenance.role ?? 'worker',
+    status: result.status,
+    summary: result.summary,
+    usage: {
+      inputTokens: result.metrics.inputTokens,
+      outputTokens: result.metrics.outputTokens,
+      cachedTokens: result.metrics.cachedTokens,
+      toolCalls: result.metrics.toolCalls,
+      wallMs: result.metrics.wallMs,
+      ...(result.metrics.costUsd === undefined
+        ? {}
+        : { costUsd: result.metrics.costUsd }),
+    },
+    provenance: result.provenance,
+    ...(result.error === undefined ? {} : { error: result.error }),
+  };
+}
+
+// One human line per worker: `<agent> (<role>): <summary>`.
+export function workerSummaryLine(
+  agentId: string,
+  result: AgentResult,
+): string {
+  // The summary is untrusted model text drawn on the operator's terminal: an
+  // ESC / CR / C1 control in it could clear or repaint the screen or
+  // overwrite this line from column 0. The same strip set the scheduler's
+  // reasons and the retained-file lines use, applied to what is DRAWN — so
+  // the 200-character budget counts visible characters.
+  const firstLine = sanitizeReasonField(
+    result.summary.split('\n')[0] ?? '',
+  ).trim();
+  const summary =
+    firstLine.length > 200 ? `${firstLine.slice(0, 200)}…` : firstLine;
+  return `${agentId} (${sanitizeReasonField(result.provenance.role ?? 'worker')}): ${summary}`;
 }
 
 export interface OrchestratorRunState {
@@ -157,6 +264,11 @@ export interface OrchestratorRunState {
   // intent identifies the in-flight agent so the branch is checked with
   // isBranchMerged and marked merged WITHOUT re-running the worker.
   merging?: string | null;
+  // The opt-in budget this run started with (issue #208, §71): persisted so
+  // --resume re-applies exactly the spec the run was launched under instead
+  // of re-deriving (or dropping) it. A state written before #208 has none,
+  // and a resume may then supply one.
+  budget?: ParsedBudgetSpec;
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -190,6 +302,16 @@ export function parseOrchestratorRunState(
   ) {
     return undefined;
   }
+  const agents = value.agents as string[];
+  if (value.budget !== undefined) {
+    const budget = parseStoredBudgetSpec(value.budget);
+    if (budget === undefined) return undefined;
+    // A per-agent clause for a worker this run never spawns would look
+    // configured while enforcing nothing (issue #208).
+    for (const agent of Object.keys(budget.byAgent)) {
+      if (!agents.includes(agent)) return undefined;
+    }
+  }
   if (typeof value.stopped !== 'boolean') return undefined;
   if (!Array.isArray(value.records)) return undefined;
   for (const record of value.records) {
@@ -198,6 +320,12 @@ export function parseOrchestratorRunState(
     if (typeof entry.agentId !== 'string') return undefined;
     if (typeof entry.branch !== 'string') return undefined;
     if (!Array.isArray(entry.hunks)) return undefined;
+    if (
+      entry.result !== undefined &&
+      !validateAgentResult(entry.result).valid
+    ) {
+      return undefined;
+    }
     for (const hunk of entry.hunks) {
       if (typeof hunk !== 'object' || hunk === null) return undefined;
       const part = hunk as Record<string, unknown>;
@@ -253,6 +381,31 @@ export class OrchestratorStateSaveError extends Error {
 export interface OrchestrateWorktree {
   path: string;
   branch: string;
+}
+
+// What the run tells the worktree seam (issue #144): the owning session
+// scopes the names, and `resume` is the only licence to reuse a tree that
+// already exists under them.
+export interface WorktreeRequest {
+  sessionId: string;
+  resume: boolean;
+}
+
+// A fresh run that finds its own session-scoped worktree already on disk is
+// refused with this named code, never silently reused (issue #144).
+export const WORKTREE_EXISTS_CODE = 'worktree_exists';
+
+// §68 provenance needs a non-empty worktree; a worker that failed before a
+// worktree was handed to it names this instead of inventing a path
+// (issue #185).
+const NO_WORKTREE = '(no worktree)';
+
+function worktreeFailureCode(error: unknown): string {
+  return typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === WORKTREE_EXISTS_CODE
+    ? WORKTREE_EXISTS_CODE
+    : 'spawn_failed';
 }
 
 // Worker-session naming (issue #85): one session per (orchestrator session,
@@ -312,6 +465,18 @@ export function delegationGraphLines(
 export interface ApprovalInput {
   agentId: string;
   branch: string;
+}
+
+// One settled merge-gate decision, as the §60 ledger records it (issue
+// #323). `by` is `--yes` for the run's standing answer and `user` for a
+// decider's answer (or the deny-closed absence of one).
+export interface MergeDecisionRecord {
+  sessionId: string;
+  agentId: string;
+  branch: string;
+  approved: boolean;
+  by: '--yes' | 'user';
+  reason?: string;
 }
 
 // The verdict a merge approval settles on (issue #130, §41.2/§45.2). A
@@ -403,12 +568,24 @@ export type ResolverOutcome =
   | { resolved: false; reason: string };
 
 export interface OrchestrateCommandDeps {
+  // stdout: the report lines or the one `--json` envelope.
   out: (line: string) => void;
+  // stderr: `error: … code=<code>` and usage diagnostics (shared logger).
+  err: (line: string) => void;
+  // Colours the report labels; colourless when absent and under --json.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   debug?: (line: string) => void;
   now?: () => number;
   isGitRepo: () => boolean | Promise<boolean>;
+  // Issue #144: the run names the owning session and whether it is a
+  // --resume, so the worktree is scoped to this session and an existing
+  // one is reused ONLY when this run resumes that same session.
   ensureWorktree: (
     agentId: string,
+    context?: WorktreeRequest,
   ) => OrchestrateWorktree | Promise<OrchestrateWorktree>;
   // Session creation (issue #85): the manager creates the worker session
   // (explicit id, cwd = the worker worktree) BEFORE the child spawns,
@@ -427,7 +604,7 @@ export interface OrchestrateCommandDeps {
     worktree: OrchestrateWorktree,
     prompt: string,
     info?: WorkerSpawnInfo,
-  ) => MergedHunk[] | Promise<MergedHunk[]>;
+  ) => MergedHunk[] | WorkerRunOutput | Promise<MergedHunk[] | WorkerRunOutput>;
   mergeBranch: (
     agentId: string,
     worktree: OrchestrateWorktree,
@@ -466,6 +643,16 @@ export interface OrchestrateCommandDeps {
   // documents (the plan prompt stands, unchanged). Synchronous so the
   // composition root can read the directory with the real FileBridge.
   loadWorkerRoles?: (agents: readonly string[]) => WorkerRolesPlan;
+  // §36.3 worker provider credentials (issue #200): called ONCE, with every
+  // pending worker's role and resolved model pin, BEFORE any state write,
+  // worktree or session exists. Returning a refusal fails the run closed
+  // with exit 6 and `code=credential_unavailable` naming the provider — a
+  // worker that could not authenticate must never cost a worktree. Absent
+  // (legacy callers/tests) means no preflight: the existing path is
+  // unchanged, and the child's own provider probe still fails its run.
+  preflightWorkerCredentials?: (
+    requests: readonly WorkerCredentialRequest[],
+  ) => WorkerCredentialRefusal | undefined;
   // The manager lane's registration seam (issue #103, §40). The run calls
   // this BEFORE it spawns anything; the lane it returns is the toolset the
   // root runs with. Defaults to `registerManagerLane()` — the §40 allowlist
@@ -528,6 +715,16 @@ export interface OrchestrateCommandDeps {
   requestApproval?: (
     input: ApprovalInput,
   ) => MergeApprovalVerdict | boolean | Promise<MergeApprovalVerdict | boolean>;
+  // The merge gate's §60 audit hook (issue #323). Called once per settled
+  // merge decision; `by` tells a `--yes` standing answer apart from a user
+  // who answered the prompt, so the ledger never records an inferred
+  // approval as a user decision.
+  auditMerge?: (record: MergeDecisionRecord) => void;
+  // Whether a merge-gate refusal points the operator at `--yes` (default
+  // true). A surface with no such flag — the TUI, whose merge asks go through
+  // its own approval overlay — passes false so the message never names a flag
+  // that does not exist there (issue #327).
+  yesHint?: boolean;
   // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
   // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
   // composition root owns construction (its dir, its TTY seat, its debug
@@ -537,11 +734,13 @@ export interface OrchestrateCommandDeps {
   approvals?: (options: {
     sessionId: string;
     maxPendingMs: number;
-    autoApprove: boolean;
     budget?: unknown;
     /** Per-spawn override: the budget for THAT worker's gate (§71). */
     budgetForAgent?: (agentId: string) => unknown;
     fullAccess?: boolean;
+    /** A fresh (non-`--resume`) run: start with an empty approvals state, so
+     *  an earlier run of the same id's full-access record is never inherited. */
+    fresh?: boolean;
   }) => WorkerApprovalsRun;
   loadState?: (
     sessionId: string,
@@ -592,7 +791,13 @@ export interface OrchestrateEnvelope {
   exitCode: number;
   sessionId: string;
   status: OrchestrateStatus;
-  workers: { agentId: string; branch: string; hunks: number }[];
+  // Issue #185: each worker that produced a §68 result also carries its
+  // role, status, summary, usage and provenance (WorkerResultView).
+  workers: ({
+    agentId: string;
+    branch: string;
+    hunks: number;
+  } & Partial<WorkerResultView>)[];
   mergeOrder: string[];
   attribution: AttributedHunk[];
   // The §54 delegation DAG of this run (§49.1 projection), rendered by
@@ -672,8 +877,8 @@ interface ParsedArgs {
   // Opt-in budgets (§71, issue #105): absent means NO budget is applied to a
   // spawn. Per-worker overrides arrive as --budget <agent>=<dims>; the shared
   // --budget <dims> applies to every worker of the run.
-  budget?: unknown;
-  budgetsByAgent: Record<string, unknown>;
+  budget?: Record<string, number>;
+  budgetsByAgent: Record<string, Record<string, number>>;
   fullAccess: boolean;
 }
 
@@ -704,6 +909,11 @@ function parseBudgetDims(raw: string): Record<string, number> | undefined {
     const value = Number(trimmed.slice(equals + 1));
     if (!Number.isFinite(value) || !(value > 0)) return undefined;
     if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
+    // setTimeout's 32-bit ceiling (same rule as --timeout): a larger "bound"
+    // would clamp to 1ms and the watchdog would fire, misreporting
+    // limit=wallClock, almost immediately — refused at parse time, never
+    // clamped.
+    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) return undefined;
     dims[name] = value;
   }
   return Object.keys(dims).length === 0 ? undefined : dims;
@@ -711,8 +921,13 @@ function parseBudgetDims(raw: string): Record<string, number> | undefined {
 
 export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
   // Per-agent entries are `<agent>:<dims>` clauses separated by ';' so a
-  // comma stays inside one agent's dimension list.
-  const byAgent: Record<string, Record<string, number>> = {};
+  // comma stays inside one agent's dimension list. The accumulator is
+  // null-prototype (issue #208 review): `__proto__` is a legal agent id, and
+  // on a plain {} accumulator it would set the prototype instead of an own
+  // key, so the clause would vanish from Object.keys and the JSON state.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
   let shared: Record<string, number> | undefined;
   for (const clause of raw.split(';')) {
     const trimmed = clause.trim();
@@ -739,60 +954,147 @@ export function parseBudgetSpec(raw: string): ParsedBudgetSpec | undefined {
   };
 }
 
-function parseAgents(raw: string): string[] | undefined {
+function storedBudgetDims(raw: unknown): Record<string, number> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const dims: Record<string, number> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (!BUDGET_DIMENSIONS.includes(name)) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
+      return undefined;
+    }
+    if (name === 'maxRuntimeMs' && value > MAX_RUN_TIMEOUT_MS) return undefined;
+    dims[name] = value;
+  }
+  return Object.keys(dims).length === 0 ? undefined : dims;
+}
+
+// The stored form of a ParsedBudgetSpec (OrchestratorRunState.budget). Unlike
+// the flag parser this receives parsed JSON: anything that is not exactly a
+// positive, known-dimension spec fails closed, so resume reports
+// no_orchestrator_state instead of handing garbage to the budget layer.
+export function parseStoredBudgetSpec(
+  raw: unknown,
+): ParsedBudgetSpec | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) => key !== 'shared' && key !== 'byAgent')
+  ) {
+    return undefined;
+  }
+  const shared = storedBudgetDims(record.shared);
+  if (record.shared !== undefined && shared === undefined) return undefined;
+  // Null-prototype for the same reason as parseBudgetSpec (issue #208
+  // review): a stored `__proto__` clause must survive as data.
+  const byAgent: Record<string, Record<string, number>> = Object.create(
+    null,
+  ) as Record<string, Record<string, number>>;
+  if (record.byAgent !== undefined) {
+    if (
+      typeof record.byAgent !== 'object' ||
+      record.byAgent === null ||
+      Array.isArray(record.byAgent)
+    ) {
+      return undefined;
+    }
+    for (const [agent, dims] of Object.entries(
+      record.byAgent as Record<string, unknown>,
+    )) {
+      if (validateAgentId(agent).length > 0) return undefined;
+      const parsed = storedBudgetDims(dims);
+      if (parsed === undefined) return undefined;
+      byAgent[agent] = parsed;
+    }
+  }
+  if (shared === undefined && Object.keys(byAgent).length === 0) {
+    return undefined;
+  }
+  return {
+    ...(shared === undefined ? {} : { shared }),
+    byAgent,
+  };
+}
+
+// Canonical equality for two parsed specs (issue #208): resume re-applies the
+// STORED budget, so a flag that differs in any dimension — or names a
+// different agent — is refused rather than silently mixed in.
+export function budgetSpecsEqual(
+  a: ParsedBudgetSpec,
+  b: ParsedBudgetSpec,
+): boolean {
+  const dimsEqual = (
+    x: Record<string, number>,
+    y: Record<string, number>,
+  ): boolean => {
+    const xKeys = Object.keys(x).sort();
+    const yKeys = Object.keys(y).sort();
+    if (xKeys.length !== yKeys.length) return false;
+    return xKeys.every(
+      (key, index) => key === yKeys[index] && x[key] === y[key],
+    );
+  };
+  const sharedEqual =
+    a.shared === undefined || b.shared === undefined
+      ? a.shared === undefined && b.shared === undefined
+      : dimsEqual(a.shared, b.shared);
+  if (!sharedEqual) return false;
+  const aAgents = Object.keys(a.byAgent).sort();
+  const bAgents = Object.keys(b.byAgent).sort();
+  if (aAgents.length !== bAgents.length) return false;
+  return aAgents.every((agent, index) => {
+    const other = bAgents[index] as string;
+    return (
+      agent === other &&
+      dimsEqual(
+        a.byAgent[agent] as Record<string, number>,
+        b.byAgent[other] as Record<string, number>,
+      )
+    );
+  });
+}
+
+// `--agents a,b`: comma-separated worker ids, each a valid agent id and
+// unique (one worktree per writer). Undefined when the list is malformed.
+// A worker set is non-empty, duplicate-free, and every id is a valid agent id.
+export function validAgentSet(agents: readonly string[]): boolean {
+  return (
+    agents.length > 0 &&
+    new Set(agents).size === agents.length &&
+    agents.every((agent) => validateAgentId(agent).length === 0)
+  );
+}
+
+export function parseAgentList(raw: string): string[] | undefined {
   const agents = raw
     .split(',')
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  if (agents.length === 0) return undefined;
-  if (new Set(agents).size !== agents.length) return undefined;
-  for (const agent of agents) {
-    if (validateAgentId(agent).length > 0) return undefined;
-  }
-  return agents;
+  return validAgentSet(agents) ? agents : undefined;
 }
 
-function parseArgs(args: string[]): ParsedArgs | undefined {
-  // Issue #127: the shared parser replaces the hand-rolled loop; every
-  // syntax problem (missing value, unknown flag, stray operand) keeps the
-  // pre-migration posture — usage, exit 2, no run.
-  const flags = parseFlagArgs(args, ORCHESTRATE_FLAG_SPEC);
-  if (
-    flags.missing.length > 0 ||
-    flags.unknown.length > 0 ||
-    flags.positional.length > 0
-  ) {
-    return undefined;
-  }
-  const parsed: ParsedArgs = {
-    agents: [...ORCHESTRATE_DEFAULT_AGENTS],
-    resume: flags.values['--resume'] === true,
-    autoApprove: flags.values['--yes'] === true,
-    json: flags.values['--json'] === true,
-    budgetsByAgent: {},
-    fullAccess: flags.values['--full-access'] === true,
-  };
-  const prompt = flags.values['--prompt'] as string | undefined;
-  if (prompt !== undefined) parsed.prompt = prompt;
-  const sessionId = flags.values['--session'] as string | undefined;
-  if (sessionId !== undefined) parsed.sessionId = sessionId;
-  const agentsRaw = flags.values['--agents'] as string | undefined;
-  if (agentsRaw !== undefined) {
-    const agents = parseAgents(agentsRaw);
-    if (agents === undefined) return undefined;
-    parsed.agents = agents;
-  }
-  const budgetRaw = flags.values['--budget'] as string | undefined;
-  if (budgetRaw !== undefined) {
+function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
+  return {
+    agents:
+      options.agents === undefined
+        ? [...ORCHESTRATE_DEFAULT_AGENTS]
+        : [...options.agents],
+    resume: options.resume === true,
+    autoApprove: options.yes === true,
+    json: options.json === true,
     // §71 opt-in budget, per spawn. Opt-in means exactly that: no flag →
-    // nothing configured → no limit applied. A malformed spec is refused
-    // (usage), never silently dropped.
-    const spec = parseBudgetSpec(budgetRaw);
-    if (spec === undefined) return undefined;
-    parsed.budget = spec.shared;
-    parsed.budgetsByAgent = spec.byAgent;
-  }
-  return parsed;
+    // nothing configured → no limit applied.
+    ...(options.budget?.shared === undefined
+      ? {}
+      : { budget: options.budget.shared }),
+    budgetsByAgent: options.budget?.byAgent ?? {},
+    fullAccess: options.fullAccess === true,
+    ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
+    ...(options.session === undefined ? {} : { sessionId: options.session }),
+  };
 }
 
 function statusForExit(exitCode: number, code: string): OrchestrateStatus {
@@ -812,25 +1114,42 @@ function statusForExit(exitCode: number, code: string): OrchestrateStatus {
 }
 
 export async function runOrchestrateCommand(
-  args: string[],
+  options: OrchestrateCliOptions,
   deps: OrchestrateCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before argv parsing (issue #100).
-  const help = answerHelp(args, deps.out, ORCHESTRATE_USAGE);
-  if (help !== null) return help;
   const now = deps.now ?? Date.now;
   const debug = deps.debug ?? (() => undefined);
-  const parsed = parseArgs(args);
-  if (parsed === undefined) return orchestrateUsage(deps.out);
+  const parsed = parsedFrom(options);
+  // --json keeps every stream colourless; stdout carries one document.
+  const theme =
+    parsed.json || deps.theme === undefined
+      ? createCliTheme('none')
+      : deps.theme;
+  const log = createLineLogger(deps.err, {
+    theme:
+      parsed.json || deps.errTheme === undefined
+        ? createCliTheme('none')
+        : deps.errTheme,
+  });
   if (parsed.resume && parsed.sessionId === undefined) {
-    return orchestrateUsage(deps.out);
+    log.error('--resume needs --session <id> (the run to re-attach to)');
+    return RUN_EXIT_USAGE;
+  }
+  // Defence in depth: agent ids name worktrees and branches, the session id
+  // a state file under .kubic/orchestrator — a library caller cannot bypass
+  // the CLI's own --agents / --session checks.
+  if (options.agents !== undefined && !validAgentSet(options.agents)) {
+    log.error(
+      `invalid --agents ${JSON.stringify(options.agents)} (unique ids of [A-Za-z0-9_-])`,
+    );
+    return RUN_EXIT_USAGE;
   }
   if (
     parsed.sessionId !== undefined &&
     !SESSION_ID_PATTERN.test(parsed.sessionId)
   ) {
-    deps.out(
-      `error: invalid --session id ${JSON.stringify(parsed.sessionId)} (use [A-Za-z0-9_-])`,
+    log.error(
+      `invalid --session id ${JSON.stringify(parsed.sessionId)} (use [A-Za-z0-9_-])`,
     );
     return RUN_EXIT_USAGE;
   }
@@ -853,10 +1172,11 @@ export async function runOrchestrateCommand(
     // happens before `fail()` exists, which is why this is built inline),
     // prose plus the named code otherwise.
     const message = error instanceof Error ? error.message : String(error);
+    log.error(`${message} code=manager_toolset_refused`);
     if (parsed.json) {
       const status = statusForExit(RUN_EXIT_FAILED, 'manager_toolset_refused');
       deps.out(
-        JSON.stringify({
+        formatJson({
           ok: false,
           exitCode: RUN_EXIT_FAILED,
           sessionId,
@@ -874,20 +1194,19 @@ export async function runOrchestrateCommand(
       );
       return RUN_EXIT_FAILED;
     }
-    deps.out(`error: ${message} code=manager_toolset_refused`);
     return RUN_EXIT_FAILED;
   }
 
   const emit = (envelope: OrchestrateEnvelope, textLines: string[]): number => {
+    // stdout is data (the envelope, or the report lines); the failure
+    // line is a diagnostic on stderr in both modes.
     if (parsed.json) {
-      deps.out(JSON.stringify(envelope));
+      deps.out(formatJson(envelope));
     } else {
       for (const line of textLines) deps.out(line);
-      if (envelope.error !== undefined) {
-        deps.out(
-          `error: ${envelope.error.message} code=${envelope.error.code}`,
-        );
-      }
+    }
+    if (envelope.error !== undefined) {
+      log.error(`${envelope.error.message} code=${envelope.error.code}`);
     }
     return envelope.exitCode;
   };
@@ -919,21 +1238,25 @@ export async function runOrchestrateCommand(
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
       },
-      [`session: ${sessionId}`],
+      [`${theme.accent('session:')} ${sessionId}`],
     );
   };
 
   if (parsed.prompt === undefined && !parsed.resume) {
-    return orchestrateUsage(deps.out);
+    log.error(
+      'missing -p, --prompt <text> (the objective), or --resume --session <id>',
+    );
+    return RUN_EXIT_USAGE;
   }
   if (!(await deps.isGitRepo())) {
-    deps.out(
-      'error: orchestrator mode needs a git repository — run solo here (`kubic run -p <prompt>`) or retry inside a git checkout (orchestrator never falls back to solo)',
-    );
+    // --json: the envelope names it (and `fail` logs the one-line code);
+    // text: the full refusal with the way out.
     if (parsed.json) {
       return fail(RUN_EXIT_USAGE, 'not_a_repo', 'not a git repository');
     }
-    deps.out(ORCHESTRATE_USAGE);
+    log.error(
+      'orchestrator mode needs a git repository — run solo here (`kubic run -p <prompt>`) or retry inside a git checkout (orchestrator never falls back to solo)',
+    );
     return RUN_EXIT_USAGE;
   }
 
@@ -941,6 +1264,18 @@ export async function runOrchestrateCommand(
   // untrusted JSON — anything malformed fails closed here as
   // no_orchestrator_state. A stopped queue also fails closed here —
   // blocked candidates are re-reported, never retried silently.
+  //
+  // §71 budget ownership (issue #208): the requested spec is reconstructed
+  // once here; it is persisted below on a fresh run and re-applied from the
+  // state on --resume (a differing flag is refused after the state loads).
+  const requestedBudget: ParsedBudgetSpec | undefined =
+    parsed.budget === undefined &&
+    Object.keys(parsed.budgetsByAgent).length === 0
+      ? undefined
+      : {
+          ...(parsed.budget === undefined ? {} : { shared: parsed.budget }),
+          byAgent: { ...parsed.budgetsByAgent },
+        };
   let state: OrchestratorRunState;
   if (parsed.resume) {
     const loaded = await deps.loadState?.(sessionId);
@@ -965,6 +1300,9 @@ export async function runOrchestrateCommand(
             agentId: record.agentId,
             branch: record.branch,
             hunks: record.hunks.length,
+            ...(record.result === undefined
+              ? {}
+              : workerResultView(record.result)),
           })),
           mergeOrder: resumed.merged,
           attribution: resumed.records.flatMap((record) =>
@@ -978,6 +1316,20 @@ export async function runOrchestrateCommand(
     }
     state = resumed;
   } else {
+    // A fresh run never adopts a session name that already holds state
+    // (issue #144): the first save below would overwrite the stored run
+    // (prompt, merged list, records) BEFORE the worktree stage fails closed
+    // on the retained tree — leaving a corrupted session that `--resume`
+    // would then continue as the wrong run. Refused here, before anything is
+    // saved. State that does not parse is not state (the same reading
+    // `--resume` gives it), so a torn file is replaced, not a dead end.
+    if ((await deps.loadState?.(sessionId)) !== undefined) {
+      return fail(
+        RUN_EXIT_USAGE,
+        'session_exists',
+        `session '${sessionId}' already has orchestrator state — continue it with \`kubic orchestrate --resume --session ${sessionId}\`, choose another --session id, or dispose it with \`kubic clean --session ${sessionId}\` (a fresh run never overwrites a stored session)`,
+      );
+    }
     state = {
       version: 1,
       sessionId,
@@ -988,6 +1340,53 @@ export async function runOrchestrateCommand(
       stopped: false,
       records: [],
     };
+  }
+  // A per-agent clause must name an agent of THIS run: the stored session's
+  // list on resume, the parsed --agents list otherwise. A clause for a worker
+  // that never spawns would look configured while enforcing nothing
+  // (issue #208).
+  const unknownBudgetAgent =
+    requestedBudget === undefined
+      ? undefined
+      : Object.keys(requestedBudget.byAgent).find(
+          (agent) => !state.agents.includes(agent),
+        );
+  if (unknownBudgetAgent !== undefined) {
+    log.error(
+      `--budget names worker '${unknownBudgetAgent}', which is not part of this run (agents: ${state.agents.join(', ')})`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  // --resume re-applies the STORED spec; a flag naming a different one is
+  // refused rather than silently mixed in (issue #208). A state written
+  // before the budget persisted has nothing to differ from — the flag is
+  // adopted and persisted below.
+  if (
+    parsed.resume &&
+    state.budget !== undefined &&
+    requestedBudget !== undefined &&
+    !budgetSpecsEqual(state.budget, requestedBudget)
+  ) {
+    log.error(
+      `--budget differs from the budget stored for session '${sessionId}': --resume re-applies the stored spec — drop the flag to continue`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  const effectiveBudget = state.budget ?? requestedBudget;
+  // The spec this run started with travels with its state (issue #208): a
+  // fresh run adopts the requested spec here, a pre-#208 stored state adopts
+  // one supplied on resume.
+  if (effectiveBudget !== undefined && state.budget === undefined) {
+    state = { ...state, budget: effectiveBudget };
+  }
+  // No approvals layer means no gate to enforce the spec. Refused, never
+  // silently dropped — the exact false sense of cost control issue #208
+  // exists to remove.
+  if (effectiveBudget !== undefined && deps.approvals === undefined) {
+    log.error(
+      '--budget cannot be enforced: this run has no approvals layer wired — refusing rather than dropping the limit',
+    );
+    return RUN_EXIT_USAGE;
   }
   // Role documents on the delegation path (issue #104, §12/§12.1). The
   // loader runs BEFORE anything spawns or merges: a contradictory document
@@ -1050,6 +1449,32 @@ export async function runOrchestrateCommand(
       modelRef: assignment.modelRef,
     };
   };
+  // §36.3 credential preflight (issue #200): the same role/model inputs
+  // every launch below gets, checked ONCE before the first state write,
+  // worktree or session exists. A refusal is exit 6 (`provider`-bound) and
+  // names the provider; a run that cannot authenticate its workers must not
+  // create any work first. The hook is the composition root's — the host
+  // side never reads process.env or a provider catalog.
+  if (deps.preflightWorkerCredentials !== undefined) {
+    const requests: WorkerCredentialRequest[] = state.agents.map((agentId) => {
+      const info = spawnRoleInfo(agentId, rolePlan);
+      return {
+        agentId,
+        role: info.role ?? 'worker',
+        ...(info.modelRef === undefined ? {} : { modelRef: info.modelRef }),
+      };
+    });
+    const refusal = deps.preflightWorkerCredentials(requests);
+    if (refusal !== undefined) {
+      return fail(
+        RUN_EXIT_PROVIDER_PROBE_FAILED,
+        'credential_unavailable',
+        `worker '${refusal.agentId}' (${refusal.role}): ${refusal.message}`,
+        undefined,
+        state.agents,
+      );
+    }
+  }
   // The lane's own call trace (issue #103): the manager drives each worker
   // through spawn → wait → collect, and each driven worker contributes its
   // own sequence — recorded through the allowlist-checking recorder as the
@@ -1102,8 +1527,13 @@ export async function runOrchestrateCommand(
     });
   const worktrees = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
+  // §68 results per worker (issue #185), successes and failures alike.
+  const resultsByAgent = new Map<string, AgentResult>();
   for (const record of state.records) {
     hunksByAgent.set(record.agentId, record.hunks);
+    if (record.result !== undefined) {
+      resultsByAgent.set(record.agentId, record.result);
+    }
   }
 
   // Per-worker approvals + opt-in budgets (issue #105; §41.1, §41.2, §71).
@@ -1114,16 +1544,26 @@ export async function runOrchestrateCommand(
   // layer keeps the old behaviour instead of a half-wired one.
   const approvalsRun = deps.approvals?.({
     sessionId,
-    // The bound is a fixed run-level contract, not a caller knob: a headless
-    // ask must deny closed on a human timescale, never hang.
-    maxPendingMs: ORCHESTRATE_APPROVAL_BOUND_MS,
-    autoApprove: parsed.autoApprove,
-    ...(parsed.budget === undefined ? {} : { budget: parsed.budget }),
+    // The bound is the config `[approvals] maxPendingMs` snapshot (issue
+    // #230) — the same one the merge gate and the conflict resolver carry —
+    // falling back to the run-level default when no config was loaded. A
+    // headless ask still denies closed on it, never hangs.
+    maxPendingMs:
+      deps.approvalPolicy?.maxPendingMs ?? ORCHESTRATE_APPROVAL_BOUND_MS,
+    // No `--yes` here (issue #323): the standing answer is the MERGE gate's,
+    // never a worker-ask seat.
+    ...(effectiveBudget?.shared === undefined
+      ? {}
+      : { budget: effectiveBudget.shared }),
     // Per-spawn overrides (`--budget worker-1:maxToolCalls=5`) reach the gate
-    // of THAT spawn only; absent, the shared spec applies.
+    // of THAT spawn only; absent, the shared spec applies. The spec read here
+    // is the EFFECTIVE one: a resume re-applies what the state stored.
     budgetForAgent: (agentId: string) =>
-      parsed.budgetsByAgent[agentId] ?? parsed.budget,
+      effectiveBudget?.byAgent[agentId] ?? effectiveBudget?.shared,
     ...(parsed.fullAccess ? { fullAccess: true } : {}),
+    // A fresh run of a reused id must not find the old run's full-access
+    // record or memoized decisions; only `--resume` continues them.
+    ...(parsed.resume ? {} : { fresh: true }),
   });
   const approvalScopeFor = (
     agentId: string,
@@ -1142,10 +1582,15 @@ export async function runOrchestrateCommand(
     workers: state.agents.map((agentId) => {
       const record = state.records.find((entry) => entry.agentId === agentId);
       const hunks = hunksByAgent.get(agentId) ?? [];
+      const result = resultsByAgent.get(agentId);
       return {
         agentId,
-        branch: record?.branch ?? `kubic/${agentId}`,
+        branch:
+          record?.branch ??
+          worktrees.get(agentId)?.branch ??
+          `kubic/${sessionId}/${agentId}`,
         hunks: hunks.length,
+        ...(result === undefined ? {} : workerResultView(result)),
       };
     }),
     mergeOrder: [...state.merged],
@@ -1190,6 +1635,113 @@ export async function runOrchestrateCommand(
     }
   };
 
+  // §68 failure results in the SAVED state (issue #185). A worker's failure
+  // used to reach only the run's envelope: its `records` entry never existed,
+  // so a failing run left `records: 0`, and a worker that never launched (the
+  // worktree stage, admission, session creation) had no result at all. Every
+  // worker-stage failure now records what the worker reported — or, when it
+  // reported nothing, a result synthesized in the same AgentResult shape —
+  // next to the run state. The record is an upsert keyed by agent: a resumed
+  // retry replaces it instead of listing the worker twice. The worker stays
+  // `pending`: it was not merged, and `--resume` retries it.
+  // The result a manager-side approval/budget termination stands for: a
+  // budget hit is a `budget_exhausted` result of kind `budget`, anything else
+  // (a denial, a bound that elapsed) a failed result of kind `approval`.
+  const terminationOutcome = (termination: {
+    code: string;
+    message: string;
+  }) => ({
+    status: (termination.code === BUDGET_EXHAUSTED
+      ? 'budget_exhausted'
+      : 'failed') as ResultStatus,
+    kind: (termination.code === BUDGET_EXHAUSTED
+      ? 'budget'
+      : 'approval') as ResultErrorKind,
+    code: termination.code,
+    message: termination.message,
+    override: true,
+  });
+  const upsertRecord = (record: OrchestratedWorkerRecord): void => {
+    const at = state.records.findIndex(
+      (entry) => entry.agentId === record.agentId,
+    );
+    if (at === -1) state.records.push(record);
+    else state.records[at] = record;
+  };
+  const recordFailure = async (
+    agentId: string,
+    worktree: OrchestrateWorktree | undefined,
+    fallback: {
+      status: ResultStatus;
+      kind: ResultErrorKind;
+      code: string;
+      message: string;
+      // A manager-side termination decided the run's outcome: what the worker
+      // itself reported (provenance, metrics) is kept, but the status and
+      // error say what the run exits on.
+      override?: boolean;
+    },
+  ): Promise<void> => {
+    let result = resultsByAgent.get(agentId);
+    if (result !== undefined && fallback.override === true) {
+      result = {
+        ...result,
+        status: fallback.status,
+        summary: fallback.message,
+        error: {
+          kind: fallback.kind,
+          message: fallback.message,
+          details: { code: fallback.code },
+        },
+      };
+      resultsByAgent.set(agentId, result);
+    }
+    if (result === undefined) {
+      try {
+        result = buildAgentResult({
+          status: fallback.status,
+          summary: fallback.message,
+          provenance: {
+            workerId: agentId,
+            sessionId: workerSessionFor(sessionId, agentId),
+            // No process ever existed for a worker that never launched.
+            pid: null,
+            generation: 0,
+            worktree: worktree?.path ?? NO_WORKTREE,
+            model: UNRESOLVED_MODEL,
+          },
+          metrics: { wallMs: 0, latencyMs: 0 },
+          error: {
+            kind: fallback.kind,
+            message: fallback.message,
+            details: { code: fallback.code },
+          },
+        });
+      } catch (error) {
+        debug(
+          `result: could not build the failure result for '${agentId}': ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+      resultsByAgent.set(agentId, result);
+    }
+    upsertRecord({
+      agentId,
+      branch: worktree?.branch ?? `kubic/${sessionId}/${agentId}`,
+      hunks: [],
+      result,
+    });
+    try {
+      await deps.saveState?.(state);
+    } catch (error) {
+      // Best-effort: the failure already owns the run's exit and envelope;
+      // an unsaved record must not replace it with a save error.
+      debug(
+        `state: failure record for '${agentId}' not saved — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+
   // Reconcile a leftover write-ahead merge intent (issue #76 fix b).
   // A kill between merge success and the post-merge save leaves the
   // branch merged on disk but still pending in state. When the intent
@@ -1198,6 +1750,10 @@ export async function runOrchestrateCommand(
   // branch is not merged (kill before the merge, or a failed merge),
   // drop the stale intent so the normal path retries the worker behind
   // the pre-merge guard. Unknown (no isBranchMerged probe) retries.
+  const worktreeRequest: WorktreeRequest = {
+    sessionId,
+    resume: parsed.resume,
+  };
   const reconcileMergeIntent = async (): Promise<number | undefined> => {
     const inFlight = state.merging;
     if (inFlight === undefined || inFlight === null) return undefined;
@@ -1205,14 +1761,23 @@ export async function runOrchestrateCommand(
       state = { ...state, merging: undefined };
       return undefined;
     }
+    // The in-flight worker's earlier failure result is not this attempt's
+    // (issue #185): the worktree stage below records its own.
+    resultsByAgent.delete(inFlight);
     let worktree: OrchestrateWorktree;
     try {
-      worktree = await deps.ensureWorktree(inFlight);
+      worktree = await deps.ensureWorktree(inFlight, worktreeRequest);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      await recordFailure(inFlight, undefined, {
+        status: 'spawn_failed',
+        kind: 'workspace',
+        code: worktreeFailureCode(error),
+        message: `spawn failed for worker '${inFlight}': ${message}`,
+      });
       return fail(
         RUN_EXIT_FAILED,
-        'spawn_failed',
+        worktreeFailureCode(error),
         `spawn failed for worker '${inFlight}': ${message}`,
         partial(),
       );
@@ -1229,12 +1794,18 @@ export async function runOrchestrateCommand(
       state = { ...state, merging: undefined };
       return undefined;
     }
-    if (!state.records.some((record) => record.agentId === inFlight)) {
-      state.records.push({
-        agentId: inFlight,
-        branch: worktree.branch,
-        hunks: [],
-      });
+    // A failure record (issue #185) is not a merge record: an earlier failed
+    // attempt of this worker is replaced by the merge record (its result
+    // unknown — the process that produced it died before the save).
+    const existing = state.records.find(
+      (record) => record.agentId === inFlight,
+    );
+    if (
+      existing === undefined ||
+      (existing.result !== undefined && existing.result.status !== 'completed')
+    ) {
+      resultsByAgent.delete(inFlight);
+      upsertRecord({ agentId: inFlight, branch: worktree.branch, hunks: [] });
     }
     state.merged.push(inFlight);
     state.pending = state.pending.filter((entry) => entry !== inFlight);
@@ -1260,19 +1831,30 @@ export async function runOrchestrateCommand(
     if (saveFailure !== undefined) return saveFailure;
   }
   for (const agentId of state.pending) {
+    // This attempt's own result: a failure record kept from an earlier run of
+    // the same session is not this attempt's outcome (issue #185). Cleared
+    // BEFORE any stage can fail — the worktree stage records its own failure
+    // and must not inherit the earlier attempt's result.
+    resultsByAgent.delete(agentId);
     // Resume may already hold this worktree (intent reconciliation
     // resolved it for the isBranchMerged probe) — never ensure twice.
     let worktree = worktrees.get(agentId);
     if (worktree === undefined) {
       try {
-        worktree = await deps.ensureWorktree(agentId);
+        worktree = await deps.ensureWorktree(agentId, worktreeRequest);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const failure = await reapSpawned(spawned);
         void failure;
+        await recordFailure(agentId, undefined, {
+          status: 'spawn_failed',
+          kind: 'workspace',
+          code: worktreeFailureCode(error),
+          message: `spawn failed for worker '${agentId}': ${message}`,
+        });
         return fail(
           RUN_EXIT_FAILED,
-          'spawn_failed',
+          worktreeFailureCode(error),
           `spawn failed for worker '${agentId}': ${message}`,
           partial(),
         );
@@ -1291,6 +1873,12 @@ export async function runOrchestrateCommand(
     if (admission.outcome === 'denied') {
       const failure = await reapSpawned(spawned);
       void failure;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_denied',
+        message: `spawn denied for worker '${agentId}': ${admission.reason}`,
+      });
       return fail(
         RUN_EXIT_FAILED,
         'spawn_denied',
@@ -1343,23 +1931,27 @@ export async function runOrchestrateCommand(
       if (created === undefined) {
         const failure = await reapSpawned(spawned);
         void failure;
-        return fail(
-          RUN_EXIT_FAILED,
-          'spawn_failed',
-          `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`,
-          partial(),
-        );
+        const noHook = `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`;
+        await recordFailure(agentId, worktree, {
+          status: 'spawn_failed',
+          kind: 'process',
+          code: 'spawn_failed',
+          message: noHook,
+        });
+        return fail(RUN_EXIT_FAILED, 'spawn_failed', noHook, partial());
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failure = await reapSpawned(spawned);
       void failure;
-      return fail(
-        RUN_EXIT_FAILED,
-        'spawn_failed',
-        `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`,
-        partial(),
-      );
+      const notCreated = `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_failed',
+        message: notCreated,
+      });
+      return fail(RUN_EXIT_FAILED, 'spawn_failed', notCreated, partial());
     }
     try {
       // The worker runs ITS plan step's prompt (issue #103) — never the
@@ -1370,11 +1962,8 @@ export async function runOrchestrateCommand(
       if (approvalsRun !== undefined) {
         approvalsRun.beginWorker(approvalScopeFor(agentId, worktree));
       }
-      const hunks = await deps.runWorker(
-        agentId,
-        worktree,
-        promptForWorker(agentId),
-        {
+      const output = runOutputOf(
+        await deps.runWorker(agentId, worktree, promptForWorker(agentId), {
           sessionId,
           workerSessionId,
           // The role this worker was assigned and the tool set its lane
@@ -1382,8 +1971,12 @@ export async function runOrchestrateCommand(
           // a tool — absence, never approval. Absent means no role
           // document exists for this worker, so nothing is narrowed.
           ...spawnRoleInfo(agentId, rolePlan),
-        },
+        }),
       );
+      if (output.result !== undefined) {
+        resultsByAgent.set(agentId, output.result);
+      }
+      const hunks = output.hunks;
       // The worker settled: route any ask that raced its exit, then read the
       // terminal outcome its run produced (a denial or a budget hit is NOT a
       // spawn failure — it carries its own named code and exit).
@@ -1394,6 +1987,11 @@ export async function runOrchestrateCommand(
         const termination = raced ?? approvalsRun.takeTermination(agentId);
         if (termination !== undefined) {
           await reapSpawned(spawned);
+          await recordFailure(
+            agentId,
+            worktree,
+            terminationOutcome(termination),
+          );
           return fail(
             termination.exitCode,
             termination.code,
@@ -1407,22 +2005,59 @@ export async function runOrchestrateCommand(
       // collect is part of the manager's real call record (issue #103).
       recordLaneSequence();
     } catch (error) {
+      // Every terminus carries its §68 result (issue #185): a failure's
+      // provenance and error.kind reach the envelope and the saved state.
+      const failed = (error as { result?: unknown }).result;
+      if (failed !== undefined && validateAgentResult(failed).valid) {
+        resultsByAgent.set(agentId, failed as AgentResult);
+      }
+      // The manager-side terminus is decided FIRST: when the approvals layer
+      // ended this worker on a named code, the run exits on that code and the
+      // saved result must say the same (issue #185) — not the generic process
+      // failure the child's own report may carry.
+      let termination: WorkerApprovalTermination | undefined;
+      if (approvalsRun !== undefined) {
+        approvalsRun.endWorker(agentId);
+        termination = approvalsRun.takeTermination(agentId);
+      }
+      // The result reaches the SAVED state whichever named terminus below the
+      // run then ends on. When the worker reported none, a result is
+      // synthesized from the failure itself.
+      const failureMessage =
+        error instanceof Error ? error.message : String(error);
+      const failureApproval = (
+        error as { approval?: { code: string; exitCode: number } }
+      ).approval;
+      const failureCode =
+        failureApproval?.code ??
+        (typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : 'worker_failed');
+      await recordFailure(
+        agentId,
+        worktree,
+        termination !== undefined
+          ? terminationOutcome(termination)
+          : {
+              status:
+                failureCode === 'spawn_failed' ? 'spawn_failed' : 'failed',
+              kind: failureApproval === undefined ? 'process' : 'approval',
+              code: failureCode,
+              message: `worker '${agentId}' failed: ${failureMessage}`,
+            },
+      );
       // A worker that exited non-zero because the USER denied it (or because a
       // configured budget ran out) reports the approval layer's named status in
       // the child's own §78 terminus; that code wins over the generic
       // worker_failed so the run's exit stays 3/4-bound instead of 1-bound.
-      if (approvalsRun !== undefined) {
-        approvalsRun.endWorker(agentId);
-        const termination = approvalsRun.takeTermination(agentId);
-        if (termination !== undefined) {
-          await reapSpawned(spawned);
-          return fail(
-            termination.exitCode,
-            termination.code,
-            termination.message,
-            partial(),
-          );
-        }
+      if (termination !== undefined) {
+        await reapSpawned(spawned);
+        return fail(
+          termination.exitCode,
+          termination.code,
+          termination.message,
+          partial(),
+        );
       }
       const message = error instanceof Error ? error.message : String(error);
       await reapSpawned(spawned);
@@ -1545,6 +2180,11 @@ export async function runOrchestrateCommand(
     return { outcome: 'delegated' };
   };
 
+  // The `--yes` pointer on a merge-gate refusal exists only where that flag
+  // does (issue #327).
+  const yesHintText =
+    deps.yesHint === false ? '' : ' — rerun with --yes to auto-approve merges';
+
   // Settle FIFO: approve → persist the write-ahead merge intent →
   // pre-merge guard → prove the manager trace write-free → merge →
   // attribute → record. Each merge is atomic per candidate and recorded
@@ -1566,6 +2206,18 @@ export async function runOrchestrateCommand(
         : settled === false || settled === undefined
           ? { verdict: 'deny' }
           : settled;
+    deps.auditMerge?.({
+      sessionId,
+      agentId,
+      branch: worktree.branch,
+      approved: verdict.verdict === 'approve',
+      by: parsed.autoApprove ? '--yes' : 'user',
+      ...(verdict.verdict === 'timeout'
+        ? { reason: `timed out after ${verdict.maxPendingMs}ms` }
+        : verdict.verdict === 'deny'
+          ? { reason: 'denied' }
+          : {}),
+    });
     if (verdict.verdict !== 'approve') {
       const saveFailure = await saveOrFail(state);
       if (saveFailure !== undefined) {
@@ -1580,14 +2232,14 @@ export async function runOrchestrateCommand(
         return fail(
           RUN_EXIT_APPROVAL_DENIED,
           APPROVAL_TIMEOUT_CODE,
-          `approval timed out after ${verdict.maxPendingMs}ms for worker '${agentId}': nobody answered the merge gate — rerun with --yes to auto-approve merges`,
+          `approval timed out after ${verdict.maxPendingMs}ms for worker '${agentId}': nobody answered the merge gate${yesHintText}`,
           partial(),
         );
       }
       return fail(
         RUN_EXIT_APPROVAL_DENIED,
         'approval_denied',
-        `approval denied for worker '${agentId}': the decider is the user — rerun with --yes to auto-approve merges`,
+        `approval denied for worker '${agentId}': the decider is the user${yesHintText}`,
         partial(),
       );
     }
@@ -1708,7 +2360,15 @@ export async function runOrchestrateCommand(
       );
     }
     const hunks = hunksByAgent.get(agentId) ?? [];
-    state.records.push({ agentId, branch: worktree.branch, hunks });
+    const result = resultsByAgent.get(agentId);
+    // An upsert: a resumed retry replaces the failure record kept from the
+    // attempt that failed (issue #185) instead of listing the worker twice.
+    upsertRecord({
+      agentId,
+      branch: worktree.branch,
+      hunks,
+      ...(result === undefined ? {} : { result }),
+    });
     state.merged.push(agentId);
     state.pending = state.pending.filter((entry) => entry !== agentId);
     state = { ...state, merging: undefined };
@@ -1782,18 +2442,24 @@ export async function runOrchestrateCommand(
     .map((record) => `${record.agentId}=${record.hunks.length} hunk(s)`)
     .join(', ');
   const textLines = [
-    `session: ${sessionId}`,
+    `${theme.accent('session:')} ${sessionId}`,
     ...state.records.map(
       (record) =>
         `worker: ${record.agentId} branch=${record.branch} hunks=${record.hunks.length}`,
     ),
+    // Issue #185: what each worker did, in its own words (§68 summary).
+    ...state.records.flatMap((record) =>
+      record.result === undefined
+        ? []
+        : [workerSummaryLine(record.agentId, record.result)],
+    ),
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
-    ...state.merged.map((agentId) => `merged: ${agentId}`),
-    ...spawned.map((agentId) => `reaped: ${agentId}`),
+    ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    ...spawned.map((agentId) => `${theme.muted('reaped:')} ${agentId}`),
     // §54: the delegation shape, one line per node/edge of the run's DAG.
     ...delegationGraphLines(sessionId, state.agents).map(
-      (line) => `dag: ${line}`,
+      (line) => `${theme.muted('dag:')} ${line}`,
     ),
     // §49.1/§50 (issue #106): the admission surface, measured. The counters
     // are the high-water the scheduler held; the cap is the one it judged
@@ -1808,7 +2474,7 @@ export async function runOrchestrateCommand(
     // §44.1 retained-worktree status (issue #106) — after the run, one line
     // per retained worktree, dirty ones naming their files.
     ...retainedLines,
-    `result: orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+    `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
   ];
   return emit(
     {
@@ -1820,6 +2486,7 @@ export async function runOrchestrateCommand(
         agentId: record.agentId,
         branch: record.branch,
         hunks: record.hunks.length,
+        ...(record.result === undefined ? {} : workerResultView(record.result)),
       })),
       mergeOrder: [...state.merged],
       attribution,

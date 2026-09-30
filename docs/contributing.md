@@ -63,6 +63,10 @@ Every issue, every wave, no freelancing:
   anything under `pi/`; it is gitignored upstream material, not Kubic.
 - **Tests never need network or paid tokens** — `faux` provider,
   headless `VirtualTerminal`, fixture `usage` rows.
+- **Tests never depend on the shell's colour variables** — `runTuiCommand`
+  takes `colorLevel` through its deps (pass `'none'`), and the shared
+  `vitest.setup.ts` fails any test that leaves a coloured TUI theme active,
+  so `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
 
 ## Docs rule
 
@@ -87,12 +91,26 @@ npm test                    # scripts/*.test.mjs via node --test
 npm run test:unit           # vitest
 npm run typecheck
 npm run lint:deps
-npm run check:pi
+npm run check:pi            # exact pins on every dependency
 npx biome ci .              # exact CI lint parity (never --no-verify)
 npm run docs:check          # dangling links + dep-table drift
 npm run build               # tsc -> gitignored dist/
 npm run test:binary-contract  # runs the built bin: version / doctor / run
 ```
+
+The vitest run is hermetic too (issue #377): `test/vitest-setup.ts` runs
+every test file under a fresh temp `HOME` (so `~/.agents/skills`,
+`~/.pi/agent/skills` and `~/.kubic` are empty), with every ambient
+`KUBIC_*` variable (`KUBIC_TRUST_PROJECT`, `KUBIC_DEBUG`, …) cleared, and
+with non-loopback TCP connects refused (`hermetic test env: TCP connect …
+refused`). Loopback is exempt — a test that owns a local server (bind port
+0, close it in `afterEach`) stays hermetic — so a loopback connect to
+anything else, such as a hard-coded `127.0.0.1:1` provider, is not caught:
+use the faux provider instead. Results never depend on the developer's
+installed skills, shell exports or network. A test that needs one of those
+variables stubs it (`vi.stubEnv`) and restores it in `afterEach`. The
+per-file homes live under one run root (`test/vitest-global-setup.ts`) that
+the main process removes when the run ends.
 
 `npm run test:binary-contract` (`scripts/binary-contract.mjs`) is the
 install-story gate: with `dist/` built it asserts the exact

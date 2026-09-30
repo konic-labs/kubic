@@ -11,6 +11,7 @@
 // gate: project roots are traversed only under an explicit trust opt-in
 // (§29.3), and the loader is told, never asked to guess.
 
+import { basename, dirname, resolve, sep } from 'node:path';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
@@ -27,9 +28,13 @@ export interface BootSkillOptions {
   cwd: string;
   homeDir: string;
   // §29.3 trust gate: false keeps every project root (`.pi/skills`,
-  // `.agents/skills`, package-declared dirs) out of discovery. The
-  // composition root passes the documented `KUBIC_TRUST_PROJECT` opt-in.
+  // `.agents/skills`, package-declared dirs) out of discovery — unless
+  // `trustProject` is given, which checks each ancestor on its own.
   trusted: boolean;
+  // Issue #228 review: per-ancestor trust. Production passes the store's
+  // per-path check, so a grant for the tree a skill lives in applies and a
+  // grant for a child never reaches an untrusted parent.
+  trustProject?: (dir: string) => boolean;
   // --no-skills: layered discovery off. Explicit --skill paths still apply
   // (the loader's own contract: explicit intent always applies).
   noSkills?: boolean;
@@ -48,6 +53,33 @@ export interface BootSkills {
   // Model-invisible skills (disableModelInvocation). Reported so a caller
   // can name them if it needs to; never injected.
   hidden: string[];
+  // Issue #173 (§29.3): the read-only roots of every ADVERTISED skill that
+  // lives outside the cwd (user roots under $HOME, trusted ancestor project
+  // roots, explicit --skill paths): a `SKILL.md` opens its skill directory
+  // (so the model can follow the skill's own relative references), a flat
+  // skill file opens only itself. Hidden skills are never advertised, so
+  // they open nothing. The lane boot threads these into the read tool's
+  // env and confine guard; every other tool keeps the confinement.
+  readRoots: string[];
+}
+
+function isInside(root: string, path: string): boolean {
+  return path === root || path.startsWith(`${root}${sep}`);
+}
+
+export function skillReadRoots(
+  skills: readonly LoadedSkill[],
+  cwd: string,
+): string[] {
+  const workspace = resolve(cwd);
+  const roots = new Set<string>();
+  for (const skill of skills) {
+    if (skill.disableModelInvocation === true) continue;
+    const file = resolve(workspace, skill.filePath);
+    if (isInside(workspace, file)) continue;
+    roots.add(basename(file) === 'SKILL.md' ? dirname(file) : file);
+  }
+  return [...roots];
 }
 
 export function bootSkills(options: BootSkillOptions): BootSkills {
@@ -56,6 +88,9 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     homeDir: options.homeDir,
     cwd: options.cwd,
     trusted: options.trusted,
+    ...(options.trustProject === undefined
+      ? {}
+      : { trustProject: options.trustProject }),
     ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
     ...(options.cliSkills === undefined
       ? {}
@@ -74,6 +109,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
     block:
       visible.length === 0 ? undefined : formatSkillsForSystemPrompt(visible),
     hidden,
+    readRoots: skillReadRoots(skills, options.cwd),
   };
 }
 

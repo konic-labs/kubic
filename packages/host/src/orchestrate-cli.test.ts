@@ -5,11 +5,15 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createCliTheme } from '../../core/src/cli/theme.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import type { AgentResult } from '../../worker/src/result.js';
+import { buildAgentResult } from '../../worker/src/result.js';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
+  WorkerCredentialRequest,
   WorkerSessionRequest,
   WorkerSpawnInfo,
 } from './orchestrate-cli.js';
@@ -41,6 +45,8 @@ interface FakeCalls {
 interface FakeWorld {
   deps: OrchestrateCommandDeps;
   lines: string[];
+  /** stderr: the logger's `error: …` diagnostics. */
+  errLines: string[];
   debugLines: string[];
   calls: FakeCalls;
   saved: OrchestratorRunState[];
@@ -54,6 +60,7 @@ function makeWorld(
   hunksPerAgent?: Record<string, number>,
 ): FakeWorld {
   const lines: string[] = [];
+  const errLines: string[] = [];
   const debugLines: string[] = [];
   const calls: FakeCalls = {
     ensure: [],
@@ -70,6 +77,9 @@ function makeWorld(
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
       lines.push(line);
+    },
+    err: (line: string) => {
+      errLines.push(line);
     },
     debug: (line: string) => {
       debugLines.push(line);
@@ -124,7 +134,7 @@ function makeWorld(
     },
     ...overrides,
   };
-  return { deps, lines, debugLines, calls, saved, runInfo, prompts };
+  return { deps, lines, errLines, debugLines, calls, saved, runInfo, prompts };
 }
 
 function lastJsonLine(lines: string[]): Record<string, unknown> {
@@ -133,37 +143,58 @@ function lastJsonLine(lines: string[]): Record<string, unknown> {
 }
 
 describe('orchestrate usage (issue #76)', () => {
-  it('prints usage and exits 2 with no prompt', async () => {
+  // Argv syntax (unknown flags, missing values, malformed --agents /
+  // --budget / --session) is refused by the commander program before this
+  // handler runs: apps/kubic/src/commands/orchestrator.test.ts. What stays
+  // here are the cross-option rules the run itself owns.
+  it('exits 2 with no prompt, naming what is missing on stderr', async () => {
     const world = makeWorld();
-    const code = await runOrchestrateCommand([], world.deps);
+    const code = await runOrchestrateCommand({}, world.deps);
     expect(code).toBe(2);
-    expect(world.lines[0]).toMatch(/^usage: kubic orchestrate/);
+    expect(world.lines).toEqual([]);
+    expect(world.errLines).toEqual([
+      'error: missing -p, --prompt <text> (the objective), or --resume --session <id>',
+    ]);
     expect(world.calls.ensure).toEqual([]);
   });
 
-  it('exits 2 on unknown flags, missing values, and bad ids', async () => {
+  it('exits 2 on --resume without --session', async () => {
     const world = makeWorld();
     expect(
-      await runOrchestrateCommand(['-p', 'x', '--bogus'], world.deps),
+      await runOrchestrateCommand({ resume: true, prompt: 'x' }, world.deps),
     ).toBe(2);
+    expect(world.errLines).toEqual([
+      'error: --resume needs --session <id> (the run to re-attach to)',
+    ]);
+    expect(world.calls.ensure).toEqual([]);
+  });
+
+  it('refuses unsafe or duplicate agent ids from a library caller (they name worktrees)', async () => {
+    for (const agents of [['good', 'bad/id'], ['a', 'a'], [], ['a,b']]) {
+      const world = makeWorld();
+      expect(
+        await runOrchestrateCommand({ prompt: 'x', agents }, world.deps),
+        JSON.stringify(agents),
+      ).toBe(2);
+      expect(world.errLines).toEqual([
+        expect.stringMatching(/^error: invalid --agents /),
+      ]);
+      expect(world.calls.ensure).toEqual([]);
+    }
+  });
+
+  it('refuses an unsafe session id from a library caller (it names a state file)', async () => {
+    const world = makeWorld();
     expect(
       await runOrchestrateCommand(
-        ['--session', 'no spaces!!', '-p', 'x'],
+        { session: '../escape', prompt: 'x' },
         world.deps,
       ),
     ).toBe(2);
-    expect(
-      await runOrchestrateCommand(
-        ['-p', 'x', '--agents', 'good,bad/id'],
-        world.deps,
-      ),
-    ).toBe(2);
-    expect(
-      await runOrchestrateCommand(['-p', 'x', '--agents', 'a,a'], world.deps),
-    ).toBe(2);
-    expect(
-      await runOrchestrateCommand(['--resume', '-p', 'x'], world.deps),
-    ).toBe(2);
+    expect(world.errLines).toEqual([
+      'error: invalid --session id "../escape" (use [A-Za-z0-9_-])',
+    ]);
+    expect(world.calls.ensure).toEqual([]);
   });
 });
 
@@ -171,16 +202,70 @@ describe('orchestrate non-git refusal (issue #76)', () => {
   it('refuses outside a git repo with exit 2 and never runs solo', async () => {
     const world = makeWorld({ isGitRepo: () => false });
     const code = await runOrchestrateCommand(
-      ['-p', 'do things', '--agents', 'alpha,beta'],
+      { prompt: 'do things', agents: ['alpha', 'beta'] },
       world.deps,
     );
     expect(code).toBe(2);
-    expect(world.lines.join('\n')).toMatch(/git repository/);
+    expect(world.lines).toEqual([]);
+    expect(world.errLines).toEqual([
+      expect.stringMatching(/^error: orchestrator mode needs a git repository/),
+    ]);
     expect(world.calls.ensure).toEqual([]);
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
     expect(world.lines.some((line) => line.startsWith('worker:'))).toBe(false);
     expect(world.lines.some((line) => line.startsWith('result:'))).toBe(false);
+  });
+
+  it('under --json prints the not_a_repo envelope on stdout, the prose on stderr', async () => {
+    const world = makeWorld({ isGitRepo: () => false });
+    const code = await runOrchestrateCommand(
+      { prompt: 'do things', json: true },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.lines).toHaveLength(1);
+    expect(JSON.parse(world.lines[0] as string)).toMatchObject({
+      ok: false,
+      exitCode: 2,
+      status: 'usage',
+      error: { code: 'not_a_repo', message: 'not a git repository' },
+    });
+    expect(world.errLines).toEqual([
+      'error: not a git repository code=not_a_repo',
+    ]);
+  });
+});
+
+describe('orchestrate report colours (shared CLI theme)', () => {
+  it('colours the report labels through the theme, never under --json', async () => {
+    const theme = createCliTheme('16');
+    const text = makeWorld({ theme });
+    expect(
+      await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1', yes: true },
+        text.deps,
+      ),
+    ).toBe(0);
+    expect(text.lines).toContain(`${theme.accent('session:')} sess-1`);
+    expect(text.lines).toContain(`${theme.success('merged:')} alpha`);
+    expect(
+      text.lines.some((line) => line.startsWith(theme.success('result:'))),
+    ).toBe(true);
+
+    const json = makeWorld({ theme });
+    await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      json.deps,
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting no ANSI escapes
+    expect(json.lines.join('\n')).not.toMatch(/\u001b\[/);
   });
 });
 
@@ -188,7 +273,7 @@ describe('orchestrate two-worker FIFO merge (issue #76)', () => {
   it('spawns, runs, merges in agent order with per-agent attribution', async () => {
     const world = makeWorld({}, { alpha: 2, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo prompt', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo prompt', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -210,10 +295,19 @@ describe('orchestrate two-worker FIFO merge (issue #76)', () => {
   it('emits a machine-readable --json envelope on success', async () => {
     const world = makeWorld({}, { alpha: 2, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--json'],
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
+    // Exactly one two-space-indented document on stdout; stderr silent.
+    expect(world.lines).toHaveLength(1);
+    expect(world.lines[0]).toMatch(/^\{\n {2}"ok": true,/);
+    expect(world.errLines).toEqual([]);
     const envelope = lastJsonLine(world.lines);
     expect(envelope).toMatchObject({
       ok: true,
@@ -242,30 +336,35 @@ describe('orchestrate approvals (issue #76)', () => {
       requestApproval: () => false,
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
-    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
+    expect(world.errLines.join('\n')).toMatch(/code=approval_denied/);
   });
 
   it('denies closed with exit 4 when no decider and no --yes (never silent)', async () => {
     const world = makeWorld({ requestApproval: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
     // Never silent: the denial is reported by its named code.
-    expect(world.lines.join('\n')).toMatch(/code=approval_denied/);
+    expect(world.errLines.join('\n')).toMatch(/code=approval_denied/);
   });
 
   it('--yes auto-approves without asking', async () => {
     const world = makeWorld({ requestApproval: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1', '--yes'],
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -283,11 +382,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=worker_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=worker_failed/);
     // The spawned worker is still reaped; nothing merges.
     expect(world.calls.merge).toEqual([]);
     expect(world.calls.reap).toContain('alpha');
@@ -305,11 +404,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_conflict/);
     const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(state.merged).toEqual(['alpha']);
     expect(state.pending).toEqual(['beta']);
@@ -324,11 +423,11 @@ describe('orchestrate failure codes (issue #76)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=reap_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=reap_failed/);
     expect(world.calls.merge).toEqual(['alpha', 'beta']);
   });
 });
@@ -337,11 +436,11 @@ describe('orchestrate crash-resume (issue #76)', () => {
   it('resume with no stored state fails closed and machine-readable', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'ghost'],
+      { resume: true, session: 'ghost' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+    expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
     expect(world.calls.merge).toEqual([]);
   });
 
@@ -353,7 +452,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
       },
     });
     const code1 = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       first.deps,
     );
     expect(code1).toBe(1);
@@ -366,7 +465,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
       loadState: () => structuredClone(killed),
     });
     const code2 = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       second.deps,
     );
     expect(code2).toBe(0);
@@ -399,13 +498,13 @@ describe('orchestrate crash-resume (issue #76)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(stopped) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
     expect(world.calls.merge).toEqual([]);
     expect(world.calls.run).toEqual([]);
-    expect(world.lines.join('\n')).toMatch(/code=merge_conflict/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_conflict/);
   });
 
   it('reports the resumed session agents in the envelope graph, not the CLI defaults', async () => {
@@ -432,7 +531,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(stopped) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-g', '--json'],
+      { resume: true, session: 'sess-g', json: true },
       world.deps,
     );
     expect(code).toBe(1);
@@ -461,7 +560,7 @@ describe('orchestrate crash-resume (issue #76)', () => {
     // reading `queued:` believes a limit is gating the run.
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      ['-p', 'do it', '--agents', 'a1,a2,a3,a4,a5,a6'],
+      { prompt: 'do it', agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] },
       world.deps,
     );
     expect(code).toBe(0);
@@ -518,6 +617,9 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
     const env = new NodeExecutionEnv(root);
     const deps: OrchestrateCommandDeps = {
       out: (line: string) => {
+        lines.push(line);
+      },
+      err: (line: string) => {
         lines.push(line);
       },
       now: () => 1700000000000,
@@ -580,7 +682,7 @@ describe('orchestrate two-worker demo on a scratch git repo (issue #76)', () => 
       saveState: () => undefined,
     };
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'demosess'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'demosess' },
       deps,
     );
     expect(code).toBe(0);
@@ -616,7 +718,7 @@ describe('orchestrate pre-merge guard (issue #76 fix a)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -638,11 +740,11 @@ describe('orchestrate pre-merge guard (issue #76 fix a)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=merge_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=merge_failed/);
     expect(world.calls.merge).toEqual(['alpha']);
     const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(state.merged).toEqual(['alpha']);
@@ -667,7 +769,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -709,7 +811,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       isBranchMerged: (agentId: string) => agentId === 'beta',
     });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -744,7 +846,7 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
       isBranchMerged: () => false,
     });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -756,6 +858,67 @@ describe('orchestrate write-ahead merge intent (issue #76 fix b)', () => {
   });
 });
 
+describe('merge denial messages name --yes only where it exists (issue #327)', () => {
+  const denyingWorld = (
+    verdict: 'deny' | { verdict: 'timeout'; maxPendingMs: number },
+    overrides: Partial<OrchestrateCommandDeps> = {},
+  ) =>
+    makeWorld({
+      requestApproval: () =>
+        verdict === 'deny' ? { verdict: 'deny' } : verdict,
+      ...overrides,
+    });
+
+  it('a CLI run keeps the --yes hint on a denial and on a timeout', async () => {
+    const denied = denyingWorld('deny');
+    expect(
+      await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+        denied.deps,
+      ),
+    ).toBe(4);
+    expect(denied.errLines.join('\n')).toContain(
+      "approval denied for worker 'alpha': the decider is the user — rerun with --yes to auto-approve merges",
+    );
+    const timedOut = denyingWorld({ verdict: 'timeout', maxPendingMs: 25 });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      timedOut.deps,
+    );
+    expect(timedOut.errLines.join('\n')).toContain(
+      "approval timed out after 25ms for worker 'alpha': nobody answered the merge gate — rerun with --yes to auto-approve merges",
+    );
+  });
+
+  it('a surface with no --yes flag (the TUI) gets a message that does not mention it', async () => {
+    const denied = denyingWorld('deny', { yesHint: false });
+    expect(
+      await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+        denied.deps,
+      ),
+    ).toBe(4);
+    const text = denied.errLines.join('\n');
+    expect(text).toContain(
+      "approval denied for worker 'alpha': the decider is the user",
+    );
+    expect(text).not.toContain('--yes');
+    const timedOut = denyingWorld(
+      { verdict: 'timeout', maxPendingMs: 25 },
+      { yesHint: false },
+    );
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      timedOut.deps,
+    );
+    const timeoutText = timedOut.errLines.join('\n');
+    expect(timeoutText).toContain(
+      "approval timed out after 25ms for worker 'alpha': nobody answered the merge gate",
+    );
+    expect(timeoutText).not.toContain('--yes');
+  });
+});
+
 describe('orchestrate state save failures (issue #76 fix c)', () => {
   it('fails closed with state_save_failed when the state store throws', async () => {
     const world = makeWorld({
@@ -764,11 +927,11 @@ describe('orchestrate state save failures (issue #76 fix c)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=state_save_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=state_save_failed/);
     expect(world.calls.merge).toEqual([]);
   });
 });
@@ -777,7 +940,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
   it('creates each worker session before its child spawns, with the attach id', async () => {
     const world = makeWorld({}, { alpha: 1, beta: 1 });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -811,11 +974,11 @@ describe('orchestrate worker session creation (issue #85)', () => {
   it('fails closed as spawn_failed when the creation hook is omitted', async () => {
     const world = makeWorld({ createWorkerSession: undefined });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha,beta', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=spawn_failed/);
     // Never a child that cannot attach, and nothing merges.
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
@@ -829,11 +992,11 @@ describe('orchestrate worker session creation (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    const text = world.lines.join('\n');
+    const text = world.errLines.join('\n');
     expect(text).toMatch(/code=spawn_failed/);
     expect(text).toMatch(/sessions root not writable/);
     expect(world.calls.run).toEqual([]);
@@ -850,7 +1013,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -885,7 +1048,7 @@ describe('orchestrate worker session creation (issue #85)', () => {
     };
     const world = makeWorld({ loadState: () => structuredClone(killed) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1'],
+      { resume: true, session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(0);
@@ -902,11 +1065,11 @@ describe('orchestrate spawn failures (issue #85)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      ['-p', 'demo', '--agents', 'alpha', '--session', 'sess-1'],
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
-    expect(world.lines.join('\n')).toMatch(/code=spawn_failed/);
+    expect(world.errLines.join('\n')).toMatch(/code=spawn_failed/);
     expect(world.calls.run).toEqual([]);
     expect(world.calls.merge).toEqual([]);
   });
@@ -955,11 +1118,11 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
           structuredClone(stored) as unknown as OrchestratorRunState,
       });
       const code = await runOrchestrateCommand(
-        ['--resume', '--session', 'sess-1'],
+        { resume: true, session: 'sess-1' },
         world.deps,
       );
       expect(code).toBe(1);
-      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
       expect(world.calls.merge).toEqual([]);
       expect(world.calls.run).toEqual([]);
     },
@@ -989,15 +1152,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
   it('hands each worker a prompt that differs and cites its plan step', async () => {
     const world = makeWorld({}, { alpha: 1, beta: 1 });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1020,15 +1180,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
   it('stores the plan in the run state for replay', async () => {
     const world = makeWorld();
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1048,15 +1205,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     });
     expect(
       await runOrchestrateCommand(
-        [
-          '-p',
-          MANAGER_PROMPT,
-          '--agents',
-          'alpha,beta',
-          '--session',
-          'sess-1',
-          '--yes',
-        ],
+        {
+          prompt: MANAGER_PROMPT,
+          agents: ['alpha', 'beta'],
+          session: 'sess-1',
+          yes: true,
+        },
         first.deps,
       ),
     ).toBe(1);
@@ -1066,7 +1220,7 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     // Resume with NO -p at all: the prompts must come from stored state.
     const second = makeWorld({ loadState: () => structuredClone(killed) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1', '--yes'],
+      { resume: true, session: 'sess-1', yes: true },
       second.deps,
     );
     expect(code).toBe(0);
@@ -1099,7 +1253,7 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
     };
     const world = makeWorld({ loadState: () => structuredClone(legacy) });
     const code = await runOrchestrateCommand(
-      ['--resume', '--session', 'sess-1', '--yes'],
+      { resume: true, session: 'sess-1', yes: true },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1132,11 +1286,11 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
           structuredClone(stored) as unknown as OrchestratorRunState,
       });
       const code = await runOrchestrateCommand(
-        ['--resume', '--session', 'sess-1', '--yes'],
+        { resume: true, session: 'sess-1', yes: true },
         world.deps,
       );
       expect(code).toBe(1);
-      expect(world.lines.join('\n')).toMatch(/code=no_orchestrator_state/);
+      expect(world.errLines.join('\n')).toMatch(/code=no_orchestrator_state/);
       expect(world.calls.run).toEqual([]);
       expect(world.calls.merge).toEqual([]);
     }
@@ -1151,15 +1305,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1180,20 +1331,19 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
-    const text = world.lines.join('\n');
-    expect(text).toMatch(/code=manager_toolset_refused/);
+    // A diagnostic on stderr; stdout carries no report for a refused start.
+    expect(world.lines).toEqual([]);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/^error: .*code=manager_toolset_refused$/);
     // The named error names the offending tool.
     expect(text).toMatch(/bash/);
     // Fail-closed: no worktree, no worker, no merge.
@@ -1208,21 +1358,23 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
         registerManagerLane([...MANAGER_ALLOWLIST, 'bash']),
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-1',
-        '--yes',
-        '--json',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(1);
     // --json is one parseable envelope on every failure path, including this
-    // one: a machine consumer must not have to parse prose.
+    // one: a machine consumer must not have to parse prose. stdout holds
+    // exactly that document; the prose line went to stderr.
+    expect(world.lines).toHaveLength(1);
+    expect(world.errLines).toEqual([
+      expect.stringMatching(/^error: .*code=manager_toolset_refused$/),
+    ]);
     const envelope = JSON.parse(
       world.lines[world.lines.length - 1] as string,
     ) as {
@@ -1247,15 +1399,12 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       },
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        MANAGER_PROMPT,
-        '--agents',
-        'alpha,beta',
-        '--session',
-        'sess-1',
-        '--yes',
-      ],
+      {
+        prompt: MANAGER_PROMPT,
+        agents: ['alpha', 'beta'],
+        session: 'sess-1',
+        yes: true,
+      },
       world.deps,
     );
     expect(code).toBe(0);
@@ -1276,5 +1425,739 @@ describe('orchestrate manager lane: plan → distinct worker prompts (issue #103
       // The whole trace is still write-free.
       expect(() => assertManagerZeroWrites(trace)).not.toThrow();
     }
+  });
+});
+
+describe('per-worker §68 results reach the output (issue #185)', () => {
+  const resultFor = (agentId: string, summary: string) => ({
+    status: 'completed' as const,
+    summary,
+    filesChanged: [`${agentId}.txt`],
+    provenance: {
+      workerId: agentId,
+      sessionId: `s-${agentId}`,
+      pid: 4242,
+      generation: 1,
+      worktree: `/repo/.kubic/wt/s/${agentId}`,
+      model: 'faux/faux-1',
+      role: 'implementer',
+    },
+    metrics: {
+      inputTokens: 120,
+      outputTokens: 30,
+      cachedTokens: 7,
+      toolCalls: 3,
+      latencyMs: 2,
+      wallMs: 50,
+      costUsd: 0.25,
+    },
+  });
+  const withResults = () =>
+    makeWorld({
+      runWorker: (agentId: string) => ({
+        hunks: [{ path: `${agentId}.txt`, hunk: '@@ +1 @@' }],
+        result: resultFor(agentId, agentId === 'worker-1' ? 'did X' : 'did Y'),
+      }),
+    });
+
+  it('prints one summary line per worker in text mode', async () => {
+    const world = withResults();
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1', 'worker-2'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.lines).toContain('worker-1 (implementer): did X');
+    expect(world.lines).toContain('worker-2 (implementer): did Y');
+  });
+
+  it('carries role/status/summary/usage per worker in --json and persists the result', async () => {
+    const world = withResults();
+    await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1'], yes: true, json: true },
+      world.deps,
+    );
+    const envelope = lastJsonLine(world.lines) as {
+      workers: {
+        summary?: string;
+        role?: string;
+        status?: string;
+        usage?: { inputTokens: number; toolCalls: number };
+        provenance?: { pid: number };
+      }[];
+    };
+    expect(envelope.workers[0]?.summary).toBe('did X');
+    expect(envelope.workers[0]?.role).toBe('implementer');
+    expect(envelope.workers[0]?.status).toBe('completed');
+    expect(envelope.workers[0]?.usage).toMatchObject({
+      inputTokens: 120,
+      toolCalls: 3,
+    });
+    expect(envelope.workers[0]?.provenance?.pid).toBe(4242);
+    const saved = world.saved[world.saved.length - 1];
+    expect(saved?.records[0]?.result?.summary).toBe('did X');
+    expect(JSON.stringify(saved)).not.toMatch(/"transcript"|"messages"/);
+  });
+
+  it('a failed worker still reports its result with error.kind in --json', async () => {
+    const failed = {
+      ...resultFor('worker-1', 'worker run exited 6'),
+      status: 'failed' as const,
+      error: { kind: 'provider' as const, message: 'exited 6' },
+    };
+    const world = makeWorld({
+      runWorker: () => {
+        throw Object.assign(new Error('worker run exited 6'), {
+          code: 'worker_failed',
+          result: failed,
+        });
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['worker-1'], yes: true, json: true },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines) as {
+      workers: { status?: string; error?: { kind: string } }[];
+    };
+    expect(envelope.workers[0]?.status).toBe('failed');
+    expect(envelope.workers[0]?.error?.kind).toBe('provider');
+  });
+});
+
+describe('worker credential preflight (issue #200)', () => {
+  const rolePlan = {
+    assignments: [
+      {
+        agentId: 'alpha',
+        role: 'planner',
+        promptText: 'You are the planner.',
+        tools: ['read'],
+        modelRef: 'gw/m1',
+      },
+    ],
+    refused: [],
+  };
+
+  it('fails closed with exit 6 naming the provider before any worktree exists', async () => {
+    const seen: WorkerCredentialRequest[] = [];
+    const world = makeWorld({
+      loadWorkerRoles: () => rolePlan,
+      preflightWorkerCredentials: (requests) => {
+        seen.push(...requests);
+        return {
+          agentId: 'alpha',
+          role: 'planner',
+          provider: 'gw',
+          message:
+            "no credential for provider 'gw': $GW_API_KEY not set in the orchestrator's environment",
+        };
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true, session: 'creds' },
+      world.deps,
+    );
+    expect(code).toBe(6);
+    // Nothing created: no worktree, no worker session, no spawn.
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.create).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    // The hook saw the resolved role and its model pin, not a made-up one.
+    expect(seen).toEqual([
+      { agentId: 'alpha', role: 'planner', modelRef: 'gw/m1' },
+    ]);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/code=credential_unavailable/);
+    expect(text).toContain("provider 'gw'");
+  });
+
+  it('reports the same refusal in the --json envelope', async () => {
+    const world = makeWorld({
+      preflightWorkerCredentials: () => ({
+        agentId: 'alpha',
+        role: 'worker',
+        provider: 'gw',
+        message: "no credential for provider 'gw'",
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true, json: true },
+      world.deps,
+    );
+    expect(code).toBe(6);
+    const envelope = lastJsonLine(world.lines) as {
+      ok: boolean;
+      exitCode: number;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(6);
+    expect(envelope.error.code).toBe('credential_unavailable');
+    expect(envelope.error.message).toContain("provider 'gw'");
+  });
+
+  it('asks for the fallback worker role when no role document is assigned', async () => {
+    const seen: WorkerCredentialRequest[] = [];
+    const world = makeWorld({
+      preflightWorkerCredentials: (requests) => {
+        seen.push(...requests);
+        return undefined;
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(seen).toEqual([{ agentId: 'alpha', role: 'worker' }]);
+  });
+
+  it('proceeds with the run when the preflight delivers every credential', async () => {
+    const world = makeWorld({
+      loadWorkerRoles: () => rolePlan,
+      preflightWorkerCredentials: () => undefined,
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'x', agents: ['alpha'], yes: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.calls.ensure).toEqual(['alpha']);
+    expect(world.calls.run).toEqual(['alpha']);
+  });
+});
+
+// Issue #185: a worker's failure result reaches the SAVED state, not just the
+// envelope, and a worker that never launched gets one too.
+describe('failure results persist in the saved records (issue #185)', () => {
+  const lastState = (world: FakeWorld): OrchestratorRunState =>
+    world.saved[world.saved.length - 1] as OrchestratorRunState;
+  const failureRecord = (
+    world: FakeWorld,
+    agentId: string,
+  ): OrchestratorRunState['records'][number] | undefined =>
+    lastState(world).records.find((record) => record.agentId === agentId);
+  const priorFailure = (agentId: string): AgentResult =>
+    buildAgentResult({
+      status: 'failed',
+      summary: 'the earlier attempt died',
+      provenance: {
+        workerId: agentId,
+        sessionId: `sess-1-${agentId}`,
+        pid: 4242,
+        generation: 1,
+        worktree: `/repo/.kubic/wt/${agentId}`,
+        model: 'faux/faux-1',
+      },
+      metrics: { wallMs: 5, latencyMs: 1 },
+      error: { kind: 'process', message: 'the earlier attempt died' },
+    });
+
+  it('a worker that throws without a report leaves a synthesized failed result, and stays pending', async () => {
+    const world = makeWorld({
+      runWorker: () => {
+        throw new Error('boom');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.errLines.join('\n')).toMatch(/code=worker_failed/);
+    const record = failureRecord(world, 'alpha');
+    expect(record).toMatchObject({
+      agentId: 'alpha',
+      branch: 'kubic/alpha',
+      hunks: [],
+    });
+    expect(record?.result).toMatchObject({
+      status: 'failed',
+      summary: "worker 'alpha' failed: boom",
+      error: {
+        kind: 'process',
+        message: "worker 'alpha' failed: boom",
+        details: { code: 'worker_failed' },
+      },
+      provenance: {
+        workerId: 'alpha',
+        sessionId: 'sess-1-alpha',
+        pid: null,
+        generation: 0,
+        worktree: '/repo/.kubic/wt/alpha',
+        model: 'unresolved',
+      },
+      metrics: { wallMs: 0, latencyMs: 0 },
+    });
+    expect(lastState(world).pending).toEqual(['alpha', 'beta']);
+    expect(lastState(world).merged).toEqual([]);
+    // The record is one entry, and nothing else was recorded.
+    expect(lastState(world).records).toHaveLength(1);
+  });
+
+  it('a lifecycle spawn_failed error is a spawn_failed result', async () => {
+    const world = makeWorld({
+      runWorker: () => {
+        throw Object.assign(new Error('never ready'), {
+          code: 'spawn_failed',
+        });
+      },
+    });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(failureRecord(world, 'alpha')?.result).toMatchObject({
+      status: 'spawn_failed',
+      error: { kind: 'process', details: { code: 'spawn_failed' } },
+    });
+  });
+
+  it('an approval terminus is recorded as an approval failure carrying its code', async () => {
+    const world = makeWorld({
+      runWorker: () => {
+        throw Object.assign(new Error('denied by the user'), {
+          approval: { code: 'approval_denied', exitCode: 4 },
+        });
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(4);
+    expect(failureRecord(world, 'alpha')?.result).toMatchObject({
+      status: 'failed',
+      error: { kind: 'approval', details: { code: 'approval_denied' } },
+    });
+  });
+
+  it('the result the worker reported wins over a synthesized one', async () => {
+    const reported = buildAgentResult({
+      status: 'timeout',
+      summary: 'ran out of time',
+      provenance: {
+        workerId: 'alpha',
+        sessionId: 'sess-1-alpha',
+        pid: 77,
+        generation: 1,
+        worktree: '/repo/.kubic/wt/alpha',
+        model: 'faux/faux-1',
+      },
+      metrics: { wallMs: 9, latencyMs: 2 },
+    });
+    const world = makeWorld({
+      runWorker: () => {
+        throw Object.assign(new Error('timed out'), { result: reported });
+      },
+    });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(failureRecord(world, 'alpha')?.result).toEqual(reported);
+  });
+
+  it('a worktree-stage failure is a spawn_failed workspace result with no worktree path', async () => {
+    const world = makeWorld({
+      ensureWorktree: () => {
+        throw Object.assign(new Error('retained from an earlier run'), {
+          code: 'worktree_exists',
+        });
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const record = failureRecord(world, 'alpha');
+    expect(record?.branch).toBe('kubic/sess-1/alpha');
+    expect(record?.result).toMatchObject({
+      status: 'spawn_failed',
+      summary: "spawn failed for worker 'alpha': retained from an earlier run",
+      error: { kind: 'workspace', details: { code: 'worktree_exists' } },
+      provenance: {
+        workerId: 'alpha',
+        sessionId: 'sess-1-alpha',
+        pid: null,
+        generation: 0,
+        worktree: '(no worktree)',
+        model: 'unresolved',
+      },
+    });
+  });
+
+  it('a session-creation failure is recorded against the worker with its worktree', async () => {
+    const world = makeWorld({
+      createWorkerSession: () => {
+        throw new Error('store is read-only');
+      },
+    });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    const record = failureRecord(world, 'alpha');
+    expect(record?.branch).toBe('kubic/alpha');
+    expect(record?.result).toMatchObject({
+      status: 'spawn_failed',
+      error: { kind: 'process', details: { code: 'spawn_failed' } },
+      provenance: { worktree: '/repo/.kubic/wt/alpha' },
+    });
+    expect(record?.result?.summary).toContain(
+      "could not create session 'sess-1-alpha': store is read-only",
+    );
+  });
+
+  it('a missing session-creation hook is recorded the same way', async () => {
+    const world = makeWorld({ createWorkerSession: () => undefined });
+    await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(failureRecord(world, 'alpha')?.result?.summary).toContain(
+      'no session-creation hook is wired',
+    );
+    expect(failureRecord(world, 'alpha')?.result?.status).toBe('spawn_failed');
+  });
+
+  it('an admission denial is recorded as a spawn_failed result naming the reason', async () => {
+    const world = makeWorld({
+      scheduler: {
+        requestSpawn: () => ({ outcome: 'denied', reason: 'cap reached' }),
+        complete: () => undefined,
+        runningCount: () => 0,
+        queuedCount: () => 0,
+        maxConcurrency: () => 1,
+      } as unknown as OrchestrateCommandDeps['scheduler'],
+    });
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(failureRecord(world, 'alpha')?.result).toMatchObject({
+      status: 'spawn_failed',
+      summary: "spawn denied for worker 'alpha': cap reached",
+      error: { kind: 'process', details: { code: 'spawn_denied' } },
+    });
+  });
+
+  it('a failure before the worker launched replaces a stale failure record from an earlier attempt', async () => {
+    const world = makeWorld({
+      loadState: () => ({
+        version: 1,
+        sessionId: 'sess-1',
+        prompt: 'demo',
+        agents: ['alpha'],
+        merged: [],
+        pending: ['alpha'],
+        stopped: false,
+        records: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [],
+            result: priorFailure('alpha'),
+          },
+        ],
+      }),
+      createWorkerSession: () => {
+        throw new Error('store is read-only');
+      },
+    });
+    await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      world.deps,
+    );
+    expect(lastState(world).records).toHaveLength(1);
+    expect(failureRecord(world, 'alpha')?.result?.summary).not.toContain(
+      'the earlier attempt died',
+    );
+    expect(failureRecord(world, 'alpha')?.result?.provenance.pid).toBeNull();
+  });
+
+  it('a worktree-stage failure on resume replaces the earlier attempt\u2019s failure record and result view', async () => {
+    const world = makeWorld({
+      loadState: () => ({
+        version: 1,
+        sessionId: 'sess-1',
+        prompt: 'demo',
+        agents: ['alpha'],
+        merged: [],
+        pending: ['alpha'],
+        stopped: false,
+        records: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [],
+            result: priorFailure('alpha'),
+          },
+        ],
+      }),
+      ensureWorktree: () => {
+        throw Object.assign(new Error('worktree gone'), {
+          code: 'worktree_missing',
+        });
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1', json: true },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // The saved record is THIS attempt's spawn_failed, not attempt 1's.
+    expect(lastState(world).records).toHaveLength(1);
+    const result = failureRecord(world, 'alpha')?.result;
+    expect(result?.status).toBe('spawn_failed');
+    expect(result?.summary).toBe(
+      "spawn failed for worker 'alpha': worktree gone",
+    );
+    expect(result?.summary).not.toContain('the earlier attempt died');
+    expect(result?.provenance.pid).toBeNull();
+    expect(result?.provenance.generation).toBe(0);
+    // And so is the envelope's worker view.
+    const envelope = JSON.parse(world.lines.join('\n')) as {
+      workers: { summary?: string; status?: string }[];
+    };
+    expect(envelope.workers[0]?.status).toBe('spawn_failed');
+    expect(envelope.workers[0]?.summary).toBe(
+      "spawn failed for worker 'alpha': worktree gone",
+    );
+  });
+
+  it('a worktree failure while reconciling a write-ahead merge intent records its own result, not the earlier attempt\u2019s', async () => {
+    const world = makeWorld({
+      loadState: () => ({
+        version: 1,
+        sessionId: 'sess-1',
+        prompt: 'demo',
+        agents: ['alpha'],
+        merged: [],
+        pending: ['alpha'],
+        stopped: false,
+        merging: 'alpha',
+        records: [
+          {
+            agentId: 'alpha',
+            branch: 'kubic/alpha',
+            hunks: [],
+            result: priorFailure('alpha'),
+          },
+        ],
+      }),
+      ensureWorktree: () => {
+        throw new Error('worktree gone');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(failureRecord(world, 'alpha')?.result?.summary).toBe(
+      "spawn failed for worker 'alpha': worktree gone",
+    );
+    expect(lastState(world).records).toHaveLength(1);
+  });
+
+  describe('a manager-side termination decides the stored outcome (issue #185)', () => {
+    // A run whose worker child died on its own (its report says a plain
+    // process failure) while the manager's approvals layer had already ended
+    // the worker on a named terminus: the run exits on THAT code, so the saved
+    // result must say the same thing.
+    const childReport = (agentId: string): AgentResult =>
+      buildAgentResult({
+        status: 'failed',
+        summary: 'worker run exited 1: it just stopped',
+        provenance: {
+          workerId: agentId,
+          sessionId: `sess-1-${agentId}`,
+          pid: 7331,
+          generation: 1,
+          worktree: `/repo/.kubic/wt/${agentId}`,
+          model: 'faux/faux-1',
+        },
+        metrics: { wallMs: 42, latencyMs: 3, toolCalls: 2 },
+        error: { kind: 'process', message: 'worker run exited 1' },
+      });
+    const runWith = async (termination: {
+      code: string;
+      exitCode: number;
+      message: string;
+    }) => {
+      const approvals = {
+        beginWorker: () => undefined,
+        endWorker: () => undefined,
+        pump: async () => undefined,
+        takeTermination: (agentId: string) => ({ agentId, ...termination }),
+      } as unknown as ReturnType<
+        NonNullable<OrchestrateCommandDeps['approvals']>
+      >;
+      const world = makeWorld({
+        approvals: () => approvals,
+        runWorker: (agentId: string) => {
+          throw Object.assign(new Error('it just stopped'), {
+            result: childReport(agentId),
+          });
+        },
+      });
+      const code = await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+        world.deps,
+      );
+      return { world, code };
+    };
+
+    it('a budget termination is recorded as budget_exhausted / kind budget, keeping the child\u2019s provenance and metrics', async () => {
+      const { world, code } = await runWith({
+        code: 'BUDGET_EXHAUSTED',
+        exitCode: 3,
+        message:
+          'budget BUDGET_EXHAUSTED (limit=toolCalls): the call is blocked',
+      });
+      expect(code).toBe(3);
+      const result = failureRecord(world, 'alpha')?.result;
+      expect(result).toMatchObject({
+        status: 'budget_exhausted',
+        summary:
+          'budget BUDGET_EXHAUSTED (limit=toolCalls): the call is blocked',
+        error: {
+          kind: 'budget',
+          message:
+            'budget BUDGET_EXHAUSTED (limit=toolCalls): the call is blocked',
+          details: { code: 'BUDGET_EXHAUSTED' },
+        },
+        provenance: { pid: 7331, generation: 1, model: 'faux/faux-1' },
+        metrics: { wallMs: 42, toolCalls: 2 },
+      });
+    });
+
+    it('an approval denial is recorded as a failed result of kind approval carrying its code', async () => {
+      const { world, code } = await runWith({
+        code: 'approval_denied',
+        exitCode: 4,
+        message: "approval denied for worker 'alpha' (network): not now",
+      });
+      expect(code).toBe(4);
+      expect(failureRecord(world, 'alpha')?.result).toMatchObject({
+        status: 'failed',
+        error: {
+          kind: 'approval',
+          details: { code: 'approval_denied' },
+        },
+        provenance: { pid: 7331 },
+      });
+    });
+
+    it('with no worker result the termination is synthesized in the same shape', async () => {
+      const approvals = {
+        beginWorker: () => undefined,
+        endWorker: () => undefined,
+        pump: async () => undefined,
+        takeTermination: (agentId: string) => ({
+          agentId,
+          code: 'approval_timeout',
+          exitCode: 4,
+          message: 'approval timed out after 25ms',
+        }),
+      } as unknown as ReturnType<
+        NonNullable<OrchestrateCommandDeps['approvals']>
+      >;
+      const world = makeWorld({
+        approvals: () => approvals,
+        runWorker: () => {
+          throw new Error('stopped');
+        },
+      });
+      await runOrchestrateCommand(
+        { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+        world.deps,
+      );
+      expect(failureRecord(world, 'alpha')?.result).toMatchObject({
+        status: 'failed',
+        summary: 'approval timed out after 25ms',
+        error: { kind: 'approval', details: { code: 'approval_timeout' } },
+      });
+    });
+  });
+
+  it('a failure record that cannot be saved never replaces the failure the run exits with', async () => {
+    const world = makeWorld({
+      runWorker: () => {
+        throw new Error('boom');
+      },
+    });
+    const store = world.deps.saveState;
+    world.deps.saveState = (state: OrchestratorRunState) => {
+      // The run's own saves succeed; only the failure record's save throws.
+      if (state.records.length > 0) throw new Error('disk full');
+      return store?.(state);
+    };
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/code=worker_failed/);
+    expect(text).not.toMatch(/state_save_failed/);
+    expect(world.debugLines.join('\n')).toContain(
+      "state: failure record for 'alpha' not saved — disk full",
+    );
+  });
+
+  it('a retry that succeeds replaces the failure record; reconciling an already-merged retry drops the stale failure result', async () => {
+    const killed = (result: AgentResult): OrchestratorRunState => ({
+      version: 1,
+      sessionId: 'sess-1',
+      prompt: 'demo',
+      agents: ['alpha'],
+      merged: [],
+      pending: ['alpha'],
+      stopped: false,
+      merging: 'alpha',
+      records: [{ agentId: 'alpha', branch: 'kubic/alpha', hunks: [], result }],
+    });
+    // The branch is already merged on disk: the failure result belonged to
+    // an earlier attempt, so the merge record carries none.
+    const failed = makeWorld({
+      loadState: () => killed(priorFailure('alpha')),
+      isBranchMerged: () => true,
+    });
+    await runOrchestrateCommand(
+      { resume: true, session: 'sess-1' },
+      failed.deps,
+    );
+    expect(lastState(failed).records).toEqual([
+      { agentId: 'alpha', branch: 'kubic/alpha', hunks: [] },
+    ]);
+    expect(lastState(failed).merged).toEqual(['alpha']);
+    // A completed result already on record is kept as it is.
+    const completed = buildAgentResult({
+      status: 'completed',
+      summary: 'did the work',
+      provenance: {
+        workerId: 'alpha',
+        sessionId: 'sess-1-alpha',
+        pid: 1,
+        generation: 1,
+        worktree: '/repo/.kubic/wt/alpha',
+        model: 'faux/faux-1',
+      },
+      metrics: { wallMs: 1, latencyMs: 0 },
+    });
+    const kept = makeWorld({
+      loadState: () => killed(completed),
+      isBranchMerged: () => true,
+    });
+    await runOrchestrateCommand({ resume: true, session: 'sess-1' }, kept.deps);
+    expect(lastState(kept).records).toEqual([
+      { agentId: 'alpha', branch: 'kubic/alpha', hunks: [], result: completed },
+    ]);
   });
 });

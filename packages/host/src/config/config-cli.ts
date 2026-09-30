@@ -5,10 +5,13 @@
 // through the same `loadRuntimeConfig` the composition root calls, so this
 // command can never report a value the runtime does not use.
 //
-// Exit codes: 0 report, 1 load/usage failure (a broken config fails closed
-// here too — the operator sees the named reason, not a silent default).
+// Exit codes: 0 report, 1 load failure (a broken config fails closed here
+// too — the operator sees the named reason, not a silent default); a usage
+// error is commander's (exit 2, apps/kubic/src/commands/solo.ts).
 
-import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
+import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
+import { formatJson } from '../../../core/src/cli/output.js';
+import { type CliIo, diagnosticsOf } from '../cli-io.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
   effectiveConfigView,
@@ -16,55 +19,39 @@ import {
   renderEffectiveConfig,
 } from './runtime.js';
 
-export const CONFIG_EXIT_OK = 0;
-export const CONFIG_EXIT_FAIL = 1;
+export const CONFIG_EXIT_OK = EXIT_OK;
+export const CONFIG_EXIT_FAIL = EXIT_FAILED;
 
-export interface ConfigCommandDeps {
+export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives
   // paths, trust, or env overrides of its own.
   load: () => RuntimeConfig;
-  out: (line: string) => void;
 }
 
-function usage(out: (line: string) => void): number {
-  out('usage: kubic config [--json]');
-  return CONFIG_EXIT_FAIL;
+export interface ConfigCommandOptions {
+  readonly json?: boolean;
 }
-
-// Issue #127: the shared parser replaces the manual loop. The refusal
-// line is unchanged: an unknown flag and a stray operand both report
-// `error: unknown flag <token>` + usage, exit 1.
-const CONFIG_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-];
 
 export function runConfigCommand(
-  args: string[],
+  options: ConfigCommandOptions,
   deps: ConfigCommandDeps,
 ): number {
-  const parsed = parseFlagArgs(args, CONFIG_FLAG_SPEC);
-  const stray = parsed.unknown[0] ?? parsed.positional[0];
-  if (stray !== undefined) {
-    deps.out(`error: unknown flag ${stray}`);
-    return usage(deps.out);
-  }
-  const json = parsed.values['--json'] === true;
   let runtime: RuntimeConfig;
   try {
     runtime = deps.load();
   } catch (error) {
     // Fail closed and name the reason (§35.1/§36/§71): unknown keys, a
     // distrusted project layer, secret refs, and budget keys all land here.
-    deps.out(
-      `error: ${redactSecretShapes(
+    diagnosticsOf(deps).error(
+      redactSecretShapes(
         error instanceof Error ? error.message : String(error),
-      )}`,
+      ),
     );
     return CONFIG_EXIT_FAIL;
   }
   const view = effectiveConfigView(runtime);
-  if (json) {
-    deps.out(JSON.stringify(view, null, 2));
+  if (options.json === true) {
+    deps.out(formatJson(view));
     return CONFIG_EXIT_OK;
   }
   for (const line of renderEffectiveConfig(view)) deps.out(line);

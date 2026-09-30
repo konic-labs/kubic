@@ -16,7 +16,9 @@
 
 import { spawn } from 'node:child_process';
 import {
+  chmodSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -26,6 +28,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -49,6 +52,8 @@ export interface StatInfo {
   isFile: boolean;
   isDirectory: boolean;
   size: number;
+  /** Permission bits (`st_mode & 0o7777`); absent on seams without modes. */
+  mode?: number;
 }
 
 export interface FileSystem {
@@ -58,12 +63,27 @@ export interface FileSystem {
   listDir(path: string): string[];
   stat(path: string): StatInfo;
   /**
+   * Symlink-aware stat (issue #172). `stat()` follows links, so a walk
+   * cannot tell a symlinked directory from a real one and would descend a
+   * loop, returning the same files under every route. `lstat()` lets the
+   * walk skip links entirely (a dangling one included, instead of throwing).
+   * Optional so existing seams stay valid; absent = links cannot be told
+   * apart from their targets (test doubles, and the documented widening).
+   */
+  lstat?(path: string): StatInfo & { isSymbolicLink: boolean };
+  /**
    * Read `[start, end)` bytes (issue #122; mirrors #107's FileBridge seam).
    * Optional so existing seams stay valid; absent = whole-file reads only
    * (test doubles). The node seam implements it, so every production read
    * windowing is bounded.
    */
   readFileRange?(path: string, start: number, end: number): Uint8Array;
+  /**
+   * Set permission bits. Optional (test doubles have no modes): tmp+rename
+   * writers copy the replaced file's mode onto the tmp, so an overwrite
+   * never strips a script's exec bit or widens a 0600 secret.
+   */
+  chmod?(path: string, mode: number): void;
 }
 
 export interface ShellResult {
@@ -71,6 +91,14 @@ export interface ShellResult {
   stdout: string;
   stderr: string;
   provenance: Provenance;
+  /**
+   * Issue #339: set when processes of the command's group outlived the
+   * leader. `killed` — the group was signalled (SIGTERM, then SIGKILL
+   * after KILL_GRACE_MS) before settling; `detached` — the caller opted
+   * into keeping background jobs, so they were left running. Absent when
+   * nothing outlived the leader.
+   */
+  background?: 'killed' | 'detached';
 }
 
 export interface ProcessSnapshot {
@@ -102,6 +130,19 @@ export interface SpawnOptions {
    * a chatty child (`yes`, a verbose build) must not OOM the run.
    */
   maxOutputBytes?: number;
+  /**
+   * Grace period between kill()'s SIGTERM and the SIGKILL escalation, in
+   * milliseconds. A group that traps or ignores SIGTERM must still die —
+   * kill() is the abort/timeout path, and without escalation wait() never
+   * settles. Default: KILL_GRACE_MS.
+   */
+  killGraceMs?: number;
+  /**
+   * Issue #339: leave processes the command backgrounded running after the
+   * leader exits (they are detached, and outlive Kubic). Default false —
+   * the whole group is signalled once the leader exits, so no orphans.
+   */
+  keepBackground?: boolean;
 }
 
 export interface ProcessHandle {
@@ -165,7 +206,23 @@ class NodeFileSystem implements FileSystem {
       isFile: st.isFile(),
       isDirectory: st.isDirectory(),
       size: st.size,
+      mode: st.mode & 0o7777,
     };
+  }
+
+  lstat(path: string): StatInfo & { isSymbolicLink: boolean } {
+    const st = lstatSync(confine(this.cwd, path));
+    return {
+      isFile: st.isFile(),
+      isDirectory: st.isDirectory(),
+      size: st.size,
+      mode: st.mode & 0o7777,
+      isSymbolicLink: st.isSymbolicLink(),
+    };
+  }
+
+  chmod(path: string, mode: number): void {
+    chmodSync(confine(this.cwd, path), mode);
   }
 
   // Range read (issue #122): same openSync/readSync/closeSync + confine()
@@ -244,6 +301,151 @@ export class MemoryCheckpointStore implements CheckpointStore {
 // cap bounds, so the run can never hold a child's whole output in memory.
 export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 
+// SIGTERM → SIGKILL escalation window for kill(): long enough for a
+// well-behaved child to flush and exit, short enough that an abort never
+// hangs on a child that ignores SIGTERM.
+export const KILL_GRACE_MS = 2000;
+
+// §3.8 "never inherit ambient authority": every child the exec seam spawns
+// (the bash tool, host git calls) starts from this allowlist, never from
+// kubic's whole environment — a provider API key in the parent must not be
+// one `echo $X` away from the model. Aligned with the worker launch
+// allowlist (packages/worker/src/lifecycle/env.ts), plus the POSIX session
+// basics a shell tool needs. No SSH_AUTH_SOCK / credential helpers: those
+// are authority, not environment.
+export const TOOL_ENV_ALLOWLIST: readonly string[] = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'TMPDIR',
+  'TZ',
+  'CI',
+  'NO_COLOR',
+  'CLICOLOR',
+  // Git behavior, not authority: a user who turns off system git config
+  // wants every spawned git child (tools and tests) to honor it.
+  'GIT_CONFIG_NOSYSTEM',
+  // Network reachability and trust roots (not credentials): tools behind
+  // a corporate proxy or custom CA must keep working. Both spellings of
+  // the proxy vars are conventional.
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  // Windows process basics (keys compared case-insensitively there).
+  'SYSTEMROOT',
+  'COMSPEC',
+  'PATHEXT',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'WINDIR',
+  'PROGRAMFILES',
+  'PROGRAMFILES(X86)',
+];
+
+const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
+
+const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
+
+function looksSecret(upper: string): boolean {
+  return SECRET_SUFFIXES.some(
+    (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
+  );
+}
+
+// Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
+// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY).
+export function toolSpawnEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined) continue;
+    const upper = key.toUpperCase();
+    const allowed =
+      (process.platform === 'win32'
+        ? ALLOWED_UPPER.has(upper)
+        : TOOL_ENV_ALLOWLIST.includes(key)) ||
+      key.startsWith('LC_') ||
+      key.startsWith('XDG_');
+    if (allowed && !looksSecret(upper)) out[key] = value;
+  }
+  return out;
+}
+
+// Issue #339: once the leader exits, pipe data it wrote is drained for at
+// most this long. Anything still holding stdout/stderr after the window is
+// a background job, never the command's own output, so the streams are
+// destroyed instead of waiting for 'close' (which never comes while a
+// backgrounded `sleep` inherits the pipe).
+export const EXIT_DRAIN_MS = 150;
+
+const GROUP_POLL_MS = 10;
+
+// 128+signal, the shell convention (`kill -9 $$` → 137), instead of a
+// flattening `code ?? 1` that makes a signal exit look like a plain error.
+export function exitCodeFor(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): number {
+  if (code !== null) return code;
+  if (signal !== null) {
+    const number = osConstants.signals[signal];
+    if (typeof number === 'number') return 128 + number;
+  }
+  return 1;
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // Group already gone.
+  }
+}
+
+const delay = (ms: number) =>
+  new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms));
+
+async function waitGroupGone(pgid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (groupAlive(pgid)) {
+    if (Date.now() >= deadline) return false;
+    await delay(GROUP_POLL_MS);
+  }
+  return true;
+}
+
+// SIGTERM the group, escalate to SIGKILL after KILL_GRACE_MS, and wait
+// until no member is left (bounded).
+async function reapGroup(pgid: number, graceMs: number): Promise<void> {
+  signalGroup(pgid, 'SIGTERM');
+  if (await waitGroupGone(pgid, graceMs)) return;
+  signalGroup(pgid, 'SIGKILL');
+  await waitGroupGone(pgid, graceMs);
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -254,9 +456,16 @@ class NodeShell implements Shell {
   spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
     // Detached process group: kill() signals the whole group so spawned
     // grandchildren die too (§9 leak cleanup) — no orphans.
+    // Issue #339: stdin is 'ignore' — a stdin reader (cat, read -p, a
+    // REPL, a commit hook) sees EOF at once instead of blocking the turn
+    // on a pipe nobody ever ends.
+    const groups = process.platform !== 'win32';
     const child = spawn(cmd, args, {
       cwd: this.cwd,
-      detached: process.platform !== 'win32',
+      detached: groups,
+      // §3.8: an explicit allowlisted env, never the inherited one.
+      env: toolSpawnEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Issue #121: capped accumulation. The tail is kept — endings carry
     // the error — and the final result names exactly what was dropped.
@@ -352,18 +561,55 @@ class NodeShell implements Shell {
         options.onUpdate?.({ ...result }, undefined);
         resolveDone(result);
       });
-      child.on('close', (code) => {
+      // Issue #339: settle on the leader's 'exit' plus a short drain
+      // window, not on 'close' — 'close' waits for every holder of the
+      // pipes, and a backgrounded job inherits them. After the drain the
+      // process group is reaped (unless keepBackground), so the tool never
+      // returns with an orphan still running in the detached group.
+      let leaderExit: number | undefined;
+      let streamsClosed = false;
+      let finishing = false;
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = async () => {
+        if (finishing || settled) return;
+        finishing = true;
+        if (drainTimer !== undefined) clearTimeout(drainTimer);
+        const heldPipes = !streamsClosed;
+        if (heldPipes) {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
+        let background: ShellResult['background'];
+        const pgid = child.pid;
+        if (groups && pgid !== undefined && groupAlive(pgid)) {
+          if (options.keepBackground === true) background = 'detached';
+          else {
+            background = 'killed';
+            await reapGroup(pgid, options.killGraceMs ?? KILL_GRACE_MS);
+          }
+        } else if (heldPipes) {
+          // A pipe holder that left the group (setsid) is out of reach.
+          background = 'detached';
+        }
         if (settled) return;
         settled = true;
         // Flush any trailing incomplete byte sequence (decoder.end() emits
         // it as U+FFFD, never throws) before the result is built.
         stdoutAcc.push(outDec.end());
         stderrAcc.push(errDec.end());
+        if (background !== undefined) {
+          stderrAcc.push(
+            background === 'killed'
+              ? '[kubic: background processes started by this command were killed after it exited (KUBIC_BASH_KEEP_BACKGROUND=1 keeps them)]\n'
+              : '[kubic: background processes started by this command were left running, detached]\n',
+          );
+        }
         const result: ShellResult = {
-          exitCode: code ?? 1,
+          exitCode: leaderExit ?? 1,
           stdout: stdoutAcc.final(),
           stderr: stderrAcc.final(),
           provenance: options.provenance,
+          ...(background === undefined ? {} : { background }),
         };
         if (options.checkpointKey && options.checkpointStore) {
           options.checkpointStore.recordFinal(options.checkpointKey, {
@@ -373,23 +619,62 @@ class NodeShell implements Shell {
         options.onUpdate?.({ ...result }, undefined);
         child.unref();
         resolveDone(result);
+      };
+      child.on('exit', (code, signal) => {
+        if (settled || finishing) return;
+        leaderExit = exitCodeFor(code, signal);
+        if (streamsClosed) {
+          void finish();
+          return;
+        }
+        drainTimer = setTimeout(() => void finish(), EXIT_DRAIN_MS);
+      });
+      child.on('close', (code, signal) => {
+        streamsClosed = true;
+        if (settled || finishing) return;
+        if (leaderExit === undefined) leaderExit = exitCodeFor(code, signal);
+        void finish();
       });
     });
     return {
       pid: child.pid,
       wait: () => done,
       kill: () => {
-        if (child.pid === undefined) return;
-        try {
-          if (process.platform !== 'win32') process.kill(-child.pid);
-          else child.kill();
-        } catch {
+        const pid = child.pid;
+        if (pid === undefined) return;
+        // A settled handle is finished: its pid (and group) may already be
+        // recycled, and a background job it deliberately left running
+        // (KUBIC_BASH_KEEP_BACKGROUND=1) is no longer this handle's to kill.
+        if (settled) return;
+        const signal = (sig: NodeJS.Signals): void => {
           try {
-            child.kill();
+            if (process.platform !== 'win32') process.kill(-pid, sig);
+            else child.kill(sig);
           } catch {
-            // Already exited — nothing to kill.
+            try {
+              child.kill(sig);
+            } catch {
+              // Already exited — nothing to kill.
+            }
           }
-        }
+        };
+        signal('SIGTERM');
+        // Escalate: a group that traps or ignores SIGTERM would otherwise
+        // keep wait() pending forever. The timer is unref'd so it never
+        // holds the event loop open, and it is a no-op once settled.
+        // The group, not just the leader: a leader that exits on SIGTERM
+        // settles the handle while group members that ignore it live on,
+        // so the group SIGKILL is unconditional (ESRCH = group gone).
+        const timer = setTimeout(() => {
+          if (process.platform !== 'win32') {
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              // ESRCH: the whole group already exited.
+            }
+          } else if (!settled) signal('SIGKILL');
+        }, options.killGraceMs ?? KILL_GRACE_MS);
+        timer.unref();
       },
     };
   }
@@ -419,6 +704,14 @@ export interface FakeScript {
   stderr: string;
 }
 
+// The fake's missing-path error carries Node's `ENOENT` code, so ops that
+// map errno codes (read, issue #199) see the same shape as the real seam.
+function fakeNoSuchFile(path: string): Error {
+  return Object.assign(new Error(`fake fs: no such file: ${path}`), {
+    code: 'ENOENT',
+  });
+}
+
 export class FakeExecutionEnv implements ExecutionEnv {
   readonly cwd = '/fake';
   readonly provenance: Provenance;
@@ -428,7 +721,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
   readonly fs: FileSystem = {
     readFile: (path: string) => {
       const hit = this.files.get(path);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${path}`);
+      if (hit === undefined) throw fakeNoSuchFile(path);
       return hit;
     },
     writeFile: (path: string, content: string) => {
@@ -436,7 +729,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
     },
     rename: (from: string, to: string) => {
       const hit = this.files.get(from);
-      if (hit === undefined) throw new Error(`fake fs: no such file: ${from}`);
+      if (hit === undefined) throw fakeNoSuchFile(from);
       this.files.delete(from);
       this.files.set(to, hit);
     },
@@ -467,7 +760,7 @@ export class FakeExecutionEnv implements ExecutionEnv {
           count += 1;
         }
       }
-      if (count === 0) throw new Error(`fake fs: no such file: ${path}`);
+      if (count === 0) throw fakeNoSuchFile(path);
       return { isFile: false, isDirectory: true, size };
     },
   };

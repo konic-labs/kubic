@@ -101,9 +101,9 @@ describe('git effects (issue #19, slice C)', () => {
         stdout: 'abc1234567890\n',
         stderr: '',
       },
-      'git show --name-only --format= abc1234567890': {
+      'git show -z --name-only --format= abc1234567890': {
         exitCode: 0,
-        stdout: 'a.txt\nb.txt\n',
+        stdout: 'a.txt\0b.txt\0',
         stderr: '',
       },
     };
@@ -120,13 +120,42 @@ describe('git effects (issue #19, slice C)', () => {
     }
   });
 
+  it.each([
+    {
+      name: 'falls back to trimmed stdout when git wrote nothing to stderr',
+      run: { exitCode: 1, stdout: '  nothing to commit\n', stderr: ' \n' },
+      message: 'git_commit failed (exit 1): nothing to commit',
+    },
+    {
+      name: 'prefers stderr over stdout when both are present',
+      run: { exitCode: 128, stdout: 'ignored', stderr: '\nfatal: boom\n' },
+      message: 'git_commit failed (exit 128): fatal: boom',
+    },
+    {
+      name: 'bounds the reason at 200 characters',
+      run: { exitCode: 1, stdout: 'x'.repeat(300), stderr: '' },
+      message: `git_commit failed (exit 1): ${'x'.repeat(200)}`,
+    },
+  ])('git_commit failure $name (issue #193)', async ({ run, message }) => {
+    const out = await callOperation(
+      'git_commit',
+      { message: 'm' },
+      inv('c3f'),
+      ctx({ 'git commit -m m': run }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('tool_failed');
+    expect(out.error.message).toBe(message);
+  });
+
   it('git_checkpoint creates a restorable stash point without touching the tree', async () => {
     const out = await callOperation(
       'git_checkpoint',
       { message: 'before risky edit' },
       inv('c4'),
       ctx({
-        'git stash create -m before risky edit': {
+        'git stash create before risky edit': {
           exitCode: 0,
           stdout: 'deadbeef\n',
           stderr: '',
@@ -143,7 +172,7 @@ describe('git effects (issue #19, slice C)', () => {
       {},
       inv('c5'),
       ctx({
-        'git branch --format=%(refname:short)': {
+        'git for-each-ref --format=%(refname:lstrip=2) refs/heads': {
           exitCode: 0,
           stdout: 'main\nfeature/x\n',
           stderr: '',

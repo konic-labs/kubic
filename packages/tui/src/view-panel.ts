@@ -113,8 +113,26 @@ export class DiffPanel implements Component {
   // selection rule directly instead of reverse-engineering a frame.
   visibleRows(): ReadonlyArray<JournalChangeLike> {
     const effective = this.getToolCall();
+    if (effective === null) return this.rows;
+    const matched = this.rows.filter((row) => row.toolCallId === effective);
+    // An explicit pin is honoured exactly: an empty result says `no changes`.
+    if (matched.length > 0 || this.selected !== null) return matched;
+    // Issue #311: following the run, the call the run last touched may have
+    // written nothing (a read, a listing). The panel then shows the most
+    // recent change instead of blanking. A `bash` write is journaled only by
+    // the sweep, as unattributed rows (toolCallId null) that share one
+    // timestamp per sweep: they are candidates too, grouped by that sweep, or
+    // a shell edit would leave the panel on `no changes`.
+    let latest: JournalChangeLike | undefined;
+    for (const row of this.rows) {
+      if (latest === undefined || row.timestamp >= latest.timestamp)
+        latest = row;
+    }
+    if (latest === undefined) return [];
+    const { toolCallId: id, timestamp } = latest;
     return this.rows.filter(
-      (row) => effective === null || row.toolCallId === effective,
+      (row) =>
+        row.toolCallId === id && (id !== null || row.timestamp === timestamp),
     );
   }
 

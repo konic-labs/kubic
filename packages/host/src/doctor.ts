@@ -6,13 +6,24 @@
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
+import { describeUnsupported } from '../../agents/src/policy.js';
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
-import { CAPABILITIES, validatePolicy } from './approvals.js';
+import {
+  alwaysAskAutoApprove,
+  CAPABILITIES,
+  validatePolicy,
+} from './approvals.js';
+import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
@@ -21,14 +32,12 @@ import {
   limitsDoctorExit,
 } from './limits/doctor-limits.js';
 
-export const DOCTOR_EXIT_OK = 0;
-export const DOCTOR_EXIT_FAIL = 1;
-export const DOCTOR_EXIT_USAGE = 2;
+export const DOCTOR_EXIT_OK = EXIT_OK;
+export const DOCTOR_EXIT_FAIL = EXIT_FAILED;
+export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
 // §78 provider-failure code, mirroring kubic run: a doctor matrix with a
 // provider-down failure exits 6 (see limitsDoctorExit).
-export const DOCTOR_EXIT_PROVIDER = 6;
-
-const DOCTOR_USAGE = 'usage: kubic doctor [--skip <id[,id…]>] [--json]';
+export const DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 // warn is informational only (issue #58 static §59.1 notices): it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
@@ -41,6 +50,7 @@ export type DoctorReason =
   | 'deps-missing'
   | 'extension-posture'
   | 'full-access'
+  | 'unsupported-level'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -77,8 +87,7 @@ export interface DepProbe {
   detail?: string;
 }
 
-export interface DoctorDeps {
-  out: (line: string) => void;
+export interface DoctorDeps extends CliIo {
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
@@ -123,11 +132,54 @@ export interface InstalledPolicyPosture {
   interceptors: string[];
   sessionScoped: boolean;
   maxPendingMs: number;
+  autoApprove?: string[];
+  requireJustification?: boolean;
   fullAccess: boolean;
+  // Issue #166 (§40.2): declared levels the tool set cannot express.
+  unsupported?: readonly {
+    class: string;
+    level: string;
+    enforcedAs: string;
+    reason: string;
+  }[];
 }
 
-function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
+// The config-sourced approval policy as policy:approvals validated it — the
+// half the installed posture must agree with (issue #230, §40.3).
+interface ConfiguredApprovals {
+  route: string;
+  maxPendingMs: number;
+}
+
+function configuredApprovals(raw: unknown): ConfiguredApprovals | undefined {
+  try {
+    const policy = validatePolicy(raw);
+    return { route: policy.route, maxPendingMs: policy.maxPendingMs };
+  } catch {
+    return undefined;
+  }
+}
+
+function installedPolicyCheck(
+  posture: InstalledPolicyPosture,
+  configured?: ConfiguredApprovals,
+): DoctorCheck {
   const base = { id: 'policy:installed', label: 'policy installed' };
+  // Issue #230 (§40.3): the route and bound the lane installs must be the
+  // ones config declares — two contradictory green lines are the false
+  // confidence doctor exists to prevent.
+  if (
+    configured !== undefined &&
+    (configured.route !== posture.route ||
+      configured.maxPendingMs !== posture.maxPendingMs)
+  ) {
+    return {
+      ...base,
+      status: 'fail',
+      reason: 'policy-mismatch',
+      detail: `installed approval policy (route=${posture.route}, maxPendingMs=${posture.maxPendingMs}) differs from config (route=${configured.route}, maxPendingMs=${configured.maxPendingMs})`,
+    };
+  }
   // §40.3: what doctor prints must be what the lane enforces. The posture
   // carries both halves, so a contradiction is detectable from the object
   // itself — an empty allowlist is a real posture (filesystem none), a
@@ -162,21 +214,31 @@ function installedPolicyCheck(posture: InstalledPolicyPosture): DoctorCheck {
         'installed policy combines credential access with full-access posture — contradictory install',
     };
   }
+  const unsupported = posture.unsupported ?? [];
+  // §40.2/§40.3: a level the lane cannot express is never printed green —
+  // the check warns and names each one with the level actually enforced.
+  const unsupportedTail =
+    unsupported.length === 0
+      ? ''
+      : `; unsupported: ${unsupported.map(describeUnsupported).join('; ')}`;
   return {
     ...base,
-    status: 'pass',
-    reason: 'ok',
+    status: unsupported.length === 0 ? 'pass' : 'warn',
+    reason: unsupported.length === 0 ? 'ok' : 'unsupported-level',
     detail:
       `source=${posture.source}, filesystem=${posture.classes.filesystem}, ` +
       `shell=${String(posture.classes.shell)}, network=${posture.classes.network}, ` +
       `git=${String(posture.classes.git)}, credentials=${posture.classes.credentials}; ` +
       `${posture.allowlist.length} allowed tool(s): ${posture.allowlist.join(', ')}; ` +
-      `guards: ${posture.interceptors.join(', ')}; route=${posture.route}` +
+      `guards: ${posture.interceptors.join(', ')}; route=${posture.route}, ` +
+      `maxPendingMs=${posture.maxPendingMs}, ` +
+      `autoApprove=${(posture.autoApprove ?? []).join(',') || 'none'}` +
+      `${posture.requireJustification === true ? ', requireJustification' : ''}` +
       `${
         posture.fullAccess
           ? '; FULL ACCESS recorded for this session — every guard stands down for challenged calls'
           : ''
-      }`,
+      }${unsupportedTail}`,
   };
 }
 
@@ -267,16 +329,22 @@ function depChecks(probes: DepProbe[]): DoctorCheck[] {
 // Policy mismatches (§41): unknown autoApprove capabilities (anything
 // outside CAPABILITIES and the dynamic `requires:<tool>` triggers),
 // autoApprove entries that can never apply under route=deny, and any
-// policy that fails host validation outright.
+// policy that fails host validation outright. An always-ask capability
+// (kubic-state-write) in autoApprove is a named warning, not a failure: the
+// config contract keeps accepting it and the lane ignores it.
 function policyCheck(raw: unknown): DoctorCheck {
   const base = {
     id: 'policy:approvals',
     label: 'policy approvals',
   };
-  let policy: { route: string; autoApprove: string[] };
+  let policy: { route: string; autoApprove: string[]; maxPendingMs: number };
   try {
     const validated = validatePolicy(raw);
-    policy = { route: validated.route, autoApprove: validated.autoApprove };
+    policy = {
+      route: validated.route,
+      autoApprove: validated.autoApprove,
+      maxPendingMs: validated.maxPendingMs,
+    };
   } catch (error) {
     return {
       ...base,
@@ -306,11 +374,27 @@ function policyCheck(raw: unknown): DoctorCheck {
       detail: 'route=deny ignores autoApprove — entries can never apply',
     };
   }
+  // An always-ask capability in autoApprove (issue #324) can never apply:
+  // named as a warning (informational, exit-neutral) and left out of the
+  // count, so the line never claims an approval the lane will not grant.
+  const ignored = [...new Set(alwaysAskAutoApprove(policy.autoApprove))];
+  const effective = policy.autoApprove.filter(
+    (cap) => !ignored.includes(cap),
+  ).length;
+  const summary = `route=${policy.route}, ${effective} auto-approved, maxPendingMs=${policy.maxPendingMs}`;
+  if (ignored.length > 0) {
+    return {
+      ...base,
+      status: 'warn',
+      reason: 'policy-mismatch',
+      detail: `${ignored.join(', ')} always asks — an autoApprove entry never answers it and is ignored; ${summary}`,
+    };
+  }
   return {
     ...base,
     status: 'pass',
     reason: 'ok',
-    detail: `route=${policy.route}, ${policy.autoApprove.length} auto-approved`,
+    detail: summary,
   };
 }
 
@@ -402,8 +486,11 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
+  let configured: ConfiguredApprovals | undefined;
   try {
-    checks.push(policyCheck(deps.loadPolicy()));
+    const raw = deps.loadPolicy();
+    configured = configuredApprovals(raw);
+    checks.push(policyCheck(raw));
   } catch (error) {
     checks.push({
       id: 'policy:approvals',
@@ -419,7 +506,7 @@ export function collectDoctorChecks(
   // fail the matrix with policy-mismatch, never pass quietly.
   if (deps.installedPolicy !== undefined) {
     try {
-      checks.push(installedPolicyCheck(deps.installedPolicy()));
+      checks.push(installedPolicyCheck(deps.installedPolicy(), configured));
     } catch (error) {
       checks.push({
         id: 'policy:installed',
@@ -511,53 +598,48 @@ function summarize(checks: DoctorCheck[]): string {
   return `doctor: ${pass} pass, ${warn} warn, ${fail} fail, ${skip} skip`;
 }
 
-// Issue #127: the shared parser replaces the hand-rolled loop. `--skip`
-// stays repeatable (comma-splitting is this command's semantics); unknown
-// tokens and stray operands keep the pre-migration refusal line.
-const DOCTOR_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--skip', takes: 'value', repeat: true },
-  { name: '--json', takes: 'boolean' },
-];
+// The parsed `kubic doctor` invocation (commander owns the argv:
+// apps/kubic/src/commands/solo.ts). Each `skip` entry may list several
+// comma-separated check ids.
+export interface DoctorCommandOptions {
+  readonly skip?: readonly string[];
+  readonly json?: boolean;
+}
 
 export async function runDoctorCommand(
-  args: string[],
+  options: DoctorCommandOptions,
   deps: DoctorDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, DOCTOR_USAGE);
-  if (help !== null) return help;
-  const flags = parseFlagArgs(args, DOCTOR_FLAG_SPEC);
-  if (flags.missing.length > 0) {
-    deps.out(`error: ${flags.missing[0]} needs a value`);
-    return DOCTOR_EXIT_USAGE;
-  }
-  const stray = flags.unknown[0] ?? flags.positional[0];
-  if (stray !== undefined) {
-    deps.out(`error: unknown flag ${stray}`);
-    return DOCTOR_EXIT_USAGE;
-  }
-  const skip = ((flags.values['--skip'] as string[] | undefined) ?? []).flatMap(
-    (value) => value.split(',').map((part) => part.trim()),
-  );
-  const json = flags.values['--json'] === true;
+  const skip = (options.skip ?? [])
+    .flatMap((value) => value.split(','))
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
   const checks = collectDoctorChecks(deps, skip);
   const known = new Set(checks.map((check) => check.id));
   const unknownSkip = skip.find((id) => !known.has(id));
   if (unknownSkip !== undefined) {
-    deps.out(`error: unknown check ${JSON.stringify(unknownSkip)}`);
+    diagnosticsOf(deps).error(`unknown check ${JSON.stringify(unknownSkip)}`);
     return DOCTOR_EXIT_USAGE;
   }
   const exitCode = limitsDoctorExit(checks);
   const failed = exitCode !== DOCTOR_EXIT_OK;
-  if (json) {
-    deps.out(JSON.stringify({ ok: !failed, exitCode, checks }, null, 2));
+  if (options.json === true) {
+    deps.out(formatJson({ ok: !failed, exitCode, checks }));
     return exitCode;
   }
+  const theme = themeOf(deps);
+  const paint: Record<DoctorStatus, (text: string) => string> = {
+    pass: theme.success,
+    warn: theme.warning,
+    fail: theme.error,
+    skip: theme.muted,
+  };
   for (const check of checks) {
     deps.out(
-      `${check.status.toUpperCase()} ${check.id} (${check.reason}): ${check.detail}`,
+      `${paint[check.status](check.status.toUpperCase())} ${theme.bold(check.id)} ${theme.muted(`(${check.reason})`)}: ${check.detail}`,
     );
   }
-  deps.out(summarize(checks));
+  const summary = summarize(checks);
+  deps.out(failed ? theme.error(summary) : theme.success(summary));
   return exitCode;
 }

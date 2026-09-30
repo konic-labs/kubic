@@ -10,6 +10,7 @@
 // Pure and injected: the FileBridge arrives as a parameter, so tests drive
 // fixtures while prod passes the real bridge.
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
   loadRoles,
@@ -72,6 +73,12 @@ export interface WorkerRolesInput {
   cwd: string;
   agents: readonly string[];
   layers?: RoleLayerInput[];
+  // §58 enterprise policy (issue #288): each ASSIGNED role's declared tools
+  // are checked against it, so the manager refuses — by name, before any
+  // worktree or process exists — the assignment a worker's own
+  // `kubic run --role` would refuse. Only assigned roles are judged: a
+  // denied role no worker runs never refuses the run.
+  toolPolicy?: EffectivePolicy;
 }
 
 // The §12 roles in the order the delegation path assigns them: the first
@@ -111,7 +118,11 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
   // `role_refused` code as a contradiction.
   let loaded: ReturnType<typeof loadRoles>;
   try {
-    loaded = loadRoles({ bridge: input.bridge, cwd: input.cwd });
+    loaded = loadRoles({
+      bridge: input.bridge,
+      cwd: input.cwd,
+      ...(input.layers === undefined ? {} : { layers: input.layers }),
+    });
   } catch (error) {
     return {
       assignments: [],
@@ -142,6 +153,9 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         cwd: input.cwd,
         role,
         ...(input.layers === undefined ? {} : { layers: input.layers }),
+        ...(input.toolPolicy === undefined
+          ? {}
+          : { toolPolicy: input.toolPolicy }),
       });
       const promptText = rolePromptFor(
         selected.doc,

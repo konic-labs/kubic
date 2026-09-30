@@ -21,6 +21,7 @@ import {
   fauxProvider,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
+import { resolveEffectivePolicy } from './policy/enterprise.js';
 import {
   buildRunEnvelope,
   mapTerminusToExitCode,
@@ -221,10 +222,13 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   it('prints the named non-answer instead of echoing the prompt (text)', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(['-p', PROMPT_FIXTURE], {
-      out: o.write,
-      run: emptySummaryRun(root),
-    });
+    const exit = await runRunCommand(
+      { prompt: PROMPT_FIXTURE },
+      {
+        out: o.write,
+        run: emptySummaryRun(root),
+      },
+    );
     expect(exit).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain(`result: ${NON_ANSWER}`);
@@ -235,10 +239,13 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   it('carries the same named non-answer in the --json envelope', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(['-p', PROMPT_FIXTURE, '--json'], {
-      out: o.write,
-      run: emptySummaryRun(root),
-    });
+    const exit = await runRunCommand(
+      { prompt: PROMPT_FIXTURE, json: true },
+      {
+        out: o.write,
+        run: emptySummaryRun(root),
+      },
+    );
     expect(exit).toBe(0);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {
@@ -287,6 +294,133 @@ describe('prod run path, empty summary honesty (issue #129)', () => {
   });
 });
 
+describe('enterprise policy gate on model selection (issue #288)', () => {
+  it('refuses a model outside allowed_models before any provider call', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const denied = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    models.setProvider(allowed.provider);
+    models.setProvider(denied.provider);
+    allowed.setResponses([fauxAssistantMessage('should never run')]);
+    denied.setResponses([fauxAssistantMessage('should never run')]);
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        model: { provider: 'other', id: denied.getModel().id },
+        modelPolicy: policy,
+      },
+    );
+    // A named policy refusal, never a probe against the denied provider: the
+
+    // run ends before the first request.
+    expect(result.terminus).toBe('provider_probe_failed');
+    expect(result.error?.message).toMatch(/policy/i);
+    expect(result.error?.message).toContain('other');
+    expect(allowed.state.callCount).toBe(0);
+    expect(denied.state.callCount).toBe(0);
+  });
+
+  it('skips a policy-denied provider for the implicit fallback pick', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const denied = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    // The registered order makes the DENIED provider first: the fallback
+    // pick must skip it rather than select-and-refuse.
+    models.setProvider(denied.provider);
+    models.setProvider(allowed.provider);
+    allowed.setResponses([fauxAssistantMessage('allowed answer')]);
+    denied.setResponses([fauxAssistantMessage('should never run')]);
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        modelPolicy: policy,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.model).toContain(`faux/`);
+    expect(allowed.state.callCount).toBeGreaterThan(0);
+    expect(denied.state.callCount).toBe(0);
+  });
+
+  it('does not let a resumed session keep a stored model the policy refuses', async () => {
+    const root = tmpRoot();
+    const allowed = fauxProvider();
+    const other = fauxProvider({ provider: 'other' });
+    const models = createModels();
+    models.setProvider(allowed.provider);
+    models.setProvider(other.provider);
+    allowed.setResponses([fauxAssistantMessage('allowed answer')]);
+    other.setResponses([fauxAssistantMessage('created')]);
+    // A session created on `other` (an explicit pin, no policy yet)...
+    const created = await runHeadlessPrompt(
+      'first',
+      {},
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        model: { provider: 'other', id: other.getModel().id },
+      },
+    );
+    expect(created.terminus).toBe('completed');
+    expect(created.model).toContain('other/');
+    const otherCalls = other.state.callCount;
+    // ...resumed under an enterprise allowlist that only admits `faux/*`, no
+    // pin: the stored `other/*` model must not survive the gate (the session
+    // file is user-writable, so it cannot be trusted to carry a compliant one).
+    const resumed = await runHeadlessPrompt(
+      'second',
+      { sessionId: created.sessionId },
+      {
+        sessionsRoot: root,
+        models,
+        env: new FakeExecutionEnv({}),
+        modelPolicy: resolveEffectivePolicy([
+          { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+        ]).policy,
+      },
+    );
+    expect(resumed.terminus).toBe('completed');
+    expect(resumed.model).toContain('faux/');
+    expect(resumed.summary).toBe('allowed answer');
+    expect(other.state.callCount).toBe(otherCalls);
+  });
+
+  it('runs a model the policy allows, unchanged (control)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'hello',
+      {},
+      {
+        sessionsRoot: root,
+        models: fauxModels(['policy ok']),
+        env: new FakeExecutionEnv({}),
+        modelPolicy: resolveEffectivePolicy([
+          { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+        ]).policy,
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('policy ok');
+  });
+});
+
 describe('prod run path, result refs (issue #68; mutation hardening)', () => {
   it('points journal/usage/trajectory refs at the live session', async () => {
     const root = tmpRoot();
@@ -303,7 +437,9 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     const id = result.sessionId;
     expect(result.journalRef).toBe(`journal:${id}`);
     expect(result.usageRef).toBe(`usage:${id}`);
-    expect(result.trajectoryRef).toBe(`trajectory:${id}`);
+    // Issue #383: the ref resolves — it names the written §46 file.
+    expect(result.trajectoryRef).toBe(join(root, id, 'trajectory.json'));
+    expect(existsSync(result.trajectoryRef)).toBe(true);
     expect(result.error).toBeUndefined();
   });
 

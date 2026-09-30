@@ -73,7 +73,7 @@ describe('doctor counts from the startup object (issue #93)', () => {
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
       probeExtensions: () => postureFromStartup(startup),
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
     const printed = lines.join('\n');
     // The counts on the line are exactly the startup object's.
@@ -115,7 +115,7 @@ describe('doctor counts from the startup object (issue #93)', () => {
       loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
       probeExtensions: () => posture,
     };
-    const code = await runDoctorCommand([], deps);
+    const code = await runDoctorCommand({}, deps);
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL extension:bundle (extension-posture): extension bundle dir missing',

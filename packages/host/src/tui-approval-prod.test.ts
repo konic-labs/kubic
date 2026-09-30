@@ -175,6 +175,59 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
+describe('allow once is not a session approval (issue #231)', () => {
+  it("two identical destructive calls answered with 'a' produce two asks", async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models } = fauxModels([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf build/' }),
+      ]),
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf build/' }),
+      ]),
+      fauxAssistantMessage('both calls done'),
+    ]);
+    let asks = 0;
+    const boot = fauxLaneBoot(root, models);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        // Issue #315's arming delay is pinned off for the #231 latch test.
+        approvalArmingMs: 0,
+        bootLane: (sessionId, answer, flags) =>
+          boot(
+            sessionId,
+            answer === undefined
+              ? undefined
+              : (request) => {
+                  asks += 1;
+                  return answer(request);
+                },
+            flags,
+          ),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'clean up') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => asks === 1);
+    await waitFor(() => fake.frame.includes('Approval required'));
+    fake.feed('a');
+    // The second identical call must ask again: 'a' approved ONE call.
+    await waitFor(() => asks === 2);
+    fake.feed('a');
+    await waitFor(() => fake.frame.includes('both calls done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(asks).toBe(2);
+  });
+});
+
 describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () => {
   it('shows the overlay for a gated call and runs it when approved', async () => {
     const root = tmpRoot();
@@ -186,11 +239,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('approved turn done'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -225,11 +283,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('after the denial'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -261,11 +324,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([fauxAssistantMessage('hello there')]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -286,11 +354,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('unreachable'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -319,11 +392,16 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
       ]),
       fauxAssistantMessage('narrow done'),
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'clean up') fake.feed(ch);
     fake.feed('\r');
@@ -336,5 +414,98 @@ describe('approval overlay on the kubic tui path (issue #96, criterion 1)', () =
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
+  });
+
+  // Issue #315: type-ahead cannot approve. With the shipped arming delay on
+  // an injected clock, an `a` typed 50 ms after the overlay appeared neither
+  // answers the ask nor reaches the draft; the same key once armed does.
+  it('ignores a decision key typed inside the arming window', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    let now = 0;
+    const { models } = fauxModels([
+      fauxAssistantMessage([
+        fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
+      ]),
+      fauxAssistantMessage('armed turn done'),
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalClock: () => now,
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'clean up') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(fake.frame).toContain('keys unlock in a moment');
+    now += 50;
+    fake.feed('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.frame).not.toContain('armed turn done');
+    // The dropped `a` restarted the window for the longer quiet period
+    // (APPROVAL_QUIET_MS = 1500): the 400 ms arming delay is not enough now,
+    // and neither is the same key inside the repeat window (700 ms).
+    now += 400;
+    fake.feed('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fake.frame).not.toContain('armed turn done');
+    now += 1500;
+    fake.feed('a');
+    await waitFor(() => fake.frame.includes('armed turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  // Issue #316: a padded 400-char command reaches the dialog whole — the
+  // seat receives the full command derived from the same args the key
+  // hashes, and the overlay shows it wrapped instead of a 120-char slice.
+  it('delivers the full padded command to the dialog', async () => {
+    const root = tmpRoot();
+    const fake = fakeTerminal(100);
+    const padded = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf /tmp/x`;
+    const { models } = fauxModels([
+      fauxAssistantMessage([fauxToolCall('bash', { command: padded })]),
+      fauxAssistantMessage('padded turn done'),
+    ]);
+    const seen: Array<{ command?: string; summary: string }> = [];
+    const boot = fauxLaneBoot(root, models);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        approvalArmingMs: 0,
+        bootLane: (sessionId, answer, flags) =>
+          boot(
+            sessionId,
+            answer === undefined
+              ? undefined
+              : (request) => {
+                  seen.push(request);
+                  return answer(request);
+                },
+            flags,
+          ),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'pad') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('Approval required'));
+    expect(seen[0]?.command).toBe(padded);
+    expect(seen[0]?.summary).toMatch(/… \(\+\d+ chars\)$/);
+    expect(fake.frame).toContain('command: ');
+    expect(fake.frame).not.toContain('summary: ');
+    fake.feed('d');
+    await waitFor(() => fake.frame.includes('padded turn done'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 });

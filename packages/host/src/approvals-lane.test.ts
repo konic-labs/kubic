@@ -62,7 +62,7 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
       policy: validatePolicy({ maxPendingMs: 20 }),
       store,
     });
-    const ask = createApprovalAsk(service, triggerContext(), store);
+    let ask = createApprovalAsk(service, triggerContext(), store);
 
     const runOnce = async (): Promise<HarnessEvent[]> => {
       const env = new FakeExecutionEnv({});
@@ -116,6 +116,9 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
     expect(JSON.stringify(denied[0])).toContain('not approved');
 
     enableFullAccess(store, 'test');
+    // Issue #325: the posture is read once at boot, so full access applies
+    // to the NEXT boot of the ask, never mid-session.
+    ask = createApprovalAsk(service, triggerContext(), store);
     const allowed = await runOnce();
     expect(allowed).toHaveLength(1);
     expect(JSON.stringify(allowed[0])).not.toContain('not approved');

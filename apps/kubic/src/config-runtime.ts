@@ -24,6 +24,7 @@ import {
   hasUnsafeCharacters,
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../../../packages/exec/src/runtime-exclude.js';
+import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
 import {
   CONFIG_LAYERS,
   ConfigError,
@@ -41,14 +42,35 @@ import {
   loadRuntimeConfig,
   type RuntimeConfig,
 } from '../../../packages/host/src/config/runtime.js';
+import {
+  NO_PROJECT_TRUST,
+  type ProjectTrustCheck,
+  type ProjectTrustReport,
+  ProjectTrustStore,
+  projectTrustCheck,
+  projectTrustReport,
+  projectTrustStorePath,
+} from '../../../packages/host/src/config/trust-store.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import type { ApprovalSnapshot } from '../../../packages/host/src/orchestrator/merge/conflicts.js';
 import { DEFAULT_WORKTREE_ROOT } from '../../../packages/host/src/orchestrator/worktree/naming.js';
+import {
+  type EffectivePolicy,
+  hasModelPolicy,
+  isModelAllowed,
+  isProviderAllowed,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type {
   RoleLayerInput,
   RoleLayerSpec,
 } from '../../../packages/host/src/roles/resolver.js';
-import type { ModelSelection } from '../../../packages/worker/src/model-select.js';
+import {
+  ModelSelectError,
+  type ModelSelection,
+  selectModel,
+} from '../../../packages/worker/src/model-select.js';
+import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
 
 export interface CliConfigResult {
   // Present only when the load succeeded. A refusal leaves it undefined:
@@ -61,6 +83,10 @@ export interface CliConfigResult {
   // `kubic config` and by doctor: the five runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
+  // Issue #228: the project trust state the load above was gated on — the
+  // same report `kubic doctor` renders, `kubic config` counts and the TUI
+  // prompt resolves, so they can never disagree about who accepted what.
+  trust: ProjectTrustReport;
 }
 
 export interface CliConfigOptions {
@@ -68,6 +94,14 @@ export interface CliConfigOptions {
   home?: string;
   env?: Record<string, string | undefined>;
   projectTrusted?: boolean;
+  /**
+   * The `--model` session override (issue #227; §38.1): the `cli` layer of
+   * the ONE runtime load, above `env` and the file layers. A frozen
+   * enterprise `model.provider`/`model.id` still wins — `loadRuntimeConfig`
+   * owns that rule, so the flag is an input to the load, never a post-load
+   * mutation that could bypass the freeze.
+   */
+  model?: ModelSelection;
 }
 
 // The §35/§91 runtime exclude entries for a worktree parent (issue #133):
@@ -141,26 +175,109 @@ function message(error: unknown): string {
 
 // One load for the whole process: paths per §35.1, the project layer behind
 // the trust gate, the documented env overrides above the file layers.
+//
+// Trust (issue #228) is resolved from the persistent store under
+// `~/.kubic/trust.json` for this cwd, with the env opt-in still honoured
+// above it and an explicit caller decision (the accepted TUI prompt) above
+// both. The same report reaches the result so every consumer — doctor, the
+// models assembly, the skills loader — reads one derivation.
 export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
   const cwd = options.cwd ?? process.cwd();
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;
   const bridge = createNodeFileBridge(cwd);
   const ignoreSplit = checkWorkspaceIgnoreSplit(bridge, cwd);
+  let stored: ProjectTrustReport;
+  try {
+    stored = projectTrustReport({ home, cwd, env });
+  } catch (error) {
+    // A home that cannot hold the store (empty or relative) is a named
+    // refusal, not a crash: the trust boundary cannot be established, so no
+    // project-local file may load.
+    return {
+      runtime: undefined,
+      error: message(error),
+      ignoreSplit,
+      trust: NO_PROJECT_TRUST,
+    };
+  }
+  const trusted = options.projectTrusted === true || stored.trusted;
+  const trust = trusted === stored.trusted ? stored : { ...stored, trusted };
   try {
     const runtime = loadRuntimeConfig({
       bridge,
       home,
       cwd,
       env,
-      ...(options.projectTrusted === undefined
-        ? {}
-        : { projectTrusted: options.projectTrusted }),
+      ...(options.model === undefined ? {} : { cli: { model: options.model } }),
+      projectTrusted: trusted,
     });
-    return { runtime, error: undefined, ignoreSplit };
+    return { runtime, error: undefined, ignoreSplit, trust };
   } catch (error) {
-    return { runtime: undefined, error: message(error), ignoreSplit };
+    return { runtime: undefined, error: message(error), ignoreSplit, trust };
   }
+}
+
+// Issue #228 review: the per-path trust check for consumers that resolve
+// the file they load by walking ancestors (the project models.json root,
+// each skills ancestor). Built from the same report the config load
+// consumed, so the store/env decision can never disagree with the config
+// gate. An unusable home yields an env-only check (fail closed).
+export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
+  return projectTrustCheck({
+    home: result.trust.home,
+    envTrust: result.trust.envTrust,
+  });
+}
+
+// The interactive half of the trust gate (issue #228): `kubic tui` and the
+// bare `kubic` on a TTY ask once about a present, undecided project config
+// before the config load, persist the answer and hand it back — so the
+// current invocation boots on the accepted decision and the next one never
+// asks again. No question is asked when the config is absent or a decision
+// is already recorded (including a recorded decline: the operator answered).
+// A cancelled prompt is not an answer: nothing is persisted, and the
+// invocation fails closed into the refusal path.
+export interface InteractiveTrustDeps {
+  home?: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  // The question channel: production passes core's `promptConfirm` bound to
+  // `interactive: true`; a test passes a collector. `null` means cancelled.
+  confirm: (message: string) => Promise<boolean | null>;
+  store?: ProjectTrustStore;
+}
+
+export async function resolveInteractiveProjectTrust(
+  deps: InteractiveTrustDeps,
+): Promise<boolean | undefined> {
+  const home = deps.home ?? homedir();
+  const cwd = deps.cwd ?? process.cwd();
+  const store =
+    deps.store ?? new ProjectTrustStore(projectTrustStorePath(home));
+  const report = projectTrustReport({
+    home,
+    cwd,
+    env: deps.env ?? process.env,
+    store,
+  });
+  if (!report.present) return undefined;
+  if (report.trusted) return true;
+  // A recorded decline is an answer: the refusal stands silently, and the
+  // remedies are named by the refusal itself.
+  if (report.decision === false) return false;
+  // The grant is one decision for the whole project tree, so the question
+  // names all of it (issue #228 review): the config.toml, the project
+  // models.json — whose provider URL receives the key of ANY `*_API_KEY` or
+  // `KUBIC_*` variable it names (`KUBIC_API_KEY` when it names none), so a
+  // "yes" lets the repository choose where a key you have set is sent — and
+  // the project skills the model is told to follow.
+  const answer = await deps.confirm(
+    `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills (instructions the model follows).`,
+  );
+  if (answer === null) return false;
+  store.set(cwd, answer);
+  return answer;
 }
 
 // The config the rest of the process runs on; a refusal throws with its
@@ -174,8 +291,11 @@ export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
 
 // Commands whose whole job is to tell the operator about the effective
 // configuration (or about a refusal) must still run when the load was
-// refused — otherwise the named reason has nowhere to surface.
-const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor']);
+// refused — otherwise the named reason has nowhere to surface. `trust`
+// (issue #228) is the repair path for a refusal: it must run in exactly the
+// repository whose project layer is refused, or the durable grant could
+// never be recorded.
+const CONFIG_REPORTING_COMMANDS = new Set(['config', 'doctor', 'trust']);
 
 // The modes that execute an agent under the configuration. They may not
 // proceed on defaults once the load was refused: silently running on
@@ -227,9 +347,166 @@ export function doctorPolicyLoader(result: CliConfigResult): () => unknown {
 export function runtimeModelPin(
   result: CliConfigResult,
 ): ModelSelection | undefined {
-  const selection = result.runtime?.model;
-  if (selection === undefined) return undefined;
-  return { provider: selection.provider, id: selection.id };
+  const runtime = result.runtime;
+  const selection = runtime?.model;
+  if (runtime === undefined || selection === undefined) return undefined;
+  // The pin carries the input it came from (issue #295), so a refusal of an
+  // unknown model says `KUBIC_MODEL`/`--model`/the config layer — not `--model`
+  // for every explicit selection.
+  return withSelectionOrigin(
+    { provider: selection.provider, id: selection.id },
+    modelPinOrigin(runtime),
+  );
+}
+
+// The label the named model refusal shows for the runtime pin: the flag, the
+// env variable, or the config layer whose `[model]` carried it.
+function modelPinOrigin(runtime: RuntimeConfig): string {
+  switch (runtime.modelSource) {
+    case 'cli':
+      return '--model';
+    case 'env':
+      return 'KUBIC_MODEL';
+    default:
+      return `[model] in ${runtime.modelSource} config`;
+  }
+}
+
+// Whether a frozen enterprise `[model]` is the effective pin (issue #295;
+// §35.1): every cli/env pin is dropped, in this process and in every worker
+// child it starts — so the consumers that reason about which model runs
+// (the worker credential preflight, the orchestrate child env, the TUI
+// `/model` switch) follow the pin, never a raw KUBIC_MODEL.
+export function runtimeModelFrozen(result: CliConfigResult): boolean {
+  return result.runtime?.modelSource === 'enterprise';
+}
+
+// One stderr line per cli/env model pin a frozen enterprise `[model]`
+// overrode (issue #295; §35.1) — the composition root prints them once at the
+// boot of run/tui/orchestrate, so `kubic run --model x` against an enterprise
+// pin says it ran the pin instead of dropping `x` silently. Empty when
+// nothing was overridden (no freeze, no cli/env pin, or the same pin).
+export function runtimeModelPinNotes(result: CliConfigResult): string[] {
+  return (result.runtime?.modelPinOverrides ?? []).map((entry) => {
+    const input =
+      entry.source === 'cli'
+        ? `--model ${entry.requested}`
+        : `KUBIC_MODEL=${entry.requested}`;
+    return `note: ${input} ignored: model pinned by enterprise policy (${entry.pinned})`;
+  });
+}
+
+// §58 enterprise policy (issue #288): the EffectivePolicy resolved once at
+// load — `kubic run` and `kubic tui` gate role grants, model selection and
+// the lane tool set with it. Undefined when the config was refused: the
+// agent-executing commands fail closed on their own before this matters, and
+// an absent [policy] section leaves the object empty (hasModelPolicy /
+// hasToolPolicy decide whether any gate applies).
+export function runtimePolicy(
+  result: CliConfigResult,
+): EffectivePolicy | undefined {
+  return result.runtime?.policy;
+}
+
+// selectModel words every explicit pin `(--model)` and every config default
+// `(config default)`; when the selection carries its real origin (issue #295;
+// model-projection's withSelectionOrigin) the suffix names that instead. Only
+// the pick that was actually attempted can have failed: an explicit pin is
+// tried first and alone.
+function relabelRefusal(
+  error: ModelSelectError,
+  explicit: ModelSelection | undefined,
+  configDefault: ModelSelection | undefined,
+): ModelSelectError {
+  const attempted =
+    explicit !== undefined
+      ? { selection: explicit, wording: '--model' }
+      : configDefault !== undefined
+        ? { selection: configDefault, wording: 'config default' }
+        : undefined;
+  if (attempted === undefined) return error;
+  const origin = selectionOrigin(attempted.selection);
+  const suffix = ` (${attempted.wording})`;
+  if (origin === undefined || !error.message.endsWith(suffix)) return error;
+  return new ModelSelectError(
+    `${error.message.slice(0, -suffix.length)} (${origin})`,
+  );
+}
+
+// The named refusal both solo entry points share (issue #288): one text, so
+// the headless terminus and the TUI's exit-6 report cannot drift apart.
+function modelPolicyRefusal(provider: string, id: string): string {
+  return `model '${provider}/${id}' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made`;
+}
+
+// Model selection under the §58 enterprise gate (issue #288), shared by
+// `kubic run` and `kubic tui`: an explicit/role/config selection outside
+// `allowed_models`/`allowed_providers` is refused with a named
+// ModelSelectError BEFORE the registry is probed or any provider is called,
+// and the implicit fallback pick only considers allowed providers. With no
+// model policy configured this is exactly `selectModel` — the selection
+// behaviour is byte-identical to before.
+export function selectModelUnderPolicy(
+  models: MutableModels,
+  explicit: ModelSelection | undefined,
+  configDefault: ModelSelection | undefined,
+  fallbackProviders: readonly string[] | undefined,
+  policy: EffectivePolicy | undefined,
+): ReturnType<typeof selectModel> {
+  const gate =
+    policy !== undefined && hasModelPolicy(policy) ? policy : undefined;
+  if (gate !== undefined) {
+    for (const selection of [explicit, configDefault]) {
+      if (
+        selection !== undefined &&
+        !isModelAllowed(gate, selection.provider, selection.id)
+      ) {
+        throw new ModelSelectError(
+          modelPolicyRefusal(selection.provider, selection.id),
+        );
+      }
+    }
+  }
+  const candidates =
+    gate === undefined
+      ? fallbackProviders
+      : (
+          fallbackProviders ??
+          models.getProviders().map((provider) => provider.id)
+        ).filter((provider) => isProviderAllowed(gate, provider));
+  let picked: ReturnType<typeof selectModel>;
+  try {
+    picked = selectModel(models, explicit, configDefault, candidates);
+  } catch (error) {
+    throw error instanceof ModelSelectError
+      ? relabelRefusal(error, explicit, configDefault)
+      : error;
+  }
+  if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
+    throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
+  }
+  return picked;
+}
+
+// The config `[approvals]` policy as the solo install consumes it (issue
+// #230; §41.2): route, maxPendingMs, autoApprove, requireJustification and
+// sessionScoped, projected ONCE here and spread into installSoloPolicy by
+// `kubic run`, `kubic tui`, replay and doctor's installed-policy line — so
+// what doctor prints and what every solo lane enforces are one derivation
+// (§40.3). A refused config contributes nothing (the command fails closed
+// first); absent means the documented defaults.
+export function runtimeApprovalDeps(
+  result: CliConfigResult,
+): SoloApprovalConfig {
+  const policy = result.runtime?.approvals.policy;
+  if (policy === undefined) return {};
+  return {
+    route: policy.route,
+    maxPendingMs: policy.maxPendingMs,
+    autoApprove: [...policy.autoApprove],
+    requireJustification: policy.requireJustification,
+    sessionScoped: policy.sessionScoped,
+  };
 }
 
 // The remaining `kubic run` projections (issue #90): the permission classes
@@ -249,10 +526,13 @@ export function runtimeRunDeps(result: CliConfigResult): {
   // that sets only, say, `[journal]` still runs the documented defaults and
   // must not be reported as operator-configured classes.
   policySource: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy the lane installs.
+  approvals?: SoloApprovalConfig;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return { policySource: 'default' };
   return {
+    approvals: runtimeApprovalDeps(result),
     policyClasses: { ...runtime.permissions.classes },
     policySource:
       runtime.permissions.source === 'defaults' ? 'default' : 'config',
@@ -357,13 +637,16 @@ export function approvalSnapshotFrom(runtime: RuntimeConfig): ApprovalSnapshot {
 export function installedPolicyDeps(result: CliConfigResult): {
   classes?: PermissionClasses;
   source: 'config' | 'default';
-} {
+} & SoloApprovalConfig {
   const { policyClasses, policySource } = runtimeRunDeps(result);
   return {
     ...(policySource === 'config' && policyClasses !== undefined
       ? { classes: policyClasses }
       : {}),
     source: policySource,
+    // Issue #230: the approval half of the same projection, so doctor's
+    // `policy:installed` line and the lane read one derivation.
+    ...runtimeApprovalDeps(result),
   };
 }
 
@@ -390,6 +673,7 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
         error: result.error ?? 'config refused',
         ignoreSplitMissing: missing,
         ignoreSplitApplicable: applicable,
+        projectTrust: result.trust,
       }),
     );
   }
@@ -401,6 +685,7 @@ export function doctorConfigProbe(result: CliConfigResult): DepProbe {
       budgetsConfigured: view.budgets.configured,
       ignoreSplitMissing: missing,
       ignoreSplitApplicable: applicable,
+      projectTrust: result.trust,
     }),
   );
 }

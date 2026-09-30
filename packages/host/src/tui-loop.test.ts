@@ -189,11 +189,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels(['all done, boss']);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'say done') fake.feed(ch);
     fake.feed('\r');
@@ -217,11 +221,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
       [fauxText('reading'), fauxToolCall('bash', { command: 'echo hi' })],
       'tool turn done',
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'run it') fake.feed(ch);
     fake.feed('\r');
@@ -299,11 +307,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
         },
       };
     };
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane,
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane,
+      },
+    );
     try {
       await waitFor(() => fake.counts.started === 1);
       for (const ch of 'stuck') fake.feed(ch);
@@ -347,11 +359,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
         return fauxAssistantMessage('never delivered');
       },
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'slow one') fake.feed(ch);
     fake.feed('\r');
@@ -386,11 +402,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
       const lines: string[] = [];
       const fake = fakeTerminal(100);
       const { models } = fauxModels(['hello']);
-      const pending = runTuiCommand([], {
-        out: (line: string) => lines.push(line),
-        createTerminal: () => fake.terminal,
-        bootLane: fauxLaneBoot(root, models),
-      });
+      const pending = runTuiCommand(
+        {},
+        {
+          out: (line: string) => lines.push(line),
+          createTerminal: () => fake.terminal,
+          colorLevel: 'none',
+          bootLane: fauxLaneBoot(root, models),
+        },
+      );
       await waitFor(() => fake.counts.started === 1);
       fake.feed(key);
       expect(await pending).toBe(0);
@@ -416,11 +436,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
         return fauxAssistantMessage('never delivered');
       },
     ]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'slow two') fake.feed(ch);
     fake.feed('\r');
@@ -443,11 +467,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([]);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     process.stdin.emit('end');
     expect(await pending).toBe(0);
@@ -465,11 +493,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
       const lines: string[] = [];
       const fake = fakeTerminal(100);
       const { models } = fauxModels([]);
-      const pending = runTuiCommand([], {
-        out: (line: string) => lines.push(line),
-        createTerminal: () => fake.terminal,
-        bootLane: fauxLaneBoot(root, models),
-      });
+      const pending = runTuiCommand(
+        {},
+        {
+          out: (line: string) => lines.push(line),
+          createTerminal: () => fake.terminal,
+          colorLevel: 'none',
+          bootLane: fauxLaneBoot(root, models),
+        },
+      );
       await waitFor(() => fake.counts.started === 1);
       fake.feed(key);
       expect(await pending).toBe(0);
@@ -483,11 +515,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels(['answered']);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
     await waitFor(() => fake.counts.started === 1);
     for (const ch of 'a question') fake.feed(ch);
     fake.feed('\r');

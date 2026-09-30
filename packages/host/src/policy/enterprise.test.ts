@@ -5,11 +5,140 @@ import {
   assertToolGrantable,
   isNetworkAllowed,
   isToolAllowed,
+  isToolAllowedByEnterprise,
   POLICY_LAYERS,
   PolicyDeniedError,
   PolicyError,
   resolveEffectivePolicy,
 } from './enterprise.js';
+
+describe('§58 vocabulary bridge (issue #288)', () => {
+  const S58_EXAMPLE = `[policy]
+allowed_models = ["claude-sonnet-4-6", "local/*"]
+allowed_providers = ["anthropic", "local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = ["network_fetch"]
+
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+`;
+
+  it('translates the §58 example into engine leaves', async () => {
+    const mod = await import('./enterprise.js');
+    const { parseTomlConfig } = await import('../config/config.js');
+    const layer = mod.layerPolicyFromConfig(parseTomlConfig(S58_EXAMPLE));
+    expect(layer.tools?.allow).toContain('bash');
+    expect(layer.tools?.deny).toEqual(['network_fetch']);
+    expect(layer.models?.allowed).toEqual(['claude-sonnet-4-6', 'local/*']);
+    expect(layer.models?.providers).toEqual(['anthropic', 'local']);
+    // §58's 'proxy' is the engine's allowlist mode; proxy enforcement itself
+    // is a named follow-up, so the shape is what travels here.
+    expect(layer.network?.mode).toBe('allowlist');
+    expect(layer.network?.domains).toEqual([
+      'registry.npmjs.org',
+      'github.com',
+    ]);
+    // 'workspace-only' is the engine's 'workspace-write' level.
+    expect(layer.filesystem?.level).toBe('workspace-write');
+    expect(layer.credentials).toEqual({
+      requireCredentialBroker: true,
+      denyLocalCredentials: true,
+    });
+    // Values with no enforceable engine leaf are carried, never dropped —
+    // doctor reports them (the §58 "never silent" rule).
+    expect(layer.data?.policy).toBe('no-external-training');
+    expect(layer.logging?.policy).toBe('full-audit');
+    expect(layer.agent).toEqual({ maxWorkers: 2, maxCostUsd: 5 });
+  });
+
+  it('returns an empty layer for a config with no [policy] section', async () => {
+    const mod = await import('./enterprise.js');
+    expect(mod.layerPolicyFromConfig({})).toEqual({});
+  });
+
+  it('gates providers and models through provider-qualified patterns', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]);
+    expect(mod.isProviderAllowed(policy, 'faux')).toBe(true);
+    expect(mod.isProviderAllowed(policy, 'other')).toBe(false);
+    expect(mod.isModelAllowed(policy, 'faux', 'anything')).toBe(true);
+    expect(mod.isModelAllowed(policy, 'other', 'x')).toBe(false);
+  });
+
+  it('matches a bare model id across providers, keeping the provider gate', async () => {
+    const mod = await import('./enterprise.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: {
+          models: { providers: ['anthropic'], allowed: ['claude-sonnet-4-6'] },
+        },
+      },
+    ]);
+    expect(mod.isModelAllowed(policy, 'anthropic', 'claude-sonnet-4-6')).toBe(
+      true,
+    );
+    expect(mod.isModelAllowed(policy, 'anthropic', 'claude-opus-4')).toBe(
+      false,
+    );
+    // The providers list still bounds a bare-id pattern.
+    expect(mod.isModelAllowed(policy, 'other', 'claude-sonnet-4-6')).toBe(
+      false,
+    );
+  });
+
+  it('refuses model patterns that are empty or cannot name a model', async () => {
+    const mod = await import('./enterprise.js');
+    for (const pattern of ['', '  ', '/x', 'x/', 'a/b/c']) {
+      expect(
+        () =>
+          mod.resolveEffectivePolicy([
+            { layer: 'enterprise', policy: { models: { allowed: [pattern] } } },
+          ]),
+        pattern,
+      ).toThrow(mod.PolicyError);
+    }
+  });
+
+  it('reports which layer set the allow list and which layer denied a tool', async () => {
+    const mod = await import('./enterprise.js');
+    const resolved = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { allow: ['read'], deny: ['bash'] } },
+      },
+      { layer: 'project', policy: { tools: { allow: ['read', 'bash'] } } },
+    ]);
+    expect(resolved.policy.tools.allowSource).toBe('enterprise');
+    expect(resolved.policy.tools.denySources).toEqual({ bash: 'enterprise' });
+  });
+
+  it('answers whether tool/model gates are configured at all', async () => {
+    const mod = await import('./enterprise.js');
+    const empty = mod.resolveEffectivePolicy([]).policy;
+    expect(mod.hasToolPolicy(empty)).toBe(false);
+    expect(mod.hasModelPolicy(empty)).toBe(false);
+    const tools = mod.resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    expect(mod.hasToolPolicy(tools)).toBe(true);
+    expect(mod.hasModelPolicy(tools)).toBe(false);
+    const models = mod.resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    expect(mod.hasModelPolicy(models)).toBe(true);
+  });
+});
 
 const ENTERPRISE_DENY = {
   enterprise: {
@@ -79,6 +208,31 @@ describe('enterprise precedence', () => {
     ).toThrow(PolicyDeniedError);
     expect(() =>
       assertToolGrantable(policy, 'bash', { layer: 'agent', model: 'evil' }),
+    ).toThrow(PolicyDeniedError);
+  });
+
+  it('a grant follows the lane gate: a deny-only policy grants what it does not deny (issue #288)', () => {
+    const { policy } = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]);
+    // No allow list: the enterprise layer says nothing about `grep`, so the
+    // grant path agrees with the lane's own gate instead of refusing it.
+    expect(isToolAllowedByEnterprise(policy, 'grep')).toBe(true);
+    expect(() =>
+      assertToolGrantable(policy, 'grep', { layer: 'agent', role: 'reviewer' }),
+    ).not.toThrow();
+    expect(() =>
+      assertToolGrantable(policy, 'bash', { layer: 'agent', role: 'reviewer' }),
+    ).toThrow(/role 'reviewer'.*enterprise denial holds/);
+    // With an allow list, an unlisted tool is still refused.
+    const allowed = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { allow: ['read'] } } },
+    ]).policy;
+    expect(() =>
+      assertToolGrantable(allowed, 'read', { layer: 'agent' }),
+    ).not.toThrow();
+    expect(() =>
+      assertToolGrantable(allowed, 'grep', { layer: 'agent' }),
     ).toThrow(PolicyDeniedError);
   });
 

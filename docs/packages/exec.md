@@ -17,12 +17,13 @@ escapes, not a sandbox boundary.
 
 | Module | Exports |
 | --- | --- |
-| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS` |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `reconcile` |
+| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation`, `beginReconciliation` |
+| `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher (#116, #172): the journal baseline walk and the worker's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock (#118) |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
@@ -47,12 +48,12 @@ Supporting shapes, field-for-field:
 | --- | --- |
 | `Provenance` | `sessionId: string`, `agentId: string`, `toolCallId: string`, `turnId: number`, `operation: string` |
 | `StatInfo` | `isFile: boolean`, `isDirectory: boolean`, `size: number` |
-| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo` |
+| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets) |
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
 | `SpawnOptions` | `provenance: Provenance`, `onUpdate?: UpdateCallback`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
-| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` |
+| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` — SIGTERM to the whole process group, escalating to SIGKILL after `killGraceMs` (default `KILL_GRACE_MS`, 2 s) if the child has not settled, so a child that traps SIGTERM can never leave `wait()` hanging |
 | `Shell` | `spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle` |
 
 `ROOT_PROVENANCE` is `{ sessionId: '', agentId: '', toolCallId: 'root',
@@ -121,6 +122,12 @@ also preserves the target's existing mode across its tmp+rename (a
 tmp 0600 so crash residue is never world-readable, and sweeps stale
 `<target>.kubic-restore-*.tmp` siblings best-effort after a successful
 restore.
+An agent-authored create (`op: 'create'`, no before-hash, not
+`unattributed`) is reversible by removal (`isUndoableCreate`,
+`removeCreatedEntry`, same containment guards as `restoreEntry`): undo
+removes the file when its content still matches the recorded after-hash,
+reports `already undone` when it is already absent, and journals a
+`kubic-undo` delete carrying the removed content so `--step` redoes it.
 
 Baseline walk ignores (issue #116): `captureBaseline` honors every
 `.gitignore` on the way down, not just the root's. Rules accumulate per
@@ -131,9 +138,18 @@ exit, so a sibling subtree never inherits another's rules. An unreadable
 nested ignore (chmod 000, a permission-denied mount) leaves the parent rules
 in force and the walk continues: the documented widening, never a throw.
 `reconcile` re-walks through the same `captureBaseline`, so boot and sweep can
-never disagree about what is in scope. The matcher stays the documented
-common subset (`*`, `?`, `**` at the edges, `dir/`, `!`) — character classes
-and mid-pattern `**` are not modeled — and nested rules are matched against
+never disagree about what is in scope. The matcher is the shared
+`ignore.ts` (#172), so this walk and the worker's find/grep walk also cannot
+disagree about what is ignored. The matcher stays the documented
+common subset (`*`, `?`, `**`, `dir/`, `!`) — character classes and rooted
+mid-pattern `**` are not modeled — compiled to tokens and matched with a
+linear DP, never a backtracking regex, so a wildcard-heavy pattern costs
+O(pattern x path) per entry instead of exponential time. A LEADING `**/`
+matches zero or more leading directories (git matches `**/foo` at the root,
+not only below one), and a trailing `dir/` applies to directories only: a
+file named like the directory stays in scope, while anything under an
+ignored directory is ignored by its ancestor. Nested rules are matched
+against
 the workspace-relative path rather than re-rooted at their own directory, so
 a nested ANCHORED pattern must be written repo-relative (`packages/foo/build/`);
 a git-style directory-relative one (`sub/build/` inside
@@ -143,6 +159,19 @@ Per-directory negation subtleties beyond last-match-wins, and
 follow-up, not a behavior change here). Cost: one `exists('.gitignore')` per
 directory entered — the same order as the `listDir` already paid, with no read
 at all for a directory without an ignore file.
+
+Sweep delete candidates (issue #341): a path is journaled as deleted when its
+expected state is a file and the sweep walk no longer sees it. The candidates
+are the baseline keys plus every path a tool journaled this run. A path only a
+tool journaled (not in the boot baseline) can be absent from the walk while
+the file is still there — gitignored, under `.git/` or `.kubic/` — so for
+those the sweep asks the bridge (`exists`, then `fileInfo` — both `lstat`) and
+records no delete while the path is still a REGULAR file. A directory, a
+symlink or a FIFO/socket/device in its place is a real delete (the walk skips
+links and never journals directories, so nothing else would report it), and so
+is ENOENT or ENOTDIR (a parent component is now a regular file). A probe that
+cannot answer (EACCES) counts as present. A tool-written ignored file that is
+really removed afterwards is still journaled as an unattributed delete.
 
 Sweep after-content bound (issue #120): `reconcile`'s record path reads a
 changed file once, bounded by `MAX_SWEEP_CONTENT_BYTES` (4 MiB). Above the

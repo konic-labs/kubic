@@ -12,7 +12,8 @@
 //   shell read-only-allowlist — bash present, destructive AND network
 //     commands blocked.
 //   shell false — bash absent via allowlist.
-//   network none — network-command verbs blocked in bash. allowlist/full
+//   network none (and a domain-less allowlist, enforced as none — issue
+//     #166) — network-command verbs blocked in bash. full
 //     change nothing at the tool layer (documented, not silent): there is
 //     no network tool to remove, and shell:true can still curl. The flag
 //     is consumed by approval triggers (issue #16).
@@ -30,7 +31,12 @@
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in host/approvals.ts.
 import { isAbsolute, join, resolve } from 'node:path';
-import type { NetworkLevel, ShellLevel } from '../../../agents/src/policy.js';
+import {
+  effectiveNetworkLevel,
+  type NetworkLevel,
+  type ShellLevel,
+} from '../../../agents/src/policy.js';
+import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { Hooks, JsonValue } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
@@ -45,6 +51,11 @@ export interface PolicyInterceptorOptions {
   onTrigger?: (trigger: PolicyTrigger) => void;
   shell?: ShellLevel;
   network?: NetworkLevel;
+  // Read-only confinement exception (issue #173; §29.3): the directories
+  // (or files) of the skills advertised with absolute paths outside the
+  // workspace. Only the `read` tool may open a path inside one; write,
+  // edit, ls, find and grep keep re-rooting every outside path.
+  readRoots?: readonly string[];
   isDestructive?: (command: string, workspace: string) => boolean;
   // Approval decider (issue #16, owned by the host). Consulted for every
   // call after the budget gate: denials block; approvals let the call
@@ -94,21 +105,111 @@ function rmBlocked(command: string, workspace: string): boolean {
   return false;
 }
 
-const DESTRUCTIVE_PATTERNS = [
+// Patterns that read the whole command: none of them is a `[^|;&]*` gap.
+const WHOLE_COMMAND_PATTERNS = [
   /\bmkfs\b/i,
-  /\bdd\b[^|;&]*\bof=\s*\/dev\//i,
   /\bshred\b/i,
-  /\bgit\s+clean\s+[^|;&]*-[a-zA-Z]*f/i,
-  /\b(chmod|chown)\b[^|;&]*\s-[a-zA-Z]*R/i,
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;/,
 ];
+
+// Every other destructive shape is a HEAD verb followed, later in the SAME
+// command segment (no `|`, `;` or `&` between), by a chain of further
+// tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`, `find …
+// -delete`, `git … push … --force|-f|+refspec` (issue #357), `git … reset …
+// --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
+// (--worktree | -W)`. They used to be one regex each with `[^|;&]*` gaps,
+// which backtracks polynomially: `git push ` repeated 2000 times took 13 s
+// and `git restore --staged ` repeated 2000 times 50 s, before every bash call.
+//
+// A chain is walked leftmost-first inside one segment — each step searches
+// from the end of the previous one. That is exactly as strong as the gapped
+// regex: the gap absorbs anything, so if any occurrence of a step leads to a
+// full match then the LEFTMOST one does too (it leaves the most text for the
+// steps after it). The walk is linear per segment. The segment handed in
+// keeps its trailing separator character, because `+\S` may consume it, and
+// `$` inside it is the end of the command only for the last segment.
+const SEGMENT_CHAINS: ReadonlyArray<readonly RegExp[]> = [
+  [/\bdd\b/gi, /\bof=\s*\/dev\//gi],
+  [/\bgit\s+clean\s+/gi, /-[a-zA-Z]*f/gi],
+  [/\b(chmod|chown)\b/gi, /\s-[a-zA-Z]*R/gi],
+  [/\bfind\b/gi, /\s-delete\b/gi],
+  [
+    /\bgit\b/gi,
+    /\spush\b/gi,
+    /\s(--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/gi,
+  ],
+  [/\bgit\b/gi, /\sreset\b/gi, /\s--hard\b/gi],
+  [/\bgit\b/gi, /\scheckout\b/gi, /\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/gi],
+  [/\bgit\b/gi, /\srestore\b/gi, /\s(--worktree|-W)\b/gi],
+];
+const GIT_HEAD = /\bgit\b/gi;
+const RESTORE_VERB = /\srestore\b/gi;
+const STAGED_ONLY = /\s(--staged|-S)\b/gi;
+const SEGMENT_HEAD = /\b(git|dd|chmod|chown|find)\b/i;
+const SEGMENT_SEPARATOR = /[|;&]/g;
+
+function chainMatches(segment: string, chain: readonly RegExp[]): boolean {
+  let at = 0;
+  for (const step of chain) {
+    step.lastIndex = at;
+    const hit = step.exec(segment);
+    if (hit === null) return false;
+    at = hit.index + hit[0].length;
+  }
+  return true;
+}
+
+// `git … restore` discards the working tree unless it is a staged-only
+// restore: a restore with no `--staged`/`-S` after it. The absence is
+// monotone — if some `restore` has none after it, the LAST one has none — so
+// only the last `restore` needs its tail checked.
+function unstagedRestore(segment: string): boolean {
+  GIT_HEAD.lastIndex = 0;
+  const git = GIT_HEAD.exec(segment);
+  if (git === null) return false;
+  RESTORE_VERB.lastIndex = git.index + git[0].length;
+  let lastEnd = -1;
+  for (
+    let hit = RESTORE_VERB.exec(segment);
+    hit !== null;
+    hit = RESTORE_VERB.exec(segment)
+  ) {
+    lastEnd = hit.index + hit[0].length;
+  }
+  if (lastEnd < 0) return false;
+  STAGED_ONLY.lastIndex = lastEnd;
+  return STAGED_ONLY.exec(segment) === null;
+}
+
+function segmentDestructive(segment: string): boolean {
+  if (!SEGMENT_HEAD.test(segment)) return false;
+  return (
+    SEGMENT_CHAINS.some((chain) => chainMatches(segment, chain)) ||
+    unstagedRestore(segment)
+  );
+}
+
+function anySegmentDestructive(command: string): boolean {
+  let from = 0;
+  for (;;) {
+    SEGMENT_SEPARATOR.lastIndex = from;
+    const separator = SEGMENT_SEPARATOR.exec(command);
+    const end = separator === null ? command.length : separator.index + 1;
+    if (segmentDestructive(command.slice(from, end))) return true;
+    if (separator === null) return false;
+    from = end;
+  }
+}
 
 export function defaultIsDestructive(
   command: string,
   workspace = '/work',
 ): boolean {
   if (rmBlocked(command, workspace)) return true;
-  return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command));
+  return (
+    WHOLE_COMMAND_PATTERNS.some((pattern) => pattern.test(command)) ||
+    anySegmentDestructive(command)
+  );
 }
 
 const NETWORK_PATTERNS = [
@@ -152,7 +253,13 @@ export function confinePath(
 // truncated and secret-shaped values redacted before they become blocks.
 export function redactReason(value: string): string {
   const short = value.length > 200 ? `${value.slice(0, 200)}…` : value;
-  return short.replace(
+  return redactSecrets(short);
+}
+
+// The redaction half alone, never truncating (issue #316): an approval
+// dialog must show the whole command, so it redacts without cutting.
+export function redactSecrets(value: string): string {
+  return value.replace(
     /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
     '$1[REDACTED]',
   );
@@ -218,6 +325,7 @@ export function registerPolicyInterceptors(
   options: PolicyInterceptorOptions,
 ): () => void {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
+  const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
   // Tool calls a real challenge cleared. Guards below stand down for
   // exactly these ids — never by tool name or pattern. Unchallenged
   // fast-path calls never enter this set, so #15 guards stay up for them.
@@ -291,12 +399,20 @@ export function registerPolicyInterceptors(
         if (isDestructive(command, options.workspace)) {
           return block(`destructive command blocked: ${command}`);
         }
+        // A domain-less `allowlist` allows nothing (issue #166): it is
+        // enforced as `none`, never as the unrestricted `full`.
+        const network =
+          options.network === undefined
+            ? undefined
+            : effectiveNetworkLevel(options.network);
         if (
-          (options.network === 'none' ||
-            options.shell === 'read-only-allowlist') &&
+          (network === 'none' || options.shell === 'read-only-allowlist') &&
           isNetworkCommand(command)
         ) {
-          return block(`network command blocked (network: none): ${command}`);
+          const declared = options.network ?? 'none';
+          return block(
+            `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
+          );
         }
         return undefined;
       }),
@@ -307,6 +423,13 @@ export function registerPolicyInterceptors(
     hooks.on('before_tool', (event) =>
       failClosed(() => {
         if (approvedCalls.has(event.toolCallId)) return undefined;
+        if (
+          event.toolName === 'read' &&
+          typeof event.args.path === 'string' &&
+          readRootFor(readRoots, event.args.path) !== undefined
+        ) {
+          return undefined;
+        }
         const confined = confineArgs(
           event.toolName,
           event.args,

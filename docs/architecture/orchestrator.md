@@ -49,7 +49,9 @@ solo) — and `run` never delegates.
   spawn → wait → collect record — stays write-free. Merges are the only write
   the orchestrator performs on the main tree.
 - **Merge approvals go to you.** Interactive runs prompt per merge; `--yes`
-  auto-approves; a headless run with no decider denies closed (exit 4).
+  auto-approves merges (and only merges — it never answers a worker ask,
+  issue #323); a headless run with no decider denies closed (exit 4). Each
+  merge decision is a §60 ledger row naming `--yes` or `user`.
 - **A worker's dangerous call goes to you too (issue #105).** Network,
   destructive-shell, outside-write, install and push calls a worker child
   raises are routed to the user through one approval router per run, over a
@@ -59,8 +61,12 @@ solo) — and `run` never delegates.
   `approval_timeout` rather than hanging), decisions are durable and memoized
   so an answered operation is never re-asked, and a denial reaches the worker
   as a named status (exit 4) instead of a crash. Budgets are **opt-in per
-  spawn** (§71): no configuration enforces nothing, a configured budget blocks
-  with `BUDGET_EXHAUSTED` (exit 3), and a worker cannot raise its own. The
+  spawn** and enforced (§71): no configuration enforces nothing; a configured
+  tool-call/token/cost budget is counted by the worker's own lane and ends the
+  run with `BUDGET_EXHAUSTED` (exit 3) naming the `limit=`, the manager's own
+  `maxRuntimeMs` watchdog kills a worker that outlives it (`limit=wallClock`),
+  and a worker cannot raise its own. The budget persists with the session so
+  `--resume` re-applies it. The
   full-access posture is session-scoped (§41.4) — enabled per session,
   indicated, recorded, never global. The manager's only view of a pending ask
   is a read-only blocked indicator; a manager approval attempt is refused and
@@ -72,6 +78,26 @@ solo) — and `run` never delegates.
   registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
   do and which tools exist on its lane; a contradictory document refuses the
   run before anything spawns, and `kubic doctor` prints the same refusal.
+- **A worker's provider key travels as its role grant, not as ambient env
+  (issue [#200](https://github.com/konic-labs/kubic/issues/200); §36.3,
+  §58, §59).** A worker child starts behind the §3.8 allowlist, which carries
+  no provider key. Before anything spawns, the manager resolves which
+  provider each worker's role will use (the operator's `KUBIC_MODEL`, the
+  role's resolved model, the manager's `[model]` pin, or the first usable
+  provider) and grants exactly that provider's key environment variables —
+  delivered to the child as `KUBIC_ROLE_<ROLE>_<ENV_VAR>` and read back by
+  the child as the provider's apiKey auth. A worker never receives a sibling
+  role's provider key, a second provider's key, the key under its plain name,
+  or an unrelated parent secret. A `models.json` key is still resolved and
+  audited per request in the child's own run (§36.1 rules 3-4); a built-in
+  key keeps Pi's own env auth. The grant is redacted on every
+  spawn/log/export surface. When the key is missing from the orchestrator's
+  environment the run **fails closed with exit 6, naming the provider,
+  before creating any worktree**; a conflict resolver is spawned under the
+  same rule, and `kubic doctor` (`dep:credentials:roles`) lists the provider
+  each role gets credentials for — names only. Under §58
+  `require_credential_broker` the grant carries `broker:<ref>` sentinels
+  instead of values, so no secret material reaches the child env at all.
 - **A genuine conflict is delegated to a spawned resolver — the manager never
   resolves a conflict itself.** The manager cannot write file content by
   design, so when a merge reports a real conflict it builds the §45.2

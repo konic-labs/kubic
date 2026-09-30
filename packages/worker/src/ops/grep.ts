@@ -4,7 +4,13 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkFiles } from './walk.js';
+import {
+  WALK_MAX_DEPTH,
+  WALK_MAX_ENTRIES,
+  walkCapNotice,
+  walkDepthNotice,
+  walkFiles,
+} from './walk.js';
 
 export const GREP_DEFAULT_MAX = 100;
 
@@ -25,6 +31,8 @@ export interface GrepResult {
   pattern: string;
   matches: GrepMatch[];
   truncated: boolean;
+  /** Present when a cap (walk or maxMatches) stopped the search. */
+  notice?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -86,7 +94,9 @@ export function validateGrepArgs(raw: unknown): GrepArgs {
 
 export const grepOperation: Operation<GrepArgs, GrepResult> = {
   name: 'grep',
-  description: 'Search file contents for a regex with line numbers',
+  // Walk rules and caps (issue #172) are part of what the model must know:
+  // a silent skip or a silent cut reads as "no such file / no more matches".
+  description: `Search file contents line by line with a JavaScript regex. Returns "path:line: text" lines under a header, at most maxMatches (default 100). include keeps only files whose path contains that substring (not a glob). The search skips .git, node_modules and paths a .gitignore excludes, and never follows symlinks; it walks at most ${WALK_MAX_ENTRIES} entries and ${WALK_MAX_DEPTH} directory levels, and when a cap stops it the header names which one.`,
   replay: 'safe',
   validateArgs: validateGrepArgs,
   execute: async (_inv: ToolInvocation, args: GrepArgs, ctx: OpContext) => {
@@ -94,10 +104,19 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
     const root = args.root ?? '.';
     const max = args.maxMatches ?? GREP_DEFAULT_MAX;
     const matches: GrepMatch[] = [];
-    let truncated = false;
-    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
-    truncated = hitCap;
-    for (const entry of entries) {
+    const walk = walkFiles(ctx.env.fs, root);
+    // The walk's own caps truncate the result whatever the match cap does.
+    let truncated = walk.hitCap || walk.hitDepth;
+    let notice = walk.hitCap
+      ? walkCapNotice(walk.capAt)
+      : walk.hitDepth
+        ? walkDepthNotice(walk.depthAt)
+        : undefined;
+    // A match beyond `max` was actually seen (not merely a window that ended
+    // exactly at the cap) — the one condition under which `truncated` is
+    // exact rather than conservative.
+    let overCap = false;
+    for (const entry of walk.entries) {
       if (entry.isDirectory) continue;
       if (args.include && !entry.path.includes(args.include)) continue;
       let text: string;
@@ -110,7 +129,7 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
       for (let i = 0; i < lines.length; i += 1) {
         if (!re.test(lines[i] as string)) continue;
         if (matches.length >= max) {
-          truncated = true;
+          overCap = true;
           break;
         }
         matches.push({
@@ -119,8 +138,18 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
           text: lines[i] as string,
         });
       }
-      if (truncated) break;
+      if (overCap) break;
+      // When the walk itself already cut the result, stop scanning for a
+      // match beyond the cap: the result is incomplete either way, and the
+      // notice already says so. Without a walk cut, the scan continues only
+      // until it can PROVE another match exists (or exhausts the walk), so
+      // `truncated` never over-claims on a cap-exact match set.
+      if (truncated && matches.length >= max) break;
     }
-    return { pattern: args.pattern, matches, truncated };
+    if (overCap) {
+      truncated = true;
+      notice ??= `result cap ${max} reached (maxMatches); results may be incomplete`;
+    }
+    return { pattern: args.pattern, matches, truncated, notice };
   },
 };

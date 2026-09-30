@@ -6,6 +6,7 @@
 // env (post-allowlist §3.8 + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
+import { redactSecretEnv } from '../../core/src/secret-keys.js';
 import {
   isTrajectoryFailureCode,
   type JsonValue,
@@ -148,13 +149,13 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
 // forces the caller to assert this — an intended/configured snapshot is
 // refused, so a trajectory can never claim unrun config.
 //
-// Secrecy contract (pinned by test, "records the used env VERBATIM"):
-// the exporter records the used env VERBATIM — it never scrubs, redacts,
-// or filters keys. A trajectory is a faithful record of what the run
-// actually saw; silent scrubbing would make replays lie. Secrecy is
-// enforced UPSTREAM at the spawn allowlist (#42, §3.8): secrets never
-// enter the spawn env, so there is nothing to scrub here. This behavior
-// is deliberate and pinned explicitly rather than left implicit.
+// Secrecy contract (issue #359, §36.1): every KEY the run saw is recorded,
+// but the value of each secret-classified key is replaced with
+// `<redacted>` — the same classifier (core/secret-keys.ts) the worker spawn
+// path uses. The spawn env is not secret-free: role grants ride in it as
+// KUBIC_ROLE_* (worker/src/lifecycle/env.ts), so the old "verbatim, secrecy
+// is upstream" premise did not hold. A replay needing a secret re-resolves
+// it; a trajectory never carries it.
 function checkEnvironment(input: BuildTrajectoryInput): TrajectoryEnvironment {
   const environment = input.environment;
   if (!isRecord(environment)) {
@@ -176,7 +177,10 @@ function checkEnvironment(input: BuildTrajectoryInput): TrajectoryEnvironment {
       'trajectory export blocked: environment.cwd and environment.env (the used snapshot) are required',
     );
   }
-  return environment;
+  return {
+    ...environment,
+    env: redactSecretEnv(environment.env),
+  };
 }
 
 function checkTimestamps(input: BuildTrajectoryInput): TrajectoryTimestamps {

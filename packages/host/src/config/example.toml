@@ -51,3 +51,21 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+
+[policy]
+allowed_models = ["local/*"]
+allowed_providers = ["local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = []
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+filesystem_policy = "workspace-only"
+require_credential_broker = true
+deny_local_credentials = true
+data_policy = "no-external-training"
+logging_policy = "full-audit"
+agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
+
+[[audit]]
+sink = "syslog"
+level = "privileged"

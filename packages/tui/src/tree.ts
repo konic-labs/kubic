@@ -11,6 +11,7 @@
 // are ignored.
 
 import { sanitizeLaneText } from './lane-cells.js';
+import { tuiTheme } from './theme.js';
 import type { Component, MouseRegionHandler } from './tui-boundary.js';
 import { MouseRegion } from './tui-boundary.js';
 
@@ -168,9 +169,43 @@ export function renderTreeLines(
   if (state.collapsed) {
     if (state.tools.length > 0) lines.push(`  ${collapsedSummary(state)}`);
   } else {
-    for (const call of state.tools) lines.push(toolLine(call));
+    // The row is height-capped (layout TREE_MAX_ROWS): the LATEST calls are
+    // the live work, so older ones fold into one count line.
+    const calls = state.tools;
+    const overflow = calls.length - TREE_MAX_TOOL_LINES;
+    if (overflow > 0) {
+      const hidden = overflow + 1;
+      lines.push(`  … ${hidden} earlier ${hidden === 1 ? 'call' : 'calls'}`);
+      for (const call of calls.slice(hidden)) lines.push(toolLine(call));
+    } else {
+      for (const call of calls) lines.push(toolLine(call));
+    }
   }
-  return lines.map((line) => truncateLine(line, w));
+  return lines.map((line) => styleTreeLine(truncateLine(line, w)));
+}
+
+// Tool lines shown before older calls fold into a count (one row is the
+// root, so root + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
+export const TREE_MAX_TOOL_LINES = 5;
+
+// Colour is applied AFTER truncation, over the plain line, so widths are
+// measured on text only. Identity under the default (plain) theme.
+function styleTreeLine(line: string): string {
+  const theme = tuiTheme();
+  if (theme.level === 'none') return line;
+  const match = /^(\s*)(✓|●|◌)( .*)$/u.exec(line);
+  if (match === null) return theme.muted(line);
+  const [, lead = '', glyph = '', rest = ''] = match;
+  const styledGlyph =
+    glyph === '✓'
+      ? theme.success(glyph)
+      : glyph === '●'
+        ? theme.warm(glyph)
+        : theme.muted(glyph);
+  const styledRest = rest
+    .replace(/ error\b/, ` ${theme.error('error')}`)
+    .replace(/ (\d+ms)$/, ` ${theme.muted('$1')}`);
+  return `${lead}${styledGlyph}${lead === '' ? theme.bold(styledRest) : styledRest}`;
 }
 
 export type TreeMouseEvent = Parameters<MouseRegionHandler>[0];

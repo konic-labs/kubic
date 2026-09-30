@@ -9,27 +9,39 @@
 ## Running it
 
 ```
-kubic doctor [--skip <id[,id…]>] [--json]
+kubic doctor [--skip <id[,id…]>]... [--json]
 ```
 
-Each check prints one human line:
+`kubic doctor --help` prints the generated help. Each check prints one
+human line on stdout (the status word coloured on a colour terminal;
+plain text under a pipe or `NO_COLOR`); notes such as a `models.json` load
+go to stderr as `info:` lines, so stdout — and `--json` — carry only the
+report:
 
 ```
-PASS provider:local (ok): listed, not dialled, 1 model(s) registered
-FAIL provider:openai (provider-down): listed, not dialled — unreachable
-doctor: 3 pass, 6 warn, 1 fail, 0 skip
+PASS provider:local (ok): listed, not dialled, 1 model(s) registered — from /repo/models.json
+PASS provider:anthropic (ok): listed, not dialled, 23 model(s) registered — built-in, auth from ANTHROPIC_API_KEY
+doctor: 4 pass, 6 warn, 0 fail, 0 skip
 ```
 
 Provider lines are explicit about what was measured: `listed, not dialled`
 means the provider is registered in the catalog but nothing contacted it
 (the default probe — zero network). A probe that really dialled reports
 `dialled and reachable`; the line never claims reachability it did not
-observe.
+observe. Each line names where the provider came from (`built-in` with its
+auth source, or the `models.json` path). Only **usable** providers are
+listed: Pi's built-ins whose env key / ambient credentials are not set
+are left out (they are not available to a run — `kubic models` names
+them).
 
 `--json` emits `{ok, exitCode, checks}` with the same checks and the
 same exit code. Exit contract: 0 clean, 6 provider-down, 1 any other
 fail, 2 usage error — full table on the
 [exit-codes page](exit-codes.md).
+
+Under `KUBIC_PROVIDER=faux` the `faux` testing provider is listed like
+any other and a `warn:` line on stderr names it — a clean doctor under the
+switch says nothing about a real provider.
 
 On a fresh clone with no provider configured, doctor exits 6 with
 exactly one failure — `FAIL limit:provider-availability (provider-down)` —
@@ -46,8 +58,11 @@ Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,
 | --- | --- | --- |
 | `provider:<id>` | Is the provider reachable, and how many models are registered? (`listed, not dialled` when nothing contacted it.) | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. |
 | `dep:<id>` | Is the dependency present? (Today: `node`, needs >= 22.19.) | `reason: deps-missing` → install/upgrade the dep; the detail line says what was found. |
-| `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. | Your `[approvals]` config — see [configuration](configuration.md). |
+| `dep:models-json` | Which `models.json` files were found, their scope (`global`/`project`) and state: `loaded <ids>`, `ignored, untrusted` (a project file before `kubic trust` / `KUBIC_TRUST_PROJECT=1`) or `invalid — <reason>`. Fails only on an invalid file. | Fix or remove the named file — see [configuration](configuration.md#modelsjson). |
+| `dep:credentials:roles` | Which provider each role's workers get credentials for (issue #200), over the same default delegation set a bare `kubic orchestrate` assigns and the same resolution the orchestrate credential preflight uses — provider **names only** (`planner→gw, implementer→gw`). Fails when a role's provider key is not in this environment — or its credential cannot reach a worker at all (`amazon-bedrock`, `azure-openai-responses` and `google-vertex` on application default credentials read process-level configuration the worker env allowlist does not carry) — naming the provider: the run itself would fail closed with exit 6 before creating a worktree. Roles the manager would refuse under the enterprise tool policy (see `role:<name>`) get no worker, so they are left out of the line; under a frozen enterprise `[model]` the provider named is the enterprise model's, not the one a `KUBIC_MODEL` the freeze dropped would name. | Run `kubic orchestrate` on a repo whose role expects a provider key: set the provider's env key (see [configuration](configuration.md)) or point the role/operator model at a configured provider. |
+| `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. An always-ask capability in `autoApprove` (`kubic-state-write`) is a `warn` (exit-neutral) naming it as ignored, and the line's `N auto-approved` count leaves it out. | Your `[approvals]` config — see [configuration](configuration.md). |
 | `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented solo defaults otherwise. |
+| `role:<name>` | One check per role document under `.kubic/roles/`, judged the way `kubic run --role <name>` resolves it: the document merged under the config `[roles.<name>]` layers. `pass` lists the resolved tool set. Fails (`policy-mismatch`) with the resolver's named reason for a contradictory document (§40.3) and, under an enterprise `[policy]` tool gate (§58), for a role that declares a denied tool or one outside `allowed_tools` — `role 'implementer' refused: tool 'bash' denied … enterprise denial holds`; a `[roles.<name>]` layer that narrows the denied tool away keeps it green. `kubic orchestrate` refuses the same assignment (`role_refused`) before anything spawns. An unparseable role directory reports as `role:documents`; no role documents at all is a `pass`. | Fix the document (or the layer) the detail names; a denial is the enterprise policy working — see [configuration](configuration.md#enterprise-policy-policy-58). |
 | `session:overlap` | How many sessions are recorded against this cwd in the local session store? Two or more prints `warn` with the session ids (issue #118): concurrent **different**-session runs stay legal, but each run's end-of-run sweep compares against its own boot baseline, so a live sibling's in-flight changes are recorded as unattributed, non-reversible journal entries. The store lists sessions, so the note is a possible overlap, never a verified one. | Nothing to fix — the overlap is disclosed, not blocked (`warn` never flips the exit). If the journal accounting matters, run the sessions one at a time. |
 | `extension:bundle` | Did the first-party bundle (`kubic/budget`, under `skills/budget/`) load through the trust gates? Reports `loaded N (…)` plus `refused M (…)` — the two live bypass probes (owned-path traversal, truthy remote flag) are refused on every run. | `reason: extension-posture` → the bundle dir is missing/unreadable, the manifest failed the trust gates, or (tripwire) a bypass was admitted: fix the install (`skills/budget/manifest.json`), never `--skip` it into silence. A fail exits 1. |
 | `license:kubic` | License identity (`MIT`). Always passes; reported, never skipped implicitly (explicit `--skip license:kubic` still works). | Nothing — informational. |

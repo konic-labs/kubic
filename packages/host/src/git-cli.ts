@@ -1,10 +1,22 @@
-// `kubic git <status|log|commit|stage>` commands (issue #19, slice D; §43.1).
-// Thin over the worker git ops; presentation only. Exit 0 on success,
-// 1 on usage errors, op failures, or outside-a-repo (with the reason —
-// the journal path `kubic diff/undo` keeps working without git).
+// `kubic git <status|log|stage|commit>` commands (issue #19, slice D; §43.1).
+// Thin over the worker git ops; presentation only. commander (the
+// composition root, apps/kubic/src/commands/journal.ts) owns argv, help and
+// parse errors and hands a typed `GitRequest` here.
+//
+// Exit codes: 0 success; 1 an op failure or outside-a-repo (thrown as
+// CliExitError — one `error:` line on stderr, with the reason; the journal
+// path `kubic diff/undo` keeps working without git); 2 a usage error
+// (thrown as CliUsageError).
 
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import {
+  CliExitError,
+  CliUsageError,
+  EXIT_FAILED,
+  EXIT_OK,
+} from '../../core/src/cli/exit-codes.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { renderTable } from '../../core/src/cli/table.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { ExecutionEnv } from '../../exec/src/env.js';
 import {
   createInvocation,
@@ -21,52 +33,53 @@ export interface GitCommandDeps {
   env: ExecutionEnv;
   sessionId?: string;
   agentId?: string;
+  // stdout: the report or the one `--json` document.
   out: (line: string) => void;
+  // Report colours (status verdicts, table headers). Default: none; never
+  // applied to `--json`.
+  theme?: CliTheme;
+  // Box-drawn `log` table. Default: plain aligned columns.
+  fancy?: boolean;
 }
 
-// Issue #127: per-subcommand specs. `status`/`stage` stay lenient about
-// unknown flags (they always were); `log` and `commit` keep their refusal
-// lines and exit 1.
-const GIT_STATUS_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-];
-const GIT_LOG_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--max', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
-const GIT_STAGE_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-];
-const GIT_COMMIT_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '-m', takes: 'value' },
-];
+export type GitRequest =
+  | { command: 'status'; json?: boolean | undefined }
+  | { command: 'log'; max?: number | undefined; json?: boolean | undefined }
+  | {
+      command: 'stage';
+      paths: readonly string[];
+      json?: boolean | undefined;
+    }
+  | { command: 'commit'; message: string; json?: boolean | undefined };
 
-export const GIT_USAGE =
-  'usage: kubic git <status [--json] | log [--max <n>] [--json] | stage [--] <path...> | commit -m <message>>';
+export const GIT_NOT_A_REPO =
+  'not a git repository — kubic diff/undo still work without git';
 
-export function gitUsage(out: (line: string) => void): number {
-  out(GIT_USAGE);
-  return 1;
+function fail(message: string): never {
+  throw new CliExitError(
+    EXIT_FAILED,
+    message.includes('not a git repository') ? GIT_NOT_A_REPO : message,
+  );
 }
 
-function fail(deps: GitCommandDeps, message: string): number {
-  if (message.includes('not a git repository')) {
-    deps.out(`not a git repository — kubic diff/undo still work without git`);
-    return 1;
-  }
-  deps.out(`error: ${message}`);
-  return 1;
-}
+const PLAIN = createCliTheme('none');
+
+// git's wording for `git log` on a branch with no commits yet.
+const UNBORN_BRANCH = /does not have any commits yet/;
+
+const LOG_COLUMNS = [
+  { header: 'SHA' },
+  { header: 'DATE' },
+  { header: 'AUTHOR' },
+  { header: 'MESSAGE' },
+] as const;
 
 export async function runGitCommand(
-  args: string[],
+  request: GitRequest,
   deps: GitCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before any subcommand dispatch (issue #100).
-  const help = answerHelp(args, deps.out, GIT_USAGE);
-  if (help !== null) return help;
-  const [sub, ...rest] = args;
-  if (sub === undefined) return gitUsage(deps.out);
+  const json = request.json === true;
+  const theme = json ? PLAIN : (deps.theme ?? PLAIN);
   const memos = new MemoryMemoStore();
   const ctx: OpContext = {
     env: deps.env,
@@ -79,103 +92,105 @@ export async function runGitCommand(
       memos,
     ) as Parameters<typeof callOperation>[2];
 
-  if (sub === 'status') {
-    const out = await callOperation('git_status', {}, inv('cli-status'), ctx);
-    if (!out.ok) return fail(deps, out.error.message);
-    const s = out.result;
-    const flags = parseFlagArgs(rest, GIT_STATUS_FLAG_SPEC);
-    if (flags.values['--json'] === true) {
-      deps.out(JSON.stringify(s, null, 2));
-      return 0;
+  switch (request.command) {
+    case 'status': {
+      const out = await callOperation('git_status', {}, inv('cli-status'), ctx);
+      if (!out.ok) return fail(out.error.message);
+      const s = out.result;
+      if (json) {
+        deps.out(formatJson(s));
+        return EXIT_OK;
+      }
+      deps.out(
+        `branch ${theme.bold(s.branch ?? '(detached HEAD)')}${s.ahead > 0 ? ` (ahead ${s.ahead})` : ''}${s.behind > 0 ? ` (behind ${s.behind})` : ''}`,
+      );
+      for (const p of s.staged) deps.out(`${theme.success('staged:')} ${p}`);
+      for (const p of s.unstaged) {
+        deps.out(`${theme.warning('modified:')} ${p}`);
+      }
+      for (const p of s.untracked)
+        deps.out(`${theme.muted('untracked:')} ${p}`);
+      if (s.clean) deps.out(theme.success('clean'));
+      return EXIT_OK;
     }
-    deps.out(
-      `branch ${s.branch}${s.ahead > 0 ? ` (ahead ${s.ahead})` : ''}${s.behind > 0 ? ` (behind ${s.behind})` : ''}`,
-    );
-    for (const p of s.staged) deps.out(`staged: ${p}`);
-    for (const p of s.unstaged) deps.out(`modified: ${p}`);
-    for (const p of s.untracked) deps.out(`untracked: ${p}`);
-    if (s.clean) deps.out('clean');
-    return 0;
+    case 'log': {
+      const max = request.max;
+      if (max !== undefined && !(Number.isInteger(max) && max >= 1)) {
+        throw new CliUsageError('--max needs a positive integer');
+      }
+      const out = await callOperation(
+        'git_log',
+        max === undefined ? {} : { max },
+        inv('cli-log'),
+        ctx,
+      );
+      // A fresh repo (unborn branch) has an empty history, not a failure.
+      if (!out.ok && !UNBORN_BRANCH.test(out.error.message)) {
+        return fail(out.error.message);
+      }
+      const entries = out.ok ? out.result.entries : [];
+      if (json) {
+        deps.out(formatJson(entries));
+        return EXIT_OK;
+      }
+      if (entries.length === 0) {
+        deps.out('no commits');
+        return EXIT_OK;
+      }
+      const rows = entries.map((e) => [
+        theme.warning(e.sha.slice(0, 8)),
+        e.date,
+        e.author,
+        e.message,
+      ]);
+      const table = renderTable(rows, LOG_COLUMNS, {
+        fancy: deps.fancy === true,
+        theme,
+      });
+      for (const line of table.split('\n')) deps.out(line);
+      return EXIT_OK;
+    }
+    case 'stage': {
+      if (request.paths.length === 0) {
+        throw new CliUsageError('stage needs at least one path');
+      }
+      const out = await callOperation(
+        'git_stage',
+        { paths: [...request.paths] },
+        inv('cli-stage'),
+        ctx,
+      );
+      if (!out.ok) return fail(out.error.message);
+      if (json) {
+        deps.out(formatJson(out.result));
+        return EXIT_OK;
+      }
+      for (const p of out.result.staged) {
+        deps.out(`${theme.success('staged')} ${p}`);
+      }
+      return EXIT_OK;
+    }
+    case 'commit': {
+      if (request.message === '') {
+        throw new CliUsageError('commit needs a non-empty message (-m)');
+      }
+      const out = await callOperation(
+        'git_commit',
+        { message: request.message },
+        inv('cli-commit'),
+        ctx,
+      );
+      if (!out.ok) return fail(out.error.message);
+      if (json) {
+        deps.out(formatJson(out.result));
+        return EXIT_OK;
+      }
+      deps.out(
+        `${theme.success('committed')} ${out.result.sha.slice(0, 8)} (${out.result.files.length} file(s))`,
+      );
+      return EXIT_OK;
+    }
   }
-
-  if (sub === 'log') {
-    const flags = parseFlagArgs(rest, GIT_LOG_FLAG_SPEC);
-    const maxRaw = flags.values['--max'] as string | undefined;
-    const max = maxRaw === undefined ? undefined : Number(maxRaw);
-    if (
-      (maxRaw !== undefined || flags.missing.includes('--max')) &&
-      (max === undefined || !Number.isInteger(max) || max < 1)
-    ) {
-      deps.out('error: --max needs a positive integer');
-      return 1;
-    }
-    const out = await callOperation(
-      'git_log',
-      max === undefined ? {} : { max },
-      inv('cli-log'),
-      ctx,
-    );
-    if (!out.ok) return fail(deps, out.error.message);
-    if (flags.values['--json'] === true) {
-      deps.out(JSON.stringify(out.result.entries, null, 2));
-      return 0;
-    }
-    if (out.result.entries.length === 0) {
-      deps.out('no commits');
-      return 0;
-    }
-    for (const e of out.result.entries) {
-      deps.out(`${e.sha.slice(0, 8)} ${e.date} ${e.author}: ${e.message}`);
-    }
-    return 0;
-  }
-
-  if (sub === 'stage') {
-    const flags = parseFlagArgs(rest, GIT_STAGE_FLAG_SPEC);
-    const paths = [...flags.positional];
-    if (paths.length === 0) {
-      deps.out('error: stage needs at least one path');
-      return 1;
-    }
-    const out = await callOperation(
-      'git_stage',
-      { paths },
-      inv('cli-stage'),
-      ctx,
-    );
-    if (!out.ok) return fail(deps, out.error.message);
-    for (const p of out.result.staged) deps.out(`staged ${p}`);
-    return 0;
-  }
-
-  if (sub === 'commit') {
-    const flags = parseFlagArgs(rest, GIT_COMMIT_FLAG_SPEC);
-    // `-m -- <message>` (issue #127): the terminator is the escape hatch
-    // for a message that begins with `--`; the bare form stays refused as
-    // the typo rule (`-m --amend` never silently takes `--amend`).
-    const operands = [...flags.positional];
-    let message = flags.values['-m'] as string | undefined;
-    if (message === undefined && rest.includes('--') && operands.length > 0) {
-      message = operands.shift();
-    }
-    if (message === undefined || message === '') {
-      deps.out('error: commit needs -m <message>');
-      return 1;
-    }
-    const out = await callOperation(
-      'git_commit',
-      { message },
-      inv('cli-commit'),
-      ctx,
-    );
-    if (!out.ok) return fail(deps, out.error.message);
-    deps.out(
-      `committed ${out.result.sha.slice(0, 8)} (${out.result.files.length} file(s))`,
-    );
-    return 0;
-  }
-
-  return gitUsage(deps.out);
 }
 
 export function gitPushHasNoTool(): boolean {

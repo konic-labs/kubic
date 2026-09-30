@@ -133,10 +133,13 @@ describe('session lock, prod paths (issue #118)', () => {
     const kill = stubKill(true);
     try {
       const lines: string[] = [];
-      const code = await runSessionsCommand(['attach', id], {
-        sessionsRoot: root,
-        out: (line) => lines.push(line),
-      });
+      const code = await runSessionsCommand(
+        { command: 'attach', id: id },
+        {
+          sessionsRoot: root,
+          out: (line) => lines.push(line),
+        },
+      );
       expect(code).toBe(1);
       const text = lines.join('\n');
       expect(text).toContain(String(FAKE_PID));
@@ -188,6 +191,31 @@ describe('repo-level overlap warning (issue #118)', () => {
     expect(result.terminus).toBe('completed');
     expect(
       debugLines.some((line) =>
+        line.includes('another run may be live in this workspace'),
+      ),
+    ).toBe(true);
+  });
+
+  it('reaches the --debug sink when the caller wired no separate debug dep (the prod `kubic run` shape)', async () => {
+    const root = tmpRoot();
+    const workspace = tmpRoot('ws-');
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const sibling = await createSession(store, workspace, BACKGROUND_CONTEXT);
+    await sibling.close(BACKGROUND_CONTEXT);
+    const sinkLines: string[] = [];
+    const result = await runHeadlessPrompt(
+      'hello',
+      { debug: true },
+      {
+        sessionsRoot: root,
+        models: fauxModels(['all done']),
+        env: new NodeExecutionEnv(workspace),
+        debugSink: (line) => sinkLines.push(line),
+      },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(
+      sinkLines.some((line) =>
         line.includes('another run may be live in this workspace'),
       ),
     ).toBe(true);

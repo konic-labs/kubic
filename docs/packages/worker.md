@@ -19,19 +19,20 @@ diff touching the boundary for maintainer review.
 | --- | --- |
 | `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
 | `pi-boundary.ts` | Sole Pi seam: harness types (`AgentLane`, `AgentHarnessTool`, `Context`, `DriveOutcome`, `Events`, `HarnessEvent`, `Session`, `SessionRepo`, `UsageRow`, …) + values (`AgentHarness`, `BACKGROUND_CONTEXT`, `MemorySessionRepo`, `JsonlSessionRepo`, `ok`, `err`, `FileError`); model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions`, `SoloLane`, `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions` (`modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`model`: the model the lane actually runs), `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `EventSource`, `toKubicLaneEvent`, `attachLaneEvents`, `watchLane` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
-| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` |
+| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
 | `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
+| `lane/pending.ts` | `PendingPolicy`, `PendingSettlement`, `PendingLane`, `PendingDriver`, `settlePendingOperation`, `pendingHead`, `describePendingOperation`, `describeSettlement`, `inspectOpenOperations`, `lastUserPromptText` — settle a turn a crashed process left open (#147: resume or durable abort) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |
-| `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `buildSpawnEnv`, `redactEnvForLog` |
+| `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
 | `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
 | `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
 | `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `formatUsageLine` |
@@ -62,6 +63,58 @@ Child output is capped at two independent layers, both keeping the **tail**
   consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
+### Find/grep walk bounds (issue #172)
+
+`walkFiles` (`ops/walk.ts`) is what `find` and `grep` recurse with, so
+both made the same mistake on a real repo: the 10,000-entry cap was spent on
+`.git` and dependency trees, and a symlinked directory was followed as a
+second route to a subtree — a loop returned the same file under every route
+until the cap or the depth bound stopped it. The walk now:
+
+- **Never walks `.git`**, at any depth, ahead of the ignore matcher: a
+  `.gitignore` line cannot un-ignore it.
+- **Applies the default ignore set (`node_modules/`) plus every
+  `.gitignore` on the way down**, matched against the walk-root-relative
+  path. Nested rules ride the stack frame, so they scope to their own
+  subtree, and child rules are appended after the parent's — last-match-wins,
+  so a nested negation overrides a broader ignore, the ordering git uses. An
+  unreadable ignore file keeps the parent rules and keeps walking (the
+  documented widening, never a throw). The matcher is the journal's shared
+  subset (`exec/ignore.ts`), so repo-wide search and `kubic diff` agree on
+  what is ignored; its limits (character classes, nested anchored patterns
+  needing the root-relative form) are stated in [@kubic/exec](exec.md),
+  under "Baseline walk ignores".
+- **Never follows a symlink**, file or directory: the walk uses the optional
+  `FileSystem.lstat` (`exec/env.ts`) and skips any entry it marks
+  `isSymbolicLink`, so a loop yields one match per real path and a dangling
+  link is skipped rather than stat-failing. The named ROOT is the caller's
+  explicit target and is read as given (a symlinked root path still walks);
+  only links below it are skipped. Seams without `lstat` cannot tell
+  a link from its target (the documented widening; `FakeExecutionEnv` has no
+  links to make). The skill read-roots wrapper (`withReadRoots`,
+  `exec/read-roots.ts`) forwards `lstat`, so a user with skills outside the
+  workspace keeps this protection; it once dropped the method and the walk
+  fell back to `stat`.
+- **Says when a bound stopped it.** `truncated: true` now always carries an
+  optional, additive `notice` naming the bound: `walk entry cap 10000
+  reached while listing <dir>; results may be incomplete` for the entry
+  bound, `walk depth cap 100 reached at <dir>; results may be incomplete`
+  for the depth bound, or `result cap <n> reached (maxResults); results may
+  be incomplete` / `(maxMatches)` for the op's own limit. `grep`'s
+  model-facing text carries the notice after the `truncated` marker (`find`'s
+  JSON result already did). The match cap is
+  exact: `truncated` is set only once a match beyond `maxMatches` was
+  actually seen, never merely because the cap filled on the last match.
+  Tool names, argument shapes, and the
+  existing result fields are unchanged; `ls` skips an entry whose `stat`
+  fails (a dangling symlink) instead of throwing, which it already did and is
+  now pinned by test.
+
+The real-filesystem suite for all of this is
+`packages/worker/src/ops/walk-real.test.ts` (mkdtemp trees through
+`NodeExecutionEnv`, a >10k `node_modules` fixture, a directory cycle, and a
+cleanup `afterEach`).
+
 ### Bash op: bash-preferred, sh fallback (issue #123)
 
 The `bash` op runs **bash when the system has it** — not `sh`, so
@@ -81,6 +134,13 @@ retry handle is re-registered via `ctx.trackHandle` so
 timeout/abort kill whichever handle is live. The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.
+
+The op also bounds a call in time (issue #339): with no `timeout` the command
+gets `BASH_DEFAULT_TIMEOUT_SEC` (120 s), any timeout is clamped to
+`BASH_MAX_TIMEOUT_SEC` (600 s), and processes the command backgrounded are
+killed when it exits unless `KUBIC_BASH_KEEP_BACKGROUND` opts in. Both limits
+and the model-facing description come from those constants; the user-facing
+statement is in [tools](../cli/tools.md#bash-limits).
 
 ### Read/edit bounds (issue #122)
 
@@ -104,12 +164,40 @@ Two hard bounds keep one tool call from costing the whole file in memory
   started does not. That is distinct from an offset whose line lies beyond
   the budget — the empty-region case, which returns empty content with
   `truncated: true`. When the scan did reach EOF, `truncated` reflects
-  only output cutting (the line window and `READ_MAX_LINES`) — an explicit
-  `limit` is the requested region, not truncation.
+  only output cutting (the line window, `READ_MAX_LINES`, and the 51200B
+  output cap) — an explicit `limit` is the requested region, not
+  truncation. `readWindowed` calls
+  `fs.readFileRange` as a method (the real `NodeFileSystem` reads
+  `this.cwd`; #199), and `read` names the actual failure: a missing path
+  is `not_found`, a directory `is_directory`, an unreadable file
+  `permission_denied`, a cwd-confinement escape `invalid_args`; any other
+  error propagates as a fault instead of masquerading as a missing file.
 - **`edit` — `EDIT_MAX_BYTES` (8 MiB):** `stat` first and refuse above the
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal
   untouched. The boundary is exact: 8 MiB edits fine, 8 MiB + 1 refuses.
+- **`read` output bounds (issue #176; §27.5):** the scan bound above is
+  not a context bound. `READ_RESULT_MAX_BYTES` (51200B — Pi's
+  `DEFAULT_MAX_BYTES`) caps what the model sees, whole lines only: a window
+  past the cap keeps the lines that fit and adds
+  `output clipped at 51200B` (the last kept line still drives
+  `more: offset=`); a line that alone exceeds the cap is left out whole —
+  a partial line could poison an exact-match `edit` — with a
+  `line K is NB …` notice carrying a shell-quoted `sed -n 'Kp' < … | head
+  -c 51200` continuation (the path goes through stdin, never an operand:
+  GNU sed would read a leading-dash name as `-e`/`-f`/`-w` options) and
+  `more: offset=K+1` when further lines exist. An
+  offset past the last line, known exactly only when the scan reached EOF,
+  carries `offset K is past the last line (N lines total)`; when the budget
+  stopped the scan instead, the offset is only past the CONFIRMED lines and
+  the old `no lines at offset K (file has at least N lines)` header stays.
+  The first chunk is sniffed for NUL and for invalid UTF-8 (strict decode
+  with stream semantics, so a codepoint straddling the 512 KiB read
+  boundary is not a false positive); binary content returns an empty
+  `content`, a structured `binary: { reason, bytes }`, and a `binary file
+  (NB, …)` notice — the sniff only MARKS the window, so the #122 scan
+  contract is unchanged. `ReadResult` only gains fields; nothing is
+  renamed.
 
 The reason for both: `read` capped only its output and `edit` capped
 nothing, so `read` with `limit: 1` or one `edit` on a multi-GB file cost the
@@ -249,6 +337,13 @@ tests use fixture rows, never network or paid tokens.
 `buildSpawnEnv`, `redactEnvForLog`); detached exits are reaped with a
 1s teardown budget (`TEARDOWN_BUDGET_MS`).
 
+A worker child reads its own provider credential back with
+`roleGrantEnv`/`withRoleGrant` (issue #200): the `KUBIC_ROLE_<ROLE>_*`
+grant is exposed under the plain provider-key names the models assembly
+asks for, only for the role the child was told it runs as — a sibling
+prefix never matches. The plain names exist only in the env view handed
+to the models assembly for that read, never in the child's process env.
+
 ### Live spawn path (issue #94: `launch.ts`, `shell.ts`, `rows.ts`)
 
 `kubic orchestrate` starts every worker through `launchWorker`, so the
@@ -262,7 +357,9 @@ and `launched.perf()` reports the §61 sample against
 allowlist reaches the OS through `allowlistedShell` (`env -i …`, since
 the exec Shell seam carries no env field); `KUBIC_WORKER_ID` is on the
 allowlist so a worker announces itself, and an ordinary `kubic run`
-prints no marker. Registry rows persist to
+prints no marker. `KUBIC_WORKER_GENERATION` (the generation the row was
+registered under) rides next to it, so the child's §46 trajectory records
+the same generation `kubic workers` shows (issue #383). Registry rows persist to
 `<repo>/.kubic/orchestrator/workers.json` (§35 keeps that out of git) and
 `kubic workers` reads them back — one shared record, never a fresh empty
 registry.

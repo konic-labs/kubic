@@ -24,10 +24,14 @@
 //   - the manager's only view of an ask: buildManagerBlockedIndicator
 //     (read-only). attemptManagerApprove is refused and audited.
 
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { FileBridge } from '../../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import {
+  appendToLedger,
+  orchestratorDecisionAudit,
+} from '../../policy/audit-ledger.js';
 import {
   applyBudgetRaise,
   BUDGET_EXHAUSTED,
@@ -142,8 +146,12 @@ export interface PublishedWorkerAsk {
 // ---------------------------------------------------------------------------
 
 export const APPROVALS_DIR = 'approvals';
+// §60 posture values on ledger records.
+export const POSTURE_APPROVALS = 'approvals';
+export const POSTURE_FULL_ACCESS = 'full-access';
 export const DECISIONS_FILE = 'decisions.json';
-export const AUDIT_FILE = 'audit.jsonl';
+// The §60 ledger file (policy/audit-ledger.ts) in this approvals dir.
+export { AUDIT_LEDGER_FILE as AUDIT_FILE } from '../../policy/audit-ledger.js';
 export const ASKS_DIR = 'asks';
 export const SKIP_RECORDS_FILE = 'skip-records.json';
 
@@ -188,26 +196,17 @@ export class FileDecisionStore implements DecisionStore {
   }
 }
 
-// The run's audit sink: append-only JSONL beside the decisions it explains.
-// A sink failure never decides a run — the decision already happened — so it
-// is swallowed here and the in-memory log still answers readers.
-export class FileAuditLog {
-  private readonly bridge: FileBridge;
-  private readonly file: string;
+// The run's in-process router trace (typed events for the live surfaces and
+// tests). It is NOT the durable audit: decisions are persisted as §60
+// OrgAuditRecords in the repo ledger (policy/audit-ledger.ts).
+export class RouterAuditTrace {
   private readonly entries: RouterAuditEvent[] = [];
 
-  constructor(dir: string) {
-    this.bridge = createNodeFileBridge(dir);
-    this.file = AUDIT_FILE;
-  }
-
   append(event: RouterAuditEvent): void {
+    // In-process trace only. The durable trail is the §60 ledger
+    // (policy/audit-ledger.ts): decisions land there as OrgAuditRecords, so
+    // the file holds ONE record format that `kubic audit` reads back.
     this.entries.push(event);
-    try {
-      this.bridge.appendFile(this.file, `${JSON.stringify(event)}\n`);
-    } catch {
-      // Best-effort durability; see the class note.
-    }
   }
 
   events(): readonly RouterAuditEvent[] {
@@ -222,13 +221,6 @@ export class FileAuditLog {
 export type WorkerAskSeat = (
   request: OrchestratorApprovalRequest,
 ) => Promise<OrchestratorVerdict | undefined>;
-
-// The user's standing answer for a run (`--yes`): the flag IS the user's own
-// pre-authorization for this run, which is why the verdict is stamped
-// by:'user' — never a manager grant and never a model claim.
-export function createStandingAnswerSeat(): WorkerAskSeat {
-  return async () => ({ approved: true, by: 'user' });
-}
 
 // The USER's seat on an interactive run: what a TTY orchestration attaches so
 // a worker's challenged call is PRESENTED — the §41.2 dialog. It is the same
@@ -302,7 +294,12 @@ export function formatWorkerAskQuestion(
     request.justification === undefined || request.justification.trim() === ''
       ? 'no justification given'
       : request.justification.trim();
-  return `worker '${request.agentId}' requests ${request.trigger} (${request.toolName}): ${reason} — approve?`;
+  // Issue #316: the full command, on its own lines, so a padded prefix
+  // cannot hide the tail the approval actually covers.
+  const head = `worker '${request.agentId}' requests ${request.trigger} (${request.toolName}): ${reason}`;
+  if (request.command === undefined) return `${head} — approve?`;
+  const command = request.command.split('\n').join('\n           ');
+  return `${head}\n  command: ${command}\napprove?`;
 }
 
 // The worker CHILD's seat: what a spawned `kubic run` attaches so a
@@ -320,16 +317,22 @@ export function createWorkerMailboxSeat(options: {
   capability: string;
   toolName: string;
   summary: string;
+  command?: string;
   justification?: string;
 }) => Promise<OrchestratorVerdict | undefined> {
   return async (request) => {
     const published = publishWorkerAsk(options.dir, {
       trigger: request.capability,
       toolName: request.toolName,
-      // The seat sees the lane's own request shape (key/capability/summary),
-      // never the raw args: the ask is re-derived by the router from what the
-      // lane reports, so a seat cannot smuggle args it was not given.
-      args: { summary: request.summary },
+      // The seat sees the lane's own request shape (key/capability/summary/
+      // command), never the raw args: the ask is re-derived by the router
+      // from what the lane reports, so a seat cannot smuggle args it was not
+      // given. Issue #316: a bash call forwards its FULL command, so the
+      // manager's seat shows what will run instead of a cut summary.
+      args:
+        request.command === undefined
+          ? { summary: request.summary }
+          : { command: request.command },
       justification:
         request.justification ??
         `worker child needs ${request.capability} to complete its plan step`,
@@ -372,11 +375,21 @@ export interface WorkerAskRouter {
 export interface WorkerAskRouterOptions {
   /** Directory for decisions, audit and the ask mailbox. */
   dir: string;
+  /**
+   * Where the §60 ledger records land, when that differs from `dir`
+   * (issue #279): the approvals run keeps its mailbox and decisions per
+   * session but the repo's ledger in ONE place. Absent means `dir`.
+   */
+  ledgerDir?: string;
   maxPendingMs: number;
   /** Where the user's answer comes from. Absent = no surface (denies closed). */
   seat?: WorkerAskSeat;
   /** Extra sink beside the durable audit log. */
   audit?: (event: RouterAuditEvent) => void;
+  /** §60 posture stamped on ledger records (default: approvals enabled). */
+  posture?: () => string;
+  /** Where a failed ledger append is reported (never decides the ask). */
+  debug?: (line: string) => void;
 }
 
 export function createWorkerAskRouter(
@@ -388,7 +401,7 @@ export function createWorkerAskRouter(
   // The router's dir IS the mailbox dir: decisions, audit and asks live
   // together, so "what is pending" needs no second path.
   const mailboxDir = options.dir;
-  const auditLog = new FileAuditLog(options.dir);
+  const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
     options.audit?.(event);
@@ -400,6 +413,20 @@ export function createWorkerAskRouter(
     audit,
   });
   const pendingAsks = new Map<string, OrchestratorApprovalRequest>();
+  // §60: every decision (approve, deny, timeout, manager refusal) becomes
+  // one OrgAuditRecord in the repo ledger beside the decisions it explains.
+  const ledger = (
+    request: OrchestratorApprovalRequest,
+    verdict: OrchestratorVerdict,
+  ): void => {
+    appendToLedger(
+      options.ledgerDir ?? mailboxDir,
+      orchestratorDecisionAudit(request, verdict, {
+        posture: options.posture?.() ?? POSTURE_APPROVALS,
+      }),
+      (message) => options.debug?.(`audit: ledger append failed: ${message}`),
+    );
+  };
 
   const ask = async (
     input: WorkerAskInput,
@@ -418,6 +445,7 @@ export function createWorkerAskRouter(
         askOptions.autoApprove === true
           ? router.submit(request, { approved: true, by: 'user' })
           : await router.request(request);
+      ledger(request, verdict);
       return classifyVerdict(request.key, verdict);
     } finally {
       pendingAsks.delete(request.key);
@@ -452,7 +480,9 @@ export function createWorkerAskRouter(
         // An unknown key is still a manager approve attempt: it is refused
         // against a key-shaped envelope so the refusal is audited either way.
         ({ key } as OrchestratorApprovalRequest);
-      return attemptManagerApprove(request, { audit });
+      const verdict = attemptManagerApprove(request, { audit });
+      ledger(request, verdict);
+      return verdict;
     },
     decided: (key: string) => router.decided(key),
     pendingKeys: () => router.pendingRequests().map((request) => request.key),
@@ -696,9 +726,12 @@ export interface WorkerApprovalsRunOptions {
   dir: string;
   sessionId: string;
   maxPendingMs: number;
-  /** `--yes`: the user's standing answer for this run. */
-  autoApprove?: boolean;
-  /** The user's seat when a surface exists (TTY); absent denies on the bound. */
+  /**
+   * The user's seat when a surface exists (TTY); absent denies on the bound.
+   * There is deliberately no `--yes` knob here (issue #323): the run's
+   * standing answer covers the MERGE gate only, so a worker's dangerous call
+   * always reaches the real seat or denies closed — never an inferred grant.
+   */
   seat?: WorkerAskSeat;
   /** Opt-in budget, applied to every spawn; undefined enforces nothing. */
   budget?: unknown;
@@ -710,10 +743,40 @@ export interface WorkerApprovalsRunOptions {
   budgetForAgent?: (agentId: string) => unknown;
   /** User opt-in full-access posture for THIS session (§41.4). */
   fullAccess?: boolean;
+  /**
+   * A FRESH (non-`--resume`) run of this session id: discards the approvals
+   * state an earlier run of the same id left in `approvals/<session>/` (the
+   * full-access record, memoized decisions, the ask mailbox) so the run starts
+   * enforced with no inherited grant. A resume leaves it unset and continues
+   * that state. The repo-wide ledger is never touched.
+   */
+  fresh?: boolean;
   /** Poll cadence used by beginWorker's interval. */
   pollMs?: number;
   debug?: (line: string) => void;
   audit?: (event: RouterAuditEvent) => void;
+}
+
+// `<dir>/approvals/<session>/`: one session's approvals state (ask mailbox,
+// decision store, full-access record), beside the repo-wide ledger.
+export function approvalsSessionDir(dir: string, sessionId: string): string {
+  return join(
+    dir,
+    APPROVALS_DIR,
+    sessionId.replace(/[^A-Za-z0-9_-]/g, '_') || '_',
+  );
+}
+
+// Removes exactly one session's approvals directory — never the ledger
+// (`<dir>/approvals/audit.jsonl`) or a sibling session. A missing directory is
+// fine. Used when a session's state is retired (`kubic clean --session`) and
+// when a fresh run reuses the id.
+export function removeSessionApprovalsState(
+  dir: string,
+  sessionId: string,
+): void {
+  const target = approvalsSessionDir(dir, sessionId);
+  createNodeFileBridge(dirname(target)).remove(basename(target), true, true);
 }
 
 // One approvals run: the router, the mailbox pump, the per-spawn budget gates
@@ -723,27 +786,38 @@ export interface WorkerApprovalsRunOptions {
 export function createOrchestratorApprovalsRun(
   options: WorkerApprovalsRunOptions,
 ): WorkerApprovalsRun {
-  const dir = join(options.dir, APPROVALS_DIR);
+  // The §60 ledger is the repo's ONE trail (`<dir>/approvals/audit.jsonl`,
+  // what `kubic audit` reads). The ask mailbox, the decision store and the
+  // full-access record are THIS run's own, one directory per session: two runs
+  // share a repo runtime root — in one checkout or across linked worktrees
+  // (issue #279) — and their default worker ids collide (`worker-1`), so a
+  // shared mailbox would let one run answer another's asks (a `--full-access`
+  // run would approve them). The children are told this directory, so nothing
+  // else needs to know the layout.
+  const ledgerDir = join(options.dir, APPROVALS_DIR);
+  const dir = approvalsSessionDir(options.dir, options.sessionId);
+  if (options.fresh === true) {
+    removeSessionApprovalsState(options.dir, options.sessionId);
+  }
   const bridge = createNodeFileBridge(dir);
   bridge.createDir(ASKS_DIR, true);
   const debug = options.debug ?? (() => undefined);
-  // ONE audit log for the whole run: the router's decisions, this module's
-  // refusals (budget self-raise) and the skip posture all land in the same
-  // durable trail. A refusal written to a throwaway sink would be an audit
-  // record nobody can read — which is not an audit record.
-  const auditLog = new FileAuditLog(dir);
+  // ONE router trace for the whole run: the router's events, this module's
+  // refusals (budget self-raise) and the skip posture all land in it. The
+  // durable §60 trail is the repo ledger the router writes each decision to.
+  const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
     options.audit?.(event);
   };
   const decisions = createWorkerAskRouter({
     dir,
+    ledgerDir,
     maxPendingMs: options.maxPendingMs,
-    ...(options.autoApprove === true
-      ? { seat: createStandingAnswerSeat() }
-      : options.seat === undefined
-        ? {}
-        : { seat: options.seat }),
+    posture: () =>
+      fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,
+    debug,
+    ...(options.seat === undefined ? {} : { seat: options.seat }),
     audit,
   });
   // Session-scoped full access (§41.4): the grant is keyed by sessionId, lives
@@ -869,7 +943,9 @@ export function createOrchestratorApprovalsRun(
     }
     const live = fullAccessLive();
     let outcome: WorkerAskOutcome;
-    if (live !== undefined) {
+    // A write into Kubic's control plane ALWAYS asks (issue #324): the
+    // full-access posture never answers it.
+    if (live !== undefined && request.trigger !== 'kubic-state-write') {
       // Full access for THIS session only: indicated, recorded, never quiet.
       debug(formatSessionSkipIndicator(live));
       outcome = await decisions.ask(inputFromRequest(published, scope), {

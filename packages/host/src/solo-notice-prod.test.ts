@@ -37,6 +37,7 @@ import {
   type MutableModels,
   type Session,
 } from '../../worker/src/pi-boundary.js';
+import { FAUX_FOOTER, FAUX_MODEL_REF } from './faux-provider.js';
 import {
   SOLO_NOTICE_OPT_OUT_ENV,
   SOLO_NOTICE_WORKER_ENV,
@@ -372,14 +373,18 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
   it('shows the line at startup, before any turn or input', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(200);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: async (sessionId?: string) => ({
-        sessionId: sessionId ?? 's1',
-        model: 'faux/test',
-      }),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+        }),
+      },
+    );
     await waitFor(() => fake.started() === 1);
     // No input was fed and no turn ran: whatever carries the line is the
     // startup render itself.
@@ -392,15 +397,38 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     expect(lines.join('\n')).toContain(soloTuiLine());
   });
 
+  it('names the faux testing provider in the footer while it answers', async () => {
+    const fake = fakeTerminal(300);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: () => undefined,
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async () => ({ sessionId: 's1', model: FAUX_MODEL_REF }),
+      },
+    );
+    await waitFor(() => fake.started() === 1);
+    const frame = fake.writes.join('');
+    expect(frame).toContain(FAUX_FOOTER);
+    expect(frame).toContain(soloTuiLine());
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
   it('keeps the line as the idle footer after a completed turn', async () => {
     const root = tmpRoot('solo-notice-tui-');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: fauxLaneBoot(root, fauxModels(['all done, boss']).models),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, fauxModels(['all done, boss']).models),
+      },
+    );
     await waitFor(() => fake.started() === 1);
     for (const ch of 'say done') fake.feed(ch);
     fake.feed('\r');
@@ -423,14 +451,18 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     vi.stubEnv(SOLO_NOTICE_WORKER_ENV, 'worker-1');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: async (sessionId?: string) => ({
-        sessionId: sessionId ?? 's1',
-        model: 'faux/test',
-      }),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+        }),
+      },
+    );
     await waitFor(() => fake.started() === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);
@@ -442,14 +474,18 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
-    const pending = runTuiCommand([], {
-      out: (line: string) => lines.push(line),
-      createTerminal: () => fake.terminal,
-      bootLane: async (sessionId?: string) => ({
-        sessionId: sessionId ?? 's1',
-        model: 'faux/test',
-      }),
-    });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: async (sessionId?: string) => ({
+          sessionId: sessionId ?? 's1',
+          model: 'faux/test',
+        }),
+      },
+    );
     await waitFor(() => fake.started() === 1);
     fake.feed('\x03');
     expect(await pending).toBe(0);

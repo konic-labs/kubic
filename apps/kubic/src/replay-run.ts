@@ -31,13 +31,19 @@ export async function runProdReplay(
 ): Promise<ReplayRunResult> {
   const run = createProdReplayRun({
     loadTrajectory: (path: string) =>
-      parseTrajectoryExportJSON(createNodeFileBridge('/').readTextFile(path)),
+      parseTrajectoryExportJSON(
+        createNodeFileBridge(process.cwd()).readTextFile(path),
+      ),
     runPrompt: async (
       prompt: string,
       model: string,
       runRuntime: ReplayRuntimeDeps,
     ) => {
-      const assembled = assembleModels(process.cwd());
+      const assembled = await assembleModels(process.cwd(), process.env, {
+        ...(runtime.trustProject === undefined
+          ? {}
+          : { projectTrust: runtime.trustProject }),
+      });
       try {
         const selection = parseModelFlag(model);
         if (

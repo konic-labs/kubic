@@ -6,6 +6,7 @@ import { makeExport } from './fixtures.js';
 import { buildGrpoGroup, validateGrpoGroup } from './grpo.js';
 import { canonicalJson } from './manifest.js';
 import { buildSftRecord, validateSftRecord } from './sft.js';
+import { RlProvenanceError } from './types.js';
 
 describe('buildSftRecord (issue #54)', () => {
   it('generates a schema-valid SFT record from a passing trajectory', () => {
@@ -61,11 +62,59 @@ describe('buildGrpoGroup (issue #54)', () => {
     expect(group.candidates[1]?.reward).toBe(0);
   });
 
-  it('rejects a group whose candidates share no prompt', () => {
-    const group = buildGrpoGroup([
-      makeExport({ promptText: 'task a' }),
-      makeExport({ promptText: 'task b' }),
-    ]);
+  it('refuses to build from fewer than two candidates (issue #269)', () => {
+    expect(() => buildGrpoGroup([])).toThrow(RlProvenanceError);
+    expect(() => buildGrpoGroup([makeExport()])).toThrow(
+      'GRPO refused: a group needs at least two candidates (got 1)',
+    );
+  });
+
+  it('refuses to build from candidates that answer different prompts (issue #269)', () => {
+    expect(() =>
+      buildGrpoGroup([
+        makeExport({ promptText: 'task a' }),
+        makeExport({ promptText: 'task b' }),
+      ]),
+    ).toThrow(RlProvenanceError);
+    expect(() =>
+      buildGrpoGroup([
+        makeExport({ promptText: 'task a' }),
+        makeExport({ promptText: 'task a' }),
+        makeExport({ promptText: 'task b' }),
+      ]),
+    ).toThrow(
+      'GRPO refused: candidate 2 answers a different prompt or task than candidate 0',
+    );
+    expect(() =>
+      buildGrpoGroup([
+        makeExport({ taskId: 'task-a' }),
+        makeExport({ taskId: 'task-b' }),
+      ]),
+    ).toThrow(/candidate 1 answers a different prompt or task/);
+  });
+
+  it('refuses (as RlProvenanceError, never a TypeError) a candidate without a task', () => {
+    const noTask = makeExport();
+    (noTask as { task?: unknown }).task = undefined;
+    expect(() => buildGrpoGroup([makeExport(), noTask])).toThrow(
+      RlProvenanceError,
+    );
+    const noFirstTask = makeExport();
+    (noFirstTask as { task?: unknown }).task = undefined;
+    expect(() => buildGrpoGroup([noFirstTask, makeExport()])).toThrow(
+      RlProvenanceError,
+    );
+  });
+
+  it('rejects a hand-crafted group whose candidates share no prompt', () => {
+    const built = buildGrpoGroup([makeExport(), makeExport()]);
+    const group = {
+      ...built,
+      candidates: [
+        built.candidates[0],
+        { ...built.candidates[1], prompt: 'task b' },
+      ],
+    };
     const checked = validateGrpoGroup(group);
     expect(checked.valid).toBe(false);
     if (!checked.valid) {

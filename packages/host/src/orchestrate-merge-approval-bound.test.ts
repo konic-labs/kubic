@@ -123,6 +123,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     restores.push(captureStderr().restore);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: scratchDir(),
       approvalPolicy: policy(25),
     });
@@ -150,6 +151,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     restores.push(stderr.restore);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: scratchDir(),
       approvalPolicy: policy(25),
     });
@@ -168,10 +170,64 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     expect(written).toContain('alpha');
   });
 
+  it('uses an embedder-supplied merge seat verbatim and never opens the stdio readline (issue #327)', async () => {
+    // A terminal-owning embedder (the TUI) with a TTY stdin AND a snapshot:
+    // exactly the conditions under which the readline would otherwise run.
+    const tty = stubStdin(true);
+    restores.push(tty.restore);
+    const stderr = captureStderr();
+    restores.push(stderr.restore);
+    const seat = async () => ({ verdict: 'approve' }) as const;
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+      approvalPolicy: policy(25),
+      mergeApproval: seat,
+    });
+    expect(deps.requestApproval).toBe(seat);
+    expect(
+      await deps.requestApproval?.({ agentId: 'alpha', branch: 'kubic/alpha' }),
+    ).toEqual({ verdict: 'approve' });
+    // No prompt was written and no stdin listener was taken.
+    expect(stderr.text()).toBe('');
+    expect(tty.stdin.listenerCount('end')).toBe(0);
+    expect(tty.stdin.listenerCount('data')).toBe(0);
+  });
+
+  it('carries the surface\u2019s no-flag hint onto the run deps only when it is false', async () => {
+    restores.push(stubStdin(false).restore);
+    const base = {
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+    };
+    expect((await orchestrateDepsWithDefaults(base)).yesHint).toBeUndefined();
+    expect(
+      (await orchestrateDepsWithDefaults({ ...base, yesHint: false })).yesHint,
+    ).toBe(false);
+    expect(
+      (await orchestrateDepsWithDefaults({ ...base, yesHint: true })).yesHint,
+    ).toBeUndefined();
+  });
+
+  it('the embedder seat applies without a TTY or a snapshot too', async () => {
+    restores.push(stubStdin(false).restore);
+    const seat = async () => ({ verdict: 'deny' }) as const;
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: scratchDir(),
+      mergeApproval: seat,
+    });
+    expect(deps.requestApproval).toBe(seat);
+  });
+
   it('keeps the seat undefined without a TTY — the shipped deny-closed path', async () => {
     restores.push(stubStdin(false).restore);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: scratchDir(),
       approvalPolicy: policy(25),
     });
@@ -182,6 +238,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     restores.push(stubStdin(true).restore);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: scratchDir(),
     });
     expect(deps.requestApproval).toBeUndefined();
@@ -193,6 +250,7 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     restores.push(stderr.restore);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: scratchDir(),
       approvalPolicy: policy(25),
     });
@@ -200,15 +258,12 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     // faked — a run that reaches the merge gate, then gets no answer).
     const world = mergeWorld(deps.requestApproval);
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-130',
-        '--json',
-      ],
+      {
+        prompt: 'do the work',
+        agents: ['alpha'],
+        session: 'sess-130',
+        json: true,
+      },
       world.deps,
     );
     // The elapse denied the merge; the run settled on the shipped exit 4 —
@@ -217,6 +272,13 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     // same true thing (issue #129's rule, applied to this seat).
     expect(code).toBe(4);
     expect(world.calls.merge).toEqual([]);
+    // stdout is exactly the envelope; the prose failure line is stderr's.
+    expect(world.lines).toHaveLength(1);
+    expect(world.errs).toEqual([
+      expect.stringMatching(
+        /^error: approval timed out .*code=approval_timeout$/,
+      ),
+    ]);
     const envelope = lastEnvelope(world.lines);
     expect(envelope.status).toBe('approval_timeout');
     expect(envelope.error?.kind).toBe('approval_timeout');
@@ -237,15 +299,12 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
       (): MergeApprovalVerdict => ({ verdict: 'timeout', maxPendingMs: 40 }),
     );
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-130',
-        '--json',
-      ],
+      {
+        prompt: 'do the work',
+        agents: ['alpha'],
+        session: 'sess-130',
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(4);
@@ -265,15 +324,12 @@ describe('the interactive merge seat is bounded by the run snapshot (issue #130)
     // The timeout label above must never leak onto a decided no.
     const world = mergeWorld(() => false);
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'do the work',
-        '--agents',
-        'alpha',
-        '--session',
-        'sess-130',
-        '--json',
-      ],
+      {
+        prompt: 'do the work',
+        agents: ['alpha'],
+        session: 'sess-130',
+        json: true,
+      },
       world.deps,
     );
     expect(code).toBe(4);
@@ -522,9 +578,11 @@ function mergeWorld(
 ): {
   deps: OrchestrateCommandDeps;
   lines: string[];
+  errs: string[];
   calls: { run: string[]; merge: string[]; reap: string[] };
 } {
   const lines: string[] = [];
+  const errs: string[] = [];
   const calls = {
     run: [] as string[],
     merge: [] as string[],
@@ -533,6 +591,9 @@ function mergeWorld(
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
       lines.push(line);
+    },
+    err: (line: string) => {
+      errs.push(line);
     },
     debug: () => undefined,
     now: () => 1_700_000_000_000,
@@ -558,5 +619,5 @@ function mergeWorld(
     loadState: () => undefined,
     saveState: () => undefined,
   };
-  return { deps, lines, calls };
+  return { deps, lines, errs, calls };
 }

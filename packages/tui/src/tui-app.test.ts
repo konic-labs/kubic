@@ -11,17 +11,29 @@ const MODEL = 'test-model';
 
 describe('tui app root (issue #75)', () => {
   it('orders tree / transcript / status top to bottom at 100 cols', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const doc = app.render(100).join('\n');
-    const order = ['◌ solo', `session ${SESSION}`, 'approvals:on'].map(
-      (marker) => doc.indexOf(marker),
-    );
+    const order = [
+      '◌ solo',
+      'Kubic — terminal coding agent',
+      'approvals:on',
+    ].map((marker) => doc.indexOf(marker));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
   it('hides the tree only below 80 columns', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const wide = app.render(100).join('\n');
     expect(wide).toContain('◌ solo');
     const narrow = app.render(70).join('\n');
@@ -31,7 +43,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('routes Ctrl-T to the tree toggle and keeps T/t for the draft', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEvent({
       type: 'tool-start',
       toolCallId: 't1',
@@ -63,7 +80,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('quits on Ctrl-C and passes other keys through', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     expect(app.handleInput('\x03')).toEqual({
       quit: true,
       consumed: true,
@@ -75,7 +97,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('quits on Esc and on Ctrl-D with an empty draft', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     expect(app.handleInput('\x1b')).toEqual({
       quit: true,
       consumed: true,
@@ -89,7 +116,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('keeps Ctrl-D as delete-forward while the draft is non-empty', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     for (const ch of 'ab') app.handleInput(ch);
     app.handleInput('\x1b[D');
     expect(app.handleInput('\x04')).toEqual({
@@ -101,7 +133,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('replicates lane events and usage into the rows', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEvent({ type: 'run-start' });
     expect(app.render(100).join('\n')).toContain('● solo');
     app.setUsage([
@@ -128,7 +165,12 @@ describe('tui app root (issue #75)', () => {
   });
 
   it('prints the final document with transcript and status', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEntries([
       {
         id: 'a1',
@@ -163,14 +205,25 @@ describe('presentation seed (issue #75; §66 contracts only)', () => {
         connection: { status: 'connected' },
       },
       MODEL,
+      { mode: 'solo', approvalsSkipped: true },
     );
-    expect(seed).toEqual({ sessionId: 'abc', model: MODEL });
+    expect(seed).toEqual({
+      sessionId: 'abc',
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: true,
+    });
   });
 });
 
 describe('prompt loop routing (issue #88)', () => {
   it('submits a typed prompt from the editor through Enter', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const submitted: string[] = [];
     app.onSubmit((text) => submitted.push(text));
     for (const ch of 'fix the bug') app.handleInput(ch);
@@ -190,7 +243,12 @@ describe('prompt loop routing (issue #88)', () => {
   });
 
   it('routes every editor key to the draft instead of the tree', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const submitted: string[] = [];
     app.onSubmit((text) => submitted.push(text));
     for (const ch of 'tT x') app.handleInput(ch);
@@ -204,13 +262,23 @@ describe('prompt loop routing (issue #88)', () => {
   });
 
   it('renders the draft into the editor row', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     for (const ch of 'hello') app.handleInput(ch);
     expect(app.render(100).join('\n')).toContain('hello');
   });
 
   it('accepts a multi-line prompt with Ctrl-J then submits it whole', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const submitted: string[] = [];
     app.onSubmit((text) => submitted.push(text));
     for (const ch of 'first') app.handleInput(ch);
@@ -221,7 +289,12 @@ describe('prompt loop routing (issue #88)', () => {
   });
 
   it('ignores Enter on an empty draft', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const submitted: string[] = [];
     app.onSubmit((text) => submitted.push(text));
     expect(app.handleInput('\r')).toEqual({
@@ -233,7 +306,12 @@ describe('prompt loop routing (issue #88)', () => {
   });
 
   it('reports the loop as busy only while a turn is in flight', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     expect(app.isBusy()).toBe(false);
     app.setBusy(true);
     expect(app.isBusy()).toBe(true);
@@ -244,7 +322,12 @@ describe('prompt loop routing (issue #88)', () => {
 
 describe('lane snapshot feed (issue #88)', () => {
   it('lands committed lane entries in the transcript view', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     app.applyLaneEntries([
       {
         id: 'u1',
@@ -268,7 +351,12 @@ describe('lane snapshot feed (issue #88)', () => {
   });
 
   it('replaces cells on a re-apply instead of duplicating them', () => {
-    const app = createTuiApp({ sessionId: SESSION, model: MODEL });
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
     const entry = {
       id: 'a1',
       seq: 2,
@@ -282,5 +370,52 @@ describe('lane snapshot feed (issue #88)', () => {
     app.applyLaneEntries([entry]);
     const occurrences = app.render(100).join('\n').split('only once').length;
     expect(occurrences).toBe(2);
+  });
+
+  // Issue #227: a `/model` switch lands on every surface that names the
+  // model — header, welcome block and status bar — through one call, so the
+  // three cannot drift apart.
+  it('updates header, welcome and status bar on a model switch', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      thinking: 'high',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    expect(app.status.getState().model).toBe(MODEL);
+    expect(app.status.getState().thinking).toBe('high');
+    const before = app.render(100).join('\n');
+    expect(before).toContain(MODEL);
+    expect(before).toContain(`model ${MODEL}`);
+    expect(
+      before.split('\n').some((l) => l.includes('solo') && l.includes(MODEL)),
+    ).toBe(true);
+
+    app.setModel('alt/m1', 'medium');
+
+    expect(app.status.getState().model).toBe('alt/m1');
+    expect(app.status.getState().thinking).toBe('medium');
+    const doc = app.render(100).join('\n');
+    expect(doc).toContain('alt/m1');
+    expect(doc).toContain('model alt/m1');
+    expect(
+      doc.split('\n').some((l) => l.includes('solo') && l.includes('alt/m1')),
+    ).toBe(true);
+    expect(app.status.render(100).join('\n')).toContain('alt/m1');
+    expect(doc).not.toContain(MODEL);
+  });
+
+  it('keeps the thinking level when a switch does not carry one', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    expect(app.status.getState().thinking).toBe('off');
+    app.setModel('alt/m1');
+    expect(app.status.getState().model).toBe('alt/m1');
+    expect(app.status.getState().thinking).toBe('off');
   });
 });

@@ -15,6 +15,7 @@ export type WorktreeErrorCode =
   | 'add_failed'
   | 'already_exists'
   | 'worktree_missing'
+  | 'worktree_exists'
   | 'list_failed'
   | 'status_failed'
   | 'remove_failed'

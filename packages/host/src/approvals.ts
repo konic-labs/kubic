@@ -1,8 +1,21 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-import type { PermissionClasses } from '../../agents/src/policy.js';
+import { homedir } from 'node:os';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from 'node:path';
+import type {
+  PermissionClasses,
+  UnsupportedLevel,
+} from '../../agents/src/policy.js';
 import {
   checkAgreement,
+  checkExpressible,
+  effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
 } from '../../agents/src/policy.js';
@@ -19,7 +32,15 @@ import {
 } from '../../worker/src/lane/interceptors.js';
 import type { ToolContribution } from '../../worker/src/lane/wrap.js';
 import { withTelemetry } from '../../worker/src/lane/wrap.js';
+import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  fullAccessEnabledAudit,
+  postureChangedAudit,
+  soloDecisionAudit,
+} from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service (issue #16; §41).
 // The decider is the user — never a manager, never the model. There is no
 // manager-approval path in solo: this module exposes no role/manager
@@ -48,7 +69,33 @@ export const CAPABILITIES = [
   'budget-overrun',
   'spawn-agents',
   'privilege-escalation',
+  'kubic-state-write',
 ] as const;
+
+// Kubic's own control plane (issue #324; §59): a write into
+// `<workspace>/.kubic/` could widen the model's future permissions (config,
+// roles) or corrupt the state `kubic undo`/`kubic audit` rest on. The model
+// never decides its own permissions, so this capability ALWAYS asks — no
+// autoApprove entry and no full-access posture answers it.
+export const KUBIC_STATE_WRITE = 'kubic-state-write';
+const ALWAYS_ASK: ReadonlySet<string> = new Set([KUBIC_STATE_WRITE]);
+
+// The `autoApprove` entries that can never apply because the capability
+// always asks (issue #324). Config keeps accepting them (rejecting would break
+// an existing config that never worked); `kubic doctor` and `kubic config`
+// name them instead of counting them as auto-approved.
+export function alwaysAskAutoApprove(autoApprove: readonly string[]): string[] {
+  return autoApprove.filter((capability) => ALWAYS_ASK.has(capability));
+}
+
+// Subtrees of `.kubic/` an agent may never write at all (a tool error, not an
+// ask): the change journal, the orchestrator's state (approvals, audit ledger,
+// decisions, mailbox) and session state.
+const REFUSED_STATE_DIRS: ReadonlySet<string> = new Set([
+  'journal',
+  'orchestrator',
+  'sessions',
+]);
 
 export type Capability = (typeof CAPABILITIES)[number] | string;
 
@@ -110,7 +157,28 @@ export interface ApprovalRequest {
   capability: Capability;
   toolName: string;
   summary: string;
+  // Issue #316: the FULL command a bash call will run — derived from the
+  // same args the key hashes, redacted and with hidden characters made
+  // visible (approval-display.ts), never truncated. Absent for calls that
+  // carry no command (file tools): their summary names the path.
+  command?: string;
   justification?: string;
+}
+
+// The `by` a seat answers for a single-call approval (the TUI overlay's 'a',
+// issue #231): approved, audited, never latched or persisted.
+export const ALLOW_ONCE = 'allow-once';
+// The request fields an ask shows (issue #316): the one-line summary and,
+// for a bash call, the full command — both from the call's own args.
+export function approvalRequestDisplay(
+  toolName: string,
+  capability: Capability,
+  args: Record<string, unknown>,
+): { summary: string; command?: string } {
+  const summary = summarizeRequest(toolName, capability, args);
+  return toolName === 'bash' && typeof args.command === 'string'
+    ? { summary, command: approvalCommandText(args.command) }
+    : { summary };
 }
 
 export type ApprovalVerdict =
@@ -159,29 +227,216 @@ export class MemoryApprovalStore implements ApprovalStore {
 //     producer yet (orchestrator opt-in budgets #48, worker perf budgets
 //     #55). Until one wires up, the flag is test-only: documented, silent
 //     nowhere.
-//   network under allowlist/full — fires nothing by design (issue #15:
-//     no network tool exists to remove; the flag is advisory for #16).
+//   network under full — fires nothing by design (issue #15: no network
+//     tool exists to remove). A domain-less `allowlist` is enforced as
+//     `none` (issue #166, §40.2): it fires like `none`, never silently
+//     unrestricted.
 //   sensitive reads — deliberately not a trigger: §41.1 governs writes,
 //     the filesystem read class governs reads.
+function networkGated(level: TriggerContext['network']): boolean {
+  return effectiveNetworkLevel(level) === 'none';
+}
+
 export interface TriggerContext {
   workspace: string;
   network: 'none' | 'allowlist' | 'full';
   isDestructive: (command: string, workspace: string) => boolean;
   isNetworkCommand: (command: string) => boolean;
   isOutsideWorkspace: (path: string) => boolean;
+  // The user's home directory: any write target under `<home>/.kubic`
+  // (session state, posture.json, approvals.json) is outside-write
+  // whatever the workspace is — even a workspace AT home (issue #355).
+  home?: string;
   requires?: string[];
   budgetOverrun?: boolean;
+  /** Kubic state roots beyond the workspace (issue #324); see ControlPlaneRoots. */
+  controlPlane?: ControlPlaneRoots;
 }
 
-const GIT_PUSH = /^\s*git\s+push\b/i;
-const GIT_REMOTE_MUTATION = /^\s*git\s+remote\s+(add|set-url|remove|rename)\b/i;
+// git push / remote mutation in ANY command segment (issue #357): the
+// verb is matched after a command-position boundary (start, `|;&`,
+// newline, whitespace, a subshell paren — `$(git push)` included — and, from
+// the re-audit, `/` (`/usr/bin/git push`), a quote (`bash -c 'git push'`), a
+// backslash (`\git push`), a backtick or a `!` — `-c alias.p='!git push'`) and
+// after any run of git global
+// options (`-C <dir>`, `-c <k=v>`, `--git-dir=…`, `--work-tree …`,
+// `--no-pager`, …, an argument may be quoted: `git -C "my dir" push`) — so
+// `ls; git push`, `cd x && git push` and `git -C . push` all raise. The word
+// must be exactly `git` followed by whitespace: `mygit push`, `digit push`
+// and `git-lfs push` never raise. A push named inside a quoted argument
+// (`echo "git push later"`) raises too: the literal scan cannot see
+// quotes, and an over-trigger is an ask, never a silent grant.
+//
+// The option run is walked token by token, never by one regex: the old
+// repeated alternation (`--namespace` as an option OR as the previous
+// option's argument) backtracked exponentially — 34 repeats stalled a real
+// `kubic run` for 14 s, and this scan runs before EVERY bash call. Walking is
+// a two-state automaton (expecting an option-or-verb / expecting an option
+// argument) and the states already explored at a token are remembered across
+// every `git` occurrence, so the whole scan is linear in the command.
+//
+// Words are read TWICE, and either reading reaching `push` raises: quote-aware
+// (a quoted option argument is one word, a backslash escapes the next
+// character outside single quotes) and plain whitespace-split (the reading the
+// original regex had). The quote-aware one catches `git -C "my dir" push`; the
+// plain one is the safety net for shell syntax the tokenizer misreads —
+// `git -c user.name=O\'Brien push # it's fine` reads `'` as an opening quote
+// only when the backslash is ignored. The plain walk is exactly the original
+// regex's language, so this only ever widens what raises (fail toward asking);
+// the over-trigger it keeps is the original's: a quoted option argument that
+// merely contains the word (`git -c "a push" status`) still reads as a push.
+const GIT_WORD = /(^|[|;&\s(/'"\\`!])git(?=\s)/gi;
+const GIT_ARG_OPTION = /^-c$/i;
+const GIT_FLAG = /^(?:-p|--[a-z][a-z-]*)$/i;
+const GIT_VALUE_OPTION =
+  /^--(?:git-dir|work-tree|namespace|exec-path|config-env)$/i;
+const GIT_VALUE_ASSIGNED =
+  /^--(?:git-dir|work-tree|namespace|exec-path|config-env)=[\s\S]+$/i;
+const GIT_PUSH_VERB = /^push\b/i;
+const GIT_REMOTE_VERB = /^remote$/i;
+const GIT_REMOTE_ACTION = /^(?:add|set-url|remove|rename)\b/i;
+const WHITESPACE_CHAR = /\s/;
+const EXPECT_OPTION = 1;
+const EXPECT_ARGUMENT = 2;
+
+interface ShellToken {
+  text: string;
+  start: number;
+  end: number;
+}
+
+type TokenReader = (command: string, from: number) => ShellToken | undefined;
+
+// The next whitespace-delimited word at or after `from`, quote-aware: a
+// balanced `"…"` or `'…'` run belongs to the word even when it holds spaces,
+// a backslash outside single quotes escapes the next character (`\'`, `\ `,
+// and `\"` inside double quotes), and a quote with no closer is an ordinary
+// character. Stateless from a token start, so a position always tokenizes the
+// same way whichever `git` reached it.
+function nextShellToken(command: string, from: number): ShellToken | undefined {
+  let start = from;
+  while (start < command.length && WHITESPACE_CHAR.test(command[start] ?? '')) {
+    start += 1;
+  }
+  if (start >= command.length) return undefined;
+  let end = start;
+  while (end < command.length && !WHITESPACE_CHAR.test(command[end] ?? '')) {
+    const char = command[end];
+    if (char === '\\') {
+      end = Math.min(end + 2, command.length);
+    } else if (char === "'") {
+      const close = command.indexOf("'", end + 1);
+      end = close < 0 ? end + 1 : close + 1;
+    } else if (char === '"') {
+      end = afterDoubleQuoted(command, end);
+    } else {
+      end += 1;
+    }
+  }
+  return { text: command.slice(start, end), start, end };
+}
+
+// The index after the double-quoted run opening at `open` (a backslash inside
+// escapes the next character), or after the lone quote when nothing closes it.
+function afterDoubleQuoted(command: string, open: number): number {
+  for (let index = open + 1; index < command.length; index += 1) {
+    if (command[index] === '\\') index += 1;
+    else if (command[index] === '"') return index + 1;
+  }
+  return open + 1;
+}
+
+// The original reading: a word is a run of non-whitespace, quotes and
+// backslashes included.
+function nextPlainToken(command: string, from: number): ShellToken | undefined {
+  let start = from;
+  while (start < command.length && WHITESPACE_CHAR.test(command[start] ?? '')) {
+    start += 1;
+  }
+  if (start >= command.length) return undefined;
+  let end = start;
+  while (end < command.length && !WHITESPACE_CHAR.test(command[end] ?? '')) {
+    end += 1;
+  }
+  return { text: command.slice(start, end), start, end };
+}
+
+function gitVerbFollows(
+  command: string,
+  from: number,
+  explored: Map<number, number>,
+  read: TokenReader,
+): boolean {
+  let states = EXPECT_OPTION;
+  let position = from;
+  for (;;) {
+    const token = read(command, position);
+    if (token === undefined) return false;
+    const seen = explored.get(token.start) ?? 0;
+    // Everything reachable from these states here was already walked by an
+    // earlier `git` — and it did not accept, or the scan would have stopped.
+    states &= ~seen;
+    if (states === 0) return false;
+    explored.set(token.start, seen | states);
+    let next = 0;
+    if ((states & EXPECT_OPTION) !== 0) {
+      if (GIT_PUSH_VERB.test(token.text)) return true;
+      if (GIT_REMOTE_VERB.test(token.text)) {
+        const action = read(command, token.end);
+        if (action !== undefined && GIT_REMOTE_ACTION.test(action.text)) {
+          return true;
+        }
+      }
+      if (GIT_ARG_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
+      // `-C <dir>` — the regex flag was case-insensitive, so `-C` is `-c`.
+      if (GIT_FLAG.test(token.text) || GIT_VALUE_ASSIGNED.test(token.text)) {
+        next |= EXPECT_OPTION;
+      }
+      // A value option may take the next word or stand alone.
+      if (GIT_VALUE_OPTION.test(token.text)) next |= EXPECT_ARGUMENT;
+    }
+    if ((states & EXPECT_ARGUMENT) !== 0) next |= EXPECT_OPTION;
+    if (next === 0) return false;
+    states = next;
+    position = token.end;
+  }
+}
+
+function gitPushOrRemoteMutation(command: string): boolean {
+  const quoted = new Map<number, number>();
+  const plain = new Map<number, number>();
+  for (const origin of command.matchAll(GIT_WORD)) {
+    const from = origin.index + origin[0].length;
+    if (
+      gitVerbFollows(command, from, quoted, nextShellToken) ||
+      gitVerbFollows(command, from, plain, nextPlainToken)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Package installs and fetch-and-run launchers (issue #357): every one can
+// run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
+// npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
+// installs), pip/pipx/uv, gem, composer, brew, apt, cargo and go.
 const INSTALL =
-  /(^|[|;&\s])(npm\s+(i|install|add|clean-install)|pip(3)?\s+install|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+  /(^|[|;&\s(])(npm\s+(i|install|add|clean-install|ci|exec|x)|pnpm\s+(i|install|add|dlx)|yarn(\s+(add|install|dlx|global\s+add)|(?=\s*($|[|;&)])))|bun\s+(i|install|add)|npx|bunx|uvx|pip(3)?\s+install|pipx\s+(install|run)|uv\s+(add|pip\s+install|tool\s+install)|gem\s+install|composer\s+(require|install)|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
 const DEPLOY =
   /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
 // Shell redirection into an absolute target is a write by another name —
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
-const REDIRECT = /(^|[|;&\s])[^|;&]*>{1,2}\s*(\S+)/;
+// EVERY redirect operator in the command is scanned (issue #326), within a
+// segment and across `;`/`&&`/`||`/`|`/newline segments, so an inside
+// redirect first can no longer hide `> /etc/cron.d/x` after it. Operators:
+// `>`, `>>`, fd-prefixed `2>`/`1>>` (the digit is just text before the
+// operator), `&>`, `&>>`, clobber `>|`, and `>&` — whose target is an fd
+// duplication (`2>&1`, `>&-`) and skipped when it is a digit run or `-`,
+// and a file otherwise (`>& out.txt`). The target is the next token up to
+// whitespace or a `|;&<>` operator character.
+const REDIRECT = /(&>>?|>\||>>?&?)[ \t]*([^\s|;&<>]*)/g;
+const FD_DUPLICATION = /^(\d+|-)$/;
 // tee writes its last argument verbatim — the same class as a `>` redirect,
 // so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
 // no redirect fires. Every command segment is scanned (a `|;&` cannot be
@@ -318,7 +573,9 @@ function stripQuotes(target: string): string {
 // The write target of a detector segment: the last whitespace-separated
 // token (last-argument heuristic; segmentEnd is the segment's absolute end
 // index in the raw command, so token characters tie back to command
-// positions). Quotes always come off (shell syntax). A trailing delimiter
+// positions). Quotes and backslash escapes always come off, wherever they sit
+// in the token (`".."/x`, `.."/x"`, `\../x` all name `../x`; issue #355 — the
+// same shell reading the control-plane targets get). A trailing delimiter
 // comes off ONLY when it is the closing `)` of a `$(…)` span the token was
 // lifted from — `$(cp a /work)` names `/work`, because that `)` is
 // substitution syntax, not path text — and then exactly the recorded
@@ -339,7 +596,624 @@ function targetToken(
   while (cut < raw.length && spanClosers.has(end - 1 - cut)) {
     cut += 1;
   }
-  return stripQuotes(raw.slice(0, raw.length - cut));
+  return shellUnquote(raw.slice(0, raw.length - cut));
+}
+
+// Kubic state that does not live under `<workspace>/.kubic/` (issue #324
+// review). `home` is where the global `~/.kubic` (config.toml, the default
+// session root) lives — default os.homedir(); `sessionsRoot` is the session
+// root actually in use when it was overridden elsewhere, refused wholesale.
+export interface ControlPlaneRoots {
+  home?: string;
+  sessionsRoot?: string;
+}
+
+// A path the shell would expand from the home directory — `~`, `$HOME`,
+// `${HOME}` or `${HOME:-…}`, alone or followed by `/…` — as the part below home
+// ('' for home itself); undefined for anything else (`~root`, `$HOMEDIR`,
+// `$HOME2`, a plain path). One rule for the control-plane class and for `cd`
+// tracking, so `$HOME/.kubic` can never be read differently from `~/.kubic`
+// (issue #324).
+const HOME_PREFIXED = /^(?:~|\$HOME|\$\{HOME(?::?-[^}]*)?\})(?:\/([\s\S]*))?$/;
+function homeRelative(path: string): string | undefined {
+  const match = HOME_PREFIXED.exec(path);
+  return match === null ? undefined : (match[1] ?? '');
+}
+
+// The shell's CURRENT directory — `~+`, `$PWD`, `${PWD}` — as the relative path
+// below it ('' for the directory itself); undefined for anything else. The
+// previous directory (`~-`, `$OLDPWD`) is not knowable from the text.
+const PWD_PREFIXED = /^(?:~\+|\$PWD|\$\{PWD(?::?-[^}]*)?\})(?:\/([\s\S]*))?$/;
+const OLDPWD_PREFIXED = /^(?:~-|\$OLDPWD|\$\{OLDPWD\})(?:\/|$)/;
+function pwdRelative(path: string): string | undefined {
+  const match = PWD_PREFIXED.exec(path);
+  return match === null ? undefined : (match[1] ?? '');
+}
+
+// The path of `target` below `root` as case-folded segments, or undefined
+// when it is not at or below `root`.
+function segmentsBelow(root: string, target: string): string[] | undefined {
+  const rel = relative(root.toLowerCase(), target.toLowerCase());
+  if (rel === '') return [];
+  if (isAbsolute(rel)) return undefined;
+  const parts = rel.split(/[\\/]/);
+  return parts[0] === '..' ? undefined : parts;
+}
+
+// Where a write target lands in Kubic's control plane, lexically: `refuse`
+// for the refused state subtrees, `ask` for anything else under a Kubic state
+// directory, undefined elsewhere. The state directories are the workspace's
+// own `.kubic/`, and — for a target OUTSIDE the workspace — the `.kubic/` of
+// every ancestor (an orchestrator worker's workspace is its worktree at
+// `<repo>/.kubic/wt/<agent>`, so the manager's journal and orchestrator state
+// sit above it; a solo run from a subdirectory has the project's `.kubic/`
+// above it) and `~/.kubic` (global config.toml, the session root). An
+// overridden session root is refused wholesale. A leading `~/`, `$HOME/` or
+// `${HOME}/` is the home directory, as the shell expands it (issue #324: the
+// variable forms used to slip through as plain outside-writes, which full
+// access auto-approves). Case-folded, because the default
+// macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml` IS the
+// config file there). Symlinks are not followed — lexical, like every shell
+// detector in this module.
+function controlPlaneClass(
+  workspace: string,
+  target: string,
+  roots: ControlPlaneRoots = {},
+): 'refuse' | 'ask' | undefined {
+  const path = stripQuotes(target);
+  if (path === '') return undefined;
+  const home = roots.home ?? homedir();
+  const ws = resolve(workspace);
+  const belowHome = homeRelative(path);
+  const abs =
+    belowHome === undefined ? resolve(ws, path) : resolve(home, belowHome);
+  const literal = literalControlPlaneClass(ws, abs, home, roots);
+  if (literal === 'refuse') return literal;
+  // A glob (or brace list) that COULD expand into state is refused, not just
+  // asked: `rm .kubic/journa?/*` names no file the scan can see, but it is the
+  // journal. The bash tool's shell would expand it; we cannot, so every
+  // expansion the pattern allows counts (issue #324).
+  return GLOB_CHARS.test(abs) && globReachesState(abs, ws, home, roots)
+    ? 'refuse'
+    : literal;
+}
+
+// The Kubic state directories a path can fall under: the workspace's own
+// `.kubic`, and — when the path is OUTSIDE the workspace — every ancestor's and
+// the home's.
+function stateDirsFor(ws: string, home: string, outside: boolean): string[] {
+  const dirs = [join(ws, '.kubic')];
+  if (!outside) return dirs;
+  for (let dir = dirname(ws); ; dir = dirname(dir)) {
+    dirs.push(join(dir, '.kubic'));
+    if (dirname(dir) === dir) break;
+  }
+  dirs.push(join(resolve(home), '.kubic'));
+  return dirs;
+}
+
+function literalControlPlaneClass(
+  ws: string,
+  abs: string,
+  home: string,
+  roots: ControlPlaneRoots,
+): 'refuse' | 'ask' | undefined {
+  if (
+    roots.sessionsRoot !== undefined &&
+    segmentsBelow(resolve(roots.sessionsRoot), abs) !== undefined
+  ) {
+    return 'refuse';
+  }
+  for (const stateDir of stateDirsFor(
+    ws,
+    home,
+    segmentsBelow(ws, abs) === undefined,
+  )) {
+    const parts = segmentsBelow(stateDir, abs);
+    if (parts === undefined) continue;
+    const sub = parts[0];
+    return sub !== undefined && REFUSED_STATE_DIRS.has(sub) ? 'refuse' : 'ask';
+  }
+  return undefined;
+}
+
+// Glob matching for the control-plane guard. Metacharacters: `*`, `?`, `[…]`
+// and `{a,b}`. Deliberately conservative: a leading `*` may match a dotfile
+// (`shopt -s dotglob` exists), and an enumeration that overflows is refused
+// whenever the path names `.kubic`.
+const GLOB_CHARS = /[*?[{]/;
+const PROTECTED_SUBS = [
+  'journal',
+  'orchestrator',
+  'sessions',
+  'config.toml',
+  'roles',
+];
+const BRACE_LIMIT = 32;
+
+function globReachesState(
+  abs: string,
+  ws: string,
+  home: string,
+  roots: ControlPlaneRoots,
+): boolean {
+  const variants = expandBraces(abs);
+  if (variants === undefined) return /\.kubic/i.test(abs);
+  const dirs = stateDirsFor(ws, home, true).map(pathSegments);
+  const sessions =
+    roots.sessionsRoot === undefined
+      ? undefined
+      : pathSegments(resolve(roots.sessionsRoot));
+  return variants.some((variant) => {
+    const segments = pathSegments(variant);
+    return (
+      dirs.some((dir) => globReaches(segments, dir, PROTECTED_SUBS)) ||
+      (sessions !== undefined && globReaches(segments, sessions, undefined))
+    );
+  });
+}
+
+function pathSegments(path: string): string[] {
+  return path
+    .toLowerCase()
+    .split(/[\\/]/)
+    .filter((part) => part !== '');
+}
+
+// Can the (possibly globbed) path `segments` name `dir` itself or something
+// below it that is protected? `subs` lists the protected first-level names;
+// undefined protects everything below (the session root).
+function globReaches(
+  segments: readonly string[],
+  dir: readonly string[],
+  subs: readonly string[] | undefined,
+): boolean {
+  // A path shorter than `dir` runs out of segments: '' matches no name.
+  for (let index = 0; index < dir.length; index += 1) {
+    if (!globMatches(segments[index] ?? '', dir[index] ?? '')) return false;
+  }
+  if (segments.length === dir.length || subs === undefined) return true;
+  const next = segments[dir.length] ?? '';
+  return subs.some((sub) => globMatches(next, sub));
+}
+
+// fnmatch for one path segment (both sides case-folded): `*`, `?`, `[set]`,
+// `[!set]` / `[^set]` and ranges. Iterative with one backtrack point, so it is
+// O(pattern x name) whatever the pattern.
+function globMatches(pattern: string, name: string): boolean {
+  if (!/[*?[]/.test(pattern)) return pattern === name;
+  let p = 0;
+  let n = 0;
+  let starAt = -1;
+  let starName = 0;
+  while (n < name.length) {
+    if (pattern[p] === '*') {
+      starAt = p;
+      starName = n;
+      p += 1;
+      continue;
+    }
+    const next = p < pattern.length ? matchOne(pattern, p, name[n] ?? '') : -1;
+    if (next >= 0) {
+      p = next;
+      n += 1;
+    } else if (starAt >= 0) {
+      p = starAt + 1;
+      starName += 1;
+      n = starName;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[p] === '*') p += 1;
+  return p === pattern.length;
+}
+
+// One pattern element against one character: the pattern index after it, or -1.
+function matchOne(pattern: string, at: number, char: string): number {
+  const first = pattern[at];
+  if (first === '?') return at + 1;
+  if (first === '[') {
+    const negate = pattern[at + 1] === '!' || pattern[at + 1] === '^';
+    const start = at + (negate ? 2 : 1);
+    const close = pattern.indexOf(']', start + 1);
+    if (close > 0) {
+      let inSet = false;
+      for (let index = start; index < close; index += 1) {
+        const from = pattern[index] ?? '';
+        if (pattern[index + 1] === '-' && index + 2 < close) {
+          if (char >= from && char <= (pattern[index + 2] ?? '')) inSet = true;
+          index += 2;
+        } else if (char === from) {
+          inSet = true;
+        }
+      }
+      return inSet === !negate ? close + 1 : -1;
+    }
+  }
+  return first === char ? at + 1 : -1;
+}
+
+// `a{b,c}d` -> `abd`, `acd` (nested and multiple groups; a group with no comma
+// is literal). undefined when the enumeration would pass BRACE_LIMIT or the
+// text is too long to scan.
+function expandBraces(text: string): string[] | undefined {
+  if (text.length > 2048) return undefined;
+  const pending = [text];
+  const done: string[] = [];
+  while (pending.length > 0) {
+    const current = pending.pop() ?? '';
+    const group = firstBraceGroup(current);
+    if (group === undefined) {
+      done.push(current);
+    } else {
+      for (const option of group.options) {
+        pending.push(group.before + option + group.after);
+      }
+    }
+    if (done.length + pending.length > BRACE_LIMIT) return undefined;
+  }
+  return done;
+}
+
+function firstBraceGroup(
+  text: string,
+): { before: string; options: string[]; after: string } | undefined {
+  for (
+    let open = text.indexOf('{');
+    open >= 0;
+    open = text.indexOf('{', open + 1)
+  ) {
+    let depth = 0;
+    const commas: number[] = [];
+    for (let index = open; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === '{') depth += 1;
+      else if (char === ',' && depth === 1) commas.push(index);
+      else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          if (commas.length === 0) break;
+          const bounds = [open, ...commas, index];
+          return {
+            before: text.slice(0, open),
+            options: bounds
+              .slice(0, -1)
+              .map((from, at) => text.slice(from + 1, bounds[at + 1])),
+            after: text.slice(index + 1),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+// Every path a call writes or destroys: write/edit's `path`, and for bash every
+// redirect (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), tee and cp/mv/install
+// target — the same lexical shapes the outside-write detector reads — plus the
+// operands of `rm` and `mv` (deleting or moving `.kubic/journal` is tampering
+// exactly like writing it; a `cp` SOURCE is only read, so it is not one).
+// Redirects are scanned one by one, so a trailing `2>/dev/null` cannot mask an
+// earlier target. A bash token is read the way the shell would: inner quotes
+// and backslash escapes come off (`".kubic"/roles/r.md`).
+//
+// Each bash target yields TWO candidates and either one being control-plane is
+// enough: the token as typed against the workspace, and the token resolved
+// against the directory the preceding `cd`/`pushd` trail leaves (the cdEvents
+// machinery the outside-write detector uses). The trail is lexical — it cannot
+// tell a subshell, a conditional or a quoted `cd` from a real one — so it must
+// only ever ADD a candidate; replacing the typed path with it let `(cd x);
+// echo p > .kubic/journal/y` through. After a `cd` to an unknown place a
+// relative token naming a `.kubic` segment is read as the workspace's own —
+// fail-closed (an agent has no business in any `.kubic/journal`, so even the
+// refusal class costs nothing).
+const WRITE_TARGETS_MEMO = new Map<string, string[]>();
+function writeTargets(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+  home: string,
+): string[] {
+  if (toolName === 'write' || toolName === 'edit') {
+    return typeof args.path === 'string' ? [args.path] : [];
+  }
+  if (toolName !== 'bash' || typeof args.command !== 'string') return [];
+  const command = args.command;
+  return memoised(WRITE_TARGETS_MEMO, `${workspace}\0${home}\0${command}`, () =>
+    bashWriteTargets(command, workspace, home),
+  );
+}
+
+function bashWriteTargets(
+  command: string,
+  workspace: string,
+  home: string,
+): string[] {
+  const found: Array<{ raw: string; index: number }> = [];
+  for (const match of command.matchAll(ALL_REDIRECT_TARGETS)) {
+    const raw = match[2] ?? '';
+    if (match[1] === '&' && FD_DUPLICATION.test(raw)) continue;
+    found.push({ raw, index: match.index });
+  }
+  for (const tee of command.matchAll(TEE_TARGET)) {
+    found.push({
+      raw: (tee[1] ?? '').trim().split(/\s+/).pop() ?? '',
+      index: tee.index,
+    });
+  }
+  for (const copy of command.matchAll(COPY_TARGET)) {
+    found.push({
+      raw: (copy[2] ?? '').trim().split(/\s+/).pop() ?? '',
+      index: copy.index,
+    });
+  }
+  for (const removal of command.matchAll(REMOVE_MOVE_OPERANDS)) {
+    for (const operand of (removal[2] ?? '').trim().split(/\s+/)) {
+      if (operand !== '' && !operand.startsWith('-')) {
+        found.push({ raw: operand, index: removal.index });
+      }
+    }
+  }
+  const trail = cdEvents(command, workspace, home);
+  const ws = resolve(workspace);
+  const targets = new Set<string>();
+  for (const { raw, index } of found) {
+    const token = shellUnquote(raw.replace(/[)`]+$/, ''));
+    targets.add(pathAtCwd(token, ws, workspace));
+    targets.add(pathAtCwd(token, cwdAt(trail, index, workspace), workspace));
+  }
+  return [...targets];
+}
+
+// A relative bash token joined onto the directory it is written from; shell
+// expansions and absolute paths are left for controlPlaneClass. `~+`/`$PWD`
+// are the directory itself. The cwd IS the workspace hands the token over
+// exactly as typed. An unknown directory (`cd $X`, `~-`, `$OLDPWD`) reads a
+// `.kubic` segment as the workspace's own.
+function pathAtCwd(
+  token: string,
+  cwd: string | null,
+  workspace: string,
+): string {
+  if (token === '' || homeRelative(token) !== undefined || isAbsolute(token)) {
+    return token;
+  }
+  const ws = resolve(workspace);
+  if (OLDPWD_PREFIXED.test(token)) return failClosedKubic(token, ws);
+  const here = pwdRelative(token);
+  const local = here ?? token;
+  if (cwd === ws) return local;
+  if (cwd !== null) return resolve(cwd, local);
+  return failClosedKubic(local, ws);
+}
+
+function failClosedKubic(token: string, ws: string): string {
+  const segments = token.split('/');
+  const at = segments.findIndex(
+    (segment) => segment.toLowerCase() === '.kubic',
+  );
+  return at < 0 ? token : join(ws, ...segments.slice(at));
+}
+
+// A tiny bounded memo for per-command scans: the same bash command is read by
+// the control-plane refusal and by trigger detection, and an 8000-target
+// command made each of them re-scan every earlier `cd`.
+const MEMO_LIMIT = 8;
+function memoised<T>(cache: Map<string, T>, key: string, compute: () => T): T {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const value = compute();
+  if (cache.size >= MEMO_LIMIT) cache.clear();
+  cache.set(key, value);
+  return value;
+}
+
+// Every redirect target in a command (see writeTargets), with the operator's
+// `&` when it has one: `>&` names a file unless the target is an fd
+// duplication (`2>&1`, `>&-` — skipped by the caller), `&>`/`&>>` are plain
+// redirects. Process substitutions are not file targets and are skipped.
+const ALL_REDIRECT_TARGETS = />{1,2}([|&])?\s*([^\s|;&<>()]+)/g;
+// rm/mv operands: the whole argument run of the segment (flags are dropped by
+// the caller). Sources are included because removing or moving state is a
+// write to it.
+const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&]*)/gi;
+
+// A bash token as the shell reads it: quotes come off wherever they sit
+// (`".kubic"/roles`, `.k"ub"ic`) and a backslash escapes the next character
+// (`\.kubic`). Over-approximate on purpose — a quote is never part of a path
+// worth telling apart from the state dir, and a wrong read only asks.
+function shellUnquote(token: string): string {
+  return token.replace(/\\(.)/g, '$1').replace(/["']/g, '');
+}
+
+// The named refusal for a write into refused control-plane state (issue
+// #324), or undefined. The caller returns it as a tool error without asking.
+export function controlPlaneRefusal(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+  roots: ControlPlaneRoots = {},
+): string | undefined {
+  const home = roots.home ?? homedir();
+  for (const target of writeTargets(toolName, args, workspace, home)) {
+    if (controlPlaneClass(workspace, target, roots) === 'refuse') {
+      return `refused: ${stripQuotes(target)} is Kubic control-plane state (.kubic/journal, .kubic/orchestrator, .kubic/sessions) — agents may not write it`;
+    }
+  }
+  return undefined;
+}
+
+// Shell-expanded and cd-relative write targets (issue #355). The literal
+// detectors see the command before bash expands it, so a target starting
+// with `~` (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+// any `$VAR/...`) names a path the workspace check cannot know — it counts
+// as OUTSIDE, fail-closed, never joined under the workspace. A preceding
+// `cd <dir>` / `pushd <dir>` at a command start moves the cwd relative
+// targets resolve against for the rest of the command: into an outside dir
+// they resolve outside, and to an unknown one (bare `cd`, `cd ~`, `cd $X`,
+// `cd -`, any `popd`) every later relative target fails closed.
+//
+// The trail is lexical, so it is only ever ONE of two candidates: a target is
+// outside if it is outside as typed against the workspace OR as resolved
+// against the tracked cwd. A subshell `(cd /etc)`, a conditional `false && cd
+// /etc` or a `cd` quoted into an argument therefore over-triggers and can
+// never hide a write (the tracked cwd alone let `(cd sub); echo x > ../y`
+// through).
+//
+// A `cd` is only a cd at a COMMAND START: after `^`, `;`, `&`, `|`, a newline or
+// `(`, then any run of the reserved words that run the next command in the
+// current shell — `if`/`elif`/`then`/`do`/`else`/`while`/`until`, `{`, `!` — and
+// the `command`/`builtin` wrappers. Each needs trailing whitespace, and a
+// keyword in the middle of an argument (`git commit -m 'then cd /x'`) starts
+// nothing. Not modelled, stated: `time cd`, `eval cd`, `bash -c 'cd …'`, and a
+// subshell `cd` that undoes an earlier one. The command's own text runs to
+// the next `;`, `|`, newline or `)` — and to a `&` only when it belongs to a
+// redirection (`2>&1`, `>&`, `&>`), so `cd 2>&1 .kubic` keeps its directory.
+const CD_COMMAND =
+  /(^|[;&|\n(])[ \t]*(?:(?:if|elif|then|do|else|while|until|\{|!|command|builtin)[ \t]+)*(cd|pushd|popd)(?=$|[\s;&|)])((?:[^;&|\n)]|&(?=>)|(?<=[<>])&)*)/g;
+const SHELL_EXPANDED = /^[~$]/;
+// Stream pseudo-devices persist nothing: `2>/dev/null` or `> /dev/stderr`
+// anywhere in a command is not an outside write (exact paths only — any
+// other /dev target is a real device and still raises).
+const STREAM_DEVICE = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
+
+// `end` is where the cd command's own text stops: a redirect inside it
+// (`cd .. > config.toml`) is applied BEFORE the cd runs.
+interface CdEvent {
+  index: number;
+  end: number;
+  cwd: string | null;
+}
+
+// A redirection word: `>`, `>>`, `2>`, `&>`, `>&`, `>|`, `<`, `<<`, `<&`, `N>&M`…
+// When the operator stands alone the NEXT word is its target.
+const REDIRECT_WORD = /^(?:&>>?|\d*(?:>>|>&|>\||>|<&|<>|<<<|<<|<))/;
+
+// The directory a `cd` names: the first word that is neither a redirection
+// (`cd 2>/dev/null .kubic`) nor an option (`-L`, `-P`, `-e`, `-@`, `--`),
+// quote-aware, read the way the shell would.
+function cdArgument(rest: string): string {
+  let at = 0;
+  for (;;) {
+    const token = nextShellToken(rest, at);
+    if (token === undefined) return '';
+    at = token.end;
+    const redirect = REDIRECT_WORD.exec(token.text);
+    if (redirect !== null) {
+      if (redirect[0].length === token.text.length) {
+        at = nextShellToken(rest, at)?.end ?? at;
+      }
+      continue;
+    }
+    if (token.text === '--' || /^-[LPe@]+$/.test(token.text)) continue;
+    return shellUnquote(token.text);
+  }
+}
+
+const CD_EVENTS_MEMO = new Map<string, CdEvent[]>();
+const MAX_TRACKED_CWD = 1024;
+
+// `home` is optional: given (the control-plane detector), `cd ~` and
+// `cd $HOME/x` resolve against it; absent (the outside-write detector),
+// they stay an unknown place and every later relative target fails closed, as
+// documented. `cd "$PWD/x"` and `cd ~+/x` are relative to the tracked cwd.
+function cdEvents(
+  command: string,
+  workspace: string,
+  home?: string,
+): CdEvent[] {
+  return memoised(
+    CD_EVENTS_MEMO,
+    `${workspace}\0${home ?? '\u0001'}\0${command}`,
+    () => computeCdEvents(command, workspace, home),
+  );
+}
+
+function computeCdEvents(
+  command: string,
+  workspace: string,
+  home?: string,
+): CdEvent[] {
+  const events: CdEvent[] = [];
+  let cwd: string | null = resolve(workspace);
+  for (const match of command.matchAll(CD_COMMAND)) {
+    const dir = match[2] === 'popd' ? '' : cdArgument(match[3] ?? '');
+    const belowHome = home === undefined ? undefined : homeRelative(dir);
+    const belowPwd = pwdRelative(dir);
+    if (home !== undefined && belowHome !== undefined) {
+      cwd = resolve(home, belowHome);
+    } else if (belowPwd !== undefined) {
+      cwd = cwd === null ? null : resolve(cwd, belowPwd);
+    } else if (
+      dir === '' ||
+      dir.startsWith('-') ||
+      /[~$`]/.test(dir[0] ?? '')
+    ) {
+      cwd = null;
+    } else if (isAbsolute(dir)) {
+      cwd = resolve(dir);
+    } else if (cwd !== null) {
+      cwd = resolve(cwd, dir);
+    }
+    // A tracked directory past 1 KiB is not a real one (`cd a` repeated 8000
+    // times built a 16 KiB path that every later target re-resolved): treated
+    // as unknown, which fails closed.
+    if (cwd !== null && cwd.length > MAX_TRACKED_CWD) cwd = null;
+    events.push({
+      index: match.index + (match[1] ?? '').length,
+      end: match.index + match[0].length,
+      cwd,
+    });
+  }
+  return events;
+}
+
+// The tracked cwd at `position`: the last cd that starts before it — unless
+// the position is inside that cd's own text, where it has not run yet.
+function cwdAt(
+  events: readonly CdEvent[],
+  position: number,
+  workspace: string,
+): string | null {
+  let low = 0;
+  let high = events.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if ((events[mid]?.index ?? 0) < position) low = mid + 1;
+    else high = mid;
+  }
+  let last = low - 1;
+  if (last >= 0 && position < (events[last]?.end ?? 0)) last -= 1;
+  return last < 0 ? resolve(workspace) : (events[last]?.cwd ?? null);
+}
+
+function underKubicHome(path: string, home: string | undefined): boolean {
+  if (home === undefined) return false;
+  const state = resolve(home, '.kubic');
+  return path === state || path.startsWith(`${state}/`);
+}
+
+function shellTargetOutside(
+  target: string,
+  cwd: string | null,
+  ctx: TriggerContext,
+): boolean {
+  if (SHELL_EXPANDED.test(target)) return true;
+  if (isAbsolute(target)) {
+    if (STREAM_DEVICE.test(resolve(target))) return false;
+    return (
+      underKubicHome(resolve(target), ctx.home) ||
+      ctx.isOutsideWorkspace(target)
+    );
+  }
+  if (cwd === null) return true;
+  const absolute = resolve(cwd, target);
+  if (underKubicHome(absolute, ctx.home)) return true;
+  // No cd moved the cwd: hand the raw token over, exactly as before.
+  return ctx.isOutsideWorkspace(
+    cwd === resolve(ctx.workspace) ? target : absolute,
+  );
 }
 
 export function detectTriggers(
@@ -363,52 +1237,48 @@ export function detectTriggers(
     const spanClosers = new Set(spans.map((span) => span.closer));
     if (ctx.isDestructive(command, ctx.workspace))
       found.push('destructive-shell');
-    if (ctx.network === 'none' && ctx.isNetworkCommand(command))
+    if (networkGated(ctx.network) && ctx.isNetworkCommand(command))
       found.push('network');
-    if (GIT_PUSH.test(command) || GIT_REMOTE_MUTATION.test(command))
-      found.push('git-push');
+    if (gitPushOrRemoteMutation(command)) found.push('git-push');
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
-    const redirect = REDIRECT.exec(command);
-    if (redirect !== null && redirect[2] !== undefined) {
+    // Every write target (redirect, tee, cp/mv/install) goes through one
+    // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
+    // failing closed on shell-expanded prefixes (issue #355).
+    const cdTrail = cdEvents(command, ctx.workspace);
+    const typedCwd = resolve(ctx.workspace);
+    const outside = (raw: string, end: number, start: number): boolean => {
       // Targets arrive raw: quotes always come off, and a lifted token also
       // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
       // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
-      // plain literal `)`/`]` stays part of the path.
-      const target = targetToken(
-        redirect[2],
-        redirect.index + redirect[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
+      // plain literal `)`/`]` stays part of the path. Outside if EITHER the
+      // token as typed OR its cd-tracked resolution is (see the cd notes above).
+      const target = targetToken(raw, end, spanClosers);
+      if (target === '') return false;
+      if (shellTargetOutside(target, typedCwd, ctx)) return true;
+      const tracked = cwdAt(cdTrail, start, ctx.workspace);
+      return tracked !== typedCwd && shellTargetOutside(target, tracked, ctx);
+    };
+    const targets: Array<[string, number, number]> = [];
+    for (const redirect of command.matchAll(REDIRECT)) {
+      const raw = redirect[2] ?? '';
+      if (redirect[1]?.endsWith('&') === true && FD_DUPLICATION.test(raw)) {
+        continue;
       }
+      targets.push([raw, redirect.index + redirect[0].length, redirect.index]);
     }
     // Shell-side writes by another name (issue #131): tee and trailing
     // cp/mv/install targets reach files no `>` ever touches. Both use the
     // same shared quote-stripping and last-argument target extraction,
     // scoped so the closer trim fires only on lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
-      const target = targetToken(
-        tee[1] ?? '',
-        tee.index + tee[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([tee[1] ?? '', tee.index + tee[0].length, tee.index]);
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
-      const target = targetToken(
-        copy[2] ?? '',
-        copy.index + copy[0].length,
-        spanClosers,
-      );
-      if (target !== '' && ctx.isOutsideWorkspace(target)) {
-        found.push('outside-write');
-        break;
-      }
+      targets.push([copy[2] ?? '', copy.index + copy[0].length, copy.index]);
+    }
+    if (targets.some(([raw, end, start]) => outside(raw, end, start))) {
+      found.push('outside-write');
     }
     // Privilege escalation and command indirection (issue #131): sudo is a
     // capability event wherever it sits, and a destructive/network verb
@@ -424,7 +1294,7 @@ export function detectTriggers(
       if (ctx.isDestructive(payload, ctx.workspace)) {
         found.push('destructive-shell');
       }
-      if (ctx.network === 'none' && ctx.isNetworkCommand(payload)) {
+      if (networkGated(ctx.network) && ctx.isNetworkCommand(payload)) {
         found.push('network');
       }
     }
@@ -433,7 +1303,26 @@ export function detectTriggers(
     (toolName === 'write' || toolName === 'edit') &&
     typeof args.path === 'string'
   ) {
-    if (ctx.isOutsideWorkspace(args.path)) found.push('outside-write');
+    if (
+      underKubicHome(resolve(ctx.workspace, args.path), ctx.home) ||
+      ctx.isOutsideWorkspace(args.path)
+    ) {
+      found.push('outside-write');
+    }
+  }
+  if (
+    writeTargets(
+      toolName,
+      args,
+      ctx.workspace,
+      ctx.controlPlane?.home ?? homedir(),
+    ).some(
+      (target) =>
+        controlPlaneClass(ctx.workspace, target, ctx.controlPlane) !==
+        undefined,
+    )
+  ) {
+    found.push(KUBIC_STATE_WRITE);
   }
   return [...new Set(found)];
 }
@@ -473,7 +1362,9 @@ export function summarizeRequest(
   // Summaries reach the TUI and the trajectory: secret-shaped values are
   // redacted exactly like block reasons (issue #15).
   if (toolName === 'bash' && typeof args.command === 'string') {
-    return redactReason(`${capability}: ${args.command.slice(0, 120)}`);
+    // Issue #316: never a silent slice — a shortened summary says how much
+    // it hid; the full command travels in the request's `command` field.
+    return summarizeCommand(capability, args.command);
   }
   if (typeof args.path === 'string') {
     return redactReason(`${capability}: ${toolName} ${args.path}`);
@@ -579,19 +1470,32 @@ export function createApprovalAsk(
   ctx: TriggerContext,
   store: FileApprovalStore,
 ): ApprovalAsk {
+  // Issue #325: the posture is read ONCE, when the ask is built (session
+  // boot) — never per call, so a posture.json written mid-session by the
+  // model cannot switch approvals off.
+  const posture = store.loadPosture();
   return async (call) => {
     const capabilities = detectTriggers(call.toolName, call.args, ctx);
     if (capabilities.length === 0) return { approved: true, challenged: false };
-    const posture = store.loadPosture();
-    if (posture.fullAccess) {
+    const refusal = controlPlaneRefusal(
+      call.toolName,
+      call.args,
+      ctx.workspace,
+      ctx.controlPlane,
+    );
+    if (refusal !== undefined) return { approved: false, reason: refusal };
+    const asked = posture.fullAccess
+      ? capabilities.filter((capability) => ALWAYS_ASK.has(capability))
+      : capabilities;
+    if (asked.length === 0) {
       return { approved: true, challenged: true };
     }
-    for (const capability of capabilities) {
+    for (const capability of asked) {
       const verdict = await service.request({
         key: approvalKey(call.toolName, capability, call.args),
         capability,
         toolName: call.toolName,
-        summary: summarizeRequest(call.toolName, capability, call.args),
+        ...approvalRequestDisplay(call.toolName, capability, call.args),
       });
       if (!verdict.approved) {
         return { approved: false, reason: verdict.reason };
@@ -613,6 +1517,72 @@ export function enableFullAccess(
   };
   store.savePosture(posture);
   return posture;
+}
+
+// The one flag name for session-scoped full access (issue #308, §41.4).
+export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
+
+export interface SessionFullAccessOptions {
+  /**
+   * The session dir whose posture.json records the grant. Absent for a
+   * posture kept elsewhere (orchestrate's own skip record): only the audit
+   * row and the warning are produced then.
+   */
+  sessionDir?: string;
+  sessionId: string;
+  /** The command after `kubic`: 'run', 'tui', 'sessions create', 'orchestrate'. */
+  command: string;
+  /** Resolves the repo ledger (resolveRepoRuntimeRoot). */
+  workspace: string;
+  mode?: 'solo' | 'orchestrator';
+  clock?: () => number;
+  onAuditError?: (message: string) => void;
+}
+
+export interface SessionFullAccessGrant {
+  posture: AccessPosture;
+  /** The stderr warning every enabling command prints, word for word. */
+  warning: string;
+}
+
+// The ONE enable path for session-scoped full access (issue #308): `kubic`,
+// `kubic tui`, `kubic run`, `kubic sessions create` and `kubic orchestrate`
+// all come through here. It records the posture in the session dir (never in
+// config), appends one §60 row naming the session and the originating
+// command, and returns the warning the caller prints on stderr.
+export function enableSessionFullAccess(
+  options: SessionFullAccessOptions,
+): SessionFullAccessGrant {
+  const commandLine = `kubic ${options.command} ${FULL_ACCESS_FLAG}`;
+  const clock = options.clock ?? Date.now;
+  const posture =
+    options.sessionDir === undefined
+      ? { fullAccess: true, enabledAt: clock(), enabledBy: commandLine }
+      : enableFullAccess(
+          new FileApprovalStore(options.sessionDir),
+          commandLine,
+          clock,
+        );
+  appendToLedger(
+    auditLedgerDirFor(options.workspace),
+    fullAccessEnabledAudit({
+      sessionId: options.sessionId,
+      command: commandLine,
+      workspace: options.workspace,
+      mode: options.mode ?? 'solo',
+    }),
+    options.onAuditError,
+  );
+  return {
+    posture,
+    warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
+  };
+}
+
+// The warning a headless run prints when the session it runs in already has
+// full access (issue #308): a scripted caller must never be surprised.
+export function fullAccessInForceWarning(sessionId: string): string {
+  return `session ${sessionId} runs with full access: approvals are skipped for every challenged call`;
 }
 
 // The INSTALLED solo policy (issue #86; §40, §41, §59.1). This is the
@@ -648,6 +1618,10 @@ export interface SoloPolicyInput {
   source?: 'config' | 'default';
   /** Extension/facet contributions; telemetry composes outermost of them. */
   contributions?: ToolContribution[];
+  /** Home directory holding the global `~/.kubic` (default os.homedir()). */
+  home?: string;
+  /** The session root in use; writes into it are refused (issue #324). */
+  sessionsRoot?: string;
   /** Telemetry sink (issue #15 slice D); absent means no telemetry wrapper. */
   telemetry?: (record: { toolName: string; durationMs: number }) => void;
   /** Bounded approval wait (headless never answers; it denies on timeout). */
@@ -656,6 +1630,15 @@ export interface SoloPolicyInput {
   route?: 'ask-user' | 'deny';
   /** Stored decisions are scoped to one session (the shipped default). */
   sessionScoped?: boolean;
+  /**
+   * Config `[approvals] autoApprove` (issue #230): capabilities approved
+   * without an ask. Explicit-only — it arrives from config, never from the
+   * tool path — and it is consulted before the no-surface refusal, so a
+   * headless run honours it too.
+   */
+  autoApprove?: Capability[];
+  /** Config `[approvals] requireJustification` (issue #230). */
+  requireJustification?: boolean;
   /** Session dir carrying posture.json (session-scoped full access). */
   sessionDir?: string;
   /**
@@ -670,7 +1653,52 @@ export interface SoloPolicyInput {
   /** Trigger sink (debug/trajectory), never consulted for the decision. */
   onTrigger?: (trigger: PolicyTrigger) => void;
   clock?: () => number;
+  /** §60 audit identity: the session (absent: sessionDir's basename). */
+  sessionId?: string;
+  /**
+   * §60 audit identity: the `provider/id` the lane runs on. A function is
+   * read at RECORD time, so a policy installed before the lane boots (the
+   * stored-model rule, issue #148) or a model switched mid-session (`/model`,
+   * issue #227) is still recorded under the model the lane runs now.
+   */
+  model?: string | (() => string);
+  /** A failed ledger append lands here; it never reaches the approval. */
+  onAuditError?: (message: string) => void;
+  /**
+   * Set when this lane is an orchestrator-managed worker child (issue #279;
+   * the composition root reads KUBIC_WORKER_ID / KUBIC_ORCHESTRATOR_SESSION).
+   * Decisions answered through the manager seat are recorded by the manager
+   * (worker-asks), so the child appends nothing for them; decisions the child
+   * makes locally (a latched answer, the route, autoApprove, full access, a
+   * refusal) are recorded ONCE, as mode 'orchestrator' for this worker, in
+   * the main repo ledger — never inside the worktree.
+   */
+  orchestratedWorker?: { workerId: string; orchestratorSession: string };
 }
+
+// The orchestrated-worker identity from a child's environment (issue #279):
+// both variables are set by `kubic orchestrate` on each worker child; either
+// missing means a plain solo lane.
+export function orchestratedWorkerFromEnv(
+  env: Record<string, string | undefined>,
+): { workerId: string; orchestratorSession: string } | undefined {
+  const workerId = env.KUBIC_WORKER_ID?.trim() ?? '';
+  const orchestratorSession = env.KUBIC_ORCHESTRATOR_SESSION?.trim() ?? '';
+  if (workerId === '' || orchestratorSession === '') return undefined;
+  return { workerId, orchestratorSession };
+}
+
+// The config `[approvals]` half of the install (issue #230): the one shape
+// the composition root projects from the config load and every solo entry
+// point (run, tui, replay, doctor) spreads into installSoloPolicy.
+export type SoloApprovalConfig = Pick<
+  SoloPolicyInput,
+  | 'route'
+  | 'maxPendingMs'
+  | 'autoApprove'
+  | 'requireJustification'
+  | 'sessionScoped'
+>;
 
 // What the lane installed and what doctor must print, in ONE object.
 export interface InstalledPolicyPosture {
@@ -681,7 +1709,12 @@ export interface InstalledPolicyPosture {
   interceptors: string[];
   sessionScoped: boolean;
   maxPendingMs: number;
+  autoApprove: string[];
+  requireJustification: boolean;
   fullAccess: boolean;
+  // §40.2 (issue #166): every declared level the tool set cannot express,
+  // with the level the lane enforces instead — reported, never silent.
+  unsupported: UnsupportedLevel[];
 }
 
 export interface RecordedApprovalDeny {
@@ -709,10 +1742,19 @@ export interface InstalledSoloPolicy {
   denials: () => RecordedApprovalDeny[];
   // The decider, exposed so a caller (or a test) can drive it directly.
   ask: ApprovalAsk;
+  // Issue #325: the end-of-session posture check — a posture.json written
+  // after the last ask is restored and recorded before the session closes.
+  settle?: () => void;
+  // Issue #307: true exactly when the ask above auto-approves every
+  // challenged call as full access — the boot posture (#325) the ask
+  // itself decides on, so the indicator cannot drift from the policy.
+  approvalsSkipped: () => boolean;
 }
 
 export function installedPolicyPosture(
   input: SoloPolicyInput,
+  // The posture record read at boot (issue #325); absent reads it here.
+  bootPosture?: AccessPosture,
 ): InstalledPolicyPosture {
   const classes = validateClasses({ ...(input.classes ?? {}) });
   const allowlist = toolsForClasses(classes);
@@ -724,19 +1766,36 @@ export function installedPolicyPosture(
       `installed policy contradicts itself: ${agreement.reason}`,
     );
   }
-  const route = input.route ?? 'ask-user';
-  const sessionScoped = input.sessionScoped ?? true;
+  // One validation for every approval knob (issue #230): the same
+  // validatePolicy the config load and the service use, so the posture
+  // doctor prints is exactly the policy the service enforces.
+  const policy = validatePolicy({
+    ...(input.route === undefined ? {} : { route: input.route }),
+    ...(input.maxPendingMs === undefined
+      ? {}
+      : { maxPendingMs: input.maxPendingMs }),
+    ...(input.autoApprove === undefined
+      ? {}
+      : { autoApprove: input.autoApprove }),
+    ...(input.sessionScoped === undefined
+      ? {}
+      : { sessionScoped: input.sessionScoped }),
+    ...(input.requireJustification === undefined
+      ? {}
+      : { requireJustification: input.requireJustification }),
+  });
   const fullAccess =
-    input.sessionDir === undefined
+    bootPosture?.fullAccess ??
+    (input.sessionDir === undefined
       ? false
-      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess;
+      : new FileApprovalStore(input.sessionDir).loadPosture().fullAccess);
   return {
     // The layer's own answer when the caller supplies it (the composition
     // root does); the shape rule only as the legacy fallback, so the printed
     // source is never a guess about a config-less install.
     source:
       input.source ?? (input.classes === undefined ? 'default' : 'config'),
-    route,
+    route: policy.route,
     classes: { ...classes },
     allowlist: [...allowlist],
     // Named mechanisms, not adjectives: this is exactly what the lane
@@ -749,24 +1808,36 @@ export function installedPolicyPosture(
       'confine-guard',
       'approval',
     ],
-    sessionScoped,
-    maxPendingMs: input.maxPendingMs ?? 60_000,
+    sessionScoped: policy.sessionScoped,
+    maxPendingMs: policy.maxPendingMs,
+    autoApprove: [...policy.autoApprove],
+    requireJustification: policy.requireJustification,
     fullAccess,
+    unsupported: checkExpressible(classes),
   };
 }
 
 export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
-  const posture = installedPolicyPosture(input);
   const denials: RecordedApprovalDeny[] = [];
   const store =
     input.sessionDir === undefined
       ? undefined
       : new FileApprovalStore(input.sessionDir);
+  // Issue #325 (§41.4, §59): the full-access posture is resolved ONCE, here,
+  // at session boot — from what the explicit flag or `sessions create
+  // --dangerously-skip-approvals` recorded — and kept in memory. posture.json
+  // is never re-read to decide an ask.
+  const bootPosture: AccessPosture = store?.loadPosture() ?? {
+    fullAccess: false,
+  };
+  const posture = installedPolicyPosture(input, bootPosture);
   const service = new ApprovalService({
     policy: validatePolicy({
       route: posture.route,
       sessionScoped: posture.sessionScoped,
       maxPendingMs: posture.maxPendingMs,
+      autoApprove: posture.autoApprove,
+      requireJustification: posture.requireJustification,
     }),
     ...(store === undefined ? {} : { store }),
     // The seat's ask is the service's awaitAnswer: the service races it
@@ -775,38 +1846,236 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     ...(input.answer === undefined ? {} : { awaitAnswer: input.answer }),
     ...(input.clock === undefined ? {} : { clock: input.clock }),
   });
-  const ask: ApprovalAsk = async (call) => {
-    if (store?.loadPosture().fullAccess && posture.route === 'ask-user') {
-      // Explicit, session-scoped full access — recorded, never implied.
-      return { approved: true, challenged: true };
+  // §60 audit ledger: every resolved ask appends one record to the REPO
+  // ledger (issue #279): <main checkout>/.kubic/orchestrator/approvals,
+  // resolved once here with the same resolver `kubic audit` reads through,
+  // so a run from a subdirectory or a linked worktree writes where the
+  // reader looks. Best-effort by contract — a failed write (or a malformed
+  // record) goes to onAuditError, never into the approval decision.
+  const ledgerDir = auditLedgerDirFor(input.workspace);
+  const worker = input.orchestratedWorker;
+  const auditSessionId =
+    input.sessionId ??
+    (input.sessionDir === undefined ? '' : basename(input.sessionDir));
+  const audit = (
+    toolName: string,
+    trigger: string,
+    decision:
+      | { approved: true; by?: string }
+      | { approved: false; reason: string },
+    fullAccess: boolean,
+  ): void => {
+    const onError = input.onAuditError ?? (() => undefined);
+    try {
+      const model =
+        typeof input.model === 'function' ? input.model() : input.model;
+      appendToLedger(
+        ledgerDir,
+        soloDecisionAudit({
+          sessionId: auditSessionId,
+          toolName,
+          trigger,
+          workspace: input.workspace,
+          ...(model === undefined ? {} : { model }),
+          approved: decision.approved,
+          ...(decision.approved
+            ? decision.by === undefined
+              ? {}
+              : { by: decision.by }
+            : { reason: decision.reason }),
+          posture: fullAccess ? 'full-access' : 'approvals',
+          ...(worker === undefined
+            ? {}
+            : {
+                worker: {
+                  id: worker.workerId,
+                  orchestratorSession: worker.orchestratorSession,
+                },
+              }),
+        }),
+        onError,
+      );
+    } catch (error) {
+      try {
+        onError(error instanceof Error ? error.message : String(error));
+      } catch {
+        // A throwing error sink must not reach the approval either.
+      }
     }
-    const capabilities = detectTriggers(
+  };
+  // Kubic state beyond the workspace (issue #324): the global home and the
+  // session root this lane actually writes.
+  const controlPlane: ControlPlaneRoots = {
+    ...(input.home === undefined ? {} : { home: input.home }),
+    ...(input.sessionsRoot === undefined
+      ? {}
+      : { sessionsRoot: input.sessionsRoot }),
+  };
+  const deny = (
+    capability: string,
+    toolName: string,
+    reason: string,
+  ): { approved: false; reason: string } => {
+    denials.push({ capability, toolName, reason });
+    audit(toolName, capability, { approved: false, reason }, false);
+    return { approved: false, reason };
+  };
+  // A refusal recorded by someone else (the manager, for a worker child's
+  // seat-answered ask): still a denial the run must end on, never a record.
+  const refuseUnaudited = (
+    capability: string,
+    toolName: string,
+    reason: string,
+  ): { approved: false; reason: string } => {
+    denials.push({ capability, toolName, reason });
+    return { approved: false, reason };
+  };
+  // Issue #307: true exactly when the ask auto-approves every challenged
+  // call as full access — the SAME boot posture the ask consults (#325), so
+  // the status bar's OFF indicator cannot drift from what the policy does.
+  const approvalsSkipped = (): boolean =>
+    posture.fullAccess && posture.route === 'ask-user';
+  // A posture.json change made DURING the session (issue #325) is refused:
+  // the file is restored to the boot posture (so a later resume does not
+  // inherit it) and the change is recorded once in the ledger. Checked on
+  // every ask and on settle(), never consulted for the decision itself.
+  let postureChangeRecorded = false;
+  const guardPosture = (): void => {
+    if (store === undefined) return;
+    let current: AccessPosture;
+    try {
+      current = store.loadPosture();
+    } catch {
+      return;
+    }
+    if (
+      current.fullAccess === bootPosture.fullAccess &&
+      current.enabledAt === bootPosture.enabledAt &&
+      current.enabledBy === bootPosture.enabledBy
+    ) {
+      return;
+    }
+    const onError = input.onAuditError ?? (() => undefined);
+    try {
+      store.savePosture(bootPosture);
+    } catch (error) {
+      onError(
+        `posture restore failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (postureChangeRecorded) return;
+    postureChangeRecorded = true;
+    appendToLedger(
+      ledgerDir,
+      postureChangedAudit({
+        sessionId: auditSessionId,
+        workspace: input.workspace,
+        bootFullAccess: bootPosture.fullAccess,
+        observedFullAccess: current.fullAccess === true,
+      }),
+      onError,
+    );
+  };
+  const ask: ApprovalAsk = async (call) => {
+    // A posture.json change made mid-session (issue #325) is refused and
+    // restored before this call is judged.
+    guardPosture();
+    // Refused control-plane state (issue #324): a tool error before any
+    // posture is consulted — full access included — and never an ask.
+    const refusal = controlPlaneRefusal(
       call.toolName,
       call.args,
-      triggerContextFor(posture.classes, input.workspace),
+      input.workspace,
+      controlPlane,
     );
+    if (refusal !== undefined) {
+      return deny(KUBIC_STATE_WRITE, call.toolName, refusal);
+    }
+    const detected = detectTriggers(
+      call.toolName,
+      call.args,
+      triggerContextFor(posture.classes, input.workspace, controlPlane),
+    );
+    let capabilities = detected;
+    if (posture.fullAccess && posture.route === 'ask-user') {
+      // Full access never answers an always-ask capability (issue #324):
+      // those still go through the ask below; everything else is approved.
+      capabilities = detected.filter((capability) =>
+        ALWAYS_ASK.has(capability),
+      );
+      if (capabilities.length === 0) {
+        // Explicit, session-scoped full access — recorded, never implied.
+        audit(
+          call.toolName,
+          'full-access',
+          { approved: true, by: 'full-access' },
+          true,
+        );
+        return { approved: true, challenged: true };
+      }
+    }
     if (capabilities.length === 0) return { approved: true, challenged: false };
     for (const capability of capabilities) {
       const key = approvalKey(call.toolName, capability, call.args);
       // A stored decision (a real answer, from a surface that has one) wins:
       // first-answer-latched, exactly like every other approval path.
-      const decided = service.decided(key);
+      // A stored approval granted without justification does not survive
+      // requireJustification (the service's own staleness rule): it
+      // re-enters the policy path below instead of being replayed.
+      const stored = service.decided(key);
+      const decided =
+        stored?.approved === true &&
+        posture.requireJustification &&
+        stored.justified !== true
+          ? undefined
+          : stored;
       if (decided !== undefined) {
         if (!decided.approved) {
-          denials.push({
-            capability,
-            toolName: call.toolName,
-            reason: decided.reason,
-          });
-          return { approved: false, reason: decided.reason };
+          return deny(capability, call.toolName, decided.reason);
         }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: decided.by },
+          false,
+        );
         continue;
       }
+      // route=deny refuses everything challenged — autoApprove entries never
+      // apply under it, which is exactly what `kubic doctor` says (`route=deny
+      // ignores autoApprove`); the lane used to approve them (issue #230).
       if (posture.route === 'deny') {
         // Configured refusal: named as the route, never as a timeout.
         const reason = `denied by policy route (capability: ${capability})`;
-        denials.push({ capability, toolName: call.toolName, reason });
-        return { approved: false, reason };
+        return deny(capability, call.toolName, reason);
+      }
+      // Config autoApprove (issue #230; §41.2): explicit-only, decided by
+      // the service (which also enforces requireJustification), and
+      // consulted BEFORE the no-surface refusal, so a headless run honours it
+      // exactly like an interactive one. An always-ask capability never takes
+      // this branch (issue #324): it behaves as if autoApprove were empty for
+      // it — the seat below, or the instant no-surface refusal — instead of
+      // waiting out maxPendingMs with no seat to answer.
+      if (
+        !ALWAYS_ASK.has(capability) &&
+        posture.autoApprove.includes(capability)
+      ) {
+        const verdict = await service.request({
+          key,
+          capability,
+          toolName: call.toolName,
+          summary: summarizeRequest(call.toolName, capability, call.args),
+        });
+        if (!verdict.approved) {
+          return deny(capability, call.toolName, verdict.reason);
+        }
+        audit(
+          call.toolName,
+          capability,
+          { approved: true, by: verdict.by },
+          false,
+        );
+        continue;
       }
       // An answer seat is attached (issue #96): the TUI is a command with a
       // user attached, so the verdict can be collected instead of refused.
@@ -817,15 +2086,22 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           key,
           capability,
           toolName: call.toolName,
-          summary: summarizeRequest(call.toolName, capability, call.args),
+          ...approvalRequestDisplay(call.toolName, capability, call.args),
         });
+        // A worker child's seat IS the manager (issue #279): the manager's
+        // worker-asks record is the one §60 record for this decision.
         if (!verdict.approved) {
-          denials.push({
+          return worker === undefined
+            ? deny(capability, call.toolName, verdict.reason)
+            : refuseUnaudited(capability, call.toolName, verdict.reason);
+        }
+        if (worker === undefined) {
+          audit(
+            call.toolName,
             capability,
-            toolName: call.toolName,
-            reason: verdict.reason,
-          });
-          return { approved: false, reason: verdict.reason };
+            { approved: true, by: verdict.by },
+            false,
+          );
         }
         continue;
       }
@@ -840,8 +2116,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       // persisted: it is a missing surface, not a user decision, and a later
       // overlay must still be able to ask about the same operation.
       const reason = `${NO_ANSWER_SURFACE_REASON} (capability: ${capability})`;
-      denials.push({ capability, toolName: call.toolName, reason });
-      return { approved: false, reason };
+      return deny(capability, call.toolName, reason);
     }
     return { approved: true, challenged: true };
   };
@@ -864,6 +2139,8 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     posture,
     denials: () => [...denials],
     ask,
+    approvalsSkipped,
+    settle: guardPosture,
   };
 }
 
@@ -873,9 +2150,24 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
 export function triggerContextFor(
   classes: PermissionClasses,
   workspace: string,
+  controlPlaneOrHome?: ControlPlaneRoots | string,
+  home?: string,
 ): TriggerContext {
+  // HEAD passes the #324 control plane as the third argument; the #355
+  // branch passes the user's home string there (tests rely on both shapes),
+  // so the third argument is either. `home` is always set — `~`-expanded
+  // targets are checked against it (issue #355).
+  const controlPlane =
+    typeof controlPlaneOrHome === 'string' ? undefined : controlPlaneOrHome;
+  const resolvedHome =
+    typeof controlPlaneOrHome === 'string'
+      ? controlPlaneOrHome
+      : (home ?? homedir());
   return {
     workspace,
+    home: resolvedHome,
+    ...(controlPlane === undefined ? {} : { controlPlane }),
+
     network: classes.network,
     isDestructive: defaultIsDestructive,
     isNetworkCommand,
@@ -941,8 +2233,16 @@ export class ApprovalService {
     const stamped: ApprovalVerdict = verdict.approved
       ? { ...verdict, justified: request.justification !== undefined }
       : verdict;
-    this.decisions.set(request.key, stamped);
-    this.persist();
+    // Issue #231 (§41.2): only session-scoped answers enter the latch —
+    // allow-session, autoApprove, the route, and user DENIALS (a refusal
+    // latching is the fail-safe direction: the user said no to this exact
+    // operation for this session). An 'allow once' approves THIS call only:
+    // it is returned without being stored or persisted, so the next
+    // identical call asks again.
+    if (!(stamped.approved && stamped.by === ALLOW_ONCE)) {
+      this.decisions.set(request.key, stamped);
+      this.persist();
+    }
     this.pending.delete(request.key);
     this.waiters.get(request.key)?.(stamped);
     this.waiters.delete(request.key);
@@ -963,7 +2263,17 @@ export class ApprovalService {
       // persists — so the eviction is durable and the denial is recorded.
       this.decisions.delete(request.key);
     }
-    if (this.policy.autoApprove.includes(request.capability)) {
+    // route=deny first: autoApprove entries never apply under it (issue #230).
+    if (this.policy.route === 'deny') {
+      return this.submit(request, {
+        approved: false,
+        reason: `denied by policy route (capability: ${request.capability})`,
+      });
+    }
+    if (
+      this.policy.autoApprove.includes(request.capability) &&
+      !ALWAYS_ASK.has(request.capability)
+    ) {
       if (
         this.policy.requireJustification &&
         request.justification === undefined
@@ -974,12 +2284,6 @@ export class ApprovalService {
         });
       }
       return this.submit(request, { approved: true, by: 'autoApprove' });
-    }
-    if (this.policy.route === 'deny') {
-      return this.submit(request, {
-        approved: false,
-        reason: `denied by policy route (capability: ${request.capability})`,
-      });
     }
     this.pending.set(request.key, request);
     try {

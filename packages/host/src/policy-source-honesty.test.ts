@@ -15,8 +15,13 @@ import {
   installedPolicyDeps,
 } from '../../../apps/kubic/src/config-runtime.js';
 import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
-import { installSoloPolicy } from './approvals.js';
+import {
+  detectTriggers,
+  installSoloPolicy,
+  triggerContextFor,
+} from './approvals.js';
 import { loadRuntimeConfig, type RuntimeConfig } from './config/runtime.js';
+import { NO_PROJECT_TRUST } from './config/trust-store.js';
 
 // The shape the composition root hands the projection: the load's own result
 // plus the fields `run`/`tui` do not read. Only `runtime` matters here.
@@ -25,6 +30,7 @@ function cliResult(runtime: RuntimeConfig | undefined): CliConfigResult {
     runtime,
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 
@@ -85,6 +91,18 @@ describe('installed-policy source honesty (issue #86)', () => {
     const installed = installSoloPolicy({ workspace: '/tmp/x', ...deps });
     expect(installed.posture.source).toBe('config');
     expect(installed.posture.classes.network).toBe('allowlist');
+    // Issue #166: the domain-less allowlist is reported, and the installed
+    // guards enforce it as `none` — `curl` raises the network trigger.
+    expect(installed.posture.unsupported.map((u) => u.class)).toEqual([
+      'network',
+    ]);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'curl https://x' },
+        triggerContextFor(installed.posture.classes, '/tmp/x'),
+      ),
+    ).toEqual(['network']);
   });
 
   it('a config that sets something ELSE still installs the default classes', () => {

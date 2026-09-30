@@ -250,6 +250,22 @@ describe('approval service (issue #16, slice A)', () => {
         triggerContext({ network: 'full' }),
       ),
     ).toEqual([]);
+    // Issue #166: an allowlist with no domains allows nothing — never the
+    // silent unrestricted network it used to be.
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'curl https://x' },
+        triggerContext({ network: 'allowlist' }),
+      ),
+    ).toEqual(['network']);
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'echo $(curl https://x)' },
+        triggerContext({ network: 'allowlist' }),
+      ),
+    ).toEqual(['network']);
     expect(
       detectTriggers(
         'read',

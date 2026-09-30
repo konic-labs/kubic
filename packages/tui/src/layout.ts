@@ -22,7 +22,13 @@ export interface Viewport {
   height: number;
 }
 
+// The tree row sizes to its content up to this many rows (TUI polish: a
+// fixed 12-row block left most of the top of the screen blank in solo).
+export const TREE_MAX_ROWS = 6;
+
 export interface LayoutSlots {
+  // Optional one-line brand header above everything else.
+  header?: Component;
   tree: Component;
   transcript: Component;
   status: Component;
@@ -49,12 +55,23 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
     grow?: number;
     shrink?: number;
     minSize?: number;
+    maxSize?: number;
     visible?: (viewport: Viewport) => boolean;
   };
-  const rows: Row[] = [
-    { component: slots.tree, basis: 12, shrink: 0, visible: treeVisible },
+  const rows: Row[] = [];
+  if (slots.header !== undefined) {
+    rows.push({ component: slots.header, basis: 1, shrink: 0 });
+  }
+  rows.push(
+    {
+      component: slots.tree,
+      basis: 'auto',
+      shrink: 0,
+      maxSize: TREE_MAX_ROWS,
+      visible: treeVisible,
+    },
     { component: slots.transcript, grow: 1, shrink: 1, minSize: 3 },
-  ];
+  );
   if (slots.panel !== undefined) {
     // Read through the slot, not a captured boolean: the callback runs per
     // render, so a toggle takes effect on the next frame.

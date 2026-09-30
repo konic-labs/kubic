@@ -157,3 +157,23 @@ describe('tool-output spill wiring (issue #34: truncated bash resolves via spill
     expect(passThroughOutput(long)).toBe(long);
   });
 });
+
+describe('reserve clamp (a reserve never eats more than a quarter of the window)', () => {
+  it('clamps the reserve to floor(window / 4) and leaves large windows alone', async () => {
+    const { effectiveReserveTokens, compactionThreshold, shouldCompact } =
+      await import('./compaction.js');
+    expect(effectiveReserveTokens(8192)).toBe(2048);
+    expect(effectiveReserveTokens(200000)).toBe(16384);
+    expect(effectiveReserveTokens(8192, 1000)).toBe(1000);
+    // Unknown window (0): nothing to clamp against.
+    expect(effectiveReserveTokens(0)).toBe(16384);
+    expect(compactionThreshold(8192)).toBe(6144);
+    // An 8192-window model no longer compacts a tiny context every turn.
+    expect(shouldCompact({ contextTokens: 100, contextWindow: 8192 })).toBe(
+      false,
+    );
+    expect(shouldCompact({ contextTokens: 6145, contextWindow: 8192 })).toBe(
+      true,
+    );
+  });
+});

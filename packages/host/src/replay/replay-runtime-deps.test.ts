@@ -37,6 +37,7 @@ import {
   type MutableModels,
 } from '../../../worker/src/pi-boundary.js';
 import { loadRuntimeConfig } from '../config/runtime.js';
+import { NO_PROJECT_TRUST } from '../config/trust-store.js';
 import {
   type ReplayRunRequest,
   type ReplayRuntimeDeps,
@@ -141,6 +142,7 @@ function cliResult(runtime: unknown): CliConfigResult {
     runtime: runtime as CliConfigResult['runtime'],
     error: undefined,
     ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
   };
 }
 
@@ -168,17 +170,15 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     writeFileSync(lockPath, JSON.stringify({ models: { faux: ['m1'] } }));
     let captured: ReplayRuntimeDeps | undefined;
     const exit = await runReplayCommand(
-      [
-        trajPath,
-        '--tier',
-        'deterministic',
-        '--model',
-        'faux/m1',
-        '--lockfile',
-        lockPath,
-      ],
+      {
+        trajectory: trajPath,
+        tier: 'deterministic',
+        model: 'faux/m1',
+        lockfile: lockPath,
+      },
       {
         out: () => {},
+        err: () => {},
         run: async (_request, runtime) => {
           captured = runtime;
           return { terminus: 'completed', summary: 'replayed' };
@@ -211,14 +211,15 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     // The effective config (issue #90): an explicit [permissions] layer
     // makes the classes config-sourced. `shell = "read-only-allowlist"` is
     // the class that blocks network-shaped bash commands at the guard —
-    // and `network = "allowlist"` keeps the approval trigger out of the
-    // way (detectTriggers fires `network` only at network 'none'). Under
-    // the documented DEFAULTS the same call instead dies on the approval
-    // challenge ('approval refused: network'), so the guard-shaped block
-    // is the proof the CONFIG classes are installed on the re-execution.
+    // and `network = "full"` keeps the approval trigger out of the way
+    // (detectTriggers fires `network` at 'none' and at the domain-less
+    // 'allowlist' it enforces as 'none', issue #166). Under the documented
+    // DEFAULTS the same call instead dies on the approval challenge
+    // ('approval refused: network'), so the guard-shaped block is the proof
+    // the CONFIG classes are installed on the re-execution.
     const loaded = loadRuntimeConfig(
       configured(
-        '[permissions]\nnetwork = "allowlist"\nshell = "read-only-allowlist"\n',
+        '[permissions]\nnetwork = "full"\nshell = "read-only-allowlist"\n',
       ),
     );
     const deps = runtimeRunDeps(cliResult(loaded));

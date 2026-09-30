@@ -2,6 +2,7 @@
 // Atomic via tmp+rename over the seam: readers never see a partial file.
 // replay:"never" — writes are effects, never re-executed on replay.
 
+import { readPreImage, replaceFile } from './atomic-file.js';
 import { sha256Hex } from './hash.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
@@ -44,47 +45,29 @@ export function validateWriteArgs(raw: unknown): WriteArgs {
 
 export const writeOperation: Operation<WriteArgs, WriteResult> = {
   name: 'write',
-  description: 'Write a file atomically (tmp + rename) with hashes',
+  description:
+    'Create or overwrite a file with its complete content, atomically (tmp + rename); returns before/after hashes. Use edit to change part of a file.',
   replay: 'never',
   validateArgs: validateWriteArgs,
   execute: async (_inv: ToolInvocation, args: WriteArgs, ctx: OpContext) => {
-    let before: string | null = null;
-    try {
-      before = ctx.env.fs.readFile(args.path);
-    } catch {
-      before = null;
-    }
-    const beforeHash = before === null ? null : sha256Hex(before);
-    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
-    const tmp = `${args.path}.kubic-tmp`;
-    ctx.env.fs.writeFile(tmp, args.content);
-    ctx.env.fs.rename(tmp, args.path);
+    const pre = readPreImage(ctx, args.path);
     const result = {
       path: args.path,
-      beforeHash,
+      beforeHash: pre.hash,
       afterHash: sha256Hex(args.content),
-      bytesDelta: Buffer.byteLength(args.content, 'utf8') - beforeBytes,
+      bytesDelta: Buffer.byteLength(args.content, 'utf8') - pre.bytes,
     };
-    if (ctx.journal !== undefined) {
-      try {
-        ctx.journal.append({
-          path: args.path,
-          op: before === null ? 'create' : 'write',
-          before,
-          after: args.content,
-          bytesDelta: result.bytesDelta,
-          sessionId: ctx.sessionId,
-          agentId: ctx.agentId,
-          toolCallId: ctx.toolCallId ?? null,
-          timestamp: Date.now(),
-        });
-      } catch (error) {
-        throw new OpError(
-          'journal_failed',
-          `write applied but journal record failed: ${(error as Error).message}`,
-        );
-      }
-    }
+    replaceFile(ctx, 'write', args.path, args.content, pre, {
+      op: pre.exists ? 'write' : 'create',
+      // Binary pre-image: hash-only (undo reports it non-reversible
+      // rather than restoring mangled bytes).
+      before: pre.text,
+      ...(pre.text === null && pre.hash !== null
+        ? { beforeHash: pre.hash, beforeOmitted: true }
+        : {}),
+      after: args.content,
+      bytesDelta: result.bytesDelta,
+    });
     return result;
   },
 };

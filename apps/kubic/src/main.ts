@@ -6,11 +6,16 @@
 
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import { ExtensionStartupError } from '../../../packages/extensions/src/startup.js';
-import { loadCliConfig } from './config-runtime.js';
+import {
+  loadCliConfig,
+  resolveInteractiveProjectTrust,
+} from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';
+import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
 
 // License identity (issue #59): version comes from this app's own
@@ -46,20 +51,38 @@ function cliVersion(): string {
 }
 
 const out = (line: string) => console.log(line);
+const err = (line: string) => console.error(line);
 const [command, ...rest] = process.argv.slice(2);
+const interactive = () =>
+  process.stdin.isTTY === true && process.stdout.isTTY === true;
 try {
   const code = await dispatchCommand(command, rest, {
     out,
+    err,
     loadConfig: loadCliConfig,
     version: cliVersion,
     ensureRuntimeExclude: (entries) =>
       ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
+    isInteractive: interactive,
+    // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
+    // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
+    // hands it back to this invocation's config load; a non-TTY caller keeps
+    // the refusal with both remedies named.
+    resolveProjectTrust: () =>
+      resolveInteractiveProjectTrust({
+        confirm: (message) =>
+          promptConfirm({
+            message,
+            interactive: true,
+            nonInteractive: false,
+          }),
+      }),
     runners: createProdRunners({
       out,
-      debug: (line) => console.error(line),
+      debug: err,
     }),
   });
-  process.exit(code);
+  exitProcessAfterFlush(code);
 } catch (error) {
   // Extension startup failures are named one-liners, not stack traces
   // (issue #93); every other unexpected failure gets the same shape — one
@@ -68,12 +91,12 @@ try {
   // scripts/binary-contract.mjs (the `__crash-probe` seam in ./dispatch.js).
   if (error instanceof ExtensionStartupError) {
     console.error(`error: ${error.message}`);
-    process.exit(1);
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    if (process.env.KUBIC_DEBUG === '1') {
+      console.error(error);
+    }
+    console.error(`error: ${message}`);
   }
-  const message = error instanceof Error ? error.message : String(error);
-  if (process.env.KUBIC_DEBUG === '1') {
-    console.error(error);
-  }
-  console.error(`error: ${message}`);
-  process.exit(1);
+  exitProcessAfterFlush(1);
 }

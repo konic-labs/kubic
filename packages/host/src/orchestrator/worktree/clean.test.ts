@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
 import {
-  parseCleanArgs,
+  type CleanOptions,
   planClean,
   planSessionClean,
   runCleanCommand,
@@ -84,19 +84,24 @@ describe('kubic clean (issue #45, #92)', () => {
   it('dry-run plans prunes but removes nothing', async () => {
     const env = new FakeExecutionEnv(repoScripts());
     const lines: string[] = [];
+    const errs: string[] = [];
     const removed: string[] = [];
     let journalCalls = 0;
-    const code = await runCleanCommand(['--dry-run'], {
-      env,
-      out: (line: string) => lines.push(line),
-      remover: async (_e: unknown, path: string) => {
-        removed.push(path);
+    const code = await runCleanCommand(
+      { dryRun: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+        pruneJournal: () => {
+          journalCalls += 1;
+          return { entries: 0, bytes: 0 };
+        },
       },
-      pruneJournal: () => {
-        journalCalls += 1;
-        return { entries: 0, bytes: 0 };
-      },
-    });
+    );
     expect(code).toBe(0);
     expect(removed).toEqual([]);
     expect(journalCalls).toBe(0);
@@ -110,15 +115,20 @@ describe('kubic clean (issue #45, #92)', () => {
   it('real clean prunes worktrees and branches and applies journal retention', async () => {
     const env = new FakeExecutionEnv(repoScripts());
     const lines: string[] = [];
+    const errs: string[] = [];
     const policies: unknown[] = [];
-    const code = await runCleanCommand(['--max-age-ms', '3600000', '--json'], {
-      env,
-      out: (line: string) => lines.push(line),
-      pruneJournal: (policy: unknown) => {
-        policies.push(policy);
-        return { entries: 4, bytes: 1024 };
+    const code = await runCleanCommand(
+      { maxAgeMs: 3600000, json: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        pruneJournal: (policy: unknown) => {
+          policies.push(policy);
+          return { entries: 4, bytes: 1024 };
+        },
       },
-    });
+    );
     expect(code).toBe(0);
     expect(policies).toEqual([{ maxAgeMs: 3600000 }]);
     const parsed = JSON.parse(lines.join('\n')) as {
@@ -144,15 +154,20 @@ describe('kubic clean (issue #45, #92)', () => {
   it('--journal alone prunes to the store default byte bound', async () => {
     const env = new FakeExecutionEnv(repoScripts());
     const lines: string[] = [];
+    const errs: string[] = [];
     const policies: { maxBytes?: number; maxAgeMs?: number }[] = [];
-    const code = await runCleanCommand(['--journal'], {
-      env,
-      out: (line: string) => lines.push(line),
-      pruneJournal: (policy: { maxBytes?: number; maxAgeMs?: number }) => {
-        policies.push(policy);
-        return { entries: 2, bytes: 64 };
+    const code = await runCleanCommand(
+      { journal: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        pruneJournal: (policy: { maxBytes?: number; maxAgeMs?: number }) => {
+          policies.push(policy);
+          return { entries: 2, bytes: 64 };
+        },
       },
-    });
+    );
     expect(code).toBe(0);
     expect(policies).toHaveLength(1);
     expect(policies[0]?.maxBytes).toBe(100 * 1024 * 1024);
@@ -179,11 +194,16 @@ describe('kubic clean (issue #45, #92)', () => {
       'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
     });
     const lines: string[] = [];
-    const code = await runCleanCommand(['--journal', '--max-bytes', '10'], {
-      env,
-      out: (line: string) => lines.push(line),
-      pruneJournal: () => ({ entries: 3, bytes: 99 }),
-    });
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxBytes: 10 },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        pruneJournal: () => ({ entries: 3, bytes: 99 }),
+      },
+    );
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('journal: pruned 3 entr(ies), freed 99 byte(s)');
@@ -267,22 +287,27 @@ describe('kubic clean (issue #45, #92)', () => {
   it('plans a custom-root worktree from the deps root, not the argv (issue #133)', async () => {
     const env = new FakeExecutionEnv(repoScripts());
     const lines: string[] = [];
+    const errs: string[] = [];
     const removed: string[] = [];
-    const code = await runCleanCommand(['--json'], {
-      env,
-      out: (line: string) => lines.push(line),
-      worktreeRoot: '.kubic-custom/wt',
-      lister: async () =>
-        parseWorktreePorcelain(
-          `${THREE_WT_PORCELAIN}\nworktree /repo/.kubic-custom/wt/agent-7\nHEAD 7777777777777777\nbranch refs/heads/kubic/agent-7\n`,
-        ),
-      branchLister: async () => ['kubic/agent-7'],
-      remover: async (_env: unknown, path: string) => {
-        removed.push(path);
+    const code = await runCleanCommand(
+      { json: true },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        worktreeRoot: '.kubic-custom/wt',
+        lister: async () =>
+          parseWorktreePorcelain(
+            `${THREE_WT_PORCELAIN}\nworktree /repo/.kubic-custom/wt/agent-7\nHEAD 7777777777777777\nbranch refs/heads/kubic/agent-7\n`,
+          ),
+        branchLister: async () => ['kubic/agent-7'],
+        remover: async (_env: unknown, path: string) => {
+          removed.push(path);
+        },
+        branchDeleter: async () => undefined,
+        pruner: async () => undefined,
       },
-      branchDeleter: async () => undefined,
-      pruner: async () => undefined,
-    });
+    );
     expect(code).toBe(0);
     expect(removed).toEqual(['/repo/.kubic-custom/wt/agent-7']);
     const parsed = JSON.parse(lines.join('\n')) as {
@@ -318,60 +343,36 @@ describe('kubic clean (issue #45, #92)', () => {
     expect(plan.branches).toEqual([]);
   });
 
-  it('rejects unknown flags with exit 2 without pruning', async () => {
-    const env = new FakeExecutionEnv({});
+  // Argv-level refusals (unknown flag, starved or malformed bound, stray
+  // operand, invalid --session id, --all with --session) are the commander
+  // program's: apps/kubic/src/commands/orchestrator.test.ts pins each one
+  // exits 2 before this handler runs.
+
+  it('refuses an unsafe session id from a library caller before touching the store', async () => {
+    // The id names <repo>/.kubic/orchestrator/<id>.json: the CLI refuses it
+    // at parse time, and the handler re-checks so no caller can bypass it.
+    const env = new FakeExecutionEnv(repoScripts());
     const lines: string[] = [];
-    let removals = 0;
-    const code = await runCleanCommand(['--nuke'], {
-      env,
-      out: (line: string) => lines.push(line),
-      remover: async () => {
-        removals += 1;
+    const errs: string[] = [];
+    let looked = 0;
+    const code = await runCleanCommand(
+      { sessionId: '../etc' },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        sessionAgents: () => {
+          looked += 1;
+          return [];
+        },
       },
-    });
+    );
     expect(code).toBe(2);
-    expect(removals).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toContain('unknown flag --nuke');
-    expect(text).toMatch(/usage: kubic clean/);
-  });
-
-  // Issue #127 review: the starved bound is reported before the unknown
-  // flag (`--max-age-ms --nuke` names the bound, not `--nuke`), while a
-  // satisfied bound still refuses `--nuke` by name — the two behaviors the
-  // migration comment used to conflate.
-  it('reports a starved bound before an unknown flag, and names the unknown flag once the bound is set', async () => {
-    const env = new FakeExecutionEnv({});
-    const starved: string[] = [];
-    expect(
-      await runCleanCommand(['--max-age-ms', '--nuke'], {
-        env,
-        out: (line: string) => starved.push(line),
-      }),
-    ).toBe(2);
-    const starvedText = starved.join('\n');
-    expect(starvedText).toContain('--max-age-ms/--max-bytes need a value');
-    expect(starvedText).not.toContain('--nuke');
-
-    const named: string[] = [];
-    expect(
-      await runCleanCommand(['--max-age-ms', '5', '--nuke'], {
-        env,
-        out: (line: string) => named.push(line),
-      }),
-    ).toBe(2);
-    expect(named.join('\n')).toContain('unknown flag --nuke');
-  });
-
-  it('rejects a stray positional argument with exit 2', async () => {
-    const env = new FakeExecutionEnv({});
-    const lines: string[] = [];
-    const code = await runCleanCommand(['worker-1'], {
-      env,
-      out: (line: string) => lines.push(line),
-    });
-    expect(code).toBe(2);
-    expect(lines.join('\n')).toContain('unexpected argument');
+    expect(looked).toBe(0);
+    expect(lines).toEqual([]);
+    expect(errs).toEqual([
+      'error: invalid --session id "../etc" (use [A-Za-z0-9_-]); nothing was removed',
+    ]);
   });
 
   it('refuses outside a git repo with exit 2 and mutates nothing', async () => {
@@ -383,35 +384,26 @@ describe('kubic clean (issue #45, #92)', () => {
       },
     });
     const lines: string[] = [];
+    const errs: string[] = [];
     let removals = 0;
-    const code = await runCleanCommand([], {
-      env,
-      out: (line: string) => lines.push(line),
-      remover: async () => {
-        removals += 1;
+    const code = await runCleanCommand(
+      {},
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        remover: async () => {
+          removals += 1;
+        },
       },
-    });
+    );
     expect(code).toBe(2);
     expect(removals).toBe(0);
-    const text = lines.join('\n');
-    expect(text).toContain('needs a git repository');
-    expect(text).toContain('nothing was removed');
-  });
-
-  it('rejects --all together with --session', () => {
-    expect(parseCleanArgs(['--all', '--session', 'orch-1'])).toEqual({
-      valid: false,
-      error: '--all and --session are mutually exclusive',
-    });
-    expect(
-      parseCleanArgs(['--all', '--session', 'orch-1', '--dry-run']),
-    ).toEqual({ valid: false, error: expect.stringContaining('mutually') });
-  });
-
-  it('rejects an invalid --session id before touching the store', () => {
-    const parsed = parseCleanArgs(['--session', '../etc']);
-    expect(parsed.valid).toBe(false);
-    expect(parsed.valid ? '' : parsed.error).toContain('invalid --session id');
+    // The refusal is a diagnostic: stderr, one logger line, stdout empty.
+    expect(lines).toEqual([]);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatch(/^error: `kubic clean` needs a git repository/);
+    expect(errs[0]).toContain('nothing was removed');
   });
 
   it('reports a hard failure when a dirty worktree refuses removal', async () => {
@@ -425,16 +417,191 @@ describe('kubic clean (issue #45, #92)', () => {
       }),
     );
     const lines: string[] = [];
-    const code = await runCleanCommand([], {
-      env,
-      out: (line: string) => lines.push(line),
-    });
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      {},
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+      },
+    );
     expect(code).toBe(1);
     const text = lines.join('\n');
-    expect(text).toContain('error:');
-    expect(text).toContain('agent-1');
+    // The failure is on stderr; stdout carries only what was disposed.
+    expect(text).not.toContain('error:');
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatch(/^error: .*agent-1/);
     // Never half-disposed: no branch delete for the worktree that survived.
     expect(text).not.toContain('deleted branch kubic/agent-1');
     expect(text).toContain('deleted branch kubic/agent-2');
+  });
+});
+
+describe('kubic clean never disposes a live worker (§51 crash recovery)', () => {
+  it('skips a worktree whose worker is still running, unless --force', async () => {
+    const run = async (
+      options: CleanOptions,
+      command = 'node kubic.js run --session s-agent-2',
+    ) => {
+      const env = new FakeExecutionEnv(repoScripts());
+      const lines: string[] = [];
+      const errs: string[] = [];
+      const removed: string[] = [];
+      const killed: number[] = [];
+      const code = await runCleanCommand(options, {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        liveWorkers: () =>
+          new Map([['agent-2', { pid: 4242, sessionId: 's-agent-2' }]]),
+        workerCommand: async () => command,
+        killWorker: (pid: number) => {
+          killed.push(pid);
+        },
+      });
+      return { code, errs: errs.join('\n'), removed, killed };
+    };
+    const refused = await run({});
+    expect(refused.removed).not.toContain('/repo/.kubic/wt/agent-2');
+    expect(refused.removed).toContain('/repo/.kubic/wt/agent-1');
+    expect(refused.errs).toMatch(/agent-2.*still live.*pid 4242.*--force/);
+    expect(refused.code).toBe(1);
+
+    const forced = await run({ force: true });
+    expect(forced.removed).toContain('/repo/.kubic/wt/agent-2');
+    expect(refused.killed).toEqual([]);
+    // --force stops the live worker's process group before disposing.
+    expect(forced.killed).toEqual([4242]);
+
+    // A reused pid (command does not name the worker's session) is treated
+    // as dead: never killed, and the worktree is disposed.
+    const reused = await run({ force: true }, '/usr/bin/vim notes.txt');
+    expect(reused.killed).toEqual([]);
+    expect(reused.removed).toContain('/repo/.kubic/wt/agent-2');
+  });
+});
+
+describe('kubic clean --session is scoped to its own session (issue #144)', () => {
+  const run = async (liveSession: string) => {
+    const removed: string[] = [];
+    const deleted: string[] = [];
+    const killed: number[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { sessionId: 'sa', force: true },
+      {
+        env: new FakeExecutionEnv(repoScripts()),
+        out: () => undefined,
+        err: (line: string) => errs.push(line),
+        repoRoot: '/repo',
+        sessionAgents: () => ['worker-1'],
+        // What session `sa` left behind: its own retained tree and branch.
+        lister: async () => [
+          {
+            path: '/repo/.kubic/wt/sa/worker-1',
+            branch: 'kubic/sa/worker-1',
+            bare: false,
+            detached: false,
+          },
+        ],
+        branchLister: async () => ['kubic/sa/worker-1'],
+        retireSessionState: () => undefined,
+        remover: async (_e: unknown, path: string) => {
+          removed.push(path);
+        },
+        branchDeleter: async (_e: unknown, branch: string) => {
+          deleted.push(branch);
+        },
+        pruner: async () => undefined,
+        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        liveWorkers: () =>
+          new Map([['worker-1', { pid: 4242, sessionId: liveSession }]]),
+        workerCommand: async () => `node kubic.js run --session ${liveSession}`,
+        killWorker: (pid: number) => {
+          killed.push(pid);
+        },
+      },
+    );
+    return { code, removed, deleted, killed, errs };
+  };
+
+  it('retires the session state only after a failure-free disposal, naming the session and repo', async () => {
+    const retired: string[][] = [];
+    const runWith = async (
+      overrides: Partial<Parameters<typeof runCleanCommand>[1]>,
+    ) => {
+      const out: string[] = [];
+      const errs: string[] = [];
+      const code = await runCleanCommand(
+        { sessionId: 'sa', force: true },
+        {
+          env: new FakeExecutionEnv(repoScripts()),
+          out: (line: string) => out.push(line),
+          err: (line: string) => errs.push(line),
+          repoRoot: '/repo',
+          sessionAgents: () => ['worker-1'],
+          lister: async () => [
+            {
+              path: '/repo/.kubic/wt/sa/worker-1',
+              branch: 'kubic/sa/worker-1',
+              bare: false,
+              detached: false,
+            },
+          ],
+          branchLister: async () => ['kubic/sa/worker-1'],
+          remover: async () => undefined,
+          branchDeleter: async () => undefined,
+          pruner: async () => undefined,
+          pruneJournal: () => ({ entries: 0, bytes: 0 }),
+          liveWorkers: () => new Map(),
+          retireSessionState: (session: string, repo: string) => {
+            retired.push([session, repo]);
+          },
+          ...overrides,
+        },
+      );
+      return { code, out, errs };
+    };
+    const ok = await runWith({});
+    expect(ok.code).toBe(0);
+    expect(retired).toEqual([['sa', '/repo']]);
+    expect(ok.out).toContain(
+      'retired session state /repo/.kubic/orchestrator/sa.json',
+    );
+    // A failing branch delete leaves the worktree gone but the disposal
+    // incomplete: the state stays.
+    retired.length = 0;
+    const failed = await runWith({
+      branchDeleter: async () => {
+        throw new Error('branch is checked out elsewhere');
+      },
+    });
+    expect(failed.code).toBe(1);
+    expect(retired).toEqual([]);
+    expect(failed.out.join('\n')).not.toContain('retired session state');
+    // A state that cannot be removed is a reported failure, not silence.
+    const stuck = await runWith({
+      retireSessionState: () => {
+        throw new Error('read-only file system');
+      },
+    });
+    expect(stuck.code).toBe(1);
+    expect(stuck.errs.join('\n')).toContain('read-only file system');
+  });
+
+  it('plans only kubic/<session>/<agent> and never kills another session’s same-named worker', async () => {
+    const other = await run('sb-worker-1');
+    expect(other.code, other.errs.join('\n')).toBe(0);
+    expect(other.removed).toEqual(['/repo/.kubic/wt/sa/worker-1']);
+    expect(other.deleted).toEqual(['kubic/sa/worker-1']);
+    expect(other.killed).toEqual([]);
+
+    const own = await run('sa-worker-1');
+    expect(own.killed).toEqual([4242]);
   });
 });

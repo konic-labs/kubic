@@ -62,6 +62,65 @@ default) or to deny. The rules are fail-closed:
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
 
+### Kubic's own control plane (issue #324, §59)
+
+The model never decides its own permissions, so it cannot rewrite the files
+that decide them:
+
+- **`kubic-state-write` always asks.** A `write`/`edit` path, a bash
+  redirect (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`, every one in the
+  command), a `tee` target or a `cp`/`mv`/`install` destination — or an
+  `rm`/`mv` operand — under `<workspace>/.kubic/` — `config.toml`,
+  `roles/`, anything else there — raises the named `kubic-state-write`
+  capability. The bash path is read the way the shell reads it, and BOTH the
+  path as typed and its resolution against the directory a preceding
+  `cd`/`pushd` left behind are checked — either being control-plane counts, so
+  a subshell, conditional or quoted `cd` (`(cd x); echo p >
+  .kubic/journal/y`) can never hide a write (`cd .kubic/roles && echo x > r.md`
+  is caught by the second candidate). Inner quotes and backslash escapes are
+  removed (`".kubic"/roles/r.md`), `$HOME/`, `${HOME}/` and `${HOME:-…}/` expand
+  like `~/`, `$PWD`/`~+` are the current directory, and a glob or brace list that
+  could expand into `.kubic/journal`, `config.toml`, `roles/`,
+  `orchestrator/` or `sessions/` is refused. So does a target outside the workspace that lands in any
+  ancestor's `.kubic/` or in `~/.kubic/` (the global `config.toml`): an
+  orchestrator worker runs in its worktree at
+  `<repo>/.kubic/wt/<session>/<agent>` (issue #144), so `../../../config.toml`
+  there is the repo's config, and a solo run from a
+  subdirectory still guards the project root's `.kubic/`. A leading `~/`, `$HOME/` or `${HOME}/` is
+  read as the home directory. No `autoApprove` entry answers it (naming it
+  there is accepted but ignored: it takes the normal ask path and
+  `kubic doctor` warns by name), and neither does the
+  session's `--full-access` posture (solo or orchestrator worker): on a TTY it
+  is a dialog, headless it is denied by name (exit 4). The path check is
+  case-folded (`.KUBIC/Config.toml` is the config file on a case-insensitive
+  disk).
+- **Journal, orchestrator and session state are refused outright.** A write —
+  or an `rm`/`mv` of it — into `.kubic/journal/`, `.kubic/orchestrator/` (approvals, the §60 audit
+  ledger, decisions, the ask mailbox) or `.kubic/sessions/` — the
+  workspace's, an ancestor's (a worker's
+  `../../../orchestrator/approvals/audit.jsonl`) or `~/.kubic`'s — or into the
+  session root the run actually uses (`~/.kubic/sessions` by default) is a
+  tool error
+  (`refused: … is Kubic control-plane state`), never an ask, whatever the
+  posture. The refusal itself is appended to the audit ledger.
+- The journal still skips `.kubic/`, so an approved `kubic-state-write` is not
+  reversible with `kubic undo` — which is why it is never auto-approved.
+
+## Tool process environment (§3.8)
+
+Every child the exec seam spawns — the bash tool, host `git` calls —
+starts from an explicit allowlist (`TOOL_ENV_ALLOWLIST` in
+`packages/exec/src/env.ts`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TERM`, `LANG`, `LC_*`, `XDG_*`, `TMPDIR`, `TZ`, `CI`, `NO_COLOR`, `CLICOLOR`,
+proxy vars (`HTTP(S)_PROXY`, `NO_PROXY`, either case), trust roots
+(`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), plus Windows
+process basics, matched case-insensitively there), never kubic's inherited environment. Any
+secret-shaped name (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
+`*_CREDENTIALS`) is dropped even when it matches, so a provider API key
+in kubic's environment never reaches a tool. `SSH_AUTH_SOCK` and
+credential helpers' variables are not passed either. Worker processes
+use their own launch allowlist plus role-scoped grants.
+
 ## What the model does and does not promise (§59.1)
 
 It promises: every edit recorded and reversible by default, every
@@ -72,7 +131,13 @@ It does not promise: isolation (solo runs in-process with the user's
 own authority), containment (worktrees separate concurrent writers
 only), no prompt-injection prevention (model output is never trusted), or
 airtight confinement (the worktree check is lexical and must be
-re-checked at use time). Approvals plus the journal are the controls;
+re-checked at use time), or an airtight control plane: the `.kubic/` guards
+are lexical, like every shell detector — `sed -i`, a script file, a symlink,
+an interpreter (`python -c`) or a variable-built path can still reach
+`.kubic/` from bash without raising `kubic-state-write` (a `cd`, a quote-split
+segment, `$HOME`, `$PWD`, a glob and an `rm` operand are read, but a path
+assembled from a variable set elsewhere, a `cd` inside `bash -c`/`eval`/`time`
+and a subshell `cd` that undoes an earlier one are not). Approvals plus the journal are the controls;
 everything else would be someone else's guarantee.
 
 Journal mechanics live on the [exec package page](../packages/exec.md),

@@ -12,7 +12,6 @@ import {
   formatSkillsForSystemPrompt,
   gateSkills,
   invokeSkill,
-  parseSkillArgs,
   parseSkillFile,
   resolveTaskSkillRefs,
 } from './skills.js';
@@ -176,6 +175,50 @@ describe('skill discovery (issue #36)', () => {
     expect(result.skills[0]?.filePath).toBe(
       `${HOME}/.agents/skills/lint/SKILL.md`,
     );
+  });
+
+  it('checks trust per ancestor: a child grant never reaches the parent (issue #228 review)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    // The grant names /repo/pkg only: the parent's skill is out of scope
+    // even though the child's cwd sits under it.
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo/pkg',
+    });
+    expect(result.skills.map((skill) => skill.name).sort()).toEqual(['near']);
+  });
+
+  it('lets a parent grant cover the parent tree from a child cwd (issue #228 review)', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      '/repo/.pi/skills/far/SKILL.md',
+      skillMd('name: far\ndescription: Far skill'),
+    );
+    env.fs.writeFile(
+      '/repo/pkg/.pi/skills/near/SKILL.md',
+      skillMd('name: near\ndescription: Near skill'),
+    );
+    // The grant names /repo: its skills load from a child cwd, while the
+    // child's own (untrusted) dir stays out.
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: '/repo/pkg',
+      trusted: false,
+      trustProject: (dir) => dir === '/repo',
+    });
+    expect(result.skills.map((skill) => skill.name).sort()).toEqual(['far']);
   });
 
   it('loads ancestor project dirs far-to-near with nearer shadowing', () => {
@@ -426,19 +469,6 @@ describe('role scoping and capability gating (issue #36)', () => {
 });
 
 describe('skill CLI flags (issue #36)', () => {
-  it('parses repeatable --skill with --no-skills', () => {
-    expect(
-      parseSkillArgs(['--no-skills', '--skill', 'a', '--skill', 'b']),
-    ).toEqual({ noSkills: true, skills: ['a', 'b'] });
-  });
-
-  it('rejects fetcher/install flags: skills never fetch', () => {
-    for (const flag of ['--fetch-skills', '--install-skill', '--skill-fetch']) {
-      expect(() => parseSkillArgs([flag])).toThrow(/never fetch/i);
-    }
-    expect(() => parseSkillArgs(['--skill'])).toThrow(/needs a value/);
-  });
-
   it('ships no fetcher module or flag', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const names = readdirSync(here);
@@ -695,15 +725,5 @@ describe('skill gating and invocation hardening (issue #69)', () => {
     expect(resolved.withheld).toEqual([
       { name: 'ghost', reason: "unknown skill 'ghost'" },
     ]);
-  });
-
-  it('rejects valueless --skill and ignores non-flag args', () => {
-    expect(() => parseSkillArgs(['--skill', '--no-skills'])).toThrow(
-      /needs a value/,
-    );
-    expect(parseSkillArgs(['positional', '--unknown-ok'])).toEqual({
-      noSkills: false,
-      skills: [],
-    });
   });
 });

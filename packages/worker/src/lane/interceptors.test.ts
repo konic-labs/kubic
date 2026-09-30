@@ -151,6 +151,47 @@ describe('policy interceptors (issue #15, slice C)', () => {
     expect(() => booted.env.fs.readFile('/etc/cron.d/x')).toThrow();
   });
 
+  it('lets read open an advertised skill root, and nothing else (issue #173)', async () => {
+    const skill = '/home/u/.agents/skills/a/SKILL.md';
+    const booted = await boot([
+      { name: 'read', args: { path: skill } },
+      { name: 'write', args: { path: skill, content: 'pwned' } },
+      { name: 'edit', args: { path: skill, oldText: 'a', newText: 'b' } },
+      { name: 'read', args: { path: '/etc/passwd' } },
+      { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
+    ]);
+    const seen: { tool: string; path: unknown }[] = [];
+    registerPolicyInterceptors(booted.harness.hooks, {
+      workspace: '/work',
+      readRoots: ['/home/u/.agents/skills/a'],
+    });
+    booted.harness.hooks.on('before_tool', (event) => {
+      seen.push({ tool: event.toolName, path: event.args.path });
+      return undefined;
+    });
+    await driveToolEnds(booted);
+    expect(seen).toEqual([
+      { tool: 'read', path: skill },
+      { tool: 'write', path: '/work/home/u/.agents/skills/a/SKILL.md' },
+      { tool: 'edit', path: '/work/home/u/.agents/skills/a/SKILL.md' },
+      { tool: 'read', path: '/work/etc/passwd' },
+      { tool: 'ls', path: '/work/home/u/.agents/skills/a' },
+    ]);
+  });
+
+  it('blocks network commands under a domain-less allowlist (issue #166)', async () => {
+    const blocked = await boot([
+      { name: 'bash', args: { command: 'curl https://evil.example' } },
+    ]);
+    registerPolicyInterceptors(blocked.harness.hooks, {
+      workspace: '/work',
+      network: 'allowlist',
+    });
+    const ends = await driveToolEnds(blocked);
+    expect(JSON.stringify(ends[0])).toContain('network command blocked');
+    expect(JSON.stringify(ends[0])).toContain('allowlist');
+  });
+
   it('blocks network commands when network is none, allows otherwise', async () => {
     const blocked = await boot([
       { name: 'bash', args: { command: 'curl https://example.com' } },
@@ -324,6 +365,24 @@ describe('policy interceptors (issue #15, slice C)', () => {
     });
   });
 
+  it('keeps tilde/$VAR tokens workspace-relative for tool paths (issue #355)', () => {
+    // The write/edit/read ops resolve a path with node `resolve(cwd, path)`
+    // and never expand `~` or `$VAR`, so for a TOOL path these tokens are
+    // literal workspace entries (`/work/~/.bashrc`) — confinePath is right to
+    // leave them unrewritten. Shell targets are different: bash expands
+    // them, so the bash outside-write detector (host approvals.ts) treats a
+    // `~`/`$VAR` prefix as outside, fail-closed — pinned in
+    // approvals-detectors.test.ts.
+    expect(confinePath('/work', '~/.bashrc')).toEqual({
+      confined: '/work/~/.bashrc',
+      rewritten: false,
+    });
+    expect(confinePath('/work', '$HOME/.zshrc')).toEqual({
+      confined: '/work/$HOME/.zshrc',
+      rewritten: false,
+    });
+  });
+
   it('matches every destructive shape, not just rm and git clean', () => {
     // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch:
     // surviving Regex mutants here mean a destructive shape slips through.
@@ -344,5 +403,41 @@ describe('policy interceptors (issue #15, slice C)', () => {
     }
     expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
     expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
+  });
+
+  // Issue #357: each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
+  // near-miss beside it, so weakening one regex fails exactly one row.
+  it.each([
+    ['git push --force origin main', true],
+    ['git push -f', true],
+    ['git push -uf origin main', true],
+    ['git push --force-with-lease', true],
+    ['git push --force-if-includes origin main', true],
+    ['git push origin +main', true],
+    ['git -C . push --force', true],
+    ['git push -u origin main', false],
+    ['git push origin feat-fix', false],
+    ['find / -delete', true],
+    ['find . -type f -delete', true],
+    ['find . -name delete', false],
+    ['git reset --hard HEAD~5', true],
+    ['git -C sub reset --hard', true],
+    ['git reset --soft HEAD~1', false],
+    ['git checkout -- .', true],
+    ['git checkout main -- a.ts', true],
+    ['git checkout .', true],
+    ['git checkout -f main', true],
+    ['git checkout --force main', true],
+    ['git checkout -b feature', false],
+    ['git checkout main', false],
+    ['git restore .', true],
+    ['git restore src/a.ts', true],
+    ['git restore --staged --worktree .', true],
+    ['git restore -W a.ts', true],
+    ['git restore --staged a.ts', false],
+    ['git restore -S a.ts', false],
+    ['git status; git log', false],
+  ])('classifies %s as destructive=%s (issue #357)', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
   });
 });

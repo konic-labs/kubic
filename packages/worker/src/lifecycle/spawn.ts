@@ -38,6 +38,14 @@ export interface SpawnWorkerRequest {
   sessionId: string;
   generation: number;
   role: string;
+  /**
+   * The role whose grant namespace the credentials are minted under. A
+   * child reads back exactly the role it was TOLD it runs as (issue #200),
+   * which is not always the role recorded on the launch row (a resolver
+   * child without a role document runs the default tool set). Defaults to
+   * `role` — the two agree on every other path.
+   */
+  grantRole?: string;
   cmd: string;
   args: string[];
   baseEnv: Record<string, string>;
@@ -127,7 +135,7 @@ export function spawnWorker(
   const startedAtMs = clock();
   const env = buildSpawnEnv(
     request.baseEnv,
-    request.role,
+    request.grantRole ?? request.role,
     request.credentials ?? {},
   );
   const marker = readyMarker(request.workerId);

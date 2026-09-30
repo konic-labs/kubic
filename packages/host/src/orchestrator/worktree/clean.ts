@@ -14,16 +14,36 @@
 // hand-made worktree, a foreign branch, or the main checkout is never
 // planned — and each mutation re-checks its own confinement.
 
-import { join } from 'node:path';
-import { answerHelp } from '../../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
+import { dirname, join, resolve } from 'node:path';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../../core/src/cli/exit-codes.js';
+import { createLineLogger } from '../../../../core/src/cli/logger.js';
+import { formatJson } from '../../../../core/src/cli/output.js';
+import {
+  type CliTheme,
+  createCliTheme,
+} from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   DEFAULT_JOURNAL_MAX_BYTES,
   FileJournalStore,
 } from '../../../../exec/src/journal.js';
+import {
+  commandOwnsSession,
+  isLiveWorkerRow,
+  killProcessGroup,
+} from '../../../../worker/src/lifecycle/orphans.js';
+import { workersListFromRepo } from '../../../../worker/src/lifecycle/rows.js';
+import { resolveRepoRuntimeRoot } from '../../policy/audit-ledger.js';
 import { SESSION_ID_PATTERN } from '../../run-cli.js';
+import {
+  approvalsSessionDir,
+  removeSessionApprovalsState,
+} from '../approvals/worker-asks.js';
 import {
   isSpawnedWorktreePath,
   isSpawnedWorktreeShape,
@@ -36,8 +56,11 @@ import {
 } from './list.js';
 import {
   branchForAgent,
+  DEFAULT_WORKTREE_ROOT,
   parseBranchAgent,
+  parseSpawnedBranch,
   pathForAgent,
+  type SpawnedBranch,
   validateAgentId,
 } from './naming.js';
 import {
@@ -46,12 +69,12 @@ import {
   removeWorktree,
 } from './remove.js';
 
-export const CLEAN_EXIT_OK = 0;
+export const CLEAN_EXIT_OK = EXIT_OK;
 
-export const CLEAN_EXIT_FAILURE = 1;
+export const CLEAN_EXIT_FAILURE = EXIT_FAILED;
 
 // §78: 2 is usage *and* the non-repo refusal (nothing is mutated either way).
-export const CLEAN_EXIT_USAGE = 2;
+export const CLEAN_EXIT_USAGE = EXIT_USAGE;
 
 export interface CleanOptions {
   dryRun?: boolean;
@@ -77,7 +100,15 @@ export interface JournalPruneResult {
 
 export interface CleanDeps {
   env: ExecutionEnv;
+  // stdout: the disposal report or the `--json` document.
   out: (line: string) => void;
+  // stderr: `error: …` diagnostics through the shared logger.
+  err: (line: string) => void;
+  // Colours the report verbs; colourless when absent (and under --json).
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   repoRoot?: string;
   // The spawned set's parent, workspace-relative: `[orchestrator].root` when
   // the config sets one, `.kubic/wt` otherwise (issue #133). It is a config
@@ -97,110 +128,29 @@ export interface CleanDeps {
     repoRoot: string,
   ) => JournalPruneResult;
   sessionAgents?: (sessionId: string, repoRoot: string) => string[] | undefined;
+  /** Workers whose process is still running, by agent id → pid (§51). A
+   *  live worker's worktree is never disposed without --force. Defaults to
+   *  the durable rows under `<repo>/.kubic/orchestrator/workers.json`. */
+  liveWorkers?: (
+    repoRoot: string,
+  ) => Map<string, { pid: number; sessionId: string }>;
+  /** A pid's command line (`ps -ww`), for the pid-reuse guard. */
+  workerCommand?: (pid: number) => Promise<string | undefined>;
+  /** Stops a live worker's process group (used only under --force). */
+  killWorker?: (pid: number) => void;
   resolveRepoRoot?: (env: ExecutionEnv) => Promise<string | undefined>;
-}
-
-export const CLEAN_USAGE =
-  'usage: kubic clean [--all] [--session <id>] [--dry-run] [--force] [--journal] [--max-age-ms <n>] [--max-bytes <n>] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(CLEAN_USAGE);
-  return CLEAN_EXIT_USAGE;
-}
-
-function positiveInt(raw: string): number | null {
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) return null;
-  return parsed;
-}
-
-// Issue #127: the shared parser replaces the known-set scan + flagValue
-// helper. The old lines are preserved: a starved bound is still reported
-// first (`--max-age-ms --nuke` → '--max-age-ms/--max-bytes need a value',
-// not `--nuke`), and `--max-age-ms 5 --nuke` still refuses `--nuke` by
-// name once the bound is set (both exit 2). The parser adds `--flag=value`
-// and the `--` terminator.
-const CLEAN_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--all', takes: 'boolean' },
-  { name: '--dry-run', takes: 'boolean' },
-  { name: '--force', takes: 'boolean' },
-  { name: '--journal', takes: 'boolean' },
-  { name: '--json', takes: 'boolean' },
-  { name: '--max-age-ms', takes: 'value' },
-  { name: '--max-bytes', takes: 'value' },
-  { name: '--session', takes: 'value' },
-];
-
-export function parseCleanArgs(
-  args: string[],
-): { valid: true; options: CleanOptions } | { valid: false; error: string } {
-  const parsed = parseFlagArgs(args, CLEAN_FLAG_SPEC);
-  const missing = parsed.missing;
-  if (missing.includes('--max-age-ms') || missing.includes('--max-bytes')) {
-    return { valid: false, error: '--max-age-ms/--max-bytes need a value' };
-  }
-  if (missing.includes('--session')) {
-    return { valid: false, error: '--session needs a value' };
-  }
-  if (parsed.unknown.length > 0) {
-    return { valid: false, error: `unknown flag ${parsed.unknown[0]}` };
-  }
-  if (parsed.positional.length > 0) {
-    return {
-      valid: false,
-      error: `unexpected argument ${JSON.stringify(parsed.positional[0])}`,
-    };
-  }
-  const values = parsed.values;
-  const maxAgeRaw = values['--max-age-ms'] as string | undefined;
-  const maxBytesRaw = values['--max-bytes'] as string | undefined;
-  const sessionRaw = values['--session'] as string | undefined;
-  let sessionId: string | undefined;
-  if (sessionRaw !== undefined) {
-    if (!SESSION_ID_PATTERN.test(sessionRaw)) {
-      return {
-        valid: false,
-        error: `invalid --session id ${JSON.stringify(sessionRaw)} (use [A-Za-z0-9_-])`,
-      };
-    }
-    sessionId = sessionRaw;
-  }
-  let maxAgeMs: number | undefined;
-  let maxBytes: number | undefined;
-  if (maxAgeRaw !== undefined) {
-    const parsedBound = positiveInt(maxAgeRaw);
-    if (parsedBound === null) {
-      return { valid: false, error: '--max-age-ms needs a positive integer' };
-    }
-    maxAgeMs = parsedBound;
-  }
-  if (maxBytesRaw !== undefined) {
-    const parsedBound = positiveInt(maxBytesRaw);
-    if (parsedBound === null) {
-      return { valid: false, error: '--max-bytes needs a positive integer' };
-    }
-    maxBytes = parsedBound;
-  }
-  // Two contradictory scopes at once: refuse before either is resolved.
-  if (values['--all'] === true && sessionId !== undefined) {
-    return {
-      valid: false,
-      error: '--all and --session are mutually exclusive',
-    };
-  }
-  return {
-    valid: true,
-    options: {
-      ...(values['--dry-run'] === true ? { dryRun: true } : {}),
-      ...(values['--json'] === true ? { json: true } : {}),
-      ...(values['--all'] === true ? { all: true } : {}),
-      ...(values['--force'] === true ? { force: true } : {}),
-      ...(values['--journal'] === true ? { journal: true } : {}),
-      ...(maxAgeMs === undefined ? {} : { maxAgeMs }),
-      ...(maxBytes === undefined ? {} : { maxBytes }),
-      ...(sessionId === undefined ? {} : { sessionId }),
-    },
-  };
+  /** Removes a directory only when it is empty (issue #144): the session
+   *  directory a disposal emptied. Must be atomic and non-recursive — a
+   *  concurrent `--resume` may add a worker directory at any moment. Defaults
+   *  to `rmdir` through the env's shell. */
+  removeEmptyDir?: (env: ExecutionEnv, path: string) => Promise<unknown>;
+  /** Retires a session's stored run state (issue #144): called only once the
+   *  session has nothing left to dispose (a full disposal, or no worktree or
+   *  branch was ever left), so the id can start a fresh run. Defaults to
+   *  removing `<repo>/.kubic/orchestrator/<session>.json` and that session's
+   *  `approvals/<session>/` directory (its full-access record, decisions and
+   *  ask mailbox) — never the repo-wide audit ledger. */
+  retireSessionState?: (sessionId: string, repoRoot: string) => void;
 }
 
 function journalPolicy(options: CleanOptions): {
@@ -252,14 +202,17 @@ export function planClean(
 
 // Session scope: one failed or finished orchestrate run names its agents in
 // `<root>/.kubic/orchestrator/<session>.json`. The retained set for that
-// session is exactly `kubic/<agent>` at `<root>/<worktreeRoot>/<agent>` per
-// named agent — deterministic, so a hand-deleted directory still plans its
-// branch.
+// session is exactly `kubic/<session>/<agent>` at
+// `<root>/<worktreeRoot>/<session>/<agent>` per named agent (issue #144: the
+// names carry the session, so another session's same-named agent is never
+// planned) — deterministic, so a hand-deleted directory still plans its
+// branch. Without a session the legacy unscoped names are planned.
 export function planSessionClean(
   agents: readonly string[],
   repoRoot: string,
   options: CleanOptions,
   worktreeRoot?: string,
+  sessionId?: string,
 ): CleanPlan {
   const worktrees: { path: string; branch: string | null }[] = [];
   const branches: string[] = [];
@@ -267,9 +220,9 @@ export function planSessionClean(
     // Agent ids from stored state are untrusted JSON — anything outside the
     // naming pattern is dropped here, never turned into a git path.
     if (validateAgentId(agent).length > 0) continue;
-    const branch = branchForAgent(agent);
+    const branch = branchForAgent(agent, sessionId);
     worktrees.push({
-      path: pathForAgent(repoRoot, agent, worktreeRoot),
+      path: pathForAgent(repoRoot, agent, worktreeRoot, sessionId),
       branch,
     });
     branches.push(branch);
@@ -309,6 +262,47 @@ function defaultSessionAgents(
   }
 }
 
+// A session-scoped worktree lives at `<root>/<worktreeRoot>/<session>/<agent>`
+// (issue #144): disposing its last agent leaves `<session>/` behind, empty.
+// Removed with a plain `rmdir` — atomic and non-recursive: the kernel refuses a
+// directory that holds anything (a hand-added file, or a `<session>/worker-N`
+// a concurrent `orchestrate --resume` created after the disposal emptied it),
+// so nothing is ever deleted that was not the empty directory itself. The
+// refusal is the expected outcome, not a failure: the directory stays.
+async function defaultRemoveEmptyDir(
+  env: ExecutionEnv,
+  path: string,
+): Promise<void> {
+  const provenance: Provenance = {
+    sessionId: 'cli',
+    agentId: 'manager',
+    toolCallId: 'clean-session-dir',
+    turnId: 0,
+    operation: 'clean',
+  };
+  await env.shell.spawn('rmdir', [path], { provenance }).wait();
+}
+
+// The run's approvals state sits under the repo runtime root (issue #279),
+// which is `repoRoot` itself outside a linked worktree.
+function sessionApprovalsRoot(repoRoot: string): string {
+  return join(resolveRepoRuntimeRoot(repoRoot), '.kubic', 'orchestrator');
+}
+
+function sessionApprovalsPath(repoRoot: string, sessionId: string): string {
+  return approvalsSessionDir(sessionApprovalsRoot(repoRoot), sessionId);
+}
+
+// Retiring a session also drops its `approvals/<session>/` directory: a stale
+// full-access record or memoized decision must never be inherited by a later
+// run that reuses the id. Only that one directory — the ledger stays.
+function defaultRetireSessionState(sessionId: string, repoRoot: string): void {
+  const bridge = createNodeFileBridge(join(repoRoot, '.kubic', 'orchestrator'));
+  const name = `${sessionId}.json`;
+  if (bridge.exists(name)) bridge.remove(name);
+  removeSessionApprovalsState(sessionApprovalsRoot(repoRoot), sessionId);
+}
+
 function sessionStorePath(repoRoot: string, sessionId: string): string {
   return join(repoRoot, '.kubic', 'orchestrator', `${sessionId}.json`);
 }
@@ -327,11 +321,17 @@ function defaultPruneJournal(
 export function cleanDepsWithDefaults(options: {
   env: ExecutionEnv;
   out: (line: string) => void;
+  err: (line: string) => void;
+  theme?: CliTheme;
+  errTheme?: CliTheme;
   worktreeRoot?: string;
 }): CleanDeps {
   return {
     env: options.env,
     out: options.out,
+    err: options.err,
+    ...(options.theme === undefined ? {} : { theme: options.theme }),
+    ...(options.errTheme === undefined ? {} : { errTheme: options.errTheme }),
     ...(options.worktreeRoot === undefined
       ? {}
       : { worktreeRoot: options.worktreeRoot }),
@@ -367,22 +367,66 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function defaultLiveWorkers(
+  repoRoot: string,
+): Map<string, { pid: number; sessionId: string }> {
+  const live = new Map<string, { pid: number; sessionId: string }>();
+  for (const row of workersListFromRepo(repoRoot)) {
+    if (row.pid !== undefined && isLiveWorkerRow(row)) {
+      live.set(row.workerId, { pid: row.pid, sessionId: row.sessionId });
+      // Also keyed by the worker session (issue #144): two sessions may
+      // each run a `worker-1`, and only the planned session's row counts.
+      live.set(row.sessionId, { pid: row.pid, sessionId: row.sessionId });
+    }
+  }
+  return live;
+}
+
+// The live row for a planned branch (issue #144). A session-scoped branch
+// matches only its own worker session (`<session>-<agent>`, the
+// orchestrator's worker-session naming), so cleaning session A never kills
+// or refuses on session B's same-named worker. A legacy branch keeps the
+// agent-keyed lookup.
+function liveEntryFor(
+  live: Map<string, { pid: number; sessionId: string }>,
+  spawned: SpawnedBranch,
+): { pid: number; sessionId: string } | undefined {
+  if (spawned.sessionId === undefined) return live.get(spawned.agentId);
+  const workerSession = `${spawned.sessionId}-${spawned.agentId}`;
+  const bySession = live.get(workerSession);
+  if (bySession !== undefined) return bySession;
+  const byAgent = live.get(spawned.agentId);
+  return byAgent?.sessionId === workerSession ? byAgent : undefined;
+}
+
+// The parsed `kubic clean` options arrive from the commander program
+// (apps/kubic/src/commands/orchestrator.ts): unknown flags, missing or
+// malformed values, an invalid `--session` id and `--all` with `--session`
+// are refused there (exit 2) before this runs.
 export async function runCleanCommand(
-  args: string[],
+  options: CleanOptions,
   deps: CleanDeps,
 ): Promise<number> {
-  // `--help`/`-h` is answered before argv parsing (issue #100).
-  const help = answerHelp(args, deps.out, CLEAN_USAGE);
-  if (help !== null) return help;
-  const parsed = parseCleanArgs(args);
-  if (!parsed.valid) {
-    deps.out(`error: ${parsed.error}`);
-    return usage(deps.out);
-  }
-  const options = parsed.options;
-  if (options.all === true && options.sessionId !== undefined) {
-    deps.out('error: --all and --session are mutually exclusive');
-    return usage(deps.out);
+  const theme =
+    options.json === true || deps.theme === undefined
+      ? createCliTheme('none')
+      : deps.theme;
+  const log = createLineLogger(deps.err, {
+    theme:
+      options.json === true || deps.errTheme === undefined
+        ? createCliTheme('none')
+        : deps.errTheme,
+  });
+  // Defence in depth: the id names a state file under .kubic/orchestrator,
+  // so a library caller cannot bypass the CLI's own --session check.
+  if (
+    options.sessionId !== undefined &&
+    !SESSION_ID_PATTERN.test(options.sessionId)
+  ) {
+    log.error(
+      `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-]); nothing was removed`,
+    );
+    return CLEAN_EXIT_USAGE;
   }
   // The spawned set's parent comes from the config projection on the deps
   // (issue #133) — `[orchestrator].root`, `.kubic/wt` by default.
@@ -394,13 +438,16 @@ export async function runCleanCommand(
     deps.repoRoot ??
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
   if (repoRoot === undefined) {
-    deps.out(
-      'error: `kubic clean` needs a git repository — it disposes retained `kubic/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
+    log.error(
+      '`kubic clean` needs a git repository — it disposes retained `kubic/<session>/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
-    return usage(deps.out);
+    return CLEAN_EXIT_USAGE;
   }
 
   let plan: CleanPlan;
+  // The session plan was narrowed by a successful listing: an empty plan then
+  // means nothing of the session is left standing (not merely unreadable).
+  let sessionListed = false;
   try {
     if (options.sessionId !== undefined) {
       const agents = (deps.sessionAgents ?? defaultSessionAgents)(
@@ -408,12 +455,44 @@ export async function runCleanCommand(
         repoRoot,
       );
       if (agents === undefined) {
-        deps.out(
-          `error: no retained set for session '${options.sessionId}' — expected ${sessionStorePath(repoRoot, options.sessionId)}; nothing was removed`,
+        log.error(
+          `no retained set for session '${options.sessionId}' — expected ${sessionStorePath(repoRoot, options.sessionId)}; nothing was removed`,
         );
         return CLEAN_EXIT_FAILURE;
       }
-      plan = planSessionClean(agents, repoRoot, options, worktreeRoot);
+      const planned = planSessionClean(
+        agents,
+        repoRoot,
+        options,
+        worktreeRoot,
+        options.sessionId,
+      );
+      // Only what the run actually left behind (issue #144): a worker that
+      // never spawned — the usual shape of a failed run — has neither a
+      // worktree nor a branch, and asking git to remove them would fail the
+      // whole disposal. An unreadable listing keeps the full plan.
+      plan = planned;
+      try {
+        const lister = deps.lister ?? ((env) => listWorktrees(env));
+        const branchLister =
+          deps.branchLister ?? ((env) => listSpawnedBranches(env));
+        const listedPaths = new Set(
+          (await lister(deps.env)).map((entry) => resolve(entry.path)),
+        );
+        const listedBranches = new Set(await branchLister(deps.env));
+        plan = {
+          ...planned,
+          worktrees: planned.worktrees.filter((item) =>
+            listedPaths.has(resolve(item.path)),
+          ),
+          branches: planned.branches.filter((branch) =>
+            listedBranches.has(branch),
+          ),
+        };
+        sessionListed = true;
+      } catch {
+        plan = planned;
+      }
     } else {
       const lister = deps.lister ?? ((env) => listWorktrees(env));
       const branchLister =
@@ -425,10 +504,10 @@ export async function runCleanCommand(
   } catch (error) {
     if (isWorktreeError(error)) {
       if (error.code === 'not_a_repo') {
-        deps.out(`error: ${error.message} — nothing was removed`);
-        return usage(deps.out);
+        log.error(`${error.message} — nothing was removed`);
+        return CLEAN_EXIT_USAGE;
       }
-      deps.out(`error: ${error.message}`);
+      log.error(error.message);
       return error.exitCode;
     }
     throw error;
@@ -438,40 +517,48 @@ export async function runCleanCommand(
   const bounded =
     plan.journal.maxAgeMs !== undefined || plan.journal.maxBytes !== undefined;
 
+  const planEmpty = plan.worktrees.length === 0 && plan.branches.length === 0;
+
   if (options.dryRun === true) {
-    const changed =
-      plan.worktrees.length > 0 || plan.branches.length > 0 || bounded;
+    // A session-scoped clean retires the session's state (and its approvals
+    // directory) once nothing of it is left standing.
+    const wouldRetire =
+      options.sessionId !== undefined && (!planEmpty || sessionListed);
+    const changed = !planEmpty || bounded || wouldRetire;
     if (options.json === true) {
       deps.out(
-        JSON.stringify(
-          {
-            ok: true,
-            exitCode: CLEAN_EXIT_OK,
-            dryRun: true,
-            worktrees: plan.worktrees,
-            branches: plan.branches,
-            journal: plan.journal,
-          },
-          null,
-          2,
-        ),
+        formatJson({
+          ok: true,
+          exitCode: CLEAN_EXIT_OK,
+          dryRun: true,
+          worktrees: plan.worktrees,
+          branches: plan.branches,
+          journal: plan.journal,
+        }),
       );
       return CLEAN_EXIT_OK;
     }
     if (!changed) {
-      deps.out('clean: nothing to prune');
+      deps.out(theme.muted('clean: nothing to prune'));
       return CLEAN_EXIT_OK;
     }
     for (const item of plan.worktrees) {
-      deps.out(`would remove worktree ${item.path}`);
+      deps.out(`${theme.warning('would remove')} worktree ${item.path}`);
     }
     for (const branch of plan.branches) {
-      deps.out(`would delete branch ${branch}`);
+      deps.out(`${theme.warning('would delete')} branch ${branch}`);
+    }
+    if (wouldRetire && options.sessionId !== undefined) {
+      deps.out(
+        `${theme.warning('would retire')} session state ${sessionStorePath(repoRoot, options.sessionId)} and its approvals directory ${sessionApprovalsPath(repoRoot, options.sessionId)}`,
+      );
     }
     if (bounded) {
-      deps.out('would prune journal entries outside the retention policy');
+      deps.out(
+        `${theme.warning('would prune')} journal entries outside the retention policy`,
+      );
     }
-    deps.out('clean (dry run): nothing changed');
+    deps.out(theme.muted('clean (dry run): nothing changed'));
     return CLEAN_EXIT_OK;
   }
 
@@ -495,7 +582,44 @@ export async function runCleanCommand(
   const removed: { path: string; branch: string | null }[] = [];
   const deleted: string[] = [];
   const failures: { target: string; message: string }[] = [];
+  const live = (deps.liveWorkers ?? defaultLiveWorkers)(repoRoot);
+  const killWorker = deps.killWorker ?? killProcessGroup;
+  const workerCommand =
+    deps.workerCommand ??
+    (async (pid: number): Promise<string | undefined> => {
+      const ps = await deps.env.shell
+        .spawn('ps', ['-ww', '-o', 'command=', '-p', String(pid)], {
+          provenance: {
+            sessionId: options.sessionId ?? 'cli',
+            agentId: 'manager',
+            toolCallId: 'clean-live-probe',
+            turnId: 0,
+            operation: 'clean',
+          },
+        })
+        .wait();
+      return ps.exitCode === 0 ? ps.stdout.trim() : undefined;
+    });
   for (const item of plan.worktrees) {
+    const spawned =
+      item.branch === null ? null : parseSpawnedBranch(item.branch);
+    const entry = spawned === null ? undefined : liveEntryFor(live, spawned);
+    // Pid-reuse guard: a live pid whose command line does not name the
+    // worker's own session is not our worker — treated as dead, never killed.
+    const livePid =
+      entry !== undefined &&
+      commandOwnsSession(await workerCommand(entry.pid), entry.sessionId)
+        ? entry.pid
+        : undefined;
+    if (livePid !== undefined && options.force === true) {
+      killWorker(livePid);
+    } else if (livePid !== undefined) {
+      failures.push({
+        target: item.path,
+        message: `worker '${spawned?.agentId}' is still live (pid ${livePid}) — not removed; stop it or rerun with --force`,
+      });
+      continue;
+    }
     try {
       await remover(deps.env, item.path, { force: options.force === true });
       removed.push(item);
@@ -531,41 +655,87 @@ export async function runCleanCommand(
   } catch (error) {
     failures.push({ target: 'worktree prune', message: messageOf(error) });
   }
+  // The session directories this run emptied (issue #144). Only the parent of
+  // a worktree that was actually removed, and only when that parent sits
+  // directly under the worktree root: a legacy unscoped tree's parent IS the
+  // root, which is never removed. Best-effort — a leftover empty directory
+  // must not fail a disposal that already succeeded.
+  const wtRoot = resolve(repoRoot, worktreeRoot ?? DEFAULT_WORKTREE_ROOT);
+  const removeEmptyDir = deps.removeEmptyDir ?? defaultRemoveEmptyDir;
+  for (const dir of new Set(removed.map((item) => dirname(item.path)))) {
+    if (dirname(dir) !== wtRoot) continue;
+    try {
+      await removeEmptyDir(deps.env, dir);
+    } catch {
+      // Left in place; the next `kubic clean` retries.
+    }
+  }
+  // A FULL session clean retires the run's stored state (issue #144): the
+  // state file is what makes a fresh run under the same `--session` id refuse
+  // (`session_exists`), and `kubic clean --session <id>` is the documented way
+  // out. Only when this invocation disposed something of the session with no
+  // failure (every worktree left standing — dirty, live — is a failure, so
+  // none remains), or the listing showed nothing of the session left to
+  // dispose (workers that never got a worktree, or an earlier plain clean
+  // already removed them) — never while a worktree remains, since the state is
+  // what `--resume` and a later clean plan from.
+  let retiredState: string | undefined;
+  if (
+    options.sessionId !== undefined &&
+    failures.length === 0 &&
+    (removed.length + deleted.length > 0 || (sessionListed && planEmpty))
+  ) {
+    try {
+      (deps.retireSessionState ?? defaultRetireSessionState)(
+        options.sessionId,
+        repoRoot,
+      );
+      retiredState = sessionStorePath(repoRoot, options.sessionId);
+    } catch (error) {
+      failures.push({
+        target: sessionStorePath(repoRoot, options.sessionId),
+        message: messageOf(error),
+      });
+    }
+  }
   const journal = bounded ? pruneJournal(plan.journal, repoRoot) : noopPrune();
   const exitCode = failures.length > 0 ? CLEAN_EXIT_FAILURE : CLEAN_EXIT_OK;
 
   if (options.json === true) {
     deps.out(
-      JSON.stringify(
-        {
-          ok: exitCode === CLEAN_EXIT_OK,
-          exitCode,
-          dryRun: false,
-          worktrees: removed,
-          branches: deleted,
-          journal,
-          ...(failures.length === 0 ? {} : { failures }),
-        },
-        null,
-        2,
-      ),
+      formatJson({
+        ok: exitCode === CLEAN_EXIT_OK,
+        exitCode,
+        dryRun: false,
+        worktrees: removed,
+        branches: deleted,
+        journal,
+        ...(retiredState === undefined ? {} : { retiredState }),
+        ...(failures.length === 0 ? {} : { failures }),
+      }),
     );
     return exitCode;
   }
-  for (const item of removed) deps.out(`removed worktree ${item.path}`);
-  for (const branch of deleted) deps.out(`deleted branch ${branch}`);
-  for (const failure of failures) {
-    deps.out(`error: ${failure.message}`);
+  for (const item of removed) {
+    deps.out(`${theme.success('removed')} worktree ${item.path}`);
   }
+  for (const branch of deleted) {
+    deps.out(`${theme.success('deleted')} branch ${branch}`);
+  }
+  if (retiredState !== undefined) {
+    deps.out(`${theme.success('retired')} session state ${retiredState}`);
+  }
+  for (const failure of failures) log.error(failure.message);
   // "nothing to prune" only when the invocation disposed nothing at all —
   // a journal-only prune already reported its own counts below.
   if (
     removed.length === 0 &&
     deleted.length === 0 &&
     failures.length === 0 &&
+    retiredState === undefined &&
     !bounded
   ) {
-    deps.out('clean: nothing to prune');
+    deps.out(theme.muted('clean: nothing to prune'));
   }
   if (bounded) {
     deps.out(

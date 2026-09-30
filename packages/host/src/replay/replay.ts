@@ -36,8 +36,12 @@
 // go through the exec FileBridge (I/O confinement).
 
 import type { PermissionClasses } from '../../../agents/src/policy.js';
-import { answerHelp } from '../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../core/src/flags.js';
+import {
+  type CliLogger,
+  createLineLogger,
+} from '../../../core/src/cli/logger.js';
+import { formatJson } from '../../../core/src/cli/output.js';
+import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../exec/src/journal.js';
 import {
@@ -45,6 +49,8 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
+import type { SoloApprovalConfig } from '../approvals.js';
+import type { EffectivePolicy } from '../policy/enterprise.js';
 import {
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
@@ -93,10 +99,32 @@ export interface ReplayRuntimeDeps {
   policyClasses?: PermissionClasses;
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
+  // Issue #230: the config `[approvals]` policy, as `kubic run` installs it.
+  approvals?: SoloApprovalConfig;
+  // §58 enterprise policy (issue #288): the same resolved EffectivePolicy
+  // `kubic run` gates with — the model/provider gate, the role-grant check and
+  // the lane tool intersection all derive from it inside the headless runner
+  // the re-execution drives, so a live replay is not an ungated lane.
+  modelPolicy?: EffectivePolicy;
+  // Issue #228 (§35.1): the per-path trust check (store resolved-root +
+  // env), from the same config load the re-execution tier runs under — it
+  // gates the project models.json of the assembled catalog. Absent falls
+  // back to the env opt-in inside assembleModels.
+  trustProject?: (path: string) => boolean;
 }
 
 export interface ReplayCommandDeps {
+  // stdout: the report or the one `--json` envelope.
   out: (line: string) => void;
+  // stderr: diagnostics — `error: [code] message` refusals and the
+  // experimental-override warning (core/cli/logger). Under --json the
+  // envelope on stdout carries the error instead.
+  err: (line: string) => void;
+  // Colours the diagnostic prefixes; absent means plain.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
   run: (
     request: ReplayRunRequest,
     runtime: ReplayRuntimeDeps,
@@ -121,8 +149,21 @@ export interface ReplayEnvelope {
   error?: ReplayError;
 }
 
-export const USAGE_MESSAGE =
-  'usage: kubic replay [--] <trajectory.json> [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]';
+// The parsed `kubic replay` operand and options (commander's positional
+// argument plus `opts()`). Values stay raw strings: the tier vocabulary
+// and the pin rules are this module's semantics, reported in the tiered
+// envelope — commander only owns argv syntax (unknown flags, missing
+// values, excess operands, `--help`).
+export interface ReplayCommandOptions {
+  readonly trajectory?: string;
+  readonly tier?: string;
+  readonly model?: string;
+  readonly lockfile?: string;
+  readonly roleConfig?: string;
+  readonly worktree?: string;
+  readonly diffAgainst?: string;
+  readonly json?: boolean;
+}
 
 interface ReplayOptions {
   trajectory: string;
@@ -134,6 +175,7 @@ interface ReplayOptions {
   worktree: string | undefined;
   diffAgainst: string | undefined;
   json: boolean;
+  log: CliLogger;
 }
 
 function parseTier(raw: string): ReplayTier | null {
@@ -143,103 +185,18 @@ function parseTier(raw: string): ReplayTier | null {
   return null;
 }
 
-// Issue #127: the shared parser (core/src/flags.ts) replaces the
-// hand-rolled loop. Replay keeps its own error vocabulary
-// (missing-flag-value / unknown-flag / unexpected-argument /
-// missing-trajectory) and its tiered envelopes.
-const REPLAY_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--tier', takes: 'value' },
-  { name: '--model', takes: 'value' },
-  { name: '--lockfile', takes: 'value' },
-  { name: '--role-config', takes: 'value' },
-  { name: '--worktree', takes: 'value' },
-  { name: '--diff-against', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
-
-// Parse errors also publish a tier (§72): the declared --tier when one
-// was given (unknown when it names no known tier), else the recorded
-// default — so --json failures share the envelope shape.
-function sniffParseTier(args: string[]): ReplayTier | 'unknown' {
-  const flags = parseFlagArgs(args, REPLAY_FLAG_SPEC);
-  const raw = flags.values['--tier'] as string | undefined;
+// Every result publishes a tier (§72): the declared --tier when one was
+// given (unknown when it names no known tier), else the recorded default.
+function resolveTier(raw: string | undefined): ReplayTier | 'unknown' {
   if (raw === undefined) return 'recorded';
   return parseTier(raw) ?? 'unknown';
 }
 
-interface ReplayParseError {
-  code: string;
-  message: string;
-  trajectory: string | null;
-  tier: ReplayTier | 'unknown';
-  json: boolean;
-}
-
-function parseArgs(
-  args: string[],
-): { options: ReplayOptions } | { error: ReplayParseError } {
-  const flags = parseFlagArgs(args, REPLAY_FLAG_SPEC);
-  const json = flags.values['--json'] === true;
-  const tier = sniffParseTier(args);
-  const failParse = (
-    code: string,
-    message: string,
-    trajectory: string | null,
-  ): { error: ReplayParseError } => ({
-    error: { code, message, trajectory, tier, json },
-  });
-  // `--json` is part of the spec, so the unknown-flag branch never sees it.
-  const positional = flags.positional;
-  const trajectory = positional[0];
-  // Missing values first (today's inline order), then unknown flags, then
-  // a second operand — each with its pre-migration code and line.
-  for (const flag of flags.missing) {
-    return failParse(
-      'missing-flag-value',
-      `error: ${flag} needs a value`,
-      trajectory ?? null,
-    );
-  }
-  if (flags.unknown.length > 0) {
-    return failParse(
-      'unknown-flag',
-      `error: unknown flag ${flags.unknown[0]}`,
-      trajectory ?? null,
-    );
-  }
-  if (positional.length > 1) {
-    return failParse(
-      'unexpected-argument',
-      `error: unexpected argument ${positional[1]}`,
-      trajectory ?? null,
-    );
-  }
-  if (trajectory === undefined) {
-    return failParse('missing-trajectory', USAGE_MESSAGE, null);
-  }
-  const tierRaw = flags.values['--tier'] as string | undefined;
-  let resolvedTier: ReplayTier | 'unknown' = 'recorded';
-  if (tierRaw !== undefined) {
-    resolvedTier = parseTier(tierRaw) ?? 'unknown';
-  }
-  return {
-    options: {
-      trajectory,
-      tier: resolvedTier,
-      tierRaw,
-      model: flags.values['--model'] as string | undefined,
-      lockfile: flags.values['--lockfile'] as string | undefined,
-      roleConfig: flags.values['--role-config'] as string | undefined,
-      worktree: flags.values['--worktree'] as string | undefined,
-      diffAgainst: flags.values['--diff-against'] as string | undefined,
-      json,
-    },
-  };
-}
+const PLAIN = createCliTheme('none');
 
 function fail(
   deps: ReplayCommandDeps,
-  options: { json: boolean; tier: ReplayTier | 'unknown' },
+  options: { json: boolean; tier: ReplayTier | 'unknown'; log: CliLogger },
   trajectory: string | null,
   exitCode: number,
   code: string,
@@ -254,13 +211,16 @@ function fail(
     changed: [],
     error: { code, message },
   };
-  if (options.json) deps.out(JSON.stringify(envelope));
-  else deps.out(`error [${code}]: ${message}`);
+  if (options.json) deps.out(formatJson(envelope));
+  else options.log.error(`[${code}] ${message}`);
   return exitCode;
 }
 
+// Paths the user typed resolve against the working directory (a bridge
+// rooted at '/' turned `kubic replay t.json` into `/t.json`); absolute
+// paths are unaffected.
 function readFile(path: string): string {
-  return createNodeFileBridge('/').readTextFile(path);
+  return createNodeFileBridge(process.cwd()).readTextFile(path);
 }
 
 function loadTrajectory(
@@ -356,7 +316,7 @@ function checkWorktreeOverride(
 ): { ok: true } | { code: string; message: string; exit: number } {
   let exists = false;
   try {
-    exists = createNodeFileBridge('/').exists(path);
+    exists = createNodeFileBridge(process.cwd()).exists(path);
   } catch {
     exists = false;
   }
@@ -431,11 +391,11 @@ async function executeTierRun(
       : { experimental: params.experimental }),
   };
   if (options.json) {
-    deps.out(JSON.stringify(envelope));
+    deps.out(formatJson(envelope));
     return exitCode;
   }
   if (params.experimental.length > 0) {
-    deps.out('warning: --worktree is experimental');
+    options.log.warn('--worktree is experimental');
   }
   deps.out(`tier: ${params.tier}`);
   deps.out(`invocation: ${params.invocation}`);
@@ -572,7 +532,7 @@ function describeRecorded(trajectory: TrajectoryExport): string[] {
 }
 
 export async function runReplayCommand(
-  args: string[],
+  parsed: ReplayCommandOptions,
   deps: ReplayCommandDeps,
   // The effective config's projections (issue #114): handed straight to
   // the run seam so re-execution consumes the config like `kubic run`.
@@ -580,29 +540,33 @@ export async function runReplayCommand(
   // answer) — never an invented policy.
   runtime: ReplayRuntimeDeps = { policySource: 'default' },
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, USAGE_MESSAGE);
-  if (help !== null) return help;
-  const parsed = parseArgs(args);
-  if ('error' in parsed) {
-    const err = parsed.error;
-    if (err.json) {
-      const envelope: ReplayEnvelope = {
-        ok: false,
-        exitCode: RUN_EXIT_USAGE,
-        tier: err.tier,
-        invocation: null,
-        trajectory: err.trajectory,
-        changed: [],
-        error: { code: err.code, message: err.message },
-      };
-      deps.out(JSON.stringify(envelope));
-    } else {
-      deps.out(err.message);
-    }
-    return RUN_EXIT_USAGE;
+  const json = parsed.json === true;
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
+  const tier = resolveTier(parsed.tier);
+  if (parsed.trajectory === undefined) {
+    return fail(
+      deps,
+      { json, tier, log },
+      null,
+      RUN_EXIT_USAGE,
+      'missing-trajectory',
+      'missing required argument <trajectory.json>',
+    );
   }
-  const options = parsed.options;
+  const options: ReplayOptions = {
+    trajectory: parsed.trajectory,
+    tier,
+    tierRaw: parsed.tier,
+    model: parsed.model,
+    lockfile: parsed.lockfile,
+    roleConfig: parsed.roleConfig,
+    worktree: parsed.worktree,
+    diffAgainst: parsed.diffAgainst,
+    json,
+    log,
+  };
 
   if (options.tier === 'unknown') {
     return fail(
@@ -662,7 +626,7 @@ export async function runReplayCommand(
       },
     };
     if (options.json) {
-      deps.out(JSON.stringify(envelope));
+      deps.out(formatJson(envelope));
       return RUN_EXIT_OK;
     }
     for (const line of describeRecorded(trajectory)) deps.out(line);
@@ -842,7 +806,7 @@ export async function runReplayCommand(
     regression,
   };
   if (options.json) {
-    deps.out(JSON.stringify(envelope));
+    deps.out(formatJson(envelope));
     return exitCode;
   }
   deps.out('tier: recorded');

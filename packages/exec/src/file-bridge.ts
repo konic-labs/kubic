@@ -15,8 +15,11 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -96,6 +99,12 @@ export interface FileBridge {
   fileInfo(path: string): BridgeFileInfo;
   listDir(path: string): BridgeFileInfo[];
   exists(path: string): boolean;
+  /**
+   * Canonical absolute path (symlinks resolved; issue #362 compares a
+   * session's recorded cwd with the invocation cwd). Optional so test
+   * doubles stay valid; throws when the path does not exist.
+   */
+  realPath?(path: string): string;
   createDir(path: string, recursive?: boolean): void;
   remove(path: string, recursive?: boolean, force?: boolean): void;
   createTempDir(prefix?: string): string;
@@ -226,6 +235,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       readdirSync(absolutePath(path)).map((name) =>
         infoOf(join(absolutePath(path), name)),
       ),
+    realPath: (path: string): string => realpathSync(absolutePath(path)),
     exists: (path: string): boolean => {
       try {
         lstatSync(absolutePath(path));
@@ -266,4 +276,60 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       throw new Error('could not create a unique temp file');
     },
   };
+}
+
+// Atomic, serialized update of one small state file (orchestrator
+// workers.json): an O_EXCL lockfile (stale after `staleMs`, so a crashed
+// holder never wedges the next run) guards a read → update → tmp+rename
+// write. The update sees the file as it is AT WRITE TIME, never a snapshot
+// taken before an await. `current` is undefined only when the file is absent.
+export function updateFileLocked(
+  absPath: string,
+  update: (current: string | undefined) => string,
+  options: { staleMs?: number; waitMs?: number } = {},
+): void {
+  const lock = `${absPath}.lock`;
+  const staleMs = options.staleMs ?? 10_000;
+  const deadline = Date.now() + (options.waitMs ?? 5_000);
+  mkdirSync(dirname(absPath), { recursive: true });
+  let fd: number | undefined;
+  while (fd === undefined) {
+    try {
+      fd = openSync(lock, 'wx');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > staleMs) {
+          unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue; // the holder released between open and stat
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for lock ${lock}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try {
+    let current: string | undefined;
+    try {
+      current = readFileSync(absPath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const next = update(current);
+    const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      writeFileSync(tmp, next);
+      renameSync(tmp, absPath);
+    } catch (error) {
+      rmSync(tmp, { force: true });
+      throw error;
+    }
+  } finally {
+    closeSync(fd);
+    rmSync(lock, { force: true });
+  }
 }

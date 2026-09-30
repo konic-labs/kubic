@@ -33,6 +33,7 @@ import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 
 const WORKER = `
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+if (0 === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
 process.exit(0);
 `;
 
@@ -73,6 +74,7 @@ describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)
     const lines: string[] = [];
     const prod = await orchestrateDepsWithDefaults({
       out: (line) => lines.push(line),
+      err: (line) => lines.push(line),
       cwd: root,
       sessionsRoot,
       workerEntry: { cmd: process.execPath, args: [worker] },
@@ -86,7 +88,7 @@ describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)
     expect(primed.outcome).toBe('admitted');
 
     const code = await runOrchestrateCommand(
-      ['-p', 'do the thing', '--agents', 'alpha', '--session', 'traj', '--yes'],
+      { prompt: 'do the thing', agents: ['alpha'], session: 'traj', yes: true },
       // The prod deps, with only the admission layer primed. `trajectoryEvent`
       // is deliberately NOT overridden: the run uses the composition root's own
       // default sink.

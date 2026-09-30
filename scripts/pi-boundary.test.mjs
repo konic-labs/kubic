@@ -91,6 +91,14 @@ describe('pi pinning + boundary (issue #4)', () => {
     );
   });
 
+  it('pinned check rejects ranges on any third-party dep (CLI stack)', () => {
+    const dir = fixturePackageJson({ chalk: '^6.0.0', commander: '15.0.0' });
+    assert.deepEqual(
+      checkPinned(dir).map((v) => v.dep),
+      ['chalk'],
+    );
+  });
+
   it('pi-boundary.ts exists with seam docs and justification template', () => {
     const file = join(ROOT, 'packages', 'worker', 'src', 'pi-boundary.ts');
     assert.ok(existsSync(file), 'missing packages/worker/src/pi-boundary.ts');
@@ -284,11 +292,17 @@ describe('pi pinning + boundary (issue #4)', () => {
     );
   });
 
-  it('pinned check ignores non-Pi ranges', () => {
-    const dir = fixturePackageJson({
-      lodash: '^4.0.0',
-      '@earendil-works/pi-ai': '0.85.1',
-    });
+  it('pinned check ignores non-Pi ranges in overrides only', () => {
+    const dir = scratchDir('pinned-ovr-nonpi-');
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fixture',
+        private: true,
+        dependencies: { '@earendil-works/pi-ai': '0.85.1' },
+        overrides: { lodash: '^4.0.0' },
+      }),
+    );
     assert.deepEqual(checkPinned(dir), []);
   });
 
@@ -358,7 +372,7 @@ describe('pi pinning + boundary (issue #4)', () => {
       [join(ROOT, 'scripts', 'check-pinned-deps.mjs'), ROOT],
       { encoding: 'utf8' },
     );
-    assert.match(out, /pi pins OK/);
+    assert.match(out, /dependency pins OK/);
   });
 
   it('pinned CLI exits 1 listing violations', () => {
@@ -374,8 +388,8 @@ describe('pi pinning + boundary (issue #4)', () => {
     );
     assert.equal(result.status, 1, 'CLI must exit 1 on an unpinned tree');
     assert.match(result.stdout, /is not an exact pin/);
-    assert.match(result.stdout, /1 unpinned Pi dependency\(ies\)/);
-    assert.doesNotMatch(result.stdout, /pi pins OK/);
+    assert.match(result.stdout, /1 unpinned dependency\(ies\)/);
+    assert.doesNotMatch(result.stdout, /dependency pins OK/);
   });
 
   it('pinned check rejects ranges in devDependencies', () => {
@@ -400,7 +414,7 @@ describe('pi pinning + boundary (issue #4)', () => {
       [join(ROOT, 'scripts', 'check-pinned-deps.mjs')],
       { encoding: 'utf8', cwd: join(ROOT, 'scripts') },
     );
-    assert.match(out, /pi pins OK/);
+    assert.match(out, /dependency pins OK/);
   });
 
   it('pinned check skips invalid package manifests', () => {

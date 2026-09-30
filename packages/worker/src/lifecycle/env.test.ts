@@ -8,6 +8,8 @@ import {
   filterSpawnEnv,
   redactEnvForLog,
   roleCredentialEnv,
+  roleGrantEnv,
+  withRoleGrant,
 } from './env.js';
 
 describe('spawn env allowlist §3.8 (issue #42)', () => {
@@ -22,8 +24,27 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
   });
 
   it('passes KUBIC_ namespaced non-secret keys through', () => {
-    const out = filterSpawnEnv({ KUBIC_MODEL: 'faux', KUBIC_DEBUG: '1' });
-    expect(out).toEqual({ KUBIC_MODEL: 'faux', KUBIC_DEBUG: '1' });
+    const out = filterSpawnEnv({
+      KUBIC_MODEL: 'faux',
+      KUBIC_PROVIDER: 'faux',
+      KUBIC_DEBUG: '1',
+    });
+    expect(out).toEqual({
+      KUBIC_MODEL: 'faux',
+      KUBIC_PROVIDER: 'faux',
+      KUBIC_DEBUG: '1',
+    });
+  });
+
+  it("passes the manager's models root and trust decision through (issue #222)", () => {
+    const out = filterSpawnEnv({
+      KUBIC_MODELS_ROOT: '/repo',
+      KUBIC_TRUST_PROJECT: '1',
+    });
+    expect(out).toEqual({
+      KUBIC_MODELS_ROOT: '/repo',
+      KUBIC_TRUST_PROJECT: '1',
+    });
   });
 
   it('injects the role grant on top of the filtered base', () => {
@@ -76,5 +97,55 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     expect(() =>
       roleCredentialEnv('reviewer', { KUBIC_ROLE_OTHER_TOKEN: 'x' }),
     ).toThrow(/KUBIC_ROLE_OTHER_TOKEN/);
+  });
+});
+
+describe('role grant read-back on the child side (issue #200)', () => {
+  it("reads this role's own grant under the provider-key names the models layer asks for", () => {
+    const env = buildSpawnEnv({ PATH: '/bin' }, 'implementer', {
+      GW_API_KEY: 'granted',
+    });
+    expect(roleGrantEnv('implementer', env)).toEqual({
+      GW_API_KEY: 'granted',
+    });
+    expect(withRoleGrant(env, 'implementer')).toEqual({
+      PATH: '/bin',
+      KUBIC_ROLE_IMPLEMENTER_GW_API_KEY: 'granted',
+      GW_API_KEY: 'granted',
+    });
+  });
+
+  it("never exposes a sibling role's grant", () => {
+    const env = {
+      KUBIC_ROLE_PLANNER_GW_API_KEY: 'sibling',
+      KUBIC_ROLE_IMPLEMENTER_GW_API_KEY: 'mine',
+    };
+    expect(roleGrantEnv('implementer', env)).toEqual({
+      GW_API_KEY: 'mine',
+    });
+    expect(Object.values(roleGrantEnv('tester', env))).toEqual([]);
+  });
+
+  it('sanitizes the role the same way the grant namespace does', () => {
+    const env = buildSpawnEnv({}, 'security-review', { GW_API_KEY: 'v' });
+    expect(roleGrantEnv('security-review', env)).toEqual({
+      GW_API_KEY: 'v',
+    });
+    expect(roleGrantEnv('Security Review', env)).toEqual({
+      GW_API_KEY: 'v',
+    });
+  });
+
+  it('leaves the base env untouched when the child holds no grant', () => {
+    expect(roleGrantEnv('implementer', { PATH: '/bin' })).toEqual({});
+    expect(withRoleGrant({ PATH: '/bin' }, 'implementer')).toEqual({
+      PATH: '/bin',
+    });
+  });
+
+  it('ignores an empty grant name instead of minting an empty-key overlay', () => {
+    expect(
+      roleGrantEnv('implementer', { KUBIC_ROLE_IMPLEMENTER_: 'v' }),
+    ).toEqual({});
   });
 });

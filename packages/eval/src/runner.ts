@@ -32,7 +32,8 @@ export type EvalRunnerErrorCode =
   | 'dirty-worktree'
   | 'usage-mismatch'
   | 'missing-usage-rows'
-  | 'invalid-trajectory';
+  | 'invalid-trajectory'
+  | 'provenance-mismatch';
 
 export class EvalRunnerError extends Error {
   readonly code: EvalRunnerErrorCode;
@@ -79,14 +80,35 @@ export interface EvalTaskDeps {
   ensureCleanWorktree?: (worktree: string) => boolean;
 }
 
+// The trajectory path takes model/thinking/worktree/generation from the
+// export itself (§48, §73): the flags are optional cross-checks, and a
+// flag that disagrees with the export is refused (provenance-mismatch)
+// rather than silently stamped over it. The tier is not recorded in an
+// export, so it stays required.
 export interface EvalTrajectoryOptions {
   suite: string;
   trajectory: unknown;
-  model: string;
-  thinking: string | null;
-  worktree: string;
-  generation: number;
-  tier: string;
+  model?: string;
+  thinking?: string | null;
+  worktree?: string;
+  generation?: number;
+  tier?: string;
+}
+
+function requireTier(tier: string | undefined): EvalTier {
+  if (typeof tier !== 'string' || tier.trim() === '') {
+    throw new EvalRunnerError(
+      'missing-tier',
+      'tier is required (smoke|standard|extended, §72) — refusing to store an untiered record',
+    );
+  }
+  if (!isEvalTier(tier)) {
+    throw new EvalRunnerError(
+      'invalid-tier',
+      `unknown tier ${JSON.stringify(tier)}: one of smoke, standard, extended`,
+    );
+  }
+  return tier;
 }
 
 function requireProvenance(options: {
@@ -110,19 +132,17 @@ function requireProvenance(options: {
       'generation is required: eval records which worker generation ran (§73)',
     );
   }
-  if (typeof options.tier !== 'string' || options.tier.trim() === '') {
-    throw new EvalRunnerError(
-      'missing-tier',
-      'tier is required (smoke|standard|extended, §72) — refusing to store an untiered record',
-    );
-  }
-  if (!isEvalTier(options.tier)) {
-    throw new EvalRunnerError(
-      'invalid-tier',
-      `unknown tier ${JSON.stringify(options.tier)}: one of smoke, standard, extended`,
-    );
-  }
-  return options.tier;
+  return requireTier(options.tier);
+}
+
+// One flag checked against the export's own value: absent means "take the
+// export's", present-and-different is a refusal.
+function crossCheck<T>(field: string, flag: T | undefined, recorded: T): void {
+  if (flag === undefined || flag === recorded) return;
+  throw new EvalRunnerError(
+    'provenance-mismatch',
+    `--${field} ${JSON.stringify(flag)} disagrees with the trajectory's recorded ${field} ${JSON.stringify(recorded)} — refusing to misattribute the record`,
+  );
 }
 
 function requireCleanWorktree(
@@ -254,7 +274,7 @@ export async function runEvalTrajectory(
       `suite ${JSON.stringify(options.suite)} is a stub — refusing to score unimplemented work`,
     );
   }
-  const tier = requireProvenance(options);
+  const tier = requireTier(options.tier);
   let parsed: TrajectoryExport;
   try {
     parsed = parseTrajectoryExport(options.trajectory);
@@ -265,14 +285,23 @@ export async function runEvalTrajectory(
       `invalid trajectory export: ${message}`,
     );
   }
+  const model = parsed.provenance.model;
+  const thinking = parsed.model.thinking ?? null;
+  const worktree = parsed.provenance.worktree;
+  const generation = parsed.provenance.generation;
+  crossCheck('model', options.model, model);
+  crossCheck('thinking', options.thinking, thinking);
+  crossCheck('worktree', options.worktree, worktree);
+  crossCheck('generation', options.generation, generation);
+  requireProvenance({ worktree, generation, tier });
   const signals = computeSignals(parsed);
   return toRecord(
     {
       suite: options.suite,
-      model: options.model,
-      thinking: options.thinking,
-      worktree: options.worktree,
-      generation: options.generation,
+      model,
+      thinking,
+      worktree,
+      generation,
       tier,
       success: signals.completion && gatesPass(signals),
       signals,

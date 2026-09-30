@@ -111,4 +111,85 @@ describe('doctor config section (issue #90)', () => {
     expect(probe.ok).toBe(true);
     expect(probe.detail).toMatch(/project layer not trusted/);
   });
+
+  it('names the store a project grant came from (issue #228)', () => {
+    const probe = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: true,
+        projectTrust: {
+          decision: true,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+        },
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain(
+      'project layer trusted (recorded in /home/u/.kubic/trust.json)',
+    );
+  });
+
+  it('names the remedies for an undecided or declined project layer (issue #228)', () => {
+    const declined = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: false,
+        projectTrust: {
+          decision: false,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+        },
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(declined.ok).toBe(true);
+    expect(declined.detail).toMatch(/declined/);
+    expect(declined.detail).toContain("run 'kubic trust' to accept");
+
+    const undecided = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: false,
+        projectTrust: {
+          decision: null,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+        },
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(undecided.ok).toBe(true);
+    expect(undecided.detail).toMatch(/no decision recorded/);
+    expect(undecided.detail).toContain('KUBIC_TRUST_PROJECT=1');
+  });
+
+  it('names a store error instead of reporting no decision (issue #228 review)', () => {
+    const probe = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: false,
+        projectTrust: {
+          decision: null,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+          storeError:
+            'trust store /home/u/.kubic/trust.json is not valid JSON: bad',
+        },
+        budgetsConfigured: false,
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain('not valid JSON');
+    expect(probe.detail).not.toContain('no decision recorded');
+  });
 });

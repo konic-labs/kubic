@@ -12,6 +12,7 @@ export type {
   Component,
   EditorTheme,
   Focusable,
+  MarkdownTheme,
   MouseRegionHandler,
   SelectListTheme,
   StackEntryOptions,
@@ -21,6 +22,8 @@ export type {
 export {
   CURSOR_MARKER,
   Editor,
+  isKeyRelease,
+  isKeyRepeat,
   Markdown,
   MouseRegion,
   matchesKey,
@@ -29,5 +32,8 @@ export {
   ScrollView,
   Text,
   TuiAltScreen,
+  truncateToWidth,
   VStack,
+  visibleWidth,
+  wrapTextWithAnsi,
 } from '@earendil-works/pi-tui';

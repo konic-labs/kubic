@@ -82,6 +82,22 @@ export function classifyFailure(
       };
     }
     case 'provider': {
+      // No provider/model configured is a setup failure, not a transient
+      // one: retrying unchanged can never succeed. It rides the existing
+      // non-retryable provider code (the §52 list is pinned equal in the
+      // trajectory/eval schemas) with a remedy that names the real fix.
+      if (
+        /no models? available|register a provider|no providers? (?:configured|registered)|provider not configured|no model configured/.test(
+          haystack,
+        )
+      ) {
+        return {
+          code: 'provider_auth',
+          remedy:
+            'No provider/model is configured; register a provider (kubic models) or set KUBIC_MODEL, then rerun.',
+          strategy: 'abandon',
+        };
+      }
       if (
         /auth|denied|unauthorized|forbidden|invalid key|api key/.test(haystack)
       ) {

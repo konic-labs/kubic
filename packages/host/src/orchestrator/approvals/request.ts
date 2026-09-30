@@ -11,6 +11,10 @@
 // the display text always derived from trigger/toolName/args, so spoofed
 // keys and dialog text cannot smuggle trust.
 import { createHash } from 'node:crypto';
+import {
+  approvalCommandText,
+  summarizeCommand,
+} from '../../approval-display.js';
 
 export const ORCHESTRATOR_TRIGGERS = [
   'network',
@@ -27,6 +31,8 @@ export const ORCHESTRATOR_TRIGGERS = [
   // for a new capability would be refused as an unknown trigger before any
   // surface could render it (issue #131).
   'privilege-escalation',
+  // Issue #324: a worker write into Kubic's control plane (`.kubic/`).
+  'kubic-state-write',
 ] as const;
 
 export type OrchestratorTrigger = (typeof ORCHESTRATOR_TRIGGERS)[number];
@@ -42,6 +48,9 @@ export interface OrchestratorApprovalRequest {
   trigger: OrchestratorTrigger;
   toolName: string;
   summary: string;
+  // Issue #316: the full command (args.command), derived like the summary —
+  // never caller-supplied — so the manager's seat shows what will run.
+  command?: string;
   justification: string;
   sessionId: string;
   agentId: string;
@@ -101,17 +110,26 @@ export function orchestratorRequestKey(
     .slice(0, 16);
 }
 
-function summarize(toolName: string, trigger: string, args: unknown): string {
+function commandOf(args: unknown): string | undefined {
   if (
     typeof args === 'object' &&
     args !== null &&
     'command' in args &&
     typeof (args as Record<string, unknown>).command === 'string'
   ) {
-    return `${trigger}: ${(args as Record<string, unknown>).command as string}`.slice(
-      0,
-      160,
-    );
+    return (args as Record<string, unknown>).command as string;
+  }
+  return undefined;
+}
+
+// Issue #316: a shortened summary says how much it hid (never a silent
+// slice); the full command rides the request's `command` field.
+const ORCHESTRATOR_SUMMARY_LIMIT = 160;
+
+function summarize(toolName: string, trigger: string, args: unknown): string {
+  const command = commandOf(args);
+  if (command !== undefined) {
+    return summarizeCommand(trigger, command, ORCHESTRATOR_SUMMARY_LIMIT);
   }
   return `${trigger}: ${toolName}`;
 }
@@ -230,6 +248,12 @@ export function validateOrchestratorRequest(
     trigger: trigger as OrchestratorTrigger,
     toolName,
     summary: summarize(toolName, trigger, args),
+    ...((): { command?: string } => {
+      const command = commandOf(args);
+      return command === undefined
+        ? {}
+        : { command: approvalCommandText(command) };
+    })(),
     justification: cleanJustification,
     sessionId: record.sessionId as string,
     agentId: record.agentId as string,

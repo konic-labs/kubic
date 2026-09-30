@@ -204,6 +204,45 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
     expect(promptOf(createSpy)).toContain('agent=root');
   });
 
+  // Issue #227: the role's `[roles.<name>].model` is the selection default
+  // for BOTH boots (the shared projection), which is why the TUI resolves
+  // the role BEFORE selectModel.
+  it('a role model layer selects the pinned model on the TUI lane', async () => {
+    const cwd = tmpRoot('tui-role-model-cwd-');
+    writeRole(
+      cwd,
+      'reviewer',
+      'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
+      'You are the reviewer. Report findings.',
+    );
+    const models = fauxModels(['done']);
+    const alt = fauxProvider({
+      provider: 'alt',
+      models: [{ id: 'm1', contextWindow: 100000 }],
+    });
+    alt.setResponses([fauxAssistantMessage('from alt')]);
+    models.setProvider(alt.provider);
+    const boot = await bootTuiLane(undefined, {
+      sessionsRoot: tmpRoot('tui-role-model-sessions-'),
+      models,
+      env: new FakeExecutionEnv({}),
+      role: 'reviewer',
+      roles: {
+        cwd,
+        layers: [
+          { layer: 'project', roles: { reviewer: { model: 'alt/m1' } } },
+        ],
+      },
+    });
+    try {
+      // The default pick would be faux/echo (first registered); the role's
+      // layer pin is the selection default, so alt/m1 answers.
+      expect(boot.model).toBe('alt/m1');
+    } finally {
+      await boot.close?.();
+    }
+  });
+
   it('layers [roles.<name>] tools under the role document on --role', async () => {
     const cwd = tmpRoot('tui-layers-cwd-');
     writeRole(
@@ -340,6 +379,7 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
     const deps: TuiRunDeps = {
       out: (line) => lines.push(line),
       createTerminal: () => fake.terminal,
+      colorLevel: 'none',
       bootLane: async (
         sessionId?: string,
         _answer?: unknown,
@@ -350,15 +390,11 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
       },
     };
     const pending = runTuiCommand(
-      [
-        '--role',
-        'planner',
-        '--no-skills',
-        '--skill',
-        '/tmp/one.md',
-        '--skill',
-        '/tmp/two.md',
-      ],
+      {
+        role: 'planner',
+        noSkills: true,
+        skills: ['/tmp/one.md', '/tmp/two.md'],
+      },
       deps,
     );
     await waitFor(() => fake.counts.started === 1);
@@ -369,30 +405,6 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
       noSkills: true,
       skillsList: ['/tmp/one.md', '/tmp/two.md'],
     });
-  });
-
-  it('rejects the parity flags without values, and the usage line names them', async () => {
-    const lines: string[] = [];
-    const deps: TuiRunDeps = {
-      out: (line) => lines.push(line),
-      createTerminal: () => fakeTerminal().terminal,
-      bootLane: async () => ({ sessionId: 's1', model: 'faux/test' }),
-    };
-    expect(await runTuiCommand(['--role'], deps)).toBe(2);
-    expect(await runTuiCommand(['--skill'], deps)).toBe(2);
-    // Each refusal names its own flag, not a generic failure.
-    expect(lines).toContain('error: --role needs a value');
-    expect(lines).toContain('error: --skill needs a value');
-    const usage: string[] = [];
-    expect(
-      await runTuiCommand(['--help'], {
-        ...deps,
-        out: (line) => usage.push(line),
-      }),
-    ).toBe(0);
-    expect(usage.join('\n')).toContain('--role <name>');
-    expect(usage.join('\n')).toContain('[--skill <path>]');
-    expect(usage.join('\n')).toContain('--no-skills');
   });
 });
 

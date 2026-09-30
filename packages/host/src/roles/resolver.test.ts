@@ -137,6 +137,145 @@ describe('resolveRole', () => {
   });
 });
 
+describe('enterprise policy on role grants (issue #288)', () => {
+  const IMPLEMENTER_MD = `---
+role: implementer
+tools: [read, write, edit, bash]
+filesystem: workspace-write
+shell: true
+network: none
+git: false
+credentials: none
+---
+# Implementer
+Writes code.
+`;
+
+  it('refuses a role declaring an enterprise-denied tool, naming the reason', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    const doc = parseRoleDocument(IMPLEMENTER_MD);
+    expect(() => resolveRole(doc, [], { toolPolicy: policy })).toThrow(
+      RoleRefusedError,
+    );
+    expect(() => resolveRole(doc, [], { toolPolicy: policy })).toThrow(
+      /'bash'.*denied.*enterprise denial holds/,
+    );
+  });
+
+  it('refuses a role tool outside an enterprise allow list, never widening it', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { allow: ['read', 'write', 'edit'] } },
+      },
+    ]).policy;
+    const doc = parseRoleDocument(IMPLEMENTER_MD);
+    expect(() => resolveRole(doc, [], { toolPolicy: policy })).toThrow(
+      /'bash' denied/,
+    );
+  });
+
+  it('keeps a role whose tools the policy allows, never adding any', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { allow: ['read', 'ls', 'find', 'grep'] } },
+      },
+    ]).policy;
+    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), [], {
+      toolPolicy: policy,
+    });
+    // The policy admits every declared tool; the resolved set is exactly the
+    // role's own — a policy can never widen a role's grant.
+    expect(resolved.tools).toEqual(['find', 'grep', 'ls', 'read']);
+  });
+
+  it('leaves a role alone when the enterprise layer has no tool policy', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
+    ]).policy;
+    const doc = parseRoleDocument(IMPLEMENTER_MD);
+    expect(() => resolveRole(doc, [], { toolPolicy: policy })).not.toThrow();
+    expect(resolveRole(doc, [], { toolPolicy: policy }).tools).toContain(
+      'bash',
+    );
+  });
+
+  // The role grant uses the lane gate's allow-semantics
+  // (isToolAllowedByEnterprise): a deny list narrows, and an absent allow
+  // list means "everything not denied" — it is not deny-by-default.
+  const REVIEWER_READ_GREP_MD = `---
+role: reviewer
+tools: [read, grep]
+filesystem: read
+shell: false
+network: none
+git: false
+credentials: none
+---
+# Reviewer
+Reads only.
+`;
+
+  it('a deny-only policy does not refuse a role that declares no denied tool', async () => {
+    const { resolveEffectivePolicy, isToolAllowedByEnterprise } = await import(
+      '../policy/enterprise.js'
+    );
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    // The lane gate lets grep through; the role grant must agree.
+    expect(isToolAllowedByEnterprise(policy, 'grep')).toBe(true);
+    const resolved = resolveRole(parseRoleDocument(REVIEWER_READ_GREP_MD), [], {
+      toolPolicy: policy,
+    });
+    expect(resolved.tools).toEqual(['grep', 'read']);
+    // A class-derived tool set (no `tools:` list) is judged the same way.
+    const planner = resolveRole(parseRoleDocument(PLANNER_MD), [], {
+      toolPolicy: policy,
+    });
+    expect(planner.tools).toEqual(['find', 'grep', 'ls', 'read']);
+  });
+
+  it('a deny-only policy still refuses a role declaring the denied tool, case-insensitively', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['Bash'] } } },
+    ]).policy;
+    expect(() =>
+      resolveRole(parseRoleDocument(IMPLEMENTER_MD), [], {
+        toolPolicy: policy,
+      }),
+    ).toThrow(/role 'implementer'.*'bash' denied.*enterprise denial holds/);
+  });
+
+  it('a denied tool stays refused when an allow list names it too', async () => {
+    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const policy = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: { tools: { allow: ['read', 'grep', 'bash'], deny: ['bash'] } },
+      },
+    ]).policy;
+    expect(
+      resolveRole(parseRoleDocument(REVIEWER_READ_GREP_MD), [], {
+        toolPolicy: policy,
+      }).tools,
+    ).toEqual(['grep', 'read']);
+    expect(() =>
+      resolveRole(parseRoleDocument(IMPLEMENTER_MD), [], {
+        toolPolicy: policy,
+      }),
+    ).toThrow(RoleRefusedError);
+  });
+});
+
 function fakeLane(): {
   calls: string[][];
   setActiveTools: (tools: string[], context: unknown) => Promise<void>;

@@ -256,8 +256,11 @@ describe('run-scoped reconciliation lifecycle (issue #87)', () => {
     expect(run.sweep()).toBe(1);
     const sweepEntry = store.entries().find((e) => e.unattributed === true);
     if (sweepEntry === undefined) throw new Error('missing sweep entry');
-    expect(sweepEntry.beforeHash).toBe(sha256Hex('v1-boot\n'));
+    // Issue #341: the before-side is the path's expected state — the tool's
+    // after-content this run — not the boot baseline, so undo walks the
+    // chain v3 → v2 (this entry) → v1 (the tool entry).
+    expect(sweepEntry.beforeHash).toBe(sha256Hex('v2-tool\n'));
     // The pre-image resolves, so this entry is reversible in fact.
-    expect(store.readBefore(sweepEntry)).toBe('v1-boot\n');
+    expect(store.readBefore(sweepEntry)).toBe('v2-tool\n');
   });
 });

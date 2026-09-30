@@ -88,7 +88,10 @@ file that no longer exists, or when a row's file has become reachable
 - Issue #96 executed its three rows: `packages/tui/src/diff-view.ts`,
   `journal-view.ts` and `approval-view.ts` are all reached from the binary now.
   The first two through `view-panel.ts` → `tui-app.ts` (the `Ctrl-O` diff panel
-  and the `Ctrl-R` journal panel); `approval-view.ts` through
+  and the `Ctrl-R` journal panel) — reachable at import level since #96, and
+  fed with rows in production only since issue #311 (`tui-run.ts` reads the
+  session journal through `diffEntries` into `setJournalChanges`; before that
+  both panels always showed `no changes`); `approval-view.ts` through
   `approval-surface.ts`, which is the answer seat the installed policy consults
   when a challenged call is deferred — the overlay the TUI was designed around
   and the inline fallback both render from it.
@@ -106,6 +109,22 @@ file that no longer exists, or when a row's file has become reachable
   reports its measured dirtiness after the run, naming the files when it is
   dirty and `clean=unknown` when the status cannot be read). All three are
   reachable from the binary now, so their rows are removed rather than kept.
+- The orchestrator-group commander migration (orchestrate, clean, workers)
+  **wired** four cli-foundation rows: `packages/core/src/cli/{logger,output,table,theme}.ts`
+  are reachable from the binary through `host/src/orchestrate-cli.ts`,
+  `host/src/orchestrator/worktree/clean.ts` and `host/src/workers-cli.ts`
+  (diagnostics via the consola logger, `--json` via `formatJson`, the
+  `kubic workers` table, the report colours), so their rows are removed.
+  `prompt.ts` is reachable too: `sessions prune` asks through
+  `promptConfirm`, its only helper (the unused select/text/spinner helpers
+  were deleted rather than ledgered).
+- Issue #383 **wired** `packages/trajectory/src/export.ts`: every settled
+  `kubic run`, orchestrator worker child and TUI turn writes its §46
+  trajectory through `buildTrajectoryExport`
+  (`host/src/trajectory/run-trajectory.ts`), so its row is removed. The
+  `trajectory/src/index.ts` barrel cannot be deleted (a §64 skeleton path
+  pinned by `scripts/dep-lint.test.mjs`); its row is re-owned from `delete:`
+  to a named `keep:`.
 
 | LOC | file | owner | disposition |
 | --- | --- | --- | --- |
@@ -138,8 +157,7 @@ file that no longer exists, or when a row's file has become reachable
 
 | 4 | `packages/host/src/root-agent.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/host/src/worker-manager.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 399 | `packages/trajectory/src/export.ts` | #99 | wire: trajectory export reachable from the CLI (#78 landed the command; the exporter stays behind a dead barrel) |
-| 56 | `packages/trajectory/src/index.ts` | #99 | delete: dead barrel over export.ts |
+| 56 | `packages/trajectory/src/index.ts` | #383 | keep: §64 skeleton path pinned by `scripts/dep-lint.test.mjs` (REQUIRED_PATHS), so it cannot be deleted; the live path imports `export.ts`/`schema.ts` per module |
 | 5 | `packages/tui/src/components.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 6 | `packages/tui/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 5 | `packages/tui/src/views.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
@@ -147,6 +165,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/worker/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/worker/src/tools.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
+| 58 | `apps/kubic/src/cli/context.ts` | cli-foundation | keep: type-only registry contract (`CommandContext`, `CommandRegistrar`, `DispatchRunners`) consumed through `import type` by `dispatch.ts`, `cli/program.ts` and every `commands/*.ts` module — a types-only module is never `reachable` by the value-import rule |
 
 ## Executed by #98 (the `ops/cost/*` + `ops/perf/*` cluster)
 
@@ -177,3 +196,20 @@ rewritten. Two halves:
 
 The §61 worker lifecycle budgets (`packages/worker/src/lifecycle/budgets.ts`)
 are NOT part of this cluster: their wiring belongs to #94.
+
+## Unwired exports of reachable modules
+
+The gate above is file-level: a reachable module can still export dead
+functions. Rows here own those exports; `packages/host/src/config/secrets-surface.test.ts`
+fails when an export of `packages/host/src/config/secrets.ts` has neither a
+non-test caller nor a row below (issue #359).
+
+| Export | Module | Owner | Disposition |
+| --- | --- | --- | --- |
+| `assertNoPlaintextSecrets` | `packages/host/src/config/secrets.ts` | #359 | keep: persistence guard for §36.3 brokering ([design drift item 22](design-drift.md#item-22--363-tool-credential-brokering-is-not-implemented)) |
+| `containsPlaintextSecret` | `packages/host/src/config/secrets.ts` | #359 | keep: used only by `assertNoPlaintextSecrets` |
+| `ScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `issueScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `useScopedToken` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 broker, not implemented (design drift item 22) |
+| `substituteTokenHost` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 host substitution, not implemented (design drift item 22) |
+| `revokeAllTokens` | `packages/host/src/config/secrets.ts` | #359 | keep: §36.3 settle/exit revocation, not implemented (design drift item 22) |

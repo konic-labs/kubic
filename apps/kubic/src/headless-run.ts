@@ -28,14 +28,33 @@ import type {
   PostureOptions,
 } from '../../../packages/extensions/src/startup.js';
 import {
+  enableSessionFullAccess,
+  fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
+  orchestratedWorkerFromEnv,
+  type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
+import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+import {
+  matchableSecrets,
+  redactBridgeWrites,
+  redactingSink,
+  redactSecretValues,
+} from '../../../packages/host/src/config/secrets.js';
+import {
+  FAUX_MODEL_ID,
+  FAUX_NOTICE,
+  FAUX_PROVIDER_ID,
+  invalidProviderMessage,
+  providerOverrideFromEnv,
+} from '../../../packages/host/src/faux-provider.js';
 import {
   emitSoloWarning,
   shouldEmitSoloNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   attachToolSpans,
   RunSpans,
@@ -43,9 +62,24 @@ import {
   type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
 import {
+  BUDGET_EXHAUSTED,
+  type BudgetLimit,
+  createRunBudgetEnforcer,
+  type OrchestratorBudget,
+  parseWorkerBudgetEnv,
+  RUN_EXIT_BUDGET,
+} from '../../../packages/host/src/orchestrator/approvals/budgets.js';
+import {
   createWorkerMailboxSeat,
   TIMEOUT_REASON_MARKER,
 } from '../../../packages/host/src/orchestrator/approvals/worker-asks.js';
+import {
+  type EffectivePolicy,
+  hasModelPolicy,
+  hasToolPolicy,
+  isModelAllowed,
+  isToolAllowedByEnterprise,
+} from '../../../packages/host/src/policy/enterprise.js';
 import type {
   ResolvedRole,
   RoleLayerInput,
@@ -67,6 +101,15 @@ import {
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
+import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
+import { drainOperation } from '../../../packages/worker/src/lane/abort.js';
+import {
+  describeSettlement,
+  lastUserPromptText,
+  pendingHead,
+  settlePendingOperation,
+} from '../../../packages/worker/src/lane/pending.js';
+
 import {
   attachSession,
   createSession,
@@ -80,20 +123,28 @@ import {
   type SettledDrive,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
+import { withRoleGrant } from '../../../packages/worker/src/lifecycle/env.js';
 import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
   ModelSelectError,
   type ModelSelection,
-  selectModel,
+  type selectModel,
 } from '../../../packages/worker/src/model-select.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  type Hooks,
   type MutableModels,
   type OperationResultRecord,
   type Session,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { selectModelUnderPolicy } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
+import {
+  hasExplicitModelSelection,
+  roleModelSelection,
+} from './model-projection.js';
+import { persistRunTrajectory } from './run-trajectory.js';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -113,6 +164,10 @@ export interface HeadlessRunOptions {
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
   debug?: boolean;
+  // §41.4 (issue #308): `--dangerously-skip-approvals` — full access for the
+  // session this run creates or resumes, recorded in its posture.json and
+  // the audit ledger, never in config.
+  dangerouslySkipApprovals?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -140,6 +195,16 @@ export interface HeadlessRunDeps {
   // ('default' when nothing configured them). Absent means 'default' — the
   // documented safe default, never an assumed operator choice.
   policySource?: 'config' | 'default';
+  // Issue #230: the config `[approvals]` policy (route, maxPendingMs,
+  // autoApprove, requireJustification, sessionScoped). Absent means the
+  // documented defaults.
+  approvals?: SoloApprovalConfig;
+  // §58 enterprise policy (issue #288): the composition root resolves it
+  // once (`runtimePolicy` in config-runtime) and threads it here. A run only
+  // gates its tool set and model selection when the layer actually
+  // configured those halves — an absent [policy] section never narrows
+  // anything.
+  modelPolicy?: EffectivePolicy;
   journalRetention?: JournalRetention;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
@@ -156,6 +221,10 @@ export interface HeadlessRunDeps {
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
+  // Operator notices (issue #147): the line naming what happened to a
+  // pending operation a crashed run left open. Defaults to stderr; tests
+  // inject a collector.
+  notice?: (line: string) => void;
   // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
   // real home directory, this process's cwd, and the documented trust
   // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
@@ -164,7 +233,13 @@ export interface HeadlessRunDeps {
     homeDir?: string;
     cwd?: string;
     trusted?: boolean;
+    trustProject?: (dir: string) => boolean;
   };
+  // Issue #228 (§35.1): the per-path trust check (the store's resolved-root
+  // decision plus the env opt-in), threaded from the composition root's
+  // config load. It gates the project models.json and the ancestor project
+  // skills on the path each resolves to. Absent falls back to the env flag.
+  trustProject?: (path: string) => boolean;
   // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
   // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
   // through the real FileBridge. Tests inject a fixture cwd.
@@ -172,7 +247,30 @@ export interface HeadlessRunDeps {
     cwd?: string;
     layers?: RoleLayerInput[];
   };
+  // Interrupt source (Ctrl-C, a supervisor SIGTERM, a closed terminal SIGHUP). Absent means the
+  // real process. Tool children run in detached process groups, so a
+  // terminal SIGINT never reaches them: without this seam the run died on
+  // the default handler and orphaned them, skipping the drain, the sweep and
+  // the session close. Tests inject an emitter.
+  signals?: SignalSource;
+  // Where models.json is read from (tests); absent means process.cwd().
+  modelsCwd?: string;
+  // User-facing warnings that must show without --debug (a refused
+  // models.json). Absent means stderr — stdout stays consumable.
+  warn?: (line: string) => void;
 }
+
+export interface SignalSource {
+  on(event: InterruptSignal, listener: (signal: string) => void): unknown;
+  off(event: InterruptSignal, listener: (signal: string) => void): unknown;
+}
+
+type InterruptSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
+  'SIGINT',
+  'SIGTERM',
+  'SIGHUP',
+];
 
 // The bounded wait a worker CHILD gives the manager for an answer to a
 // challenged call (issue #105, §41.2): long enough for a human to read the
@@ -195,6 +293,30 @@ class WallClockError extends Error {
   constructor(ms: number) {
     super(`run timed out after ${ms}ms`);
     this.ms = ms;
+  }
+}
+
+// §71 child-side budget exhaustion (issue #208): the worker's own lane hit a
+// dimension of the KUBIC_BUDGET the manager handed down. Control flow, never a
+// lane failure: caught below and mapped to budget_exhausted (exit 3) with the
+// exact limit that tripped.
+export class BudgetExceededError extends Error {
+  readonly limit: BudgetLimit;
+  constructor(limit: BudgetLimit) {
+    super(
+      `budget ${BUDGET_EXHAUSTED} (limit=${limit}): the worker exceeded its configured ${limit} budget, exit ${RUN_EXIT_BUDGET}`,
+    );
+    this.name = 'BudgetExceededError';
+    this.limit = limit;
+  }
+}
+
+// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the drive like a guard does: control
+// flow, mapped to `failed` (exit 1) after the drain — §78 has no separate
+// interrupt code.
+class InterruptedError extends Error {
+  constructor(signal: string) {
+    super(`run interrupted by ${signal}`);
   }
 }
 
@@ -283,6 +405,8 @@ async function driveWithGuard(
   context: Context,
   boundMs: number,
   maxTurns: number | undefined,
+  interrupted: Promise<never>,
+  budgetExceeded: Promise<never>,
 ): Promise<SettledDrive> {
   let turns = 0;
   const counting: LaneDriver = {
@@ -298,6 +422,11 @@ async function driveWithGuard(
   try {
     return await Promise.race([
       driveToSettled(counting, operationId, context),
+      interrupted,
+      // An exhausted KUBIC_BUDGET (issue #208): the drive is abandoned and
+      // the caller maps the rejection to budget_exhausted, exactly like the
+      // wall-clock guard below.
+      budgetExceeded,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new WallClockError(boundMs)), boundMs);
       }),
@@ -332,7 +461,9 @@ export const NO_ASSISTANT_TEXT_SUMMARY =
 // Final assistant text of the settled run for the result summary. A lane
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
-function assistantSummary(entries: readonly unknown[]): string | undefined {
+export function assistantSummary(
+  entries: readonly unknown[],
+): string | undefined {
   let best: string | undefined;
   let bestSeq = -1;
   for (const entry of entries) {
@@ -393,10 +524,171 @@ async function recordPrompt(
   }, context);
 }
 
+// Issue #185 (§39, §68): the finished run reports its OWN usage — the
+// session's usage rollup (what `kubic cost` reads), the tool calls it
+// executed and the model that answered — so an orchestrator building a
+// worker's §68 metrics reads real numbers from the child's report. Read
+// after the session is closed; a run that never created a session, or a
+// read that fails, keeps the refs-only report (never invented numbers).
+
+// What the settled run leaves for its §46 trajectory (issue #383): filled
+// as the run boots, read once after it settles.
+interface RunCapture {
+  startedAt: number;
+  sessionsRoot?: string;
+  sessionId?: string;
+  cwd?: string;
+  model?: { provider: string; id: string };
+  role?: string;
+  skills: string[];
+  entries: unknown[];
+  lane?: RunOutcome['lane'];
+  interrupted: boolean;
+  // Every provider key the request-time resolver has handed out so far
+  // (issue #359): what the debug channel, the session writes, the result and
+  // the trajectory are scrubbed of. Empty until a models.json key is used.
+  liveSecrets: () => string[];
+}
+
+// kubic run -p (issue #28) plus its §46 trajectory (issue #383): every run
+// that attached a session writes <sessions-root>/<id>/trajectory.json when
+// it settles — completed or not — and the result's trajectory ref names
+// that file. A trajectory that cannot be written is reported on the warning
+// channel; it never changes the run's own result.
+
 export async function runHeadlessPrompt(
   prompt: string,
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
+): Promise<HeadlessRunResult> {
+  // The settled run's §46 trajectory capture (issue #383).
+  const capture: RunCapture = {
+    startedAt: Date.now(),
+    skills: [],
+    entries: [],
+    interrupted: false,
+    liveSecrets: () => [],
+  };
+  // Issue #148/#308: the live lane model and the approval posture the lane
+  // was installed with travel on the result (and so the --json envelope),
+  // whatever path the run ends on.
+  const report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  } = {};
+  const result = await runHeadlessPromptOnce(
+    prompt,
+    options,
+    deps,
+    report,
+    capture,
+  );
+  const withPosture =
+    report.posture === undefined
+      ? result
+      : { ...result, posture: report.posture };
+  let settled: HeadlessRunResult;
+  if (withPosture.sessionId === 'unassigned') {
+    settled = withPosture;
+  } else {
+    try {
+      const measured = await readSessionRunUsage(
+        deps.sessionsRoot ?? defaultSessionsRoot(),
+        withPosture.sessionId,
+      );
+      settled = {
+        ...withPosture,
+        usage: measured.usage,
+        // Issue #148: the live lane model reported by the boot wins over the
+        // session's recorded usage model — a pin may have switched models in
+        // this run, and the result must name the one that actually ran.
+        ...(withPosture.model !== undefined || measured.model === undefined
+          ? {}
+          : { model: measured.model }),
+      };
+    } catch {
+      settled = withPosture;
+    }
+  }
+  // Issue #359: a provider that echoes the key it rejected puts the value in
+  // the run's own failure text. The result (the --json envelope) and the
+  // trajectory's prompt are scrubbed of every live provider key before either
+  // leaves the run; the session JSONL (which the trajectory's entries are
+  // read back from) is scrubbed at its write bridge.
+  const liveKeys = matchableSecrets(capture.liveSecrets());
+  const scrub = <T>(value: T): T =>
+    liveKeys.length === 0 ? value : (redactSecretValues(value, liveKeys) as T);
+  settled = scrub(settled);
+  // kubic run -p plus its §46 trajectory (issue #383): every run that
+  // attached a session writes <sessions-root>/<id>/trajectory.json when it
+  // settles — completed or not — and the result's trajectory ref names that
+  // file. A trajectory that cannot be written is reported on the warning
+  // channel; it never changes the run's own result.
+  if (capture.sessionId === undefined || capture.sessionsRoot === undefined) {
+    return settled;
+  }
+  try {
+    const path = persistRunTrajectory({
+      sessionsRoot: capture.sessionsRoot,
+      sessionId: capture.sessionId,
+      agentId: deps.agentId ?? 'root',
+      role: capture.role ?? 'solo',
+      prompt: scrub(prompt),
+      entries: capture.entries,
+      ...(capture.model === undefined ? {} : { model: capture.model }),
+      cwd: capture.cwd ?? deps.env?.cwd ?? process.cwd(),
+      skills: capture.skills,
+      startedAt: capture.startedAt,
+      endedAt: Date.now(),
+      outcome: {
+        terminus: settled.terminus,
+        summary: settled.summary,
+        ...(capture.lane === undefined ? {} : { lane: capture.lane }),
+        interrupted: capture.interrupted,
+      },
+    });
+    return { ...settled, trajectoryRef: path };
+  } catch (error) {
+    (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+      `trajectory not written for session ${capture.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return settled;
+  }
+}
+
+async function runHeadlessPromptOnce(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps = {},
+  report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  },
+  capture: RunCapture,
+): Promise<HeadlessRunResult> {
+  // Issue #148: every result after the lane booted names the model the
+  // lane actually ran (the live lane model, never the bare selection).
+  const result = await runHeadlessPromptImpl(
+    prompt,
+    options,
+    deps,
+    report,
+    capture,
+  );
+  return report.model === undefined
+    ? result
+    : { ...result, model: report.model };
+}
+
+async function runHeadlessPromptImpl(
+  prompt: string,
+  options: HeadlessRunOptions,
+  deps: HeadlessRunDeps,
+  report: {
+    model?: string;
+    posture?: 'approvals' | 'full-access';
+  },
+  capture: RunCapture,
 ): Promise<HeadlessRunResult> {
   // Defense-in-depth with run-cli's --session check: direct callers bypass
   // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
@@ -435,8 +727,43 @@ export async function runHeadlessPrompt(
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
+  // §71 child-side budget (issue #208): the manager hands each worker its
+  // resolved spec through the §3.8 allowlisted KUBIC_BUDGET. A malformed
+  // payload fails closed as a usage terminus — a silently dropped limit is
+  // the false sense of cost control this issue exists to remove.
+  let runBudget: OrchestratorBudget | undefined;
+  try {
+    runBudget = parseWorkerBudgetEnv(process.env.KUBIC_BUDGET);
+  } catch (error) {
+    const invalid = error instanceof Error ? error.message : String(error);
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
+  // §50 debug channel: `--debug` routes the span lines AND the run's
+  // diagnostics (extension receipt, reconcile/overlap notices, skill-load
+  // reports, drain failures) to one sink. An injected deps.debug still wins;
+  // without either, the diagnostics are off — the prod `kubic run` wires
+  // only the flag, so these lines were unreachable before.
+  const debugSink: DebugSink | undefined =
+    options.debug === true
+      ? (deps.debugSink ?? ((line: string) => console.error(line)))
+      : undefined;
+  // The §50 vocabulary is closed: a diagnostic without its own class rides
+  // the sink as `[session]`.
+  // Issue #359: every resolved provider key is redacted from the debug
+  // channel — the values are known only once the resolver has run, so the
+  // redaction reads them at emit time.
+  const rawDebug: ((line: string) => void) | undefined =
+    deps.debug ??
+    (debugSink === undefined
+      ? undefined
+      : (line: string) =>
+          debugSink(/^\[[a-z]+\]/.test(line) ? line : `[session] ${line}`));
+  const debug: ((line: string) => void) | undefined =
+    rawDebug === undefined
+      ? undefined
+      : redactingSink(rawDebug, () => capture.liveSecrets());
   // Extension startup (issue #93): the solo lane loads the first-party
   // bundle set through the trust gates BEFORE any store or lane exists — a
   // missing/refused bundle fails this run closed (ExtensionStartupError maps
@@ -447,7 +774,7 @@ export async function runHeadlessPrompt(
     extensions =
       deps.extensions ??
       (await loadExtensionStartup('run', process.cwd(), {
-        receipt: (line) => deps.debug?.(line),
+        receipt: (line) => debug?.(line),
         ...(deps.extensionOptions === undefined
           ? {}
           : { options: deps.extensionOptions }),
@@ -460,14 +787,15 @@ export async function runHeadlessPrompt(
   // and persisted to <root>/<id>/spans.jsonl when the run settles. The
   // recorder is created before the store so a store failure still leaves a
   // (run-only) trace behind.
-  const spans = new RunSpans(
-    Date.now,
-    options.debug === true
-      ? (deps.debugSink ?? ((line: string) => console.error(line)))
-      : undefined,
-  );
+  const spans = new RunSpans(Date.now, debugSink);
   const runSpan = spans.startRun();
-  const bridge = createNodeFileBridge(root);
+  // Every session write goes through the one bridge, so it is the choke
+  // point for scrubbing the live provider keys out of the session JSONL and
+  // the span artifact (issue #359): a provider echoing a rejected key in its
+  // error body must not persist it.
+  const bridge = redactBridgeWrites(createNodeFileBridge(root), () =>
+    capture.liveSecrets(),
+  );
   const store = openSessionStore(root, bridge);
   let session: Session;
   try {
@@ -479,9 +807,13 @@ export async function runHeadlessPrompt(
     return storeFailure(options.sessionId, error);
   }
   const id = session.metadata.id;
+  capture.sessionId = id;
+  capture.sessionsRoot = root;
   // Declared outside the try so the `finally` sweep below can reach it
   // (issue #87): assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
+  // Issue #325: the installed policy's end-of-session posture check.
+  let settlePolicy: (() => void) | undefined;
   // Issue #109: the booted lane and the admitted operation are hoisted the
   // same way, so every exit path can drain in-flight work — a guard
   // firing mid-drive must not abandon the tool processes it interrupted.
@@ -495,20 +827,61 @@ export async function runHeadlessPrompt(
   // channel — the backstop is the drain, and a refusal must not skip it.
   const drainInFlight = async (): Promise<void> => {
     if (solo === undefined || activeOperationId === undefined) return;
-    try {
-      await solo.lane.requestAbort(activeOperationId, context);
-    } catch (error) {
-      deps.debug?.(
-        `guard: requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    for (const kill of solo.kills.drain(activeOperationId)) {
-      try {
-        kill();
-      } catch {
-        // Already exited — the kill registry drains every entry regardless.
+    await drainOperation(
+      solo.lane,
+      solo.kills,
+      activeOperationId,
+      context,
+      (message) => debug?.(`guard: ${message}`),
+    );
+  };
+  // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally has
+  // drained, so the default handler can no longer kill the run past its own
+  // cleanup. The first signal kills the admitted operation's children
+  // synchronously (they sit in their own process groups and never saw the
+  // signal) and ends the drive; the listeners detach at once, so a second
+  // Ctrl-C force-quits through the default handler.
+  const signals = deps.signals ?? process;
+  let rejectInterrupt: ((error: Error) => void) | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    rejectInterrupt = reject;
+  });
+  // Observed here so a signal outside the drive race is not an unhandled
+  // rejection; the race still sees the rejected promise.
+  interrupted.catch(() => undefined);
+  let signalsAttached = false;
+  // Set by the first signal. Boot checks it before each expensive step (and
+  // before admission), so a pre-admission Ctrl-C cancels the boot instead
+  // of letting it run on unseen.
+  let interruptedBy: string | undefined;
+  const detachSignals = (): void => {
+    if (!signalsAttached) return;
+    signalsAttached = false;
+    for (const name of INTERRUPT_SIGNALS) signals.off(name, onSignal);
+  };
+  function onSignal(signal: string): void {
+    detachSignals();
+    interruptedBy ??= signal;
+    if (solo !== undefined && activeOperationId !== undefined) {
+      for (const kill of solo.kills.drain(activeOperationId)) {
+        try {
+          kill();
+        } catch {
+          // Already exited.
+        }
       }
     }
+    rejectInterrupt?.(new InterruptedError(signal));
+  }
+  const attachSignals = (): void => {
+    signalsAttached = true;
+    for (const name of INTERRUPT_SIGNALS) signals.on(name, onSignal);
+  };
+  const bootInterrupted = (): HeadlessRunResult | undefined => {
+    if (interruptedBy === undefined) return undefined;
+    capture.interrupted = true;
+    const message = new InterruptedError(interruptedBy).message;
+    return finished(id, 'failed', message, message);
   };
   // The span artifact is the durable half of criterion 1: written on every
   // exit path (success or mapped failure) next to the session journal.
@@ -534,8 +907,12 @@ export async function runHeadlessPrompt(
     emitSoloWarning((line) => process.stderr.write(`${line}\n`));
   }
   try {
+    // Attached inside the try: the finally below always detaches them.
+    attachSignals();
     bridge.createDir(join(id, 'journal'));
     await recordPrompt(session, prompt, context);
+    const afterPrompt = bootInterrupted();
+    if (afterPrompt !== undefined) return afterPrompt;
     // Readiness handshake (issue #94; §13): when this process IS a worker
     // (`kubic orchestrate` launches it with KUBIC_WORKER_ID in the §3.8
     // allowlist), announce that the worker is up the moment its session is
@@ -559,6 +936,22 @@ export async function runHeadlessPrompt(
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    // §58 enterprise gates (issue #288): one local view of the resolved
+    // policy, so the role resolution, the model selection and the lane tool
+    // set all read the same object.
+    const enterprisePolicy = deps.modelPolicy;
+    const toolGate =
+      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
+        ? (tool: string): boolean =>
+            isToolAllowedByEnterprise(enterprisePolicy, tool)
+        : undefined;
+    // The stored model of a resumed session is gated too (issue #288): the
+    // selection is checked at boot, the stored one only by this closure.
+    const modelGate =
+      enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
+        ? (provider: string, modelId: string): boolean =>
+            isModelAllowed(enterprisePolicy, provider, modelId)
+        : undefined;
     if (options.role !== undefined) {
       const rolesBridge = createNodeFileBridge(
         deps.roles?.cwd ?? process.cwd(),
@@ -573,6 +966,11 @@ export async function runHeadlessPrompt(
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),
+          // §58 enterprise policy (issue #288): a role document declaring a
+          // denied tool is refused here, by name, before the lane boots.
+          ...(enterprisePolicy === undefined
+            ? {}
+            : { toolPolicy: enterprisePolicy }),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -589,24 +987,121 @@ export async function runHeadlessPrompt(
         const message = error instanceof Error ? error.message : String(error);
         return finished(id, 'failed', message, message);
       }
-      deps.debug?.(
+      debug?.(
         `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
       );
       role = { resolved: selected.resolved, prompt: promptText };
+      capture.role = selected.resolved.name;
     }
-    const assembled = assembleModels(process.cwd());
-    const models = deps.models ?? assembled.models;
+    // A refused models.json is a config error the user must see: it goes
+    // to the warning channel unconditionally; a successful load is a
+    // receipt for the debug channel only.
+    let models: MutableModels;
+    // Issue #221: the implicit pick only considers customs and built-ins
+    // whose auth is configured — a keyless built-in is never picked.
+    let fallbackProviders: readonly string[] | undefined;
+    if (deps.models === undefined) {
+      // Request-time provider keys (issue #359, §36.1): a models.json key is
+      // resolved per request and each use lands in the §60 ledger of the
+      // run's workspace — a worker's under its own worktree root.
+      const worker = process.env.KUBIC_WORKER_ID;
+      let identityWords: string[] | undefined;
+      const keyResolver = createLedgerModelKeyResolver({
+        workspace: deps.env?.cwd ?? process.cwd(),
+        role:
+          role?.resolved.name ??
+          (worker === undefined || worker === '' ? 'root' : `worker:${worker}`),
+        sessionId: () => id,
+        mode: worker === undefined || worker === '' ? 'solo' : 'orchestrator',
+        onError: (message) =>
+          debug?.(`[session] credential use not audited: ${message}`),
+        // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
+        // is identity, not a secret (issue #359): the catalog's provider and
+        // model ids are read once assembled — a line emitted before that
+        // (the models receipts) has nothing to exempt yet.
+        identity: () => {
+          if (identityWords !== undefined) return identityWords;
+          const catalog = models as MutableModels | undefined;
+          if (catalog === undefined) return [];
+          identityWords = catalogIdentity(catalog);
+          return identityWords;
+        },
+      });
+      capture.liveSecrets = keyResolver.live;
+      // Worker role credentials (issue #200; §36.3): when this process IS an
+      // orchestrator worker, its provider key travelled as a
+      // KUBIC_ROLE_<role>_* grant. The models assembly reads the grant back
+      // under the provider-key names its auth resolution asks for; the plain
+      // names exist only in this view, never in the child's process env. A
+      // plain `kubic run` holds no grant, so the view is the identity.
+      const modelsEnv = withRoleGrant(
+        Object.fromEntries(
+          Object.entries(process.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
+        options.role ?? 'worker',
+      );
+      const assembled = await assembleModels(
+        deps.modelsCwd ?? process.cwd(),
+        modelsEnv,
+        {
+          resolveApiKey: keyResolver.resolve,
+          ...(deps.trustProject === undefined
+            ? {}
+            : { projectTrust: deps.trustProject }),
+        },
+      );
+      for (const note of assembled.notes) {
+        if (note.startsWith('models.json ignored')) {
+          (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+            note,
+          );
+        } else {
+          debug?.(note);
+        }
+      }
+      models = assembled.models;
+      fallbackProviders = assembled.fallbackProviders;
+    } else {
+      models = deps.models;
+    }
+    // The faux testing provider (`KUBIC_PROVIDER=faux`): registered by
+    // assembleModels and pinned here, so it is the model that answers —
+    // announced on the warning channel before the first turn (never
+    // silent). Any other KUBIC_PROVIDER value is refused by name.
+    const providerOverride = providerOverrideFromEnv(process.env);
+    if (providerOverride.kind === 'invalid') {
+      const message = invalidProviderMessage(providerOverride.value);
+      return finished(id, 'provider_probe_failed', message, message);
+    }
+    const fauxPinned =
+      providerOverride.kind === 'faux' && deps.models === undefined;
+    if (fauxPinned) {
+      (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+        FAUX_NOTICE,
+      );
+    }
     let model: ReturnType<typeof selectModel>;
     try {
       // An explicit pin (replay re-execution at the declared model, or the
-      // `[model]`/env pin runtimeModelPin projects) wins over default
+      // `[model]`/env/cli pin runtimeModelPin projects) wins over default
       // selection; the role layer's own `provider/id` pin (issue #133) is
-      // the next default, and `kubic run` with neither keeps the
-      // first-registered-provider pick.
-      model = selectModel(
+      // the next default, and `kubic run` with neither takes the first
+      // usable provider (customs first; never a keyless built-in). The
+      // §58 enterprise policy (issue #288) gates the explicit/role
+      // selection and the implicit provider pool the same way on this
+      // path and on `kubic tui`.
+      const explicitSelection = fauxPinned
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : deps.model;
+      const roleSelection = roleModelSelection(role?.resolved.model);
+      model = selectModelUnderPolicy(
         models,
-        deps.model,
-        roleModelSelection(role?.resolved.model),
+        explicitSelection,
+        roleSelection,
+        fallbackProviders,
+        enterprisePolicy,
       );
     } catch (error) {
       if (error instanceof ModelSelectError) {
@@ -619,7 +1114,9 @@ export async function runHeadlessPrompt(
       }
       throw error;
     }
+    capture.model = { provider: model.provider, id: model.id };
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    capture.cwd = env.cwd;
     // Installed policy (issue #86; §40, §41): the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
     // same function doctor reads (host/approvals.installSoloPolicy). Config-
@@ -632,6 +1129,13 @@ export async function runHeadlessPrompt(
     // the ask mailbox is. The seat published there is what turns a challenged
     // call into a question for the USER instead of a dead end.
     const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
+    // Issue #230: the manager hands its child a bound below its own config
+    // maxPendingMs; absent or malformed keeps the shipped child default.
+    const workerBoundRaw = process.env.KUBIC_APPROVALS_BOUND_MS;
+    const workerBoundMs =
+      workerBoundRaw !== undefined && /^[1-9]\d*$/.test(workerBoundRaw)
+        ? Number(workerBoundRaw)
+        : DEFAULT_WORKER_APPROVAL_BOUND_MS;
     const approvalsSeat =
       approvalMailboxDir === undefined || approvalMailboxDir.trim() === ''
         ? undefined
@@ -640,8 +1144,31 @@ export async function runHeadlessPrompt(
             // The child's own bound. It sits BELOW the orchestration's bound on
             // purpose: the child denies closed with the named status rather
             // than outliving the run that would answer it.
-            maxPendingMs: DEFAULT_WORKER_APPROVAL_BOUND_MS,
+            maxPendingMs: workerBoundMs,
           });
+    const warnLine =
+      deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+    // §41.4 (issue #308): the explicit flag enables full access for THIS
+    // session through the one host enable path (posture.json + one §60 row +
+    // the shared warning) BEFORE the policy is installed, so the lane boots
+    // under the posture the user asked for.
+    const fullAccessGrant =
+      options.dangerouslySkipApprovals === true
+        ? enableSessionFullAccess({
+            sessionDir: join(root, id),
+            sessionId: id,
+            command: 'run',
+            workspace: env.cwd,
+            onAuditError: (message) =>
+              debug?.(`audit: ledger append failed: ${message}`),
+          })
+        : undefined;
+    // The `provider/id` the §60 rows name (issue #148): seeded with the
+    // selection and re-pointed at the model the lane REPORTS once the boot
+    // has applied the stored-model rule — the policy is installed before the
+    // lane exists, so it reads this at record time instead of freezing the
+    // pre-boot pick.
+    let liveModelRef = `${model.provider}/${model.id}`;
     const installed =
       deps.policy ??
       installSoloPolicy({
@@ -652,15 +1179,43 @@ export async function runHeadlessPrompt(
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
+        // Issue #230: the configured approval policy, never the defaults.
+        ...(deps.approvals ?? {}),
         sessionDir: join(root, id),
+        // The session root in use is refused control-plane state (#324).
+        sessionsRoot: root,
+        // §60 audit identity for the ledger record of each resolved ask.
+        sessionId: id,
+        model: () => liveModelRef,
         // Per-worker approvals (issue #105): an orchestrator-managed child
         // (`kubic orchestrate` set KUBIC_APPROVALS_DIR) attaches the mailbox
         // seat, so a challenged call it cannot answer itself reaches the USER
         // through the manager instead of dying at "no approval surface". The
         // wait is bounded inside the seat, so a manager that never answers
         // denies closed rather than hanging the child's turn.
-        ...(approvalsSeat === undefined ? {} : { answer: approvalsSeat }),
+        ...(approvalsSeat === undefined
+          ? {}
+          : { answer: approvalsSeat, maxPendingMs: workerBoundMs }),
+        // Issue #279: a worker child's §60 records are orchestrator records
+        // in the main repo ledger (seat-answered asks: the manager's).
+        ...((): {
+          orchestratedWorker?: {
+            workerId: string;
+            orchestratorSession: string;
+          };
+        } => {
+          const worker = orchestratedWorkerFromEnv(process.env);
+          return worker === undefined ? {} : { orchestratedWorker: worker };
+        })(),
       });
+    report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
+    settlePolicy = installed.settle;
+    // A headless run on a full-access session is never silent (issue #308):
+    // the grant's own warning when this run enabled it, otherwise the named
+    // in-force warning — on stderr, so stdout stays consumable.
+    if (installed.posture.fullAccess) {
+      warnLine(fullAccessGrant?.warning ?? fullAccessInForceWarning(id));
+    }
     const journal = new FileJournalStore(
       join(root, id, 'journal'),
       deps.journalRetention ?? {},
@@ -680,13 +1235,13 @@ export async function runHeadlessPrompt(
         // #107 review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
-        onNotice: (detail: string) => deps.debug?.(`reconcile: ${detail}`),
+        onNotice: (detail: string) => debug?.(`reconcile: ${detail}`),
         ...(deps.reconcileOutOfScope === undefined
           ? {}
           : { outOfScope: deps.reconcileOutOfScope }),
       });
     } catch (error) {
-      deps.debug?.(
+      debug?.(
         `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -702,12 +1257,12 @@ export async function runHeadlessPrompt(
       const touching = await sessionsTouchingWorkspace(store, env.cwd, context);
       const others = touching.filter((sessionId) => sessionId !== id);
       if (others.length > 0) {
-        deps.debug?.(
+        debug?.(
           `reconcile: another run may be live in this workspace — its in-progress changes will be recorded as unattributed (sessions: ${others.join(', ')})`,
         );
       }
     } catch (error) {
-      deps.debug?.(
+      debug?.(
         `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -728,6 +1283,7 @@ export async function runHeadlessPrompt(
     // the assembled system prompt as a suffix section. A refusal here is
     // not fatal by design (skills are context, never a gate) — the loader
     // reports unreadable skills on the debug channel and continues.
+    const trustProject = deps.trustProject ?? deps.skills?.trustProject;
     const skills = bootSkills({
       bridge,
       cwd: deps.skills?.cwd ?? process.cwd(),
@@ -736,82 +1292,231 @@ export async function runHeadlessPrompt(
         deps.skills?.trusted ??
         (process.env.KUBIC_TRUST_PROJECT === '1' ||
           process.env.KUBIC_TRUST_PROJECT === 'true'),
+      ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
-      log: (line) => deps.debug?.(`skills: ${line}`),
+      log: (line) => debug?.(`skills: ${line}`),
     });
+    capture.skills = skills.skills.map((skill) => skill.name);
     if (skills.skills.length > 0) {
-      deps.debug?.(
+      debug?.(
         `skills: ${skills.skills.length} loaded (${skills.skills
           .map((skill) => `${skill.name}@${skill.source}`)
           .join(', ')})`,
       );
     }
-    solo = await bootSoloLane({
-      session,
-      models,
-      model,
-      env,
-      sessionId: id,
-      agentId: deps.agentId ?? 'root',
-      journal,
-      ...(skills.block === undefined ? {} : { promptSections: [skills.block] }),
-      ...(role === undefined
-        ? {}
-        : {
-            rolePrompt: role.prompt,
-            ...(role.resolved.tools.length === 0
-              ? {}
-              : { toolAllowlist: role.resolved.tools }),
-          }),
-      // One policy object carrying all three mechanisms (#86 + #90 + #93):
-      // the classes come from the config layer when it supplies them and
-      // from the documented safe default otherwise, the interceptors are
-      // always installed, and the extension facet composes as a tool-wrap
-      // contribution on the same stack. SoloPolicyOptions has three
-      // independent fields, so this is a union, not a choice.
-      policy: {
-        classes: installed.classes,
-        interceptors: installed.interceptors,
-        ...(contributions.length === 0 ? {} : { contributions }),
-      },
+    const beforeBoot = bootInterrupted();
+    if (beforeBoot !== undefined) return beforeBoot;
+    // Issue #148 (§26.1): a pin (the faux pin, the `[model]`/env pin, or
+    // the role's model) is an explicit selection and switches a resumed
+    // session whose stored model differs; the default pick never does —
+    // the session keeps its own model. Either way it is named on stderr.
+    const notice = deps.notice ?? ((line: string) => console.error(line));
+    const explicitModel = hasExplicitModelSelection({
+      fauxPinned,
+      pin: deps.model,
+      roleModel: role?.resolved.model,
     });
+    // §71 child-side enforcement (issue #208): one meter for the run, built
+    // BEFORE the lane so its before_tool gate can subscribe BEFORE the
+    // policy interceptors — Pi's before_tool chain stops at the first block,
+    // so a later subscriber would never count a blocked/denied attempt. A
+    // breach rejects the drive race, so the run ends BUDGET_EXHAUSTED
+    // (exit 3) with the dimension named — never a silent overspend.
+    const budgetPlan = runBudget;
+    let rejectBudget: ((error: Error) => void) | undefined;
+    const budgetExceeded = new Promise<never>((_resolve, reject) => {
+      rejectBudget = reject;
+    });
+    const budgetEnforcer =
+      budgetPlan === undefined
+        ? undefined
+        : createRunBudgetEnforcer(budgetPlan, (termination) => {
+            rejectBudget?.(new BudgetExceededError(termination.limit));
+          });
+    try {
+      solo = await bootSoloLane({
+        session,
+        models,
+        model,
+        modelPolicy: explicitModel ? 'selected' : 'stored',
+        onModelNotice: notice,
+        env,
+        sessionId: id,
+        agentId: deps.agentId ?? 'root',
+        journal,
+        ...(skills.block === undefined
+          ? {}
+          : { promptSections: [skills.block] }),
+        // Issue #173: the advertised skills outside the cwd stay readable.
+        ...(skills.readRoots.length === 0
+          ? {}
+          : { skillReadRoots: skills.readRoots }),
+        ...(role === undefined
+          ? {}
+          : {
+              rolePrompt: role.prompt,
+              ...(role.resolved.tools.length === 0
+                ? {}
+                : { toolAllowlist: role.resolved.tools }),
+            }),
+        // One policy object carrying all three mechanisms (#86 + #90 + #93):
+        // the classes come from the config layer when it supplies them and
+        // from the documented safe default otherwise, the interceptors are
+        // always installed, and the extension facet composes as a tool-wrap
+        // contribution on the same stack. SoloPolicyOptions has three
+        // independent fields, so this is a union, not a choice.
+        policy: {
+          classes: installed.classes,
+          interceptors: installed.interceptors,
+          ...(contributions.length === 0 ? {} : { contributions }),
+          // §71 (issue #208): the budget meter goes FIRST. The chain stops
+          // at the first block, so this is what makes a destructive or
+          // network-denied call still count against maxToolCalls.
+          ...(budgetEnforcer === undefined
+            ? {}
+            : {
+                beforePolicyHooks: (hooks: Hooks) =>
+                  hooks.on('before_tool', budgetEnforcer.onToolAttempt),
+              }),
+          // §58 enterprise tool gate (issue #288): the same predicate drives
+          // the active tool set and the prompt tools line.
+          ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
+          ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
+        },
+      });
+    } catch (error) {
+      // A stored session model that is no longer registered (issue #148)
+      // is the same terminus as an unknown selection: exit 6, named.
+      if (error instanceof ModelSelectError) {
+        return finished(
+          id,
+          'provider_probe_failed',
+          error.message,
+          error.message,
+        );
+      }
+      throw error;
+    }
     const { harness, lane } = solo;
+    // The boot reconciled the selection with the session's stored model
+    // (issue #148): the trajectory and the audit rows name what the lane
+    // reports, the same source as the envelope and the usage rows.
+    const running = await liveModel(solo, context);
+    if (running !== undefined) {
+      capture.model = { provider: running.provider, id: running.id };
+      liveModelRef = `${running.provider}/${running.id}`;
+    }
+    report.model = await liveModelId(solo, context);
     // Tool spans come from the harness's own hook registry, so they cover
     // every tool the lane actually executes (issue #98). Detached in the
     // finally below. A lane booted without a harness (unit stubs, future
     // lanes) yields no registry: telemetry degrades to lane/run spans and
     // never fails the run.
     const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
+    // §71 child-side enforcement (issue #208): the usage half of the meter.
+    // Usage is an event, not a hook, so it has no ordering constraint; it
+    // shares the meter the before_tool gate already registered.
+    const detachBudgetUsage =
+      budgetEnforcer === undefined
+        ? undefined
+        : harness.events.on('usage', budgetEnforcer.onUsage);
+    const detachBudgetHooks = solo.detachBeforePolicyHooks;
     try {
-      const acceptSpan = spans.startLane('accept');
-      const admission = await lane.accept({ kind: 'prompt', prompt }, context);
-      if (!admission.ok) {
-        const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
-        spans.endLane(acceptSpan, message);
-        return finished(id, 'failed', message, message);
+      const beforeAccept = bootInterrupted();
+      if (beforeAccept !== undefined) return beforeAccept;
+      const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+      // Issue #147 (§21): a turn a dead process left open would refuse this
+      // prompt with LaneBusy. The documented policy: when the pending run
+      // carries this very prompt (an orchestrator worker re-launched on its
+      // reattached session, a retried script), it is resumed AS this run —
+      // never re-prompted. Otherwise it is resumed first under the same
+      // guards and then this prompt is accepted; a resume that cannot
+      // settle (guard fired, approval with no TTY) is durably aborted. Each
+      // choice is named on stderr.
+      let resumedOperationId: string | undefined;
+      const open = solo.open ?? [];
+      if (open.length > 0) {
+        const pendingPrompt = lastUserPromptText(
+          await lane.findEntries(undefined, context),
+        );
+        for (const op of open) {
+          if (
+            resumedOperationId === undefined &&
+            op.kind === 'run' &&
+            op.aborting !== true &&
+            pendingPrompt === prompt
+          ) {
+            resumedOperationId = op.operationId;
+            notice(
+              `${pendingHead(op)} carries this prompt: resuming it instead of re-prompting`,
+            );
+            continue;
+          }
+          const settled = await settlePendingOperation(
+            solo,
+            op,
+            'resume',
+            context,
+            (operationId) =>
+              driveWithGuard(
+                lane,
+                operationId,
+                context,
+                boundMs,
+                options.maxTurns,
+                interrupted,
+                budgetExceeded,
+              ),
+          );
+          notice(describeSettlement(settled));
+        }
       }
-      spans.endLane(acceptSpan);
+      let operationId: string;
+      if (resumedOperationId !== undefined) {
+        operationId = resumedOperationId;
+      } else {
+        const acceptSpan = spans.startLane('accept');
+        const admission = await lane.accept(
+          { kind: 'prompt', prompt },
+          context,
+        );
+        if (!admission.ok) {
+          const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
+          spans.endLane(acceptSpan, message);
+          return finished(id, 'failed', message, message);
+        }
+        spans.endLane(acceptSpan);
+        operationId = admission.value.operationId;
+      }
       // Issue #109: record the admitted operation for the finally drain — a
       // guard firing mid-drive (or any later exit path) aborts and kills
       // exactly this operation's in-flight work before the sweep.
-      activeOperationId = admission.value.operationId;
+      activeOperationId = operationId;
       let driven: SettledDrive;
       const driveSpan = spans.startLane('drive');
       try {
         driven = await driveWithGuard(
           lane,
-          admission.value.operationId,
+          operationId,
           context,
-          options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+          boundMs,
           options.maxTurns,
+          interrupted,
+          budgetExceeded,
         );
       } catch (error) {
-        // Guard exhaustion only: any other throw re-enters the outer
-        // storeFailure path below.
+        // Guard exhaustion or an interrupt only: any other throw re-enters
+        // the outer storeFailure path below.
+        if (error instanceof InterruptedError) {
+          capture.interrupted = true;
+          spans.endLane(driveSpan, error.message);
+          return finished(id, 'failed', error.message, error.message);
+        }
         if (
           error instanceof TurnBudgetError ||
-          error instanceof WallClockError
+          error instanceof WallClockError ||
+          error instanceof BudgetExceededError
         ) {
           const message = error.message;
           spans.endLane(driveSpan, message);
@@ -862,6 +1567,10 @@ export async function runHeadlessPrompt(
         const malformed = `lane yielded a malformed outcome: ${detail}`;
         return finished(id, 'failed', malformed, malformed);
       }
+      capture.lane = {
+        status: record.status,
+        ...(record.error === undefined ? {} : { error: record.error }),
+      };
       const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
       if (terminus === 'completed') {
         const entries = await lane.findEntries(undefined, context);
@@ -877,6 +1586,8 @@ export async function runHeadlessPrompt(
           : `${record.error.code}: ${record.error.message}`;
       return finished(id, terminus, summary, summary);
     } finally {
+      detachBudgetHooks?.();
+      detachBudgetUsage?.();
       detachToolSpans();
     }
   } catch (error) {
@@ -893,13 +1604,15 @@ export async function runHeadlessPrompt(
       await drainInFlight();
     } catch (error) {
       try {
-        deps.debug?.(
+        debug?.(
           `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       } catch {
         // A throwing debug sink must not mask the mapped result either.
       }
     }
+    // In-flight work is dead: a later signal takes the default path again.
+    detachSignals();
     // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close
@@ -909,7 +1622,7 @@ export async function runHeadlessPrompt(
       reconciliation?.sweep();
     } catch (error) {
       try {
-        deps.debug?.(
+        debug?.(
           `reconcile: sweep failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       } catch {
@@ -917,6 +1630,21 @@ export async function runHeadlessPrompt(
       }
     }
     flushSpans();
+    // Issue #325: a posture.json written after the last ask is restored to
+    // the boot posture (and recorded) before the session closes.
+    try {
+      settlePolicy?.();
+    } catch {
+      // Best-effort: the mapped result stands.
+    }
+    // The §46 trajectory's entries (issue #383), read while the session is
+    // still open; a read failure leaves the trajectory without actions,
+    // never the run without its result.
+    try {
+      capture.entries = await session.findEntries(undefined, context);
+    } catch {
+      capture.entries = [];
+    }
     // The result is already mapped: a close failure must neither escape
     // nor mask it.
     try {
@@ -925,6 +1653,42 @@ export async function runHeadlessPrompt(
       // Intentionally swallowed — the mapped result stands.
     }
   }
+}
+
+// The provider ids and model ids a run names (issue #359): the words a live
+// key value must not be scrubbed out of. Empty before the catalog exists.
+function catalogIdentity(models: MutableModels | undefined): string[] {
+  if (models === undefined) return [];
+  return models
+    .getProviders()
+    .flatMap((provider) => [
+      provider.id,
+      ...models.getModels(provider.id).map((model) => model.id),
+    ]);
+}
+
+// The `provider/id` the lane actually runs (issue #148): the live lane
+// model, else the boot's effective model. Tolerant of stub lanes (unit
+// boots without getModel/model), which report nothing rather than fail.
+async function liveModel(
+  solo: SoloLane,
+  context: Context,
+): Promise<{ provider: string; id: string } | undefined> {
+  const live =
+    typeof solo.lane.getModel === 'function'
+      ? await solo.lane.getModel(context)
+      : undefined;
+  return live ?? (solo.model as SoloLane['model'] | undefined);
+}
+
+async function liveModelId(
+  solo: SoloLane,
+  context: Context,
+): Promise<string | undefined> {
+  const running = await liveModel(solo, context);
+  return running === undefined
+    ? undefined
+    : `${running.provider}/${running.id}`;
 }
 
 // The harness hook registry for tool spans, tolerant of a harness-less lane
@@ -940,20 +1704,3 @@ function toolHooksOf(
 }
 
 const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };
-
-// The role layer's `provider/id` pin as a selection (issue #133). The config
-// load refuses a malformed ref by name (checkRoleModelRef) before it can
-// reach here; this stays fail-closed for a programmatic layer, and an absent
-// pin means "no default" — the caller's own selection stands.
-function roleModelSelection(
-  ref: string | undefined,
-): ModelSelection | undefined {
-  if (ref === undefined) return undefined;
-  const slash = ref.indexOf('/');
-  if (slash <= 0 || slash === ref.length - 1) {
-    throw new ModelSelectError(
-      `[roles.<name>].model must be 'provider/id' (got ${JSON.stringify(ref)})`,
-    );
-  }
-  return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
-}

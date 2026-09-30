@@ -13,7 +13,11 @@
 import { join } from 'node:path';
 import type { TaskResources } from '../../../agents/src/task.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  updateFileLocked,
+} from '../../../exec/src/file-bridge.js';
+import { viewWorkerRows } from './orphans.js';
 import type { WorkerRow } from './registry.js';
 import { WORKER_STATUSES } from './status.js';
 
@@ -26,13 +30,22 @@ interface RowsPayload {
   rows: WorkerRow[];
 }
 
+function isSafePid(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value > 1;
+}
+
 function isRow(value: unknown): value is WorkerRow {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
   if (typeof row.workerId !== 'string' || row.workerId.length === 0) {
     return false;
   }
-  if (typeof row.sessionId !== 'string') return false;
+  if (typeof row.sessionId !== 'string' || row.sessionId.length === 0)
+    return false;
+  // A pid is signalled on recovery: only a real process id (> 1) is kept,
+  // so kill(-0)/kill(-1) (own group / every process) can never happen.
+  if (row.pid !== undefined && !isSafePid(row.pid)) return false;
+  if (row.managerPid !== undefined && !isSafePid(row.managerPid)) return false;
   if (typeof row.generation !== 'number') return false;
   if (typeof row.owner !== 'string') return false;
   if (typeof row.startedAtMs !== 'number') return false;
@@ -97,13 +110,49 @@ export function workerRowsPath(repo: string): string {
 // fails because of stale runtime state helps nobody.
 export function workersListFromRepo(repo: string): WorkerRow[] {
   try {
-    return readWorkerRows(
-      createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),
-      WORKER_ROWS_FILE,
+    // A manager that died hard leaves rows claiming a live status: the
+    // listing shows them as `crashed` when both worker and manager are gone.
+    return viewWorkerRows(
+      readWorkerRows(
+        createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),
+        WORKER_ROWS_FILE,
+      ),
     );
   } catch {
     return [];
   }
+}
+
+// Atomic, serialized read-modify-write of workers.json (review fix): the
+// update runs under an O_EXCL lock against the rows on disk AT WRITE TIME,
+// the write is tmp+rename, and a present-but-unparsable file is refused —
+// never read as [] and overwritten.
+export function updateWorkerRowsFile(
+  absPath: string,
+  update: (rows: WorkerRow[]) => WorkerRow[],
+): void {
+  updateFileLocked(absPath, (current) => {
+    let rows: WorkerRow[] = [];
+    if (current !== undefined) {
+      let parsed: { version?: unknown; rows?: unknown };
+      try {
+        parsed = JSON.parse(current) as typeof parsed;
+      } catch {
+        throw new Error(`${absPath} is unparsable — refusing to overwrite it`);
+      }
+      if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        parsed.version !== 1 ||
+        !Array.isArray(parsed.rows)
+      ) {
+        throw new Error(`${absPath} is unparsable — refusing to overwrite it`);
+      }
+      rows = parsed.rows.filter(isRow);
+    }
+    const payload: RowsPayload = { version: 1, rows: update(rows) };
+    return `${JSON.stringify(payload, null, 2)}\n`;
+  });
 }
 
 export type { TaskResources, WorkerRow };

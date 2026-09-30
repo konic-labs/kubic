@@ -222,18 +222,25 @@ describe('this repo ships the split (issue #91)', () => {
       join(ROOT, 'apps', 'kubic', 'src', 'dispatch.ts'),
       'utf8',
     );
+    // The commander migration keeps the pre-parse step: the state-creating
+    // modes are one named set, checked before the runtime-exclude call.
     const call = dispatch.match(
-      /if \(command === 'run' \|\| command === 'orchestrate' \|\| command === 'tui'\) \{\n\s*deps\.ensureRuntimeExclude\(/,
+      /if \(command !== undefined && STATE_CREATING_COMMANDS\.has\(command\)\) \{\n\s*deps\.ensureRuntimeExclude\(/,
     );
     assert.ok(
       call !== null,
       'apps/kubic/src/dispatch.ts must call the runtime-exclude seam for run + orchestrate + tui',
     );
-    // No mode that writes state may be added without it: the dispatch
-    // names exactly the state-creating commands.
-    for (const mode of ['run', 'orchestrate', 'tui']) {
-      assert.match(dispatch, new RegExp(`command === '${mode}'`));
-    }
+    // No mode that writes state may be added without it: the set names
+    // exactly the state-creating commands.
+    const set = dispatch.match(
+      /const STATE_CREATING_COMMANDS[^=]*= new Set\(\[([^\]]*)\]\)/,
+    );
+    assert.ok(set !== null, 'dispatch.ts must declare STATE_CREATING_COMMANDS');
+    assert.deepEqual(
+      [...set[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
+      ['orchestrate', 'run', 'tui'],
+    );
     // The dispatch delegates to the injected seam, so CLI-reachability needs
     // the production wiring too (the pre-#135 pin asserted exactly this,
     // against main.ts): the entry point must wire the real rules into the

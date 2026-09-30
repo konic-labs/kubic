@@ -18,7 +18,7 @@ import type { Provenance } from '../../../exec/src/env.js';
 import type { FailureCode } from '../lane/failures.js';
 import { classifyFailure } from '../lane/failures.js';
 import type { AgentResult, ResultErrorKind, ResultStatus } from '../result.js';
-import { validateAgentResult } from '../result.js';
+import { buildAgentResult, UNRESOLVED_MODEL } from '../result.js';
 import type { KubicUsageRow, UsageSummary } from '../usage.js';
 import { summarizeUsage } from '../usage.js';
 import type { PerfGateResult, PerfSample } from './budgets.js';
@@ -36,6 +36,13 @@ export interface LaunchWorkerRequest {
   workerId: string;
   sessionId: string;
   role: string;
+  /**
+   * The role whose grant namespace the credentials are minted under
+   * (issue #200). The child reads back the role it was TOLD it runs as;
+   * a resolver without a role document is told nothing and falls back to
+   * `worker`, while its row keeps the spec's role. Defaults to `role`.
+   */
+  grantRole?: string;
   cmd: string;
   args: string[];
   /** Owner recorded on the registry row (§50: who started the worker). */
@@ -60,6 +67,11 @@ export interface LaunchWorkerRequest {
    *  times spawn, readiness and teardown itself. */
   worktreeMs?: number;
   attachMs?: number;
+  /** §68 provenance (issue #185): the worktree the child runs in and the
+   *  model/thinking it was pinned to, when the caller knows them. */
+  worktree?: string;
+  model?: string;
+  thinking?: string;
 }
 
 export interface LaunchWorkerDeps {
@@ -183,11 +195,20 @@ export function launchWorker(
     sessionId: request.sessionId,
     generation,
     role: request.role,
+    ...(request.grantRole === undefined
+      ? {}
+      : { grantRole: request.grantRole }),
     cmd: request.cmd,
     args: request.args,
     // The worker's own identity travels with the allowlist (§3.8): the
-    // child prints its readiness marker under this id.
-    baseEnv: { ...request.baseEnv, KUBIC_WORKER_ID: request.workerId },
+    // child prints its readiness marker under this id, and records this
+    // generation — the one its `kubic workers` row carries — in the §46
+    // trajectory it writes (issue #383).
+    baseEnv: {
+      ...request.baseEnv,
+      KUBIC_WORKER_ID: request.workerId,
+      KUBIC_WORKER_GENERATION: String(generation),
+    },
     ...(request.credentials === undefined
       ? {}
       : { credentials: request.credentials }),
@@ -321,23 +342,32 @@ export function launchWorker(
         : phase === 'completed'
           ? 'completed'
           : 'failed';
-    const metrics = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      toolCalls: 0,
-      latencyMs: worker.startupMs ?? 0,
-      wallMs: Math.max(0, clock() - spawnStartedAt),
-    };
-    const built: AgentResult = {
+    // The one §68 builder (issue #185) zero-fills the token metrics the
+    // lifecycle cannot see and self-checks against the closed-world
+    // contract: a result that fails its own validator is a bug here.
+    return buildAgentResult({
       status,
       summary:
         failure === undefined
           ? `worker ${request.workerId} ${phase}`
           : failure.message,
-      filesChanged: [],
-      provenance: { workerId: request.workerId },
-      metrics,
+      provenance: {
+        workerId: request.workerId,
+        sessionId: request.sessionId,
+        pid: pid ?? null,
+        generation,
+        worktree:
+          request.worktree ?? `(unrecorded worktree of ${request.workerId})`,
+        model: request.model ?? UNRESOLVED_MODEL,
+        role: request.role,
+        ...(request.thinking === undefined
+          ? {}
+          : { thinking: request.thinking }),
+      },
+      metrics: {
+        latencyMs: worker.startupMs ?? 0,
+        wallMs: Math.max(0, clock() - spawnStartedAt),
+      },
       ...(failure === undefined
         ? {}
         : {
@@ -347,16 +377,7 @@ export function launchWorker(
               details: { code: failure.code },
             },
           }),
-    };
-    // Self-check against the closed-world contract (§68): a result that
-    // fails its own validator is a bug in this module, not a caller's.
-    const validation = validateAgentResult(built);
-    if (!validation.valid) {
-      throw new Error(
-        `worker result violates the §68 contract: ${validation.errors.join('; ')}`,
-      );
-    }
-    return built;
+    });
   };
 
   // A readiness timeout or an exit before the marker is terminal in the

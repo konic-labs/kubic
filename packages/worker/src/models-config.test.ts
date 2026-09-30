@@ -1,12 +1,48 @@
 // Slice A: models.json custom/local providers (issue #20; §37).
 // RED: parseModelsJson/registerCustomProviders do not exist yet.
 import { describe, expect, it } from 'vitest';
+import { compactionThreshold, DEFAULT_RESERVE_TOKENS } from './compaction.js';
 import {
   LOCAL_MODELS_EXAMPLE,
+  ModelsJsonError,
   parseModelsJson,
   registerCustomProviders,
 } from './models-config.js';
 import { createModels } from './pi-boundary.js';
+
+describe('models.json apiKeyEnv allowlist (issue #322)', () => {
+  const withKeyEnv = (apiKeyEnv: string) => ({
+    providers: [
+      {
+        id: 'gw',
+        baseUrl: 'http://127.0.0.1:8000/v1',
+        api: 'openai-completions',
+        apiKeyEnv,
+        models: [{ id: 'm' }],
+      },
+    ],
+  });
+
+  it.each([
+    'AWS_SECRET_ACCESS_KEY',
+    'GITHUB_TOKEN',
+    'HOME',
+    'PATH',
+    'kubic_lower_api_key',
+  ])('refuses apiKeyEnv %s with a ModelsJsonError naming it', (name) => {
+    expect(() => parseModelsJson(withKeyEnv(name))).toThrow(ModelsJsonError);
+    expect(() => parseModelsJson(withKeyEnv(name))).toThrow(name);
+  });
+
+  it.each([
+    'KUBIC_API_KEY',
+    'KUBIC_GATEWAY_TOKEN',
+    'OPENROUTER_API_KEY',
+    'MY_GATEWAY_API_KEY',
+  ])('accepts apiKeyEnv %s', (name) => {
+    expect(parseModelsJson(withKeyEnv(name))[0]?.apiKeyEnv).toBe(name);
+  });
+});
 
 describe('models.json custom providers (issue #20, slice A)', () => {
   it('parses an Ollama-style local provider', () => {
@@ -147,5 +183,98 @@ describe('models.json custom providers (issue #20, slice A)', () => {
         ],
       }),
     ).toThrow(/headers/);
+  });
+});
+
+describe('models.json defaults (compaction headroom)', () => {
+  it('keeps the fail-safe 8192/2048 defaults and still leaves compaction headroom', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson({
+        providers: [
+          {
+            id: 'fake',
+            baseUrl: 'http://127.0.0.1:1/v1',
+            api: 'openai-completions',
+            models: [{ id: 'm' }],
+          },
+        ],
+      }),
+    );
+    const model = models.getModels('fake')[0];
+    expect(model?.contextWindow).toBe(8192);
+    expect(model?.maxTokens).toBe(2048);
+    // The reserve clamp keeps the threshold positive for the small default
+    // window (otherwise every turn compacts: one extra model call each).
+    expect(
+      compactionThreshold(model?.contextWindow ?? 0, DEFAULT_RESERVE_TOKENS),
+    ).toBeGreaterThan(0);
+  });
+});
+
+// Issue #359 (§36.1 rules 3-4): a models.json provider key is resolved at
+// REQUEST time through the host's resolver hook, once per auth resolution,
+// so each use can be audited. Availability checks never resolve (and so
+// never count as a use).
+describe('models.json request-time key resolution (issue #359)', () => {
+  const spec = parseModelsJson({
+    providers: [
+      {
+        id: 'gw',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        api: 'openai-completions',
+        apiKeyEnv: 'GW_API_KEY',
+        models: [{ id: 'm1' }],
+      },
+    ],
+  });
+  const env: Record<string, string> = { GW_API_KEY: 'sk-live-gw-123' };
+  const ctx = {
+    env: async (name: string) => env[name],
+    fileExists: async () => false,
+  };
+  const signal = new AbortController().signal;
+
+  it('routes every resolve through the hook and never on check', async () => {
+    const calls: { provider: string; envVar: string }[] = [];
+    const models = createModels();
+    registerCustomProviders(models, spec, {
+      resolveApiKey: async (use) => {
+        calls.push({ provider: use.provider, envVar: use.envVar });
+        return use.readEnv(use.envVar);
+      },
+    });
+    const auth = models.getProvider('gw')?.auth.apiKey;
+    if (auth === undefined) throw new Error('no api key auth');
+    expect(await auth.check?.({ ctx, signal })).toEqual({
+      source: 'GW_API_KEY',
+      type: 'api_key',
+    });
+    expect(calls).toEqual([]);
+    const first = await auth.resolve({ ctx, signal });
+    const second = await auth.resolve({ ctx, signal });
+    expect(first?.auth.apiKey).toBe('sk-live-gw-123');
+    expect(second?.source).toBe('GW_API_KEY');
+    expect(calls).toEqual([
+      { provider: 'gw', envVar: 'GW_API_KEY' },
+      { provider: 'gw', envVar: 'GW_API_KEY' },
+    ]);
+  });
+
+  it('an unset key is not configured: no hook use, check reports nothing', async () => {
+    const calls: string[] = [];
+    const models = createModels();
+    registerCustomProviders(models, spec, {
+      resolveApiKey: async (use) => {
+        calls.push(use.envVar);
+        return use.readEnv(use.envVar);
+      },
+    });
+    const auth = models.getProvider('gw')?.auth.apiKey;
+    const empty = { env: async () => undefined, fileExists: async () => false };
+    expect(await auth?.check?.({ ctx: empty, signal })).toBeUndefined();
+    expect(await auth?.resolve({ ctx: empty, signal })).toBeUndefined();
+    expect(calls).toEqual([]);
   });
 });

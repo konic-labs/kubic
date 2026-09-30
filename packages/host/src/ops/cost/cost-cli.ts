@@ -1,5 +1,5 @@
 // `kubic cost [--session <id>] [--json]` (issue #79; §62, §49.2).
-// Presentation only over per-agent cost rows: one TUI row per agent plus
+// Presentation only over per-agent cost rows: one table row per agent plus
 // the task total, or the in-code `toCostJson` shape under --json. Rows
 // arrive injected (faux in tests); the prod loader below reads real
 // session stats out of the session store — this module never invents
@@ -11,8 +11,18 @@
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
-import { answerHelp } from '../../../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../../../core/src/flags.js';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../../core/src/cli/exit-codes.js';
+import { createLineLogger } from '../../../../core/src/cli/logger.js';
+import { formatJson } from '../../../../core/src/cli/output.js';
+import { renderTable } from '../../../../core/src/cli/table.js';
+import {
+  type CliTheme,
+  createCliTheme,
+} from '../../../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   attachSession,
@@ -21,33 +31,39 @@ import {
 } from '../../../../worker/src/lane/session-store.js';
 import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
-import { SESSION_ID_PATTERN } from '../../run-cli.js';
+import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
   type AgentCostInput,
-  formatAgentCostRow,
+  type PerAgentCostSummary,
   summarizePerAgentCost,
   toCostJson,
 } from './per-agent-cost.js';
 
-export const COST_EXIT_OK = 0;
-export const COST_EXIT_FAIL = 1;
-export const COST_EXIT_USAGE = 2;
+// The parsed `kubic cost` options (commander's `opts()`).
+export interface CostOptions {
+  readonly session?: string;
+  readonly json?: boolean;
+}
 
 export interface CostCommandDeps {
   loadRows: (
     sessionId?: string,
   ) => AgentCostInput[] | Promise<AgentCostInput[]>;
+  // stdout: the report or the one `--json` document.
   out: (line: string) => void;
+  // stderr: diagnostics, one `error: …` line each (core/cli/logger).
+  err: (line: string) => void;
+  // Colour and box drawing for the human report; absent means plain.
+  theme?: CliTheme;
+  // Colour of the stderr diagnostics, from stderr's own TTY state (never
+  // stdout's); absent means plain.
+  errTheme?: CliTheme;
+  fancy?: boolean;
 }
 
-export const COST_USAGE = 'usage: kubic cost [--session <id>] [--json]';
-
-function usage(out: (line: string) => void): number {
-  out(COST_USAGE);
-  return COST_EXIT_USAGE;
-}
+const PLAIN = createCliTheme('none');
 
 // Prod loader: one row per real session out of the session store. Session
 // stats carry no per-model split at this seam, so each row is the session
@@ -88,42 +104,101 @@ export async function loadSessionCostRows(
   return rows;
 }
 
-// Issue #127: the shared parser replaces the hand-rolled loop. Missing
-// values keep their line; unknown flags and stray operands keep the bare
-// usage exit; the id pattern stays this command's semantics.
-const COST_FLAG_SPEC: readonly FlagSpec[] = [
-  { name: '--json', takes: 'boolean' },
-  { name: '--session', takes: 'value' },
-];
+// One run's usage as its `--json` report carries it (issue #185; §39,
+// §68): the session's own usage rollup (the numbers `kubic cost` reads),
+// the tool calls it executed, and the `provider/id` of the model that
+// answered last. The orchestrator builds each worker's §68 metrics and
+// provenance from this — never invented zeros.
+export async function readSessionRunUsage(
+  sessionsRoot: string,
+  sessionId: string,
+): Promise<{ usage: RunUsage; model?: string }> {
+  const store = openSessionStore(
+    sessionsRoot,
+    createNodeFileBridge(sessionsRoot),
+  );
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const stats = await session.getStats(BACKGROUND_CONTEXT);
+    const entries = (await session.findEntries(
+      undefined,
+      BACKGROUND_CONTEXT,
+    )) as {
+      message?: { role?: unknown; provider?: unknown; model?: unknown };
+    }[];
+    let toolCalls = 0;
+    let model: string | undefined;
+    for (const entry of entries) {
+      const message = entry.message;
+      if (message?.role === 'toolResult') toolCalls += 1;
+      if (
+        message?.role === 'assistant' &&
+        typeof message.provider === 'string' &&
+        typeof message.model === 'string'
+      ) {
+        model = `${message.provider}/${message.model}`;
+      }
+    }
+    return {
+      usage: {
+        input: stats.usage.input,
+        output: stats.usage.output,
+        cacheRead: stats.usage.cacheRead,
+        cacheWrite: stats.usage.cacheWrite,
+        costUsd: stats.usage.cost.total,
+        toolCalls,
+      },
+      ...(model === undefined ? {} : { model }),
+    };
+  } finally {
+    await session.close(BACKGROUND_CONTEXT);
+  }
+}
 
+// Presentation over the per-agent rows: a table (box-drawn only on a
+// coloured terminal, plain aligned text otherwise), then the task total.
+function costTable(
+  summary: PerAgentCostSummary,
+  deps: CostCommandDeps,
+): string {
+  const rows = summary.perAgent.map((entry) => [
+    entry.agentId,
+    entry.model,
+    String(entry.input + entry.output),
+    `$${entry.costUsd.toFixed(2)}`,
+  ]);
+  return renderTable(
+    rows,
+    [
+      { header: 'AGENT' },
+      { header: 'MODEL' },
+      { header: 'TOKENS', align: 'right' },
+      { header: 'COST', align: 'right' },
+    ],
+    { fancy: deps.fancy === true, theme: deps.theme ?? PLAIN },
+  );
+}
+
+// `kubic cost` over parsed options: commander (apps/kubic/src/commands/
+// analysis.ts) owns argv syntax — unknown flags, missing values, `--help`;
+// this handler owns the semantics (the session id pattern, the store).
 export async function runCostCommand(
-  args: string[],
+  options: CostOptions,
   deps: CostCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the usage line and exits 0 (issue #100).
-  const help = answerHelp(args, deps.out, COST_USAGE);
-  if (help !== null) return help;
-  const flags = parseFlagArgs(args, COST_FLAG_SPEC);
-  if (flags.missing.includes('--session')) {
-    deps.out('error: --session needs a value');
-    return usage(deps.out);
-  }
-  if (flags.unknown.length > 0 || flags.positional.length > 0) {
-    return usage(deps.out);
-  }
-  const json = flags.values['--json'] === true;
-  let sessionId: string | undefined;
-  const sessionRaw = flags.values['--session'] as string | undefined;
-  if (sessionRaw !== undefined) {
-    if (!SESSION_ID_PATTERN.test(sessionRaw)) {
-      // Fail-closed echo: the rejected id is argv-controlled and may
-      // carry secret-shaped material (e.g. a bearer token with spaces).
-      deps.out(
-        `error: invalid --session id ${redactSecretShapes(JSON.stringify(sessionRaw))} (use [A-Za-z0-9_-])`,
-      );
-      return usage(deps.out);
-    }
-    sessionId = sessionRaw;
+  const json = options.json === true;
+  const theme = json ? PLAIN : (deps.theme ?? PLAIN);
+  const log = createLineLogger(deps.err, {
+    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+  });
+  const sessionId = options.session;
+  if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
+    // Fail-closed echo: the rejected id is argv-controlled and may
+    // carry secret-shaped material (e.g. a bearer token with spaces).
+    log.error(
+      `invalid --session id ${redactSecretShapes(JSON.stringify(sessionId))} (use [A-Za-z0-9_-])`,
+    );
+    return EXIT_USAGE;
   }
   let rows: AgentCostInput[];
   try {
@@ -132,32 +207,32 @@ export async function runCostCommand(
     if (error instanceof Error && error.name === 'SessionAttachError') {
       // SESSION_ID_PATTERN admits sk-shaped strings, so the validated id
       // echoing back here may carry secret-shaped material — redact it.
-      deps.out(
-        `error: unknown session: ${redactSecretShapes(sessionId ?? '')}`,
-      );
-      return COST_EXIT_FAIL;
+      log.error(`unknown session: ${redactSecretShapes(sessionId ?? '')}`);
+      return EXIT_FAILED;
     }
     // Store failures name the failure, never the secret: the message is
     // store-controlled and may echo ids, paths, or tokens.
-    deps.out(
-      `error: ${redactSecretShapes(error instanceof Error ? error.message : String(error))}`,
+    log.error(
+      redactSecretShapes(
+        error instanceof Error ? error.message : String(error),
+      ),
     );
-    return COST_EXIT_FAIL;
+    return EXIT_FAILED;
   }
   const summary = summarizePerAgentCost(rows);
   if (json) {
-    deps.out(JSON.stringify(toCostJson(summary), null, 2));
-    return COST_EXIT_OK;
+    deps.out(formatJson(toCostJson(summary)));
+    return EXIT_OK;
   }
   if (rows.length === 0) {
     deps.out('no cost rows');
-    return COST_EXIT_OK;
+    return EXIT_OK;
   }
-  for (const entry of summary.perAgent) {
-    deps.out(formatAgentCostRow(entry));
-  }
+  deps.out(costTable(summary, deps));
   deps.out(
-    `task total $${summary.taskTotal.toFixed(2)} (${summary.perAgent.length} agents)`,
+    theme.bold(
+      `task total $${summary.taskTotal.toFixed(2)} (${summary.perAgent.length} agents)`,
+    ),
   );
   // §62 lever 2 over real usage rows (issue #98): reported only when the
   // rows actually carried cache counters, so an unmeasured readout never
@@ -167,7 +242,7 @@ export async function runCostCommand(
       `cache: ${summary.cache.hits}/${summary.cache.total} sessions with prefix hits ` +
         `(${Math.round(summary.cache.rate * 100)}%)`,
     );
-    deps.out(transparentCachingNote());
+    deps.out(theme.muted(transparentCachingNote()));
   }
-  return COST_EXIT_OK;
+  return EXIT_OK;
 }

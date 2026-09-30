@@ -164,16 +164,63 @@ describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)',
     expect(first.binding?.modelId).toBe('faux/a');
     const modelB = faux.getModel('b');
     if (modelB === undefined) throw new Error("faux model 'b' missing");
+    // Issue #148: only an EXPLICIT selection moves a resumed lane off its
+    // stored model — an unpinned re-boot keeps 'faux/a', which is exactly
+    // the bound model. The explicit switch is the re-boot that must refuse.
     await expect(
       bootSoloLane({
         session,
         models,
         model: modelB,
+        modelPolicy: 'selected',
         env,
         sessionId: session.metadata.id,
         agentId: 'root',
         registry,
       }),
     ).rejects.toThrow(/model/i);
+  });
+});
+
+describe('escalation re-clamps the compaction reserve to the new model window', () => {
+  it('escalating onto a small-window model lowers the harness reserve', async () => {
+    const { MemorySessionRepo } = await import('../pi-boundary.js');
+    const { createLadder } = await import('../model-select.js');
+    const repo = new MemorySessionRepo();
+    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    openSessions.push(session);
+    const faux = fauxProvider({
+      models: [
+        { id: 'big', contextWindow: 200000 },
+        { id: 'small', contextWindow: 8192 },
+      ],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const big = faux.getModel('big');
+    if (big === undefined) throw new Error("faux model 'big' missing");
+    const booted = await bootSoloLane({
+      session,
+      models,
+      model: big,
+      env: new FakeExecutionEnv({}),
+      sessionId: session.metadata.id,
+      agentId: 'root',
+      taskId: 'task-clamp',
+    });
+    const before =
+      await booted.harness.getCompactionSettings(BACKGROUND_CONTEXT);
+    expect(before.reserveTokens).toBe(16384);
+    await escalateSoloModel(
+      booted,
+      createLadder(['faux/big', 'faux/small'], { maxEscalations: 1 }),
+      'faux/small',
+      'cheaper',
+      BACKGROUND_CONTEXT,
+    );
+    const after =
+      await booted.harness.getCompactionSettings(BACKGROUND_CONTEXT);
+    expect(after.reserveTokens).toBe(2048);
+    expect(after.keepRecentTokens).toBe(before.keepRecentTokens);
   });
 });

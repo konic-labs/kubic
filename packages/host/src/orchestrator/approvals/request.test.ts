@@ -36,6 +36,7 @@ describe('orchestrator request envelope (issue #48)', () => {
         'outside-write',
         'privilege-escalation',
         'spawn-agents',
+        'kubic-state-write',
       ].sort(),
     );
   });

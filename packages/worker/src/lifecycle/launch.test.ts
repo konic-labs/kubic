@@ -207,9 +207,10 @@ describe('launchWorker (issue #94)', () => {
     expect(done.exitCode).toBe(6);
     expect(registry.get('worker-1')?.status).toBe('crashed');
     // Exit 6 is the §78 provider boundary: the §52 code names the
-    // provider, not a generic crash.
+    // provider, not a generic crash — and a missing provider is a setup
+    // failure (non-retryable), never provider_transient.
     expect(launched.failure()).toMatchObject({
-      code: 'provider_transient',
+      code: 'provider_auth',
       kind: 'provider',
     });
     expect(launched.failure()?.message).toMatch(/exited 6/);
@@ -319,6 +320,86 @@ describe('launchWorker (issue #94)', () => {
     expect(launched.env.PATH).toBe('/bin');
   });
 
+  it('mints the grant under the role the child was TOLD, not the launch role (issue #200)', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    // A resolver child runs the launch's registry role but is told a
+    // different (or no) role; the grant namespace must follow what the
+    // child can read itself, or the credential is invisible to it.
+    const launched = launchWorker(
+      request({
+        role: 'implementer',
+        grantRole: 'worker',
+        credentials: { GW_API_KEY: 'granted-key' },
+      }),
+      { shell: child.shell, registry, clock: () => 0 },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    const env = child.spawned[0]?.env as Record<string, string>;
+    expect(env.KUBIC_ROLE_WORKER_GW_API_KEY).toBe('granted-key');
+    expect(env.KUBIC_ROLE_IMPLEMENTER_GW_API_KEY).toBeUndefined();
+  });
+
+  it('never lets a sibling grant or an unrelated parent secret into the child env (issue #200)', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const launched = launchWorker(
+      request({
+        baseEnv: {
+          PATH: '/bin',
+          HOME: '/home/op',
+          AWS_SECRET_ACCESS_KEY: 'aws-parent-secret',
+          KUBIC_ROLE_PLANNER_GW_API_KEY: 'sibling-grant',
+          KUBIC_ROLE_IMPLEMENTER_OPENAI_API_KEY: 'sibling-provider',
+        },
+        role: 'implementer',
+        grantRole: 'worker',
+        credentials: { GW_API_KEY: 'mine' },
+      }),
+      { shell: child.shell, registry, clock: () => 0 },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    const env = child.spawned[0]?.env as Record<string, string>;
+    // Exactly the role's own provider key, under the grant namespace.
+    expect(env.KUBIC_ROLE_WORKER_GW_API_KEY).toBe('mine');
+    // Never the sibling role's grant, never a second provider's key, and
+    // never an unrelated parent secret.
+    expect(Object.keys(env)).not.toContain('KUBIC_ROLE_PLANNER_GW_API_KEY');
+    expect(Object.keys(env)).not.toContain(
+      'KUBIC_ROLE_IMPLEMENTER_OPENAI_API_KEY',
+    );
+    expect(JSON.stringify(env)).not.toContain('aws-parent-secret');
+    expect(JSON.stringify(env)).not.toContain('sibling-grant');
+    expect(JSON.stringify(env)).not.toContain('sibling-provider');
+  });
+
+  it('redacts the grant value on the spawn debug line while keeping its key (issue #200)', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const lines: string[] = [];
+    const launched = launchWorker(
+      request({
+        role: 'implementer',
+        grantRole: 'worker',
+        credentials: { GW_API_KEY: 'sk-grant-do-not-print' },
+      }),
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+        debug: (line) => lines.push(line),
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    const line = lines.join('\n');
+    // The key is visible for debugging; the value never is.
+    expect(line).toContain('KUBIC_ROLE_WORKER_GW_API_KEY');
+    expect(line).not.toContain('sk-grant-do-not-print');
+  });
+
   it('keeps one generation per worker across a resumed relaunch', async () => {
     const registry = new WorkerRegistry(() => 0);
     const first = controllable();
@@ -346,6 +427,12 @@ describe('launchWorker (issue #94)', () => {
     expect(registry.get('worker-1')?.generation).toBe(2);
     expect(registry.get('worker-1')?.status).toBe('running');
     expect(registry.get('worker-1')?.pid).toBe(5151);
+    // Issue #383: each child is told the generation its row carries, so the
+    // §46 trajectory it writes matches `kubic workers`.
+    const envOf = (spawned: typeof first.spawned): Record<string, string> =>
+      (spawned[0]?.env ?? {}) as Record<string, string>;
+    expect(envOf(first.spawned).KUBIC_WORKER_GENERATION).toBe('1');
+    expect(envOf(second.spawned).KUBIC_WORKER_GENERATION).toBe('2');
   });
 
   it('reaps through the teardown budget on demand', async () => {

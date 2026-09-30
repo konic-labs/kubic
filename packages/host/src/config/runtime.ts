@@ -23,7 +23,13 @@ import {
   validateClasses,
 } from '../../../agents/src/policy.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { validatePolicy } from '../approvals.js';
+import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
+import {
+  type EffectivePolicy,
+  layerPolicyFromConfig,
+  type PolicyInput,
+  resolveEffectivePolicy,
+} from '../policy/enterprise.js';
 import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
   type ApprovalsConfig,
@@ -120,9 +126,11 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
   },
   'model.provider': {
-    effect: 'provider selection for `kubic run` (selectModel)',
+    effect: 'provider selection for `kubic run` and `kubic tui` (selectModel)',
   },
-  'model.id': { effect: 'model selection for `kubic run` (selectModel)' },
+  'model.id': {
+    effect: 'model selection for `kubic run` and `kubic tui` (selectModel)',
+  },
   'model.thinking': {
     effect:
       'default thinking level reported by `kubic config`; per-run override is --model',
@@ -137,17 +145,20 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'approvals.route': { effect: 'approval routing (ask-user | deny) — §41' },
   'approvals.maxPendingMs': {
-    effect: 'pending-approval bound; a pending ask denies on timeout',
+    effect:
+      'pending-approval bound on the solo lane and the orchestrator; a pending ask denies on timeout',
   },
   'approvals.autoApprove': {
-    effect: 'explicit-only capability auto-approvals (never inferred)',
+    effect:
+      'explicit-only capability auto-approvals on the solo lane (never inferred)',
   },
   'approvals.sessionScoped': {
     effect:
-      'reported in the effective policy; store placement is chosen by the host',
+      'per-session approval store (true only; false is refused — no shared store exists)',
   },
   'approvals.requireJustification': {
-    effect: 'reported in the effective policy; asks require justification',
+    effect:
+      'installed on the solo lane: an approval without justification is denied',
   },
   'permissions.filesystem': {
     effect: 'permission classes for the lane: derived tool allowlist (§40)',
@@ -198,12 +209,76 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
   },
+  // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
+  // the live path (lane tool intersection, model selection gate, `kubic
+  // policy`). The rest are resolved into the effective policy and only listed
+  // here (`kubic config`): parsing them is the contract, enforcement is not
+  // invented, and `kubic doctor` does not report them yet.
+  policy: {
+    kept: '§58 enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
+  },
+  'policy.allowed_models': {
+    effect:
+      'model selection gate (`provider/id`, `provider/*`, bare ids) before any provider call',
+  },
+  'policy.allowed_providers': {
+    effect:
+      'provider gate shared by model selection and the implicit fallback pick',
+  },
+  'policy.allowed_tools': {
+    effect:
+      'lane tool intersection (active tools and the prompt tools line); a lower layer cannot widen it',
+  },
+  'policy.denied_tools': {
+    effect:
+      'lane tool intersection; the deny holds against every lower layer, role document and model grant',
+  },
+  'policy.network_policy': {
+    kept: 'resolved into the effective policy but NOT enforced: proxy-mediated enforcement is a named follow-up, listed here rather than silently ignored (doctor does not report it yet)',
+  },
+  'policy.allowed_domains': {
+    kept: 'resolved into the effective policy alongside network_policy; no live network enforcement exists yet',
+  },
+  'policy.filesystem_policy': {
+    kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
+  },
+  'policy.require_credential_broker': {
+    kept: 'resolved into the effective policy but NOT enforced: the credential broker is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
+  },
+  'policy.deny_local_credentials': {
+    kept: 'resolved into the effective policy but NOT enforced: the local-credential check is not on the worker spawn path yet, so this key protects nothing today (doctor does not report it yet)',
+  },
+  'policy.data_policy': {
+    kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
+  },
+  'policy.logging_policy': {
+    kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
+  },
+  'policy.agent_policy': {
+    kept: 'max_agents/max_cost_usd resolve into the effective policy but are NOT enforced: the orchestrator cap is a named follow-up (doctor does not report it yet)',
+  },
+  audit: {
+    kept: '[[audit]] sinks are parsed and validated; sink construction is a named follow-up, so the CLI cannot write to them yet',
+  },
 };
 
 export interface RuntimeModelSelection {
   provider: string;
   id: string;
   thinking?: string;
+}
+
+// A cli/env model pin the frozen enterprise `[model]` overrode (issue #295;
+// §35.1): reported instead of being dropped silently, so `kubic run --model x`
+// against an enterprise pin says it ran the pin, not `x`.
+export interface ModelPinOverride {
+  // The input that carried the ignored pin: `--model` (cli layer) or
+  // `KUBIC_MODEL` (env layer).
+  source: 'cli' | 'env';
+  // The ignored `provider/id`.
+  requested: string;
+  // The enterprise `provider/id` that ran instead.
+  pinned: string;
 }
 
 export interface RuntimeApprovals {
@@ -273,6 +348,7 @@ export interface RuntimeConfigInputs {
   cwd: string;
   workspaceRoot?: string;
   enterprisePath?: string;
+  productPath?: string;
   env?: Record<string, string | undefined>;
   // Trust gate for the project layer (§35.1). An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
@@ -285,6 +361,13 @@ export interface RuntimeConfigInputs {
 
 export interface RuntimeConfig {
   config: KubicConfig;
+  /**
+   * §58 enterprise policy (issue #288), resolved ONCE per process from the
+   * per-layer `[policy]` sections (enterprise > product > … > agent) — the
+   * same merge the config layers use, with deny accumulation and layer
+   * provenance. Empty when no layer declares `[policy]`.
+   */
+  policy: EffectivePolicy;
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
   approvals: RuntimeApprovals;
@@ -295,6 +378,10 @@ export interface RuntimeConfig {
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
+  // The cli/env model pins a frozen enterprise `[model]` overrode (also named
+  // in `overriddenAttempts`); empty when nothing was overridden — the same pin
+  // named twice, no freeze, or no cli/env pin.
+  modelPinOverrides: ModelPinOverride[];
   layers: ConfigLayerReport[];
   // Leaf path → source, for every key the effective view reports.
   sources: Record<string, ConfigValueSource>;
@@ -341,6 +428,7 @@ export interface EffectiveConfigView {
 
 const LAYER_ORDER: readonly ConfigLayer[] = [
   'enterprise',
+  'product',
   'global',
   'project',
   'workspace',
@@ -439,6 +527,11 @@ function envFlag(raw: string | undefined): boolean {
 
 interface LoadedLayers {
   inputs: LayerInput[];
+  // Each present layer's own parsed config, in precedence order: the §58
+  // policy resolution (issue #288) needs per-layer inputs so a lower layer
+  // can narrow a higher one's deny list without the pre-flattened merge
+  // dropping the addition.
+  perLayer: Array<{ layer: ConfigLayer; config: KubicConfig }>;
   sources: Record<string, ConfigValueSource>;
   paths: Record<ConfigLayer, string | undefined>;
   reports: ConfigLayerReport[];
@@ -460,8 +553,12 @@ function loadLayers(
     ...(inputs.enterprisePath === undefined
       ? {}
       : { enterprisePath: inputs.enterprisePath }),
+    ...(inputs.productPath === undefined
+      ? {}
+      : { productPath: inputs.productPath }),
   });
   const layerInputs: LayerInput[] = [];
+  const perLayer: Array<{ layer: ConfigLayer; config: KubicConfig }> = [];
   const sources: Record<string, ConfigValueSource> = {};
   const reports: ConfigLayerReport[] = [];
   for (const layer of LAYER_ORDER) {
@@ -474,8 +571,10 @@ function loadLayers(
         present: programmatic !== undefined,
         trusted: true,
       });
-      if (programmatic !== undefined)
+      if (programmatic !== undefined) {
         layerInputs.push({ layer, config: programmatic });
+        perLayer.push({ layer, config: programmatic });
+      }
       continue;
     }
     const present = path !== undefined && safeExists(inputs.bridge, path);
@@ -488,9 +587,11 @@ function loadLayers(
     if (layer === 'project' && !projectTrusted) {
       if (present) {
         // Refused pre-trust, before the file is read (§35.1). Named by path
-        // so the operator knows exactly which layer is waiting on trust.
+        // so the operator knows exactly which layer is waiting on trust,
+        // and with the remedies named (issue #228): the durable grant or the
+        // per-invocation env opt-in, never a bare issue number.
         throw new ProjectUntrustedError(
-          `project-local config refused pre-trust: ${path} (issue #38)`,
+          `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
         );
       }
       continue;
@@ -502,11 +603,12 @@ function loadLayers(
       config: parsed,
       ...(layer === 'project' ? { trusted: true as const } : {}),
     });
+    perLayer.push({ layer, config: parsed });
     for (const leaf of Object.keys(flatten(parsed))) {
       if (!(leaf in sources)) sources[leaf] = layer;
     }
   }
-  return { inputs: layerInputs, sources, paths, reports };
+  return { inputs: layerInputs, perLayer, sources, paths, reports };
 }
 
 function flatten(value: unknown, prefix = ''): Record<string, unknown> {
@@ -548,6 +650,15 @@ function approvalsFrom(
   routeOverride: 'ask-user' | 'deny' | undefined,
 ): RuntimeApprovals {
   const approvals: ApprovalsConfig = config.approvals ?? {};
+  // Issue #230: the host has exactly one store placement — per session
+  // (<session>/approvals.json). A shared, cross-session store is not
+  // implemented, so `sessionScoped = false` is refused by name rather than
+  // printed as an effective policy that no lane enforces.
+  if (approvals.sessionScoped === false) {
+    throw new ConfigError(
+      "'approvals': 'sessionScoped = false' is not supported — approval decisions are always stored per session (<session>/approvals.json); remove the key or set it to true",
+    );
+  }
   const route =
     routeOverride ?? approvals.route ?? RUNTIME_DEFAULTS.approvalsRoute;
   const source: ConfigValueSource =
@@ -609,6 +720,20 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const merged = mergeLayered(loaded.inputs);
   const config = merged.config;
   assertNoSecretRefs(config);
+  // §58 enterprise policy (issue #288): resolved once, from EACH layer's own
+  // `[policy]` section in precedence order — never from the pre-flattened
+  // merge, so a lower layer's added deny accumulates (the first-wins leaf
+  // merge would drop it) while a lower allow can never lift an enterprise
+  // deny. Absent `[policy]` anywhere leaves an empty effective policy and
+  // gates nothing.
+  const policyInputs: PolicyInput[] = [];
+  for (const entry of loaded.perLayer) {
+    const layerPolicy = layerPolicyFromConfig(entry.config);
+    if (Object.keys(layerPolicy).length > 0) {
+      policyInputs.push({ layer: entry.layer, policy: layerPolicy });
+    }
+  }
+  const policy = resolveEffectivePolicy(policyInputs).policy;
 
   const envModelRaw = env[RUNTIME_ENV_OVERRIDES.model];
   const envModel =
@@ -650,6 +775,26 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   } else {
     model = undefined;
     modelSource = 'defaults';
+  }
+
+  // §35.1 (issue #295): a frozen enterprise pin drops every cli/env pin
+  // without a word unless it is recorded here — the composition root turns
+  // each entry into one stderr note. A pin equal to the enterprise one
+  // overrode nothing.
+  const modelPinOverrides: ModelPinOverride[] = [];
+  if (modelSource === 'enterprise' && model !== undefined) {
+    const pinned = `${model.provider}/${model.id}`;
+    const attempts: Array<['cli' | 'env', RuntimeModelSelection | undefined]> =
+      [
+        ['cli', cliModel],
+        ['env', envModel],
+      ];
+    for (const [source, attempt] of attempts) {
+      if (attempt === undefined) continue;
+      const requested = `${attempt.provider}/${attempt.id}`;
+      if (requested === pinned) continue;
+      modelPinOverrides.push({ source, requested, pinned });
+    }
   }
 
   const envRouteRaw = env[RUNTIME_ENV_OVERRIDES.approvalsRoute];
@@ -739,6 +884,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
 
   return {
     config,
+    policy,
     model,
     modelSource,
     approvals,
@@ -757,7 +903,14 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         'no budgets are defaulted by config (§71): nothing is capped until you configure a limit, and [budgets] keys are refused outright',
     },
     projectTrusted,
-    overriddenAttempts: merged.overriddenAttempts,
+    overriddenAttempts: [
+      ...merged.overriddenAttempts,
+      ...modelPinOverrides.map(
+        (entry) =>
+          `model: ${entry.source === 'cli' ? '--model' : 'KUBIC_MODEL'} '${entry.requested}' rejected: enterprise pin '${entry.pinned}' holds`,
+      ),
+    ],
+    modelPinOverrides,
     layers: loaded.reports,
     sources: loaded.sources,
   };
@@ -856,8 +1009,20 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
       `selected model: first available provider (${view.modelSource}) — no model pin configured`,
     );
   }
+  // An always-ask capability in autoApprove never applies (issue #324): named
+  // and left out of the count, never printed as an approval nothing grants.
+  const ignoredAutoApprove = [
+    ...new Set(alwaysAskAutoApprove(view.approvals.autoApprove)),
+  ];
+  const effectiveAutoApprove = view.approvals.autoApprove.filter(
+    (capability) => !ignoredAutoApprove.includes(capability),
+  );
   lines.push(
-    `approvals: route=${view.approvals.route} (${view.approvals.source}), ${view.approvals.autoApprove.length} auto-approved, maxPendingMs=${view.approvals.maxPendingMs}`,
+    `approvals: route=${view.approvals.route} (${view.approvals.source}), ${effectiveAutoApprove.length} auto-approved${
+      ignoredAutoApprove.length === 0
+        ? ''
+        : ` (${ignoredAutoApprove.join(', ')} always asks — ignored)`
+    }, maxPendingMs=${view.approvals.maxPendingMs}`,
   );
   lines.push(
     `permissions: filesystem=${view.permissions.classes.filesystem}, shell=${String(view.permissions.classes.shell)}, network=${view.permissions.classes.network}, git=${String(view.permissions.classes.git)}, credentials=${view.permissions.classes.credentials} (${view.permissions.source})`,
@@ -879,7 +1044,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
     `budgets: ${view.budgets.configured ? 'configured' : 'none'} — ${view.budgets.detail}`,
   );
   lines.push(
-    `project layer: ${view.projectTrusted ? 'trusted' : 'distrusted (refused pre-trust; KUBIC_TRUST_PROJECT=1 to accept)'}`,
+    `project layer: ${view.projectTrusted ? 'trusted' : "distrusted (refused pre-trust; run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation)"}`,
   );
   lines.push(
     view.overriddenAttempts.length === 0

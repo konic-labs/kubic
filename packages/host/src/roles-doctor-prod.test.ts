@@ -16,6 +16,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { type DoctorDeps, runDoctorCommand } from './doctor.js';
+import {
+  type EffectivePolicy,
+  resolveEffectivePolicy,
+} from './policy/enterprise.js';
+import type { RoleLayerInput } from './roles/resolver.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
 
 const roots: string[] = [];
@@ -42,7 +47,12 @@ function roleDir(role: string, frontmatter: string, prompt = 'Go.'): string {
   return cwd;
 }
 
-function doctorDeps(cwd: string, lines: string[]): DoctorDeps {
+function doctorDeps(
+  cwd: string,
+  lines: string[],
+  toolPolicy?: EffectivePolicy,
+  layers?: RoleLayerInput[],
+): DoctorDeps {
   return {
     out: (line: string) => lines.push(line),
     probeProviders: () => [
@@ -51,7 +61,12 @@ function doctorDeps(cwd: string, lines: string[]): DoctorDeps {
     checkDeps: () => [{ id: 'node', ok: true }],
     loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
     probeRoles: () =>
-      rolesDoctorProbe({ cwd, bridge: createNodeFileBridge(cwd) }),
+      rolesDoctorProbe({
+        cwd,
+        bridge: createNodeFileBridge(cwd),
+        ...(toolPolicy === undefined ? {} : { toolPolicy }),
+        ...(layers === undefined ? {} : { layers }),
+      }),
   };
 }
 
@@ -60,9 +75,16 @@ interface Report {
   checks: Array<{ id: string; status: string; detail?: string }>;
 }
 
-async function report(cwd: string): Promise<Report> {
+async function report(
+  cwd: string,
+  toolPolicy?: EffectivePolicy,
+  layers?: RoleLayerInput[],
+): Promise<Report> {
   const lines: string[] = [];
-  await runDoctorCommand(['--json'], doctorDeps(cwd, lines));
+  await runDoctorCommand(
+    { json: true },
+    doctorDeps(cwd, lines, toolPolicy, layers),
+  );
   return JSON.parse(lines.join('\n')) as Report;
 }
 
@@ -103,6 +125,65 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     expect(
       roles.some((c) => c.id === 'role:planner' && c.status === 'pass'),
     ).toBe(true);
+  });
+
+  // §58 enterprise tool policy (issue #288): `kubic run --role` refuses a
+  // role that declares a denied tool, so doctor must show it red instead of
+  // green — through the real doctor command, over a real `.kubic/roles/`.
+  it('a role declaring an enterprise-denied tool is red; an innocuous one stays green', async () => {
+    const cwd = roleDir(
+      'implementer',
+      'tools: [read, ls, write, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n',
+    );
+    writeFileSync(
+      join(cwd, '.kubic', 'roles', 'planner.md'),
+      '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\nGo.\n',
+    );
+    const denyBash = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    const gated = await report(cwd, denyBash);
+    const failing = gated.checks.filter((c) => c.status === 'fail');
+    expect(failing.map((c) => c.id)).toEqual(['role:implementer']);
+    expect(failing[0]?.detail ?? '').toMatch(
+      /role 'implementer'.*'bash' denied.*enterprise denial holds/,
+    );
+    expect(
+      gated.checks.some((c) => c.id === 'role:planner' && c.status === 'pass'),
+    ).toBe(true);
+    expect(gated.ok).toBe(false);
+    // Control: without the policy the same tree is green.
+    const open = await report(cwd);
+    expect(open.checks.filter((c) => c.status === 'fail')).toEqual([]);
+    expect(open.ok).toBe(true);
+  });
+
+  it('a config [roles.<name>] layer that narrows the denied tool away keeps the role green', async () => {
+    // Doctor judges the role as `kubic run --role` resolves it — document
+    // AFTER the config layers — so a layer replacing the tool list with [read]
+    // passes the enterprise deny instead of being shown red.
+    const cwd = roleDir(
+      'implementer',
+      'tools: [read, ls, write, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n',
+    );
+    const denyBash = resolveEffectivePolicy([
+      { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+    ]).policy;
+    const layers: RoleLayerInput[] = [
+      { layer: 'project', roles: { implementer: { tools: ['read'] } } },
+    ];
+    const layered = await report(cwd, denyBash, layers);
+    expect(layered.checks.filter((c) => c.status === 'fail')).toEqual([]);
+    expect(
+      layered.checks.some(
+        (c) => c.id === 'role:implementer' && c.status === 'pass',
+      ),
+    ).toBe(true);
+    // Control: without the layer the deny turns it red.
+    const bare = await report(cwd, denyBash);
+    expect(
+      bare.checks.filter((c) => c.status === 'fail').map((c) => c.id),
+    ).toEqual(['role:implementer']);
   });
 
   it('an absent role directory is not a failure', async () => {

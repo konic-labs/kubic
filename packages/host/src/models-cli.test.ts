@@ -30,10 +30,48 @@ describe('kubic models (issue #20, slice C)', () => {
     models.setProvider(fauxProvider().provider);
     const lines: string[] = [];
     expect(
-      await runModelsCommand([], { models, out: (l: string) => lines.push(l) }),
+      await runModelsCommand({}, { models, out: (l: string) => lines.push(l) }),
     ).toBe(0);
-    expect(lines.join('\n')).toContain('faux');
-    expect(lines.join('\n')).toMatch(/thinking:/);
+    // A plain (non-TTY) table: header row, then one row per model.
+    expect(lines).toHaveLength(1);
+    const rows = (lines[0] ?? '').split('\n');
+    expect(rows[0]).toMatch(
+      /^PROVIDER\s+MODEL\s+THINKING\s+IN \$\/1M\s+OUT \$\/1M$/,
+    );
+    expect(rows[1]).toMatch(/^faux\s+faux-1\s+/);
+    expect(lines[0]).not.toMatch(/[│┌]/);
+  });
+
+  it('draws a boxed table only in fancy mode', async () => {
+    const models = createModels();
+    models.setProvider(fauxProvider().provider);
+    const lines: string[] = [];
+    await runModelsCommand(
+      {},
+      { models, fancy: true, out: (l: string) => lines.push(l) },
+    );
+    expect(lines.join('\n')).toMatch(/┌/);
+  });
+
+  it('reports an empty catalog on the diagnostics channel, not stdout', async () => {
+    const out: string[] = [];
+    const info: string[] = [];
+    const code = await runModelsCommand(
+      {},
+      {
+        models: createModels(),
+        out: (l: string) => out.push(l),
+        logger: {
+          error: () => undefined,
+          warn: () => undefined,
+          success: () => undefined,
+          info: (message: string) => info.push(message),
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(out).toEqual([]);
+    expect(info.join('\n')).toContain('no usable providers');
   });
 
   it('resolves --model provider/id through the selection chain', async () => {
@@ -42,37 +80,26 @@ describe('kubic models (issue #20, slice C)', () => {
     const fauxId = models.getModels('faux')[0]?.id ?? 'x';
     const lines: string[] = [];
     expect(
-      await runModelsCommand(['--resolve', `faux/${fauxId}`], {
-        models,
-        out: (l: string) => lines.push(l),
-      }),
+      await runModelsCommand(
+        { resolve: `faux/${fauxId}` },
+        {
+          models,
+          out: (l: string) => lines.push(l),
+        },
+      ),
     ).toBe(0);
     expect(lines.join('\n')).toContain(`selected faux/${fauxId}`);
     const bad: string[] = [];
     expect(
-      await runModelsCommand(['--resolve', 'nope/x'], {
-        models,
-        out: (l: string) => bad.push(l),
-      }),
+      await runModelsCommand(
+        { resolve: 'nope/x' },
+        {
+          models,
+          out: (l: string) => bad.push(l),
+        },
+      ),
     ).toBe(1);
     expect(bad.join('\n')).toContain('unknown provider');
-  });
-
-  // Issue #127 review: a starved duplicate --resolve used to be silently
-  // ignored (the first occurrence resolved, exit 0). The shared parser
-  // records the starved occurrence, so the command now refuses it —
-  // fail-closed, pinned here as deliberate.
-  it('refuses a starved duplicate --resolve (needs-value, exit 1)', async () => {
-    const models = createModels();
-    models.setProvider(fauxProvider().provider);
-    const lines: string[] = [];
-    expect(
-      await runModelsCommand(['--resolve', 'faux/faux', '--resolve'], {
-        models,
-        out: (l: string) => lines.push(l),
-      }),
-    ).toBe(1);
-    expect(lines.join('\n')).toContain('error: --resolve needs provider/id');
   });
 
   it('--json parses', async () => {
@@ -80,10 +107,13 @@ describe('kubic models (issue #20, slice C)', () => {
     models.setProvider(fauxProvider().provider);
     const lines: string[] = [];
     expect(
-      await runModelsCommand(['--json'], {
-        models,
-        out: (l: string) => lines.push(l),
-      }),
+      await runModelsCommand(
+        { json: true },
+        {
+          models,
+          out: (l: string) => lines.push(l),
+        },
+      ),
     ).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as Array<{ id: string }>;
     expect(parsed[0]?.id).toBe('faux');
@@ -95,14 +125,30 @@ describe('kubic models (issue #20, slice C)', () => {
       join(dir, 'models.json'),
       JSON.stringify(LOCAL_MODELS_EXAMPLE),
     );
-    const ok = assembleModels(dir);
+    const env = { KUBIC_TRUST_PROJECT: '1' };
+    const home = tmpDir();
+    const ok = await assembleModels(dir, env, { home });
     expect(ok.models.getProvider('local')?.id).toBe('local');
-    expect(ok.note).toContain('local');
-    const empty = assembleModels(tmpDir());
-    expect(empty.note).toBe(null);
+    expect(ok.notes.join('\n')).toContain('local');
+    const empty = await assembleModels(tmpDir(), env, { home });
+    expect(empty.notes).toEqual([]);
     const badDir = tmpDir();
     writeFileSync(join(badDir, 'models.json'), '{nope');
-    const bad = assembleModels(badDir);
-    expect(bad.note).toContain('ignored');
+    const bad = await assembleModels(badDir, env, { home });
+    expect(bad.notes.join('\n')).toContain('ignored');
+  });
+
+  it('adds the faux testing provider only under KUBIC_PROVIDER=faux', async () => {
+    const dir = tmpDir();
+    const home = tmpDir();
+    expect(
+      (await assembleModels(dir, {}, { home })).models.getProvider('faux'),
+    ).toBe(undefined);
+    const faux = await assembleModels(
+      dir,
+      { KUBIC_PROVIDER: 'faux' },
+      { home },
+    );
+    expect(faux.models.getModel('faux', 'echo')?.id).toBe('echo');
   });
 });

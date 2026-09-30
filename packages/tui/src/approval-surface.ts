@@ -33,12 +33,17 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import {
+  APPROVAL_ARMING_MS,
   APPROVAL_DEFAULT_KEYS,
+  APPROVAL_IMMEDIATE_KEY,
   APPROVAL_MIN_WIDTH,
+  APPROVAL_QUIET_MS,
+  APPROVAL_REPEAT_MS,
   approvalKeyConflicts,
+  approvalKeyProblems,
   renderApprovalInline,
   renderApprovalLines,
-  resolveApprovalAction,
+  resolveApprovalKey,
   shouldUseInlineFallback,
 } from './approval-view.js';
 import { sanitizeLaneText } from './lane-cells.js';
@@ -62,6 +67,24 @@ export interface ApprovalSurfaceOptions {
   // request would sit invisible until the operator happened to press a key
   // (the bug the end-to-end test caught: the frame never showed the overlay).
   onChange?: (() => void) | undefined;
+  // Issue #315: the arming delay (APPROVAL_ARMING_MS when absent; 0 turns it
+  // off), the quiet period a swallowed key restarts it with and the window in
+  // which the same decision key counts as a terminal repeat
+  // (APPROVAL_QUIET_MS / APPROVAL_REPEAT_MS when absent; both are off when the
+  // arming delay is 0, which is the test seam), the clock they are measured on,
+  // and the timer that repaints the frame the request arms in. All injectable
+  // so tests are deterministic.
+  armingMs?: number;
+  quietMs?: number;
+  repeatMs?: number;
+  now?: () => number;
+  setTimer?: (ms: number, fire: () => void) => () => void;
+}
+
+function defaultArmTimer(ms: number, fire: () => void): () => void {
+  const timer = setTimeout(fire, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 // Structural request: approval-view.ts's own request type plus nothing. The
@@ -78,6 +101,23 @@ export interface ApprovalSurface {
   // The request currently shown, if any (queued requests are not shown).
   pending(): SurfaceRequest | undefined;
   isShowing(): boolean;
+  // Issue #315: false during the arming window after a request appears —
+  // every decision key but the immediate deny is ignored until then. The
+  // window measures QUIET time: it restarts (for the longer APPROVAL_QUIET_MS)
+  // on every key the modal swallows, and a decision key that repeats the
+  // previous key inside APPROVAL_REPEAT_MS is swallowed as a terminal repeat.
+  isArmed(): boolean;
+  // Issue #316: false while the dialog cannot show the whole command (the
+  // overlay is too short): every allow key is inert then, deny always works.
+  isAllowable(): boolean;
+  // Issue #315: the app dropped a key while a request shows without asking
+  // `decide` (a held-key repeat): that is typing too, so the arming window
+  // restarts. A no-op when nothing shows.
+  noteDroppedKey(): void;
+  // Issue #316: the page of a long command the dialog shows, and the
+  // `v` key that advances it (wrapping back to the first page).
+  commandPage(): number;
+  nextCommandPage(): boolean;
   // Settles every queued and shown request as a deny. Used by the quit path
   // and by the in-flight cancel path, so nothing is left hanging.
   cancelPending(reason?: string): void;
@@ -94,8 +134,14 @@ export interface ApprovalSurface {
   // this when it attaches the overlay, and every surface change calls it so a
   // lane-arrived ask paints a frame instead of waiting for a keypress.
   renderRequest: (() => void) | undefined;
-  // Verifies the resolved key map; throws naming the conflicting key.
-  checkKeys(): boolean;
+  // Issue #316: the app's own answer to "does the shown dialog fit the overlay
+  // it is composited on right now?" (it knows the live terminal size). Absent
+  // means it does — a host that cannot report a size keeps the fixed layout.
+  fitCheck: (() => boolean) | undefined;
+  // Verifies the resolved key map; throws naming the conflicting key, a
+  // prose allow-session key (issue #315), or an approval key that shadows
+  // one of the caller's `reserved` global keys.
+  checkKeys(reserved?: ReadonlyArray<string>): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
   // The answer seat itself (issue #96): field-for-field the host's
   // `SoloPolicyInput.answer` shape (packages/host/src/approvals.ts), typed
@@ -156,20 +202,74 @@ export function createApprovalSurface(
   const hooks: {
     onChange: (() => void) | undefined;
     renderRequest: (() => void) | undefined;
+    fitCheck: (() => boolean) | undefined;
   } = {
     onChange: options.onChange,
     renderRequest: undefined,
+    fitCheck: undefined,
   };
   const queue: PendingAsk[] = [];
   let shown: PendingAsk | undefined;
+  const armingMs = options.armingMs ?? APPROVAL_ARMING_MS;
+  // Both follow the arming delay's off switch: with it at 0 (tests and the
+  // composition root's seam) nothing ever locks.
+  const quietMs = options.quietMs ?? (armingMs === 0 ? 0 : APPROVAL_QUIET_MS);
+  const repeatMs =
+    options.repeatMs ?? (armingMs === 0 ? 0 : APPROVAL_REPEAT_MS);
+  const now = options.now ?? ((): number => performance.now());
+  const setTimer = options.setTimer ?? defaultArmTimer;
+  let shownAt = 0;
+  // How long the current window lasts: the arming delay for a fresh request,
+  // the quiet period once a key was swallowed.
+  let windowMs = armingMs;
+  // The previous key the surface saw, for the terminal-repeat rule.
+  let lastKey: { readonly data: string; readonly at: number } | undefined;
+  let page = 0;
+  let cancelArmTimer: (() => void) | undefined;
+  // Bumped on every (re)start of the window, so a timer that outlived its
+  // window (an injected timer may ignore its cancel) never repaints for it.
+  let armGeneration = 0;
   const notify = (): void => {
     hooks.onChange?.();
     hooks.renderRequest?.();
   };
+  const isArmed = (): boolean =>
+    shown !== undefined && now() - shownAt >= windowMs;
+  // Issue #315: (re)start the arming window and the repaint timer that
+  // unlocks the key hints when it ends.
+  const startArming = (ask: PendingAsk, ms: number): void => {
+    shownAt = now();
+    windowMs = ms;
+    armGeneration += 1;
+    cancelArmTimer?.();
+    cancelArmTimer = undefined;
+    if (ms > 0) {
+      const generation = armGeneration;
+      cancelArmTimer = setTimer(ms, () => {
+        if (shown === ask && armGeneration === generation) notify();
+      });
+    }
+  };
+  // Issue #315: a swallowed key is typing, and typing means the operator is
+  // not answering yet — so the next decision needs a fresh quiet period.
+  // Repaints when this re-locked hints that were showing as live.
+  const restartArming = (): void => {
+    const current = shown;
+    if (current === undefined) return;
+    const wasArmed = isArmed();
+    startArming(current, quietMs);
+    if (wasArmed && quietMs > 0) notify();
+  };
   const showNext = (): void => {
     if (shown !== undefined) return;
     shown = queue.shift();
-    if (shown !== undefined) notify();
+    if (shown === undefined) return;
+    // Issue #315: every request — the next queued one included — starts its
+    // own arming window, and the frame repaints when it arms so the key
+    // hints unlock visibly.
+    page = 0;
+    startArming(shown, armingMs);
+    notify();
   };
   const settle = (ask: PendingAsk, decision: ApprovalDecision): void => {
     if (shown === ask) {
@@ -179,12 +279,38 @@ export function createApprovalSurface(
     }
     ask.resolve(decision);
   };
+  const isAllowable = (): boolean => hooks.fitCheck?.() ?? true;
   const findAction = (data: string): ApprovalAction | undefined => {
     // Classified by approval-view.ts's own resolver, which matches through
     // pi-tui's matchesKey — no raw byte comparison on the input path, so a
     // Kitty-protocol terminal's Esc ('\x1b[27u') resolves like the legacy
     // byte. Deny first is that module's documented precedence.
-    return resolveApprovalAction(data, overrides);
+    const match = resolveApprovalKey(data, overrides);
+    // Issue #315: the same byte again inside the OS auto-repeat window is a
+    // held key, not a new press (legacy terminals flag no repeats). Esc is
+    // exempt — it only ever denies.
+    const at = now();
+    const repeated =
+      lastKey !== undefined &&
+      lastKey.data === data &&
+      at - lastKey.at < repeatMs;
+    lastKey = { data, at };
+    if (match !== undefined) {
+      const immediate = match.key === APPROVAL_IMMEDIATE_KEY;
+      // Inside the arming window only the immediate deny acts; a repeat never
+      // decides; and while the dialog cannot show the whole command (issue
+      // #316) only deny does.
+      if (
+        (immediate || (isArmed() && !repeated)) &&
+        (match.action === 'deny' || isAllowable())
+      ) {
+        return match.action;
+      }
+    }
+    // Not a decision (prose, a global key, or a decision key that came too
+    // soon): the modal swallowed it, so the quiet period starts over.
+    restartArming();
+    return undefined;
   };
   const surface: ApprovalSurface = {
     ask: (request: SurfaceRequest): Promise<ApprovalDecision> => {
@@ -208,6 +334,12 @@ export function createApprovalSurface(
     set renderRequest(next: (() => void) | undefined) {
       hooks.renderRequest = next;
     },
+    get fitCheck(): (() => boolean) | undefined {
+      return hooks.fitCheck;
+    },
+    set fitCheck(next: (() => boolean) | undefined) {
+      hooks.fitCheck = next;
+    },
     decide: (data: string): boolean => {
       const current = shown;
       if (current === undefined) return false;
@@ -218,6 +350,16 @@ export function createApprovalSurface(
     },
     pending: (): SurfaceRequest | undefined => shown?.request,
     isShowing: (): boolean => shown !== undefined,
+    isArmed,
+    isAllowable,
+    noteDroppedKey: restartArming,
+    commandPage: (): number => page,
+    nextCommandPage: (): boolean => {
+      if (shown === undefined) return false;
+      page += 1;
+      notify();
+      return true;
+    },
     cancelPending: (reason?: string): void => {
       const decision: ApprovalDecision = {
         approved: false,
@@ -234,21 +376,31 @@ export function createApprovalSurface(
     renderInline: (width: number): string[] => {
       const current = shown;
       if (current === undefined) return [];
-      return renderApprovalInline(current.request, width);
+      return renderApprovalInline(current.request, width, {
+        armed: isArmed(),
+        commandPage: page,
+        keys: surface.keys(),
+      });
     },
     renderOverlayBody: (width: number): string[] => {
       const current = shown;
       if (current === undefined) return [];
-      return renderApprovalLines(current.request, width);
+      return renderApprovalLines(current.request, width, {
+        armed: isArmed(),
+        commandPage: page,
+        keys: surface.keys(),
+      });
     },
     usesInlineFallback: (width: number): boolean =>
       shouldUseInlineFallback(width),
-    checkKeys: (): boolean => {
+    checkKeys: (reserved?: ReadonlyArray<string>): boolean => {
       const conflicts = approvalKeyConflicts(overrides);
       const first = conflicts[0];
       if (first !== undefined) {
         throw new Error(`approval key conflict: ${first.key}`);
       }
+      const problem = approvalKeyProblems(overrides, reserved)[0];
+      if (problem !== undefined) throw new Error(problem);
       return true;
     },
     keys: (): Record<ApprovalAction, readonly string[]> => ({

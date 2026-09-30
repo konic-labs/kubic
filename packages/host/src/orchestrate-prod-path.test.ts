@@ -99,6 +99,7 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     });
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -148,6 +149,7 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     });
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -196,6 +198,7 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     });
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -228,33 +231,33 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
 });
 
 describe('prod orchestrate path: stale branch without a worktree (issue #85)', () => {
-  it('fails closed with spawn_failed and no raw ENOENT when the worktree is gone', async () => {
+  it('fails closed with a named code and no raw ENOENT when the worktree is gone', async () => {
     const root = await initRepo();
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     // The branch survives, the worktree directory does not — the shape a
     // `rm -rf .kubic && git worktree prune` leaves behind.
-    await gitOrThrow(root, ['branch', 'kubic/worker-1']);
+    await gitOrThrow(root, ['branch', 'kubic/prodsess/worker-1']);
     const lines: string[] = [];
     const deps = await orchestrateDepsWithDefaults({
       out: (line) => lines.push(line),
+      err: (line) => lines.push(line),
       cwd: root,
       sessionsRoot,
     });
     const code = await runOrchestrateCommand(
-      [
-        '-p',
-        'say hi',
-        '--agents',
-        'worker-1',
-        '--yes',
-        '--session',
-        'prodsess',
-      ],
+      {
+        prompt: 'say hi',
+        agents: ['worker-1'],
+        yes: true,
+        session: 'prodsess',
+      },
       deps,
     );
     const text = lines.join('\n');
     expect(code).toBe(1);
-    expect(text).toMatch(/code=spawn_failed/);
+    // A fresh (non --resume) run never reuses its session's leftovers
+    // (issue #144): the named refusal, not a spawn into a phantom tree.
+    expect(text).toMatch(/code=worktree_exists/);
     // A raw ENOENT crash (unhandled 'error' event, stack trace, no §78
     // code) is exactly what this pins against.
     expect(text).not.toMatch(/ENOENT/);
@@ -268,6 +271,7 @@ describe('prod orchestrate path: stale branch without a worktree (issue #85)', (
     const env = new NodeExecutionEnv(root);
     const added = await addWorktree(env, root, 'worker-1', {
       sessionId: 'prodsess',
+      ownerSession: 'prodsess',
     });
     // Same call again: addWorktree refuses (`already_exists`) and the
     // resume tolerance must hand back the live worktree. No provider is
@@ -275,32 +279,37 @@ describe('prod orchestrate path: stale branch without a worktree (issue #85)', (
     // never at a phantom worktree.
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
-    const worktree = await deps.ensureWorktree('worker-1');
+    const worktree = await deps.ensureWorktree('worker-1', {
+      sessionId: 'prodsess',
+      resume: true,
+    });
     // macOS: /var is a symlink to /private/var and git reports the resolved
     // toplevel, so compare resolved paths — the worktree is the same one.
     expect(realpathSync(worktree.path)).toBe(realpathSync(added.path));
-    expect(worktree.branch).toBe('kubic/worker-1');
+    expect(worktree.branch).toBe('kubic/prodsess/worker-1');
   });
 
   it('names the missing worktree with its own worktree error code', async () => {
     const root = await initRepo();
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
-    await gitOrThrow(root, ['branch', 'kubic/worker-1']);
+    await gitOrThrow(root, ['branch', 'kubic/prodsess/worker-1']);
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
-    const error = (await Promise.resolve(deps.ensureWorktree('worker-1')).catch(
-      (e: unknown) => e,
-    )) as WorktreeError;
+    const error = (await Promise.resolve(
+      deps.ensureWorktree('worker-1', { sessionId: 'prodsess', resume: true }),
+    ).catch((e: unknown) => e)) as WorktreeError;
     expect(error.code).toBe('worktree_missing');
     expect(error.exitCode).toBe(1);
     expect(error.message).toMatch(/worktree/i);
-    expect(error.message).toMatch(/kubic\/worker-1/);
+    expect(error.message).toMatch(/kubic\/prodsess\/worker-1/);
   });
 });
 
@@ -310,6 +319,7 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -354,6 +364,7 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
       const lines: string[] = [];
       await orchestrateDepsWithDefaults({
         out: () => undefined,
+        err: () => undefined,
         debug: (line) => lines.push(line),
         cwd: root,
         sessionsRoot,
@@ -375,6 +386,7 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     env.fs.writeFile(join('.kubic', '.gitignore'), 'wt/\n');
     await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -395,6 +407,7 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     env.fs.writeFile(join('.kubic', '.gitignore'), '*\n');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -417,6 +430,7 @@ describe('prod orchestrate path: kubic state never dirties the tree (issue #85)'
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -458,6 +472,7 @@ describe('prod orchestrate path: the child that cannot attach (issue #85)', () =
     });
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });
@@ -509,6 +524,7 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
       orchestrator: { root: '.kubic-custom/wt' },
@@ -534,11 +550,15 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
 
     // `kubic clean` reads the same value: what orchestrate created is planned.
     const out: string[] = [];
-    const code = await runCleanCommand(['--dry-run', '--json'], {
-      env: new NodeExecutionEnv(root),
-      out: (line) => out.push(line),
-      worktreeRoot: '.kubic-custom/wt',
-    });
+    const code = await runCleanCommand(
+      { dryRun: true, json: true },
+      {
+        env: new NodeExecutionEnv(root),
+        out: (line) => out.push(line),
+        err: (line) => out.push(line),
+        worktreeRoot: '.kubic-custom/wt',
+      },
+    );
     expect(code).toBe(0);
     const plan = JSON.parse(out.join('\n')) as {
       worktrees: { path: string }[];
@@ -548,10 +568,14 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     // The default scope does NOT see it — the configured value is what makes
     // clean find the set, not an accidental hardcode.
     const defaultOut: string[] = [];
-    await runCleanCommand(['--dry-run', '--json'], {
-      env: new NodeExecutionEnv(root),
-      out: (line) => defaultOut.push(line),
-    });
+    await runCleanCommand(
+      { dryRun: true, json: true },
+      {
+        env: new NodeExecutionEnv(root),
+        out: (line) => defaultOut.push(line),
+        err: (line) => defaultOut.push(line),
+      },
+    );
     const defaultPlan = JSON.parse(defaultOut.join('\n')) as {
       worktrees: unknown[];
     };
@@ -563,6 +587,7 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     const sessionsRoot = scratchRoot('kubic-orch-sessions-');
     const deps = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
       orchestrator: { maxWorkers: 7 },
@@ -585,6 +610,7 @@ describe('prod orchestrate path: the configured worktree root (issue #133)', () 
     // Unset keeps the shipped default cap of four (no scheduler built).
     const bare = await orchestrateDepsWithDefaults({
       out: () => undefined,
+      err: () => undefined,
       cwd: root,
       sessionsRoot,
     });

@@ -4,7 +4,13 @@
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
-import { walkFiles } from './walk.js';
+import {
+  WALK_MAX_DEPTH,
+  WALK_MAX_ENTRIES,
+  walkCapNotice,
+  walkDepthNotice,
+  walkFiles,
+} from './walk.js';
 
 export const FIND_DEFAULT_MAX = 100;
 
@@ -19,6 +25,8 @@ export interface FindResult {
   root: string;
   paths: string[];
   truncated: boolean;
+  /** Present when a cap (walk or maxResults) stopped the listing. */
+  notice?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,16 +80,23 @@ export function validateFindArgs(raw: unknown): FindArgs {
 
 export const findOperation: Operation<FindArgs, FindResult> = {
   name: 'find',
-  description: 'Find files and directories recursively with filters',
+  // Walk rules and caps (issue #172), stated so a skipped or cut listing is
+  // never mistaken for "nothing there".
+  description: `Find files and directories recursively under root (default "."), filtered by nameContains (substring) and type ("file" or "dir"). Returns at most maxResults entries (default 100) and says when the list was cut. The walk skips .git, node_modules and paths a .gitignore excludes, and never follows or lists symlinks; it visits at most ${WALK_MAX_ENTRIES} entries and ${WALK_MAX_DEPTH} directory levels, and the result's notice names the cap that stopped it.`,
   replay: 'safe',
   validateArgs: validateFindArgs,
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {
     const root = args.root ?? '.';
     const max = args.maxResults ?? FIND_DEFAULT_MAX;
-    const { entries, hitCap } = walkFiles(ctx.env.fs, root);
+    const walk = walkFiles(ctx.env.fs, root);
     const paths: string[] = [];
-    let truncated = hitCap;
-    for (const entry of entries) {
+    let truncated = walk.hitCap || walk.hitDepth;
+    let notice = walk.hitCap
+      ? walkCapNotice(walk.capAt)
+      : walk.hitDepth
+        ? walkDepthNotice(walk.depthAt)
+        : undefined;
+    for (const entry of walk.entries) {
       if (args.type === 'file' && entry.isDirectory) continue;
       if (args.type === 'dir' && !entry.isDirectory) continue;
       if (
@@ -91,10 +106,11 @@ export const findOperation: Operation<FindArgs, FindResult> = {
         continue;
       if (paths.length >= max) {
         truncated = true;
+        notice ??= `result cap ${max} reached (maxResults); results may be incomplete`;
         break;
       }
       paths.push(entry.path);
     }
-    return { root, paths, truncated };
+    return { root, paths, truncated, notice };
   },
 };

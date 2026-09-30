@@ -141,6 +141,79 @@ export function checkGrantable(
   return { agree: true };
 }
 
+// §40.2 (issue #166): a level the tool set cannot express is reported as
+// unsupported, never silently widened. Each entry names the class, the
+// declared level, the level the lane actually enforces, and why.
+export interface UnsupportedLevel {
+  class: keyof PermissionClasses;
+  level: string;
+  enforcedAs: string;
+  reason: string;
+}
+
+// The network level the guards enforce. `allowlist` carries no domain list
+// (PermissionClasses has nowhere to put one), and an allowlist naming no
+// domains allows nothing — so it is enforced as `none`: every network verb
+// is blocked by the guard and raises the network approval trigger. Never
+// the unrestricted `full` it used to behave as (§40.3 false confidence).
+export function effectiveNetworkLevel(level: NetworkLevel): NetworkLevel {
+  return level === 'allowlist' ? 'none' : level;
+}
+
+export function checkExpressible(
+  classes: PermissionClasses,
+): UnsupportedLevel[] {
+  const found: UnsupportedLevel[] = [];
+  if (classes.filesystem === 'full') {
+    found.push({
+      class: 'filesystem',
+      level: 'full',
+      enforcedAs: 'workspace-write',
+      reason:
+        'no outside-workspace write tool exists; writes stay confined to the workspace (outside paths raise outside-write)',
+    });
+  }
+  if (classes.network === 'allowlist') {
+    found.push({
+      class: 'network',
+      level: 'allowlist',
+      enforcedAs: 'none',
+      reason:
+        'no domain list can be supplied, and an empty allowlist allows nothing; every network command is blocked and raises the network trigger',
+    });
+  }
+  if (classes.git === 'full') {
+    found.push({
+      class: 'git',
+      level: 'full',
+      enforcedAs: 'workspace',
+      reason:
+        'the git tools only act inside the workspace repository (no push/init tool); full grants nothing beyond workspace',
+    });
+  }
+  if (classes.credentials === 'allowlist') {
+    found.push({
+      class: 'credentials',
+      level: 'allowlist',
+      enforcedAs: 'none',
+      reason:
+        'no credential list can be supplied and no credential tool exists; no credential is granted',
+    });
+  }
+  return found;
+}
+
+// One human line per unsupported level, shared by doctor and `kubic policy`
+// so the two surfaces name the same thing in the same words.
+export function describeUnsupported(entry: {
+  readonly class: string;
+  readonly level: string;
+  readonly enforcedAs: string;
+  readonly reason: string;
+}): string {
+  return `${entry.class} '${entry.level}' is unsupported — enforced as '${entry.enforcedAs}': ${entry.reason}`;
+}
+
 export function validateClasses(input: unknown): PermissionClasses {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new PolicyValidationError('permission classes must be an object');

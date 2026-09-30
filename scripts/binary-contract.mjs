@@ -8,7 +8,8 @@
 // (session:/journal:/usage:/trajectory:), so the documented failure path
 // is pinned end to end. Issue #128 adds the front-door contract: root
 // `--help`/`-h` print the listing and exit 0 while the bare invocation
-// keeps exit 1 (same line), a stubbed old runtime hits the launcher's
+// off a TTY keeps exit 1 (same line; on an interactive terminal it opens
+// the TUI, §78/§80 — the probes run over pipes, so never a TTY), a stubbed old runtime hits the launcher's
 // named Node guard before any dist import, and an injected command
 // failure (reached only through its contract-only env gate) surfaces as
 // one `error: <message>` line (full stack only under KUBIC_DEBUG=1).
@@ -48,10 +49,11 @@ export const DOCTOR_PROVIDER_EXIT = 6;
 
 // The root dispatcher's usage line (issue #128): one string serves
 // `kubic --help` / `kubic -h` (exit 0 — help is success, §78) and the
-// bare invocation (exit 1 — POSIX usage-on-no-args). Pinned literally so
+// bare invocation off a TTY (exit 1 — POSIX usage-on-no-args; a bare
+// `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
 // a command-list drift fails here instead of shipping stale help.
 export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
@@ -141,7 +143,9 @@ export function binaryContract({ distPresent, expectedLine, run }) {
   }
 
   // Issue #128: help at the root is success, and the bare invocation keeps
-  // the POSIX usage-on-no-args posture — one line, two exit codes.
+  // the POSIX usage-on-no-args posture — one line, two exit codes. The
+  // probes spawn over pipes (non-TTY), which is exactly the scripted case
+  // that must keep exit 1; the TTY → TUI branch is pinned in dispatch.test.
   for (const [label, probe] of [
     ['kubic --help', run(['--help'])],
     ['kubic -h', run(['-h'])],
@@ -172,7 +176,7 @@ export function binaryContract({ distPresent, expectedLine, run }) {
   } else {
     if (bare.code !== 1) {
       problems.push(
-        `\`kubic\` with no command exited ${bare.code} (expected 1 — usage-on-no-args is the documented POSIX posture)`,
+        `\`kubic\` with no command exited ${bare.code} (expected 1 — off a TTY, usage-on-no-args is the documented POSIX posture)`,
       );
     }
     const printed = bare.stdout.trimEnd();
@@ -368,9 +372,17 @@ export function binaryContract({ distPresent, expectedLine, run }) {
   for (const kind of REF_KINDS) {
     if (kind === 'session') continue;
     const value = refValue(headless.stdout, kind);
+    // The trajectory ref is the written §46 file (issue #383): even this
+    // provider-less run settles with a session, so it names
+    // <sessions-root>/<id>/trajectory.json rather than a `trajectory:<id>`
+    // string that resolves to nothing.
+    const expected =
+      kind === 'trajectory'
+        ? (ref) => ref.endsWith(`/${session}/trajectory.json`)
+        : (ref) => ref === `${kind}:${session}`;
     if (value === null) {
       problems.push(`\`kubic run -p\` missing the \`${kind}:\` ref`);
-    } else if (session !== null && value !== `${kind}:${session}`) {
+    } else if (session !== null && !expected(value)) {
       problems.push(
         `\`kubic run -p\` \`${kind}:\` ref ${JSON.stringify(value)} does not point at session ${session}`,
       );

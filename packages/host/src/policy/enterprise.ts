@@ -7,6 +7,7 @@
 // modified here — this module owns only the enterprise overlay and its
 // evaluation. Faux-only, zero network; no node:fs (FileBridge owns I/O).
 
+import type { KubicConfig } from '../config/config.js';
 import { containsSecretShape } from './secret-shapes.js';
 
 export const POLICY_LAYERS = [
@@ -51,6 +52,12 @@ export interface ModelsPolicy {
   providers?: string[];
   ids?: string[];
   thinking?: string;
+  /**
+   * §58 `allowed_models` (issue #288): provider-qualified patterns
+   * (`provider/id`, `*` wildcard) or bare model ids. Kept beside the exact
+   * `providers`/`ids` lists so both vocabularies meet in one policy.
+   */
+  allowed?: string[];
 }
 
 export type FilesystemLevel = 'none' | 'read' | 'workspace-write' | 'full';
@@ -68,6 +75,8 @@ export interface CredentialsPolicy {
 export interface DataPolicy {
   retentionDays?: number;
   redactSecrets?: boolean;
+  /** §58 `data_policy` (issue #288): carried, reported, not enforced yet. */
+  policy?: string;
 }
 
 export type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
@@ -75,6 +84,8 @@ export type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
 export interface LoggingPolicy {
   level?: LoggingLevel;
   destinations?: string[];
+  /** §58 `logging_policy` (issue #288): carried, reported, not enforced yet. */
+  policy?: string;
 }
 
 export interface AgentPolicy {
@@ -111,12 +122,20 @@ export interface PolicyInput {
 }
 
 export interface EffectivePolicy {
-  tools: { allow: string[] | undefined; deny: string[] };
+  tools: {
+    allow: string[] | undefined;
+    deny: string[];
+    /** The layer that set the effective allow list (undefined: none set). */
+    allowSource: PolicyLayer | undefined;
+    /** Normalized tool name → the layer whose deny named it (highest wins). */
+    denySources: Record<string, PolicyLayer>;
+  };
   network: { mode: NetworkMode | undefined; domains: string[] | undefined };
   models: {
     providers: string[] | undefined;
     ids: string[] | undefined;
     thinking: string | undefined;
+    allowed: string[] | undefined;
   };
   filesystem: {
     level: FilesystemLevel | undefined;
@@ -129,10 +148,12 @@ export interface EffectivePolicy {
   data: {
     retentionDays: number | undefined;
     redactSecrets: boolean | undefined;
+    policy: string | undefined;
   };
   logging: {
     level: LoggingLevel | undefined;
     destinations: string[] | undefined;
+    policy: string | undefined;
   };
   agent: { maxWorkers: number | undefined; maxCostUsd: number | undefined };
   audit: { sinks: AuditSinkSpec[] };
@@ -216,6 +237,36 @@ const FILESYSTEM_LEVELS: readonly string[] = [
 const LOGGING_LEVELS: readonly string[] = ['error', 'warn', 'info', 'debug'];
 
 const SINK_KINDS: readonly string[] = ['syslog', 'file', 'memory'];
+
+// §58 `allowed_models` patterns (issue #288): `provider/id`, `provider/*`,
+// a bare id, or `*` globs. Each segment is non-empty and there is at most
+// one slash, so a pattern can never be a typo that matches nothing while
+// looking like an allow.
+function modelPatternList(value: unknown, path: string): string[] | undefined {
+  const entries = stringArray(value, path);
+  if (entries === undefined) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const slash = entry.indexOf('/');
+    const provider = slash === -1 ? undefined : entry.slice(0, slash);
+    const id = slash === -1 ? entry : entry.slice(slash + 1);
+    if (
+      id === '' ||
+      (provider !== undefined && provider === '') ||
+      id.includes('/')
+    ) {
+      throw new PolicyError(
+        `'${path}' must be 'provider/id', 'provider/*' or a bare model id (got ${JSON.stringify(entry)})`,
+      );
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      out.push(entry);
+    }
+  }
+  return out;
+}
 
 function optBooleanLeaf(
   record: Record<string, unknown>,
@@ -373,7 +424,7 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
     }
     checkNoUnknown(
       models,
-      new Set(['providers', 'ids', 'thinking']),
+      new Set(['providers', 'ids', 'thinking', 'allowed']),
       'models',
       layer,
     );
@@ -391,6 +442,7 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
       providers: stringArray(models.providers, `${layer}.models.providers`),
       ids: stringArray(models.ids, `${layer}.models.ids`),
       ...(thinking === undefined ? {} : { thinking }),
+      allowed: modelPatternList(models.allowed, `${layer}.models.allowed`),
     };
   }
   const filesystem = raw.filesystem;
@@ -453,10 +505,19 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
     }
     checkNoUnknown(
       data,
-      new Set(['retentionDays', 'redactSecrets']),
+      new Set(['retentionDays', 'redactSecrets', 'policy']),
       'data',
       layer,
     );
+    const dataPolicy = data.policy;
+    if (
+      dataPolicy !== undefined &&
+      (typeof dataPolicy !== 'string' || dataPolicy === '')
+    ) {
+      throw new PolicyError(
+        `policy layer '${layer}': 'data.policy' must be a non-empty string`,
+      );
+    }
     out.data = {
       retentionDays: optNumberLeaf(
         data,
@@ -468,6 +529,7 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
         'redactSecrets',
         `${layer}.data.redactSecrets`,
       ),
+      ...(dataPolicy === undefined ? {} : { policy: dataPolicy }),
     };
   }
   const logging = raw.logging;
@@ -479,7 +541,7 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
     }
     checkNoUnknown(
       logging,
-      new Set(['level', 'destinations']),
+      new Set(['level', 'destinations', 'policy']),
       'logging',
       layer,
     );
@@ -492,12 +554,22 @@ function validateLayerPolicy(raw: unknown, layer: string): LayerPolicy {
         `policy layer '${layer}': invalid logging level ${JSON.stringify(level)}`,
       );
     }
+    const loggingPolicy = logging.policy;
+    if (
+      loggingPolicy !== undefined &&
+      (typeof loggingPolicy !== 'string' || loggingPolicy === '')
+    ) {
+      throw new PolicyError(
+        `policy layer '${layer}': 'logging.policy' must be a non-empty string`,
+      );
+    }
     out.logging = {
       ...(level === undefined ? {} : { level: level as LoggingLevel }),
       destinations: stringArray(
         logging.destinations,
         `${layer}.logging.destinations`,
       ),
+      ...(loggingPolicy === undefined ? {} : { policy: loggingPolicy }),
     };
   }
   const agent = raw.agent;
@@ -552,20 +624,25 @@ export function resolveEffectivePolicy(
   const overriddenAttempts: string[] = [];
   let allow: string[] | undefined;
   let allowSetter = '';
+  let allowSource: PolicyLayer | undefined;
   const deny = new Set<string>();
+  const denySources: Record<string, PolicyLayer> = {};
   let mode: NetworkMode | undefined;
   let domains: string[] | undefined;
   let providers: string[] | undefined;
   let modelIds: string[] | undefined;
   let thinking: string | undefined;
+  let modelAllowed: string[] | undefined;
   let fsLevel: FilesystemLevel | undefined;
   let fsRoots: string[] | undefined;
   let requireBroker: boolean | undefined;
   let denyLocal: boolean | undefined;
   let retentionDays: number | undefined;
   let redactSecrets: boolean | undefined;
+  let dataPolicy: string | undefined;
   let logLevel: LoggingLevel | undefined;
   let logDestinations: string[] | undefined;
+  let loggingPolicy: string | undefined;
   let maxWorkers: number | undefined;
   let maxCostUsd: number | undefined;
   let sinks: AuditSinkSpec[] | undefined;
@@ -589,12 +666,16 @@ export function resolveEffectivePolicy(
   for (const input of ordered) {
     const parsed = validateLayerPolicy(input.policy, input.layer);
     if (parsed.tools?.deny !== undefined) {
-      for (const tool of parsed.tools.deny) deny.add(tool);
+      for (const tool of parsed.tools.deny) {
+        if (!(tool in denySources)) denySources[tool] = input.layer;
+        deny.add(tool);
+      }
     }
     if (parsed.tools?.allow !== undefined) {
       if (allow === undefined) {
         allow = [...parsed.tools.allow];
         allowSetter = input.layer;
+        allowSource = input.layer;
       } else if (JSON.stringify(allow) !== JSON.stringify(parsed.tools.allow)) {
         overriddenAttempts.push(
           `${input.layer}.tools.allow overridden by ${allowSetter}`,
@@ -646,6 +727,15 @@ export function resolveEffectivePolicy(
       () => thinking,
       (v) => {
         thinking = v;
+      },
+    );
+    take(
+      input.layer,
+      'models.allowed',
+      parsed.models?.allowed,
+      () => modelAllowed,
+      (v) => {
+        modelAllowed = [...v];
       },
     );
     take(
@@ -704,6 +794,15 @@ export function resolveEffectivePolicy(
     );
     take(
       input.layer,
+      'data.policy',
+      parsed.data?.policy,
+      () => dataPolicy,
+      (v) => {
+        dataPolicy = v;
+      },
+    );
+    take(
+      input.layer,
       'logging.level',
       parsed.logging?.level,
       () => logLevel,
@@ -718,6 +817,15 @@ export function resolveEffectivePolicy(
       () => logDestinations,
       (v) => {
         logDestinations = [...v];
+      },
+    );
+    take(
+      input.layer,
+      'logging.policy',
+      parsed.logging?.policy,
+      () => loggingPolicy,
+      (v) => {
+        loggingPolicy = v;
       },
     );
     take(
@@ -751,16 +859,20 @@ export function resolveEffectivePolicy(
   // A lower-layer allow that names an enterprise-denied tool is a rejected
   // override attempt even though allow/deny are separate leaves.
   const effective: EffectivePolicy = {
-    tools: { allow, deny: [...deny].sort() },
+    tools: { allow, deny: [...deny].sort(), allowSource, denySources },
     network: { mode, domains },
-    models: { providers, ids: modelIds, thinking },
+    models: { providers, ids: modelIds, thinking, allowed: modelAllowed },
     filesystem: { level: fsLevel, roots: fsRoots },
     credentials: {
       requireCredentialBroker: requireBroker ?? false,
       denyLocalCredentials: denyLocal ?? false,
     },
-    data: { retentionDays, redactSecrets },
-    logging: { level: logLevel, destinations: logDestinations },
+    data: { retentionDays, redactSecrets, policy: dataPolicy },
+    logging: {
+      level: logLevel,
+      destinations: logDestinations,
+      policy: loggingPolicy,
+    },
     agent: { maxWorkers, maxCostUsd },
     audit: { sinks: sinks ?? [] },
   };
@@ -776,6 +888,104 @@ export function resolveEffectivePolicy(
     }
   }
   return { policy: effective, overriddenAttempts };
+}
+
+// §58 → engine vocabulary (issue #288): the `[policy]` section's flat keys
+// become the LayerPolicy leaves `resolveEffectivePolicy` merges. The two
+// spellings that differ are reconciled here, in one place:
+//   network_policy = "proxy"           → network.mode = 'allowlist'
+//   filesystem_policy = "workspace-only" → filesystem.level = 'workspace-write'
+// The engine names are accepted in config too, so either vocabulary loads.
+// `[[audit]]` is deliberately not translated: the engine's AuditSinkSpec has
+// no level field and the syslog sink is a named follow-up, so the config
+// keeps the parsed table for that work while this bridge stays honest.
+const NETWORK_POLICY_MODES: Record<string, NetworkMode> = {
+  proxy: 'allowlist',
+  none: 'none',
+  allowlist: 'allowlist',
+  full: 'full',
+};
+
+const FILESYSTEM_POLICY_LEVELS: Record<string, FilesystemLevel> = {
+  'workspace-only': 'workspace-write',
+  none: 'none',
+  read: 'read',
+  'workspace-write': 'workspace-write',
+  full: 'full',
+};
+
+export function layerPolicyFromConfig(config: KubicConfig): LayerPolicy {
+  const p = config.policy;
+  if (p === undefined) return {};
+  const out: LayerPolicy = {};
+  if (p.allowedTools !== undefined || p.deniedTools !== undefined) {
+    out.tools = {
+      ...(p.allowedTools === undefined ? {} : { allow: [...p.allowedTools] }),
+      ...(p.deniedTools === undefined ? {} : { deny: [...p.deniedTools] }),
+    };
+  }
+  if (p.allowedProviders !== undefined || p.allowedModels !== undefined) {
+    out.models = {
+      ...(p.allowedProviders === undefined
+        ? {}
+        : { providers: [...p.allowedProviders] }),
+      ...(p.allowedModels === undefined
+        ? {}
+        : { allowed: [...p.allowedModels] }),
+    };
+  }
+  if (p.networkPolicy !== undefined || p.allowedDomains !== undefined) {
+    let mode: NetworkMode | undefined;
+    if (p.networkPolicy !== undefined) {
+      mode = NETWORK_POLICY_MODES[p.networkPolicy];
+      if (mode === undefined) {
+        throw new PolicyError(
+          `'policy.network_policy' must be one of ${Object.keys(NETWORK_POLICY_MODES).join(', ')} (got ${JSON.stringify(p.networkPolicy)})`,
+        );
+      }
+    }
+    out.network = {
+      ...(mode === undefined ? {} : { mode }),
+      ...(p.allowedDomains === undefined
+        ? {}
+        : { domains: [...p.allowedDomains] }),
+    };
+  }
+  if (p.filesystemPolicy !== undefined) {
+    const level = FILESYSTEM_POLICY_LEVELS[p.filesystemPolicy];
+    if (level === undefined) {
+      throw new PolicyError(
+        `'policy.filesystem_policy' must be one of ${Object.keys(FILESYSTEM_POLICY_LEVELS).join(', ')} (got ${JSON.stringify(p.filesystemPolicy)})`,
+      );
+    }
+    out.filesystem = { level };
+  }
+  if (
+    p.requireCredentialBroker !== undefined ||
+    p.denyLocalCredentials !== undefined
+  ) {
+    out.credentials = {
+      ...(p.requireCredentialBroker === undefined
+        ? {}
+        : { requireCredentialBroker: p.requireCredentialBroker }),
+      ...(p.denyLocalCredentials === undefined
+        ? {}
+        : { denyLocalCredentials: p.denyLocalCredentials }),
+    };
+  }
+  if (p.dataPolicy !== undefined) out.data = { policy: p.dataPolicy };
+  if (p.loggingPolicy !== undefined) out.logging = { policy: p.loggingPolicy };
+  if (p.agentPolicy !== undefined) {
+    out.agent = {
+      ...(p.agentPolicy.maxAgents === undefined
+        ? {}
+        : { maxWorkers: p.agentPolicy.maxAgents }),
+      ...(p.agentPolicy.maxCostUsd === undefined
+        ? {}
+        : { maxCostUsd: p.agentPolicy.maxCostUsd }),
+    };
+  }
+  return out;
 }
 
 // Deny-by-default: a denied tool is never allowed; an unlisted tool is
@@ -794,14 +1004,41 @@ export function isToolAllowed(policy: EffectivePolicy, tool: string): boolean {
   );
 }
 
+// The LANE's enterprise gate (issue #288): the effective policy can only
+// narrow what the lane's classes/roles already allow. It denies a named
+// denied tool always, and — when the enterprise layer configured an allow
+// list — anything outside it; with NO allow list configured the enterprise
+// layer says nothing about the tool and the lane's own allowlist decides.
+// (`isToolAllowed` keeps the engine's deny-by-default reading for callers
+// that merge an explicit allowlist, like `kubic policy`.)
+export function isToolAllowedByEnterprise(
+  policy: EffectivePolicy,
+  tool: string,
+): boolean {
+  const normalized = normalizeToolName(tool);
+  if (
+    policy.tools.deny.some((denied) => normalizeToolName(denied) === normalized)
+  ) {
+    return false;
+  }
+  if (policy.tools.allow === undefined) return true;
+  return policy.tools.allow.some(
+    (allowed) => normalizeToolName(allowed) === normalized,
+  );
+}
+
 // A denied tool is not re-enableable by project, role, or model: any grant
-// path funnels through this gate and the enterprise denial holds.
+// path funnels through this gate and the enterprise denial holds. The
+// predicate is the LANE's (`isToolAllowedByEnterprise`, issue #288): a deny
+// list narrows and an absent allow list says nothing about a tool — the
+// engine's deny-by-default reading (`isToolAllowed`) would refuse every role
+// under a deny-only policy while the lane gate still admits its tools.
 export function assertToolGrantable(
   policy: EffectivePolicy,
   tool: string,
   requester: { layer: string; role?: string; model?: string },
 ): void {
-  if (isToolAllowed(policy, tool)) return;
+  if (isToolAllowedByEnterprise(policy, tool)) return;
   const who =
     requester.role !== undefined
       ? `role '${requester.role}'`
@@ -826,14 +1063,72 @@ export function isNetworkAllowed(
   return policy.network.domains?.includes(host) ?? false;
 }
 
+// §58 `allowed_models` matching (issue #288): `*` globs inside an id segment
+// (or a whole segment), `provider/id`, or a bare id that matches across
+// providers. A pattern with a provider segment only matches that provider —
+// so `faux/*` can never widen to `other/*`.
+function globMatches(pattern: string, value: string): boolean {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replaceAll('*', '.*');
+  return new RegExp(`^${escaped}$`).test(value);
+}
+
+function patternMatchesProvider(pattern: string, provider: string): boolean {
+  const slash = pattern.indexOf('/');
+  if (slash === -1) return true;
+  return globMatches(pattern.slice(0, slash), provider);
+}
+
+function patternMatchesModel(
+  pattern: string,
+  provider: string,
+  id: string,
+): boolean {
+  const slash = pattern.indexOf('/');
+  if (slash === -1) return globMatches(pattern, id);
+  return (
+    globMatches(pattern.slice(0, slash), provider) &&
+    globMatches(pattern.slice(slash + 1), id)
+  );
+}
+
+// Whether the layer configured a tool gate at all. An absent [policy]
+// section (or one that names only models) must not deny every tool by
+// accident: the lane gate is only installed when this is true.
+export function hasToolPolicy(policy: EffectivePolicy): boolean {
+  return policy.tools.allow !== undefined || policy.tools.deny.length > 0;
+}
+
+// Same question for models: no allowlist configured means no model gate.
+export function hasModelPolicy(policy: EffectivePolicy): boolean {
+  return (
+    policy.models.providers !== undefined ||
+    policy.models.ids !== undefined ||
+    policy.models.allowed !== undefined
+  );
+}
+
 // Deny-by-default for models: an unlisted provider is never allowed; an
-// unlisted model id is allowed only when no id allowlist is set.
+// unlisted model id is allowed only when no id allowlist is set. §58
+// `allowed` patterns (issue #288) add provider-qualified matches; every
+// configured list applies (intersection), never widens.
 export function isProviderAllowed(
   policy: EffectivePolicy,
   provider: string,
 ): boolean {
-  if (policy.models.providers === undefined) return false;
-  return policy.models.providers.includes(provider);
+  if (
+    policy.models.providers !== undefined &&
+    !policy.models.providers.includes(provider)
+  ) {
+    return false;
+  }
+  if (policy.models.allowed !== undefined) {
+    return policy.models.allowed.some((pattern) =>
+      patternMatchesProvider(pattern, provider),
+    );
+  }
+  return policy.models.providers !== undefined;
 }
 
 export function isModelAllowed(
@@ -842,8 +1137,15 @@ export function isModelAllowed(
   id: string,
 ): boolean {
   if (!isProviderAllowed(policy, provider)) return false;
-  if (policy.models.ids === undefined) return true;
-  return policy.models.ids.includes(id);
+  if (policy.models.ids !== undefined && !policy.models.ids.includes(id)) {
+    return false;
+  }
+  if (policy.models.allowed !== undefined) {
+    return policy.models.allowed.some((pattern) =>
+      patternMatchesModel(pattern, provider, id),
+    );
+  }
+  return true;
 }
 
 export interface BrokerSecret {
@@ -858,6 +1160,14 @@ export interface BrokeredEnv {
   sentinels: Record<string, string[]>;
 }
 
+// The only policy input brokering reads. Kept structurally narrow (issue
+// #200) so a caller that resolved one worker's credentials can broker them
+// without constructing a whole EnterprisePolicy — an EffectivePolicy still
+// satisfies it exactly.
+export interface CredentialBrokerPolicy {
+  readonly credentials: { readonly requireCredentialBroker: boolean };
+}
+
 // Credential broker (§36): when require_credential_broker holds, live
 // secret values never reach worker env — every occurrence is replaced by a
 // `broker:<ref>` sentinel that names the ref without carrying material.
@@ -869,7 +1179,7 @@ export interface BrokeredEnv {
 export function buildBrokeredWorkerEnv(
   env: Record<string, string>,
   secrets: BrokerSecret[],
-  policy: EffectivePolicy,
+  policy: CredentialBrokerPolicy,
 ): BrokeredEnv {
   if (!policy.credentials.requireCredentialBroker) {
     return { env: { ...env }, sentinels: {} };

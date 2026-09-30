@@ -14,6 +14,19 @@ export interface ConfigDoctorInput {
   effectiveValues: number | undefined;
   refusal: string | undefined;
   projectTrusted: boolean | undefined;
+  // Issue #228: how the project layer was trusted (or not) — the store
+  // decision, the env opt-in and the store path. Optional so existing
+  // fixtures stay valid; absent falls back to the boolean wording.
+  projectTrust:
+    | {
+        decision: boolean | null;
+        envTrust: boolean;
+        storePath: string;
+        // Issue #228 review: the store exists but could not be read or
+        // parsed — named instead of reported as "no decision recorded".
+        storeError?: string;
+      }
+    | undefined;
   // Accepted keys whose effective value has NO row in the key-effect table
   // (issue #133): the table is the claim that every accepted key does
   // something, so a key it cannot explain is reported by name, not glossed.
@@ -28,6 +41,33 @@ export interface ConfigDoctorInput {
 }
 
 export const CONFIG_DOCTOR_ID = 'config-load';
+
+// Issue #228: the trust half of the detail, naming the exact provenance —
+// the store file that records the grant, the env opt-in, or the remedy when
+// the project layer has no accepted decision.
+function projectTrustDetail(input: ConfigDoctorInput): string {
+  const trust = input.projectTrust;
+  if (trust === undefined) {
+    return `project layer ${input.projectTrusted === true ? 'trusted' : 'not trusted'}`;
+  }
+  if (input.projectTrusted === true) {
+    const via = [
+      trust.decision === true ? `recorded in ${trust.storePath}` : undefined,
+      trust.envTrust ? 'KUBIC_TRUST_PROJECT=1' : undefined,
+      trust.storeError === undefined
+        ? undefined
+        : `store error: ${trust.storeError}`,
+    ].filter((part): part is string => part !== undefined);
+    return `project layer trusted${via.length === 0 ? '' : ` (${via.join(' + ')})`}`;
+  }
+  if (trust.storeError !== undefined) {
+    return `project layer not trusted (${trust.storeError})`;
+  }
+  if (trust.decision === false) {
+    return `project layer not trusted (declined in ${trust.storePath}; run 'kubic trust' to accept)`;
+  }
+  return "project layer not trusted (no decision recorded; run 'kubic trust' to accept, or set KUBIC_TRUST_PROJECT=1)";
+}
 
 // A refused config is a failure, not a disclosure: the run must not proceed
 // on invented values, so the operator has to fix the key. The refusal text
@@ -58,7 +98,7 @@ export function configDoctorProbe(input: ConfigDoctorInput): DepProbe {
     id: CONFIG_DOCTOR_ID,
     ok: true,
     detail:
-      `${input.effectiveValues ?? 0} effective value(s); project layer ${input.projectTrusted === true ? 'trusted' : 'not trusted'}; ` +
+      `${input.effectiveValues ?? 0} effective value(s); ${projectTrustDetail(input)}; ` +
       `budgets ${input.budgetsConfigured ? 'configured' : 'none (§71: nothing is capped until you configure a limit)'}; ` +
       `runtime ignore split ${input.ignoreSplitApplicable ? 'complete' : 'not applicable (not a git repository)'}`,
   };
@@ -79,11 +119,13 @@ export function buildConfigDoctorInput(
         budgetsConfigured: boolean;
         ignoreSplitMissing: string[];
         ignoreSplitApplicable: boolean;
+        projectTrust?: ConfigDoctorInput['projectTrust'];
       }
     | {
         error: string;
         ignoreSplitMissing: string[];
         ignoreSplitApplicable: boolean;
+        projectTrust?: ConfigDoctorInput['projectTrust'];
       },
 ): ConfigDoctorInput {
   if ('error' in loaded) {
@@ -91,6 +133,7 @@ export function buildConfigDoctorInput(
       effectiveValues: undefined,
       refusal: loaded.error,
       projectTrusted: undefined,
+      projectTrust: loaded.projectTrust,
       unexplainedKeys: [],
       ignoreSplitMissing: loaded.ignoreSplitMissing,
       ignoreSplitApplicable: loaded.ignoreSplitApplicable,
@@ -101,6 +144,7 @@ export function buildConfigDoctorInput(
     effectiveValues: loaded.values.length,
     refusal: undefined,
     projectTrusted: loaded.projectTrusted,
+    projectTrust: loaded.projectTrust,
     // 'unknown' is the view's own word for "no effect row explains this key"
     // (issue #133) — one derivation, so doctor and `kubic config` agree.
     unexplainedKeys: loaded.values

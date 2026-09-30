@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CliExitError, CliUsageError } from '../../core/src/cli/exit-codes.js';
+import { createCliTheme } from '../../core/src/cli/theme.js';
 import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
 import {
   captureBaseline,
@@ -16,7 +18,7 @@ import {
 } from '../../worker/src/ops/memos.js';
 import { callOperation } from '../../worker/src/ops/registry.js';
 import { detectTriggers } from './approvals.js';
-import { gitPushHasNoTool, runGitCommand } from './git-cli.js';
+import { GIT_NOT_A_REPO, gitPushHasNoTool, runGitCommand } from './git-cli.js';
 
 const made: string[] = [];
 
@@ -48,7 +50,7 @@ function fakeGitCli(statusOut: string): {
     string,
     { exitCode: number; stdout: string; stderr: string }
   > = {
-    'git status --porcelain=v1 -b': {
+    'git status --porcelain=v2 -z -b': {
       exitCode: 0,
       stdout: statusOut,
       stderr: '',
@@ -76,19 +78,34 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
 
   it('kubic git status renders the structured state', async () => {
     const { lines, deps } = fakeGitCli(
-      '## main...origin/main [ahead 1]\nM  staged.txt\n?? new.txt\n',
+      [
+        '# branch.oid abc1234\0',
+        '# branch.head main\0',
+        '# branch.upstream origin/main\0',
+        '# branch.ab +1 -0\0',
+        '1 M. N... 100644 100644 100644 1111111 2222222 staged.txt\0',
+        '? new.txt\0',
+      ].join(''),
     );
-    expect(await runGitCommand(['status'], deps)).toBe(0);
+    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
     expect(lines).toContain('branch main (ahead 1)');
     expect(lines).toContain('staged: staged.txt');
     expect(lines).toContain('untracked: new.txt');
+  });
+
+  it('kubic git status prints a detached HEAD instead of a null branch', async () => {
+    const { lines, deps } = fakeGitCli(
+      '# branch.oid abc1234\0# branch.head (detached)\0',
+    );
+    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect(lines).toContain('branch (detached HEAD)');
   });
 
   it('kubic git outside a repo explains itself and exits 1', async () => {
     const lines: string[] = [];
     const deps: Parameters<typeof runGitCommand>[1] = {
       env: new FakeExecutionEnv({
-        'git status --porcelain=v1 -b': {
+        'git status --porcelain=v2 -z -b': {
           exitCode: 128,
           stdout: '',
           stderr: 'fatal: not a git repository',
@@ -96,8 +113,10 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
       }),
       out: (l: string) => lines.push(l),
     };
-    expect(await runGitCommand(['status'], deps)).toBe(1);
-    expect(lines.join('\n')).toContain('not a git repository');
+    await expect(runGitCommand({ command: 'status' }, deps)).rejects.toThrow(
+      new CliExitError(1, GIT_NOT_A_REPO),
+    );
+    expect(lines).toEqual([]);
   });
 
   it('git-via-bash changes appear in reconciliation as unattributed', () => {
@@ -172,5 +191,137 @@ describe('git guard + CLI + reconciliation (issue #19, slice D)', () => {
     });
     expect(added).toBe(1);
     expect(store.entries()[0]?.unattributed).toBe(true);
+  });
+});
+
+// The typed-request surface commander drives (apps/kubic/src/commands/
+// journal.ts): every subcommand end to end over a real temp repo, in the
+// human, coloured and `--json` forms.
+describe('kubic git over a real repo (typed requests)', () => {
+  function repo(): {
+    root: string;
+    lines: string[];
+    out: (l: string) => void;
+  } {
+    const root = mkTmp('git-cli-');
+    for (const args of [
+      ['init', '-b', 'main'],
+      ['config', 'user.email', 't@t'],
+      ['config', 'user.name', 'tester'],
+      ['config', 'commit.gpgsign', 'false'],
+    ]) {
+      execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    }
+    const lines: string[] = [];
+    return { root, lines, out: (l) => lines.push(l) };
+  }
+
+  it('stage, commit, log and status round-trip in the human form', async () => {
+    const { root, lines, out } = repo();
+    const env = new NodeExecutionEnv(root);
+    writeFileSync(join(root, 'a.txt'), 'a\n');
+    writeFileSync(join(root, 'b.txt'), 'b\n');
+    expect(
+      await runGitCommand({ command: 'stage', paths: ['a.txt'] }, { env, out }),
+    ).toBe(0);
+    expect(lines).toEqual(['staged a.txt']);
+    lines.length = 0;
+    expect(
+      await runGitCommand(
+        { command: 'commit', message: 'feat: add a' },
+        { env, out },
+      ),
+    ).toBe(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^committed [0-9a-f]{8} \(1 file\(s\)\)$/);
+    lines.length = 0;
+    expect(await runGitCommand({ command: 'log' }, { env, out })).toBe(0);
+    // Plain aligned table: header plus one row, no box characters.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^SHA\s+DATE\s+AUTHOR\s+MESSAGE$/);
+    expect(lines[1]).toMatch(/^[0-9a-f]{8}\s+\S.*\s+tester\s+feat: add a$/);
+    lines.length = 0;
+    expect(await runGitCommand({ command: 'status' }, { env, out })).toBe(0);
+    expect(lines).toEqual(['branch main', 'untracked: b.txt']);
+  });
+
+  it('--json prints exactly one document per subcommand', async () => {
+    const { root, lines, out } = repo();
+    const env = new NodeExecutionEnv(root);
+    writeFileSync(join(root, 'a.txt'), 'a\n');
+    const docs: unknown[] = [];
+    const run = async (request: Parameters<typeof runGitCommand>[0]) => {
+      lines.length = 0;
+      expect(await runGitCommand(request, { env, out })).toBe(0);
+      expect(lines).toHaveLength(1);
+      docs.push(JSON.parse(lines[0] ?? ''));
+    };
+    await run({ command: 'stage', paths: ['a.txt'], json: true });
+    await run({ command: 'commit', message: 'm1', json: true });
+    await run({ command: 'log', max: 1, json: true });
+    await run({ command: 'status', json: true });
+    expect(docs[0]).toEqual({ staged: ['a.txt'] });
+    expect(docs[1]).toMatchObject({ files: ['a.txt'] });
+    expect(docs[2]).toMatchObject([{ author: 'tester', message: 'm1' }]);
+    expect(docs[3]).toMatchObject({ branch: 'main', clean: true });
+  });
+
+  it('colours only through the injected theme, and never under --json', async () => {
+    const { root, lines, out } = repo();
+    const env = new NodeExecutionEnv(root);
+    const theme = createCliTheme('16');
+    writeFileSync(join(root, 'u.txt'), 'u\n');
+    await runGitCommand({ command: 'status' }, { env, out, theme });
+    expect(lines.join('\n')).toContain('\u001b[');
+    expect(lines.join('\n')).toContain('untracked:');
+    lines.length = 0;
+    await runGitCommand({ command: 'status', json: true }, { env, out, theme });
+    expect(lines.join('\n')).not.toContain('\u001b[');
+  });
+
+  it('a fresh repo (unborn branch) has an empty history, not a failure', async () => {
+    const { root, lines, out } = repo();
+    const env = new NodeExecutionEnv(root);
+    expect(await runGitCommand({ command: 'log' }, { env, out })).toBe(0);
+    expect(lines).toEqual(['no commits']);
+    lines.length = 0;
+    expect(
+      await runGitCommand({ command: 'log', json: true }, { env, out }),
+    ).toBe(0);
+    expect(lines).toEqual(['[]']);
+  });
+
+  it('programmatic usage errors throw CliUsageError (exit 2) before any git call', async () => {
+    const deps = {
+      env: new FakeExecutionEnv({}),
+      out: () => {
+        throw new Error('no output on a usage error');
+      },
+    };
+    for (const max of [0, -1, 1.5]) {
+      await expect(
+        runGitCommand({ command: 'log', max }, deps),
+      ).rejects.toThrow(new CliUsageError('--max needs a positive integer'));
+    }
+    await expect(
+      runGitCommand({ command: 'stage', paths: [] }, deps),
+    ).rejects.toThrow(new CliUsageError('stage needs at least one path'));
+    await expect(
+      runGitCommand({ command: 'commit', message: '' }, deps),
+    ).rejects.toThrow(
+      new CliUsageError('commit needs a non-empty message (-m)'),
+    );
+  });
+
+  it('an op failure other than not-a-repo keeps its own message, exit 1', async () => {
+    const { root } = repo();
+    const env = new NodeExecutionEnv(root);
+    const error = await runGitCommand(
+      { command: 'commit', message: 'nothing staged' },
+      { env, out: () => {} },
+    ).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(CliExitError);
+    expect((error as CliExitError).exitCode).toBe(1);
+    expect((error as CliExitError).message).not.toBe(GIT_NOT_A_REPO);
   });
 });

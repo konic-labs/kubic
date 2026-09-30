@@ -8,6 +8,8 @@
 // Zero network, zero real processes here: command execution is injected by
 // the host composition root (faux in tests). Never imports worker impl.
 
+import type { FileBridge } from '../../../exec/src/file-bridge.js';
+
 export const REDACTED = '[REDACTED]';
 
 export class SecretError extends Error {
@@ -101,8 +103,105 @@ export async function resolveSecretRef(
   return value;
 }
 
+// The models.json provider-key resolver (issue #359; §36.1 rules 3-4): the
+// provider's `apiKeyEnv` IS a `$ENV` ref, resolved through resolveSecretRef
+// at every request (Pi calls it per request), emitting exactly one audit
+// event per use — ref, role, purpose, never the value. Every resolved value
+// is remembered in `live` so the persistence paths can redact it.
+export interface ModelKeyUse {
+  provider: string;
+  envVar: string;
+  readEnv: (name: string) => Promise<string | undefined>;
+}
+
+export interface ModelKeyResolver {
+  resolve: (use: ModelKeyUse) => Promise<string | undefined>;
+  /** Every value resolved so far, for redactSecretValues. */
+  live: () => string[];
+}
+
+export function createModelKeyResolver(options: {
+  role: string;
+  audit: (event: SecretAuditEvent & { provider: string }) => void;
+  now?: () => number;
+  /**
+   * The run's provider and model ids (issue #359). A resolved value that is —
+   * or sits inside — one of them is identity, not a secret (LM Studio's
+   * documented dummy key is its own provider name), so `live()` leaves it
+   * out and nothing scrubs or refuses on it.
+   */
+  identity?: () => readonly string[];
+}): ModelKeyResolver {
+  const live = new Set<string>();
+  return {
+    resolve: async (use) => {
+      const value = await use.readEnv(use.envVar);
+      if (value === undefined || value === '') return undefined;
+      // Registered BEFORE the audit event fires: a failure of that very
+      // append (an error message naming a path, a sink's own text) must
+      // already be redactable on the first use — not only from the second
+      // (issue #359).
+      live.add(value);
+      const resolved = await resolveSecretRef(
+        parseSecretRef(`$${use.envVar}`),
+        {
+          env: { [use.envVar]: value },
+          runCommand: () => {
+            throw new SecretError('apiKeyEnv never runs a command');
+          },
+          audit: (event) => options.audit({ ...event, provider: use.provider }),
+          ...(options.now === undefined ? {} : { now: options.now }),
+        },
+        { role: options.role, purpose: `model-request:${use.provider}` },
+      );
+      return resolved;
+    },
+    live: () => {
+      const values = [...live];
+      return values.length === 0
+        ? values
+        : withoutIdentity(values, options.identity?.() ?? []);
+    },
+  };
+}
+
+// The values that are not identity (issue #359): a live value equal to, or
+// contained in, an identity word (a provider or model id), compared
+// case-insensitively, is a name the run legitimately carries everywhere —
+// scrubbing it rewrites the envelope and the session rows, refusing on it
+// drops the credential-use row that names the provider. A value that merely
+// CONTAINS an identity word (a real key that starts with the provider's
+// name) is still a secret.
+export function withoutIdentity(
+  secrets: readonly string[],
+  identity: readonly string[],
+): string[] {
+  const words = identity
+    .map((word) => word.toLowerCase())
+    .filter((word) => word !== '');
+  return secrets.filter((secret) => {
+    const value = secret.toLowerCase();
+    return !words.some((word) => word.includes(value));
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// The shortest live value matched as a SUBSTRING (issue #359): the debug and
+// persistence redaction and the §60 ledger refusal all search text for the
+// resolved values, and a short or dummy key (`gw`, `solo`, `1`, a key named
+// like its provider) would blank every word it spells and refuse the
+// credential-use row that names the provider. Real provider keys are far
+// longer; below this length a value is not matched at all.
+export const MIN_MATCHABLE_SECRET_LENGTH = 8;
+
+// The inventory the substring paths may search for.
+export function matchableSecrets(secrets: readonly string[]): string[] {
+  return secrets.filter(
+    (secret) => secret.length >= MIN_MATCHABLE_SECRET_LENGTH,
+  );
 }
 
 // Deep-redact every occurrence of live secret values (config, trajectory,
@@ -111,7 +210,10 @@ export function redactSecretValues(
   value: unknown,
   secrets: readonly string[],
 ): unknown {
-  const live = secrets.filter((secret) => secret !== '');
+  // Longest first: one value can be the prefix of another form of itself (a
+  // key ending in `\` and its JSON-escaped `\\`), and replacing the short
+  // form first would leave the tail of the long one behind.
+  const live = matchableSecrets(secrets).sort((a, b) => b.length - a.length);
   if (typeof value === 'string') {
     let out = value;
     for (const secret of live) {
@@ -132,11 +234,52 @@ export function redactSecretValues(
   return value;
 }
 
+// A line sink that scrubs the live values out of every line before it
+// reaches `sink` (issue #359: the debug channel). The inventory is read per
+// line — the values are known only once the request-time resolver has run.
+export function redactingSink(
+  sink: (line: string) => void,
+  secrets: () => readonly string[],
+): (line: string) => void {
+  return (line) => sink(String(redactSecretValues(line, secrets())));
+}
+
+// The session/trajectory persistence choke point (issue #359): a FileBridge
+// whose text writes and appends scrub the live values first, so a provider
+// echoing a key in an error body (or a tool printing one) cannot land in the
+// session JSONL. Strings inside JSONL are JSON-escaped, so each value is also
+// matched in that form. Reads and binary writes pass through untouched.
+export function redactBridgeWrites(
+  bridge: FileBridge,
+  secrets: () => readonly string[],
+): FileBridge {
+  const scrub = (content: string | Uint8Array): string | Uint8Array => {
+    if (typeof content !== 'string') return content;
+    const live = matchableSecrets(secrets());
+    if (live.length === 0) return content;
+    const escaped = live.map((secret) => JSON.stringify(secret).slice(1, -1));
+    return String(redactSecretValues(content, [...live, ...escaped]));
+  };
+  const durable = bridge.appendDurably?.bind(bridge);
+  return {
+    ...bridge,
+    writeFile: (path, content, options) =>
+      bridge.writeFile(path, scrub(content), options),
+    appendFile: (path, content) => bridge.appendFile(path, scrub(content)),
+    ...(durable === undefined
+      ? {}
+      : {
+          appendDurably: (path: string, content: string | Uint8Array) =>
+            durable(path, scrub(content)),
+        }),
+  };
+}
+
 export function containsPlaintextSecret(
   text: string,
   secrets: readonly string[],
 ): boolean {
-  return secrets.some((secret) => secret !== '' && text.includes(secret));
+  return matchableSecrets(secrets).some((secret) => text.includes(secret));
 }
 
 export function assertNoPlaintextSecrets(
@@ -236,56 +379,4 @@ export function substituteTokenHost(
 // Settle/exit path: revoke every outstanding token for the run.
 export function revokeAllTokens(tokens: readonly ScopedToken[]): void {
   for (const token of tokens) token.revoke();
-}
-
-export interface RoleCredentialSet {
-  role: string;
-  version: number;
-  tokens: Record<string, ScopedToken>;
-}
-
-// Per-role injection: a worker receives ONLY its role's credentials as
-// fresh tokens. A version bump re-resolves (never inherits another role's
-// or a previous version's tokens).
-export function resolveRoleCredentials(
-  role: string,
-  entries: Record<string, string>,
-  opts: {
-    version: number;
-    ttlMs: number;
-    hosts: string[];
-    maxUses: number;
-    now?: number;
-  },
-): RoleCredentialSet {
-  const tokens: Record<string, ScopedToken> = {};
-  for (const [name, secret] of Object.entries(entries)) {
-    tokens[name] = issueScopedToken(secret, opts);
-  }
-  return { role, version: opts.version, tokens };
-}
-
-// Agent processes see the fixed allowlist plus their role credentials —
-// ambient process env is never inherited wholesale.
-export const AGENT_ENV_ALLOWLIST = [
-  'PATH',
-  'HOME',
-  'TERM',
-  'LANG',
-  'TZ',
-  'TMPDIR',
-] as const;
-
-export function buildAgentEnv(
-  baseEnv: Record<string, string | undefined>,
-  allowlist: readonly string[],
-  roleSecrets: Record<string, string>,
-): Record<string, string> {
-  const allowed = new Set(allowlist);
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (allowed.has(key) && value !== undefined) out[key] = value;
-  }
-  for (const [key, value] of Object.entries(roleSecrets)) out[key] = value;
-  return out;
 }

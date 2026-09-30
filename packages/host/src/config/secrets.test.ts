@@ -1,20 +1,25 @@
 // Request-time secrets, audit, ScopedToken, per-role env (issue #38) — RED first.
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import {
-  AGENT_ENV_ALLOWLIST,
   assertNoPlaintextSecrets,
-  buildAgentEnv,
   containsPlaintextSecret,
   issueScopedToken,
+  MIN_MATCHABLE_SECRET_LENGTH,
   parseSecretRef,
+  redactBridgeWrites,
+  redactingSink,
   redactSecretValues,
-  resolveRoleCredentials,
   resolveSecretRef,
   revokeAllTokens,
   type SecretAuditEvent,
   type SecretResolverDeps,
   substituteTokenHost,
   useScopedToken,
+  withoutIdentity,
 } from './secrets.js';
 
 // NEVER real secrets in tests — [REDACTED]-style fixtures only.
@@ -259,63 +264,6 @@ describe('ScopedToken (issue #38)', () => {
   });
 });
 
-describe('per-role injection (issue #38)', () => {
-  it('gives a worker only its own role creds', () => {
-    const reviewer = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_A },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    const implementer = resolveRoleCredentials(
-      'implementer',
-      { writeKey: FIXTURE_KEY_B },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    expect(Object.keys(reviewer.tokens)).toEqual(['readKey']);
-    expect(Object.keys(implementer.tokens)).toEqual(['writeKey']);
-  });
-
-  it('re-resolves on change instead of inheriting', () => {
-    const first = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_A },
-      { version: 1, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    const second = resolveRoleCredentials(
-      'reviewer',
-      { readKey: FIXTURE_KEY_B },
-      { version: 2, ttlMs: 60_000, hosts: ['h'], maxUses: 3, now: 1_000 },
-    );
-    expect(second.version).toBe(2);
-    expect(useScopedToken(second.tokens.readKey, 'h', 2_000)).toBe(
-      FIXTURE_KEY_B,
-    );
-    expect(first.tokens.readKey).not.toBe(second.tokens.readKey);
-  });
-});
-
-describe('agent env allowlist (issue #38)', () => {
-  it('exposes allowlist ∪ role creds with no ambient leak', () => {
-    expect(AGENT_ENV_ALLOWLIST).toContain('PATH');
-    const env = buildAgentEnv(
-      {
-        PATH: '/usr/bin',
-        HOME: '/home/u',
-        KUBIC_AMBIENT_LEAK_PROBE: 'leak',
-        AWS_SECRET_ACCESS_KEY: '[REDACTED-fixture]',
-      },
-      AGENT_ENV_ALLOWLIST,
-      { KUBIC_ROLE_KEY: FIXTURE_KEY_A },
-    );
-    expect(env.PATH).toBe('/usr/bin');
-    expect(env.KUBIC_ROLE_KEY).toBe(FIXTURE_KEY_A);
-    expect('KUBIC_AMBIENT_LEAK_PROBE' in env).toBe(false);
-    expect('AWS_SECRET_ACCESS_KEY' in env).toBe(false);
-  });
-});
-
-// Secret-ref and redaction hardening (issue #69): every fail-closed branch
-// pins its exact error so a removed refusal fails a test.
 describe('secret ref hardening (issue #69)', () => {
   it('rejects empty !command refs', () => {
     expect(() => parseSecretRef('!')).toThrow(/empty !command/);
@@ -495,50 +443,186 @@ describe('ScopedToken hardening (issue #69)', () => {
   it('revokes zero tokens without throwing', () => {
     expect(() => revokeAllTokens([])).not.toThrow();
   });
+});
 
-  it('pins the exact allowlist contents', () => {
-    expect([...AGENT_ENV_ALLOWLIST]).toEqual([
-      'PATH',
-      'HOME',
-      'TERM',
-      'LANG',
-      'TZ',
-      'TMPDIR',
+// A live value is matched as a SUBSTRING by the debug/persistence redaction
+// and by the §60 ledger refusal. A short or dummy key (`gw`, `solo`, `1`, a
+// key named like its provider) would redact every word it appears in and —
+// on the ledger — refuse the very credential-use row that names the
+// provider; below the minimum length the value is not matched at all.
+describe('short live values are not substring-matched (issue #359)', () => {
+  const AT_MIN = 'abcd1234';
+  const BELOW_MIN = 'abcd123';
+
+  it('pins the minimum at 8 characters', () => {
+    expect(MIN_MATCHABLE_SECRET_LENGTH).toBe(8);
+    expect(AT_MIN).toHaveLength(MIN_MATCHABLE_SECRET_LENGTH);
+    expect(BELOW_MIN).toHaveLength(MIN_MATCHABLE_SECRET_LENGTH - 1);
+  });
+
+  it('redactSecretValues redacts a value at the minimum length and leaves a shorter one alone', () => {
+    expect(redactSecretValues(`key ${AT_MIN} end`, [AT_MIN])).toBe(
+      'key [REDACTED] end',
+    );
+    expect(redactSecretValues(`key ${BELOW_MIN} end`, [BELOW_MIN])).toBe(
+      `key ${BELOW_MIN} end`,
+    );
+  });
+
+  it('redacts the longest of overlapping values first, whatever the inventory order', () => {
+    const line = 'x abcdefgh1234 y';
+    expect(redactSecretValues(line, ['abcdefgh', 'abcdefgh1234'])).toBe(
+      'x [REDACTED] y',
+    );
+    expect(redactSecretValues(line, ['abcdefgh1234', 'abcdefgh'])).toBe(
+      'x [REDACTED] y',
+    );
+  });
+
+  it('a dummy key does not blank the words it happens to spell', () => {
+    const line = 'provider ollama solo mode gw 1';
+    expect(redactSecretValues(line, ['ollama', 'solo', 'gw', '1'])).toBe(line);
+  });
+
+  it('a short value does not stop a real one in the same inventory from redacting', () => {
+    expect(redactSecretValues(`a ${AT_MIN} b gw`, ['gw', AT_MIN])).toBe(
+      'a [REDACTED] b gw',
+    );
+  });
+
+  it('containsPlaintextSecret follows the same minimum', () => {
+    expect(containsPlaintextSecret(`x ${AT_MIN}`, [AT_MIN])).toBe(true);
+    expect(containsPlaintextSecret(`x ${BELOW_MIN}`, [BELOW_MIN])).toBe(false);
+  });
+});
+
+describe('redactingSink (issue #359: the debug channel)', () => {
+  it('scrubs a secret-bearing line before the sink sees it, reading the inventory per line', () => {
+    const seen: string[] = [];
+    let live: string[] = [];
+    const sink = redactingSink(
+      (line) => seen.push(line),
+      () => live,
+    );
+    sink('before the key resolved: sk-live-abcdef123456');
+    live = ['sk-live-abcdef123456'];
+    sink('provider said: bad key sk-live-abcdef123456!');
+    sink('a clean line');
+    expect(seen).toEqual([
+      'before the key resolved: sk-live-abcdef123456',
+      'provider said: bad key [REDACTED]!',
+      'a clean line',
+    ]);
+  });
+});
+
+describe('redactBridgeWrites (issue #359: session persistence)', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0))
+      rmSync(dir, { recursive: true, force: true });
+  });
+  const KEY = 'sk-live-abcdef123456';
+
+  function fixture(secrets: () => string[]) {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-359-bridge-'));
+    dirs.push(dir);
+    const inner = createNodeFileBridge(dir);
+    return {
+      dir,
+      bridge: redactBridgeWrites(inner, secrets),
+      read: (name: string) => readFileSync(join(dir, name), 'utf8'),
+    };
+  }
+
+  it('scrubs text written, appended and appended durably; leaves clean text and reads alone', () => {
+    const { bridge, read } = fixture(() => [KEY]);
+    bridge.writeFile('w.txt', `write ${KEY} end`);
+    bridge.appendFile('a.txt', `append ${KEY}\n`);
+    bridge.appendFile('a.txt', 'clean line\n');
+    bridge.appendDurably?.('d.txt', `durable ${KEY}\n`);
+    expect(read('w.txt')).toBe('write [REDACTED] end');
+    expect(read('a.txt')).toBe('append [REDACTED]\nclean line\n');
+    expect(read('d.txt')).toBe('durable [REDACTED]\n');
+    expect(bridge.readTextFile('w.txt')).toBe('write [REDACTED] end');
+  });
+
+  it('matches the JSON-escaped form a JSONL line carries', () => {
+    const tricky = 'sk-"quoted"\\slash-123456';
+    const { bridge, read } = fixture(() => [tricky]);
+    bridge.appendFile(
+      's.jsonl',
+      `${JSON.stringify({ text: `bad ${tricky}` })}\n`,
+    );
+    const line = read('s.jsonl');
+    expect(line).not.toContain('quoted');
+    expect(JSON.parse(line)).toEqual({ text: 'bad [REDACTED]' });
+  });
+
+  // A value ending in a backslash: its raw form is a PREFIX of its JSON-escaped
+  // form (`k\\` vs `k\\\\`), so replacing the raw form first leaves a dangling
+  // escape that breaks the session line. Longest form first.
+  it('keeps a JSONL line parseable for a key ending in a backslash and for one containing a quote', () => {
+    for (const tricky of [
+      'sk-tail-1234567\\',
+      'sk-"quo"-1234567',
+      'sk-mid\\-"-12345',
+    ]) {
+      const { bridge, read } = fixture(() => [tricky]);
+      bridge.appendFile(
+        's.jsonl',
+        `${JSON.stringify({ text: `bad ${tricky}`, after: 'ok' })}\n`,
+      );
+      const line = read('s.jsonl');
+      expect(JSON.parse(line)).toEqual({ text: 'bad [REDACTED]', after: 'ok' });
+    }
+  });
+
+  it('reads the inventory at write time, and never rewrites binary content', () => {
+    let live: string[] = [];
+    const { bridge, read, dir } = fixture(() => live);
+    bridge.appendFile('l.txt', `early ${KEY}\n`);
+    live = [KEY];
+    bridge.appendFile('l.txt', `late ${KEY}\n`);
+    bridge.writeFile('b.bin', new TextEncoder().encode(`bin ${KEY}`));
+    expect(read('l.txt')).toBe(`early ${KEY}\nlate [REDACTED]\n`);
+    expect(readFileSync(join(dir, 'b.bin'), 'utf8')).toBe(`bin ${KEY}`);
+  });
+
+  it('a value below the minimum length is not matched', () => {
+    const { bridge, read } = fixture(() => ['gw']);
+    bridge.writeFile('short.txt', 'gw stays gw');
+    expect(read('short.txt')).toBe('gw stays gw');
+  });
+});
+
+// Identity words are not secrets (issue #359): a dummy key that IS its
+// provider's name (`lm-studio`) or sits inside a provider/model id must not
+// be scrubbed or refuse a ledger row, or the run's own identity is rewritten.
+describe('withoutIdentity', () => {
+  it('drops a value equal to an identity word, case-insensitively', () => {
+    expect(withoutIdentity(['lm-studio'], ['lm-studio'])).toEqual([]);
+    expect(withoutIdentity(['LM-Studio'], ['lm-studio'])).toEqual([]);
+    expect(withoutIdentity(['lm-studio'], ['LM-STUDIO'])).toEqual([]);
+  });
+
+  it('drops a value contained in an identity word, keeps one that merely contains it', () => {
+    expect(withoutIdentity(['studio-l'], ['my-studio-local'])).toEqual([]);
+    expect(withoutIdentity(['lm-studio-real-key'], ['lm-studio'])).toEqual([
+      'lm-studio-real-key',
     ]);
   });
 
-  it('skips undefined allowlisted values and lets role creds win', () => {
-    const env = buildAgentEnv(
-      { PATH: undefined, HOME: '/home/u' },
-      AGENT_ENV_ALLOWLIST,
-      { PATH: '/role/bin' },
-    );
-    expect(env.PATH).toBe('/role/bin');
-    expect(env.HOME).toBe('/home/u');
-    // Without a role cred, an undefined allowlisted value is absent, not
-    // copied through as a key with an undefined value.
-    const bare = buildAgentEnv(
-      { PATH: undefined, HOME: '/home/u' },
-      AGENT_ENV_ALLOWLIST,
-      {},
-    );
-    expect(bare).toEqual({ HOME: '/home/u' });
-  });
-
-  it('isolates role credential sets by entries, not by reference', () => {
-    const opts = {
-      version: 3,
-      ttlMs: 60_000,
-      hosts: ['h'],
-      maxUses: 3,
-      now: 1_000,
-    };
-    const entries: Record<string, string> = { readKey: FIXTURE_KEY_A };
-    const set = resolveRoleCredentials('reviewer', entries, opts);
-    // A later change to the caller's entries never reaches an issued set.
-    entries.writeKey = FIXTURE_KEY_B;
-    expect(set).toMatchObject({ role: 'reviewer', version: 3 });
-    expect(Object.keys(set.tokens)).toEqual(['readKey']);
-    expect(resolveRoleCredentials('reviewer', {}, opts).tokens).toEqual({});
+  it('keeps unrelated values, in order, and every value with no identity or only blank words', () => {
+    expect(
+      withoutIdentity(
+        ['sk-live-abcdef', 'lm-studio', 'other-key-1'],
+        ['lm-studio'],
+      ),
+    ).toEqual(['sk-live-abcdef', 'other-key-1']);
+    expect(withoutIdentity(['sk-live-abcdef'], [])).toEqual(['sk-live-abcdef']);
+    expect(withoutIdentity(['sk-live-abcdef'], ['', ''])).toEqual([
+      'sk-live-abcdef',
+    ]);
   });
 });

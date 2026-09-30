@@ -3,7 +3,12 @@
 // latest after, latest attribution), plus unified-hunk rendering shared
 // by the CLI and the future TUI views ("TUI consumes same data").
 
-import type { FileJournalStore, JournalEntry, JournalOp } from './journal.js';
+import {
+  type FileJournalStore,
+  isUndoableCreate,
+  type JournalEntry,
+  type JournalOp,
+} from './journal.js';
 
 export interface FileChange {
   path: string;
@@ -67,7 +72,8 @@ export function diffEntries(
     const beforeLost =
       first.beforeHash !== null &&
       before === null &&
-      first.unattributed !== true;
+      first.unattributed !== true &&
+      first.beforeOmitted !== true;
     // A hash-only sweep after-side (issue #120) is a designed absence: the
     // entry records the walk hash but deliberately no content.
     const afterLost =
@@ -80,7 +86,7 @@ export function diffEntries(
       sessionId: last.sessionId,
       timestamp: last.timestamp,
       unattributed: last.unattributed === true,
-      reversible: before !== null,
+      reversible: before !== null || isUndoableCreate(first),
       before,
       after,
       corrupt: beforeLost || afterLost,

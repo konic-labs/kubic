@@ -9,7 +9,7 @@
 // ./tui-boundary.js. No node:fs in prod src (I/O confinement).
 
 import type { Component, Focusable } from './tui-boundary.js';
-import { CURSOR_MARKER, matchesKey } from './tui-boundary.js';
+import { CURSOR_MARKER, matchesKey, visibleWidth } from './tui-boundary.js';
 
 export type ApprovalAction = 'allow-once' | 'allow-session' | 'deny';
 
@@ -58,10 +58,33 @@ export interface ApprovalOverlayOptions {
   readonly nonCapturing?: boolean;
 }
 
+// The overlay's size caps, as percentages of the terminal (§16.4).
+const APPROVAL_OVERLAY_WIDTH_PERCENT = 70;
+const APPROVAL_OVERLAY_HEIGHT_PERCENT = 60;
+
+// Issue #316: the columns Pi gives the overlay (its own percentage rule: floor
+// of the share, at least one column).
+export function approvalOverlayWidth(terminalColumns: number): number {
+  return Math.max(
+    1,
+    Math.floor((terminalColumns * APPROVAL_OVERLAY_WIDTH_PERCENT) / 100),
+  );
+}
+
+// Issue #316: how many rows Pi leaves the overlay — its own percentage rule
+// (floor of the share, at least one row) on the terminal's row count. Pi cuts
+// what does not fit from the bottom, so the dialog fits itself to this.
+export function approvalOverlayRows(terminalRows: number): number {
+  return Math.max(
+    1,
+    Math.floor((terminalRows * APPROVAL_OVERLAY_HEIGHT_PERCENT) / 100),
+  );
+}
+
 export function approvalOverlayOptions(): ApprovalOverlayOptions {
   return {
-    width: '70%',
-    maxHeight: '60%',
+    width: `${APPROVAL_OVERLAY_WIDTH_PERCENT}%`,
+    maxHeight: `${APPROVAL_OVERLAY_HEIGHT_PERCENT}%`,
     anchor: 'center',
     // Capturing by design: the modal takes focus on show (nonCapturing
     // is never set). Narrow terminals skip the overlay via visible.
@@ -96,18 +119,176 @@ export function approvalOverlayBounds(
   };
 }
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+// Issue #316: cut by terminal COLUMNS, not UTF-16 length — a row of wide
+// characters is twice as wide as it is long, and the overlay compositor would
+// otherwise cut it again, silently, past its own marker. The cut lands on a
+// grapheme boundary and the `…` takes the last column.
 function truncateLine(line: string, width: number): string {
-  if (line.length <= width) return line;
   if (width <= 0) return '';
-  return `${line.slice(0, width - 1)}…`;
+  if (visibleWidth(line) <= width) return line;
+  const budget = width - 1;
+  let kept = '';
+  let used = 0;
+  for (const { segment } of graphemes.segment(line)) {
+    const cells = visibleWidth(segment);
+    if (used + cells > budget) break;
+    kept += segment;
+    used += cells;
+  }
+  return `${kept}…`;
 }
 
-// Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
-// these lines directly like renderLayout in layout.test.ts.
-export function renderApprovalLines(
+// Issue #315: how the key hints read. `armed: false` is the arming window —
+// decision keys are ignored, only Esc (deny) acts — so the hint says so
+// instead of advertising keys that do nothing yet. Absent means armed.
+export interface ApprovalRenderOptions {
+  readonly armed?: boolean;
+  readonly keys?: Record<ApprovalAction, readonly string[]>;
+  // Issue #316: which page of a long command is shown (wraps around).
+  readonly commandPage?: number;
+  // Issue #316: the rows the overlay may occupy (approvalOverlayRows). Pi cuts
+  // an overlay from the bottom, so a command taller than what is left pages to
+  // fit — the marker, justification and hint row always stay on screen.
+  readonly maxRows?: number;
+}
+
+// Issue #316: the dialog shows what will actually run. A command wraps
+// across rows; one page holds this many rows, and a taller command shows an
+// explicit `… command lines a–b of n · [v] next page` marker — the height is
+// capped honestly, never by a silent character slice.
+export const APPROVAL_COMMAND_PAGE_LINES = 8;
+export const APPROVAL_PAGE_KEY = 'v';
+const COMMAND_PREFIX = 'command: ';
+
+// Issue #316: one command line as rows that each fit `room` terminal columns.
+// The unit is the grapheme cluster (a combining sequence or an emoji ZWJ
+// sequence is one unit) measured with pi-tui's own width, so no character is
+// cut mid-cluster or pushed past the edge where the compositor would drop it.
+// A unit wider than the room still gets a row of its own — nothing is skipped.
+function wrapByColumns(line: string, room: number): string[] {
+  const rows: string[] = [];
+  let row = '';
+  let used = 0;
+  for (const { segment } of graphemes.segment(line)) {
+    const cells = visibleWidth(segment);
+    if (used > 0 && used + cells > room) {
+      rows.push(row);
+      row = '';
+      used = 0;
+    }
+    row += segment;
+    used += cells;
+  }
+  rows.push(row);
+  return rows;
+}
+
+function commandRows(command: string, width: number): string[] {
+  const room = Math.max(1, width - COMMAND_PREFIX.length);
+  const rows: string[] = [];
+  for (const line of command.split('\n')) {
+    if (line === '') {
+      rows.push('');
+      continue;
+    }
+    rows.push(...wrapByColumns(line, room));
+  }
+  return rows;
+}
+
+// `budget` is the rows the whole command block (marker included) may take.
+function commandLines(
+  command: string,
+  width: number,
+  page: number,
+  budget?: number,
+): string[] {
+  const rows = commandRows(command, width);
+  // A command that fits its budget (and a page) shows whole; a taller one
+  // pages, and the marker takes one of the budgeted rows.
+  const cap = Math.min(APPROVAL_COMMAND_PAGE_LINES, budget ?? Infinity);
+  const pageLines =
+    rows.length <= cap
+      ? APPROVAL_COMMAND_PAGE_LINES
+      : Math.max(
+          1,
+          Math.min(APPROVAL_COMMAND_PAGE_LINES, (budget ?? Infinity) - 1),
+        );
+  const pages = Math.max(1, Math.ceil(rows.length / pageLines));
+  const current = ((page % pages) + pages) % pages;
+  const from = current * pageLines;
+  const shown = rows.slice(from, from + pageLines);
+  const indent = ' '.repeat(COMMAND_PREFIX.length);
+  const out = shown.map((row, index) =>
+    index === 0 ? `${COMMAND_PREFIX}${row}` : `${indent}${row}`,
+  );
+  if (pages > 1) {
+    out.push(
+      `… command lines ${from + 1}–${from + shown.length} of ${rows.length} · [${APPROVAL_PAGE_KEY}] next page`,
+    );
+  }
+  return out;
+}
+
+// Operator-facing key names: `ctrl+s` → `Ctrl-S`, `escape` → `Esc`.
+export function approvalKeyLabel(key: string): string {
+  if (key === 'escape') return 'Esc';
+  const parts = key.split('+');
+  if (parts.length === 1) return key;
+  const base = (parts.at(-1) ?? '').toUpperCase();
+  const mods = parts
+    .slice(0, -1)
+    .map((mod) => `${mod.charAt(0).toUpperCase()}${mod.slice(1)}`);
+  return [...mods, base].join('-');
+}
+
+function hintLine(options: ApprovalRenderOptions): string {
+  const keys = options.keys ?? APPROVAL_DEFAULT_KEYS;
+  if (options.armed === false) {
+    return keys.deny.includes(APPROVAL_IMMEDIATE_KEY)
+      ? '… keys unlock in a moment · [Esc] deny now'
+      : '… keys unlock in a moment';
+  }
+  const labels = (action: ApprovalAction): string =>
+    keys[action].map((key) => `[${approvalKeyLabel(key)}]`).join('/');
+  return `${labels('allow-once')} allow once   ${labels('allow-session')} allow session   ${labels('deny')} deny`;
+}
+
+// Issue #316: what the dialog shows when the overlay has too few rows for
+// the fixed rows, the page marker and one command row. Pi cuts an overlay
+// from the bottom, so a squeezed full dialog would show the first command row
+// and lose the rest — including the hint row — while `a` still approved. This
+// block fails closed instead: it says so, offers deny, and (the surface and
+// the view both check the same layout) allow keys are inert. The deny row
+// comes first so a one-row overlay still carries it.
+function tooShortLines(
   request: ApprovalViewRequest,
   width: number,
+  options: ApprovalRenderOptions,
 ): string[] {
+  const keys = options.keys ?? APPROVAL_DEFAULT_KEYS;
+  const deny = keys.deny.map((key) => `[${approvalKeyLabel(key)}]`).join('/');
+  return [
+    `Too short to show this command — ${deny} deny`,
+    `Approval required: ${request.capability}`,
+    `tool: ${request.toolName}`,
+    'Enlarge the terminal to review the whole command.',
+  ].map((line) => truncateLine(line, width));
+}
+
+interface ApprovalLayout {
+  readonly lines: string[];
+  // False when the full dialog needs more rows than the overlay has.
+  readonly fits: boolean;
+}
+
+function layoutApproval(
+  request: ApprovalViewRequest,
+  width: number,
+  options: ApprovalRenderOptions,
+): ApprovalLayout {
   const w = Math.max(0, Math.floor(width));
   const lines = [
     `Approval required: ${request.capability}`,
@@ -118,19 +299,70 @@ export function renderApprovalLines(
   // "capability: <tool> <path>". Without this line the operator approves a
   // capability without seeing the operation, which is the whole point of the
   // surface. Empty means "no summary supplied" — a minimal request is not a
-  // blank line.
-  if (request.summary !== undefined && request.summary !== '') {
+  // blank line. Issue #316: when the request carries the full command, that
+  // is what the dialog shows — wrapped and paged, never cut — and the
+  // one-line summary (a shortened copy of it) is not repeated.
+  const hasCommand = request.command !== undefined && request.command !== '';
+  if (!hasCommand && request.summary !== undefined && request.summary !== '') {
     lines.push(`summary: ${request.summary}`);
-  }
-  if (request.command !== undefined && request.command !== '') {
-    lines.push(`command: ${request.command}`);
   }
   if (request.paths !== undefined && request.paths.length > 0) {
     lines.push(`paths: ${request.paths.join(', ')}`);
   }
   lines.push(`justification: ${request.justification ?? '(none)'}`);
-  lines.push('[a] allow once   [s] allow session   [d] deny');
-  return lines.map((line) => truncateLine(line, w));
+  lines.push(hintLine(options));
+  // Every row that is not the command: what is left of the overlay's rows is
+  // the command block's budget (issue #316).
+  const commandBlock = hasCommand
+    ? commandLines(
+        request.command ?? '',
+        w,
+        options.commandPage ?? 0,
+        options.maxRows === undefined
+          ? undefined
+          : options.maxRows - lines.length,
+      )
+    : [];
+  const head = lines.slice(0, 2).map((line) => truncateLine(line, w));
+  const rest = lines.slice(2).map((line) => truncateLine(line, w));
+  // The command rows are already fitted to the width (wrapped, not cut);
+  // only the page marker could exceed a very narrow width.
+  const full = [
+    ...head,
+    ...commandBlock.map((line) => truncateLine(line, w)),
+    ...rest,
+  ];
+  // The paging above always shows at least one command row and, when it pages,
+  // the marker: if even that overflows the overlay, the hint row (last) would
+  // be cut, so nothing of the full dialog is shown.
+  if (options.maxRows === undefined || full.length <= options.maxRows) {
+    return { lines: full, fits: true };
+  }
+  return {
+    lines: tooShortLines(request, w, options).slice(0, options.maxRows),
+    fits: false,
+  };
+}
+
+// Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
+// these lines directly like renderLayout in layout.test.ts.
+export function renderApprovalLines(
+  request: ApprovalViewRequest,
+  width: number,
+  options: ApprovalRenderOptions = {},
+): string[] {
+  return layoutApproval(request, width, options).lines;
+}
+
+// Issue #316: whether the whole dialog (command rows or page marker,
+// justification and hint row) fits in `maxRows` overlay rows at this width.
+// The approval surface asks this to keep allow keys inert while it does not.
+export function approvalFitsOverlay(
+  request: ApprovalViewRequest,
+  width: number,
+  maxRows: number | undefined,
+): boolean {
+  return layoutApproval(request, width, { maxRows }).fits;
 }
 
 // Narrow-terminal fallback (w < 80): same body under an inline header so
@@ -138,11 +370,12 @@ export function renderApprovalLines(
 export function renderApprovalInline(
   request: ApprovalViewRequest,
   width: number,
+  options: ApprovalRenderOptions = {},
 ): string[] {
   const w = Math.max(0, Math.floor(width));
   return [
     truncateLine('! approval (inline) — narrow terminal', w),
-    ...renderApprovalLines(request, w),
+    ...renderApprovalLines(request, w, options),
   ];
 }
 
@@ -156,10 +389,36 @@ export const APPROVAL_DEFAULT_KEYS: Record<
   ApprovalAction,
   readonly ApprovalKeyId[]
 > = {
+  // Issue #315: an approval is consent to run code with the operator's
+  // authority, so type-ahead meant for the editor must never produce one.
+  // allow-once and deny keep a letter but act only after the arming delay
+  // below; allow-session (consent for the whole session) is Ctrl-S, which
+  // prose cannot produce; Esc is the one immediate key, and it only denies.
   'allow-once': ['a'],
-  'allow-session': ['s'],
+  'allow-session': ['ctrl+s'],
   deny: ['d', 'escape'],
 };
+
+// Issue #315: decision keys are ignored for this long after a request
+// appears (and again for each queued request), so a keystroke typed into the
+// editor a moment before the ask arrived cannot answer it.
+export const APPROVAL_ARMING_MS = 400;
+
+// Issue #315: after ANY key the modal swallows the unlock needs this much
+// quiet, not just the first arming delay. A thinking pause in the middle of
+// prose is ~0.5 s, so 400 ms after the last typed key would let the next bare
+// `a` answer a request the operator never looked at; 1.5 s is a pause long
+// enough to be a decision to stop typing.
+export const APPROVAL_QUIET_MS = 1500;
+
+// Issue #315: a decision key that arrives within this long of the SAME key is
+// a terminal auto-repeat, not a press. Terminals that do not report key events
+// (Terminal.app, VTE, tmux) send a held `a` as plain repeated bytes after an
+// OS repeat delay of up to ~0.6 s, with nothing to tell it from typing.
+export const APPROVAL_REPEAT_MS = 700;
+
+// The one binding honoured during the arming window: Esc, and only as deny.
+export const APPROVAL_IMMEDIATE_KEY = 'escape';
 
 export type ApprovalKeyOverrides = Partial<
   Record<ApprovalAction, readonly ApprovalKeyId[]>
@@ -189,13 +448,53 @@ export function resolveApprovalAction(
   data: string,
   overrides?: ApprovalKeyOverrides,
 ): ApprovalAction | undefined {
+  return resolveApprovalKey(data, overrides)?.action;
+}
+
+// The action AND the binding that matched: the arming window lets only the
+// immediate deny key through, so the caller needs to know which key it was.
+export function resolveApprovalKey(
+  data: string,
+  overrides?: ApprovalKeyOverrides,
+): { action: ApprovalAction; key: string } | undefined {
   const bindings = resolvedBindings(overrides);
   for (const action of ACTION_ORDER) {
     for (const key of bindings[action]) {
-      if (matchesKey(data, key)) return action;
+      if (matchesKey(data, key)) return { action, key };
     }
   }
   return undefined;
+}
+
+// Issue #315: a key ordinary typing can produce — a bare character, space,
+// or a shifted character (an upper-case letter or a symbol).
+export function isProseKey(key: string): boolean {
+  return key.length === 1 || key === 'space' || /^shift\+.$/.test(key);
+}
+
+// Issue #315 (§16.9): registry hygiene beyond action overlaps. allow-session
+// may never be a prose key, and no approval key may shadow one of the loop's
+// own global keys (`reserved`, supplied by the app; Esc is exempt — its deny
+// is intentional). One message per problem.
+export function approvalKeyProblems(
+  overrides?: ApprovalKeyOverrides,
+  reserved: ReadonlyArray<string> = [],
+): string[] {
+  const bindings = resolvedBindings(overrides);
+  const problems: string[] = [];
+  for (const key of bindings['allow-session']) {
+    if (isProseKey(key))
+      problems.push(
+        `allow-session key ${key} can be typed as prose (bind a modified key)`,
+      );
+  }
+  for (const action of ACTION_ORDER) {
+    for (const key of bindings[action]) {
+      if (key !== APPROVAL_IMMEDIATE_KEY && reserved.includes(key))
+        problems.push(`approval key conflict: ${key} is a global TUI key`);
+    }
+  }
+  return problems;
 }
 
 export interface ApprovalKeyConflict {
@@ -243,6 +542,12 @@ export interface ApprovalOverlayTui {
   // tests drive a fake host that only implements showOverlay; the live
   // TuiAltScreen always provides it.
   requestRender?: (force?: boolean) => void;
+  // Issue #316: the terminal the overlay is composited on (Pi's TUI exposes
+  // it). Optional — a host without it keeps the fixed command page size.
+  readonly terminal?: {
+    readonly rows: number;
+    readonly columns: number;
+  };
 }
 
 export function showApprovalOverlay(
@@ -280,6 +585,17 @@ export interface ApprovalViewOptions {
   ) => void;
   readonly onFocusEditor?: () => void;
   readonly keyOverrides?: ApprovalKeyOverrides;
+  // Issue #315: the surface's arming state, read on every render so the key
+  // hints unlock in the frame the surface arms. Absent means armed.
+  readonly isArmed?: () => boolean;
+  // Issue #316: the page of a long command the surface shows.
+  readonly commandPage?: () => number;
+  // Issue #316: the rows the overlay may occupy, read on every render (the
+  // terminal can resize). Absent means the fixed command page size.
+  readonly maxRows?: () => number | undefined;
+  // Issue #316: false while the overlay is too short to show the command —
+  // every allow key is then inert (deny always works). Absent means allowed.
+  readonly canAllow?: () => boolean;
 }
 
 export class ApprovalView implements Component, Focusable {
@@ -291,12 +607,20 @@ export class ApprovalView implements Component, Focusable {
   ) => void;
   private readonly onFocusEditor: () => void;
   private readonly keyOverrides?: ApprovalKeyOverrides;
+  private readonly isArmed: () => boolean;
+  private readonly commandPage: () => number;
+  private readonly maxRows: () => number | undefined;
+  private readonly canAllow: () => boolean;
 
   constructor(options: ApprovalViewOptions) {
     this.viewRequest = options.request;
     this.onDecision = options.onDecision ?? (() => {});
     this.onFocusEditor = options.onFocusEditor ?? (() => {});
     this.keyOverrides = options.keyOverrides;
+    this.isArmed = options.isArmed ?? (() => true);
+    this.commandPage = options.commandPage ?? (() => 0);
+    this.maxRows = options.maxRows ?? (() => undefined);
+    this.canAllow = options.canAllow ?? (() => true);
   }
 
   getRequest(): ApprovalViewRequest {
@@ -304,14 +628,21 @@ export class ApprovalView implements Component, Focusable {
   }
 
   handleInput(data: string): void {
-    const action = resolveApprovalAction(data, this.keyOverrides);
-    if (action === undefined) return;
-    this.onDecision(action, this.viewRequest);
+    const match = resolveApprovalKey(data, this.keyOverrides);
+    if (match === undefined) return;
+    if (!this.isArmed() && match.key !== APPROVAL_IMMEDIATE_KEY) return;
+    if (match.action !== 'deny' && !this.canAllow()) return;
+    this.onDecision(match.action, this.viewRequest);
     this.onFocusEditor();
   }
 
   render(width: number): string[] {
-    const lines = renderApprovalLines(this.viewRequest, width);
+    const lines = renderApprovalLines(this.viewRequest, width, {
+      armed: this.isArmed(),
+      commandPage: this.commandPage(),
+      keys: resolvedBindings(this.keyOverrides),
+      maxRows: this.maxRows(),
+    });
     if (this.focused && lines.length > 0) {
       lines[0] += CURSOR_MARKER;
     }

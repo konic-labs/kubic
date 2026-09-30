@@ -11,15 +11,18 @@ import {
 } from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import { withReadRoots } from '../../../exec/src/read-roots.js';
 import {
   buildCompactPrompt,
   type CompactionCheckpoint,
+  compactionThreshold,
   DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
   shouldCheckAt,
   shouldCompact,
 } from '../compaction.js';
 import type { EscalationLadder } from '../model-select.js';
-import { validateEscalation } from '../model-select.js';
+import { ModelSelectError, validateEscalation } from '../model-select.js';
 import { MemoryMemoStore } from '../ops/memos.js';
 import type { MemoStore } from '../ops/types.js';
 import {
@@ -29,7 +32,10 @@ import {
   BACKGROUND_CONTEXT,
   type Context,
   type DeferredHandle,
+  type Hooks,
+  laneConfig,
   type Model,
+  type OpenOperation,
   type Session,
 } from '../pi-boundary.js';
 import {
@@ -114,6 +120,32 @@ export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
+  /**
+   * Issue #208: a before_tool gate registered BEFORE the policy interceptors.
+   * Pi's before_tool chain stops at the first block, so a gate that must
+   * observe EVERY attempt (the run budget meter) has to subscribe before the
+   * guards that may block it. Returns a detach function, exposed on the
+   * booted lane as `detachBeforePolicyHooks`.
+   */
+  beforePolicyHooks?: (hooks: Hooks) => () => void;
+  /**
+   * §58 enterprise tool gate (issue #288): the composition root closes this
+   * over `isToolAllowedByEnterprise(effectivePolicy, tool)`, so the lane
+   * has no policy import of its own. When present, the base/class/role
+   * intersection is filtered through it for BOTH the active tool set and
+   * the prompt's `tools:` line — the two can never disagree about what the
+   * model may call. Absent means no enterprise tool policy is configured.
+   */
+  toolAllowed?: (tool: string) => boolean;
+  /**
+   * §58 enterprise model gate (issue #288): closed over
+   * `isModelAllowed(effectivePolicy, provider, id)` by the composition root.
+   * The stored-model rule (issue #148) lets a resumed session keep its own
+   * model, and the boot selection is gated but the stored one never was — a
+   * session file could carry a refused provider past the policy. A stored
+   * model the gate refuses is dropped for the selected (gated) one.
+   */
+  modelAllowed?: (provider: string, modelId: string) => boolean;
 }
 
 // Harness compaction budget overrides. keepRecentTokens mirrors Pi's
@@ -177,6 +209,11 @@ export interface SoloBootOptions {
   // blocks land as suffix sections only. Ignored when `systemPrompt` is
   // given: an explicit prompt is byte-authoritative.
   promptSections?: string[];
+  // Issue #173 (§29.3): the roots of the skills advertised with absolute
+  // paths outside the workspace. The read tool (and only it) may open a
+  // path inside one — the env serves those reads and the confine guard
+  // leaves them un-rerooted; every other tool and path stays confined.
+  skillReadRoots?: readonly string[];
   // §12.1 role prompt (issue #99): replaces the hardcoded SOLO_ROLE seed
   // with the role document's own `## Prompt` text. The assembled
   // cwd/tools/meta lines are unchanged — the role supplies the instruction
@@ -188,15 +225,71 @@ export interface SoloBootOptions {
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
+  // Resumed-session model identity (issue #148; §21, §26.1). Pi restores a
+  // resumed lane's STORED model; `model` only seeds a new lane. When they
+  // differ: 'selected' (the caller's selection was an explicit pin) switches
+  // the lane to `model` — setModel, reserve re-clamp, notice — and 'stored'
+  // (the default: the selection was only a default pick) keeps the
+  // session's own model, which then drives the prompt metadata, the reserve
+  // clamp and every report. A stored model that is no longer registered
+  // fails the boot closed with a named ModelSelectError.
+  modelPolicy?: 'selected' | 'stored';
+  // The one-line notice for either reconciliation (stderr on `run`, the
+  // debug channel elsewhere). Absent means silent.
+  onModelNotice?: (line: string) => void;
+}
+
+// The stored lane model, read before the harness boots (issue #148):
+// undefined for a lane this session has never configured.
+async function storedLaneModel(
+  session: Session,
+  context: Context,
+): Promise<{ provider: string; modelId: string } | undefined> {
+  const stored = await session.getValue(laneConfig(SOLO_LANE_NAME), context);
+  return stored?.value.model;
+}
+
+function resolveStoredModel(
+  models: SoloBootOptions['models'],
+  stored: { provider: string; modelId: string },
+): Model<string> {
+  const id = `${stored.provider}/${stored.modelId}`;
+  const hint = '(pin a model to switch this session)';
+  if (models.getProvider(stored.provider) === undefined) {
+    throw new ModelSelectError(
+      `session model '${id}' is unavailable: provider '${stored.provider}' is not registered ${hint}`,
+    );
+  }
+  const model = models.getModel(stored.provider, stored.modelId);
+  if (model === undefined) {
+    throw new ModelSelectError(
+      `session model '${id}' is unavailable: model '${stored.modelId}' is not registered on provider '${stored.provider}' ${hint}`,
+    );
+  }
+  return model as Model<string>;
 }
 
 export interface SoloLane {
   harness: AgentHarnessApi<KubicToolContext>;
   lane: AgentLane;
   kills: OperationKillRegistry;
+  // The model the lane actually runs after boot (issue #148): the selection
+  // for a new lane or an explicit switch, else the session's stored model.
+  // Every report (prompt metadata, status, usage, envelope) names this one.
+  model: Model<string>;
+  // Issue #147: operations Pi restored open on this lane at boot (a turn a
+  // dead process left mid-flight). Absent on stub lanes.
+  open?: OpenOperation[];
   sessionId: string;
   binding?: LaneBinding;
   affinity?: TaskAffinity;
+  // The configured (unclamped) compaction reserve and a window lookup, so a
+  // model switch re-clamps the harness reserve to the NEW model's window.
+  configuredReserveTokens?: number;
+  modelWindow?: (provider: string, modelId: string) => number | undefined;
+  // Issue #208: the detach for `policy.beforePolicyHooks`, when one was
+  // registered. The caller owns the lane's lifetime and unsubscribes here.
+  detachBeforePolicyHooks?: () => void;
 }
 
 export function splitSoloModelId(id: string): {
@@ -210,6 +303,30 @@ export function splitSoloModelId(id: string): {
     );
   }
   return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
+}
+
+// The harness took its reserve clamped to the BOOT model's window; after a
+// switch the clamp follows the live model (a missing lookup keeps it).
+async function reclampCompactionReserve(
+  solo: SoloLane,
+  model: { provider: string; modelId: string },
+  context: Context,
+): Promise<void> {
+  const window = solo.modelWindow?.(model.provider, model.modelId);
+  if (window === undefined || solo.configuredReserveTokens === undefined) {
+    return;
+  }
+  const current = await solo.harness.getCompactionSettings(context);
+  await solo.harness.setCompactionSettings(
+    {
+      ...current,
+      reserveTokens: effectiveReserveTokens(
+        window,
+        solo.configuredReserveTokens,
+      ),
+    },
+    context,
+  );
 }
 
 // The ONLY path off the pinned model through the lane: one-way,
@@ -244,6 +361,7 @@ export async function escalateSoloModel(
   const parsed = splitSoloModelId(to);
   validateEscalation(ladder, from, to);
   await solo.lane.setModel(parsed, context);
+  await reclampCompactionReserve(solo, parsed, context);
   const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
   solo.affinity = result.affinity;
   return result;
@@ -298,7 +416,7 @@ export async function maybeCompactSoloLane(
     return { checked: false, reason: 'checkpoint-skipped', checkpoint };
   }
   const reserve = check.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
-  const threshold = check.contextWindow - reserve;
+  const threshold = compactionThreshold(check.contextWindow, reserve);
   if (
     shouldCompact({
       contextTokens: check.contextTokens,
@@ -341,7 +459,10 @@ export async function bootSoloLane(
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
   const toolContext: KubicToolContext = {
-    env: options.env,
+    env:
+      options.skillReadRoots === undefined
+        ? options.env
+        : withReadRoots(options.env, options.skillReadRoots),
     sessionId: options.sessionId,
     agentId: options.agentId,
     memos: options.memos ?? new MemoryMemoStore(),
@@ -349,28 +470,65 @@ export async function bootSoloLane(
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
   const baseTools = kubicToolsToPiTools();
-  // §12.1 role narrowing (issue #99): the role's resolved tool set is the
-  // NARROWER of the two allowlists — a role can never widen what the
-  // permission classes permit. Computed BEFORE the harness boots so the
-  // assembled `tools:` line names exactly what the lane registers: the
-  // model must be told the truth about its own tool set (§40.3), and the
-  // value is fixed for the boot, so the prompt-cache prefix (#33) is still
-  // byte-stable across turns.
+  // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the lane
+  // activates and the tools the prompt advertises are ONE set — base tools,
+  // narrowed by the permission classes when declared, by the role allowlist
+  // when declared, and by the enterprise tool policy when configured. A
+  // role or an enterprise deny can only narrow what the classes allow,
+  // never widen it. Computed BEFORE the harness boots so the assembled
+  // `tools:` line names exactly what the lane registers: the model must be
+  // told the truth about its own tool set (§40.3), and the value is fixed
+  // for the boot, so the prompt-cache prefix (#33) is still byte-stable
+  // across turns.
   const classAllowed =
     options.policy?.classes === undefined
       ? undefined
       : toolsForClasses(validateClasses({ ...options.policy.classes }));
-  const effectiveToolNames =
-    options.toolAllowlist === undefined
-      ? baseTools.map((t) => t.name)
-      : classAllowed === undefined
-        ? [...options.toolAllowlist]
-        : options.toolAllowlist.filter((tool) => classAllowed.includes(tool));
-  const { harness } = await AgentHarness.create(
+  const enterpriseGate = options.policy?.toolAllowed;
+  const baseNames = baseTools.map((t) => t.name);
+  const roleNames = options.toolAllowlist ?? baseNames;
+  let effectiveToolNames =
+    classAllowed === undefined
+      ? [...roleNames]
+      : roleNames.filter((tool) => classAllowed.includes(tool));
+  if (enterpriseGate !== undefined) {
+    effectiveToolNames = effectiveToolNames.filter((tool) =>
+      enterpriseGate(tool),
+    );
+  }
+  // Without a role or enterprise gate, applyToolPolicy already installs the
+  // class-derived allowlist; only the two narrowing paths need their own
+  // activation (and their set can never exceed the class-derived one).
+  const mustActivateTools =
+    options.toolAllowlist !== undefined || enterpriseGate !== undefined;
+  // Issue #148: reconcile the stored lane model with the selection BEFORE
+  // the harness fixes the system prompt and the reserve.
+  const selectedId = defaultSoloModelId(options.model);
+  const stored = await storedLaneModel(options.session, context);
+  const storedId =
+    stored === undefined ? undefined : `${stored.provider}/${stored.modelId}`;
+  const storedRefused =
+    stored !== undefined &&
+    options.policy?.modelAllowed?.(stored.provider, stored.modelId) === false;
+  const keep =
+    stored !== undefined &&
+    storedId !== selectedId &&
+    options.modelPolicy !== 'selected' &&
+    !storedRefused
+      ? stored
+      : undefined;
+  const differs = storedId !== undefined && storedId !== selectedId;
+  const switchToSelected = differs && keep === undefined;
+  const effectiveModel =
+    keep === undefined
+      ? options.model
+      : resolveStoredModel(options.models, keep);
+  const effectiveId = defaultSoloModelId(effectiveModel);
+  const { harness, open } = await AgentHarness.create(
     {
       session: options.session,
       models: options.models,
-      model: options.model,
+      model: effectiveModel,
       tools: composeTools(baseTools, withPolicyContributions(options.policy)),
       toolContext,
       systemPrompt:
@@ -381,7 +539,7 @@ export async function bootSoloLane(
           metadata: {
             agent: options.agentId,
             lane: SOLO_LANE_NAME,
-            model: defaultSoloModelId(options.model),
+            model: effectiveId,
           },
           // §12.1 role prompt (issue #99): the document's own text replaces
           // the solo constant; absent, the constant stands.
@@ -398,8 +556,12 @@ export async function bootSoloLane(
         }),
       compaction: {
         enabled: options.compaction?.enabled ?? true,
-        reserveTokens:
+        // Clamped to the model's window: a small-window model must not
+        // compact every turn (see effectiveReserveTokens).
+        reserveTokens: effectiveReserveTokens(
+          effectiveModel.contextWindow,
           options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+        ),
         keepRecentTokens:
           options.compaction?.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
       },
@@ -407,6 +569,25 @@ export async function bootSoloLane(
     context,
   );
   const lane = await harness.lane(SOLO_LANE_NAME, context);
+  if (switchToSelected) {
+    // An explicit selection is an explicit model change (§26.1): applied
+    // to the restored lane (and persisted by Pi) and announced.
+    await lane.setModel(
+      { provider: options.model.provider, modelId: options.model.id },
+      context,
+    );
+    options.onModelNotice?.(
+      `model: session model '${storedId}' switched to '${selectedId}' (${
+        storedRefused && options.modelPolicy !== 'selected'
+          ? 'enterprise policy'
+          : 'explicit selection'
+      })`,
+    );
+  } else if (differs) {
+    options.onModelNotice?.(
+      `model: session keeps its own model '${storedId}' (selected default '${selectedId}' not applied; pin a model to switch)`,
+    );
+  }
   if (options.policy?.classes !== undefined) {
     await applyToolPolicy(harness, lane, options.policy.classes, context);
   }
@@ -416,11 +597,27 @@ export async function bootSoloLane(
   // set is the noTools case (the lane allow-lists nothing). The absence
   // guard (issue #43's createRoleToolGuard) stays available to callers;
   // registration-time absence is what this pins.
-  if (options.toolAllowlist !== undefined) {
+  if (mustActivateTools) {
     await lane.setActiveTools(effectiveToolNames, context);
   }
+  // Issue #208: the budget meter (or any other attempt gate) subscribes
+  // BEFORE the policy interceptors: Pi's before_tool chain stops at the
+  // first block, so a later subscriber would never observe a denied call.
+  const detachBeforePolicyHooks = options.policy?.beforePolicyHooks?.(
+    harness.hooks,
+  );
   if (options.policy?.interceptors !== undefined) {
-    registerPolicyInterceptors(harness.hooks, options.policy.interceptors);
+    registerPolicyInterceptors(harness.hooks, {
+      ...options.policy.interceptors,
+      ...(options.skillReadRoots === undefined
+        ? {}
+        : {
+            readRoots: [
+              ...(options.policy.interceptors.readRoots ?? []),
+              ...options.skillReadRoots,
+            ],
+          }),
+    });
   }
   let binding: LaneBinding | undefined;
   // NIT (review, issue #82): the harness above boots BEFORE the registry
@@ -432,7 +629,7 @@ export async function bootSoloLane(
     const candidate: LaneBinding = {
       sessionId: options.sessionId,
       lane: SOLO_LANE_NAME,
-      modelId: defaultSoloModelId(options.model),
+      modelId: effectiveId,
     };
     let existing: LaneBinding | undefined;
     try {
@@ -470,15 +667,25 @@ export async function bootSoloLane(
     harness,
     lane,
     kills,
+    model: effectiveModel,
+    // Issue #147 (§21): the operations Pi restored open on this lane — a
+    // turn a dead process left mid-flight. Callers settle them (resume or
+    // durable abort, lane/pending.ts) before admitting a new prompt.
+    open: open.filter((op) => op.lane === SOLO_LANE_NAME),
     sessionId: options.sessionId,
+    configuredReserveTokens:
+      options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+    modelWindow: (provider, modelId) =>
+      options.models.getModels(provider).find((model) => model.id === modelId)
+        ?.contextWindow,
     ...(binding === undefined ? {} : { binding }),
+    ...(detachBeforePolicyHooks === undefined
+      ? {}
+      : { detachBeforePolicyHooks }),
     ...(options.taskId === undefined
       ? {}
       : {
-          affinity: pinModelForTask(
-            options.taskId,
-            defaultSoloModelId(options.model),
-          ),
+          affinity: pinModelForTask(options.taskId, effectiveId),
         }),
   };
 }

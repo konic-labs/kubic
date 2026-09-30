@@ -32,6 +32,11 @@ export interface AddWorktreeOptions {
   // The worktree parent, workspace-relative: `[orchestrator].root` when the
   // config sets one, `.kubic/wt` otherwise (issue #133).
   worktreeRoot?: string;
+  // The orchestrator session that owns the worktree (issue #144): names
+  // become `kubic/<session>/<agent>` at `<worktreeRoot>/<session>/<agent>`,
+  // so a retained tree from one run is never another run's worktree.
+  // Omitted keeps the legacy unscoped shape (direct library callers).
+  ownerSession?: string;
 }
 
 export function isColdAddWithinBudget(elapsedMs: number): boolean {
@@ -131,8 +136,13 @@ export async function addWorktree(
 ): Promise<AddWorktreeResult> {
   const now = options?.now ?? Date.now;
   const started = now();
-  const branch = branchForAgent(agentId);
-  const path = pathForAgent(repoRoot, agentId, options?.worktreeRoot);
+  const branch = branchForAgent(agentId, options?.ownerSession);
+  const path = pathForAgent(
+    repoRoot,
+    agentId,
+    options?.worktreeRoot,
+    options?.ownerSession,
+  );
   const provenance = provenanceFor(agentId, options?.sessionId ?? 'cli');
 
   const top = await runGit(env, ['rev-parse', '--show-toplevel'], provenance);

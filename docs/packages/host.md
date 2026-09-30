@@ -15,11 +15,12 @@ docs and code must never imply otherwise (design §59.1).
 | Module | Exports |
 | --- | --- |
 | `approvals.ts` | `CAPABILITIES`, `Capability`, `ApprovalPolicy`, `PolicyValidationError`, `validatePolicy`, `ApprovalRequest`, `ApprovalVerdict`, `ApprovalStore`, `MemoryApprovalStore`, `FileApprovalStore`, `TriggerContext`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `AccessPosture`, `ApprovalAsk`, `createApprovalAsk`, `enableFullAccess`, `ApprovalServiceOptions`, `ApprovalService` |
-| `config/config.ts` | `CONFIG_LAYERS`, `ConfigLayer`, `ConfigError`, `ProjectUntrustedError`, `BudgetKeyError`, `AgentConfig`, `ModelConfig`, `ModesConfig`, `ApprovalsConfig`, `PermissionsConfig`, `JournalConfig`, `RoleConfig`, `OrchestratorConfig`, `UiConfig`, `SessionConfig`, `KubicConfig`, `KNOWN_CONFIG_SECTIONS`, `EXAMPLE_TOML`, `assertNoBudgetKeys`, `parseTomlConfig`, `serializeTomlConfig`, `parseLayerConfig`, `LayerInput`, `MergeResult`, `mergeLayered`, `defaultLayerPaths`, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `isCommittedConfigPath`, `checkGitignoreSplit`, `loadLayered` |
+| `config/config.ts` | `CONFIG_LAYERS`, `ConfigLayer`, `ConfigError`, `ProjectUntrustedError`, `BudgetKeyError`, `AgentConfig`, `ModelConfig`, `ModesConfig`, `ApprovalsConfig`, `PermissionsConfig`, `JournalConfig`, `RoleConfig`, `OrchestratorConfig`, `UiConfig`, `SessionConfig`, `PolicyConfig`, `AuditTableConfig`, `KubicConfig`, `KNOWN_CONFIG_SECTIONS`, `EXAMPLE_TOML`, `assertNoBudgetKeys`, `parseTomlConfig`, `serializeTomlConfig`, `parseLayerConfig`, `LayerInput`, `MergeResult`, `mergeLayered`, `defaultLayerPaths`, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `isCommittedConfigPath`, `checkGitignoreSplit`, `loadLayered` |
 | `config/runtime.ts` | `loadRuntimeConfig`, `effectiveConfigView`, `renderEffectiveConfig`, `checkWorkspaceIgnoreSplit`, `RuntimeConfig`, `RuntimeConfigInputs`, `ConfigValueSource`, `EffectiveConfigView`, `RuntimeKeyEffect`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES`, `RUNTIME_DEFAULTS`, `MS_PER_DAY` — the load the binary actually runs on (#90) |
 | `config/config-cli.ts` | `runConfigCommand`, `ConfigCommandDeps`, `CONFIG_EXIT_OK/FAIL` — `kubic config [--json]` (#90) |
 | `config/config-doctor.ts` | `configDoctorProbe`, `buildConfigDoctorInput`, `CONFIG_DOCTOR_ID` — doctor's config check (#90) |
 | `config/stances.ts` | `McpUnsupportedError`, `assertNoMcpConfig` (+ secrets in `config/secrets.ts`) |
+| `config/role-credentials.ts` | `ProviderKeyEnv`, `ProviderKeyIndex`, `providerOfModelRef`, `resolveWorkerProvider`, `resolveProviderGrant`, `planWorkerCredentials`, `workerCredentialDoctorProbe` — §36.3 provider-credential scoping for orchestrator workers (#200): which provider a role resolves to, exactly which key env vars that provider needs, and when the run must refuse by provider name before any worktree exists (#200) |
 | `doctor.ts` | `DOCTOR_EXIT_OK/FAIL/USAGE/PROVIDER` (0/1/2/6), `DoctorStatus`, `DoctorReason`, `DoctorCheck`, `DoctorReport`, `ProviderProbe`, `DepProbe`, `SessionOverlapProbe`, `DoctorDeps`, `collectDoctorChecks` |
 | `spans.ts` | `SPAN_NAMES`, `SpanName`, `SpanRecord`, `SpanRecorder`, `DEBUG_CLASSES`, `DebugSink`, `ToolPhase`, `DebugLog`, `HookDeps`, `HookResult`, `TranscriptSink`, `createTranscriptSink`, `makeWriteLogSink`. Live on the run path since #98 (see "Spans") |
 | `ops/perf/` | `budgets.ts` (§61 ms constants + p50/p95 `evaluateBudget`), `perf-cli.ts` (`kubic perf`, `--measure` \| `--samples`), `measure.ts` (real spawn/worktree samples, #98), `run-spans.ts` (lane/tool spans on the run path, #98) |
@@ -27,7 +28,7 @@ docs and code must never imply otherwise (design §59.1).
 | `worker-manager.ts`, `dispatch.ts`, `root-agent.ts` | Pointer | Supervision state in `@kubic/worker` `lifecycle/registry.ts` (#42); dispatch in `orchestrator/manager.ts` (#40, live since #103); root agent is the solo lane `@kubic/worker` `lane/solo.ts` (#11) |
 | `orchestrator/` | Manager + worker-process orchestration (parallel limits, approval budgets). `orchestrator/manager.ts` is live since #103: `MANAGER_ALLOWLIST` + `registerManagerLane` gate the run's toolset and `buildManagerPlan` authors the per-worker prompts |
 | `roles/` | Role presets and role data |
-| `policy/` | Host-side policy wiring |
+| `policy/` | Host-side policy wiring: `enterprise.ts` (`resolveEffectivePolicy`, `layerPolicyFromConfig`, `isToolAllowed`, `isToolAllowedByEnterprise`, `isModelAllowed`, `enterpriseDoctorChecks`), `policy-cli.ts` (`kubic policy`), `audit*.ts` (§60 ledger) |
 | `replay/` | Replay surfaces over trajectory exports |
 | `limits/` | Honest-claims/skip-record guards, solo-warning + orchestrator notices |
 | `run-cli.ts`, `sessions-cli.ts`, `workers-cli.ts`, `journal-cli.ts`, `models-cli.ts`, `git-cli.ts` | Headless/CLI command implementations |
@@ -66,9 +67,13 @@ is additive by construction.
 
 ### Approvals (`approvals.ts`, #48)
 
-`CAPABILITIES` (10): `network`, `credentials`, `git-push`,
+`CAPABILITIES` (11): `network`, `credentials`, `git-push`,
 `destructive-shell`, `install`, `deploy`, `outside-write`,
-`budget-overrun`, `spawn-agents`, `privilege-escalation`.
+`budget-overrun`, `spawn-agents`, `privilege-escalation`,
+`kubic-state-write` (always asks; `controlPlaneRefusal` refuses writes into
+`.kubic/journal|orchestrator|sessions` outright — the workspace's, an
+ancestor's such as a worker worktree's repo, or `~/.kubic`'s — plus the
+session root in use, `installSoloPolicy({ home, sessionsRoot })`, issue #324).
 
 | Interface | Fields |
 | --- | --- |

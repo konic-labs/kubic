@@ -46,7 +46,8 @@ export function validateLsArgs(raw: unknown): LsArgs {
 
 export const lsOperation: Operation<LsArgs, LsResult> = {
   name: 'ls',
-  description: 'List directory entries with kinds and sizes',
+  description:
+    'List one directory (not recursive): every entry with its kind and size. path defaults to the workspace root.',
   replay: 'safe',
   validateArgs: validateLsArgs,
   execute: async (_inv: ToolInvocation, args: LsArgs, ctx: OpContext) => {

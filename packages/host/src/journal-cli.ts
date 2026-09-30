@@ -1,11 +1,29 @@
 // `kubic diff / undo / log / status` commands (issue #18; §42.2, §78).
-// Thin over the exec journal core; presentation only (one line per fact).
-// Exit codes: 0 success (including empty diff and clean dry-run),
-// 1 usage/IO errors, 2 undo completed with non-reversible skips.
+// Thin over the exec journal core; presentation only. commander (the
+// composition root, apps/kubic/src/commands/journal.ts) owns argv, help and
+// parse errors and hands a typed `JournalRequest` here.
+//
+// Channels: the report (diff, undo verdicts, log table, status lines, or
+// the one `--json` document) goes to `out`; diagnostics (the fallback
+// session note, the empty-journal hint, undo warnings) go through the
+// logger to `err` — so a `--json` run's stdout is pure JSON.
+//
+// Exit codes (docs/cli/exit-codes.md): 0 success (including empty diff and
+// clean dry-run), 2 a usage error (thrown as CliUsageError: bad --session
+// id, conflicting store selectors, bad --max-content-bytes) and `undo`
+// completed with skipped steps; an IO failure propagates (root catch-all,
+// exit 1).
 
-import { basename, dirname, join } from 'node:path';
-import { answerHelp } from '../../core/src/cli-help.js';
-import { type FlagSpec, parseFlagArgs } from '../../core/src/flags.js';
+import { basename, dirname, join, sep } from 'node:path';
+import {
+  CliUsageError,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
+import { formatJson } from '../../core/src/cli/output.js';
+import { renderTable } from '../../core/src/cli/table.js';
+import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
 import {
@@ -17,9 +35,13 @@ import {
 import {
   journalStatus,
   reconciliationSummary,
-  renderLog,
 } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
+import {
+  listSessions,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { MS_PER_DAY } from './config/runtime.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
@@ -33,44 +55,54 @@ export interface JournalCommandDeps {
   // read path writes nothing. The workspace journal is never governed by
   // this key: `journal.retentionDays` bounds it on append.
   retentionDays?: number;
+  // stdout: the report or the one `--json` document.
   out: (line: string) => void;
+  // stderr: logger diagnostics. Absent means `out` (single-channel callers).
+  err?: (line: string) => void;
+  // Colours for the report (diff hunks, undo verdicts, status). Default:
+  // none. Never applied to `--json`.
+  theme?: CliTheme;
+  // Colours for the logger's level prefixes. Default: none.
+  errTheme?: CliTheme;
+  // Box-drawn `log` table (an interactive, coloured terminal). Default:
+  // plain aligned columns.
+  fancy?: boolean;
+  // Issue #362: session id → recorded workspace (the cwd the session was
+  // created in). Default: the local session store's own listing.
+  sessionWorkspaces?: (sessionsRoot: string) => Promise<Map<string, string>>;
 }
+
+// The store selector every journal command shares.
+export interface JournalSelection {
+  // `<id>` or the `journal:<id>` ref `kubic run` prints.
+  session?: string | undefined;
+  json?: boolean | undefined;
+}
+
+export interface JournalDiffOptions extends JournalSelection {
+  path?: string | undefined;
+  agent?: string | undefined;
+  // The `--json` per-side content bound in bytes; 0 = unlimited.
+  maxContentBytes?: number | undefined;
+}
+
+export interface JournalUndoOptions extends JournalSelection {
+  // The undo scope (the positional operand), never the --session value.
+  path?: string | undefined;
+  step?: boolean | undefined;
+  dryRun?: boolean | undefined;
+  force?: boolean | undefined;
+}
+
+export type JournalRequest =
+  | ({ command: 'diff' } & JournalDiffOptions)
+  | ({ command: 'undo' } & JournalUndoOptions)
+  | ({ command: 'log' } & JournalSelection)
+  | ({ command: 'status' } & JournalSelection);
 
 export function defaultJournalDir(root: string): string {
   return join(root, '.kubic', 'journal');
 }
-
-const JOURNAL_USAGE =
-  'usage: kubic <diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>] | undo [--step] [--dry-run] [--force] [--session <id>] [--] [<path>] | log [--session <id>] | status [--session <id>]>';
-
-function usage(out: (line: string) => void): number {
-  out(JOURNAL_USAGE);
-  return 1;
-}
-
-// Issue #127: the shared parser (core/src/flags.ts) replaces the
-// indexOf-based flagValue helper. Per-subcommand specs keep each
-// subcommand's surface exact: `undo` never consumes a --path value (its
-// bare operand is the undo scope, as before), while `diff` owns the
-// diff-only value flags.
-const JOURNAL_GLOBAL_SPEC: readonly FlagSpec[] = [
-  { name: '--session', takes: 'value' },
-  { name: '--json', takes: 'boolean' },
-];
-
-const JOURNAL_DIFF_SPEC: readonly FlagSpec[] = [
-  ...JOURNAL_GLOBAL_SPEC,
-  { name: '--path', takes: 'value' },
-  { name: '--agent', takes: 'value' },
-  { name: '--max-content-bytes', takes: 'value' },
-];
-
-const JOURNAL_UNDO_SPEC: readonly FlagSpec[] = [
-  ...JOURNAL_GLOBAL_SPEC,
-  { name: '--step', takes: 'boolean' },
-  { name: '--dry-run', takes: 'boolean' },
-  { name: '--force', takes: 'boolean' },
-];
 
 // Session ids are path segments under the sessions root: the shared
 // run-cli SESSION_ID_PATTERN ([A-Za-z0-9_-]) is checked before any path
@@ -88,18 +120,66 @@ function hasJournalIndex(dir: string): boolean {
   return createNodeFileBridge(dir).exists('index.jsonl');
 }
 
+// Issue #362: the session store's recorded cwd per session id. An
+// unlistable store (no sessions root yet, a torn transcript) is "nothing
+// recorded" — never a throw, never a guess.
+async function defaultSessionWorkspaces(
+  sessionsRoot: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const listed = await listSessions(
+      openSessionStore(sessionsRoot, createNodeFileBridge(sessionsRoot)),
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of listed) {
+      if (entry.cwd !== undefined && entry.cwd !== '') {
+        out.set(entry.id, entry.cwd);
+      }
+    }
+  } catch {
+    // No readable sessions root — no recorded workspaces.
+  }
+  return out;
+}
+
+// Canonical form for the workspace comparison (symlinks resolved, e.g.
+// macOS /var → /private/var). A path that no longer exists keeps its
+// lexical form — it can then only match itself.
+function canonical(path: string): string {
+  try {
+    return createNodeFileBridge('/').realPath?.(path) ?? path;
+  } catch {
+    return path;
+  }
+}
+
+// True when `root` is the recorded workspace or inside it: `kubic diff`
+// from a project's subdirectory still belongs to that project.
+function workspaceContains(recorded: string, root: string): boolean {
+  const r = canonical(recorded);
+  const c = canonical(root);
+  return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
+}
+
 // The most recent run journal under the sessions root (issue #125): one
 // level of session ids (the shared SESSION_ID_PATTERN, checked before any
 // path join — contained by construction, same rule as --session), newest
-// `journal/index.jsonl` mtime wins. A session whose journal index cannot
-// be statted is skipped (no journal there); a missing sessions root is
-// simply "nothing here" (fresh machine), never a throw.
-function latestSessionJournal(sessionsRoot: string): string | undefined {
+// `journal/index.jsonl` mtime wins among the sessions `accept` admits
+// (issue #362: only those recorded for the current workspace). A session
+// whose journal index cannot be statted is skipped (no journal there); a
+// missing sessions root is simply "nothing here" (fresh machine), never a
+// throw.
+function latestSessionJournal(
+  sessionsRoot: string,
+  accept: (id: string) => boolean,
+): string | undefined {
   const bridge = createNodeFileBridge(sessionsRoot);
   let best: { dir: string; mtime: number } | undefined;
   try {
     for (const info of bridge.listDir('.')) {
       if (!info.isDirectory || !SESSION_ID_PATTERN.test(info.name)) continue;
+      if (!accept(info.name)) continue;
       const idx = join(info.name, 'journal', 'index.jsonl');
       try {
         const mtime = bridge.fileInfo(idx).mtimeMs;
@@ -116,15 +196,27 @@ function latestSessionJournal(sessionsRoot: string): string | undefined {
   return best?.dir;
 }
 
-// `sessionId` is set exactly when the resolved store is a session journal
-// (explicit --session or the latest-session fallback) — the read-time
-// self-heal below keys off it, so a pinned/workspace store can never be
-// pruned by `session.retentionDays`.
-function resolveJournalDir(
+interface ResolvedStore {
+  dir: string;
+  // Set exactly when the resolved store is a session journal (explicit
+  // --session or the latest-session fallback) — the read-time self-heal
+  // keys off it, so a pinned/workspace store can never be pruned by
+  // `session.retentionDays`.
+  sessionId?: string;
+  latestSessionId?: string;
+  // Issue #362: the workspace the store's relative paths resolve against.
+  // A session store takes the session's recorded cwd; undefined means the
+  // session recorded none (undo/status then refuse by name).
+  workspace?: string;
+}
+
+// Throws CliUsageError for a bad or conflicting --session (exit 2).
+async function resolveJournalDir(
   deps: JournalCommandDeps,
   root: string,
   session: string | undefined,
-): { dir: string; sessionId?: string; latestSessionId?: string } | string {
+): Promise<ResolvedStore> {
+  const workspacesOf = deps.sessionWorkspaces ?? defaultSessionWorkspaces;
   if (session === undefined) {
     const dir = deps.journalDir ?? defaultJournalDir(root);
     // Issue #125: the bare default is a store nothing writes (runs journal
@@ -134,276 +226,407 @@ function resolveJournalDir(
     // invocation, fail-closed — the same rule as the --session conflict
     // below), and keeping the scan off that path keeps pinned-store tests
     // hermetic (no walk of the real sessions root).
+    // Issue #362: only sessions recorded for THIS workspace are
+    // candidates — another project's newer journal is never picked, and
+    // its relative paths never resolve against this cwd.
     if (deps.journalDir === undefined && !hasJournalIndex(dir)) {
-      const fallback = latestSessionJournal(
-        deps.sessionsRoot ?? defaultSessionsRoot(),
-      );
+      const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
+      const workspaces = await workspacesOf(sessionsRoot);
+      const fallback = latestSessionJournal(sessionsRoot, (id) => {
+        const recorded = workspaces.get(id);
+        return recorded !== undefined && workspaceContains(recorded, root);
+      });
       if (fallback !== undefined) {
         const id = basename(dirname(fallback));
-        return { dir: fallback, sessionId: id, latestSessionId: id };
+        return {
+          dir: fallback,
+          sessionId: id,
+          latestSessionId: id,
+          workspace: workspaces.get(id) as string,
+        };
       }
     }
-    return { dir };
+    return { dir, workspace: root };
   }
   const id = session.startsWith(JOURNAL_REF_PREFIX)
     ? session.slice(JOURNAL_REF_PREFIX.length)
     : session;
   if (!SESSION_ID_PATTERN.test(id)) {
-    return `error: invalid --session id ${JSON.stringify(session)} (use [A-Za-z0-9_-] or journal:<id>)`;
+    throw new CliUsageError(
+      `invalid --session id ${JSON.stringify(session)} (use [A-Za-z0-9_-] or journal:<id>)`,
+    );
   }
   if (deps.journalDir !== undefined) {
     // Explicit precedence, fail-closed: a programmatic journalDir plus an
     // operator --session is ambiguous — refuse rather than silently
     // ignoring one side.
-    return `error: --session ${JSON.stringify(session)} conflicts with a configured journal dir (use one store per invocation)`;
+    throw new CliUsageError(
+      `--session ${JSON.stringify(session)} conflicts with a configured journal dir (use one store per invocation)`,
+    );
   }
   const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
-  return { dir: join(sessionsRoot, id, 'journal'), sessionId: id };
+  // Issue #362: an explicit session operates on its OWN recorded
+  // workspace, whatever the invocation cwd (`--session` works from any
+  // cwd, and restores land where the session wrote).
+  const workspace = (await workspacesOf(sessionsRoot)).get(id);
+  return {
+    dir: join(sessionsRoot, id, 'journal'),
+    sessionId: id,
+    ...(workspace === undefined ? {} : { workspace }),
+  };
+}
+
+// Everything one invocation shares after the store is resolved.
+interface JournalRun {
+  readonly deps: JournalCommandDeps;
+  // The workspace root the store's paths resolve against (issue #362) —
+  // the invocation cwd only for a workspace store.
+  readonly root: string;
+  // The resolved session id and root, as `--json` reports them.
+  readonly ref: { session: string | null; root: string | null };
+  readonly resolved: ResolvedStore;
+  readonly store: FileJournalStore;
+  readonly theme: CliTheme;
+  readonly log: CliLogger;
+}
+
+const PLAIN = createCliTheme('none');
+
+function loggerFor(deps: JournalCommandDeps): CliLogger {
+  return createLineLogger(deps.err ?? deps.out, {
+    theme: deps.errTheme ?? PLAIN,
+  });
 }
 
 export async function runJournalCommand(
-  args: string[],
+  request: JournalRequest,
   deps: JournalCommandDeps,
 ): Promise<number> {
-  // `--help`/`-h` prints the shared usage line and exits 0 (issue #100).
-  // The line names all four subcommands, so `kubic diff --help` and
-  // `kubic undo --help` answer with the same listing they belong to.
-  const help = answerHelp(args, deps.out, JOURNAL_USAGE);
-  if (help !== null) return help;
-  const [sub, ...rest] = args;
-  if (sub === undefined) return usage(deps.out);
   const root = deps.root ?? process.cwd();
-  // The session store selector is shared by all four subcommands; the
-  // global spec keeps `--json` so the hint line below can read it.
-  const global = parseFlagArgs(rest, JOURNAL_GLOBAL_SPEC);
-  if (global.missing.includes('--session')) {
-    deps.out('error: --session needs a value');
-    return 1;
+  if (
+    request.command === 'diff' &&
+    request.maxContentBytes !== undefined &&
+    !(Number.isInteger(request.maxContentBytes) && request.maxContentBytes >= 0)
+  ) {
+    throw new CliUsageError(
+      '--max-content-bytes needs a non-negative integer (0 = unlimited)',
+    );
   }
-  const session = global.values['--session'] as string | undefined;
-  const json = global.values['--json'] === true;
-  const journalDir = resolveJournalDir(deps, root, session);
-  if (typeof journalDir === 'string') {
-    deps.out(journalDir);
-    return 1;
+  const resolved = await resolveJournalDir(deps, root, request.session);
+  const json = request.json === true;
+  const log = loggerFor(deps);
+  // Issue #125/#362: a session store is named — with the workspace its
+  // paths resolve against — before any subcommand output, so the
+  // resolution is never silent. It is a diagnostic (stderr), and `--json`
+  // stays silent there too: the document carries `session` and `root`.
+  if (resolved.sessionId !== undefined && !json) {
+    const where =
+      resolved.workspace === undefined
+        ? 'no recorded workspace'
+        : `workspace ${resolved.workspace}`;
+    log.info(
+      resolved.latestSessionId !== undefined
+        ? `session: ${resolved.sessionId} (latest session journal for this workspace) — ${where}`
+        : `session: ${resolved.sessionId} — ${where}`,
+    );
   }
-  // Issue #125: a fallback store is named before any subcommand output so
-  // the resolution is never silent. `--json` keeps its parseable envelope —
-  // the refs there are self-describing, so no line is added.
-  if (journalDir.latestSessionId !== undefined && !json) {
-    deps.out(`session: ${journalDir.latestSessionId}`);
+  // Issue #362: undo writes and status reads the workspace, so both refuse
+  // (exit 2, named) when a session's workspace is unknown or gone — its
+  // relative paths must never land in the invocation cwd instead.
+  if (
+    resolved.sessionId !== undefined &&
+    (request.command === 'undo' || request.command === 'status')
+  ) {
+    const refusal = workspaceRefusal(resolved.sessionId, resolved.workspace);
+    if (refusal !== undefined) {
+      log.error(refusal);
+      return EXIT_USAGE;
+    }
   }
-  const store = new FileJournalStore(journalDir.dir);
+  const run: JournalRun = {
+    deps,
+    root: resolved.workspace ?? root,
+    ref: {
+      session: resolved.sessionId ?? null,
+      root: resolved.workspace ?? null,
+    },
+    resolved,
+    store: new FileJournalStore(resolved.dir),
+    theme: json ? PLAIN : (deps.theme ?? PLAIN),
+    log,
+  };
+  switch (request.command) {
+    case 'diff':
+      return journalDiff(run, request);
+    case 'undo':
+      return journalUndo(run, request);
+    case 'log':
+      return journalLog(run, request);
+    case 'status':
+      return journalStatusCommand(run, request);
+  }
+}
 
-  if (sub === 'diff') {
-    const parsed = parseFlagArgs(rest, JOURNAL_DIFF_SPEC);
-    const path = parsed.values['--path'] as string | undefined;
-    const agent = parsed.values['--agent'] as string | undefined;
-    // Issue #126: the `--json` content bound. Validated on every diff
-    // invocation (fail-closed like --path/--agent), applied to `--json`
-    // only — the human path renders hunks, not whole files.
-    const maxContent = parsed.values['--max-content-bytes'] as
-      | string
-      | undefined;
+function workspaceRefusal(
+  sessionId: string,
+  workspace: string | undefined,
+): string | undefined {
+  if (workspace === undefined) {
+    return `session ${sessionId}: no recorded workspace — refusing to resolve its paths against the current directory`;
+  }
+  if (!createNodeFileBridge('/').exists(workspace)) {
+    return `session ${sessionId}: recorded workspace ${workspace} no longer exists — refusing to resolve its paths elsewhere`;
+  }
+  return undefined;
+}
+
+// One rendered diff line, coloured by its role: file headers bold, hunk
+// headers amber, removals red, additions green, attribution/markers muted.
+// Context lines stay plain. The identity under the plain theme.
+export function colorizeDiffLine(line: string, theme: CliTheme): string {
+  if (line.startsWith('--- ') || line.startsWith('+++ ')) {
+    return theme.bold(line);
+  }
+  if (line.startsWith('@@')) return theme.warning(line);
+  if (line.startsWith('# ')) return theme.muted(line);
+  if (line.startsWith('+')) return theme.success(line);
+  if (line.startsWith('-')) return theme.accent(line);
+  return line;
+}
+
+function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
+  const { deps, store } = run;
+  const changes = diffEntries(store, {
+    ...(request.path === undefined ? {} : { path: request.path }),
+    ...(request.agent === undefined ? {} : { agent: request.agent }),
+  });
+  if (request.json === true) {
+    // One change's before/after can be a whole file: the envelope clips
+    // each side at 64 KiB by default (marker line + `contentTruncated`),
+    // and `--max-content-bytes 0` restores the unbounded form for
+    // scripting. The bound applies to `--json` only — the human path
+    // renders hunks, not whole files.
+    const maxBytes = request.maxContentBytes ?? DEFAULT_MAX_CONTENT_BYTES;
+    deps.out(
+      formatJson({
+        ...run.ref,
+        changes: changes.map((c) => clipChangeContent(c, maxBytes)),
+      }),
+    );
+    return EXIT_OK;
+  }
+  if (changes.length === 0) {
+    deps.out('no changes');
+    // Issue #125: with no journal anywhere, name both places that were
+    // looked at — the empty result is otherwise indistinguishable from
+    // "ran and nothing changed". Only the bare default path hints (a
+    // configured store or --session is a deliberate choice). "Nothing
+    // anywhere" means the resolved store has no entries AND no session
+    // journal exists to fall back to.
+    const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
     if (
-      parsed.missing.includes('--path') ||
-      parsed.missing.includes('--agent')
+      request.session === undefined &&
+      deps.journalDir === undefined &&
+      run.resolved.sessionId === undefined &&
+      store.entries().length === 0
     ) {
-      deps.out('error: --path/--agent need a value');
-      return 1;
-    }
-    if (parsed.missing.includes('--max-content-bytes')) {
-      deps.out('error: --max-content-bytes needs a value');
-      return 1;
-    }
-    if (maxContent !== undefined && !/^\d+$/.test(maxContent)) {
-      deps.out(
-        'error: --max-content-bytes needs a non-negative integer (0 = unlimited)',
+      run.log.info(
+        `no journal under ${run.resolved.dir} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
       );
-      return 1;
     }
-    const changes = diffEntries(store, {
-      ...(path === undefined ? {} : { path }),
-      ...(agent === undefined ? {} : { agent }),
+    return EXIT_OK;
+  }
+  for (const line of renderDiff(changes).split('\n')) {
+    deps.out(colorizeDiffLine(line, run.theme));
+  }
+  return EXIT_OK;
+}
+
+type SkipKind = 'stale' | 'already-undone' | 'non-reversible';
+
+function skipKindOf(reason: string): SkipKind {
+  if (reason.startsWith('stale:')) return 'stale';
+  if (reason.startsWith('already undone:')) return 'already-undone';
+  return 'non-reversible';
+}
+
+function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
+  const { deps, store, root, theme } = run;
+  const dryRun = request.dryRun === true;
+  const plan = planUndo(
+    store,
+    {
+      ...(request.path === undefined ? {} : { path: request.path }),
+      ...(request.step === true ? { step: true } : {}),
+    },
+    root,
+  );
+  if (plan.steps.length === 0) {
+    deps.out(
+      request.json === true
+        ? formatJson({ ...run.ref, dryRun, restored: [], skipped: [] })
+        : 'nothing to undo',
+    );
+    return EXIT_OK;
+  }
+  // Issue #108: --force overrides the staleness refusal per-invocation;
+  // nothing persists it — the next undo re-checks by default.
+  const result = applyUndo(store, plan, root, {
+    dryRun,
+    force: request.force === true,
+  });
+  // Stale refusals and already-undone skips get their own line shapes so
+  // scripts (and humans) can tell "cannot reverse" from "refused because
+  // the file changed since" from "a previous undo already unwound it".
+  const kinds = result.skippedDetails.map((d) => skipKindOf(d.reason));
+  // One JSON document (or the human report); the exit code is shared: 2
+  // when a real run skipped anything, a dry run always 0.
+  const exit = !dryRun && result.skipped.length > 0 ? EXIT_USAGE : EXIT_OK;
+  if (request.json === true) {
+    deps.out(
+      formatJson({
+        ...run.ref,
+        dryRun,
+        restored: result.restored,
+        warnings: result.warnings,
+        skipped: result.skippedDetails.map((d, i) => ({
+          path: d.path,
+          kind: kinds[i],
+          reason: d.reason,
+        })),
+      }),
+    );
+    return exit;
+  }
+  const staleCount = kinds.filter((k) => k === 'stale').length;
+  const undoneCount = kinds.filter((k) => k === 'already-undone').length;
+  const classified = staleCount > 0 || undoneCount > 0;
+  const skipLabel = classified
+    ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null].filter((s) => s !== null).join(', ')})`
+    : ' non-reversible';
+  if (dryRun) {
+    deps.out(
+      `would restore ${result.restored.length} step(s)` +
+        (result.skipped.length > 0
+          ? `, skip ${result.skipped.length}${skipLabel}: ${result.skipped.join(', ')}`
+          : ''),
+    );
+    return EXIT_OK;
+  }
+  for (const path of result.restored) {
+    deps.out(`${theme.success('restored')} ${path}`);
+  }
+  for (const warning of result.warnings) run.log.warn(warning);
+  result.skippedDetails.forEach((detail, i) => {
+    const kind = kinds[i];
+    deps.out(
+      kind === 'stale'
+        ? `${theme.warning('stale (skipped):')} ${detail.path} — ${detail.reason}`
+        : kind === 'already-undone'
+          ? `${theme.muted('already undone (skipped):')} ${detail.path}`
+          : `${theme.warning('non-reversible (skipped):')} ${detail.path}`,
+    );
+  });
+  deps.out(
+    classified
+      ? `undo: ${result.restored.length} restored, ${result.skipped.length} skipped${skipLabel}`
+      : `undo: ${result.restored.length} restored, ${result.skipped.length} non-reversible`,
+  );
+  return exit;
+}
+
+const LOG_COLUMNS = [
+  { header: 'TIME' },
+  { header: 'AGENT' },
+  { header: 'TOOL CALL' },
+  { header: 'OP' },
+  { header: 'PATH' },
+  { header: 'BYTES', align: 'right' },
+  { header: 'NOTE' },
+] as const;
+
+function journalLog(run: JournalRun, request: JournalSelection): number {
+  const { deps, store, resolved } = run;
+  // Issue #119 (read-time self-heal): with `session.retentionDays` set, a
+  // SESSION journal drops entries older than the window as it is read —
+  // the same age bound `kubic sessions prune` applies to whole session
+  // dirs, enforced entry-wise through the store's retention pass (which
+  // `append` already runs; the read path triggers it explicitly here).
+  // Session-scoped by construction (`sessionId` is set only for a session
+  // journal): the workspace journal keeps its own `journal.retentionDays`
+  // append-time bound, and prune remains the only deleter of session
+  // dirs. With retention unset — or 0 — no pass runs: the read path
+  // writes nothing.
+  const retentionDays = deps.retentionDays ?? 0;
+  if (resolved.sessionId !== undefined && retentionDays > 0) {
+    store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
+  }
+  const entries = store.entries();
+  // `--json` stays the raw entries array (the count is derivable from the
+  // `unattributed` flags there); the human path gains the summary line.
+  if (request.json === true) {
+    deps.out(formatJson({ ...run.ref, entries }));
+    return EXIT_OK;
+  }
+  if (entries.length === 0) {
+    deps.out('journal is empty');
+  } else {
+    const rows = entries.map((e) => [
+      new Date(e.timestamp).toISOString(),
+      e.agentId,
+      e.toolCallId ?? 'none',
+      e.op,
+      e.path,
+      `${e.bytesDelta >= 0 ? '+' : ''}${e.bytesDelta}B`,
+      e.unattributed === true ? 'reconciled' : '',
+    ]);
+    const table = renderTable(rows, LOG_COLUMNS, {
+      fancy: deps.fancy === true,
+      theme: run.theme,
     });
-    if (json) {
-      // One change's before/after can be a whole file: the envelope clips
-      // each side at 64 KiB by default (marker line + `contentTruncated`),
-      // and `--max-content-bytes 0` restores the unbounded form for
-      // scripting.
-      const maxBytes =
-        maxContent === undefined
-          ? DEFAULT_MAX_CONTENT_BYTES
-          : Number(maxContent);
-      deps.out(
-        JSON.stringify(
-          changes.map((c) => clipChangeContent(c, maxBytes)),
-          null,
-          2,
-        ),
-      );
-      return 0;
-    }
-    if (changes.length === 0) {
-      deps.out('no changes');
-      // Issue #125: with no journal anywhere, name both places that were
-      // looked at — the empty result is otherwise indistinguishable from
-      // "ran and nothing changed". Only the bare default path hints (a
-      // configured store or --session is a deliberate choice), and never
-      // on the --json branch above. "Nothing anywhere" means the resolved
-      // store has no entries AND no session journal exists to fall back to.
-      if (
-        session === undefined &&
-        deps.journalDir === undefined &&
-        store.entries().length === 0 &&
-        latestSessionJournal(deps.sessionsRoot ?? defaultSessionsRoot()) ===
-          undefined
-      ) {
-        deps.out(
-          `hint: no journal under ${journalDir.dir} and none under the sessions root (${deps.sessionsRoot ?? defaultSessionsRoot()}) — start a run or pass --session`,
-        );
-      }
-      return 0;
-    }
-    for (const line of renderDiff(changes).split('\n')) deps.out(line);
-    return 0;
+    for (const line of table.split('\n')) deps.out(line);
   }
+  // Issue #87: the reconciliation count is part of `log`'s contract — it
+  // is the only surface that answers "did anything bypass the tools?"
+  // without the operator grepping for the `reconciled` marker. Printed
+  // for an empty journal too, so scripts see a stable shape.
+  deps.out(reconciliationSummary(store));
+  return EXIT_OK;
+}
 
-  if (sub === 'undo') {
-    // The undo spec owns the undo flags only: a `--path`-style token stays
-    // unknown here and its bare operand remains the positional undo scope
-    // (today's rule, preserved).
-    const parsed = parseFlagArgs(rest, JOURNAL_UNDO_SPEC);
-    const dryRun = parsed.values['--dry-run'] === true;
-    const step = parsed.values['--step'] === true;
-    // Issue #108: --force overrides the staleness refusal per-invocation;
-    // nothing persists it — the next undo re-checks by default.
-    const force = parsed.values['--force'] === true;
-    // The --session value is a store selector, not a path scope: the parser
-    // consumes it, so the first operand is the <path> scope.
-    const positional = parsed.positional[0];
-    const plan = planUndo(
-      store,
-      {
-        ...(positional === undefined ? {} : { path: positional }),
-        ...(step ? { step: true } : {}),
-      },
-      root,
-    );
-    if (plan.steps.length === 0) {
-      deps.out('nothing to undo');
-      return 0;
-    }
-    const result = applyUndo(store, plan, root, { dryRun, force });
-    // Stale refusals and already-undone skips get their own line shapes so
-    // scripts (and humans) can tell "cannot reverse" from "refused because
-    // the file changed since" from "a previous undo already unwound it".
-    const parts: string[] = [];
-    for (const detail of result.skippedDetails) {
-      if (detail.reason.startsWith('stale:')) parts.push('stale');
-      else if (detail.reason.startsWith('already undone:'))
-        parts.push('already undone');
-      else parts.push('non-reversible');
-    }
-    const staleCount = parts.filter((p) => p === 'stale').length;
-    const undoneCount = parts.filter((p) => p === 'already undone').length;
-    const skipLabel =
-      staleCount > 0 || undoneCount > 0
-        ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null].filter((s) => s !== null).join(', ')})`
-        : ' non-reversible';
-    if (dryRun) {
-      deps.out(
-        `would restore ${result.restored.length} step(s)` +
-          (result.skipped.length > 0
-            ? `, skip ${result.skipped.length}${skipLabel}: ${result.skipped.join(', ')}`
-            : ''),
-      );
-      return 0;
-    }
-    for (const path of result.restored) deps.out(`restored ${path}`);
-    for (const [detail, kind] of result.skippedDetails.map(
-      (d, i) => [d, parts[i]] as const,
-    )) {
-      deps.out(
-        kind === 'stale'
-          ? `stale (skipped): ${detail.path} — ${detail.reason}`
-          : kind === 'already undone'
-            ? `already undone (skipped): ${detail.path}`
-            : `non-reversible (skipped): ${detail.path}`,
-      );
-    }
+function journalStatusCommand(
+  run: JournalRun,
+  request: JournalSelection,
+): number {
+  const { deps, theme } = run;
+  const status = journalStatus(run.store, run.root);
+  if (request.json === true) {
+    deps.out(formatJson({ ...run.ref, ...status }));
+    return EXIT_OK;
+  }
+  deps.out(
+    `entries: ${status.entries} (reversible: ${status.reversible}, non-reversible: ${status.nonReversible})`,
+  );
+  // Issue #87: unattributed entries are a subset of non-reversible ones;
+  // naming the count keeps reconciliation visible in the summary, not
+  // only in the per-entry `reconciled` marker.
+  deps.out(
+    `unattributed: ${status.unattributed} of ${status.entries} (reconciled at run end)`,
+  );
+  // Issue #111: lost journal content is named on its own line ("0 is the
+  // honest answer") so a corrupt store is visible at a glance.
+  const corrupt = `corrupt: ${status.corrupt}`;
+  deps.out(status.corrupt > 0 ? theme.error(corrupt) : corrupt);
+  if (status.repo === null) {
+    deps.out('repo: non-repo directory (journal works without git)');
+  } else {
+    const dirty =
+      status.repo.dirty === null ? 'unknown' : status.repo.dirty ? 'yes' : 'no';
     deps.out(
-      staleCount > 0 || undoneCount > 0
-        ? `undo: ${result.restored.length} restored, ${result.skipped.length} skipped${skipLabel}`
-        : `undo: ${result.restored.length} restored, ${result.skipped.length} non-reversible`,
+      `repo: branch ${status.repo.branch}, dirty: ${
+        dirty === 'yes' ? theme.warning(dirty) : dirty
+      }`,
     );
-    return result.skipped.length > 0 ? 2 : 0;
   }
-
-  if (sub === 'log') {
-    // Issue #119 (read-time self-heal): with `session.retentionDays` set, a
-    // SESSION journal drops entries older than the window as it is read —
-    // the same age bound `kubic sessions prune` applies to whole session
-    // dirs, enforced entry-wise through the store's retention pass (which
-    // `append` already runs; the read path triggers it explicitly here).
-    // Session-scoped by construction (`sessionId` is set only for a session
-    // journal): the workspace journal keeps its own `journal.retentionDays`
-    // append-time bound, and prune remains the only deleter of session
-    // dirs. With retention unset — or 0 — no pass runs: the read path
-    // writes nothing.
-    const retentionDays = deps.retentionDays ?? 0;
-    if (journalDir.sessionId !== undefined && retentionDays > 0) {
-      store.enforceRetention({ maxAgeMs: retentionDays * MS_PER_DAY });
-    }
-    const lines = renderLog(store);
-    // `--json` stays the raw entries array (the count is derivable from the
-    // `unattributed` flags there); the human path gains the summary line.
-    if (json) {
-      deps.out(JSON.stringify(store.entries(), null, 2));
-      return 0;
-    }
-    if (lines.length === 0) {
-      deps.out('journal is empty');
-    } else {
-      for (const line of lines) deps.out(line);
-    }
-    // Issue #87: the reconciliation count is part of `log`'s contract — it
-    // is the only surface that answers "did anything bypass the tools?"
-    // without the operator grepping for the `reconciled` marker. Printed
-    // for an empty journal too, so scripts see a stable shape.
-    deps.out(reconciliationSummary(store));
-    return 0;
-  }
-
-  if (sub === 'status') {
-    const status = journalStatus(store, root);
-    deps.out(
-      `entries: ${status.entries} (reversible: ${status.reversible}, non-reversible: ${status.nonReversible})`,
-    );
-    // Issue #87: unattributed entries are a subset of non-reversible ones;
-    // naming the count keeps reconciliation visible in the summary, not
-    // only in the per-entry `reconciled` marker.
-    deps.out(
-      `unattributed: ${status.unattributed} of ${status.entries} (reconciled at run end)`,
-    );
-    // Issue #111: lost journal content is named on its own line ("0 is the
-    // honest answer") so a corrupt store is visible at a glance.
-    deps.out(`corrupt: ${status.corrupt}`);
-    if (status.repo === null) {
-      deps.out('repo: non-repo directory (journal works without git)');
-    } else {
-      deps.out(
-        `repo: branch ${status.repo.branch}, dirty: ${
-          status.repo.dirty === null
-            ? 'unknown'
-            : status.repo.dirty
-              ? 'yes'
-              : 'no'
-        }`,
-      );
-    }
-    return 0;
-  }
-
-  return usage(deps.out);
+  return EXIT_OK;
 }

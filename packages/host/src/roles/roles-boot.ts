@@ -9,6 +9,7 @@
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
+import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
   applyRoleToLane,
@@ -61,6 +62,17 @@ export interface RolesDirInput {
   // an in-memory fixture with the same two methods.
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
+  // §58 enterprise policy (issue #288): when the effective policy gates
+  // tools, a role declaring a denied tool is REFUSED at resolution — the same
+  // check `kubic run --role` makes at boot (`resolveRole`'s grant gate). The
+  // doctor probe reads it so a role the run would refuse is not shown green.
+  // Absent means no enterprise tool policy is applied.
+  toolPolicy?: EffectivePolicy;
+  // §35.1 config `[roles.<name>]` layers (issue #133), merged under each
+  // document exactly as `kubic run --role` merges them — so a role is judged
+  // (contradictions, the enterprise tool gate) as it would actually run.
+  // Absent means the documents alone.
+  layers?: RoleLayerInput[];
 }
 
 export interface LoadedRoles {
@@ -101,7 +113,13 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
   const refused: Array<{ name: string; reason: string }> = [];
   for (const doc of docs) {
     try {
-      resolved.push(resolveRole(doc, []));
+      resolved.push(
+        resolveRole(doc, input.layers ?? [], {
+          ...(input.toolPolicy === undefined
+            ? {}
+            : { toolPolicy: input.toolPolicy }),
+        }),
+      );
     } catch (error) {
       if (error instanceof RoleRefusedError) {
         refused.push({ name: doc.name, reason: error.message });
@@ -121,7 +139,10 @@ export interface RoleSelectionInput extends RolesDirInput {
   role: string;
   // §35.1/§58 layering: layer-supplied tool_policy/tools over the document.
   // Empty in the shipped binary (no config layer populates roles yet).
-  layers?: RoleLayerInput[];
+  // (`layers` and `toolPolicy` are inherited from RolesDirInput: the role is
+  // resolved under the config layers, and its declared tools are checked
+  // against the §58 enterprise policy — a denied tool refuses the role
+  // instead of reaching the lane.)
 }
 
 export interface SelectedRole {
@@ -138,7 +159,9 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
       `no role document for '${input.role}' under ${ROLES_DIR}${known === '' ? ' (no role documents found)' : ` (loaded: ${known})`}`,
     );
   }
-  const resolved = resolveRole(doc, input.layers ?? []);
+  const resolved = resolveRole(doc, input.layers ?? [], {
+    ...(input.toolPolicy === undefined ? {} : { toolPolicy: input.toolPolicy }),
+  });
   return { resolved, doc };
 }
 

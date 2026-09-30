@@ -16,6 +16,7 @@ import {
   sep,
 } from 'node:path';
 import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
+import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -84,6 +85,9 @@ export interface JournalEntryInput {
   // above the sweep content bound, or a lossy decode. `diff` renders it as a
   // size-only change; it is never corruption.
   afterOmitted?: boolean;
+  // Designed hash-only pre-image: the file existed but its bytes were not
+  // lossless utf-8 (binary), so only the hash is kept — never corruption.
+  beforeOmitted?: boolean;
   // The observed after-side size in bytes, recorded alongside afterOmitted.
   afterBytes?: number;
   bytesDelta: number;
@@ -114,6 +118,7 @@ export interface JournalEntry {
    *  returns null; `afterHash` keeps the walk hash, so dedupe and undo
    *  staleness behave exactly as for a content-captured entry. */
   afterOmitted?: boolean;
+  beforeOmitted?: boolean;
   /** The observed size in bytes of an afterOmitted entry's file. */
   afterBytes?: number;
 }
@@ -370,6 +375,7 @@ export class FileJournalStore {
       // Issue #120: the hash-only after-side shape, carried on the entry so
       // `diff` can say why there is no content to show.
       ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
+      ...(input.beforeOmitted === true ? { beforeOmitted: true } : {}),
       ...(input.afterBytes === undefined
         ? {}
         : { afterBytes: input.afterBytes }),
@@ -773,119 +779,6 @@ export interface BaselineOptions {
   onNotice?: (detail: string) => void;
 }
 
-function globToRegExp(glob: string): RegExp {
-  const escapable = new Set([
-    '+',
-    '.',
-    '^',
-    '$',
-    '{',
-    '}',
-    '(',
-    ')',
-    '|',
-    '[',
-    ']',
-    '\\',
-  ]);
-  let out = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i] ?? '';
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        out += '.*';
-        i++;
-      } else {
-        out += '[^/]*';
-      }
-    } else if (c === '?') {
-      out += '[^/]';
-    } else if (escapable.has(c)) {
-      out += `\\${c}`;
-    } else {
-      out += c;
-    }
-  }
-  return new RegExp(`^${out}$`);
-}
-
-interface IgnoreRule {
-  negate: boolean;
-  dirOnly: boolean;
-  anchored: boolean;
-  match: RegExp;
-  prefix: string;
-}
-
-function parseIgnoreFile(content: string): IgnoreRule[] {
-  const rules: IgnoreRule[] = [];
-  for (const raw of content.split('\n')) {
-    const line = raw.trim();
-    if (line === '' || line.startsWith('#')) continue;
-    const negate = line.startsWith('!');
-    const body = negate ? line.slice(1) : line;
-    const dirOnly = body.endsWith('/');
-    const stripped = dirOnly ? body.slice(0, -1) : body;
-    const anchored = stripped.includes('/');
-    const pattern = anchored ? stripped.replace(/^\//, '') : stripped;
-    rules.push({
-      negate,
-      dirOnly,
-      anchored,
-      match: globToRegExp(
-        anchored ? pattern : (pattern.split('/').pop() ?? pattern),
-      ),
-      // `prefix` is compared against a workspace-relative path in
-      // `isIgnored`, and those never carry a leading `/` — so the anchored
-      // form (`/pi/`) must drop it here or the rule can never match. Keep
-      // this in step with the `pattern` derivation above.
-      prefix: pattern,
-    });
-  }
-  return rules;
-}
-
-// Common-subset .gitignore matcher: *, ?, **, dir/ prefixes, ! negation
-// (last match wins). Exotic forms (character classes beyond ?, rooted
-// mid-pattern **) are not covered — documented, and anything missed only
-// widens the baseline, never narrows the journal.
-//
-// Nested files (issue #116) are appended to the parent's rules verbatim and
-// matched against the workspace-relative path, exactly as root rules are —
-// they are NOT re-rooted at their own directory. The WALK is what scopes
-// them: a nested file's rules are in force only inside its own subtree, so a
-// rule can never match a sibling's path (git's per-directory scoping, held by
-// the recursion rather than by this matcher). The limit that remains is the
-// anchored form: a nested anchored pattern must be written repo-relative
-// (`packages/foo/build/`) to match — a git-style directory-relative one
-// (`sub/build/` inside `packages/foo/.gitignore`, meaning
-// `packages/foo/sub/build/` to git) matches nothing here and merely widens
-// the baseline. docs/packages/exec.md states the subset and its limits.
-function isIgnored(
-  rules: IgnoreRule[],
-  relPath: string,
-  isDir: boolean,
-): boolean {
-  const name = relPath.split('/').pop() ?? relPath;
-  let ignored = false;
-  for (const rule of rules) {
-    let hit = false;
-    if (rule.dirOnly) {
-      hit =
-        relPath === rule.prefix ||
-        relPath.startsWith(`${rule.prefix}/`) ||
-        (!rule.anchored && relPath.split('/').includes(rule.prefix));
-    } else if (rule.anchored) {
-      hit = rule.match.test(relPath);
-    } else {
-      hit = rule.match.test(name);
-    }
-    if (hit) ignored = !rule.negate;
-    void isDir;
-  }
-  return ignored;
-}
-
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
 // everything under it. Operators declare directories (`dist`), so the match is
 // path-boundary aware — `dist` excludes `dist` and `dist/a.js`, never `dist-x`
@@ -1013,6 +906,48 @@ export interface ReconcileContext {
   sessionId: string;
   agentId: string;
   timestamp: number;
+  /**
+   * Issue #341: where this run's part of the journal begins (captured with
+   * the boot baseline). Only entries appended after it define a path's
+   * expected state; absent ⇒ the whole store is treated as this run.
+   */
+  runStart?: JournalRunStart;
+}
+
+/**
+ * The journal position at the moment a run's baseline was captured: the
+ * entry count and the last entry then. The last entry is the marker — a
+ * retention pass that drops head entries mid-run shifts indexes, so the
+ * marker is re-found by content rather than trusted by position.
+ */
+export interface JournalRunStart {
+  count: number;
+  last: JournalEntry | null;
+}
+
+export function journalRunStart(store: FileJournalStore): JournalRunStart {
+  const all = store.entries();
+  return { count: all.length, last: all.at(-1) ?? null };
+}
+
+// The entries appended since `start` (issue #341). The fast path trusts the
+// recorded index when the marker is still there; otherwise the marker's
+// last occurrence is searched, and a marker retention already dropped
+// means everything left is newer than it.
+export function entriesSinceRunStart(
+  all: JournalEntry[],
+  start: JournalRunStart | undefined,
+): JournalEntry[] {
+  if (start === undefined || start.last === null) return all;
+  const marker = JSON.stringify(start.last);
+  const at = start.count - 1;
+  if (at < all.length && JSON.stringify(all[at]) === marker) {
+    return all.slice(start.count);
+  }
+  for (let i = Math.min(at, all.length - 1); i >= 0; i--) {
+    if (JSON.stringify(all[i]) === marker) return all.slice(i + 1);
+  }
+  return all;
 }
 
 export type RestoreResult =
@@ -1112,20 +1047,13 @@ function sweepStaleRestoreTmps(
   }
 }
 
-export function restoreEntry(
-  store: FileJournalStore,
+// Containment guard shared by every undo primitive: the resolved target
+// must sit strictly inside the root, and no existing parent component may
+// be a symlink. Returns the absolute target, or the refusal.
+function guardTarget(
   entry: JournalEntry,
   root: string,
-  options?: RestoreOptions,
-): RestoreResult {
-  const before = store.readBefore(entry);
-  if (before === null) {
-    return {
-      restored: false,
-      reason:
-        'no before-content: no retrievable pre-image for this entry — nothing to restore',
-    };
-  }
+): string | { restored: false; reason: string } {
   const target = resolve(root, entry.path);
   const rel = relative(root, target);
   if (rel === '' || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) {
@@ -1144,6 +1072,68 @@ export function restoreEntry(
       reason: `entry path crosses a symlink: ${entry.path}`,
     };
   }
+  return target;
+}
+
+// An agent-authored create: the pre-state is "absent", which the journal
+// knows exactly even though no before-blob exists — so undo reverts it by
+// removing the file (§42.2 "kubic undo reverts the run"). Unattributed
+// reconciliation creates stay non-reversible: the sweep saw the file
+// appear but cannot vouch that nothing else depends on it.
+export function isUndoableCreate(entry: JournalEntry): boolean {
+  return (
+    entry.op === 'create' &&
+    entry.beforeHash === null &&
+    entry.afterHash !== null &&
+    entry.unattributed !== true
+  );
+}
+
+// Undo primitive for an agent-authored create: removes the file. Carries
+// the same containment guards as restoreEntry; the staleness verdict is
+// the caller's (the undo walk), exactly as restoreEntry's allowStale path.
+export function removeCreatedEntry(
+  entry: JournalEntry,
+  root: string,
+): RestoreResult {
+  if (!isUndoableCreate(entry)) {
+    return {
+      restored: false,
+      reason: `not an agent-created file entry: ${entry.path}`,
+    };
+  }
+  const guarded = guardTarget(entry, root);
+  if (typeof guarded !== 'string') return guarded;
+  const bridge = createNodeFileBridge('/');
+  try {
+    bridge.remove(guarded, false, true);
+  } catch (error) {
+    return {
+      restored: false,
+      reason: `remove failed: ${(error as Error).message}`,
+    };
+  }
+  sweepStaleRestoreTmps(bridge, guarded);
+  return { restored: true };
+}
+
+export function restoreEntry(
+  store: FileJournalStore,
+  entry: JournalEntry,
+  root: string,
+  options?: RestoreOptions,
+): RestoreResult {
+  const before = store.readBefore(entry);
+  if (before === null) {
+    return {
+      restored: false,
+      reason:
+        'no before-content: no retrievable pre-image for this entry — nothing to restore',
+    };
+  }
+  const guarded = guardTarget(entry, root);
+  if (typeof guarded !== 'string') return guarded;
+  const target = guarded;
   if (options?.allowStale !== true) {
     // Direct-caller safety net (issue #108): the walk-aware undo planner
     // performs the same check with full plan context and then calls
@@ -1243,6 +1233,51 @@ function decodeLossless(bytes: Uint8Array): string | null {
   return sha256Hex(raw) === sha256HexOfBytes(bytes) ? raw : null;
 }
 
+// A journaled path as the walk keys it ('/'-separated, relative to root), or
+// null when it resolves to the root itself or outside it.
+function rootRelativeKey(root: string, path: string): string | null {
+  const rel = relative(root, resolve(root, path));
+  if (
+    rel === '' ||
+    rel === '..' ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  )
+    return null;
+  return rel.split(sep).join('/');
+}
+
+// Whether the sweep-relative path is still present on disk AS A REGULAR FILE
+// (lstat: never through a link). A directory, a symlink or a FIFO/socket in
+// its place means the file the tool wrote is gone — a real delete the walk
+// cannot report, since it skips links and never journals a directory. A probe
+// that cannot answer (EACCES) reads as "present": the sweep never records a
+// delete it cannot prove. ENOENT and ENOTDIR (a parent component is a regular
+// file) prove absence.
+function regularFileStillThere(
+  bridge: FileBridge,
+  root: string,
+  relPath: string,
+): boolean {
+  const abs = join(root, relPath);
+  const cannotTell = (error: unknown): boolean => {
+    const code = (error as { code?: string } | null)?.code;
+    return code !== 'ENOENT' && code !== 'ENOTDIR';
+  };
+  try {
+    if (!bridge.exists(abs)) return false;
+  } catch (error) {
+    return cannotTell(error);
+  }
+  try {
+    const info = bridge.fileInfo(abs);
+    // `isFile` undefined = the bridge did not classify it: a regular file.
+    return !info.isDirectory && !info.isSymbolicLink && info.isFile !== false;
+  } catch (error) {
+    return cannotTell(error);
+  }
+}
+
 // End-of-run sweep: whatever moved without interception gets an
 // unattributed entry — sed -i, npm install fallout, formatters, builds.
 // Before-content is unknowable for these (the baseline holds hashes, not
@@ -1263,10 +1298,23 @@ export function reconcile(
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, options);
-  const latest = new Map<string, { afterHash: string | null }>();
-  for (const e of store.entries()) {
-    latest.set(e.path, { afterHash: e.afterHash });
+  // Issue #341: each path's EXPECTED state is the last entry journaled
+  // during THIS run, else the boot baseline — never "matches the baseline
+  // OR any historical after-hash", which hid same-run reverts, a resumed
+  // session's change back to an older hash, and repeat deletes.
+  // `null` = expected absent.
+  const sinceStart = new Map<string, string | null>();
+  for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
+    // Tools journal `args.path` verbatim (absolute or './'-prefixed), while
+    // the walk keys are root-relative: normalize before keying, and drop a
+    // path outside the root — it is never a sweep candidate.
+    const key = rootRelativeKey(root, e.path);
+    if (key !== null) sinceStart.set(key, e.afterHash);
   }
+  const expectedHash = (relPath: string): string | null => {
+    if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;
+    return baseline[relPath] ?? null;
+  };
   let added = 0;
   const record = (input: {
     path: string;
@@ -1302,8 +1350,8 @@ export function reconcile(
     // The walk above already prunes an excluded directory, so this states the
     // rule for a path that reaches the sweep any other way.
     if (isOutOfScope(relPath, outOfScope)) continue;
-    if (baseline[relPath] === hash) continue;
-    if (latest.get(relPath)?.afterHash === hash) continue;
+    const expected = expectedHash(relPath);
+    if (expected === hash) continue;
     const abs = join(root, relPath);
     let size: number | null = null;
     try {
@@ -1337,8 +1385,8 @@ export function reconcile(
     }
     record({
       path: relPath,
-      op: baseline[relPath] === undefined ? 'create' : 'write',
-      beforeHash: baseline[relPath] ?? null,
+      op: expected === null ? 'create' : 'write',
+      beforeHash: expected,
       after,
       // The hash-only shape: the walk hash keeps dedupe and undo staleness
       // comparing the same digest the baseline walk produced, and the
@@ -1349,18 +1397,30 @@ export function reconcile(
         : {}),
     });
   }
-  for (const relPath of Object.keys(baseline)) {
+  const candidates = new Set([...Object.keys(baseline), ...sinceStart.keys()]);
+  for (const relPath of candidates) {
     // The same rule in the delete direction (issue #115): a baseline captured
     // before the entry was declared — or supplied by a caller — can name
     // out-of-scope paths, and their disappearance is not a journal event
     // either.
     if (isOutOfScope(relPath, outOfScope)) continue;
     if (current[relPath] !== undefined) continue;
-    if (latest.get(relPath)?.afterHash === null) continue;
+    const expected = expectedHash(relPath);
+    if (expected === null) continue;
+    // A path only a tool journaled (not in the boot baseline) is absent from
+    // `current` whenever the walk skips it — gitignored, `.git/`, `.kubic/` —
+    // while the regular file is still on disk: no delete happened, so none is
+    // recorded (issue #341 regression). Replaced by a directory or a link it
+    // IS a delete. Baseline keys keep the old rule.
+    if (
+      baseline[relPath] === undefined &&
+      regularFileStillThere(bridge, root, relPath)
+    )
+      continue;
     record({
       path: relPath,
       op: 'delete',
-      beforeHash: baseline[relPath] ?? null,
+      beforeHash: expected,
       after: null,
     });
   }

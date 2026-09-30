@@ -37,6 +37,12 @@ export function selectModel(
   models: MutableModels,
   explicit?: ModelSelection,
   configDefault?: ModelSelection,
+  // Issue #221: the providers the implicit first-available pick may use,
+  // in preference order. The assembly lists models.json customs first and
+  // leaves out every built-in whose auth is not configured, so a keyless
+  // built-in is never selected silently. Omitted: every registered
+  // provider, in registration order.
+  fallbackProviders?: readonly string[],
 ): AnyModel {
   const pick = (sel: ModelSelection, origin: string): AnyModel => {
     const provider = models.getProvider(sel.provider);
@@ -55,12 +61,17 @@ export function selectModel(
   };
   if (explicit !== undefined) return pick(explicit, '--model');
   if (configDefault !== undefined) return pick(configDefault, 'config default');
-  const providers = models.getProviders();
-  for (const provider of providers) {
-    const first = models.getModels(provider.id)[0];
+  const candidates =
+    fallbackProviders ?? models.getProviders().map((provider) => provider.id);
+  for (const providerId of candidates) {
+    const first = models.getModels(providerId)[0];
     if (first !== undefined) return first as AnyModel;
   }
-  throw new ModelSelectError('no models available: register a provider first');
+  throw new ModelSelectError(
+    fallbackProviders === undefined
+      ? 'no models available: register a provider first'
+      : "no models available: register a provider first (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)",
+  );
 }
 
 export function parseModelFlag(flag: string): ModelSelection {

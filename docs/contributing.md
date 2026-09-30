@@ -31,9 +31,10 @@ Every issue, every wave, no freelancing:
 - **LC3 Review gate** — before every commit on a staged diff: static
   security scan of added lines (secrets, shell/SQL injection,
   eval/exec, unsafe deserialization), baseline tests + lint (only NEW
-  failures block), self-review, then an independent reviewer on the
-  diff alone (fail-closed), max 2 auto-fix cycles. Never verify your
-  own work. Lint gate is `biome ci` (exact CI parity).
+  failures block), then one brief solo self-review of the staged diff
+  (no reviewer subagent — see "No subagents" in `AGENTS.md`), max 2
+  auto-fix cycles; say what you did not verify. Lint gate is `biome ci`
+  (exact CI parity).
 - **LC4 Simplify** — only on explicit request, per wave, never bundled
   into feature commits.
 - **LC5 Commit** — Conventional Commits, one commit per finished issue
@@ -79,21 +80,33 @@ standalone `npm run docs:check` step, and again inside `npm test` via
 
 ## CI gates (run these locally)
 
-A push runs the `verify` job (the suites + linters below) and the
-`binary-contract` job (the shipped artifact), each on node 22 and 24, plus
-the per-push `mutation` job on the changed lines (see "The gate"). The
-nightly full-scope `mutation-nightly` job is postponed (#137). Mirror `verify` and
-`binary-contract` before you push — same commands, same order:
+A push runs the `test` job (the linters, suites and the shipped-artifact
+check below) plus the per-push `mutation` job on the changed lines (see
+"The gate"). The nightly full-scope `mutation-nightly` job is postponed
+(#137). Efficiency rules of the workflow:
+
+- **`test` runs on node 22** (the lowest supported) on every ref, and on
+  **22 and 24 on `main`**. The Node-independent static checks (typecheck, biome,
+  `lint:deps`, `check:pi`, `docs:check`) run once, first, on the 22 leg.
+- **One live run per ref**: a newer push cancels the older run, and a PR
+  branch (which fires both `push` and `pull_request`) keeps a single run.
+  `main` is keyed by commit and never cancelled.
+- **`mutation` stops before `npm ci`** when nothing mutable changed (docs,
+  tests, config), and is bounded by changed lines (see "The gate") so a big push
+  is scored rather than ending at the job timeout.
+- Workflow permissions are read-only; actions are on their Node 24 majors.
+
+Mirror the `test` job before you push — same commands, same order:
 
 ```sh
 npm ci
-npm test                    # scripts/*.test.mjs via node --test
-npm run test:unit           # vitest
 npm run typecheck
+npx biome ci .              # exact CI lint parity (never --no-verify)
 npm run lint:deps
 npm run check:pi            # exact pins on every dependency
-npx biome ci .              # exact CI lint parity (never --no-verify)
 npm run docs:check          # dangling links + dep-table drift
+npm test                    # scripts/*.test.mjs via node --test
+npm run test:unit           # vitest
 npm run build               # tsc -> gitignored dist/
 npm run test:binary-contract  # runs the built bin: version / doctor / run
 ```
@@ -159,8 +172,12 @@ leaves gating to the per-file check).
 - **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>`
   maps `git diff -U0` hunks to the **changed lines** of touched source files
   (`path:start-end` ranges; a core file alone can hold ~1k mutants covered by
-  ~500 tests), capped at 25 files — the rest are left to the nightly run
-  with a warning. Test-only changes mutate nothing per push; the nightly
+  ~500 tests), capped at 25 files **and 2000 changed lines** (about 1500
+  mutants, what the 30-minute job can score; first-fit in sorted order, a lone
+  oversized file is trimmed to the budget) — the rest are left to the nightly
+  run with a warning. The job needs no `npm ci` when nothing mutable changed,
+  and its vitest step has its own 26-minute timeout so an overrun fails as a
+  named step rather than the job ending "cancelled". Test-only changes mutate nothing per push; the nightly
   ratchet catches weakened tests. `--tap` maps changed scripts to their SUTs.
   No mutable change → the step is skipped; a failed diff exits 1 rather
   than widening or emptying the scope. The changed lines' score is
@@ -181,7 +198,7 @@ Run a scope locally: `npx stryker run --mutate "path/a.ts,path/b.ts"`, then
 
 - `erasable.test.mjs` is **not** in the tap `testFiles`: it imports no script
   SUT (node builtins only), so it kills zero script mutants by construction.
-  It stays green via `npm test` in the CI `verify` job.
+  It stays green via `npm test` in the CI `test` job.
 - `node --test <file>` must **not** be used as the tap runner command: `--test`
   delegates execution to child processes, so the parent process (whose hook
   output file Stryker reads) records zero coverage and every mutant lands in

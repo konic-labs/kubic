@@ -8,42 +8,48 @@ on:
   #   - cron: '0 3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# One live run per ref. A newer push supersedes the older run, and a PR branch
+# (which fires both `push` and `pull_request`) keeps a single run. main is
+# keyed by commit, so every merged commit is verified in full and never
+# cancelled.
+concurrency:
+  group: ${{ github.ref_name == 'main' && format('main-{0}', github.sha) || format('ci-{0}', github.head_ref || github.ref_name) }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+  test:
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
-        node: ['22', '24']
+        # The lowest supported Node (engines >=22.19) on every ref; the newest
+        # LTS as well on main, once per merged commit.
+        node: ${{ fromJSON(github.ref_name == 'main' && '["22", "24"]' || '["22"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
+      # Static checks do not depend on the Node version: run them once (first,
+      # cheapest first) so a typo fails in seconds, before the test suites.
+      - if: matrix.node == '22'
+        run: npm run typecheck
+      - if: matrix.node == '22'
+        run: npx biome ci .
+      - if: matrix.node == '22'
+        run: npm run lint:deps
+      - if: matrix.node == '22'
+        run: npm run check:pi
+      - if: matrix.node == '22'
+        run: npm run docs:check
       - run: npm test
       - run: npm run test:unit
-      - run: npm run typecheck
-      - run: npm run lint:deps
-      - run: npm run check:pi
-      - run: npx biome ci .
-      - run: npm run docs:check
-  binary-contract:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      matrix:
-        node: ['22', '24']
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
       # The shipped artifact (bin/kubic.js over dist/) is proven per push:
       # build, then pin the version line, doctor's provider-down exit 6 +
       # reason, and the provider-less run -p ref triple. Hermetic: HOME is a
@@ -51,28 +57,23 @@ jobs:
       - run: npm run build
       - run: npm run test:binary-contract
   mutation:
-    # Per-push gate on the touched files only (<= 25, see mutation-scope.mjs),
-    # ratcheted against the last accepted nightly report: a touched file
-    # below 80 may not drop below its baseline, one at or above 80 must stay
-    # >= 80, and files new to the baseline need 80.
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    # Per-push gate on the touched lines only (<= 25 files and <= 2000 changed
+    # lines, see mutation-scope.mjs), ratcheted against the last accepted
+    # nightly report: a touched file below 80 may not drop below its
+    # baseline, one at or above 80 must stay >= 80, and files new to the
+    # baseline need 80.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
-      - name: Restore the ratchet baseline
-        uses: actions/cache/restore@v4
-        with:
-          path: reports/baseline.json
-          key: stryker-baseline-${{ github.run_id }}
-          restore-keys: stryker-baseline-
+      # The scope needs only git and node builtins, so a push with nothing
+      # mutable (docs, tests, config) stops here without an `npm ci`.
       - name: Scope the diff
         id: scope
         env:
@@ -91,20 +92,38 @@ jobs:
           TAP="$(node scripts/mutation-scope.mjs --ref "$REF" --tap)"
           echo "vitest=$VITEST" >> "$GITHUB_OUTPUT"
           echo "tap=$TAP" >> "$GITHUB_OUTPUT"
-          if [ ! -f reports/baseline.json ]; then
-            echo "::warning::No nightly baseline cached yet; touched files are held to 80%."
+          if [ -n "$VITEST$TAP" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Nothing mutable changed; the mutation gate has nothing to score."
           fi
-      - name: Mutation gate, vitest side (touched files)
+      - if: steps.scope.outputs.run == 'true'
+        run: npm ci --no-audit --no-fund
+      - name: Restore the ratchet baseline
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: reports/baseline.json
+          key: stryker-baseline-${{ github.run_id }}
+          restore-keys: stryker-baseline-
+      - name: Mutation gate, vitest side (touched lines)
         if: steps.scope.outputs.vitest != ''
+        # Fails as a named step instead of the whole job ending 'cancelled'.
+        timeout-minutes: 26
         env:
           MUTATE: ${{ steps.scope.outputs.vitest }}
         run: |
-          npx stryker run --concurrency 4 --mutate "$MUTATE"
           BASELINE=()
-          if [ -f reports/baseline.json ]; then BASELINE=(--baseline reports/baseline.json); fi
+          if [ -f reports/baseline.json ]; then
+            BASELINE=(--baseline reports/baseline.json)
+          else
+            echo "::warning::No nightly baseline cached yet; touched files are held to 80%."
+          fi
+          npx stryker run --concurrency 4 --mutate "$MUTATE"
           node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 "${BASELINE[@]}"
       - name: Mutation gate, tap side (touched scripts)
         if: steps.scope.outputs.tap != ''
+        timeout-minutes: 10
         env:
           MUTATE: ${{ steps.scope.outputs.tap }}
         run: |
@@ -123,20 +142,20 @@ jobs:
     # runs only re-test changed code and tests.
     timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - name: Restore the incremental file
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: reports/stryker-incremental.json
           key: stryker-incremental-${{ github.run_id }}
           restore-keys: stryker-incremental-
       - name: Restore the ratchet baseline
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: reports/baseline.json
           key: stryker-baseline-${{ github.run_id }}
@@ -145,7 +164,7 @@ jobs:
         run: npx stryker run --incremental --concurrency 4 --reporters json,clear-text,progress-append-only
       - name: Save the incremental file
         if: always() && hashFiles('reports/stryker-incremental.json') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: reports/stryker-incremental.json
           key: stryker-incremental-${{ github.run_id }}
@@ -159,7 +178,7 @@ jobs:
           fi
           cp reports/mutation/mutation.json reports/baseline.json
       - name: Save the ratchet baseline
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: reports/baseline.json
           key: stryker-baseline-${{ github.run_id }}

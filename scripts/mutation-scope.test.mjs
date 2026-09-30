@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   changedRanges,
   MAX_VITEST_FILES,
+  MAX_VITEST_LINES,
   tapScope,
   vitestScope,
 } from './mutation-scope.mjs';
@@ -90,6 +91,73 @@ describe('vitestScope (issue #72)', () => {
     );
     assert.equal(scope.mutate[0], 'packages/core/src/f000.ts:1-2');
     assert.equal(scope.dropped, 5);
+  });
+
+  // A mutant costs about a second on a hosted runner, so the per-push job is
+  // bounded by changed LINES (a core file alone can hold ~1k mutants), not
+  // just by file count: a wave-sized push used to run into the 30-minute job
+  // limit and end 'cancelled' instead of scored.
+  it('caps the total changed lines: a file that does not fit is dropped, later ones that do fit stay', () => {
+    const scope = vitestScope(
+      new Map([
+        ['packages/host/src/a.ts', [[1, MAX_VITEST_LINES - 500]]],
+        ['packages/host/src/b.ts', [[1, 1000]]],
+        ['packages/host/src/c.ts', [[1, 500]]],
+      ]),
+    );
+    assert.deepEqual(scope.mutate, [
+      `packages/host/src/a.ts:1-${MAX_VITEST_LINES - 500}`,
+      'packages/host/src/c.ts:1-500',
+    ]);
+    assert.equal(scope.dropped, 1);
+  });
+
+  it('keeps a file that fills the budget exactly and drops the next one', () => {
+    const scope = vitestScope(
+      new Map([
+        ['packages/host/src/a.ts', [[1, MAX_VITEST_LINES]]],
+        ['packages/host/src/b.ts', [[1, 1]]],
+      ]),
+    );
+    assert.deepEqual(scope.mutate, [
+      `packages/host/src/a.ts:1-${MAX_VITEST_LINES}`,
+    ]);
+    assert.equal(scope.dropped, 1);
+  });
+
+  it('trims a lone oversized first file to the budget instead of running unbounded', () => {
+    const scope = vitestScope(
+      new Map([
+        [
+          'packages/host/src/a.ts',
+          [
+            [1, MAX_VITEST_LINES - 500],
+            [5000, 6999],
+          ],
+        ],
+      ]),
+    );
+    assert.deepEqual(scope.mutate, [
+      `packages/host/src/a.ts:1-${MAX_VITEST_LINES - 500}`,
+      'packages/host/src/a.ts:5000-5499',
+    ]);
+    assert.equal(scope.dropped, 0);
+  });
+
+  it('counts ranges by lines, inclusive of both ends', () => {
+    const scope = vitestScope(
+      new Map([
+        ['packages/host/src/a.ts', [[10, 10]]],
+        ['packages/host/src/b.ts', [[1, MAX_VITEST_LINES - 1]]],
+        ['packages/host/src/c.ts', [[1, 1]]],
+      ]),
+    );
+    // a (1 line) + b (LIMIT-1 lines) fill the budget exactly; c does not fit.
+    assert.deepEqual(scope.mutate, [
+      'packages/host/src/a.ts:10-10',
+      `packages/host/src/b.ts:1-${MAX_VITEST_LINES - 1}`,
+    ]);
+    assert.equal(scope.dropped, 1);
   });
 });
 

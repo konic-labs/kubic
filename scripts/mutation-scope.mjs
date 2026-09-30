@@ -15,6 +15,15 @@
 // (sorted) are kept and the rest are left to the nightly run, with a warning.
 export const MAX_VITEST_FILES = 25;
 
+// Upper bound on the CHANGED LINES the per-push vitest run may mutate. A
+// mutant costs ~1 s on a hosted runner and changed code yields ~0.7 mutants
+// per line, so the 30-minute job holds ~1500 mutants — about 2000 lines. The
+// file cap alone let a wave-sized push through to the job timeout, which ends
+// 'cancelled' (neither scored nor red); this keeps every push scoreable.
+// Files are taken first-fit in sorted order; a lone first file over the
+// budget is trimmed to it rather than run unbounded.
+export const MAX_VITEST_LINES = 2000;
+
 // Tap-side systems under test; keep in sync with stryker.tap.conf.json.
 const SCRIPT_SUTS = ['scripts/dep-lint.mjs', 'scripts/check-pinned-deps.mjs'];
 
@@ -46,13 +55,37 @@ export function changedRanges(diff) {
   return ranges;
 }
 
+const rangeLines = ([start, end]) => end - start + 1;
+
 export function vitestScope(ranges) {
   const files = [...ranges.keys()].filter(isSource).sort();
-  const kept = files.slice(0, MAX_VITEST_FILES);
-  const mutate = kept.flatMap((f) =>
-    ranges.get(f).map(([a, b]) => `${f}:${a}-${b}`),
-  );
-  return { mutate, dropped: files.length - kept.length };
+  const mutate = [];
+  let kept = 0;
+  let lines = 0;
+  for (const file of files) {
+    const fileRanges = ranges.get(file);
+    const fileLines = fileRanges.reduce((sum, r) => sum + rangeLines(r), 0);
+    const room = MAX_VITEST_LINES - lines;
+    if (kept >= MAX_VITEST_FILES || room <= 0) continue;
+    if (fileLines <= room) {
+      mutate.push(...fileRanges.map(([a, b]) => `${file}:${a}-${b}`));
+      lines += fileLines;
+    } else if (kept === 0) {
+      // A lone oversized file: mutate its first `room` changed lines.
+      let left = room;
+      for (const [a, b] of fileRanges) {
+        if (left <= 0) break;
+        const take = Math.min(left, rangeLines([a, b]));
+        mutate.push(`${file}:${a}-${a + take - 1}`);
+        left -= take;
+      }
+      lines = MAX_VITEST_LINES;
+    } else {
+      continue;
+    }
+    kept += 1;
+  }
+  return { mutate, dropped: files.length - kept };
 }
 
 // Script test files exercise a sibling SUT (`dep-lint.test.mjs` imports
@@ -94,7 +127,7 @@ function main(argv) {
     const scope = vitestScope(changedRanges(diff));
     if (scope.dropped > 0) {
       console.error(
-        `mutation-scope: ${scope.dropped} changed file(s) over the ${MAX_VITEST_FILES}-file cap are left to the nightly full run`,
+        `mutation-scope: ${scope.dropped} changed file(s) over the ${MAX_VITEST_FILES}-file / ${MAX_VITEST_LINES}-changed-line cap are left to the nightly full run`,
       );
     }
     console.log(scope.mutate.join(','));

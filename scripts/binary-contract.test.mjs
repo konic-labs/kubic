@@ -613,21 +613,92 @@ function jobBlock(name) {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
+// CI efficiency (per-push cost): the workflow keeps one live run per ref,
+// tests the newest Node only on main, and never installs dependencies for a
+// mutation gate that has nothing to score. Text-matched like the wiring above.
+describe('CI efficiency', () => {
+  it('tests node 22 everywhere and node 24 as well on main only', () => {
+    const job = jobBlock('test');
+    assert.match(
+      job,
+      /node: \$\{\{ fromJSON\(github\.ref_name == 'main' && '\["22", "24"\]' \|\| '\["22"\]'\) \}\}/,
+    );
+  });
+
+  it('keeps one live run per ref and never cancels a main commit', () => {
+    const yml = ciYml();
+    assert.match(
+      yml,
+      /^concurrency:\n {2}group: .*format\('main-\{0\}', github\.sha\)/m,
+    );
+    assert.match(yml, /^ {2}cancel-in-progress: true$/m);
+  });
+
+  it('runs with read-only token permissions', () => {
+    assert.match(ciYml(), /^permissions:\n {2}contents: read$/m);
+  });
+
+  it('scopes the mutation diff before installing, and installs only when something is mutable', () => {
+    const job = jobBlock('mutation');
+    const scope = job.indexOf('id: scope');
+    const install = job.indexOf('run: npm ci');
+    assert.ok(scope !== -1 && install > scope, 'scope must precede `npm ci`');
+    assert.match(
+      job,
+      /- if: steps\.scope\.outputs\.run == 'true'\n {8}run: npm ci/,
+    );
+  });
+
+  it('gives the mutation steps their own timeout so an overrun is a named failure', () => {
+    const job = jobBlock('mutation');
+    assert.match(job, /timeout-minutes: 26/);
+    assert.match(job, /timeout-minutes: 30\n/);
+  });
+});
+
+function ciYml() {
+  return readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+}
+
 describe('CI wiring (issue #101)', () => {
-  it('runs the binary contract in a dedicated job after a real build', () => {
-    const job = jobBlock('binary-contract');
-    assert.match(job, /actions\/checkout@v4/);
-    assert.match(job, /actions\/setup-node@v4/);
-    assert.match(job, /node: \['22', '24'\]/);
+  it('builds for real, then runs the binary contract, in the test job', () => {
+    const job = jobBlock('test');
+    assert.match(job, /actions\/checkout@v7/);
+    assert.match(job, /actions\/setup-node@v7/);
     assert.match(job, /npm ci/);
-    assert.match(job, /npm run build/);
-    assert.match(job, /npm run test:binary-contract/);
+    const build = job.indexOf('- run: npm run build\n');
+    const contract = job.indexOf('- run: npm run test:binary-contract\n');
+    assert.ok(build !== -1, 'the test job must run `npm run build`');
+    assert.ok(contract > build, 'the contract must run after the build');
   });
 
-  it('runs docs:check as its own verify step', () => {
-    assert.match(jobBlock('verify'), /- run: npm run docs:check\n/);
+  it('runs docs:check as a static step of the test job', () => {
+    assert.match(
+      jobBlock('test'),
+      /- if: matrix\.node == '22'\n {8}run: npm run docs:check\n/,
+    );
   });
 
+  it('runs every Node-independent static check once, before the suites', () => {
+    const job = jobBlock('test');
+    const suites = job.indexOf('- run: npm test\n');
+    assert.ok(suites !== -1, 'the test job must run `npm test`');
+    for (const step of [
+      'npm run typecheck',
+      'npx biome ci .',
+      'npm run lint:deps',
+      'npm run check:pi',
+      'npm run docs:check',
+    ]) {
+      const at = job.indexOf(`run: ${step}\n`);
+      assert.ok(at !== -1 && at < suites, `${step} must run before the suites`);
+      assert.match(
+        job.slice(Math.max(0, at - 40), at),
+        /- if: matrix\.node == '22'\n {8}$/,
+        `${step} must run on the node 22 leg only`,
+      );
+    }
+  });
   it('npm test includes the binary-contract unit suite', () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, 'package.json'), 'utf8'),

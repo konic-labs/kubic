@@ -52,7 +52,7 @@ composition root:
 | --- | --- |
 | `packages/core` | Shared contracts both runtimes build on |
 | `packages/exec` | Execution environment and change journal; the only package that touches `node:fs` / `node:child_process` |
-| `packages/worker` | Solo lane and worker lifecycle (the executing side) |
+| `packages/worker` | Solo lane (one pi-durable `Harness` + its root conversation) and worker lifecycle (the executing side) |
 | `packages/host` | Host wiring: approvals, orchestrator/manager contracts, worktrees, merge (the delegating side) |
 | `packages/agents` | Agent task, roles, budgets, skills |
 | `packages/trajectory` | Versioned run records for replay and eval |
@@ -66,7 +66,7 @@ never imports `host`/`worker` implementation, the worker never imports
 `host`, and only the app root wires `host` and `tui` together.
 
 **Test contract.** There is no `VirtualTerminal` in the pinned Pi
-(`@earendil-works/pi-tui` 0.87.1 exports `ProcessTerminal` only) and Kubic
+(`@earendil-works/pi-tui` 1.0.2 exports no such class) and Kubic
 declares no terminal-emulator dependency. TUI tests render the pure view
 functions directly into headless snapshot strings — no TTY, no alt-screen —
 and each view module records that in its header. See the

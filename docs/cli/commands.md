@@ -84,7 +84,8 @@ workers (child `kubic run` processes) apply the same rule.
 stopping a worker) and `SIGHUP` during a run are handled like the
 wall-clock guard (a signal during boot, before the prompt is admitted,
 cancels the boot — the lane never drives): the in-flight tool process groups are killed at once, the
-operation is aborted durably, the reconciliation sweep runs, the session is
+turn is aborted durably (`conversation.abort()` plus the conversation-keyed
+kill drain), the reconciliation sweep runs, the session is
 closed, and the run prints its normal result with `status: failed`,
 `run interrupted by <SIGNAL>` (exit 1). A second signal while that cleanup
 runs takes the default path and ends the process immediately.
@@ -179,9 +180,9 @@ access for the session this run creates or resumes), or record it first
 with `kubic sessions create --dangerously-skip-approvals` — it is never
 implied.
 
-**Attaching a session with a pending operation** (issue #147). A run
+**Attaching a session with unfinished durable work** (issue #147). A run
 that died mid-turn (SIGKILL, OOM, power loss, orphan reaping) leaves its
-operation open in the session, and an open operation refuses every new
+turn placed but unsettled in the session, and an unsettled turn refuses every new
 prompt. `kubic run --session X` therefore settles it first and names the
 choice on stderr: when the pending run carries **this same prompt** (an
 orchestrator worker re-launched on its reattached session, a retried
@@ -785,7 +786,7 @@ The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in
 the tree, the transcript grows with the committed conversation, and the
 status bar fills with usage rows. While a turn runs the editor disables
-submit; `Ctrl-C` cancels the in-flight solo operation and keeps the session
+submit; `Ctrl-C` cancels the in-flight solo turn and keeps the session
 alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits. An orchestrator
 run cannot be cancelled from the TUI (there is no abort seam into the
 manager): `Ctrl-C` during one quits, and the manager's own signal guard
@@ -957,9 +958,9 @@ assistant answer, status bar, editor and footer — on stdout, without the
 editor's cursor artifacts (the hardware-cursor marker and the inverse-video
 cursor cell are stripped, as Pi's own stop path strips the marker). A crash
 restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
-`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the operation
-is aborted (recorded in the session, so a resumed session shows no
-unfinished operation), every tool process group it started is killed, and
+`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the turn
+is aborted (durably recorded in the session, so a resumed session shows no
+unfinished work), every tool process group it started is killed, and
 the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
 the end-of-run reconciliation sweep and the session close — so a killed
 tool's last write is still journaled and no child keeps running after the
@@ -1051,7 +1052,8 @@ beside the session's state directory. Kubic does not convert them — the
 project is unreleased, so there is nothing to migrate:
 
 - `kubic sessions list` reports them as `legacy` (the store returns
-  `format: 'legacy'`; the CLI row lands with #400) and never crashes on one.
+  `format: 'legacy'`, rendered `(legacy pi 0.87 — cannot attach)`) and
+  never crashes on one.
 - `kubic sessions attach <id>` refuses by name, exit 1:
   `session <id> was written by Kubic on Pi 0.87; start a new session`.
   Nothing is read, moved or rewritten.

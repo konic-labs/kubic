@@ -8,18 +8,22 @@ import { join } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import {
-  describePendingOperation,
-  inspectOpenOperations,
-} from '../../worker/src/lane/pending.js';
+import { stripUnsafeCharacters } from '../../exec/src/runtime-exclude.js';
+import { inspectStoredWork } from '../../worker/src/lane/pending.js';
 import {
   attachSession,
   createSession,
   listSessions,
   openSessionStore,
   SessionAttachError,
+  SessionFormatError,
   SessionLockError,
 } from '../../worker/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+  type TranscriptItem,
+} from '../../worker/src/lane/transcript.js';
 import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
@@ -199,9 +203,9 @@ export async function runSessionsCommand(
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (invocation.command === 'create') {
     const cwd = invocation.cwd ?? process.cwd();
-    const session = await createSession(store, cwd, BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const session = await createSession(store, { cwd }, BACKGROUND_CONTEXT);
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     deps.out(id);
     // Session-scoped full-access: recorded in the session dir (posture.json)
     // and announced on the diagnostics channel. Fresh sessions start safe —
@@ -228,7 +232,10 @@ export async function runSessionsCommand(
       // `| jq` consumer never reads an empty stream (§78).
       deps.out(
         formatJson(
-          sessions.map((entry) => ({ id: entry.id, cwd: entry.cwd ?? null })),
+          sessions.map((entry) => ({
+            id: entry.id,
+            cwd: entry.meta?.cwd ?? null,
+          })),
         ),
       );
       return 0;
@@ -240,10 +247,15 @@ export async function runSessionsCommand(
     const theme = themeOf(deps);
     deps.out(
       renderTable(
-        sessions.map((entry) => [
-          theme.bold(entry.id),
-          entry.cwd ?? theme.muted('(no cwd)'),
-        ]),
+        sessions.map((entry) => {
+          const cwd = entry.meta?.cwd ?? theme.muted('(no cwd)');
+          return [
+            theme.bold(entry.id),
+            entry.format === 'legacy'
+              ? `${cwd} ${theme.muted('(legacy pi 0.87 — cannot attach)')}`
+              : cwd,
+          ];
+        }),
         [{ header: 'SESSION' }, { header: 'CWD' }],
         { fancy: deps.fancy === true, theme },
       ),
@@ -262,39 +274,47 @@ export async function runSessionsCommand(
   try {
     const session = await attachSession(store, id, BACKGROUND_CONTEXT);
     try {
-      deps.out(
-        `session ${session.metadata.id}  cwd=${session.metadata.cwd ?? '(none)'}`,
-      );
+      deps.out(`session ${session.id}  cwd=${session.meta.cwd ?? '(none)'}`);
       const posture = new FileApprovalStore(join(root, id)).loadPosture();
       deps.out(
         posture.fullAccess
           ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
           : 'posture: approvals enforced',
       );
-      // Issue #147 (§21): a turn a crashed process left open is named, so
-      // the operator knows the next `kubic run --session` / `kubic tui
-      // --session` settles it before taking a new prompt.
-      for (const op of await inspectOpenOperations(
-        session,
+      // Issue #147 (§21): unfinished durable work a crashed process left
+      // behind is named, so the operator knows the next `kubic run --session`
+      // / `kubic tui --session` settles it before taking a new prompt. The
+      // storage-level probe (#396 `inspectStoredWork`) owns the format, so
+      // this line and the run path's settlement line are the same string;
+      // attach must not boot a harness.
+      const pending = await inspectStoredWork(
+        session.storage,
         BACKGROUND_CONTEXT,
-      )) {
-        deps.out(describePendingOperation(op));
+      );
+      if (pending.pending && pending.summary !== undefined) {
+        deps.out(pending.summary);
       }
-      const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
-      const last = entries.slice(Math.max(0, entries.length - tail));
-      for (const entry of last) {
-        deps.out(JSON.stringify(entry).slice(0, 300));
+      // The transcript through the shared adapter (#400): one readable line
+      // per turn instead of a truncated JSON entry (#318).
+      const items = entriesToTranscript(
+        await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+      );
+      const last = items.slice(Math.max(0, items.length - tail));
+      for (const item of last) {
+        deps.out(renderTranscriptItem(item));
       }
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await session.release(BACKGROUND_CONTEXT);
     }
   } catch (error) {
     // A live second attachment (issue #118): the refusal is the answer —
     // printed as-is (it names the holder pid + start time), exit 1, and
     // no transcript was ever read (attach acquires before it opens).
+    // A 0.87 session directory (#392) is refused by name the same way.
     if (
       error instanceof SessionLockError ||
-      error instanceof SessionAttachError
+      error instanceof SessionAttachError ||
+      error instanceof SessionFormatError
     ) {
       log.error(error.message);
       return 1;
@@ -302,4 +322,44 @@ export async function runSessionsCommand(
     throw error;
   }
   return 0;
+}
+
+// One attach line per transcript item (#318): role + text, one line each.
+// Whitespace is collapsed so a multi-line message or tool output stays one
+// readable row, and the line keeps the documented 300-character bound.
+// Transcript text is untrusted (model- and tool-authored): control
+// characters — ESC sequences above all — are stripped before it reaches the
+// operator's terminal, exactly as the display-only strip does elsewhere.
+const ATTACH_LINE_CHARS = 300;
+
+function oneLine(text: string): string {
+  const collapsed = stripUnsafeCharacters(text).replace(/\s+/g, ' ').trim();
+  return collapsed.length <= ATTACH_LINE_CHARS
+    ? collapsed
+    : `${collapsed.slice(0, ATTACH_LINE_CHARS - 1)}…`;
+}
+
+function renderTranscriptItem(item: TranscriptItem): string {
+  switch (item.kind) {
+    case 'user':
+      return `user: ${oneLine(item.text)}`;
+    case 'assistant': {
+      const text = oneLine(item.text);
+      // Tool names are model-authored (pi-durable persists a call the
+      // registry never offered), so they are sanitized like the text.
+      const calls = item.toolCalls.map((call) => oneLine(call.name)).join(', ');
+      const tools = calls === '' ? '' : ` [tools: ${calls}]`;
+      return `assistant: ${text === '' ? '(no text)' : text}${tools}`;
+    }
+    case 'tool-result':
+      return `tool-result ${oneLine(item.name)}: ${oneLine(item.text)}${
+        item.isError ? ' (error)' : ''
+      }`;
+    case 'system':
+      return `system: ${oneLine(item.text ?? '')}`;
+    case 'compaction':
+      return `[compaction] ${oneLine(item.text ?? '')}`;
+    case 'reset':
+      return `[reset]${item.text === undefined ? '' : ` ${oneLine(item.text)}`}`;
+  }
 }

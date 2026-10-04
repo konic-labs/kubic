@@ -7,6 +7,17 @@ import { describe, expect, it } from 'vitest';
 import { toolSpawnEnv } from '../../../exec/src/env.js';
 import type { FileChange } from '../../../exec/src/journal-diff.js';
 import { parseTrajectoryExport } from '../../../trajectory/src/schema.js';
+import { readConversationEntries } from '../../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  MemoryStorage,
+} from '../../../worker/src/pi-boundary.js';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import {
   assembleRunTrajectory,
@@ -28,73 +39,96 @@ function usage(input: number, output: number, cost: number) {
   };
 }
 
-// The stored chain of one faux run with a single `read` call, out of order
-// (the store makes no order promise) plus one entry from an earlier run.
+// The durable entry chain of one faux run with a single `read` call
+// (pi-durable `EntryRecord`s: typed kinds, `model` payloads), plus one entry
+// from an earlier run. Entries carry no timestamp of their own — the
+// messages do — and the array is deliberately out of id order: entry ids are
+// assigned in commit order, so the adapter restores transcript order.
+function assistantEntry(
+  id: number,
+  timestamp: number,
+  content: unknown[],
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    conversationId: 1,
+    kind: 'pi.assistant',
+    model: [
+      {
+        role: 'assistant',
+        content,
+        api: 'faux',
+        provider: 'faux',
+        model: 'echo',
+        usage: usage(20, 7, 0.001),
+        stopReason: 'stop',
+        timestamp,
+        ...overrides,
+      },
+    ],
+  };
+}
+
 const ENTRIES: unknown[] = [
+  assistantEntry(40, STARTED + 30, [
+    { type: 'text', text: 'faux: read returned 6 chars' },
+  ]),
   {
-    type: 'message',
-    seq: 40,
-    timestamp: STARTED + 30,
-    message: {
-      role: 'assistant',
-      content: [{ type: 'text', text: 'faux: read returned 6 chars' }],
-      provider: 'faux',
-      model: 'echo',
-      usage: usage(20, 7, 0.001),
-    },
+    id: 29,
+    conversationId: 1,
+    kind: 'pi.tool-result',
+    data: { diagnostics: [] },
+    model: [
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'hello\n' }],
+        isError: false,
+        timestamp: STARTED + 20,
+      },
+    ],
   },
+  assistantEntry(
+    19,
+    STARTED + 10,
+    [
+      {
+        type: 'toolCall',
+        id: 'call-1',
+        name: 'read',
+        arguments: { path: 'a.txt' },
+      },
+    ],
+    { usage: usage(100, 6, 0.002) },
+  ),
   {
-    type: 'message',
-    seq: 29,
-    timestamp: STARTED + 20,
-    message: {
-      role: 'toolResult',
-      toolCallId: 'call-1',
-      toolName: 'read',
-      content: [{ type: 'text', text: 'hello\n' }],
-    },
+    id: 6,
+    conversationId: 1,
+    kind: 'pi.user',
+    model: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'read a.txt' }],
+        timestamp: STARTED + 1,
+      },
+    ],
   },
-  {
-    type: 'message',
-    seq: 19,
-    timestamp: STARTED + 10,
-    message: {
-      role: 'assistant',
-      content: [
-        {
-          type: 'toolCall',
-          id: 'call-1',
-          name: 'read',
-          arguments: { path: 'a.txt' },
-        },
-      ],
-      provider: 'faux',
-      model: 'echo',
-      usage: usage(100, 6, 0.002),
-    },
-  },
-  {
-    type: 'message',
-    seq: 6,
-    timestamp: STARTED + 1,
-    message: { role: 'user', content: [{ type: 'text', text: 'read a.txt' }] },
-  },
-  {
-    // An earlier run of a resumed session: never part of this trajectory.
-    type: 'message',
-    seq: 2,
-    timestamp: STARTED - 60_000,
-    message: {
-      role: 'assistant',
-      content: [
-        { type: 'toolCall', id: 'old', name: 'bash', arguments: { cmd: 'x' } },
-      ],
-      provider: 'faux',
-      model: 'echo',
-      usage: usage(999, 999, 9),
-    },
-  },
+  // An earlier run of a resumed session: never part of this trajectory.
+  assistantEntry(
+    2,
+    STARTED - 60_000,
+    [{ type: 'toolCall', id: 'old', name: 'bash', arguments: { cmd: 'x' } }],
+    { usage: usage(999, 999, 9) },
+  ),
 ];
+
+let nextEntryId = 100;
+function entryId(): number {
+  nextEntryId += 1;
+  return nextEntryId;
+}
 
 function change(overrides: Partial<FileChange> = {}): FileChange {
   return {
@@ -341,72 +375,111 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
           null,
           'not an entry',
           ['an', 'array'],
-          { type: 'compaction', seq: 1, timestamp: at(1), message: {} },
-          { type: 'message', seq: 2, timestamp: at(1), message: 'text' },
+          // Not a durable entry record: no numeric id.
+          { kind: 'pi.assistant', model: [] },
+          // A compaction entry with no messages: nothing to show.
+          { id: entryId(), conversationId: 1, kind: 'pi.compaction' },
+          // A model payload that is not an array, and one with no numeric
+          // timestamp: neither can be placed in the run.
           {
-            type: 'message',
-            seq: 3,
-            timestamp: at(1),
-            message: { content: [] },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.assistant',
+            model: 'x',
           },
-          // Exactly at the run start: part of this run.
           {
-            type: 'message',
-            seq: 4,
-            timestamp: STARTED,
-            message: {
-              role: 'assistant',
-              content: [
-                { type: 'toolCall', id: 'c1', name: 42, arguments: undefined },
-                'not a part',
-                { type: 'text', text: 'thinking' },
-              ],
-            },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.user',
+            model: [{ role: 'user', content: [], timestamp: 'y' }],
           },
-          // No seq/timestamp numbers: sorts first, filtered by time (0 < start).
+          // Exactly at the run start: part of this run. A tool call with a
+          // non-string name and no arguments, plus parts that are not calls.
           {
-            type: 'message',
-            seq: 'x',
-            timestamp: 'y',
-            message: {
-              role: 'assistant',
-              content: [{ type: 'toolCall', id: 'old', name: 'old' }],
-            },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.assistant',
+            model: [
+              {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'toolCall',
+                    id: 'c1',
+                    name: 42,
+                    arguments: undefined,
+                  },
+                  'not a part',
+                  { type: 'text', text: 'thinking' },
+                ],
+                timestamp: STARTED,
+              },
+            ],
           },
           // Assistant without a content array: no actions, no crash.
           {
-            type: 'message',
-            seq: 5,
-            timestamp: at(2),
-            message: { role: 'assistant' },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.assistant',
+            model: [
+              {
+                role: 'assistant',
+                timestamp: at(2),
+                provider: 'faux',
+                model: 'echo',
+              },
+            ],
           },
           {
-            type: 'message',
-            seq: 6,
-            timestamp: at(3),
-            message: {
-              role: 'toolResult',
-              toolCallId: 'c1',
-              content: [
-                { type: 'text', text: 'line one' },
-                { type: 'image', data: 'x' },
-                { type: 'text', text: 7 },
-                { type: 'text', text: 'line two' },
-              ],
-            },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.tool-result',
+            data: { diagnostics: [] },
+            model: [
+              {
+                role: 'toolResult',
+                toolCallId: 'c1',
+                toolName: 'read',
+                content: [
+                  { type: 'text', text: 'line one' },
+                  { type: 'image', data: 'x' },
+                  { type: 'text', text: 7 },
+                  { type: 'text', text: 'line two' },
+                ],
+                isError: false,
+                timestamp: at(3),
+              },
+            ],
           },
           // A result whose call is not in this run, and one without an id.
           {
-            type: 'message',
-            seq: 7,
-            timestamp: at(4),
-            message: { role: 'toolResult', toolCallId: 'nope', content: [] },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.tool-result',
+            model: [
+              {
+                role: 'toolResult',
+                toolCallId: 'nope',
+                toolName: 'read',
+                content: [],
+                isError: false,
+                timestamp: at(4),
+              },
+            ],
           },
           {
-            type: 'message',
-            seq: 8,
-            timestamp: at(5),
-            message: { role: 'toolResult', content: 'x' },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.tool-result',
+            model: [
+              {
+                role: 'toolResult',
+                toolName: 'read',
+                content: [{ type: 'text', text: 'x' }],
+                isError: false,
+                timestamp: at(5),
+              },
+            ],
           },
         ],
       }),
@@ -434,25 +507,31 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
       input({
         entries: [
           {
-            type: 'message',
-            seq: 1,
-            timestamp: at(1),
-            message: {
-              role: 'assistant',
-              content: [],
-              usage: { input: 3, output: 2 },
-            },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.assistant',
+            model: [
+              {
+                role: 'assistant',
+                content: [],
+                usage: { input: 3, output: 2 },
+                timestamp: at(1),
+              },
+            ],
           },
           {
             // A user message with usage-shaped data is not a request.
-            type: 'message',
-            seq: 2,
-            timestamp: at(2),
-            message: {
-              role: 'user',
-              content: [],
-              usage: { input: 99, output: 99 },
-            },
+            id: entryId(),
+            conversationId: 1,
+            kind: 'pi.user',
+            model: [
+              {
+                role: 'user',
+                content: [],
+                usage: { input: 99, output: 99 },
+                timestamp: at(2),
+              },
+            ],
           },
         ],
       }),
@@ -467,6 +546,38 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
         'unknown/unknown': { requests: 1, input: 3, output: 2, costTotal: 0 },
       },
     });
+  });
+
+  it('records the thinking level the responses ran at when the caller named none (issue #282)', () => {
+    const exported = assembleRunTrajectory(
+      input({
+        model: { provider: 'faux', id: 'echo', thinking: null },
+        entries: [
+          assistantEntry(1, at(1), [{ type: 'text', text: 'first' }], {
+            thinkingLevel: 'low',
+          }),
+          assistantEntry(2, at(2), [{ type: 'text', text: 'second' }], {
+            thinkingLevel: 'high',
+          }),
+        ],
+      }),
+    );
+    // The newest response names the level the run ended at.
+    expect(exported.model.thinking).toBe('high');
+  });
+
+  it('keeps the caller-named thinking level over the responses (issue #282)', () => {
+    const exported = assembleRunTrajectory(
+      input({
+        model: { provider: 'faux', id: 'echo', thinking: 'medium' },
+        entries: [
+          assistantEntry(1, at(1), [{ type: 'text', text: 'first' }], {
+            thinkingLevel: 'high',
+          }),
+        ],
+      }),
+    );
+    expect(exported.model.thinking).toBe('medium');
   });
 
   it('diffs creates, deletes and omitted after-sides; the change boundary is inclusive', () => {
@@ -629,5 +740,65 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
     );
     expect(exported.result.status).toBe('failed');
     expect(exported.result.failureCategory).not.toBeNull();
+  });
+});
+
+describe('assembleRunTrajectory over a real harness (issue #400)', () => {
+  it('builds a schema-valid v1 trajectory from the entries a faux harness stored', async () => {
+    // A real pi-durable Harness over MemoryStorage with the faux provider:
+    // the entries the adapter reads are the ones the harness actually
+    // writes (user turn, assistant tool call, its result, the answer).
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      { models, registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const root = await harness.root(BACKGROUND_CONTEXT, {
+        agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+      });
+      faux.setResponses([
+        fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('read returned 6 chars'),
+      ]);
+      const startedAt = Date.now() - 60_000;
+      await (
+        await root.submit(
+          { type: 'input', content: 'read a.txt' },
+          BACKGROUND_CONTEXT,
+        )
+      ).wait(BACKGROUND_CONTEXT);
+      const entries = await readConversationEntries(root, BACKGROUND_CONTEXT);
+      const exported = assembleRunTrajectory(
+        input({
+          entries,
+          startedAt,
+          endedAt: Date.now(),
+          prompt: 'read a.txt',
+          outcome: {
+            terminus: 'completed',
+            summary: 'read returned 6 chars',
+          },
+        }),
+      );
+      expect(() =>
+        parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
+      ).not.toThrow();
+      expect(exported.actions).toEqual([
+        { seq: 1, tool: 'read', args: { path: 'a.txt' } },
+      ]);
+      expect(exported.observations).toHaveLength(1);
+      expect(exported.observations[0]?.actionSeq).toBe(1);
+      expect(exported.usage.requests).toBe(2);
+      expect(exported.usage.byModel['faux/faux-1']?.requests).toBe(2);
+      expect(exported.provenance.model).toBe('faux/echo');
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
   });
 });

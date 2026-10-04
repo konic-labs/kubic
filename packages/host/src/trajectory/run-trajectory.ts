@@ -36,10 +36,14 @@ import type {
 } from '../../../trajectory/src/schema.js';
 import { classifyFailure } from '../../../worker/src/lane/failures.js';
 import {
+  classifyHarnessError,
   type OperationErrorLike,
-  settleTerminalStatus,
 } from '../../../worker/src/lane/settle.js';
-import type { TerminalStatus } from '../../../worker/src/pi-boundary.js';
+import {
+  entriesToTranscript,
+  type TranscriptItem,
+} from '../../../worker/src/lane/transcript.js';
+import type { EntryRecord } from '../../../worker/src/pi-boundary.js';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import type { RunTerminusKind } from '../run-cli.js';
 
@@ -51,7 +55,10 @@ export const TRAJECTORY_FILE = 'trajectory.json';
 export interface RunOutcome {
   terminus: RunTerminusKind;
   summary: string;
-  lane?: { status: TerminalStatus; error?: OperationErrorLike };
+  // The lane's terminal record (#395 lane/turn.ts): its outcome kind
+  // ('completed' | 'failed' | 'aborted') and, for a failure, the lane error
+  // that explains it.
+  lane?: { status: string; error?: OperationErrorLike };
   interrupted?: boolean;
 }
 
@@ -63,7 +70,7 @@ export interface RunTrajectoryInput {
   // The role the lane ran as: 'solo', or the `--role` name.
   role: string;
   prompt: string;
-  // The session's stored entries (any order; older runs filtered here).
+  // The session's durable entries (any order; older runs filtered here).
   entries: readonly unknown[];
   model: { provider: string; id: string; thinking: string | null };
   pid: number | null;
@@ -89,13 +96,6 @@ export function taskIdForPrompt(prompt: string): string {
   return `prompt:${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}`;
 }
 
-interface StoredEntry {
-  seq: number;
-  timestamp: number;
-  role: string;
-  message: Record<string, unknown>;
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -104,65 +104,77 @@ function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-// This run's message entries, in chain order.
+// A durable entry as far as this module needs to identify one: the entry
+// record shape `Storage.scanEntries` returns. Anything else (a 0.87 entry, a
+// foreign object) is skipped, never guessed at.
+function isEntryRecord(value: unknown): value is EntryRecord {
+  return (
+    isObject(value) &&
+    typeof value.id === 'number' &&
+    typeof value.kind === 'string'
+  );
+}
+
+// When the entry was written: the newest timestamp among its model messages.
+// Entries carry no timestamp of their own (entry ids are the only order);
+// the messages they contribute do. An entry with no stamped message (a
+// bookkeeping entry, a positional prompt update) has no place in a run's
+// evidence and is filtered out.
+function entryTimestamp(entry: EntryRecord): number | undefined {
+  if (!Array.isArray(entry.model)) return undefined;
+  let newest: number | undefined;
+  for (const message of entry.model) {
+    if (!isObject(message)) continue;
+    const timestamp = message.timestamp;
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) continue;
+    if (newest === undefined || timestamp > newest) newest = timestamp;
+  }
+  return newest;
+}
+
+// This run's durable entries, in transcript order. The run-start boundary is
+// inclusive, exactly as the 0.87 reader had it.
 function runEntries(
   entries: readonly unknown[],
   startedAt: number,
-): StoredEntry[] {
-  const out: StoredEntry[] = [];
+): EntryRecord[] {
+  const out: EntryRecord[] = [];
   for (const entry of entries) {
-    if (!isObject(entry) || entry.type !== 'message') continue;
-    if (!isObject(entry.message)) continue;
-    const timestamp = num(entry.timestamp);
-    if (timestamp < startedAt) continue;
-    const role = entry.message.role;
-    if (typeof role !== 'string') continue;
-    out.push({ seq: num(entry.seq), timestamp, role, message: entry.message });
+    if (!isEntryRecord(entry)) continue;
+    const timestamp = entryTimestamp(entry);
+    if (timestamp === undefined || timestamp < startedAt) continue;
+    out.push(entry);
   }
-  return out.sort((a, b) => a.seq - b.seq);
+  return out;
 }
 
-function textOf(content: unknown): string {
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter(
-      (part): part is { type: 'text'; text: string } =>
-        isObject(part) && part.type === 'text' && typeof part.text === 'string',
-    )
-    .map((part) => part.text)
-    .join('\n');
-}
-
-function actionsAndObservations(entries: StoredEntry[]): {
+function actionsAndObservations(items: readonly TranscriptItem[]): {
   actions: TrajectoryAction[];
   observations: RawObservation[];
 } {
   const actions: TrajectoryAction[] = [];
   const observations: RawObservation[] = [];
   const actionSeqByCall = new Map<string, number>();
-  for (const entry of entries) {
-    if (entry.role === 'assistant' && Array.isArray(entry.message.content)) {
-      for (const part of entry.message.content) {
-        if (!isObject(part) || part.type !== 'toolCall') continue;
+  for (const item of items) {
+    if (item.kind === 'assistant') {
+      for (const call of item.toolCalls) {
         const seq = actions.length + 1;
         actions.push({
           seq,
-          tool: typeof part.name === 'string' ? part.name : 'unknown',
-          args: (part.arguments ?? null) as JsonValue,
+          tool: call.name === '' ? 'unknown' : call.name,
+          args: (call.args ?? null) as JsonValue,
         });
-        if (typeof part.id === 'string') actionSeqByCall.set(part.id, seq);
+        if (call.id !== '') actionSeqByCall.set(call.id, seq);
       }
     }
-    if (entry.role === 'toolResult') {
-      const callId = entry.message.toolCallId;
-      const actionSeq =
-        typeof callId === 'string' ? actionSeqByCall.get(callId) : undefined;
+    if (item.kind === 'tool-result') {
+      const actionSeq = actionSeqByCall.get(item.callId);
       // A result whose call is not in this run has nothing to observe.
       if (actionSeq === undefined) continue;
       observations.push({
         seq: observations.length + 1,
         actionSeq,
-        output: textOf(entry.message.content),
+        output: item.text,
       });
     }
   }
@@ -173,7 +185,7 @@ function round(value: number): number {
   return Math.round(value * 1e9) / 1e9;
 }
 
-function usageOf(entries: StoredEntry[]): TrajectoryUsage {
+function usageOf(items: readonly TranscriptItem[]): TrajectoryUsage {
   const total: TrajectoryUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -182,16 +194,16 @@ function usageOf(entries: StoredEntry[]): TrajectoryUsage {
     costUsd: 0,
     byModel: {},
   };
-  for (const entry of entries) {
-    if (entry.role !== 'assistant' || !isObject(entry.message.usage)) continue;
-    const usage = entry.message.usage;
-    const cost = isObject(usage.cost) ? num(usage.cost.total) : 0;
+  for (const item of items) {
+    if (item.kind !== 'assistant' || item.usage === undefined) continue;
+    const usage = item.usage;
+    const cost = num(usage.cost?.total);
     total.inputTokens += num(usage.input);
     total.outputTokens += num(usage.output);
     total.cachedTokens += num(usage.cacheRead);
     total.requests += 1;
     total.costUsd = round(total.costUsd + cost);
-    const key = `${String(entry.message.provider ?? 'unknown')}/${String(entry.message.model ?? 'unknown')}`;
+    const key = `${item.provider ?? 'unknown'}/${item.model ?? 'unknown'}`;
     const row: TrajectoryModelUsage = total.byModel[key] ?? {
       requests: 0,
       input: 0,
@@ -205,6 +217,18 @@ function usageOf(entries: StoredEntry[]): TrajectoryUsage {
     total.byModel[key] = row;
   }
   return total;
+}
+
+// The thinking level the run actually ended at (issue #282): the newest
+// assistant response's `thinkingLevel`. Recorded in `model.thinking` when
+// the caller could not name one (a resumed session, a lane that escalated).
+function thinkingLevelOf(items: readonly TranscriptItem[]): string | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind !== 'assistant') continue;
+    if (item.thinkingLevel !== undefined) return item.thinkingLevel;
+  }
+  return null;
 }
 
 function diffOf(
@@ -285,13 +309,18 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
     default: {
       const lane = outcome.lane;
       if (lane !== undefined) {
-        const settled = settleTerminalStatus(lane.status, lane.error);
-        status = settled.status === 'cancelled' ? 'cancelled' : 'failed';
+        // The lane's own terminal record: an aborted/declined lane is a
+        // cancellation, everything else a failure, and a failure without a
+        // named error is a process failure (never an invented category).
+        status =
+          lane.status === 'aborted' || lane.status === 'declined'
+            ? 'cancelled'
+            : 'failed';
         category =
-          settled.error === undefined || lane.error === undefined
+          lane.error === undefined
             ? 'process_crashed'
             : classifyFailure(
-                settled.error.kind,
+                classifyHarnessError(lane.error.code, lane.error.message).kind,
                 lane.error.code,
                 lane.error.message,
               ).code;
@@ -313,7 +342,8 @@ export function assembleRunTrajectory(
   input: RunTrajectoryInput,
 ): TrajectoryExport {
   const entries = runEntries(input.entries, input.startedAt);
-  const { actions, observations } = actionsAndObservations(entries);
+  const items = entriesToTranscript(entries);
+  const { actions, observations } = actionsAndObservations(items);
   const taskId = taskIdForPrompt(input.prompt);
   const modelRef = `${input.model.provider}/${input.model.id}`;
   const result = trajectoryResultFor(input.outcome);
@@ -327,7 +357,9 @@ export function assembleRunTrajectory(
     model: {
       provider: input.model.provider,
       model: input.model.id,
-      thinking: input.model.thinking,
+      // #282: a caller that cannot name the level still records the one the
+      // responses actually ran at.
+      thinking: input.model.thinking ?? thinkingLevelOf(items),
       escalations: [],
     },
     prompt: { text: input.prompt, constraints: [] },
@@ -356,7 +388,7 @@ export function assembleRunTrajectory(
       startedAt: new Date(input.startedAt).toISOString(),
       endedAt: new Date(input.endedAt).toISOString(),
     },
-    usage: usageOf(entries),
+    usage: usageOf(items),
     result,
   });
 }

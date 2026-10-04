@@ -119,6 +119,31 @@ The real-filesystem suite for all of this is
 `NodeExecutionEnv`, a >10k `node_modules` fixture, a directory cycle, and a
 cleanup `afterEach`).
 
+### Grep bounds (issue #180)
+
+`grep` reads and returns under three bounds, all in `ops/grep.ts`:
+
+- **`GREP_MAX_LINE_LENGTH` (500, §27.5 / Pi's constant):** match text is
+  clipped, `linesTruncated: true` marks it, and the rendered header says
+  `lines clipped at 500 chars`. Clipping is not truncation — every match is
+  still reported, so `truncated` stays false — but a partial line read as a
+  whole one is a wrong answer, which is why the flag rides the header.
+- **`GREP_MAX_FILE_BYTES` (8 MiB, the text bound read and edit share):** the
+  file is `stat`ed and, when over the bound, never opened; the count lands in
+  `skippedOversized`. Unlike a binary skip this marks the result `truncated`
+  with a notice naming the bound: an unsearched text candidate can hide
+  matches, so the model has to know the search was partial.
+- **`GREP_RESULT_MAX_BYTES` (51200, read's output cap / Pi's
+  `DEFAULT_MAX_BYTES`):** matches are appended while the rendered
+  `path:line: text` line fits; the search stops at the last whole line and
+  the header names `output cap 51200B reached`.
+- **Binary files (a NUL byte) are skipped and counted** in `skippedBinary`,
+  using read's own rule. This is the documented contract (binaries are never
+  text-matched), so it counts without flipping `truncated`.
+
+`include` stays a path substring test — pinned in the tool schema and the
+operation description (`ops/grep.test.ts`), not turned into a glob.
+
 ### Bash op: bash-preferred, sh fallback (issue #123)
 
 The `bash` op runs **bash when the system has it** — not `sh`, so

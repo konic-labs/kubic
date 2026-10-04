@@ -23,6 +23,7 @@ import {
   type SpawnOptions,
 } from '../../../exec/src/env.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import { OPERATION_PARAMETERS, OPERATIONS } from '../ops/registry.js';
 import type { JsonValue } from '../ops/types.js';
 import { WALK_MAX_DEPTH, WALK_MAX_ENTRIES } from '../ops/walk.js';
@@ -714,5 +715,33 @@ describe('renderGrepText (issue #172)', () => {
     expect(
       renderGrepText({ pattern: 'p', matches: [match], truncated: false }),
     ).toBe('[grep /p/: 1 match]\na.ts:3: x\n');
+  });
+
+  it('names clipped lines and skipped files (issue #180)', () => {
+    // A clipped line read as a whole one is a wrong answer, and a skipped
+    // file is a place the pattern was never looked for.
+    expect(
+      renderGrepText({
+        pattern: 'p',
+        matches: [match],
+        truncated: false,
+        linesTruncated: true,
+      }),
+    ).toBe(
+      `[grep /p/: 1 match, lines clipped at ${GREP_MAX_LINE_LENGTH} chars]\na.ts:3: x\n`,
+    );
+    expect(
+      renderGrepText({
+        pattern: 'p',
+        matches: [],
+        truncated: true,
+        skippedBinary: 2,
+        skippedOversized: 1,
+        notice:
+          'skipped 1 file(s) over the 8388608B grep bound; results may be incomplete',
+      }),
+    ).toBe(
+      '[grep /p/: 0 matches, truncated (narrow pattern, root or include), 2 binary file(s) skipped, 1 oversized file(s) skipped: skipped 1 file(s) over the 8388608B grep bound; results may be incomplete]\n',
+    );
   });
 });

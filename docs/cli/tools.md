@@ -33,7 +33,7 @@ workspace.
 | `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
 | `ls` | `path?` (default `.`) | One directory, not recursive. |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
-| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`. |
+| `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
 | `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`. |
 | `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
@@ -89,10 +89,15 @@ src/b.ts:3: // TODO remove
   stopped it, followed by `: <notice>` naming the cap — for example
   `walk entry cap 10000 reached while listing src/gen; results may be
   incomplete`, `walk depth cap 100 reached at <dir>; results may be
-  incomplete`, or `result cap 100 reached (maxMatches); results may be
-  incomplete`. `find` returns its structured result as JSON with the same
+  incomplete`, `result cap 100 reached (maxMatches); results may be
+  incomplete`, or `output cap 51200B reached; results may be incomplete`.
+  `find` returns its structured result as JSON with the same
   `truncated` and `notice` fields. `bash` adds `, timed out`, `, aborted` or
   `, output truncated`, and `(no output)` when both streams are empty.
+- `grep`'s header also names the two things a model must not misread: the
+  `lines clipped at 500 chars` flag when match text was cut, and
+  `N binary file(s) skipped` / `N oversized file(s) skipped` when files were
+  not searched at all (see [Grep bounds](#grep-bounds)).
 - Every other tool returns its structured result as JSON.
 - A refused `git_commit` carries git's own reason: stderr when git wrote
   one, else stdout (an empty index prints `nothing to commit` on stdout).
@@ -142,6 +147,32 @@ link itself.
 - **Caps:** at most **10,000** entries and **100** directory levels, plus the
   op's own `maxResults` / `maxMatches` (default 100). A result a cap cut is
   marked `truncated` and names the cap and where it hit, as shown above.
+
+## Grep bounds
+
+`grep` bounds what it reads and what it returns (issue
+[#180](https://github.com/konic-labs/kubic/issues/180)):
+
+- **Matching lines are clipped at 500 characters** (`GREP_MAX_LINE_LENGTH`,
+  §27.5 / Pi's own constant) and the result carries `linesTruncated: true`
+  — a minified bundle's 5 MB line can no longer flood the context. The line
+  *number* stays exact; only the text is partial, and the header says
+  `lines clipped at 500 chars`.
+- **Binary files are skipped and counted** (`skippedBinary`): a file whose
+  content contains a NUL byte is never matched — the same rule `read` uses —
+  and the header says `N binary file(s) skipped`. Skipping binaries is the
+  tool's contract, so it does not mark the search `truncated`.
+- **Files over 8 MiB are skipped and counted** (`skippedOversized`): the
+  file costs one `stat` and is never opened, so memory is bounded by the
+  text bound rather than by the largest file in the tree. Because an
+  unsearched text candidate can hide matches, this one *does* mark the
+  result `truncated`, with a notice naming the bound.
+- **The whole result stays within 51200 bytes** (`GREP_RESULT_MAX_BYTES`,
+  read's output cap): matches are added while they fit, the search stops at
+  the last whole line, and the header names `output cap 51200B reached`.
+- `include` remains a **path substring**, not a glob — stated in the tool
+  schema (`OPERATION_PARAMETERS.grep.include`) and in the tool description,
+  and pinned by `ops/grep.test.ts`.
 
 ## Bash limits
 

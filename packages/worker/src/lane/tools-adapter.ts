@@ -48,6 +48,7 @@ import type {
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { BASH_RESULT_MAX_CHARS, type BashResult } from '../ops/bash.js';
 import type { GrepResult } from '../ops/grep.js';
+import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import type { ReadResult } from '../ops/read.js';
 import {
   callOperation,
@@ -221,12 +222,29 @@ export function renderGrepText(result: GrepResult): string {
   const count = result.matches.length;
   // A cut result names WHICH cap stopped it (issue #172): the walk's entry
   // cap with the directory it exhausted, the depth cap with where it pruned,
-  // or maxMatches — the model narrows differently for each.
-  const cut = result.truncated
-    ? `, truncated (narrow pattern, root or include)${
-        result.notice === undefined ? '' : `: ${result.notice}`
-      }`
-    : '';
+  // or maxMatches — the model narrows differently for each. The flags a
+  // model must not miss ride along (issue #180): clipped match text (a
+  // partial line read as a whole one is a wrong answer) and the files grep
+  // did not search.
+  const flags: string[] = [];
+  if (result.truncated) {
+    flags.push('truncated (narrow pattern, root or include)');
+  }
+  if (result.linesTruncated === true) {
+    flags.push(`lines clipped at ${GREP_MAX_LINE_LENGTH} chars`);
+  }
+  if ((result.skippedBinary ?? 0) > 0) {
+    flags.push(`${result.skippedBinary} binary file(s) skipped`);
+  }
+  if ((result.skippedOversized ?? 0) > 0) {
+    flags.push(`${result.skippedOversized} oversized file(s) skipped`);
+  }
+  const cut =
+    flags.length === 0
+      ? ''
+      : `, ${flags.join(', ')}${
+          result.notice === undefined ? '' : `: ${result.notice}`
+        }`;
   const head = `[grep /${result.pattern}/: ${count} ${count === 1 ? 'match' : 'matches'}${cut}]\n`;
   return (
     head +

@@ -563,3 +563,58 @@ describe('compaction cells (issue #317)', () => {
     }
   });
 });
+
+describe('streamed assistant draft (issue #296)', () => {
+  it('renders the draft after the committed cells, before the commit', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 'a0', kind: 'text', markdown: 'committed answer' }],
+      1,
+    );
+    view.setStream('partial');
+    const doc = view.render(80);
+    const text = doc.join('\n');
+    expect(text).toContain('partial');
+    expect(doc.findIndex((line) => line.includes('partial'))).toBeGreaterThan(
+      doc.findIndex((line) => line.includes('committed answer')),
+    );
+    // The commit replaces it: the draft is gone, the cell is not doubled.
+    view.setStream(undefined);
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        { id: 'a0', kind: 'text', markdown: 'committed answer' },
+        { id: 'a1', kind: 'text', markdown: 'partial' },
+      ],
+      2,
+    );
+    const after = view.render(80).join('\n');
+    expect(after).not.toContain('partialpartial');
+    expect(after.match(/partial/g)).toHaveLength(1);
+  });
+
+  it('sanitizes a streamed delta at ingress', () => {
+    const ESC = String.fromCharCode(27);
+    const view = createTranscriptView();
+    view.setStream(`half${ESC}[2J\rvisible`);
+    const doc = view.render(80);
+    const text = doc.join('\n');
+    expect(text).toContain('visible');
+    expect(text).not.toContain(`${ESC}[2J`);
+    expect(text).not.toContain('[2J');
+    for (const line of doc) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it('wraps a long draft instead of cutting it', () => {
+    const view = createTranscriptView();
+    view.setStream('z'.repeat(300));
+    const doc = view.render(80);
+    expect(doc.join('').split('z').length - 1).toBe(300);
+    for (const line of doc) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
+  });
+});

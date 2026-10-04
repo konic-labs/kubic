@@ -336,6 +336,23 @@ class TranscriptDocument implements Component {
         }
       }
     }
+    if (this.stream !== undefined && this.stream !== '') {
+      // Issue #296 (§61): the in-flight generation's text, rendered as it
+      // arrives. Plain text, not markdown — the committed entry is the one
+      // markdown rebuild per entry — and dim, because it is not committed.
+      gap();
+      const lines = wrapTextWithAnsi(this.stream, Math.max(1, w - 2));
+      lines.forEach((line, index) => {
+        out.push(
+          fit(
+            index === 0
+              ? `${theme.accent(ASSISTANT_MARK)} ${theme.dim(line)}`
+              : `  ${theme.dim(line)}`,
+            w,
+          ),
+        );
+      });
+    }
     if (this.pending !== undefined) {
       gap();
       this.renderPrompt(out, `${PROMPT_MARK} ${this.pending}`, w, theme);
@@ -645,7 +662,9 @@ export function createTranscriptView(
       document.pending = prompt;
     },
     setStream(text: string | undefined): void {
-      document.stream = text;
+      // Issue #296 (review): the streamed draft is untrusted lane text like
+      // every other ingress — a delta carrying ESC/C0 must not reach a frame.
+      document.stream = text === undefined ? undefined : sanitizeLaneText(text);
     },
     setQueuedPrompts(prompts: readonly string[]): void {
       // Issue #334 (review): a queued draft is untrusted terminal input like

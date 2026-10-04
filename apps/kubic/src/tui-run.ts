@@ -2281,10 +2281,6 @@ export class TuiTurnRunner {
     if (event.type === 'usage') {
       // The row names the provider/model that answered (#287); the status
       // bar reads tokens + cost only.
-      // Issue #296: the committed assistant entry is here — the draft it
-      // replaces is dropped before the feed is applied, so the text is never
-      // rendered twice.
-      this.clearStream();
       this.usageRows.push({
         model: event.row.model,
         provider: event.row.provider,
@@ -2297,7 +2293,11 @@ export class TuiTurnRunner {
           : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
+      // Issue #296: the committed assistant entry is here — the feed is
+      // applied FIRST and the draft cleared after, so a frame never shows the
+      // text vanishing before its committed cell lands.
       this.foldLaneEntries([event.entry]);
+      this.clearStream();
       return;
     }
     if (event.type === 'entry') {
@@ -2325,7 +2325,6 @@ export class TuiTurnRunner {
     if (this.streamText === '') return;
     this.streamText = '';
     this.app.setStream(undefined);
-    this.onUpdate?.();
   }
 
   private readonly usageRows: StatusUsageRow[];

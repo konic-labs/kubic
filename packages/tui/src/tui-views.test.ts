@@ -297,6 +297,24 @@ describe('diff panel multi-file and scrolling (issue #301)', () => {
     expect(app.panelScrollTop()).toBe(5);
     screen.stop();
   });
+
+  it('reopens the panel at its first file after a close (review #301)', () => {
+    const app = appWithRun([longChange()]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    app.panelScrollTo(5);
+    expect(app.panelScrollTop()).toBe(5);
+    // The operator's real toggle path (Ctrl-O), not the API: the reset must
+    // run there too, or a reopen would resume the old viewport.
+    app.handleInput(OPEN_DIFF);
+    expect(app.panelMode()).toBe('closed');
+    app.handleInput(OPEN_DIFF);
+    screen.render();
+    expect(app.panelMode()).toBe('diff');
+    expect(app.panelScrollTop()).toBe(0);
+    expect(screen.frame()).toContain('-line 0');
+    screen.stop();
+  });
 });
 
 describe('journal panel (issue #96, criterion 3)', () => {

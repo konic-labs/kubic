@@ -1,7 +1,7 @@
 // Inspectable panel body for the diff and journal views (issue #96; §17).
-// The panel is the surface half of the two views: `DiffView` renders one
-// file's effects, `JournalView` renders the session journal, and this module
-// owns which of them is on screen, the multi-file document each panel
+// The panel is the surface half of the two views: `renderDiffLines` renders
+// one file's effects, `JournalView` renders the session journal, and this
+// module owns which of them is on screen, the multi-file document each panel
 // produces (issue #301) plus the sanitisation of the journal rows that feed
 // them.
 //

@@ -1,11 +1,10 @@
-// Slice A RED: DiffView single-file journal diff (issue #25; §16.5, §18).
+// Slice A RED: single-file journal diff rendering (issue #25; §16.5, §18).
 // Text only, no VirtualTerminal in Pi 0.85.1: headless snapshots render
 // directly like layout.test.ts. Structural DiffFileChange mirrors exec
 // FileChange (journal-diff.ts) without importing it — tui must never
 // import exec/host/worker implementation (dep-lint).
 import { describe, expect, it } from 'vitest';
 import {
-  DiffView,
   isBinaryText,
   renderDiffHeader,
   renderDiffLines,
@@ -126,18 +125,6 @@ describe('diff view header + hunks (issue #25)', () => {
       ' three',
       ' ',
     ]);
-  });
-
-  it('headless DiffView snapshot shows header + hunks within width', () => {
-    const view = new DiffView(WRITE_EDIT);
-    const lines = view.render(100);
-    const doc = lines.join('\n');
-    expect(doc).toContain('a.txt');
-    expect(doc).toContain('-two');
-    expect(doc).toContain('+TWO');
-    for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(100);
-    }
   });
 
   it('truncates long lines and caps max lines with a trailer', () => {

@@ -526,6 +526,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (panelJumpFile(delta)) return;
     panelScroll.scrollBy(delta * panelPageLines());
   };
+  // The one place the panel mode is written (the Ctrl-O/Ctrl-R toggles and
+  // the `openPanel` API both go through it), so the reset below cannot be
+  // skipped on the operator's real open path (#301 review).
+  const setPanel = (next: PanelMode): void => {
+    mode = next;
+    panelFile = 0;
+    panelScroll.scrollTo(0);
+  };
   const root = buildLayoutRoot({
     tree,
     header: lineComponent((width) =>
@@ -745,11 +753,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // page keys and ctrl+shift+*), and both are classified through the same
       // seam as every other global key.
       if (keyId === 'ctrl+o') {
-        mode = mode === 'diff' ? 'closed' : 'diff';
+        // Through the setter, not a bare assignment: the panel reset (#301)
+        // must run on the operator's real open path.
+        setPanel(mode === 'diff' ? 'closed' : 'diff');
         return { quit: false, consumed: true, cancel: false };
       }
       if (keyId === 'ctrl+r') {
-        mode = mode === 'journal' ? 'closed' : 'journal';
+        setPanel(mode === 'journal' ? 'closed' : 'journal');
         return { quit: false, consumed: true, cancel: false };
       }
       if (keyId === 'ctrl+x') {
@@ -874,13 +884,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       diffPanel.setToolCall(toolCallId);
     },
     panelMode: (): PanelMode => mode,
-    openPanel: (next: PanelMode): void => {
-      mode = next;
-      // Issue #301: a freshly opened panel starts at its first file, never at
-      // the previous visit's viewport.
-      panelFile = 0;
-      panelScroll.scrollTo(0);
-    },
+    openPanel: setPanel,
     panelScrollBy: (lines: number): void => {
       panelScroll.scrollBy(Math.trunc(lines));
     },

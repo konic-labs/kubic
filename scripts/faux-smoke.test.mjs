@@ -76,6 +76,36 @@ function healthy(overrides = {}) {
     if (args[0] === 'orchestrate') {
       return { code: 0, stdout: envelope('completed', 'done'), stderr: '' };
     }
+    if (args[0] === 'benchmark') {
+      // Issue #262: seven executable fixtures, one live-PTY stub.
+      const results = [
+        'swe-bench-mini',
+        'repo-mod-rename',
+        'bugfix-repro',
+        'refactor-extract',
+        'testgen-cover',
+        'review-diff',
+        'agentic-live',
+      ].map((suite) => ({
+        suite,
+        stub: false,
+        skipped: false,
+        success: true,
+        determinism: 'live',
+      }));
+      results.push({
+        suite: 'terminal-live',
+        stub: true,
+        skipped: true,
+        success: false,
+        determinism: 'live',
+      });
+      return {
+        code: 0,
+        stdout: JSON.stringify({ ok: true, exitCode: 0, results }),
+        stderr: '',
+      };
+    }
     if (['replay', 'eval', 'export'].includes(args[0])) {
       return { code: 0, stdout: '{}', stderr: '' };
     }
@@ -186,6 +216,41 @@ describe('faux smoke checker', () => {
       },
     });
     assert.ok(problems.some((p) => p.startsWith('unknown KUBIC_PROVIDER')));
+  });
+
+  it('names a benchmark whose fixture suite failed, and one that refused', () => {
+    const failedRow = JSON.stringify({
+      ok: true,
+      exitCode: 0,
+      results: [
+        {
+          suite: 'swe-bench-mini',
+          stub: false,
+          skipped: false,
+          success: false,
+          determinism: 'live',
+        },
+      ],
+    });
+    const { problems } = smoke({
+      'benchmark --model faux/echo --worktree /repo --generation 0 --size smoke --json|faux':
+        { code: 0, stdout: failedRow, stderr: '' },
+    });
+    assert.ok(
+      problems.some((p) => p.includes('swe-bench-mini: success false')),
+    );
+
+    const refused = smoke({
+      'benchmark --model faux/echo --worktree /repo --generation 0 --size smoke --json|faux':
+        { code: 2, stdout: '', stderr: 'error: no executable suites' },
+    });
+    assert.ok(
+      refused.problems.some(
+        (p) =>
+          p.includes('faux benchmark: exit 2, want 0') &&
+          p.includes('no executable suites'),
+      ),
+    );
   });
 
   it('names a failed orchestration', () => {

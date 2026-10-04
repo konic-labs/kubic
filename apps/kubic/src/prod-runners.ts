@@ -128,6 +128,7 @@ import {
   sessionRetentionDays,
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
+import { createProdRunSuite } from './eval-prod.js';
 import {
   extensionPostureForDoctor,
   loadExtensionStartup,
@@ -147,18 +148,6 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
-}
-
-// Suite execution is injected: the binary scores recorded trajectories
-// (--trajectory path, fully live); live task execution has no model-backed
-// suite runner here, so --task refuses fail-closed instead of scoring
-// fiction. The message is the documented refusal, surfaced verbatim by the
-// eval/benchmark CLI as `eval error: <message>`.
-const LIVE_SUITE_REFUSAL =
-  'live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)';
-
-async function refuseLiveSuite(): Promise<never> {
-  throw new Error(LIVE_SUITE_REFUSAL);
 }
 
 // The presentation seams of one solo-command invocation, derived once from
@@ -805,19 +794,21 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         },
       );
     },
-    eval: (options) =>
+    eval: (options, cliConfig) =>
       // Analysis surfaces (issue #78): the eval/benchmark presentation
       // layer is library-owned (packages/eval/src/cli.ts, read-only); the
       // root only supplies prod deps. Worktree cleanliness is a real git
-      // probe (packages/exec).
+      // probe (packages/exec); the suite runner is the live one (issue
+      // #262) — each built-in suite's fixture runs through the solo lane
+      // and is scored from the trajectory it writes.
       runEvalCommand(options, {
-        runSuite: refuseLiveSuite,
+        runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
         ...report(),
       }),
-    benchmark: (options) =>
+    benchmark: (options, cliConfig) =>
       runBenchmarkCommand(options, {
-        runSuite: refuseLiveSuite,
+        runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
         ...report(),
       }),

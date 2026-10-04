@@ -28,6 +28,7 @@ export type EvalRunnerErrorCode =
   | 'unknown-suite'
   | 'stub-suite'
   | 'no-executable-suites'
+  | 'ambiguous-suite'
   | 'missing-worktree'
   | 'missing-generation'
   | 'missing-size'

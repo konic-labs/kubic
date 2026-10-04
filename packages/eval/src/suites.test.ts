@@ -3,7 +3,7 @@
 // flipped stub flags, or a findSuite rewrite cannot survive.
 import { describe, expect, it } from 'vitest';
 import { EVAL_CATEGORIES } from './categories.js';
-import { EVAL_SUITES, findSuite } from './suites.js';
+import { EVAL_SUITES, findSuite, resolveSuites } from './suites.js';
 
 describe('eval suites exact shape (issue #53, §48)', () => {
   it('covers all eight required categories, in order', () => {
@@ -32,7 +32,9 @@ describe('eval suites exact shape (issue #53, §48)', () => {
     ]);
   });
 
-  it('marks the six faux suites live and the two live-only suites stub', () => {
+  it('runs every suite but the live-PTY one (issue #262)', () => {
+    // The faux fixture suites execute through the real lane; terminal-live
+    // still needs a live PTY the binary does not ship, so it stays a stub.
     expect(
       EVAL_SUITES.filter((suite) => !suite.stub).map((suite) => suite.id),
     ).toEqual([
@@ -42,10 +44,43 @@ describe('eval suites exact shape (issue #53, §48)', () => {
       'refactor-extract',
       'testgen-cover',
       'review-diff',
+      'agentic-live',
     ]);
     expect(
       EVAL_SUITES.filter((suite) => suite.stub).map((suite) => suite.id),
-    ).toEqual(['terminal-live', 'agentic-live']);
+    ).toEqual(['terminal-live']);
+  });
+
+  it('gives every executable suite a fixture with a prompt, files and a gate command (issue #262)', () => {
+    for (const suite of EVAL_SUITES) {
+      if (suite.stub) {
+        expect(suite.fixture, suite.id).toBeUndefined();
+        continue;
+      }
+      expect(suite.fixture?.prompt, suite.id).toMatch(/faux:tool /);
+      expect(suite.fixture?.files, suite.id).toBeDefined();
+      expect(
+        Object.values(suite.fixture?.verify ?? {}).some(
+          (command) => (command ?? '').trim() !== '',
+        ),
+        suite.id,
+      ).toBe(true);
+    }
+  });
+
+  it('resolves a category alias to its suites, and an unknown selector to undefined (issue #262)', () => {
+    expect(resolveSuites('swe')?.map((suite) => suite.id)).toEqual([
+      'swe-bench-mini',
+    ]);
+    expect(resolveSuites('review')?.map((suite) => suite.id)).toEqual([
+      'review-diff',
+    ]);
+    expect(resolveSuites('swe-bench-mini')?.map((suite) => suite.id)).toEqual([
+      'swe-bench-mini',
+    ]);
+    expect(resolveSuites(undefined)).toHaveLength(EVAL_SUITES.length);
+    expect(resolveSuites('all')).toHaveLength(EVAL_SUITES.length);
+    expect(resolveSuites('nope')).toBeUndefined();
   });
 
   it('pairs each suite with its own category', () => {
@@ -78,7 +113,14 @@ describe('findSuite (issue #53)', () => {
       category: 'swe',
       title: 'SWE mini (faux)',
       stub: false,
-      description: 'Minimal coding-task signal: faux run must complete.',
+      description:
+        'Minimal coding-task signal: the fix file lands and the gate passes.',
+      fixture: {
+        prompt:
+          'faux:tool write {"path":"src/fix.ts","content":"export const fixed = true;\\n"}',
+        files: {},
+        verify: { tests: 'test -f src/fix.ts' },
+      },
     });
   });
 

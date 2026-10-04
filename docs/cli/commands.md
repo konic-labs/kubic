@@ -1680,7 +1680,8 @@ export. Every record needs its provenance (`model`, `thinking`,
 is refused with exit 2 and is never stored.
 
 - With `--task`, the provenance comes from the flags: `--worktree` and
-  `--generation` are mandatory and `--model` defaults to `faux/faux`.
+  `--generation` are mandatory and `--model` defaults to `faux/echo`
+  (the shipped testing provider's registered model).
 - With `--trajectory`, the provenance comes from the export itself:
   `model` from `provenance.model`, `thinking` from `model.thinking`, and
   `worktree` and `generation` from `provenance`. These flags become
@@ -1699,14 +1700,14 @@ a skipped stub, which names the tier it would run at).
 
 | Flag | Meaning |
 | --- | --- |
-| `--suite <id>` | **Required.** One of the built-in suites: `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover` or `review-diff`. `terminal-live` and `agentic-live` are stubs and refuse with exit 2. An unknown suite exits 2. |
-| `--task <prompt>` | Runs the suite against a task prompt. This needs a live model-backed suite runner, which the binary does not ship, so it exits 1 with a pointer to `--trajectory` instead of scoring fiction. |
+| `--suite <id>` | **Required.** A built-in suite id — `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live` — or a **category alias** (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`); `kubic eval` scores one record, so a category with more than one suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with exit 2. An unknown selector exits 2. |
+| `--task <prompt>` | Runs the suite's fixture through the real solo lane and scores the trajectory it writes: the fixture's prompt is the run, its gate command(s) decide the verdict, and the record carries the §73 fields. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`/`--generation`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
 | `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
 | `--generation <n>` | The worker generation that ran. Must be an integer; anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
 | `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
 | `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a §47.1 tier. Published on every record; a missing or unknown size exits 2 on both paths. |
-| `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/faux`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
-| `--workspace inline\|worktree` | `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean. Any other value exits 2. Default `inline`. |
+| `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/echo`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
+| `--workspace inline\|worktree` | `inline` (default) materializes the suite fixture in a temp directory. `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean, then runs each suite in a fresh detached checkout of that repo at its HEAD (`git worktree add --detach`), removed and pruned afterwards. Any other value exits 2. |
 | `--thinking <level>` | With `--task`, recorded on the record verbatim (default none). With `--trajectory` it is read from `model.thinking`, and a different value exits 2 (`provenance-mismatch`). |
 | `--json` | Prints one JSON envelope (`ok`, `exitCode`, and either `record` or `error`) instead of the text line. The exit code is the same either way. |
 
@@ -1733,8 +1734,8 @@ code is:
 - 1 if any executed suite failed
 - 2 on usage errors: an unknown suite, missing provenance, a dirty
   `--workspace worktree`, a stub-only selection
-  (`no-executable-suites`), or a suite that needs the live runner the
-  binary does not ship
+  (`no-executable-suites`), or a stub suite (the live-PTY
+  `terminal-live`, `stub-suite`)
 
 The flags are the same as `kubic eval` without `--task` and
 `--trajectory`; each matrix row runs `benchmark:<suite-id>` as its task.

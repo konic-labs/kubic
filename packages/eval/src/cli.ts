@@ -23,14 +23,19 @@ import {
   runEvalTask,
   runEvalTrajectory,
 } from './runner.js';
-import { EVAL_SUITES, findSuite } from './suites.js';
+import { resolveSuites } from './suites.js';
 
 export const EVAL_EXIT_OK = EXIT_OK;
 export const EVAL_EXIT_FAILED = EXIT_FAILED;
 export const EVAL_EXIT_USAGE = EXIT_USAGE;
 
 // The documented default model of a record (`--model` unset).
-export const EVAL_DEFAULT_MODEL = 'faux/faux';
+// The registered id of the shipped testing provider (issue #262): the
+// fixture suites run through the real lane, so the default must name a
+// model the catalog actually holds. The host's faux provider registers
+// `faux/echo` (FAUX_MODEL_REF); the eval package cannot import host (dep
+// direction), so the ref is restated here.
+export const EVAL_DEFAULT_MODEL = 'faux/echo';
 
 export interface EvalCliDeps extends EvalTaskDeps {
   // stdout: the record line / matrix table, or the one `--json` envelope.
@@ -211,6 +216,33 @@ export async function runEvalCommand(
     log.error("required option '--suite <id>' not specified");
     return EVAL_EXIT_USAGE;
   }
+  // Issue #262 (§73): the selector is a suite id or a category alias
+  // (`--suite swe`). eval scores ONE record, so a category with more than
+  // one suite is refused by name rather than silently picking one.
+  const selected = resolveSuites(parsed.suite);
+  if (selected === undefined) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'unknown-suite',
+        `unknown suite ${JSON.stringify(parsed.suite)}`,
+      ),
+      parsed.json,
+    );
+  }
+  if (selected.length !== 1) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'ambiguous-suite',
+        `--suite ${JSON.stringify(parsed.suite)} matches ${selected.length} suites — kubic eval scores one record; name the suite id`,
+      ),
+      parsed.json,
+    );
+  }
+  const suiteId = (selected[0] as { id: string }).id;
   if (parsed.task === undefined && parsed.trajectory === undefined) {
     log.error('one of --task <prompt> or --trajectory <json> is required');
     return EVAL_EXIT_USAGE;
@@ -225,7 +257,7 @@ export async function runEvalCommand(
         return EVAL_EXIT_USAGE;
       }
       const record = await runEvalTrajectory({
-        suite: parsed.suite,
+        suite: suiteId,
         trajectory: payload,
         ...(parsed.model === undefined ? {} : { model: parsed.model }),
         ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
@@ -245,7 +277,7 @@ export async function runEvalCommand(
     }
     const record = await runEvalTask(
       {
-        suite: parsed.suite,
+        suite: suiteId,
         task: parsed.task as string,
         ...provenance,
         size: parsed.size,
@@ -269,6 +301,15 @@ export interface BenchmarkResult {
   // Issue #260 (§47.1/§72): the executed row publishes the record's own
   // determinism tier; a skipped stub names the tier it would run at (live).
   determinism: EvalDeterminism;
+  // §73 record fields on an executed row (issue #262); absent on a stub.
+  costUsd?: number;
+  tokens?: number;
+  latencyMs?: number;
+  toolCalls?: number;
+  model?: string;
+  thinking?: string | null;
+  worktree?: string;
+  generation?: number;
 }
 
 // kubic benchmark [--suite <id>|all] (design §82): the reproducible
@@ -302,20 +343,20 @@ export async function runBenchmarkCommand(
     }
     throw error;
   }
-  const selected =
-    parsed.suite === undefined
-      ? [...EVAL_SUITES]
-      : (() => {
-          const one = findSuite(parsed.suite);
-          if (one === undefined) {
-            log.error(
-              `[unknown-suite] unknown suite ${JSON.stringify(parsed.suite)}`,
-            );
-            return null;
-          }
-          return [one];
-        })();
-  if (selected === null) return EVAL_EXIT_USAGE;
+  // Issue #262 (§73): the selector is a suite id, a category alias
+  // (`--suite swe` → every swe-category suite), or `all`/absent.
+  const selected = resolveSuites(parsed.suite);
+  if (selected === undefined) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'unknown-suite',
+        `unknown suite ${JSON.stringify(parsed.suite)}`,
+      ),
+      parsed.json,
+    );
+  }
   const results: BenchmarkResult[] = [];
   for (const suite of selected) {
     if (suite.stub) {
@@ -347,8 +388,24 @@ export async function runBenchmarkCommand(
         skipped: false,
         success: record.success,
         determinism: record.determinism,
+        // §73 record fields (issue #262): every executed row carries how it
+        // ran, not just the verdict.
+        costUsd: record.costUsd,
+        tokens: record.tokens,
+        latencyMs: record.latencyMs,
+        toolCalls: record.toolCalls,
+        model: record.model,
+        thinking: record.thinking,
+        worktree: record.worktree,
+        generation: record.generation,
       });
     } catch (error) {
+      // A named runner refusal keeps its code (issue #262): a dirty
+      // worktree is `dirty-worktree`, not a generic `eval-failed`. Only an
+      // unnamed throw falls back to the benchmark's documented mapping.
+      if (error instanceof EvalRunnerError) {
+        return emitError(deps.out, log, error, parsed.json);
+      }
       const message = error instanceof Error ? error.message : String(error);
       if (parsed.json) {
         deps.out(

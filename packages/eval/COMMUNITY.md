@@ -25,25 +25,26 @@ Rules:
 - `category` is one of `swe`, `repo-mod`, `bugfix`, `refactor`,
   `testgen`, `review`, `terminal`, `agentic`.
 - Suites must run faux-only (zero network, zero paid tokens) in CI.
-  Anything needing a live PTY or live model stays `stub: true`.
+  Anything needing a capability the binary does not ship (a live PTY)
+  stays `stub: true`; a faux-drivable fixture is executable.
 
 ## 2. Run it
 
 ```sh
 # Single eval against a task prompt
 kubic eval --task "fix the widget" --suite my-suite \
-  --model faux/faux --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 --generation 1 \
   --size smoke --json
 
 # Score an existing trajectory without re-running it
 kubic eval --trajectory "$(cat run.trajectory.json)" --suite my-suite \
-  --model faux/faux --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 --generation 1 \
   --size smoke --json
 
 # Full matrix (or one suite) — clean worktree required with
 # --workspace worktree
 kubic benchmark --suite my-suite --workspace worktree \
-  --model faux/faux --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 --generation 1 \
   --size smoke --json
 ```
 

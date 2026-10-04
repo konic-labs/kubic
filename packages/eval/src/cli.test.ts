@@ -403,7 +403,7 @@ describe('benchmark command (issue #53)', () => {
     const text = out();
     const textExit = await runBenchmarkCommand(
       {
-        suite: 'agentic-live',
+        suite: 'terminal-live',
         model: 'acme/m1',
         worktree: '/wt/a',
         generation: '1',
@@ -458,7 +458,7 @@ describe('benchmark command (issue #53)', () => {
     );
     expect(exit).toBe(0);
     expect(o.lines.at(-1)).toBe(
-      'benchmark ok: 6/6 suites passed, 2 stub(s) skipped',
+      'benchmark ok: 7/7 suites passed, 1 stub(s) skipped',
     );
   });
 
@@ -502,14 +502,14 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs).toEqual([]);
   });
 
-  it('defaults the model to faux/faux', async () => {
+  it('defaults the model to the shipped testing provider (faux/echo)', async () => {
     const o = out();
     const { model: _model, ...rest } = PROVENANCE;
     await runEvalCommand(
       { suite: 'swe-bench-mini', task: 'fix', ...rest },
       { ...deps, out: o.write, err: o.err },
     );
-    expect(o.lines[0]).toMatch(/ model=faux\/faux /);
+    expect(o.lines[0]).toMatch(/ model=faux\/echo /);
   });
 
   it('refuses a non-integer generation (exit 2, stderr only)', async () => {
@@ -706,7 +706,7 @@ describe('eval/benchmark semantics over parsed options', () => {
       'testgen-cover:false:true',
       'review-diff:false:true',
       'terminal-live:true:false',
-      'agentic-live:true:false',
+      'agentic-live:false:true',
     ]);
     const text = out();
     const textExit = await runBenchmarkCommand(
@@ -717,7 +717,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(text.lines[0]).toMatch(/bugfix-repro +bugfix +FAIL/);
     expect(text.lines[0]).toMatch(/swe-bench-mini +swe +pass/);
     expect(text.lines.at(-1)).toBe(
-      'benchmark FAILED: 5/6 suites passed, 2 stub(s) skipped',
+      'benchmark FAILED: 6/7 suites passed, 1 stub(s) skipped',
     );
     expect(text.errs).toEqual([]);
   });

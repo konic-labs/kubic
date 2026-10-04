@@ -132,7 +132,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
     task: 'p',
     generation: '1',
   },
-  benchmark: { generation: '1', model: 'faux/faux' },
+  benchmark: { generation: '1', model: 'faux/echo' },
   replay: { trajectory: 't.json', tier: 'recorded' },
   export: { trajectory: 'trajectory.json' },
 };
@@ -922,24 +922,35 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     };
   }
 
-  it('eval --task surfaces the runSuite refusal verbatim', async () => {
-    const cap = capture();
-    const runners = createProdRunners(cap.io);
-    const code = await runners.eval(
-      {
-        task: 'do it',
-        suite: 'swe-bench-mini',
-        worktree: '/tmp/w',
-        generation: '1',
-        size: 'smoke',
-      },
-      loadedConfig(),
-    );
-    expect(code).toBe(1);
-    expect(cap.lines).toEqual([]);
-    expect(cap.errs).toEqual([
-      'error: live suite execution is not available in this binary: score a recorded trajectory with --trajectory (see packages/eval/COMMUNITY.md)',
-    ]);
+  it('eval --task drives the live suite runner (issue #262)', async () => {
+    // The built-in suite's fixture runs through the solo lane with the faux
+    // provider, so --task produces a scored record instead of the old
+    // "live suite execution is not available" refusal.
+    vi.stubEnv('KUBIC_PROVIDER', 'faux');
+    const workspace = mkdtempSync(join(tmpdir(), 'kubic-dispatch-eval-'));
+    try {
+      const cap = capture();
+      const runners = createProdRunners(cap.io);
+      const code = await runners.eval(
+        {
+          task: 'do it',
+          suite: 'swe-bench-mini',
+          worktree: workspace,
+          generation: '1',
+          size: 'smoke',
+        },
+        loadedConfig(),
+      );
+      expect(code).toBe(0);
+      expect(cap.lines).toHaveLength(1);
+      expect(cap.lines[0]).toMatch(
+        /^eval ok: suite swe-bench-mini success=true /,
+      );
+      expect(cap.lines[0]).toMatch(/determinism=live/);
+      expect(cap.errs).toEqual([]);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it('clean receives { env, out, err } (an unknown session fails by name on stderr)', async () => {

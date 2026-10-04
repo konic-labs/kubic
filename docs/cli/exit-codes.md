@@ -195,8 +195,7 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--json` reports the same code in its `exitCode` field; `ok` is
   `exitCode === 0`.
 - **`kubic benchmark`**: 0 every executed suite succeeded; 1 any executed
-  suite failed; 2 usage errors, a runner that threw (including the
-  live-runner refusal the binary does not ship) and a selection with no
+  suite failed; 2 usage errors, a runner that threw and a selection with no
   executable suite (`no-executable-suites` — `benchmark: no executable
   suites selected`). In a matrix with at least one executable suite, stub
   suites are reported `skipped (stub)` and never count toward the verdict;

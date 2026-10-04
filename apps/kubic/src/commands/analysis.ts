@@ -202,7 +202,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     [
       'kubic replay traj.json',
       'kubic replay --session 3f2a',
-      'kubic replay traj.json --tier deterministic --model faux/faux --lockfile pins.lock',
+      'kubic replay traj.json --tier deterministic --model faux/echo --lockfile pins.lock',
       'kubic replay traj.json --diff-against other.json --json',
     ],
   )

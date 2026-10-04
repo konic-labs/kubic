@@ -10,9 +10,12 @@
 stored result carries how it ran — model/thinking/worktree/generation,
 the record size, and the §47.1 determinism tier; records missing any of
 them are rejected (exit 2), never stored. Cost/latency/tokens reconcile against §39 usage rows
-before a record is accepted. Suites run faux-only in CI (zero network,
-zero paid tokens); anything needing a live PTY or model stays
-`stub: true` and reports `skipped`, never passing work.
+before a record is accepted. Each executable suite carries a fixture
+(prompt, starting files, gate commands); `kubic eval --task` and
+`kubic benchmark` run it through the real solo lane and score the
+trajectory it writes. Suites run faux-only in CI (zero network, zero paid
+tokens); anything needing a capability the binary does not ship (a live
+PTY) stays `stub: true` and reports `skipped`, never passing work.
 
 Quoted from `packages/eval/COMMUNITY.md` (stub-first contribution path):
 append one row to `EVAL_SUITES` in `suites.ts` (`{ id` — unique,
@@ -76,19 +79,21 @@ input. `reconcileUsage` checks tokens/cost/latency against
 
 `EVAL_CATEGORIES` (8): `swe`, `repo-mod`, `bugfix`, `refactor`,
 `testgen`, `review`, `terminal`, `agentic`. `EvalSuite` fields: `id`,
-`category`, `title`, `stub`, `description`. Built-ins — one per
-category:
+`category`, `title`, `stub`, `description`, `fixture?` (issue #262:
+`prompt`, `files`, `verify` gate commands, `timeoutMs?`).
+`resolveSuites(selector)` accepts an id, a category alias (`swe` → every
+suite of that category) or `all`/undefined. Built-ins — one per category:
 
-| `id` | `category` | `stub` |
-| --- | --- | --- |
-| `swe-bench-mini` | `swe` | false |
-| `repo-mod-rename` | `repo-mod` | false |
-| `bugfix-repro` | `bugfix` | false |
-| `refactor-extract` | `refactor` | false |
-| `testgen-cover` | `testgen` | false |
-| `review-diff` | `review` | false |
-| `terminal-live` | `terminal` | true (needs live PTY) |
-| `agentic-live` | `agentic` | true (needs live model) |
+| `id` | `category` | `stub` | fixture |
+| --- | --- | --- | --- |
+| `swe-bench-mini` | `swe` | false | write the fix file, gate on it |
+| `repo-mod-rename` | `repo-mod` | false | rename via bash, gate on both paths |
+| `bugfix-repro` | `bugfix` | false | write the answer, gate runs the repro script |
+| `refactor-extract` | `refactor` | false | write the extracted module, gate on it |
+| `testgen-cover` | `testgen` | false | write the test file, gate greps it |
+| `review-diff` | `review` | false | write the findings, gate greps the path |
+| `terminal-live` | `terminal` | true | — (needs a live PTY) |
+| `agentic-live` | `agentic` | false | one tool step, gate on its artifact |
 
 ### Signals (`signals.ts`, §48)
 

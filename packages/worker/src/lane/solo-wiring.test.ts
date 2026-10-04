@@ -125,7 +125,10 @@ function catalog() {
   });
   const models = createModels();
   models.setProvider(faux.provider);
-  return { faux, models };
+  const big = faux.getModel('big');
+  const small = faux.getModel('small');
+  if (big === undefined || small === undefined) throw new Error('faux models');
+  return { faux, models, big, small };
 }
 
 async function boot(
@@ -278,12 +281,12 @@ describe('solo boot binds the lane registry (issue #82, rule 5)', () => {
 
 describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
-    const { faux, models } = catalog();
+    const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({
       session: handle() as never,
       models,
-      model: faux.getModel('big'),
+      model: big,
       env: new FakeExecutionEnv({}),
       sessionId: 'sess-1',
       agentId: 'root',
@@ -304,12 +307,12 @@ describe('solo boot hands HarnessSettings compaction to #399 (issues #82, #399)'
 
   it('the current-window getter follows an escalation (issue #82 rule 6)', async () => {
     const { createLadder } = await import('../model-select.js');
-    const { faux, models } = catalog();
+    const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({
       session: handle() as never,
       models,
-      model: faux.getModel('big'),
+      model: big,
       env: new FakeExecutionEnv({}),
       sessionId: 'sess-1',
       agentId: 'root',

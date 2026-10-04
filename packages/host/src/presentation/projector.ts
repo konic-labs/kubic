@@ -82,6 +82,9 @@ export class PresentationProjector {
   // prompt text of the submissions it queued, so it hands the map in and the
   // projector resolves the rows.
   private queuedText: ReadonlyMap<string, string> = new Map();
+  // The inbox's ids as of the last `inbox` event (#334); the text comes from
+  // `queuedText` when the state is handed out.
+  private queuedItems: ReadonlyArray<{ readonly id: string | number }> = [];
   // The projector's monotonic fold counter (issue #333): a consumer can tell
   // a fresh state from the one it last rendered without diffing. Deliberately
   // NOT a §66 state field — the contract's seven keys stay exact.
@@ -146,7 +149,27 @@ export class PresentationProjector {
         throw new Error(`presentation state lost '${field}'`);
       }
     }
+    this.syncQueued();
     return this.current;
+  }
+
+  // Resolve the inbox ids to prompt text against the loop's live map (issue
+  // #333 review). The state is the ONE writer of the queued rows, so this
+  // runs on every hand-out instead of only on an `inbox` event.
+  private syncQueued(): void {
+    const lane = this.rootLane();
+    const queued = this.queuedItems
+      .map((item) => this.queuedText.get(String(item.id)))
+      .filter((text): text is string => text !== undefined);
+    if (
+      queued.length === lane.queued.length &&
+      queued.every((text, index) => text === lane.queued[index])
+    ) {
+      return;
+    }
+    const lanes = new Map(this.current.lanes);
+    lanes.set(this.rootLaneId, { ...lane, queued });
+    this.current = { ...this.current, lanes };
   }
 
   /** The lane the TUI renders (the solo lane's id is the session id). */
@@ -182,11 +205,23 @@ export class PresentationProjector {
                 },
               }),
         });
-        this.patchUsage(usageTotalsOf(event.usage));
+        // The snapshot's `usage` is the session's cumulative `pi.usage`
+        // ledger (the same value #346 seeds the bar from) and every other
+        // field of this branch is REPLACE — adding it would double the
+        // totals on the watch's overflow rebase (issue #333 review).
+        this.current = {
+          ...this.current,
+          usage: usageTotalsOf(event.usage),
+        };
+        this.fold += 1;
         return;
       }
       case 'run-start': {
-        this.patchLane({ status: 'running' });
+        // The turn boundary is the projector's (issue #333 review): the
+        // lane's `tools` list is a running list across turns, and only a
+        // snapshot replaces it, so without this the previous turn's calls
+        // render as live rows again and the tree's rollup counts them twice.
+        this.patchLane({ status: 'running', tools: [] });
         return;
       }
       case 'run-end': {
@@ -235,12 +270,12 @@ export class PresentationProjector {
       }
       case 'inbox': {
         // The inbox is a snapshot per commit (#334): admission, placement and
-        // withdrawal all emit it.
-        this.patchLane({
-          queued: event.items
-            .map((item) => this.queuedText.get(String(item.id)))
-            .filter((text): text is string => text !== undefined),
-        });
+        // withdrawal all emit it. Only the IDS are remembered here — the
+        // prompt text is resolved in `state()`, because the loop's in-place
+        // map drops an id the moment the harness PLACES it (a `run-start`),
+        // and the app writes `lane.queued` on every presentation apply.
+        this.queuedItems = event.items;
+        this.fold += 1;
         return;
       }
       case 'fault': {
@@ -313,11 +348,6 @@ export class PresentationProjector {
   /** §66 queues: the prompt text of the submissions the loop queued. */
   setQueuedText(text: ReadonlyMap<string, string>): void {
     this.queuedText = text;
-  }
-
-  /** §66 queues: the conversation's inbox follow-ups, newest last. */
-  setQueuedPrompts(prompts: readonly string[]): void {
-    this.patchLane({ queued: [...prompts] });
   }
 
   private rootLane(): LaneSnapshot {

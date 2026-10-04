@@ -77,6 +77,33 @@ describe('journal index size counts against the bound (issue #350)', () => {
     expect(store.entries().length).toBeGreaterThan(0);
   }, 30_000);
 
+  it('leaves a tenth of the bound free, not a tenth of the entries', () => {
+    const dir = tmpRoot();
+    // Build well over the bound: the drop set is forced, so the pass has to
+    // decide how much headroom to buy back.
+    const store = new FileJournalStore(dir, { durable: false });
+    for (let i = 0; i < 40; i += 1) {
+      store.append(
+        entry({
+          path: `f${i}.txt`,
+          after: `${'x'.repeat(400)}${i}\n`,
+          bytesDelta: 0,
+          timestamp: 1_700_000_000_000 + i,
+        }),
+      );
+    }
+    const full = storeBytes(dir);
+    const maxBytes = Math.floor(full / 2);
+    const pruned = store.enforceRetention({ maxBytes });
+    expect(pruned.entries).toBeGreaterThan(0);
+    // The pass stops a tenth of the BOUND below the cap (the headroom the
+    // next appends need), not a tenth of the entries above it — dropping to
+    // just under `maxBytes` would leave the next append rewriting the index.
+    expect(storeBytes(dir)).toBeLessThanOrEqual(maxBytes * 0.9);
+    // And it still keeps the newest entry, as ever.
+    expect(store.entries().length).toBeGreaterThan(0);
+  });
+
   it('drops the oldest entry when only the index pushes the store over', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, { maxBytes: 2000, durable: false });

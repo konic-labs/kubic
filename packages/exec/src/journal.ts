@@ -950,19 +950,20 @@ export class FileJournalStore {
       // is the one thing a change journal may not do. Whatever excess is
       // left is reported to the caller instead of being deleted.
       //
-      // Issue #350: a pass that has to prune drops at least a chunk of the
-      // kept entries (a tenth), so a store at its cap is not rewriting its
+      // Issue #350: a pass that has to prune frees a tenth of the BOUND (a
+      // byte low-water mark), so a store at its cap is not rewriting its
       // whole index on every append — the next chunk of appends fits under
-      // the bound without another pass. The drop set is unchanged whenever
-      // the bound itself forces more than a chunk, which is the common case
-      // (one big entry, or a journal left unpruned for a while).
+      // the bound without another pass. A tenth of the kept ENTRIES would buy
+      // the same headroom only when entries are uniform: a store whose oldest
+      // entries hold most of the blobs would collapse to a fraction of the
+      // cap in one pass and lose far more history than the bound required
+      // (issue #350 review). The mark is a tenth of the cap, so the history a
+      // pass destroys stays proportional to what it has to free.
       if (total > maxBytes) {
-        const chunk = Math.ceil(kept.length / RETENTION_DROP_SHARE);
-        let dropped = 0;
-        while (kept.length > 1 && (total > maxBytes || dropped < chunk)) {
+        const lowWater = maxBytes - maxBytes / RETENTION_DROP_SHARE;
+        while (kept.length > 1 && total > lowWater) {
           const gone = kept.shift();
           if (gone === undefined) break;
-          dropped += 1;
           total -= lineBytes.get(gone) ?? 0;
           for (const hash of blobHashesOf(gone)) {
             const count = refs.get(hash) ?? 0;

@@ -1,4 +1,4 @@
-# Trajectory export contract — v1.0 (`stable`)
+# Trajectory export contract — v1.1 (`stable`)
 
 Published contract for issue #51 (design §46). Every autonomous run may
 emit one versioned JSON record sufficient for replay/bench/SFT/RL/debug —
@@ -13,11 +13,20 @@ with `unknown-major` (exit 3). Breaking changes mint major 2.
 
 ## §46 fields (all present, every export)
 
-`schema_version`, `task`, `identity`, `model` (+`escalations`), `prompt`,
-`resources`, `transfer`, `actions` (+args), `observations` (truncated),
-`state` (durable), `provenance` (pid/generation/worktree/model),
-`environment` (USED snapshot), `worktree` (+baseRevision), `diff`,
-`approvals`, `timestamps`, `usage` (+cost), `result`, `eval` (slot).
+`schema_version`, `task`, `identity` (+`parentSessionId`, `role`),
+`model` (+`escalations`: `reason`/`at`/`fromModel`/`toModel`/`thinking`),
+`prompt`, `resources`, `transfer`, `actions` (+args), `observations`
+(truncated), `state` (durable: `phase`, `snapshot`, `operations[]`
+`{id, kind}`, `memos[]` refs), `provenance`
+(pid/generation/worktree/model), `environment` (USED snapshot),
+`worktree` (+baseRevision), `diff`, `approvals` (+`requested` redacted
+summary, `justification`), `timestamps`, `usage` (+cost), `result`
+(+`tests`, `artifacts` refs), `eval` (slot).
+
+The 1.1 additions are optional on read (a 1.0 record still parses, no
+shim) and written by the exporter: an absent parent is `null`, an absent
+role falls back to `task.role`, absent leaves/memos/evidence are `[]`,
+and absent approval details are `null` — never an invented value.
 
 ## Non-negotiables (fail-closed, never silent drop)
 
@@ -39,6 +48,9 @@ with `unknown-major` (exit 3). Breaking changes mint major 2.
   `costTotal` non-negative numbers); otherwise `invalid-usage` (exit 2).
   A caller that omits the rollup gets `byModel: {}` — the exporter never
   emits a record the parser would refuse.
+- An escalation without a non-empty `toModel` → `invalid-escalation`
+  (exit 2): an escalation that cannot name its target model cannot be
+  attributed in RL pairing or cost analysis (1.1, #329).
 - Structural validation (issue #331): every §46 section is type-checked
   with its required nested keys (`model.provider`/`model`, `result.status`
   in `RESULT_STATUSES`, `actions`/`observations`/`approvals` arrays, the
@@ -57,6 +69,13 @@ with `unknown-major` (exit 3). Breaking changes mint major 2.
 
 ## Changelog
 
+- 1.1 (2026-10-04): additive §46 fields — identity ancestry
+  (`parentSessionId`, `role`), escalation attribution
+  (`fromModel`/`toModel`/`thinking`), approval audit (`requested`,
+  `justification`), durable-state leaves (`operations[]`, `memos[]`) and
+  result evidence (`tests`, `artifacts`). Optional on read: 1.0 records
+  still parse with no shim. `toModel` is required on write.
+  (Machine-readable mirror: `TRAJECTORY_CHANGELOG` in `src/schema.ts`.)
 - 1.0 (2026-09-23): initial stable export — all §46 fields, mandatory
   provenance + used-environment (fail-closed), §52 categories on
   failures, truncated observations, reserved eval slot.

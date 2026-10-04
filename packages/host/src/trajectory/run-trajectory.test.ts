@@ -201,7 +201,7 @@ describe('assembleRunTrajectory (issue #383)', () => {
     expect(() =>
       parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
     ).not.toThrow();
-    expect(exported.schema_version).toBe('1.0');
+    expect(exported.schema_version).toBe('1.1');
   });
 
   it('records the run provenance: session, agent, pid, generation, worktree, model', () => {
@@ -229,6 +229,10 @@ describe('assembleRunTrajectory (issue #383)', () => {
       sessionId: 'sess-1',
       agentId: 'root',
       workerId: null,
+      // 1.1 (issue #329): solo runs have no parent; the agent role
+      // falls back to the task's own role.
+      parentSessionId: null,
+      role: 'solo',
     });
   });
 
@@ -298,18 +302,24 @@ describe('assembleRunTrajectory (issue #383)', () => {
         capability: 'shell',
         verdict: 'approved',
         by: 'user',
+        requested: null,
+        justification: null,
       },
       {
         approvalId: 'sess-1:2',
         capability: 'shell',
         verdict: 'denied',
         by: 'user',
+        requested: null,
+        justification: null,
       },
       {
         approvalId: 'sess-1:3',
         capability: 'shell',
         verdict: 'timed-out',
         by: 'user',
+        requested: null,
+        justification: null,
       },
     ]);
   });
@@ -630,7 +640,12 @@ describe('assembleRunTrajectory reads real entries defensively (issue #383)', ()
   it('records the task id as a 16-hex prompt digest and the terminal state', () => {
     const exported = assembleRunTrajectory(input());
     expect(exported.task.taskId).toMatch(/^prompt:[0-9a-f]{16}$/);
-    expect(exported.state).toEqual({ phase: 'completed', snapshot: null });
+    expect(exported.state).toEqual({
+      phase: 'completed',
+      snapshot: null,
+      operations: [],
+      memos: [],
+    });
   });
 });
 

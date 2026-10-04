@@ -87,8 +87,8 @@ function parseError(input: unknown): TrajectorySchemaError {
 }
 
 describe('trajectory schema version (issue #51)', () => {
-  it('publishes schema_version 1.0', () => {
-    expect(SCHEMA_VERSION).toBe('1.0');
+  it('publishes schema_version 1.1', () => {
+    expect(SCHEMA_VERSION).toBe('1.1');
     expect(SCHEMA_MAJOR).toBe(1);
   });
 
@@ -264,5 +264,90 @@ describe('trajectory structural validation (issue #331)', () => {
     expect(isTrajectoryFailureCode('budget_exhausted')).toBe(true);
     expect(isTrajectoryFailureCode('completed')).toBe(false);
     expect(isTrajectoryFailureCode('')).toBe(false);
+  });
+});
+
+describe('trajectory schema 1.1 (issue #329)', () => {
+  it('parses a 1.0 record without any 1.1 field (compat)', () => {
+    const record = validExport();
+    const identity = { ...(record.identity as Record<string, unknown>) };
+    delete identity.parentSessionId;
+    delete identity.role;
+    const state = { ...(record.state as Record<string, unknown>) };
+    delete state.operations;
+    delete state.memos;
+    const result = { ...(record.result as Record<string, unknown>) };
+    delete result.tests;
+    delete result.artifacts;
+    const parsed = parseTrajectoryExport({
+      ...record,
+      schema_version: '1.0',
+      identity,
+      state,
+      result,
+    });
+    expect(parsed.schema_version).toBe('1.0');
+    expect(parsed.identity.parentSessionId).toBeUndefined();
+    expect(parsed.identity.role).toBeUndefined();
+    expect(parsed.state.operations).toBeUndefined();
+    expect(parsed.state.memos).toBeUndefined();
+    expect(parsed.result.tests).toBeUndefined();
+    expect(parsed.result.artifacts).toBeUndefined();
+  });
+
+  it('type-checks the 1.1 fields when present, naming the JSON path', () => {
+    const record = validExport();
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [
+        { identity: { ...(record.identity as object), parentSessionId: 5 } },
+        /trajectory\.identity\.parentSessionId must be a string or null/,
+      ],
+      [
+        { identity: { ...(record.identity as object), role: null } },
+        /trajectory\.identity\.role must be a string \(got null\)/,
+      ],
+      [
+        { state: { ...(record.state as object), memos: ['a', 2] } },
+        /trajectory\.state\.memos must be an array of strings/,
+      ],
+      [
+        { result: { ...(record.result as object), tests: 'x' } },
+        /trajectory\.result\.tests must be an array of strings/,
+      ],
+      [
+        {
+          model: {
+            ...(record.model as object),
+            escalations: [{ reason: 'r', at: 't', toModel: 1 }],
+          },
+        },
+        /trajectory\.model\.escalations\[0\]\.toModel must be a string/,
+      ],
+      [
+        {
+          approvals: [
+            {
+              approvalId: 'a',
+              capability: 'c',
+              verdict: 'approved',
+              by: null,
+              justification: 5,
+            },
+          ],
+        },
+        /trajectory\.approvals\[0\]\.justification must be a string or null/,
+      ],
+      [
+        {
+          state: { ...(record.state as object), operations: [{ id: 'op-1' }] },
+        },
+        /trajectory\.state\.operations\[0\]\.kind is required/,
+      ],
+    ];
+    for (const [override, message] of cases) {
+      const err = parseError({ ...record, ...override });
+      expect(err.code, JSON.stringify(override)).toBe('malformed');
+      expect(err.message, JSON.stringify(override)).toMatch(message);
+    }
   });
 });

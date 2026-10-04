@@ -129,7 +129,8 @@ export async function runTurn(
 // The user-message content one turn admits (#338): the prompt as a text part
 // plus one image part per attachment. Without attachments the content stays
 // the bare string every existing reader (and the faux provider tests)
-// expects.
+// expects; an image-only prompt (attach + Enter, #338 review) sends no empty
+// text part at all — the image IS the message.
 function promptContent(
   prompt: string,
   images: readonly LaneImagePart[] | undefined,
@@ -141,7 +142,7 @@ function promptContent(
     > {
   if (images === undefined || images.length === 0) return prompt;
   return [
-    { type: 'text', text: prompt },
+    ...(prompt === '' ? [] : [{ type: 'text' as const, text: prompt }]),
     ...images.map((image) => ({
       type: 'image' as const,
       data: image.data,

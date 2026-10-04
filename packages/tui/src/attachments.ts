@@ -121,12 +121,15 @@ export function attachmentPlaceholder(image: {
   mimeType: string;
   bytes?: number;
 }): string {
-  const parts: string[] = [];
-  if (image.filename !== undefined && image.filename !== '') {
-    parts.push(image.filename);
-  }
+  // The name when the attachment was just made; the MIME type for a part
+  // read back from the lane (the committed entry stores no name — #338
+  // review), so the row is never a bare size.
+  const label =
+    image.filename !== undefined && image.filename !== ''
+      ? image.filename
+      : image.mimeType;
+  const parts = [label];
   if (image.bytes !== undefined) parts.push(formatImageBytes(image.bytes));
-  if (parts.length === 0) parts.push(image.mimeType);
   return `[image: ${parts.join(' ')}]`;
 }
 
@@ -231,4 +234,57 @@ export function parseInlineImageSequence(
     }
   }
   return { filename, base64: (match[2] ?? '').replace(/\s+/g, '') };
+}
+
+/** The opening of the iTerm2 inline-image sequence, matched at the tail. */
+export const INLINE_IMAGE_PREFIX = '\u001b]1337;File=';
+
+// The most characters a sequence can hold before its payload can no longer
+// fit under IMAGE_MAX_BYTES: base64's 4/3 expansion plus framing slack. A
+// partial sequence beyond this is dropped rather than buffered.
+export const INLINE_IMAGE_MAX_CHARS =
+  Math.ceil((IMAGE_MAX_BYTES * 4) / 3) + 1024;
+
+export type InlineImageChunk =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'image'; readonly image: PastedImage }
+  | {
+      readonly kind: 'pending';
+      /** Text before the unterminated sequence — route it normally. */
+      readonly head: string;
+      /** The partial sequence, to prepend to the next chunk. */
+      readonly buffer: string;
+    }
+  | {
+      // Past the cap the payload can never be accepted, so it is dropped
+      // instead of buffered — but never silently (the operator pasted
+      // something, and a no-op reads as a broken terminal).
+      readonly kind: 'too-large';
+      readonly head: string;
+    };
+
+// One listener call's worth of terminal input. A real paste of a large image
+// arrives in chunks (the pty splits it, and pi-tui's StdinBuffer flushes a
+// partial OSC after 50 ms), so an unterminated sequence is held for the next
+// call instead of being typed into the draft as raw escape + base64 — the
+// defect this function exists to prevent (issue #338 review). `buffer` is the
+// previous call's pending tail; a chunk with no sequence at all (ordinary
+// typing, a key press) is left to the normal input path.
+export function scanInlineImageChunk(
+  buffer: string,
+  chunk: string,
+): InlineImageChunk {
+  const combined = buffer + chunk;
+  const image = parseInlineImageSequence(combined);
+  if (image !== undefined) return { kind: 'image', image };
+  const start = combined.lastIndexOf(INLINE_IMAGE_PREFIX);
+  if (start === -1) return { kind: 'none' };
+  const head = combined.slice(0, start);
+  const tail = combined.slice(start);
+  if (tail.length > INLINE_IMAGE_MAX_CHARS) {
+    // Past the cap the payload can never be accepted: drop it (keeping the
+    // text that preceded it) rather than grow the buffer without bound.
+    return { kind: 'too-large', head };
+  }
+  return { kind: 'pending', head, buffer: tail };
 }

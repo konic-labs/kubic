@@ -33,19 +33,17 @@ describe('transcript prompt images (issue #338)', () => {
       entriesToCells([
         userEntry([
           { type: 'text', text: 'look at this' },
-          {
-            type: 'image',
-            data: PNG,
-            mimeType: 'image/png',
-            filename: 'shot.png',
-          },
+          // Exactly what the lane stores (turn.ts): mimeType and data only —
+          // the name and the size are the PENDING echo's rendering, so a
+          // resumed session shows `[image: image/png …]`.
+          { type: 'image', data: PNG, mimeType: 'image/png' },
         ]),
       ]),
       1,
     );
     const frame = view.render(60).join('\n');
     expect(frame).toContain('look at this');
-    expect(frame).toContain('[image: shot.png');
+    expect(frame).toContain('[image: image/png');
   });
 
   it('renders an image-only prompt (no text part)', () => {

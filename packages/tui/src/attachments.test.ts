@@ -9,7 +9,9 @@ import {
   detectImageMime,
   formatImageBytes,
   IMAGE_MAX_BYTES,
+  INLINE_IMAGE_MAX_CHARS,
   parseInlineImageSequence,
+  scanInlineImageChunk,
   validateImageAttachment,
 } from './attachments.js';
 import { tuiTheme } from './theme.js';
@@ -134,5 +136,46 @@ describe('terminal-pasted images (issue #338)', () => {
 
   it('leaves ordinary pasted text alone', () => {
     expect(parseInlineImageSequence('just text')).toBeUndefined();
+  });
+
+  // A >4 KB paste reaches the pty in chunks, and pi-tui's StdinBuffer flushes
+  // a partial OSC after 50 ms — so the sequence must be reassembled across
+  // listener calls instead of being typed into the draft as raw escape +
+  // base64 (issue #338 review).
+  it('reassembles a sequence split across two chunks', () => {
+    const sequence = `\x1b]1337;File=name=${Buffer.from('big.png', 'latin1').toString('base64')};inline=1:${PNG.toString('base64')}\x07`;
+    const cut = 30;
+    const first = scanInlineImageChunk('', sequence.slice(0, cut));
+    expect(first.kind).toBe('pending');
+    const second = scanInlineImageChunk(
+      first.kind === 'pending' ? first.buffer : '',
+      sequence.slice(cut),
+    );
+    expect(second).toEqual({
+      kind: 'image',
+      image: { filename: 'big.png', base64: PNG.toString('base64') },
+    });
+  });
+
+  it('hands back the text that preceded a partial sequence', () => {
+    const chunk = scanInlineImageChunk(
+      '',
+      'look\x1b]1337;File=name=x;inline=1:AAA',
+    );
+    expect(chunk).toEqual({
+      kind: 'pending',
+      head: 'look',
+      buffer: '\x1b]1337;File=name=x;inline=1:AAA',
+    });
+  });
+
+  it('drops a partial sequence past the cap instead of growing memory', () => {
+    const huge = `\x1b]1337;File=name=x;inline=1:${'A'.repeat(INLINE_IMAGE_MAX_CHARS)}`;
+    const chunk = scanInlineImageChunk('', huge);
+    expect(chunk).toEqual({ kind: 'too-large', head: '' });
+  });
+
+  it('leaves a chunk with no sequence to the normal input path', () => {
+    expect(scanInlineImageChunk('', 'plain typing')).toEqual({ kind: 'none' });
   });
 });

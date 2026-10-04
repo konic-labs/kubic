@@ -108,7 +108,7 @@ import {
   type AttachmentImage,
   formatImageBytes,
   IMAGE_MAX_BYTES,
-  parseInlineImageSequence,
+  scanInlineImageChunk,
   validateImageAttachment,
 } from '../../../packages/tui/src/attachments.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
@@ -2787,6 +2787,14 @@ export function readImageFile(files: FileBridge, path: string): ImageFileRead {
   const filename = basename(full);
   let bytes: Uint8Array;
   try {
+    // The regular-file check comes FIRST (issue #338 review): `lstat` is
+    // cheap and never blocks, while a synchronous read of a FIFO with no
+    // writer — or of a device node like /dev/tty — blocks the event loop
+    // forever, so no Ctrl-C handler could ever run. `undefined` means a
+    // synthetic entry that intends a regular file.
+    if (files.fileInfo(full).isFile === false) {
+      return { ok: false, message: `'${filename}' is not a regular file` };
+    }
     bytes =
       files.readFileRange?.(full, 0, IMAGE_MAX_BYTES + 1) ??
       files.readBinaryFile(full);
@@ -3430,6 +3438,10 @@ export async function runTuiCommand(
     // seam the session store uses, rooted at the workspace, and an absolute
     // path is taken as typed because the operator named it.
     const imageFiles = createNodeFileBridge(process.cwd());
+    // Issue #338 review: a large inline paste arrives in chunks, so a partial
+    // OSC 1337 sequence is held here across listener calls (bounded) instead
+    // of being typed into the draft as raw escape + base64.
+    let pasteBuffer = '';
     const setImagesFooter = (text: string): void => {
       app.setEditorFooter(text);
       if (!stopped) screen?.render();
@@ -3478,6 +3490,16 @@ export async function runTuiCommand(
       base64: string,
       filename: string,
     ): Promise<void> => {
+      // Refuse an oversize paste BEFORE decoding it (issue #338 review): the
+      // base64 text is already in memory (the terminal delivered it), but the
+      // decoded payload would be a second, larger allocation. 4/3 is base64's
+      // own expansion; the slack covers padding and line breaks.
+      if (base64.length > Math.ceil((IMAGE_MAX_BYTES * 4) / 3) + 4) {
+        setImagesFooter(
+          `'${filename}' is too large (> ${formatImageBytes(IMAGE_MAX_BYTES)})`,
+        );
+        return;
+      }
       await attachImage({
         filename,
         bytes: Buffer.from(base64, 'base64'),
@@ -3500,13 +3522,27 @@ export async function runTuiCommand(
       if (isKeyRelease(data)) return { consume: true };
       // Issue #338: a terminal that pastes an image inline (iTerm2's OSC
       // 1337 `File=` sequence) hands the bytes to the attach path — the
-      // editor would otherwise insert the base64 payload as draft text.
-      const pastedImage = parseInlineImageSequence(data);
-      if (pastedImage !== undefined) {
-        void attachPasted(pastedImage.base64, pastedImage.filename);
+      // editor would otherwise insert the base64 payload as draft text. The
+      // scanner also reassembles a sequence the pty split across calls; the
+      // text before an unterminated sequence still routes normally.
+      const scan = scanInlineImageChunk(pasteBuffer, data);
+      if (scan.kind === 'image') {
+        pasteBuffer = '';
+        void attachPasted(scan.image.base64, scan.image.filename);
         return { consume: true };
       }
-      const routed = app.handleInput(data);
+      if (scan.kind === 'too-large') {
+        pasteBuffer = '';
+        setImagesFooter(
+          `pasted image is too large (> ${formatImageBytes(IMAGE_MAX_BYTES)})`,
+        );
+      } else {
+        pasteBuffer = scan.kind === 'pending' ? scan.buffer : '';
+      }
+      const routedData =
+        scan.kind === 'pending' || scan.kind === 'too-large' ? scan.head : data;
+      if (routedData === '') return { consume: true };
+      const routed = app.handleInput(routedData);
       // Issue #334: Alt+Enter carried the draft out of the editor. Busy, the
       // text steers the running turn through the harness' steer queue; idle,
       // it submits like Enter (with the same pending echo).

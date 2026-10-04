@@ -832,7 +832,12 @@ was one.
 to the next submitted prompt — `png`, `jpeg`, `webp` or `gif`, up to 5 MB,
 checked by magic bytes rather than the file name, and the footer names the
 file and its size (`image attached: screenshot.png 120 KB — Enter sends it`).
-A terminal that pastes an image inline (iTerm2's `OSC 1337 File=` sequence)
+Enter with no text sends the attachment on its own (the image is the
+prompt), and a non-regular file (a FIFO, a device node) is refused unopened
+rather than read.
+A terminal that pastes an image inline (iTerm2's `OSC 1337 File=` sequence,
+reassembled when the pty splits a large payload across reads; other
+terminals have no inline-image paste, so `/image <path>` is the way in)
 attaches it the same way. The attachment is refused — with the reason in the
 footer and nothing sent — when the file is missing, is not one of those four
 formats, is over the cap, or when the live model's own input modalities do
@@ -841,9 +846,13 @@ pending attachments and says so). An attached image travels as Pi's own
 user-message image content part, so the session stores it and a resumed
 session replays it; on a terminal with a kitty or iTerm2 image protocol the
 transcript draws the image itself, and everywhere else it renders one
-placeholder row (`[image: screenshot.png 120 KB]`). Attachments belong to
+placeholder row. The row names the file and its size while the prompt is
+pending (`[image: screenshot.png 120 KB]`); the committed entry stores the
+MIME type and the bytes, not the name, so a resumed session shows
+`[image: image/png 120 KB]`. Attachments belong to
 the solo lane: an orchestrator run takes an objective, not a session prompt,
-and refuses them by name.
+and refuses them by name — the attachments are kept, so a switch back to
+solo (Ctrl-G) sends them.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,

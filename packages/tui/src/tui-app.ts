@@ -814,6 +814,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // them on the same keystroke as the submit it accepted, the echo renders
   // them, and clearing the echo clears them.
   let pendingImages: readonly LaneImagePart[] = [];
+  // Issue #338 (review): Enter with an attachment and no text IS a submit —
+  // the image is the prompt. The editor asks this before dropping a blank
+  // draft (attach + Enter was a silent no-op otherwise).
+  editor.allowEmptySubmit = (): boolean => pendingImages.length > 0;
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
   editor.onSubmit = (prompt: string): void => {

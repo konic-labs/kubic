@@ -69,6 +69,11 @@ export function editorTheme(): EditorTheme {
 export class PromptEditor implements Component, Focusable {
   readonly inner: Editor;
   onSubmit?: (text: string) => void;
+  // Issue #338 (review): an image-only prompt is a prompt. The app owns the
+  // pending attachments, so it answers this before the wrapper drops a blank
+  // draft — otherwise attach + Enter is a silent no-op while the footer says
+  // "Enter sends it". Absent means the shipped behaviour (blank is a no-op).
+  allowEmptySubmit: () => boolean = () => false;
 
   private readonly delegate: TuiDelegate;
 
@@ -82,8 +87,8 @@ export class PromptEditor implements Component, Focusable {
     this.history = [];
     this.inner.onSubmit = (text: string): void => {
       const prompt = text.trim();
-      if (prompt === '') return;
-      this.recordHistory(prompt);
+      if (prompt === '' && !this.allowEmptySubmit()) return;
+      if (prompt !== '') this.recordHistory(prompt);
       this.onSubmit?.(prompt);
     };
   }

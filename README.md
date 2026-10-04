@@ -28,8 +28,8 @@ in a version-control-independent journal, so `kubic diff` and `kubic undo` work 
 **Orchestrator mode is opt-in and session-scoped.** Turn it on and the `kubic orchestrate`
 command plays the manager: it registers the §40 manager toolset, plans one step per worker,
 fans one worker process plus one git worktree per subagent out, then merges what they produce.
-Each worker runs its own plan step — role-driven prompts and per-worker approvals are later
-issues. The mode requires a git repository.
+Each worker runs its own plan step under an assigned role, and a worker's dangerous calls are
+routed to you for approval. The mode requires a git repository.
 
 There is no sandbox. Solo mode has no isolation at all, and the design says so plainly rather than
 implying otherwise — see §59.1 of the document.

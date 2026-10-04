@@ -10,8 +10,8 @@ working directly in the user's directory. **Orchestrator** is an
 opt-in mode for delegation: the `kubic orchestrate` CLI process is the
 manager — it registers the §40 manager toolset, plans one step per worker,
 fans one worker process plus one git worktree per subagent out and merges
-what they produce. Role-driven prompts and per-worker approvals are the
-parts of §9.2 still open, on their own issues. Both modes share the same
+what they produce. Each worker runs under one of the five §12 roles (issue
+#104) and its dangerous calls are routed to the user (issue #105). Both modes share the same
 safety controls — the
 VCS-independent change journal and user-decided approvals.
 
@@ -31,10 +31,10 @@ controls: approvals + journal       └── … merge what they produce
 
 The shipped manager lane is the CLI process: it registers the §40 manager
 toolset, plans one step per worker, and every worker is a child `kubic run`
-that runs its own plan step. Role-driven prompts and per-worker approvals
-are the parts of the design still unwired — issue
-[#104](https://github.com/konic-labs/kubic/issues/104) and
-[#105](https://github.com/konic-labs/kubic/issues/105). See
+that runs its own plan step under an assigned role — the role's prompt and
+tool set ([#104](https://github.com/konic-labs/kubic/issues/104)) — and a
+worker's dangerous call is routed to the user through the run's approval
+router ([#105](https://github.com/konic-labs/kubic/issues/105)). See
 [orchestrator](orchestrator.md) for the delegation model as shipped.
 
 Solo is the whole story for trust: there is exactly one trust zone —

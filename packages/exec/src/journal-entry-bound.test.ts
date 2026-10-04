@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  encodeDelta,
   FileJournalStore,
   type JournalEntry,
   type JournalEntryInput,
@@ -84,13 +85,30 @@ describe('journal entry bound (issue #348)', () => {
     }
   });
 
-  it('accepts an entry that fits exactly, including the delta shape', () => {
+  it('measures the delta shape: a large after-side counts as its delta', () => {
     const dir = tmpRoot();
-    const store = new FileJournalStore(dir, { maxBytes: 1000 });
-    const exact = 'x'.repeat(1000);
-    // At the bound is not over it.
-    const recorded = store.append(entry({ path: 'exact.txt', after: exact }));
-    expect(store.readAfter(recorded)).toBe(exact);
+    // Similar large contents: the after-side is stored as a small delta, so
+    // the entry fits a bound far below the content size...
+    const before = 'line\n'.repeat(20_000); // 100 KB
+    const after = `${before}tail\n`;
+    const delta = encodeDelta(before, after);
+    const bound =
+      Buffer.byteLength(before, 'utf8') + Buffer.byteLength(delta, 'utf8');
+    const store = new FileJournalStore(dir, {
+      maxBytes: bound,
+      durable: false,
+    });
+    const recorded = store.append(entry({ path: 'big.txt', before, after }));
+    expect(store.readAfter(recorded)).toBe(after);
+    // ...and one byte less refuses it, naming the bound: the measure is the
+    // delta that is actually stored, not the content it encodes.
+    const tighter = new FileJournalStore(tmpRoot(), {
+      maxBytes: bound - 1,
+      durable: false,
+    });
+    expect(() =>
+      tighter.append(entry({ path: 'big.txt', before, after })),
+    ).toThrow(JournalEntryTooLargeError);
   });
 
   it('keeps the newest entry and reports how far over the bound it is', () => {

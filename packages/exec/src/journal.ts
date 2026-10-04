@@ -338,6 +338,36 @@ function indexLineBytes(entry: JournalEntry): number {
   return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
 }
 
+// The delta a large after-side is stored as (issue #111, issue #348 review):
+// encoded ONCE per append so the bound measure and the blob write share the
+// same string — a >64 KiB write must not pay `encodeDelta` twice. null when
+// the after-side is stored whole, or absent.
+function deltaFor(input: JournalEntryInput): string | null {
+  if (input.after === null) return null;
+  if (Buffer.byteLength(input.after, 'utf8') <= LARGE_FILE_BYTES) return null;
+  return encodeDelta(input.before ?? '', input.after);
+}
+
+// Issue #348: the bytes this entry's own blobs occupy — the before pre-image
+// plus either the after content or, for a large after-side, the delta stored
+// instead of it (`delta`, from `deltaFor`). Each blob counts once: a no-op
+// write (before === after) references a single blob, so it is measured once
+// rather than twice. The check is on the entry's own content, not on what
+// dedupe would add — an entry that could never fit the store is refused
+// whether or not its bytes happen to be there already.
+function entryBlobBytes(
+  input: JournalEntryInput,
+  delta: string | null,
+): number {
+  const before = input.before;
+  const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
+  const after = input.after;
+  if (after === null) return beforeBytes;
+  if (delta !== null) return beforeBytes + Buffer.byteLength(delta, 'utf8');
+  if (before !== null && before === after) return beforeBytes;
+  return beforeBytes + Buffer.byteLength(after, 'utf8');
+}
+
 // Issue #349: the minimum timestamp in a kept set — what an age policy's
 // fast path compares against `now`. The minimum, not the first entry: a
 // journal can carry entries appended out of timestamp order (reconciliation
@@ -427,8 +457,10 @@ export class FileJournalStore {
     // Issue #348: an entry the store could never keep is refused before a
     // single blob is written, so the caller's file write is aborted with
     // the target untouched rather than landing a change whose record the
-    // retention pass below would immediately delete.
-    const ownBytes = this.entryBlobBytes(input);
+    // retention pass below would immediately delete. The delta is encoded
+    // once, here, and reused by the blob write below (issue #348 review).
+    const delta = deltaFor(input);
+    const ownBytes = entryBlobBytes(input, delta);
     if (ownBytes > this.limits.maxBytes) {
       throw new JournalEntryTooLargeError(ownBytes, this.limits.maxBytes);
     }
@@ -452,8 +484,7 @@ export class FileJournalStore {
     }
     let deltaHash: string | null = null;
     if (input.after !== null && afterHash !== null) {
-      if (Buffer.byteLength(input.after, 'utf8') > LARGE_FILE_BYTES) {
-        const delta = encodeDelta(input.before ?? '', input.after);
+      if (delta !== null) {
         deltaHash = sha256Hex(delta);
         this.putBlob(bridge, deltaHash, delta);
       } else {
@@ -601,6 +632,21 @@ export class FileJournalStore {
     } catch {
       // Left as-is.
     }
+  }
+
+  // Issue #348 review: the entry's own content against the store's bound,
+  // for a caller that mutates the workspace and only then records the inverse
+  // — `undo`. It must be able to decide BEFORE the mutation whether the
+  // record will fit: a restore the store would refuse would leave the
+  // workspace changed with no undo/redo entry to show for it.
+  entryBound(input: JournalEntryInput): {
+    entryBytes: number;
+    maxBytes: number;
+  } {
+    return {
+      entryBytes: entryBlobBytes(input, deltaFor(input)),
+      maxBytes: this.limits.maxBytes,
+    };
   }
 
   hasBlob(hash: string): boolean {
@@ -887,28 +933,6 @@ export class FileJournalStore {
     } catch {
       return null;
     }
-  }
-
-  // Issue #348: the bytes this entry's own blobs occupy — the before
-  // pre-image plus either the after content or, for a large after-side, the
-  // delta that is stored instead of it. Each blob counts once: a no-op
-  // write (before === after) references a single blob, so it is measured
-  // once rather than twice. The check is on the entry's own content, not on
-  // what dedupe would add — an entry that could never fit the store is
-  // refused whether or not its bytes happen to be there already.
-  private entryBlobBytes(input: JournalEntryInput): number {
-    const before = input.before;
-    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
-    const after = input.after;
-    if (after === null) return beforeBytes;
-    if (Buffer.byteLength(after, 'utf8') > LARGE_FILE_BYTES) {
-      return (
-        beforeBytes +
-        Buffer.byteLength(encodeDelta(before ?? '', after), 'utf8')
-      );
-    }
-    if (before !== null && before === after) return beforeBytes;
-    return beforeBytes + Buffer.byteLength(after, 'utf8');
   }
 
   private putBlob(

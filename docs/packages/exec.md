@@ -77,6 +77,7 @@ guardrail (#140).
 | `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `afterOmitted?: boolean`, `afterBytes?: number` |
 | `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) — `maxBytes` is the whole store (index + blobs) and is what `[journal] maxBytes` threads into |
+| `UndoResult` | `restored: string[]`, `skipped: string[]`, `skippedDetails: { path, reason }[]`, `warnings: string[]` — a step whose inverse record cannot fit the store's bound is skipped with `too large to record: …` and a warning naming the bound, before the file is touched |
 | `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
@@ -172,7 +173,13 @@ entry — pre-undo content as `before`, restored content as `after`,
 describes the world after an undo, and a second `undo --step` is the
 redo. It is an attributed entry (no `unattributed` flag, no
 `reconciled` marker); `applyUndo` appends it in the non-dry-run path
-only, and only for a step that actually restored. Plain plans
+only, and only for a step that actually restored. The record is planned —
+and measured against the store's bound — BEFORE the restore: an inverse
+entry whose own content (the pre-undo file stored whole, plus the restored
+pre-image) would not fit the bound makes the step skip with a warning and
+a named reason, leaving the file exactly as it was. Restoring first and
+then failing to record would leave the workspace changed with no undo/redo
+entry and nothing to report it with. Plain plans
 (`planUndo` without `step`) filter these records out — they are the
 walk's own bookkeeping — so repeated plain undo is idempotent
 (`already undone`, nothing appended); `--step` targets them. A restore

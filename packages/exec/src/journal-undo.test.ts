@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FileJournalStore } from './journal.js';
+import { FileJournalStore, sha256Hex } from './journal.js';
 import { diffEntries } from './journal-diff.js';
 import { journalStatus } from './journal-status.js';
 import { applyUndo, planUndo } from './journal-undo.js';
@@ -666,5 +666,94 @@ describe('undo of an agent-created file', () => {
     const result = applyUndo(store, planUndo(store, {}, root), root, {});
     expect(result.restored).toEqual([]);
     expect(existsSync(join(root, 'built.js'))).toBe(true);
+  });
+});
+
+// Issue #348 review: the inverse record is appended AFTER the mutation, so a
+// store whose bound cannot take that record must refuse the step BEFORE the
+// file changes. Otherwise `kubic undo` restores a file, throws, and leaves
+// the workspace changed with no undo/redo entry and no report of what
+// happened — reachable even at the default bound, because the inverse record
+// measures the pre-undo content whole plus the restored pre-image.
+describe('undo refuses a step whose inverse record cannot fit (issue #348)', () => {
+  it('leaves a restored file as it is when the record cannot fit', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const before = 'a\n'.repeat(20_000); // 40 KB, stored whole
+    const after = `${before}${'b\n'.repeat(30_000)}`; // 100 KB
+    // The entry is the sweep's hash-only-after shape, so its own blobs are
+    // just the 40 KB pre-image: it fits a bound its inverse record does not.
+    const store = new FileJournalStore(dir, {
+      maxBytes: 80_000,
+      durable: false,
+    });
+    writeFileSync(join(root, 'big.txt'), after);
+    store.append({
+      path: 'big.txt',
+      op: 'write',
+      before,
+      after: null,
+      afterHash: sha256Hex(after),
+      afterOmitted: true,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+
+    // The dry run reports the same skip, so it never promises a restore the
+    // real run refuses.
+    const dry = applyUndo(store, planUndo(store, {}, root), root, {
+      dryRun: true,
+    });
+    expect(dry.restored).toEqual([]);
+    expect(dry.skipped).toEqual(['big.txt']);
+
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    // The inverse record stores the 100 KB pre-undo content whole: over the
+    // 80 KB bound, so the step is refused before the file is touched.
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['big.txt']);
+    expect(result.skippedDetails[0]?.reason).toMatch(
+      /too large to record: the inverse entry needs \d+ bytes, over the journal's 80000-byte bound/,
+    );
+    expect(result.warnings.join('\n')).toMatch(/big\.txt.*left as it is/);
+    expect(readFileSync(join(root, 'big.txt'), 'utf8')).toBe(after);
+    // Nothing was journaled either: the store still holds the one entry.
+    expect(store.entries()).toHaveLength(1);
+  });
+
+  it('keeps a created file when its removal could not be recorded', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const content = 'c\n'.repeat(50_000); // 100 KB
+    const store = new FileJournalStore(dir, {
+      maxBytes: 80_000,
+      durable: false,
+    });
+    writeFileSync(join(root, 'created.txt'), content);
+    store.append({
+      path: 'created.txt',
+      op: 'create',
+      before: null,
+      after: null,
+      afterHash: sha256Hex(content),
+      afterOmitted: true,
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+
+    const result = applyUndo(store, planUndo(store, {}, root), root, {});
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['created.txt']);
+    expect(result.skippedDetails[0]?.reason).toMatch(/too large to record/);
+    // A removal that could not be redone is never silent, and never happens.
+    expect(existsSync(join(root, 'created.txt'))).toBe(true);
+    expect(readFileSync(join(root, 'created.txt'), 'utf8')).toBe(content);
+    expect(store.entries()).toHaveLength(1);
   });
 });

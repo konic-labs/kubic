@@ -1361,8 +1361,13 @@ or colliding files are named, never fatal (see
 [configuration](configuration.md#modelsjson)). A built-in is
 **usable** when its auth is configured: its documented env key
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`OPENROUTER_API_KEY`, …) or, for Bedrock/Vertex, the ambient AWS/Google
-credentials Pi recognises. A custom provider may not reuse a built-in id
+`OPENROUTER_API_KEY`, …), Anthropic's workload identity federation variables
+(`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_IDENTITY_TOKEN_FILE`), or, for Bedrock/Vertex, the ambient
+AWS/Google credentials Pi recognises. Only **chat** models are ever listed or
+resolved: the catalogue also carries image and classifier entries, and the
+unqualified reads `kubic models` and model selection use return chat models
+only. A custom provider may not reuse a built-in id
 (the file is ignored with a note naming the collision). Under
 `KUBIC_PROVIDER=faux` the catalog also lists the `faux` testing provider
 and a `warn:` line names it.

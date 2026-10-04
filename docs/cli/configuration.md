@@ -619,9 +619,24 @@ Secrets never appear in config: a secret-shaped value or a secret ref in
   request resolves it, so that line is scrubbed from the trajectory and the
   result but not from the session file. A trajectory export also redacts every
   secret-classified env key (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
-  `*_CREDENTIALS`, `KUBIC_ROLE_*`) to `<redacted>` with the same classifier
+  `*_CREDENTIALS`, `KUBIC_ROLE_*`, and the Anthropic federation block below)
+  to `<redacted>` with the same classifier
   the worker spawn env uses. (`kubic tui` resolves and audits keys the same
   way but does not yet scrub its session writes.)
+
+**Anthropic workload identity federation is secret whole (issue #402).**
+`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_IDENTITY_TOKEN_FILE` and the optional
+`ANTHROPIC_SERVICE_ACCOUNT_ID` / `ANTHROPIC_WORKSPACE_ID` match none of the
+suffix shapes above — the token key is a FILE path and the ids end in `_ID` —
+yet the block is the credential: the Anthropic SDK exchanges the file's
+identity token for a short-lived access token and refreshes it itself. All
+five are classified secret, so they are redacted from worker debug logs and
+from trajectory exports like any `*_TOKEN`. The token file's *contents* never
+pass through Kubic: Pi hands the SDK the path, and the SDK reads the file.
+Anthropic counts as **configured** in `kubic models` and `kubic doctor` when
+the three required variables are present (the two ids are optional), while an
+API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
 
 Not implemented: `!command` and literal refs inside `models.json` (the
 parser exists in `packages/host/src/config/secrets.ts`; wiring them is
@@ -652,7 +667,11 @@ on application default credentials (project, location, credentials file) — is
 refused the same way, by name, rather than passing the manager's preflight and
 dying in the worker. `google-vertex` on `GOOGLE_CLOUD_API_KEY` is forwarded
 like any single-key provider, and the Cloudflare providers forward their
-account (and gateway) id next to the key.
+account (and gateway) id next to the key. Anthropic over workload identity
+federation forwards the whole block: the grant carries the three required
+`ANTHROPIC_*` variables plus whichever optional ids are set, and the child
+reads the identity token file from disk itself — the path travels, never the
+token.
 With `require_credential_broker` the grant carries `broker:<ref>` sentinels
 instead of values, so no secret material reaches the child env — the flag is
 host policy input, and the `[policy] require_credential_broker` key is parsed and reported but not wired to it yet (see
@@ -687,7 +706,14 @@ not. The split, exactly as shipped:
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
   `GEMINI_API_KEY`, …) or its ambient credentials are set, and a keyless
   built-in is never selected implicitly (`kubic models` shows which are
-  usable). Custom providers come from `models.json` (see
+  usable). Anthropic is also usable from workload identity federation
+  (`ANTHROPIC_FEDERATION_RULE_ID` + `ANTHROPIC_ORGANIZATION_ID` +
+  `ANTHROPIC_IDENTITY_TOKEN_FILE`, optional `ANTHROPIC_SERVICE_ACCOUNT_ID` /
+  `ANTHROPIC_WORKSPACE_ID`), which Pi resolves only when no
+  `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` is set. Only **chat** models are
+  listed or selected: the catalogue's image and classifier entries are never
+  listed by `kubic models` and never picked by model selection. Custom
+  providers come from `models.json` (see
   [models.json](#modelsjson) above). A model without `contextWindow`/`maxTokens` gets
   fail-safe defaults `8192`/`2048` (small local servers overflow above
   them). The 16384-token compaction reserve is

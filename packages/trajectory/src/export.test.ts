@@ -420,6 +420,10 @@ describe('trajectory review fixes (round 2)', () => {
       HOME: '/home/agent',
       SECRET_TOKEN: 's3cret-that-must-not-leak',
       KUBIC_ROLE_IMPLEMENTER_SESSION: 'grant-value',
+      // Issue #402: the Anthropic federation block (pi-ai 0.99.2) is secret
+      // even though its names match no suffix rule.
+      ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
+      ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/identity-token',
     };
     const exported = buildTrajectoryExport(
       completeInput({
@@ -431,8 +435,11 @@ describe('trajectory review fixes (round 2)', () => {
       HOME: '/home/agent',
       SECRET_TOKEN: '<redacted>',
       KUBIC_ROLE_IMPLEMENTER_SESSION: '<redacted>',
+      ANTHROPIC_FEDERATION_RULE_ID: '<redacted>',
+      ANTHROPIC_IDENTITY_TOKEN_FILE: '<redacted>',
     });
     expect(JSON.stringify(exported)).not.toContain('s3cret-that-must-not-leak');
     expect(JSON.stringify(exported)).not.toContain('grant-value');
+    expect(JSON.stringify(exported)).not.toContain('identity-token');
   });
 });

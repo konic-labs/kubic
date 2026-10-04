@@ -22,10 +22,13 @@ function stringifyCanonical(value: unknown): string {
     // Default string order is UTF-16 code-unit order — the same total
     // order an explicit comparator would implement, minus its equality
     // branch (object keys are unique, so that branch is unreachable).
-    const keys = Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${stringifyCanonical(record[key])}`).join(',')}}`;
+    // Each value is read exactly once: an accessor answering differently
+    // between reads must not decide both inclusion and output.
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => [key, record[key]] as const)
+      .filter(([, entry]) => entry !== undefined);
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stringifyCanonical(entry)}`).join(',')}}`;
   }
   throw new Error(`uncapturable value of type ${typeof value}`);
 }

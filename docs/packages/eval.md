@@ -38,7 +38,7 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 | `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass` |
 | `runner.ts` | `EvalRunnerErrorCode`, `EvalRunnerError`, `EvalTaskDeps`, `EvalTaskOptions`, `EvalTrajectoryOptions`, `EvalWorkspace`, `SuiteRunOutcome`, `runEvalTask`, `runEvalTrajectory` |
 | `cli.ts` | `BenchmarkResult`, `EvalCliDeps`, `EvalOptions`, `EVAL_DEFAULT_MODEL`, `EVAL_EXIT_OK/FAILED/USAGE`, `runEvalCommand`, `runBenchmarkCommand`. The handlers take the options commander parses in `apps/kubic/src/commands/analysis.ts`; the benchmark matrix is assembled here over `EVAL_SUITES` |
-| `matrix.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` (one suite per category, stubs marked) — there is no `matrix.ts`; matrix assembly is a function of `runBenchmarkCommand` |
+| `suites.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` — eight categories in order, one suite each, stubs marked. There is no `matrix.ts`: matrix assembly is a function of `runBenchmarkCommand` |
 | `rl/` | Phase-4 RL export: `types`, `manifest`, `fixtures`, `coding`, `tooluse`, `sft`, `grpo`, `dpo`, `preference`, `provenance`, `verifier` (incl. pairs/sft-grpo/tooluse-coding shapes) |
 | `index.ts` | Re-exports the surface above |
 

@@ -365,8 +365,9 @@ Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
-A cancelled worker is given a **worker grace** (10 s by default, issue #249)
-between the SIGTERM to its process group and the SIGKILL escalation — its own
+A cancelled worker is given a **worker grace** (a fixed 10 s for the shipped
+CLI — no flag or config key; an embedder or the TUI can pass its own, issue
+#249) between the SIGTERM to its process group and the SIGKILL escalation — its own
 shutdown is a durable abort, a kill-registry drain and a reconcile sweep, not
 a tool call, so it is not bounded by the 2 s tool grace. `kubic workers
 --json` records which happened: `cancel: "settled"` when the worker finished

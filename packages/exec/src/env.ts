@@ -657,8 +657,13 @@ class NodeShell implements Shell {
     const outDec = new StringDecoder('utf8');
     const errDec = new StringDecoder('utf8');
     let settled = false;
-    // Issue #249: did the SIGKILL escalation beat the leader's own settle?
+    // Issue #249: did the SIGKILL escalation beat the LEADER's own exit?
+    // Derived from the leader, never from the handle settling: `finish()`
+    // awaits the whole group drain, so a grandchild that outlives the
+    // SIGTERM would otherwise report a cooperative settle as forced.
     let forced = false;
+    let leaderExited = false;
+    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
     const snapshot = (): ProcessSnapshot => ({
       stdout: stdoutAcc.peek(),
       stderr: stderrAcc.peek(),
@@ -694,6 +699,8 @@ class NodeShell implements Shell {
       // the `spawn <path> ENOENT` crash). Settle wait() with a named
       // failure instead, so every caller reads it through the same seam.
       child.on('error', (error: Error) => {
+        // A spawn error means no leader exists (issue #249): nothing to force.
+        leaderExited = true;
         if (settled) return;
         settled = true;
         // Flush any buffered partial byte sequence before the result is
@@ -730,6 +737,11 @@ class NodeShell implements Shell {
         if (finishing || settled) return;
         finishing = true;
         if (drainTimer !== undefined) clearTimeout(drainTimer);
+        // Issue #249 review: the group SIGKILL escalation belongs to a LIVE
+        // leader. Once the handle settles, a pending timer could signal a
+        // recycled pgid (the #142 stranger hazard) — the settle path reaps
+        // the group itself.
+        if (escalationTimer !== undefined) clearTimeout(escalationTimer);
         const heldPipes = !streamsClosed;
         if (heldPipes) {
           child.stdout?.destroy();
@@ -779,6 +791,9 @@ class NodeShell implements Shell {
         resolveDone(result);
       };
       child.on('exit', (code, signal) => {
+        // The leader is gone, whatever else the group is doing (issue #249):
+        // recorded before the settle guard so a finishing handle still knows.
+        leaderExited = true;
         if (settled || finishing) return;
         leaderExit = exitCodeFor(code, signal);
         leaderSignal = signal;
@@ -833,10 +848,12 @@ class NodeShell implements Shell {
         // the group still holds (reapGroup, unless the caller opted into
         // keepBackground).
         if (!leaderAlive(pid)) return;
-        const timer = setTimeout(() => {
+        escalationTimer = setTimeout(() => {
           // The leader is still up when the grace elapses: its cooperative
           // shutdown did not finish, so this is a FORCED kill (issue #249).
-          if (!settled) forced = true;
+          // The LEADER's exit is the test — a group member that outlives the
+          // SIGTERM is the escalation's cleanup, not a forced worker.
+          if (!leaderExited) forced = true;
           if (process.platform !== 'win32') {
             try {
               process.kill(-pid, 'SIGKILL');
@@ -845,7 +862,7 @@ class NodeShell implements Shell {
             }
           } else if (!settled) signal('SIGKILL');
         }, options.killGraceMs ?? KILL_GRACE_MS);
-        timer.unref();
+        escalationTimer.unref();
       },
     };
   }

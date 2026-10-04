@@ -12,6 +12,7 @@
 // a REAL child process; only the process-signal seam is injected, so the
 // vitest worker itself is never signalled.
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -40,13 +41,28 @@ const PROVENANCE: Provenance = {
 // Announce readiness, then stay alive until killed (a worker mid-run).
 // SLOW_ABORT=<ms> (issue #249): a cooperative SIGTERM shutdown that takes
 // <ms> to settle, so a cancel grace can be measured against it.
+// ABORT_MARKER=<path>: the handler writes this file when the cooperative
+// settle COMPLETES — proof the abort finished, not just that the row says so.
+// STUBBORN_GRANDCHILD: leave a grandchild behind that ignores SIGTERM, so the
+// leader exits inside the grace while the group still needs the escalation.
 const FIXTURE = `
+import { writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] ?? '';
 const slowAbort = /SLOW_ABORT=(\\d+)/.exec(prompt)?.[1];
+const abortMarker = /ABORT_MARKER=(\\S+)/.exec(prompt)?.[1];
+if (prompt.includes('STUBBORN_GRANDCHILD')) {
+  spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+}
 if (slowAbort !== undefined) {
-  process.on('SIGTERM', () => { setTimeout(() => process.exit(0), Number(slowAbort)); });
+  process.on('SIGTERM', () => {
+    setTimeout(() => {
+      if (abortMarker !== undefined) writeFileSync(abortMarker, 'settled');
+      process.exit(0);
+    }, Number(slowAbort));
+  });
   setInterval(() => {}, 1000);
 }
 setTimeout(() => process.exit(0), 30000);
@@ -407,8 +423,9 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
     const signals = fakeSignals();
     // The child takes 3 s to settle after SIGTERM; the worker grace is 8 s,
     // so the SIGKILL escalation must NOT cut it off.
+    const marker = join(scratchRoot('kubic-orch-settle-'), 'abort.done');
     const { pid, settled, deps } = await startLiveWorker(signals, {
-      prompt: 'work SLOW_ABORT=3000',
+      prompt: `work SLOW_ABORT=3000 ABORT_MARKER=${marker}`,
       cancelGraceMs: 8_000,
     });
     expect(processAlive(pid)).toBe(true);
@@ -418,6 +435,9 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
       () => expect(deps.launches?.rows()[0]?.cancel).toBe('settled'),
       { timeout: 10_000 },
     );
+    // The marker proves the child's own shutdown actually COMPLETED: the row
+    // saying `settled` is not taken on its own word.
+    expect(existsSync(marker)).toBe(true);
     expect(processAlive(pid)).toBe(false);
   }, 30_000);
 
@@ -425,8 +445,9 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
     const signals = fakeSignals();
     // Same 3 s settle, but only 500 ms of grace: the group SIGKILL lands
     // first and the row says so.
+    const marker = join(scratchRoot('kubic-orch-settle-'), 'abort.done');
     const { settled, deps } = await startLiveWorker(signals, {
-      prompt: 'work SLOW_ABORT=3000',
+      prompt: `work SLOW_ABORT=3000 ABORT_MARKER=${marker}`,
       cancelGraceMs: 500,
     });
     deps.cancelWorker?.('worker-1');
@@ -435,5 +456,25 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
       () => expect(deps.launches?.rows()[0]?.cancel).toBe('forced'),
       { timeout: 10_000 },
     );
+    // The grace beat the abort: the marker was never written.
+    expect(existsSync(marker)).toBe(false);
+  }, 30_000);
+
+  it('is settled even when a grandchild outlives the SIGTERM (issue #249 review)', async () => {
+    // The leader exits cooperatively inside the grace while a grandchild
+    // ignores SIGTERM: the group SIGKILL is cleanup, not a forced worker.
+    const signals = fakeSignals();
+    const marker = join(scratchRoot('kubic-orch-settle-'), 'abort.done');
+    const { settled, deps } = await startLiveWorker(signals, {
+      prompt: `work SLOW_ABORT=1000 ABORT_MARKER=${marker} STUBBORN_GRANDCHILD`,
+      cancelGraceMs: 5_000,
+    });
+    deps.cancelWorker?.('worker-1');
+    await settled;
+    await vi.waitFor(
+      () => expect(deps.launches?.rows()[0]?.cancel).toBe('settled'),
+      { timeout: 10_000 },
+    );
+    expect(existsSync(marker)).toBe(true);
   }, 30_000);
 });

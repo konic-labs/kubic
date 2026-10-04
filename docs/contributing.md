@@ -20,7 +20,8 @@ Every issue, every wave, no freelancing:
 - **LC1 TDD** — one acceptance checkbox at a time: failing test → watch
   it fail → minimal code → watch it pass → refactor. Runner is vitest
   with the `faux` provider (zero network, zero paid tokens in CI); TUI
-  work adds `VirtualTerminal` headless snapshots. One behavior per
+  work adds pure-render headless snapshots (the pinned `pi-tui` has no
+  `VirtualTerminal`). One behavior per
   test, real code over mocks.
 - **LC2 Debug** — anything red goes through root-cause investigation
   first (tight repro loop, recent changes, data flow — no fix proposals
@@ -62,12 +63,36 @@ Every issue, every wave, no freelancing:
   (in/out), `## Acceptance criteria` (checkboxes), `## Dependencies`.
 - **`pi/` is read-only reference** — never build, modify, lint, or test
   anything under `pi/`; it is gitignored upstream material, not Kubic.
+  The clone to work against is upstream Pi tag **`v1.0.2`** (the version
+  every `@earendil-works/*` pin names); its own `AGENTS.md` and commands
+  do not apply here.
 - **Tests never need network or paid tokens** — `faux` provider,
-  headless `VirtualTerminal`, fixture `usage` rows.
+  pure-render headless snapshots, fixture `usage` rows.
 - **Tests never depend on the shell's colour variables** — `runTuiCommand`
   takes `colorLevel` through its deps (pass `'none'`), and the shared
   `vitest.setup.ts` fails any test that leaves a coloured TUI theme active,
   so `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
+
+## Pi boundary
+
+Kubic runs on Pi 1.0 (`@earendil-works/*` **1.0.2**, exact pins). The
+boundary is enforced, not conventional:
+
+- **Only two files may import `@earendil-works/*`** —
+  `packages/worker/src/pi-boundary.ts` (the worker seam, §65) and
+  `packages/tui/src/tui-boundary.ts` (presentation).
+  `scripts/dep-lint.mjs` rejects every other import, each re-export in a
+  seam carries a JUSTIFICATION block checked by
+  `scripts/pi-boundary.test.mjs`, and CODEOWNERS flags seam diffs for
+  maintainer review.
+- **The worker seam is append-only per issue** — additions land in a
+  `// --- #<issue> additions ---` block at the end of
+  `pi-boundary.ts`, never by reordering or deleting another issue's lines.
+- **The runtime packages are `pi-durable`** (the `Harness`, conversations,
+  submissions, durable tasks, documents and the extension registry),
+  `pi-ai` (the model layer) and `chord` (`Context`); `pi-tui` is
+  presentation only. Pi 1.0 removed the experimental `pi-agent-core`
+  harness (AgentHarness/AgentLane/operations) — nothing imports it.
 
 ## Docs rule
 

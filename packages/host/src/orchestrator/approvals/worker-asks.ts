@@ -357,6 +357,24 @@ export function formatWorkerAskQuestion(
   return `${head}\n  command: ${command}\napprove?`;
 }
 
+// The worker child's identity as its manager set it (issue #159; §23): the
+// worker's OWN session (`<orch>-<agent>`) travels in KUBIC_WORKER_SESSION, its
+// id in KUBIC_WORKER_ID, and the run that spawned it in
+// KUBIC_ORCHESTRATOR_SESSION — the two session ids were the SAME value before
+// this issue, which is what made the ledger unattributable. A process without
+// the session var is not an orchestrated child that knows one, so its own id
+// is the best label it has.
+export function workerAskIdentity(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { sessionId: string; agentId: string; parentSessionId: string } {
+  const agentId = env.KUBIC_WORKER_ID ?? 'worker';
+  return {
+    sessionId: env.KUBIC_WORKER_SESSION ?? agentId,
+    agentId,
+    parentSessionId: env.KUBIC_ORCHESTRATOR_SESSION ?? 'orchestrator',
+  };
+}
+
 // The worker CHILD's seat: what a spawned `kubic run` attaches so a
 // challenged call it cannot answer itself reaches the user through the
 // manager. It publishes the ask to the run's mailbox and waits the bounded
@@ -367,11 +385,14 @@ export function formatWorkerAskQuestion(
 // `verifyKey` is the manager's public verification key (issue #149): without
 // the matching MAC the answer is bytes, not a verdict. `onRefused` names a
 // refused answer on the child's own surface, so a forgery attempt is
-// observable rather than a silent denial.
+// observable rather than a silent denial. `role` is the §12 role this worker
+// was booted as (`--role`), recorded on the ask so `kubic audit` can tell who
+// asked (issue #159); absent means the shipped default label, `worker`.
 export function createWorkerMailboxSeat(options: {
   dir: string;
   maxPendingMs: number;
   verifyKey: string;
+  role?: string;
   pollMs?: number;
   onRefused?: (detail: string) => void;
 }): (request: {
@@ -383,6 +404,7 @@ export function createWorkerMailboxSeat(options: {
   justification?: string;
 }) => Promise<OrchestratorVerdict | undefined> {
   return async (request) => {
+    const identity = workerAskIdentity();
     const published = publishWorkerAsk(options.dir, {
       trigger: request.capability,
       toolName: request.toolName,
@@ -398,14 +420,11 @@ export function createWorkerMailboxSeat(options: {
       justification:
         request.justification ??
         `worker child needs ${request.capability} to complete its plan step`,
-      sessionId: process.env.KUBIC_WORKER_ID ?? 'worker',
-      agentId: process.env.KUBIC_WORKER_ID ?? 'worker',
-      role: 'worker',
+      sessionId: identity.sessionId,
+      agentId: identity.agentId,
+      role: options.role ?? 'worker',
       worktree: process.cwd(),
-      provenance: {
-        parentSessionId:
-          process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'orchestrator',
-      },
+      provenance: { parentSessionId: identity.parentSessionId },
     });
     const outcome = await awaitWorkerAskAnswer(
       options.dir,

@@ -1586,7 +1586,10 @@ export async function runOrchestrateCommand(
     sessionId,
     agentId,
     worktree: worktree.path,
-    role: 'worker',
+    // Issue #159: the role this worker was ASSIGNED (the same plan the spawn
+    // info and the credential preflight read), never a hardcoded label — the
+    // manager's §60 rows and the child's ask must name the same role.
+    role: spawnRoleInfo(agentId, rolePlan).role ?? 'worker',
   });
 
   const partial = (): Pick<

@@ -29,6 +29,11 @@ export interface AuditOptions {
   readonly mode?: string;
   readonly posture?: string;
   readonly result?: string;
+  /**
+   * Filter on the orchestrator session (issue #159): the run's own rows and
+   * the worker asks it spawned.
+   */
+  readonly session?: string;
   readonly json?: boolean;
 }
 
@@ -160,6 +165,18 @@ export async function runAuditCommand(
     }
     result = options.result;
   }
+  // A session filter is an id, never an empty value: `--session ''` (or a
+  // whitespace-only one) would silently read as "no filter" or match nothing,
+  // so it is refused like the other value-bearing filters (issue #159).
+  const session = options.session;
+  if (session !== undefined && session.trim() === '') {
+    log.error(
+      redactSecretShapes(
+        `unknown session ${JSON.stringify(options.session)} (want an orchestrator session id)`,
+      ),
+    );
+    return EXIT_USAGE;
+  }
   // An unreadable ledger (issue #279) is a failure naming the file, never
   // an empty trail: "no audit records" would be a false all-clear.
   let records: OrgAuditRecord[];
@@ -183,6 +200,7 @@ export async function runAuditCommand(
     mode,
     posture: options.posture,
     result,
+    ...(session === undefined ? {} : { session }),
   });
   const redacted = filtered.map((record) => redactAuditRecord(record, secrets));
   if (json) {

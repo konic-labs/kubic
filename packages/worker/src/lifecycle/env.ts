@@ -37,6 +37,12 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // locations/identifiers — the same class as KUBIC_WORKER_ID.
   'KUBIC_APPROVALS_DIR',
   'KUBIC_ORCHESTRATOR_SESSION',
+  // The worker's OWN session id (issue #159; §23): `<orch>-<agent>`, what its
+  // approval ask is bound to. It travels beside KUBIC_ORCHESTRATOR_SESSION (the
+  // run that spawned it) so a worker's decision can be attributed to the run
+  // — the two were conflated before, which made the §60 audit row unusable.
+  // An identifier, never a secret, like the two above.
+  'KUBIC_WORKER_SESSION',
   // The manager's approval VERIFICATION key (issue #149): the child refuses
   // any answer in the mailbox without a matching MAC, so a worker that writes
   // its own `{"approved":true}` changes nothing. A public key grants no

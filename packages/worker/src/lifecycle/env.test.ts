@@ -67,6 +67,28 @@ describe('spawn env allowlist §3.8 (issue #42)', () => {
     });
   });
 
+  it("carries a worker's approval identity: its own session, its run, the mailbox (issues #105, #149, #159)", () => {
+    // The mailbox location, the manager's PUBLIC verification key, the bound,
+    // and the two session ids §23 ancestry needs: the worker's OWN session
+    // (`<orch>-<agent>`) and the run that spawned it. All identifiers or
+    // public material — the same class as KUBIC_WORKER_ID.
+    const out = filterSpawnEnv({
+      KUBIC_APPROVALS_DIR: '/home/u/.kubic/orchestrator/ab12/sess-1',
+      KUBIC_APPROVALS_VERIFY_KEY: 'public-key-material',
+      KUBIC_APPROVALS_BOUND_MS: '60000',
+      KUBIC_ORCHESTRATOR_SESSION: 'orch-9',
+      KUBIC_WORKER_SESSION: 'orch-9-worker-1',
+      KUBIC_UNRELATED_NOPE: 'x',
+    });
+    expect(out).toEqual({
+      KUBIC_APPROVALS_DIR: '/home/u/.kubic/orchestrator/ab12/sess-1',
+      KUBIC_APPROVALS_VERIFY_KEY: 'public-key-material',
+      KUBIC_APPROVALS_BOUND_MS: '60000',
+      KUBIC_ORCHESTRATOR_SESSION: 'orch-9',
+      KUBIC_WORKER_SESSION: 'orch-9-worker-1',
+    });
+  });
+
   it('injects the role grant on top of the filtered base', () => {
     const out = buildSpawnEnv(
       { PATH: '/bin', PARENT_TOKEN: 'nope' },

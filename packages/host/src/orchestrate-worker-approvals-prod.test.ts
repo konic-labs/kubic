@@ -37,6 +37,7 @@ import {
   approvalsSessionDir,
   workerSeatForRun,
 } from './orchestrator/approvals/worker-asks.js';
+import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
 const PROVENANCE: Provenance = {
   sessionId: 'issue-105',
@@ -129,16 +130,20 @@ const agentId = process.env.KUBIC_WORKER_ID ?? 'worker';
 const { publishWorkerAsk, awaitWorkerAskAnswer } = await import(
   pathToFileURL(__MODULE_URL__).href
 );
+// Issue #159 (§23): the two ids are distinct — the worker's OWN session in
+// KUBIC_WORKER_SESSION, the run that spawned it in KUBIC_ORCHESTRATOR_SESSION.
+const workerSession = process.env.KUBIC_WORKER_SESSION ?? 'unknown';
+const orchestratorSession = process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown';
 const published = publishWorkerAsk(dir, {
   trigger: 'network',
   toolName: 'bash',
   args: { command: 'curl https://example.com/release.tgz' },
   justification: 'worker needs the release tarball for its plan step',
-  sessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown',
+  sessionId: workerSession,
   agentId,
   role: 'worker',
   worktree: process.cwd(),
-  provenance: { parentSessionId: process.env.KUBIC_ORCHESTRATOR_SESSION ?? 'unknown' },
+  provenance: { parentSessionId: orchestratorSession },
 });
 const answer = await awaitWorkerAskAnswer(dir, published.request.key, {
   maxPendingMs: __BOUND_MS__,
@@ -148,7 +153,12 @@ const answer = await awaitWorkerAskAnswer(dir, published.request.key, {
 });
 writeFileSync(
   join(dir, agentId + '.child.json'),
-  JSON.stringify({ key: published.request.key, answer }),
+  JSON.stringify({
+    key: published.request.key,
+    answer,
+    workerSession,
+    orchestratorSession,
+  }),
 );
 console.log(JSON.stringify({ key: published.request.key, answer }));
 if ((answer.approved ? 0 : 4) === 0) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
@@ -397,9 +407,32 @@ describe('per-worker approvals: the mailbox crosses the process boundary (issue 
     // key the router recomputed, and exited 0 on it.
     const evidence = JSON.parse(
       readFileSync(join(mailboxDir(h.root), 'worker-1.child.json'), 'utf8'),
-    ) as { key: string; answer: { approved: boolean } };
+    ) as {
+      key: string;
+      answer: { approved: boolean };
+      workerSession: string;
+      orchestratorSession: string;
+    };
     expect(evidence.answer.approved).toBe(true);
     expect(evidence.key).toBe(h.asked[0]?.key);
+    // Issue #159: the child was told its OWN session and the run it belongs
+    // to — two distinct ids, the worker's being `<orch>-<agent>`.
+    expect(evidence.workerSession).toBe('orch-105-worker-1');
+    expect(evidence.orchestratorSession).toBe('orch-105');
+    // And the manager's §60 row carries that same ancestry, so `kubic audit
+    // --session orch-105` can attribute the decision to the run and the role
+    // that asked.
+    const row = readAuditLedger(auditLedgerDir(h.root)).find(
+      (record) => record.what === 'tool:bash',
+    );
+    expect(row).toMatchObject({
+      agent: {
+        session: 'orch-105-worker-1',
+        role: 'worker',
+        parent: 'orch-105',
+      },
+      mode: 'orchestrator',
+    });
   }, 60_000);
 
   it('AC2 (prod): with no user answer the child denies closed on its own bound with the named reason', async () => {

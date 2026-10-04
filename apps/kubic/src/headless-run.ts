@@ -1248,6 +1248,10 @@ async function runHeadlessPromptImpl(
             // than outliving the run that would answer it.
             maxPendingMs: workerBoundMs,
             verifyKey: approvalVerifyKey,
+            // Issue #159: the §12 role this child was booted as, so the ask it
+            // publishes (`kubic audit`) names the role that asked, not a
+            // hardcoded label. Absent means an unroled worker.
+            role: options.role ?? 'worker',
             // A refused (unsigned, forged or stale) answer is named on the
             // debug surface instead of reading as a silent denial.
             onRefused: (detail) => debug?.(`approvals: ${detail}`),

@@ -144,6 +144,58 @@ describe('kubic audit query (issue #79)', () => {
     expect(rows[1]).toMatch(/ solo +full-access +deny +tool\.call /);
   });
 
+  // Issue #159: `--session <orch>` reads one orchestration run's decisions —
+  // the manager's own rows (agent.session = the run) and every worker ask it
+  // spawned (agent.session = `<orch>-<agent>`, agent.parent = the run).
+  it('filters on the orchestrator session: the run and the workers it spawned', async () => {
+    const rows: OrgAuditRecord[] = [
+      {
+        ...FLOW_AUDIT_FIXTURE,
+        agent: { session: 'orch-9', role: 'manager' },
+        what: 'merge:kubic/orch-9/worker-1',
+      },
+      {
+        ...FLOW_AUDIT_FIXTURE,
+        agent: {
+          session: 'orch-9-worker-1',
+          role: 'implementer',
+          parent: 'orch-9',
+        },
+        what: 'tool:bash',
+      },
+      {
+        ...FLOW_AUDIT_FIXTURE,
+        agent: {
+          session: 'orch-8-worker-1',
+          role: 'implementer',
+          parent: 'orch-8',
+        },
+        what: 'tool:bash',
+      },
+    ];
+    const cap = capture();
+    const code = await runAuditCommand(
+      { session: 'orch-9', json: true },
+      { loadRecords: () => rows, out: cap.out, err: cap.err },
+    );
+    expect(code).toBe(0);
+    const printed = JSON.parse(cap.lines[0] ?? '[]') as OrgAuditRecord[];
+    expect(printed.map((record) => record.what)).toEqual([
+      'merge:kubic/orch-9/worker-1',
+      'tool:bash',
+    ]);
+  });
+
+  it('exits 2 on a whitespace-only session filter, like the other filters', async () => {
+    const cap = capture();
+    const code = await runAuditCommand(
+      { session: '   ' },
+      { loadRecords: () => TWO, out: cap.out, err: cap.err },
+    );
+    expect(code).toBe(2);
+    expect(cap.errs.join('\n')).toMatch(/session/);
+  });
+
   it('reports no audit records on an empty store', async () => {
     const cap = capture();
     const code = await runAuditCommand(

@@ -158,6 +158,50 @@ describe('mode, posture, and query', () => {
     ]);
     expect(queryAudits(sink.records, { mode: 'orchestrator' })).toHaveLength(1);
   });
+
+  // Issue #159: an orchestration's ledger holds the manager's own rows
+  // (agent.session is the run) and each worker's rows (agent.session is the
+  // worker's `<orch>-<agent>`, agent.parent is the run). Filtering by the
+  // orchestrator session must return both halves of that run, and nothing
+  // from another run.
+  it('filters on the orchestrator session across manager and worker rows (issue #159)', () => {
+    const sink = createMemorySink('memory');
+    emitAudit(
+      [sink],
+      { ...baseInput(), agent: { session: 'orch-9', role: 'manager' } },
+      { now: () => 1_700_000_000_001 },
+    );
+    emitAudit(
+      [sink],
+      {
+        ...baseInput(),
+        agent: {
+          session: 'orch-9-worker-1',
+          role: 'implementer',
+          parent: 'orch-9',
+        },
+      },
+      { now: () => 1_700_000_000_002 },
+    );
+    emitAudit(
+      [sink],
+      {
+        ...baseInput(),
+        agent: {
+          session: 'orch-8-worker-1',
+          role: 'implementer',
+          parent: 'orch-8',
+        },
+      },
+      { now: () => 1_700_000_000_003 },
+    );
+    expect(
+      queryAudits(sink.records, { session: 'orch-9' }).map(
+        (record) => record.agent.session,
+      ),
+    ).toEqual(['orch-9', 'orch-9-worker-1']);
+    expect(queryAudits(sink.records, { session: 'nobody' })).toEqual([]);
+  });
 });
 
 describe('sink failure', () => {

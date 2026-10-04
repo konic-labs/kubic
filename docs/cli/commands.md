@@ -417,7 +417,12 @@ is dropped at construction and audited rather than honoured. A **fresh** run
 session id never inherits an earlier run's `--dangerously-skip-approvals`
 record or memoized decisions. The run hands each child the ask mailbox and the
 manager's public verification key through the child env
-(`KUBIC_APPROVALS_DIR`, `KUBIC_APPROVALS_VERIFY_KEY`). The mailbox is per
+(`KUBIC_APPROVALS_DIR`, `KUBIC_APPROVALS_VERIFY_KEY`), together with two
+distinct ids (issue #159): the worker's OWN session
+(`KUBIC_WORKER_SESSION`, `<orch>-<agent>`) and the run it belongs to
+(`KUBIC_ORCHESTRATOR_SESSION`, `<orch>`). A worker's ask records the first as
+its session and the second as its parent, with the role it was assigned, so
+`kubic audit --session <orch>` reads that run's whole trail. The mailbox is per
 session, so two runs — in one checkout or in different linked worktrees —
 never answer each other's asks even though both use `worker-1`, and a worker
 that settles has its ask and answer files swept (asks left by an earlier
@@ -1819,9 +1824,14 @@ line to stderr. `kubic doctor` names the same set on its
 | `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
 | `--json` | Prints `{"tool", "decision"}` instead of the text line, plus `unsupported` (`[{class, level, enforcedAs, reason}]`) when any installed level is unsupported. Exits 0. |
 
-## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--json]`
+## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--session <id>] [--json]`
 
-Queries the audit trail, matching each supplied filter exactly.
+Queries the audit trail, matching each supplied filter exactly. `--session`
+takes an **orchestration** session id and reads that whole run: the manager's
+own rows (`agent.session` is the run) plus every worker ask the run spawned
+(`agent.session` is the worker's own `<orch>-<agent>`, `agent.parent` is the
+run), so one filter answers "what did this delegation decide" — including the
+role each worker asked as (issue #159).
 
 **Output.** Text mode prints a table with the columns `WHEN`, `MODE`,
 `POSTURE`, `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`.
@@ -1859,8 +1869,9 @@ shipped runtime ignore rules cover this file.
   `autoApprove`, full access) is recorded once as `mode: orchestrator`
   for that worker in the main repo ledger, never inside its worktree, with
   the identity `kubic orchestrate` gave the child in its environment: the
-  worker id (`KUBIC_WORKER_ID`), the orchestrating session as `parent`
-  (`KUBIC_ORCHESTRATOR_SESSION`), and the `worker.generation` from
+  worker id (`KUBIC_WORKER_ID`), the worker's OWN session as `session`
+  (`KUBIC_WORKER_SESSION`, `<orch>-<agent>`), the orchestrating session as
+  `parent` (`KUBIC_ORCHESTRATOR_SESSION`), and the `worker.generation` from
   `KUBIC_WORKER_GENERATION` (`0` for a solo run).
 - The model on every solo record is the model the lane runs: `kubic run`
   reads it after the stored-model rule (`--session` without a pin keeps the
@@ -1877,6 +1888,7 @@ shipped runtime ignore rules cover this file.
 | `--mode <solo\|orchestrator>` | Filters on mode. Any other value exits 2. |
 | `--posture <name>` | Filters on posture. |
 | `--result <ok\|deny\|error>` | Filters on result. Any other value exits 2. |
+| `--session <id>` | Filters on an orchestrator session: the run's own rows and the workers it spawned. A whitespace-only value exits 2. |
 | `--json` | Prints the matching records as a JSON array, with the same redaction. Exits 0. |
 
 Back to the [docs index](../README.md). See also

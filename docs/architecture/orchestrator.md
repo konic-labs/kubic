@@ -122,8 +122,11 @@ solo) — and `run` never delegates.
   `NO_COLOR`, `CLICOLOR`); the model/provider selection (`KUBIC_MODEL`,
   `KUBIC_PROVIDER`) and `KUBIC_DEBUG`; the worker's own identity
   (`KUBIC_WORKER_ID`, `KUBIC_WORKER_GENERATION`); the run's plumbing the
-  manager writes itself (the worker session, the approval mailbox
-  `KUBIC_APPROVALS_DIR` and `KUBIC_ORCHESTRATOR_SESSION`, the approval bound
+  manager writes itself (the worker's own session `KUBIC_WORKER_SESSION` and
+  the orchestration it belongs to `KUBIC_ORCHESTRATOR_SESSION` — two distinct
+  ids, §23, so a worker's §60 row is attributable to its run — the approval
+  mailbox `KUBIC_APPROVALS_DIR` with the manager's public verification key
+  `KUBIC_APPROVALS_VERIFY_KEY`, the approval bound
   `KUBIC_APPROVALS_BOUND_MS`, and the `KUBIC_BUDGET` spec); the manager's repo
   root (`KUBIC_MODELS_ROOT`) with its project-trust decision
   (`KUBIC_TRUST_PROJECT`, synthesized from the durable store when the operator

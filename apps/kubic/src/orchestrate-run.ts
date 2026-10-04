@@ -1742,7 +1742,16 @@ export async function orchestrateDepsWithDefaults(
                   // mailbox directory is one the worker can write, so its
                   // contents are bytes until this key says otherwise.
                   KUBIC_APPROVALS_VERIFY_KEY: approvalsActive.verifyKey(),
-                  KUBIC_ORCHESTRATOR_SESSION: workerSession,
+                  // Issue #159 (§23): TWO ids, never one. The child is told
+                  // which ORCHESTRATION it belongs to (its ask's ancestry) and
+                  // which session is its OWN (`<orch>-<agent>`, what its ask
+                  // is bound to and what `kubic audit` slices on). Before,
+                  // KUBIC_ORCHESTRATOR_SESSION carried the worker's own
+                  // session and there was no var for the run, so every
+                  // worker's audit row claimed itself as its own parent.
+                  KUBIC_ORCHESTRATOR_SESSION:
+                    info?.sessionId ?? orchestratorSessionId ?? 'orch',
+                  KUBIC_WORKER_SESSION: workerSession,
                   // Issue #230: the child's bound, below the manager's.
                   KUBIC_APPROVALS_BOUND_MS: String(
                     workerApprovalBoundMs(approvalsBoundMs),

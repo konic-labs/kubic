@@ -145,6 +145,10 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     .option('--mode <mode>', 'filter on mode: solo|orchestrator')
     .option('--posture <name>', 'filter on posture')
     .option('--result <result>', 'filter on result: ok|deny|error')
+    .option(
+      '--session <id>',
+      'filter on orchestrator session: the run and the workers it spawned',
+    )
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.audit(options, config)));
 

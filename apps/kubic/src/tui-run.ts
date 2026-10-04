@@ -8,12 +8,14 @@
 // and exactly once. `kubic run` is untouched (headless regression:
 // tui-command.test.ts + binary exit codes).
 //
-// Cancellation (§18, issue #88): Ctrl-C during a turn aborts the in-flight
-// operation through the lane's own requestAbort (the durable, kill-draining
-// path) and keeps the session alive; a second Ctrl-C quits. While idle the
-// first Ctrl-C quits. Esc and Ctrl-D-on-an-empty-draft quit too, so no
-// honoured key is a silent no-op.
+// Cancellation (§18, issue #88; durable in #395): Ctrl-C during a turn aborts
+// the in-flight conversation through the lane's own durable abort
+// (conversation.abort + the conversation's kill drain, D6.2) and keeps the
+// session alive; a second Ctrl-C quits. While idle the first Ctrl-C quits.
+// Esc and Ctrl-D-on-an-empty-draft quit too, so no honoured key is a silent
+// no-op.
 
+import { randomUUID } from 'node:crypto';
 import { homedir, constants as osConstants } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
@@ -74,12 +76,12 @@ import {
 } from '../../../packages/host/src/roles/roles-boot.js';
 import {
   mapCaughtErrorToTerminus,
-  mapLaneOutcomeToTerminus,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
   RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
+  type RunTerminusKind,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
@@ -110,32 +112,41 @@ import {
   parseKey,
 } from '../../../packages/tui/src/tui-boundary.js';
 import {
-  drainOperation,
-  type LaneAborter,
+  abortLane,
+  forgetLaneKills,
   type OperationKillRegistry,
-  requestLaneAbort,
 } from '../../../packages/worker/src/lane/abort.js';
 import type {
-  EventSource,
   KubicLaneEvent,
   LaneEventSink,
 } from '../../../packages/worker/src/lane/events.js';
-import { attachLaneEvents } from '../../../packages/worker/src/lane/events.js';
+import { subscribeLaneEvents } from '../../../packages/worker/src/lane/events.js';
 import {
-  describeSettlement,
-  settlePendingOperation,
+  describePendingSettlement,
+  inspectPending,
+  pendingInputText,
+  settlePending,
 } from '../../../packages/worker/src/lane/pending.js';
 import {
   attachSession,
   createSession,
   openSessionStore,
 } from '../../../packages/worker/src/lane/session-store.js';
-import type { OperationErrorLike } from '../../../packages/worker/src/lane/settle.js';
 import {
   bootSoloLane,
-  driveToSettled,
-  type LaneDriver,
+  type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
+import {
+  entriesToTranscript,
+  readConversationEntries,
+  type TranscriptItem,
+} from '../../../packages/worker/src/lane/transcript.js';
+import {
+  runTurn,
+  TURN_BUSY_REASON,
+  type TurnOutcome,
+  turnLaneRecord,
+} from '../../../packages/worker/src/lane/turn.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -144,9 +155,9 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
+  ConversationBusy,
+  type EntryRecord,
   type MutableModels,
-  type OperationAdmissionResult,
-  type TerminalStatus,
 } from '../../../packages/worker/src/pi-boundary.js';
 import {
   type runtimeLaneDeps,
@@ -170,39 +181,66 @@ import {
 export type TuiApprovalSeat = (
   request: ApprovalRequest,
 ) => Promise<ApprovalVerdict | undefined>;
-// The lane surface the loop drives. Narrow on purpose: the loop accepts a
-// prompt, drives to settlement, can abort, and reads committed entries to
-// refresh the transcript — nothing else. Every member is a real lane
-// method (or the lane itself), so the prod wiring is a straight passthrough.
+// The lane surface the loop drives (pi-durable, #395). Narrow on purpose:
+// one turn (submit + wait), the conversation's committed event stream, the
+// transcript read, and the abort/drain pair — nothing else. Every member is
+// a real lane call, so the prod wiring is a straight passthrough.
 export interface TuiLaneLoop {
-  accept(prompt: string, context: Context): Promise<OperationAdmissionResult>;
-  lane: LaneDriver;
+  /**
+   * #395: one turn on the durable lane (lane/turn.ts). The busy policy is
+   * `reject` until #334 lands: a prompt submitted while the conversation
+   * runs comes back `{kind:'failed', reason:'busy'}` — it is never queued.
+   */
+  runTurn(
+    prompt: string,
+    opts: {
+      requestId: string;
+      context: Context;
+      whenBusy?: 'reject' | 'followUp' | 'steer';
+    },
+  ): Promise<TurnOutcome>;
+  /**
+   * #398/D2: the conversation's committed lane events. The attach snapshot
+   * REPLACES the feed's committed entries; every later event is appended.
+   */
+  subscribe(
+    sink: LaneEventSink,
+    context: Context,
+  ): Promise<() => Promise<void>>;
+  /**
+   * #400/D6.5: the live conversation's transcript entries, transcript order
+   * (the one entry read path; never a per-event re-read).
+   */
+  entries(context: Context): Promise<ReadonlyArray<EntryRecord>>;
+  /**
+   * #395/D6.2: abort the conversation and drain its kills — every kill
+   * attempted, failures aggregated into one throw. A refused abort is not
+   * silent: the cancel path reports it on the footer.
+   */
+  abort(context: Context): Promise<void>;
+  /**
+   * #395/D6.2: a settled turn's kills are FORGOTTEN, not run — a kept
+   * background job outlives Kubic, and a recycled pid must not receive a
+   * stale group SIGTERM. The quit drain still has the registry backstop.
+   */
+  forgetKills(): void;
+  /** D1: the kill registry key — String(conversation.id). */
+  killsKey: string;
+  kills: OperationKillRegistry;
+  context: Context;
   /**
    * Issue #227: the live model switch (`/model`). The prod boot resolves
-   * the id against the live catalog (selectModel — an unknown provider or
-   * model fails by name), calls lane.setModel, which commits the
-   * config_update to the session, and returns the model the lane reports.
-   * A viewer-shell stub may omit it; `/model` then says so instead of
-   * pretending to switch.
+   * the id against the live catalog (an unknown provider or model fails by
+   * name), commits the change through conversation.configure, and returns
+   * the live read-back. A viewer-shell stub may omit it; `/model` then says
+   * so instead of pretending to switch.
    */
   switchModel?: (
     model: { provider: string; modelId: string },
     context: Context,
   ) => Promise<string>;
-  requestAbort: LaneAborter['requestAbort'];
-  findEntries(
-    query: undefined,
-    context: Context,
-  ): Promise<ReadonlyArray<LaneEntryLike>>;
-  events: EventSource['events'];
-  kills: OperationKillRegistry;
-  context: Context;
-  // The runner calls this once an operation's turn settled on the lane and
-  // no quit is under way: the boot forgets that operation's kills (without
-  // running them) so the session close's last-resort kill never reaches a
-  // finished turn — a kept background job outlives Kubic, and a recycled pid
-  // must not receive a stale group SIGTERM. Absent on injected loops.
-  settled?: (operationId: string) => void;
+  /** The live model label (provider/id) — the status bar and usage rows. */
+  model?: (context: Context) => Promise<string>;
   // §46 trajectory per settled turn (issue #383): the prod boot persists
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
@@ -210,13 +248,40 @@ export interface TuiLaneLoop {
 }
 
 // One settled turn as the runner saw it: the prompt, when it started, the
-// footer outcome, and the lane's own terminal record when it settled (or
-// 'deferred' when the lane suspended the operation).
+// footer outcome, and — when the lane settled it — the durable TurnOutcome
+// that is the §46 lane record's source (completed/failed/aborted, the §52
+// reason and the human message; D6.1).
 export interface TuiTurnRecord {
   prompt: string;
   startedAt: number;
   outcome: TuiTurnOutcome;
-  lane?: { status: TerminalStatus; error?: OperationErrorLike } | 'deferred';
+  turn?: TurnOutcome;
+}
+
+// The §46 lane record of one settled turn: the durable outcome kind and, for
+// a failure, the classified error (#395/D6.1, `turnLaneRecord`).
+export type TuiTurnLaneRecord = ReturnType<typeof turnLaneRecord>;
+
+// The §78 terminus of a durable failure (#395): the §52 reason code carries
+// the classification the old terminal-status mapping used to derive, so the
+// TUI trajectory keeps the same envelope vocabulary as `kubic run`. A code
+// this map does not know stays a plain failure — never an invented terminus.
+function terminusOfFailure(reason: string): RunTerminusKind {
+  switch (reason) {
+    case 'budget_exhausted':
+      return 'budget_exhausted';
+    case 'approval_denied':
+      return 'approval_denied';
+    case 'approval_timed_out':
+      return 'approval_timed_out';
+    case 'workspace_failed':
+      return 'workspace_unavailable';
+    case 'provider_auth':
+    case 'provider_transient':
+      return 'provider_probe_failed';
+    default:
+      return 'failed';
+  }
 }
 
 // One turn's driver, whichever lane owns it (issue #327): the solo
@@ -590,9 +655,9 @@ export async function bootTuiLane(
   const store = openSessionStore(root, bridge);
   const session =
     sessionId === undefined
-      ? await createSession(store, process.cwd(), context)
+      ? await createSession(store, { cwd: process.cwd() }, context)
       : await attachSession(store, sessionId, context);
-  const id = session.metadata.id;
+  const id = session.id;
   // §42.5 baseline + end-of-run sweep (issue #87): the TUI's run end is its
   // close — quit, SIGINT, EOF — so the sweep rides that `close`. There is no
   // closed-latch: idempotence comes from `reconcile`'s per-path after-hash
@@ -602,14 +667,15 @@ export async function bootTuiLane(
   let reconciliation: RunReconciliation | undefined;
   // Issue #325: the installed policy's end-of-session posture check.
   let settlePolicy: (() => void) | undefined;
-  // Issue #312: the operations this session admitted that have not settled,
-  // and the kill registry that tracks their process groups (set once the
-  // lane boots). The quit's drain kills what is registered when it runs; a
-  // tool that registers its kill AFTER it (between spawning and tracking, or
-  // behind an abort request the bound gave up on) is killed here, before the
-  // sweep and the close. A settled turn leaves the set (`settled` below): its
-  // kept background jobs are not this quit's to kill.
-  const admittedOperations = new Set<string>();
+  // The booted lane, once it exists. The session release is the caller's job
+  // (#392): the harness closes first, then the handle gives the lock back.
+  let solo: SoloLane | undefined;
+  // Issue #312: the quit's last-resort kill drain. D1 keys every bash group
+  // by String(conversation.id): whatever is still registered when the quit
+  // runs is killed here — before the sweep and the close — because a tool
+  // may register its kill after the abort bound gave up on it. A settled
+  // turn's handles are forgotten (forgetKills), so a kept background job is
+  // not this quit's to kill.
   let killRemaining: (() => void) | undefined;
   const close = async (): Promise<void> => {
     try {
@@ -629,7 +695,13 @@ export async function bootTuiLane(
       // Best-effort, like the sweep: the clean quit stands.
     }
     try {
-      await session.close(context);
+      await solo?.close(context);
+    } catch {
+      // A harness that was never booted, or one already closed, still
+      // releases the session handle below.
+    }
+    try {
+      await session.release(context);
     } catch {
       // The mapped result stands — close failures never escape.
     }
@@ -807,7 +879,7 @@ export async function bootTuiLane(
     // runtime, or the role's default) switches a resumed session whose
     // stored model differs; the default pick keeps the session's own model.
     const modelNotices: string[] = [];
-    const solo = await bootSoloLane({
+    const booted = await bootSoloLane({
       session,
       models,
       model,
@@ -878,31 +950,45 @@ export async function bootTuiLane(
         ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
       },
     });
+    // The booted lane: `solo` stays optional for the close closure (a boot
+    // that failed before the assignment must still release the session).
+    solo = booted;
     {
-      const running = (await solo.lane.getModel(context)) ?? solo.model;
+      const running = await liveModelOf(booted, context);
       liveModelRef = `${running.provider}/${running.id}`;
     }
     killRemaining = (): void => {
-      for (const operationId of admittedOperations) {
-        for (const kill of solo.kills.drain(operationId)) {
-          try {
-            kill();
-          } catch {
-            // Already exited — the registry drains every entry regardless.
-          }
+      // D1: every bash group is keyed by the conversation id, so the quit's
+      // backstop drains exactly that key (forgetKills may already have
+      // dropped a settled turn's handles — that is the point).
+      for (const kill of booted.kills.drain(String(booted.conversation.id))) {
+        try {
+          kill();
+        } catch {
+          // Already exited — the registry drains every entry regardless.
         }
       }
     };
-    // Issue #147 (§21): a turn a dead process left open would refuse every
-    // prompt with LaneBusy. The interactive policy is the durable abort: its
-    // approvals would need the overlay, which is not on screen yet, and the
-    // operator is present to re-send. The outcome is named in the footer.
+    // Issue #147 (§21): a turn a dead process left open would sit until its
+    // guarded resume timed out; the interactive policy is the durable abort —
+    // its approvals would need the overlay, which is not on screen yet, and
+    // the operator is present to re-send. The interrupted prompt's own text
+    // is named too when the dead process had already placed it (#147's
+    // "resume this very prompt" rule): the operator sees WHAT was interrupted.
+    // The outcome is named in the footer from the first render (#396).
     const pendingNotices: string[] = [];
-    for (const op of solo.open ?? []) {
+    const pending = await inspectPending(solo, context);
+    if (pending.pending) {
+      const interrupted = await pendingInputText(solo, context);
+      const settlement = await settlePending(solo, 'abort', {
+        context,
+        kills: booted.kills,
+      });
+      const notice = describePendingSettlement(pending.summary, settlement);
       pendingNotices.push(
-        describeSettlement(
-          await settlePendingOperation(solo, op, 'abort', context),
-        ),
+        interrupted === undefined
+          ? notice
+          : `${notice} — interrupted prompt: ${interrupted}`,
       );
     }
     const fullAccess = installed.posture.fullAccess;
@@ -912,8 +998,7 @@ export async function bootTuiLane(
       // The model the lane actually runs (issue #148): the status bar and
       // the usage rows the turn runner records both read this.
       model: await (async () => {
-        const live = await solo.lane.getModel(context);
-        const running = live ?? solo.model;
+        const running = await liveModelOf(solo, context);
         return `${running.provider}/${running.id}`;
       })(),
       journal,
@@ -983,27 +1068,38 @@ export async function bootTuiLane(
       }),
 
       loop: {
-        accept: async (prompt, loopContext) => {
-          const admitted = await solo.lane.accept(
-            { kind: 'prompt', prompt },
+        runTurn: (prompt, opts) => runTurn(booted, prompt, opts),
+        subscribe: (sink, loopContext) =>
+          subscribeLaneEvents(
+            booted.harness,
+            booted.conversation.id,
+            sink,
             loopContext,
-          );
-          if (admitted.ok) admittedOperations.add(admitted.value.operationId);
-          return admitted;
+          ),
+        entries: (loopContext) =>
+          readConversationEntries(booted.conversation, loopContext),
+        // D6.2: the shared abort+drain (conversation.abort, every kill
+        // attempted, failures aggregated) and the settled-turn forget.
+        abort: async (loopContext) => {
+          await abortLane(booted, loopContext);
         },
-        lane: solo.lane,
+        forgetKills: () => forgetLaneKills(booted),
+        killsKey: String(booted.conversation.id),
+        kills: booted.kills,
+        context,
         // Issue #227: resolve against the live catalog before touching the
-        // lane, so `/model typo/nope` fails by name and the lane keeps the
-        // model it had; setModel then records the config_update in the
-        // session, and the read-back is the label every surface shows. The
-        // §58 enterprise gate (issue #288) is the boot's own: a switch outside
-        // `allowed_models`/`allowed_providers` is refused with the same named
-        // error before the lane is touched, so the live model stays put.
+        // conversation, so `/model typo/nope` fails by name and the lane
+        // keeps the model it had; configure then commits the change to the
+        // session's agent document (#394), and the read-back is the label
+        // every surface shows. The §58 enterprise gate (issue #288) is the
+        // boot's own: a switch outside `allowed_models`/`allowed_providers`
+        // is refused with the same named error before the lane is touched,
+        // so the live model stays put.
         switchModel: async (selection, loopContext) => {
           // §35.1/§38.1 (issue #295): `/model` is the session override, and a
           // frozen enterprise `[model]` cannot be overridden by it — refused
-          // by name before the catalog or the lane is touched. Naming the pin
-          // itself changes nothing and passes.
+          // by name before the catalog or the conversation is touched. Naming
+          // the pin itself changes nothing and passes.
           if (options.modelPinFrozen === true && options.model !== undefined) {
             const pinned = `${options.model.provider}/${options.model.id}`;
             const requested = `${selection.provider}/${selection.modelId}`;
@@ -1020,34 +1116,34 @@ export async function bootTuiLane(
             undefined,
             enterprisePolicy,
           );
-          await solo.lane.setModel(
-            { provider: resolved.provider, modelId: resolved.id },
+          await booted.conversation.configure(
+            { model: { provider: resolved.provider, modelId: resolved.id } },
             loopContext,
           );
-          liveModelRef = `${resolved.provider}/${resolved.id}`;
-          // Pi stores exactly the identity it is given, so the resolved id
-          // IS the live label — no read-back branch to keep honest.
-          return `${resolved.provider}/${resolved.id}`;
+          // The agent document is the truth: read the live model back
+          // instead of echoing the request (it also re-clamps the #399
+          // compaction reserve, which follows the current model live).
+          const live = await liveModelOf(booted, loopContext);
+          liveModelRef = `${live.provider}/${live.id}`;
+          return liveModelRef;
         },
-        requestAbort: (operationId, loopContext) =>
-          solo.lane.requestAbort(operationId, loopContext),
-        findEntries: (query, loopContext) =>
-          solo.lane.findEntries(query, loopContext),
-        events: solo.harness.events,
-        kills: solo.kills,
-        context,
-        settled: (operationId) => {
-          admittedOperations.delete(operationId);
-          solo.kills.drain(operationId);
+        model: async (loopContext) => {
+          const running = await liveModelOf(booted, loopContext);
+          return `${running.provider}/${running.id}`;
         },
         // §46 trajectory per settled turn (issue #383): the same record
         // `kubic run` writes, holding the session's latest settled turn.
+        // D6.5: the entries and the transcript come from #400's adapter —
+        // never a second entry reader.
         recordTurn: async (turn) => {
-          const entries = await solo.lane.findEntries(undefined, context);
+          const entries = await readConversationEntries(
+            booted.conversation,
+            context,
+          );
           // The live model can have moved since boot (`/model`), so the
           // trajectory records what the lane actually runs — the same read
           // the returned `model` and the status bar use.
-          const live = (await solo.lane.getModel(context)) ?? solo.model;
+          const live = await liveModelOf(booted, context);
           persistRunTrajectory({
             sessionsRoot: root,
             sessionId: id,
@@ -1060,7 +1156,7 @@ export async function bootTuiLane(
             skills: skillNames,
             startedAt: turn.startedAt,
             endedAt: Date.now(),
-            outcome: tuiTurnOutcome(turn, entries),
+            outcome: tuiTurnOutcome(turn, entriesToTranscript(entries)),
           });
         },
       },
@@ -1073,32 +1169,98 @@ export async function bootTuiLane(
 }
 
 // A settled TUI turn → the §78 outcome its trajectory records (#383): the
-// lane's own terminal record decides, exactly as it does for `kubic run`; a
-// deferred operation is an approval that could not be answered; a refused
-// admission is a plain failure.
+// durable turn record decides (D6.1), exactly as it does for `kubic run`; a
+// turn the lane never settled is a plain failure, never an invented terminus.
 export function tuiTurnOutcome(
   turn: TuiTurnRecord,
-  entries: readonly unknown[],
+  items: readonly TranscriptItem[],
 ): RunOutcome {
-  const lane = turn.lane;
-  if (lane === 'deferred') {
+  const lane = turn.turn === undefined ? undefined : turnLaneRecord(turn.turn);
+  // The lane's own record is authoritative: an abort that raced a completing
+  // turn is a completed run, not a cancellation (the work really did land).
+  const completed =
+    lane === undefined
+      ? turn.outcome.status === 'completed'
+      : lane.status === 'completed';
+  if (completed) {
     return {
-      terminus: 'approval_timed_out',
-      summary: turn.outcome.detail ?? 'turn deferred',
+      terminus: 'completed',
+      summary: assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
+      ...(lane === undefined ? {} : { lane }),
     };
   }
-  if (lane === undefined) {
-    return {
-      terminus: 'failed',
-      summary: turn.outcome.detail ?? 'the turn failed',
-    };
+  const summary = turn.outcome.detail ?? footerForOutcome(turn.outcome);
+  const terminus =
+    lane?.status === 'failed'
+      ? terminusOfFailure(lane.error?.code ?? '')
+      : 'failed';
+  return { terminus, summary, ...(lane === undefined ? {} : { lane }) };
+}
+
+// The model the conversation actually runs (issue #148): the committed
+// `pi.agent` document first, the boot model as the fallback for the window
+// before the first configure.
+async function liveModelOf(
+  solo: SoloLane,
+  context: Context,
+): Promise<{ provider: string; id: string }> {
+  const agent = await solo.conversation.agent(context);
+  const live = agent.model;
+  if (live !== undefined) {
+    return { provider: live.provider, id: live.modelId };
   }
-  const terminus = mapLaneOutcomeToTerminus(lane.status, lane.error);
-  const summary =
-    terminus === 'completed'
-      ? (assistantSummary(entries) ?? NO_ASSISTANT_TEXT_SUMMARY)
-      : (turn.outcome.detail ?? footerForOutcome(turn.outcome));
-  return { terminus, summary, lane };
+  return { provider: solo.model.provider, id: solo.model.id };
+}
+
+// One durable entry → the coarse transcript cell the TUI app renders. The
+// tui package may not import worker types (dep-lint), so the entry is
+// projected into the structural `LaneEntryLike` by hand. The renderable
+// kinds are the message-bearing ones; the positional prompt/system,
+// compaction and reset entries have no transcript cell of their own, exactly
+// as 0.87's non-message entries had none.
+export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
+  const role =
+    entry.kind === 'pi.user'
+      ? 'user'
+      : entry.kind === 'pi.assistant'
+        ? 'assistant'
+        : entry.kind === 'pi.tool-result'
+          ? 'toolResult'
+          : undefined;
+  if (role === undefined) return undefined;
+  const message = entry.model?.[0] as
+    | {
+        content?: unknown;
+        isError?: unknown;
+        toolCallId?: unknown;
+      }
+    | undefined;
+  if (message === undefined) return undefined;
+  const content = normalizeMessageContent(message.content);
+  if (content === undefined) return undefined;
+  return {
+    id: String(entry.id),
+    // The entry id is monotonic (uuidv7), so it is the transcript order the
+    // app sorts by; `seq` stays the numeric field it expects.
+    seq: entry.id,
+    type: 'message',
+    message: {
+      role,
+      content,
+      ...(message.isError === true ? { isError: true } : {}),
+      ...(typeof message.toolCallId === 'string' && message.toolCallId !== ''
+        ? { toolCallId: message.toolCallId }
+        : {}),
+    },
+  };
+}
+
+// A user message's content may be a bare string; the app renders content
+// arrays only, so a string becomes its one text part.
+function normalizeMessageContent(content: unknown): unknown[] | undefined {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  if (Array.isArray(content)) return content;
+  return undefined;
 }
 
 // The channels `tuiDepsWithDefaults` adds to, plus every config projection;
@@ -1345,28 +1507,35 @@ export function footerForOutcome(outcome: TuiTurnOutcome): string {
   return `error: ${outcome.detail ?? 'the turn failed'}`;
 }
 
-// Drives one accepted prompt to settlement and folds the lane's own events
-// into the views as they arrive. `cancel` aborts the in-flight operation by
-// id (the same id the admission handed back), so the abort can never target
-// a different turn — and a Ctrl-C that lands between submit and admission is
-// honoured once the id exists rather than being lost (or worse, treated as a
-// quit, which would kill the process mid-turn).
+// Drives one accepted prompt to settlement (the durable submit + wait) and
+// folds the conversation's committed lane events into the views as they
+// arrive. `cancel` aborts the conversation through the loop's durable abort
+// (#395/D6.2) — the same path the quit drain uses — and a Ctrl-C that lands
+// while the submit is still in flight is replayed on the real turn rather
+// than being lost (or worse, treated as a quit, which would kill the
+// process mid-turn).
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
   private model: string;
-  private activeOperationId: string | undefined;
-  private detach: (() => void) | undefined;
+  // The turn in flight, from the moment a submit is accepted by the runner:
+  // `starting` covers the window before the durable submit lands.
   private starting = false;
+  // The durable turn outcome of the turn in flight (§46 lane record, #395).
+  private settledTurn: TurnOutcome | undefined;
+  private detach: (() => Promise<void>) | undefined;
   private aborted = false;
+  // The durable run has started (the `run-start` lane event): the placement
+  // signal a pre-submit Ctrl-C waits for, so its abort cannot slip between
+  // the submit and the moment the run owns the conversation.
+  private placed: Promise<void> = Promise.resolve();
+  private markPlaced: () => void = () => {};
   // Set once a quit starts draining: from then on the operation's kills stay
   // registered for the session close's backstop even if the turn settles.
   private quitting = false;
 
-  // Called after a mid-turn transcript refresh lands (the root repaints).
+  // Called after a mid-turn transcript apply lands (the root repaints).
   private readonly onUpdate: (() => void) | undefined;
-  private refreshing = false;
-  private refreshAgain = false;
 
   // Issue #311: every lane event, after the app folded it in (the root
   // requests a journal read on tool-end).
@@ -1384,34 +1553,6 @@ export class TuiTurnRunner {
     this.model = model;
     this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
-  }
-
-  // TUI polish: the transcript follows the turn instead of appearing only
-  // at settlement. Every lane event (tool start/end, usage = one model
-  // step) re-reads the committed entries; refreshes never overlap, and a
-  // burst of events collapses into one trailing refresh.
-  private scheduleRefresh(): void {
-    if (this.refreshing) {
-      this.refreshAgain = true;
-      return;
-    }
-    this.refreshing = true;
-    void this.refreshTranscript()
-      .catch(() => {
-        // A mid-turn read failure is not fatal: settlement refreshes again.
-      })
-      .finally(() => {
-        this.refreshing = false;
-        this.onUpdate?.();
-        if (this.refreshAgain) {
-          this.refreshAgain = false;
-          this.scheduleRefresh();
-        }
-      });
-  }
-
-  get operationId(): string | undefined {
-    return this.activeOperationId;
   }
 
   // Issue #227: the live model label (updated by a `/model` switch), so the
@@ -1438,42 +1579,94 @@ export class TuiTurnRunner {
   }
 
   // Busy from the moment a submit is accepted by the loop — not from the
-  // moment the lane admits it — so the Ctrl-C that follows Enter by a
+  // moment the durable turn lands — so the Ctrl-C that follows Enter by a
   // keystroke still cancels instead of quitting.
   isRunning(): boolean {
-    return this.starting || this.activeOperationId !== undefined;
+    return this.starting || this.running !== undefined;
   }
 
-  // The single lane-event consumer for this lane (§15.3: exactly one).
-  // Tool status drives the tree, usage rows drive the status bar. The row
-  // carries the boot model (the lane's usage rows are per-request records
-  // with no model field of their own) so the bar can group them.
+  // The single lane-event consumer for this conversation (§15.3: exactly
+  // one). The committed entries the events carry are folded into the feed
+  // (REPLACE on the attach snapshot, upsert on a committed message or tool
+  // result) instead of re-reading the lane per event; tool status drives the
+  // tree and usage rows drive the status bar (#398/D2).
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     this.app.applyLaneEvent(event);
     this.onLaneEvent?.(event);
-    if (event.type !== 'run-start') this.scheduleRefresh();
+    if (event.type === 'run-start') {
+      // The run is placed: a latched Ctrl-C may now abort it for real.
+      this.markPlaced();
+    }
+    if (event.type === 'snapshot') {
+      // REPLACE semantics (D2): the attach snapshot is the transcript.
+      this.replaceLaneEntries(event.entries);
+      return;
+    }
     if (event.type === 'usage') {
+      // The row names the provider/model that answered (#287); the status
+      // bar reads tokens + cost only.
       this.usageRows.push({
-        model: this.model,
-        provider: event.lane,
+        model: event.row.model,
+        provider: event.row.provider,
         usage: event.row.usage,
-        entryId: event.row.entryId,
-        // Pi stamps the row with its own id/seq; the status bar reads
-        // tokens + cost only, so the request id is the closest honest
-        // trace handle available here.
-        toolCallId: event.row.id,
+        ...(event.row.entryId === undefined
+          ? {}
+          : { entryId: event.row.entryId }),
+        ...(event.row.toolCallId === undefined
+          ? {}
+          : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
+      this.foldLaneEntries([event.entry]);
+      return;
+    }
+    if (event.type === 'tool-end' && event.entry !== undefined) {
+      // A tool result that faulted or was orphaned has no entry: the tree
+      // already shows the error, and the transcript has nothing to append.
+      this.foldLaneEntries([event.entry]);
     }
   };
 
   private readonly usageRows: Array<Parameters<TuiApp['setUsage']>[0][number]> =
     [];
 
+  // The accumulated committed-transcript feed: the attach snapshot replaces
+  // it, every later entry-bearing event upserts into it, and every apply is a
+  // fresh snapshot for the app (revision semantics).
+  private laneEntries: LaneEntryLike[] = [];
+  private readonly laneEntryIndex = new Map<string, number>();
+
+  private replaceLaneEntries(entries: readonly EntryRecord[]): void {
+    this.laneEntries = [];
+    this.laneEntryIndex.clear();
+    this.foldLaneEntries(entries);
+  }
+
+  private foldLaneEntries(entries: readonly EntryRecord[]): void {
+    for (const entry of entries) {
+      const cell = laneEntryFor(entry);
+      if (cell === undefined) continue;
+      const id = String(cell.id);
+      const at = this.laneEntryIndex.get(id);
+      if (at === undefined) {
+        this.laneEntryIndex.set(id, this.laneEntries.length);
+        this.laneEntries.push(cell);
+      } else {
+        this.laneEntries[at] = cell;
+      }
+    }
+    this.applyLaneEntries();
+  }
+
+  private applyLaneEntries(): void {
+    // Every apply replaces the transcript's cells instead of appending them
+    // (the app's revision counter makes the snapshot a replacement).
+    this.app.applyLaneEntries(this.laneEntries);
+    this.onUpdate?.();
+  }
+
   // The in-flight run (issue #312): a quit waits on it, bounded.
   private running: Promise<TuiTurnOutcome> | undefined;
-  // The lane's terminal record of the turn in flight (issue #383).
-  private settledLane: TuiTurnRecord['lane'];
 
   run(prompt: string): Promise<TuiTurnOutcome> {
     const running = this.runTurn(prompt);
@@ -1482,35 +1675,30 @@ export class TuiTurnRunner {
   }
 
   // Issue #312 (§18, #109): quitting mid-turn aborts and drains the
-  // operation — the durable abort request, then every registered kill — and
-  // waits for the run to settle, at most until `bound` resolves. A quit that
-  // lands before admission is latched: `drive` aborts on the real id.
+  // conversation — the durable abort, then every registered kill — and waits
+  // for the run to settle, at most until `bound` resolves. A quit that lands
+  // before the submit is latched: `drive` replays it on the in-flight turn.
+  // When the bound wins, the registered kills still run: the registry drain
+  // is the backstop and must not queue behind an abort that may never answer
+  // (`abortLane` drains them again — a no-op).
   async drainForQuit(bound: Promise<void>): Promise<void> {
     if (!this.isRunning()) return;
     this.aborted = true;
     this.quitting = true;
-    const operationId = this.activeOperationId;
-    if (operationId !== undefined) {
-      // The durable abort request is itself a lane call and can hang; the
-      // bound (the timer, or a second quit) covers it too, never only the
-      // wait after it. When the bound wins, the registered kills run anyway:
-      // the kill drain is the backstop and must not queue behind a request
-      // that may never answer (drainOperation drains them again — a no-op).
-      await Promise.race([
-        drainOperation(
-          this.loop,
-          this.loop.kills,
-          operationId,
-          this.loop.context,
-        ),
-        bound,
-      ]);
-      for (const kill of this.loop.kills.drain(operationId)) {
-        try {
-          kill();
-        } catch {
-          // Already exited — the registry drains every entry regardless.
-        }
+    // The run may not be placed yet: aborting now would hit an idle
+    // conversation and the turn would outlive the quit. Wait for the
+    // placement (or the turn's end) first, bounded by the same quit bound so
+    // a submit that never lands cannot hang the quit either.
+    await Promise.race([this.placed, bound]);
+    await Promise.race([
+      this.loop.abort(this.loop.context).catch(() => undefined),
+      bound,
+    ]);
+    for (const kill of this.loop.kills.drain(this.loop.killsKey)) {
+      try {
+        kill();
+      } catch {
+        // Already exited — the registry drains every entry regardless.
       }
     }
     const settled = (this.running ?? Promise.resolve()).then(
@@ -1520,19 +1708,19 @@ export class TuiTurnRunner {
     await Promise.race([settled, bound]);
   }
 
-  // One turn: drive it, then hand the lane's own terminal record to the
-  // run's §46 trajectory (issue #383) — the recording never changes the
-  // turn's outcome.
+  // One turn: settle it on the durable lane, then hand the turn's own record
+  // to the run's §46 trajectory (issue #383) — the recording never changes
+  // the turn's outcome.
   private async runTurn(prompt: string): Promise<TuiTurnOutcome> {
     const startedAt = Date.now();
-    this.settledLane = undefined;
+    this.settledTurn = undefined;
     const outcome = await this.drive(prompt);
     try {
       await this.loop.recordTurn?.({
         prompt,
         startedAt,
         outcome,
-        ...(this.settledLane === undefined ? {} : { lane: this.settledLane }),
+        ...(this.settledTurn === undefined ? {} : { turn: this.settledTurn }),
       });
     } catch {
       // The trajectory observes the turn; it never changes its outcome.
@@ -1543,93 +1731,86 @@ export class TuiTurnRunner {
   private async drive(prompt: string): Promise<TuiTurnOutcome> {
     this.starting = true;
     this.aborted = false;
-    this.detach = attachLaneEvents(
-      { events: this.loop.events },
-      'main',
-      this.sink,
-    );
+    this.placed = new Promise<void>((resolve) => {
+      this.markPlaced = resolve;
+    });
+    // The subscription is snapshot-safe (#398): the attach snapshot replaces
+    // the feed, so nothing committed between the boot read and this turn can
+    // be lost, and no event can arrive before the sink is listening.
+    this.detach = await this.loop.subscribe(this.sink, this.loop.context);
     try {
-      const admission = await this.loop.accept(prompt, this.loop.context);
-      if (!admission.ok) {
-        return {
-          status: 'failed',
-          detail: `lane refused the prompt: ${JSON.stringify(admission.error)}`,
-        };
-      }
-      this.activeOperationId = admission.value.operationId;
-      // A Ctrl-C that arrived while the admission was in flight is honoured
-      // here, on the real id — never dropped, never escalated to a quit.
-      if (this.aborted) await this.abort();
-      const driven = await driveToSettled(
-        this.loop.lane,
-        admission.value.operationId,
-        this.loop.context,
-      );
+      const turn = await this.loop.runTurn(prompt, {
+        // The prompt is this invocation's own intent: a fresh id per submit
+        // so pi-durable's requestId dedupe never collapses two prompts the
+        // operator really sent (#395 idempotency rule).
+        requestId: randomUUID(),
+        context: this.loop.context,
+        // Until #334 lands a busy conversation refuses the submit instead of
+        // queueing it (lane/turn.ts: {kind:'failed', reason:'busy'}).
+        whenBusy: 'reject',
+      });
+      this.settledTurn = turn;
       // A settled turn's kills are forgotten, not run: a kept background job
-      // outlives Kubic. A deferred operation is not settled, and a quit keeps
-      // its kills for the session close.
-      if (driven.kind !== 'waiting-deferred' && !this.quitting) {
-        this.loop.settled?.(admission.value.operationId);
-      }
+      // outlives Kubic. A quit keeps them for the session close's backstop.
+      if (!this.quitting) this.loop.forgetKills();
+      // One settling read completes the feed (the user entry the submit
+      // committed is not carried by any mapped event): events drive the live
+      // transcript, this single read is the turn's full one.
       await this.refreshTranscript();
-      // The lane's own terminal status is authoritative: an abort that raced
+      // The lane's own terminal record is authoritative: an abort that raced
       // a completing turn must not be relabelled as cancelled (the work
-      // really did land), and a turn that the abort did stop settles as
-      // 'aborted'. `this.aborted` only decides the footer when the record is
-      // silent, which cannot happen on a settled drive.
-      if (driven.kind === 'waiting-deferred') {
-        this.settledLane = 'deferred';
+      // really did land), and a turn the abort did stop settles 'aborted'.
+      if (turn.kind === 'completed') return { status: 'completed' };
+      if (turn.kind === 'aborted') return { status: 'cancelled' };
+      // `FailureCode` is #52's closed vocabulary; the busy refusal is Kubic's
+      // own reason (D6.1) and may or may not be part of it depending on the
+      // turn module's typing, so the comparison is on the plain string.
+      const reason: string = turn.reason;
+      if (reason === TURN_BUSY_REASON) {
+        // The busy refusal keeps the shape the operator saw when the lane
+        // refused an admission: the prompt never reaches the model.
         return {
           status: 'failed',
-          // Issue #113: the TUI HAS a TTY — the old message blamed a
-          // missing one. The deferral is the fact: the lane suspended this
-          // operation (an unanswerable approval or a background wait) and
-          // the operator can try again.
-          detail:
-            'turn suspended: the lane deferred this operation (an unanswerable approval or background wait) — try re-submitting',
+          detail: `lane refused the prompt: ${turn.error ?? 'the conversation is busy'}`,
         };
       }
-      const record = driven.outcome as { status?: unknown; error?: unknown };
-      if (
-        record.status === 'completed' ||
-        record.status === 'aborted' ||
-        record.status === 'declined' ||
-        record.status === 'failed'
-      ) {
-        const laneError = record.error as OperationErrorLike | undefined;
-        this.settledLane = {
-          status: record.status,
-          ...(laneError === undefined ? {} : { error: laneError }),
-        };
-      }
-      if (record.status === 'completed') return { status: 'completed' };
-      if (record.status === 'aborted' || record.status === 'declined') {
-        return { status: 'cancelled' };
-      }
-      const error = record.error as { message?: unknown } | undefined;
       return {
         status: 'failed',
-        detail:
-          typeof error?.message === 'string'
-            ? error.message
-            : `lane ${String(record.status)}`,
+        detail: turn.error ?? `lane ${turn.reason}`,
       };
+    } catch (error) {
+      // Defensive: lane/turn.ts maps a rejected submit to a busy failure
+      // (D6.1), so a ConversationBusy escaping here is a wiring bug — report
+      // it as the refusal it is instead of crashing the loop.
+      if (error instanceof ConversationBusy) {
+        return {
+          status: 'failed',
+          detail: `lane refused the prompt: ${error.message}`,
+        };
+      }
+      throw error;
     } finally {
       this.starting = false;
-      this.activeOperationId = undefined;
-      this.detach?.();
+      // A run that never started (a refused submit, a failure) must not
+      // leave a latched Ctrl-C waiting for a placement that cannot come.
+      this.markPlaced();
+      const detach = this.detach;
       this.detach = undefined;
+      try {
+        await detach?.();
+      } catch {
+        // A torn-down watch is not a turn failure.
+      }
     }
   }
 
+  // The durable abort path (D6.2): conversation.abort + the conversation's
+  // kill drain. It THROWS when the abort or a kill fails, so the cancel path
+  // reports a refusal instead of a silent no-op and the quit drain can bound
+  // it. The abort targets the conversation, which is the only turn that can
+  // be in flight here (the runner admits one turn at a time).
   private async abort(): Promise<void> {
-    if (this.activeOperationId === undefined) return;
-    await requestLaneAbort(
-      this.loop,
-      this.loop.kills,
-      this.activeOperationId,
-      this.loop.context,
-    );
+    await this.loop.abort(this.loop.context);
   }
 
   // Ctrl-C: true (the solo lane always is; the orchestrator lane only when
@@ -1645,32 +1826,39 @@ export class TuiTurnRunner {
     return this.aborted && this.isRunning();
   }
 
-  // Cancels the in-flight operation. Returns false when nothing is running,
-  // so the caller can fall through to quit. Before the admission lands the
-  // request is latched and replayed by `run`, so the key is never lost.
-  // It THROWS when the lane refuses the abort (requestLaneAbort wraps the
-  // refusal in LaneDriveError); the key handler catches it and reports it,
-  // so a refusal is never a silent no-op and never an unhandled rejection.
+  // Cancels the in-flight turn. Returns false when nothing is running, so
+  // the caller can fall through to quit. Before the submit lands the request
+  // is latched and replayed by `drive`, so the key is never lost. It THROWS
+  // when the abort refused (abortLane aggregates the failure); the key
+  // handler catches it and reports it, so a refusal is never a silent no-op
+  // and never an unhandled rejection.
   async cancel(): Promise<boolean> {
     if (!this.isRunning()) return false;
     this.aborted = true;
+    // A Ctrl-C can beat the durable submit: aborting an idle conversation is
+    // a no-op, so the abort waits for the run's own `run-start` placement (or
+    // for the turn to end) instead of slipping between the two.
+    await this.placed;
+    if (this.quitting) return true;
     await this.abort();
     return true;
   }
 
   // Reads are tagged in issue order: a background refresh that resolves
   // after a newer one (e.g. the settlement refresh) is dropped instead of
-  // overwriting the fresher transcript.
+  // overwriting the fresher feed.
   private readSeq = 0;
   private appliedSeq = 0;
 
   async refreshTranscript(): Promise<void> {
     this.readSeq += 1;
     const seq = this.readSeq;
-    const entries = await this.loop.findEntries(undefined, this.loop.context);
+    const entries = await this.loop.entries(this.loop.context);
     if (seq < this.appliedSeq) return;
     this.appliedSeq = seq;
-    this.app.applyLaneEntries(entries);
+    // The accumulated event feed is the live transcript; a settling read
+    // replaces it with the completed one (D6.5's readConversationEntries).
+    this.replaceLaneEntries(entries);
   }
 }
 

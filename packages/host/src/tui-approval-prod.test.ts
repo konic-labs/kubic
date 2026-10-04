@@ -28,6 +28,7 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -56,7 +57,7 @@ type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 // of a `toolUse` turn (0.87 inferred them from the parts alone).
 function toolUse(message: FauxMessage): FauxMessage {
   const hasCall = message.content.some((part) => part.type === 'toolCall');
-  return hasCall ? { ...message, stopReason: 'toolUse' } : message;
+  return hasCall ? fauxToolUse(message.content) : message;
 }
 
 function fauxModels(steps: FauxMessage[]): {

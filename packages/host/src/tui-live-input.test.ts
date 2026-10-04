@@ -28,6 +28,7 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -134,10 +135,7 @@ function fauxLaneBoot(
             part !== null &&
             (part as { type?: unknown }).type === 'toolCall',
         );
-      return fauxAssistantMessage(
-        step,
-        toolUse ? { stopReason: 'toolUse' } : undefined,
-      );
+      return toolUse ? fauxToolUse(step) : fauxAssistantMessage(step);
     }),
   );
   return async () => {

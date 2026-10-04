@@ -33,6 +33,7 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -176,10 +177,7 @@ function harness(steps: Step[]): Harness {
               part !== null &&
               (part as { type?: unknown }).type === 'toolCall',
           );
-        return fauxAssistantMessage(
-          step,
-          toolUse ? { stopReason: 'toolUse' } : undefined,
-        );
+        return toolUse ? fauxToolUse(step) : fauxAssistantMessage(step);
       }),
     );
     const models = createModels();
@@ -381,8 +379,13 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     expect(timers.map((timer) => timer.ms)).toEqual([1234]);
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03'); // second Ctrl-C while draining: exit now
+    // The close gets a FRESH bound of its own (the drain's budget was spent
+    // ending the wait); the injected clock must fire it.
+    await waitFor(() => timers.length === 2);
+    timers[1]?.fire();
     expect(await exit).toBe(0);
     expect(fake.counts.stopped).toBe(1);
+    expect(timers.every((timer) => timer.ms === 1234)).toBe(true);
   });
 
   // Issue #306 decision: a held key's repeats never act as a global key.
@@ -395,8 +398,12 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         return fauxAssistantMessage('never');
       },
     ]);
+    const timers: Array<() => void> = [];
     const { fake, exit } = start(h, {
-      setDrainTimer: () => () => {},
+      setDrainTimer: (_ms, fire) => {
+        timers.push(fire);
+        return () => {};
+      },
     });
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
@@ -414,6 +421,10 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     expect(fake.counts.stopped).toBe(0);
     expect(h.events).not.toContain('close');
     fake.feed('\x1b[99;5u'); // a real Ctrl-C press (Kitty)
+    // The close's own fresh bound is the second timer the injected clock
+    // handed out; fire it so the quit can finish.
+    await waitFor(() => timers.length === 2);
+    timers[1]?.();
     expect(await exit).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
@@ -467,6 +478,9 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       fake.feed('\x1b');
       await waitFor(() => timers.length === 1);
       timers[0]?.();
+      // The close gets its own fresh bound (the drain consumed the first).
+      await waitFor(() => timers.length === 2);
+      timers[1]?.();
       expect(await settled(exit)).toBe(0);
       // The kill drain is the backstop: it does not wait on the abort request.
       expect(h.events).toEqual(['kill', 'close']);
@@ -513,6 +527,8 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       fake.feed('\x1b');
       await waitFor(() => timers.length === 1);
       timers[0]?.();
+      await waitFor(() => timers.length === 2);
+      timers[1]?.();
       expect(await settled(exit)).toBe(0);
       expect(h.events).toEqual(['kill', 'close', 'late-kill']);
     });
@@ -525,12 +541,21 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         },
       ]);
       hungAbort(h);
-      const { fake, exit } = start(h, { setDrainTimer: () => () => {} });
+      const timers: Array<() => void> = [];
+      const { fake, exit } = start(h, {
+        setDrainTimer: (_ms, fire) => {
+          timers.push(fire);
+          return () => {};
+        },
+      });
       await submit(fake, 'hang');
       await waitFor(() => h.admitted.length === 1);
       fake.feed('\x1b');
       await waitFor(() => fake.writes.join('').includes('cancelling'));
       fake.feed('\x03');
+      // The close's fresh bound is the second timer; fire it.
+      await waitFor(() => timers.length === 2);
+      timers[1]?.();
       expect(await settled(exit)).toBe(0);
       expect(fake.counts.stopped).toBe(1);
     });
@@ -625,6 +650,9 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     fake.feed('\x1b');
     await waitFor(() => timers.length === 1);
     timers[0]?.();
+    // The close's own fresh bound is the second timer.
+    await waitFor(() => timers.length === 2);
+    timers[1]?.();
     expect(await exit).toBe(0);
     expect(h.events.at(-1)).toBe('close');
   });

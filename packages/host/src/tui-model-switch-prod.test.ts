@@ -13,6 +13,7 @@ import {
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -61,7 +62,7 @@ function twoProviders(
     altResponses.map((message) =>
       // pi-durable dispatches the calls of a `toolUse` turn.
       message.content.some((part) => part.type === 'toolCall')
-        ? { ...message, stopReason: 'toolUse' as const }
+        ? fauxToolUse(message.content)
         : message,
     ),
   );

@@ -17,6 +17,7 @@ import {
   runTuiCommand,
   soloTuiLoop,
   type TuiRunDeps,
+  TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -27,7 +28,12 @@ import {
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
 import {
+  bootFauxLane,
+  fauxToolUse,
+} from '../../worker/src/lane/test-harness.js';
+import {
   BACKGROUND_CONTEXT,
+  ConversationBusy,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -75,10 +81,7 @@ function fauxModels(steps: FauxStep[]): {
               part !== null &&
               (part as { type?: unknown }).type === 'toolCall',
           );
-        return fauxAssistantMessage(
-          step,
-          toolUse ? { stopReason: 'toolUse' } : undefined,
-        );
+        return toolUse ? fauxToolUse(step) : fauxAssistantMessage(step);
       }),
     );
   };
@@ -437,6 +440,63 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // lane (the editor's own echo of a refused draft is not a lane cell).
     expect(calls()).toBe(1);
     expect(doc).not.toContain('second answer');
+  });
+
+  it('a durably busy conversation refuses the second turn with the busy failure', async () => {
+    // The runner-level half of the busy contract (D6.1), with the UI's own
+    // submit guard bypassed on purpose: one turn is live on a REAL booted
+    // lane, and the second submit is rejected by pi-durable (whenBusy
+    // 'reject') — lane/turn.ts maps that to the named busy failure, which
+    // the footer shows and which never reaches the model.
+    const root = tmpRoot();
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lane = await bootFauxLane({
+      storage: 'jsonl',
+      root,
+      responses: [
+        async () => {
+          await gated;
+          return fauxAssistantMessage('first answer');
+        },
+        fauxAssistantMessage('second answer'),
+      ],
+    });
+    try {
+      const app = {
+        applyLaneEntries: () => {},
+        applyLaneEvent: () => {},
+        setUsage: () => {},
+      } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
+      const runner = new TuiTurnRunner(
+        app,
+        soloTuiLoop(lane.solo),
+        'faux/faux-1',
+      );
+      const first = lane.run('first prompt');
+      // The run is live: its model request has started.
+      await waitFor(() => lane.faux.state.callCount === 1);
+      const refused = await runner.run('second prompt');
+      expect(refused.status).toBe('failed');
+      expect(refused.detail).toContain('lane refused the prompt');
+      expect(lane.faux.state.callCount).toBe(1);
+      // The durable fact behind the footer text: the submit is rejected by
+      // pi-durable, not queued (lane/turn.ts's D6.1 mapping of it is pinned
+      // by lane/turn.test.ts).
+      await expect(
+        lane.solo.conversation.submit(
+          { type: 'input', content: 'second prompt', whenBusy: 'reject' },
+          BACKGROUND_CONTEXT,
+        ),
+      ).rejects.toThrow(ConversationBusy);
+      release();
+      expect((await first).status).toBe('completed');
+      expect(lane.faux.state.callCount).toBe(1);
+    } finally {
+      await lane.cleanup();
+    }
   });
 
   it('quits on the Kitty-protocol form of Esc and Ctrl-D, not only legacy bytes', async () => {

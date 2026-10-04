@@ -18,6 +18,7 @@ import {
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type { FileJournalStore } from '../../exec/src/journal.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -112,10 +113,7 @@ function prodBoot(
               part !== null &&
               (part as { type?: unknown }).type === 'toolCall',
           );
-        return fauxAssistantMessage(
-          step,
-          toolUse ? { stopReason: 'toolUse' } : undefined,
-        );
+        return toolUse ? fauxToolUse(step) : fauxAssistantMessage(step);
       }),
     );
     const models = createModels();

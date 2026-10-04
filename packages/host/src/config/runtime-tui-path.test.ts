@@ -6,6 +6,7 @@
 // #133 run tests (runtime-run-path.test.ts).
 //
 // Faux provider only: zero network, zero paid tokens.
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,7 @@ import {
 } from '../../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -164,11 +166,9 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      // pi-durable dispatches the calls of a `toolUse` turn.
-      fauxAssistantMessage(
-        [fauxToolCall('bash', { command: 'printf "v2\\n" > note.txt' })],
-        { stopReason: 'toolUse' },
-      ),
+      fauxToolUse([
+        fauxToolCall('bash', { command: 'printf "v2\\n" > note.txt' }),
+      ]),
       fauxAssistantMessage('mutated'),
     ]);
     const deps = tuiDepsWithDefaults(
@@ -480,9 +480,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
       models: [{ id: 'a' }, { id: 'b' }],
     });
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf gone' })], {
-        stopReason: 'toolUse',
-      }),
+      fauxToolUse([fauxToolCall('bash', { command: 'rm -rf gone' })]),
       fauxAssistantMessage('removed'),
     ]);
     const models = createModels();

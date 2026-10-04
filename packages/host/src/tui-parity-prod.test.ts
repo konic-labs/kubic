@@ -496,6 +496,45 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     expect(outcome.detail).not.toContain('TTY');
   });
 
+  it("forgets a settled turn's kills, never an unsettled one's", async () => {
+    // Review finding (#395): `forgetLaneKills` drains the D1 conversation
+    // key, so forgetting a failed turn would strip a still-live run's bash
+    // process groups of their handles and a later quit could not kill them.
+    let forgotten = 0;
+    const loop = {
+      runTurn: async () => ({
+        kind: 'failed' as const,
+        reason: 'provider_transient' as const,
+        error: 'boom',
+      }),
+      subscribe: async () => async () => {},
+      entries: async () => [],
+      abort: async () => {},
+      forgetKills: () => {
+        forgotten += 1;
+      },
+      killsKey: 'conversation',
+      kills: new OperationKillRegistry(),
+      context: BACKGROUND_CONTEXT,
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
+    const app = {
+      applyLaneEntries: () => {},
+      applyLaneEvent: () => {},
+      setUsage: () => {},
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
+    const runner = new TuiTurnRunner(app, loop, 'faux/test');
+    expect((await runner.run('fails')).status).toBe('failed');
+    expect(forgotten).toBe(0);
+    // Control: a settled turn does forget — a kept background job outlives
+    // Kubic and must not be signalled by the session close.
+    loop.runTurn = async () => ({
+      kind: 'completed' as const,
+      submissionId: 'sub-1',
+    });
+    expect((await runner.run('settles')).status).toBe('completed');
+    expect(forgotten).toBe(1);
+  });
+
   it('names the busy refusal the durable turn reports (D6.1)', async () => {
     const app = {
       applyLaneEntries: () => {},

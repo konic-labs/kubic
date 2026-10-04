@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
 import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
   createModels,
@@ -570,14 +571,10 @@ describe('advertised skills outside the workspace stay readable on the tui lane 
     writeFileSync(join(home, 'secret.txt'), 'top secret\n');
     const faux = fauxProvider({ provider: 'fx', models: [{ id: 'a' }] });
     faux.setResponses([
-      // pi-durable dispatches the calls of a `toolUse` turn.
-      fauxAssistantMessage(
-        [
-          fauxToolCall('read', { path: skillFile }),
-          fauxToolCall('read', { path: join(home, 'secret.txt') }),
-        ],
-        { stopReason: 'toolUse' },
-      ),
+      fauxToolUse([
+        fauxToolCall('read', { path: skillFile }),
+        fauxToolCall('read', { path: join(home, 'secret.txt') }),
+      ]),
       fauxAssistantMessage('done'),
     ]);
     const models = createModels();

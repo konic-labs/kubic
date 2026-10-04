@@ -513,7 +513,10 @@ export async function bootSoloLane(
   }
 
   const harness = await Harness.open(
-    options.session.storage,
+    // Adopt, never take `storage` directly (D8.1): the handle must know a
+    // harness owns the storage, or its `release()` would close the storage
+    // under the live harness.
+    options.session.adopt(),
     { models: options.models, registry, settings },
     context,
   );

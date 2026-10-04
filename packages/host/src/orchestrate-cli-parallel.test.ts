@@ -377,6 +377,7 @@ describe('orchestrate queue expiry and never-wakeable queues (issue #206 review)
           promptText: '',
           tools: [],
           modelRef: 'prov/m1',
+          thinking: undefined,
         })),
         refused: [],
       }),

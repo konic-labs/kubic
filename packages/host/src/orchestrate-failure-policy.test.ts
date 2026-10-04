@@ -310,6 +310,7 @@ describe('orchestrate --on-failure policy and unwakeable queues (issue #169 revi
           promptText: '',
           tools: [],
           modelRef: 'prov/m1',
+          thinking: undefined,
         })),
         refused: [],
       }),

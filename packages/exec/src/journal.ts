@@ -178,7 +178,11 @@ export function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
-function sha256HexOfBytes(bytes: Uint8Array): string {
+/**
+ * The sha256 of raw bytes (issue #352): what the walk hashes, and what the
+ * undo record keeps for a pre-image that cannot be stored as text.
+ */
+export function sha256HexOfBytes(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 

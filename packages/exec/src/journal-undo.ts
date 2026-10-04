@@ -46,6 +46,7 @@ import {
   probeFileState,
   removeCreatedEntry,
   restoreEntry,
+  sha256HexOfBytes,
 } from './journal.js';
 
 export interface UndoScope {
@@ -273,6 +274,10 @@ interface InversePlan {
   /** Create-shaped steps: the removed content (null when it was not
    *  lossless utf-8 text — the removal then cannot be redone). */
   removedContent: string | null;
+  /** Write-shaped steps (issue #352): the pre-undo content could not be
+   *  recorded as text (binary/invalid utf-8), so the record carries its raw
+   *  hash only and the undo cannot be redone. */
+  lossyBefore: boolean;
 }
 
 function planInverse(
@@ -301,6 +306,7 @@ function planInverse(
     }
     return {
       removedContent,
+      lossyBefore: false,
       entry: {
         path: step.path,
         op: 'delete',
@@ -317,17 +323,34 @@ function planInverse(
       },
     };
   }
-  // Pre-undo state for the record: read before the restore overwrites it.
+  // Pre-undo state for the record: read before the restore overwrites it —
+  // as BYTES, with the same lossless rule the create-removal path applies
+  // (issue #352). A utf-8 decode that cannot round-trip (binary content) must
+  // not become the record's before-side: a following `undo --step` would
+  // write the mangled text back over the user's bytes. The raw hash is
+  // recorded instead, marked as a designed omission — never U+FFFD text.
   // A missing file (null) is recorded as such — no content is invented.
   let preUndo: string | null = null;
+  let preUndoHash: string | null = null;
+  let lossyBefore = false;
   try {
-    preUndo = createNodeFileBridge(root).readTextFile(resolve(root, step.path));
+    const bytes = Buffer.from(
+      createNodeFileBridge(root).readBinaryFile(resolve(root, step.path)),
+    );
+    const decoded = bytes.toString('utf8');
+    if (Buffer.from(decoded, 'utf8').equals(bytes)) {
+      preUndo = decoded;
+    } else {
+      preUndoHash = sha256HexOfBytes(bytes);
+      lossyBefore = true;
+    }
   } catch {
     preUndo = null;
   }
   const restoredContent = store.readBefore(step);
   return {
     removedContent: null,
+    lossyBefore,
     entry:
       restoredContent === null
         ? null
@@ -336,6 +359,9 @@ function planInverse(
             // Restores write content — delete entries restore as writes too.
             op: 'write',
             before: preUndo,
+            ...(preUndoHash === null
+              ? {}
+              : { beforeHash: preUndoHash, beforeOmitted: true }),
             after: restoredContent,
             bytesDelta:
               Buffer.byteLength(restoredContent, 'utf8') -
@@ -432,6 +458,11 @@ export function applyUndo(
     const result = restoreEntry(store, step, root, { allowStale: true });
     if (result.restored) {
       restored.push(step.path);
+      if (inverse.lossyBefore) {
+        warnings.push(
+          `restored '${step.path}' without a recoverable copy of its pre-undo content (it was not lossless utf-8 text) — this undo cannot be redone`,
+        );
+      }
       // The undo is itself a change (issue #117): journal the inverse so
       // `kubic diff`/`log` describe the world after the undo — and so a
       // second `undo --step` re-applies the pre-undo content (the redo).

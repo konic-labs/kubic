@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FileJournalStore, sha256Hex } from './journal.js';
+import { FileJournalStore, sha256Hex, sha256HexOfBytes } from './journal.js';
 import { diffEntries } from './journal-diff.js';
 import { journalStatus } from './journal-status.js';
 import { applyUndo, planUndo } from './journal-undo.js';
@@ -755,5 +755,54 @@ describe('undo refuses a step whose inverse record cannot fit (issue #348)', () 
     expect(existsSync(join(root, 'created.txt'))).toBe(true);
     expect(readFileSync(join(root, 'created.txt'), 'utf8')).toBe(content);
     expect(store.entries()).toHaveLength(1);
+  });
+});
+
+// Issue #352: the inverse record's before-side is a copy of the file as it is
+// NOW (the pre-undo state). Reading it as utf-8 mangles binary bytes into
+// U+FFFD, and a following `undo --step` (the redo) would write that mangled
+// text back — corrupting the user's bytes. The create-removal path already
+// applies the byte-exact lossless rule; the restore path must too.
+describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
+  it('records the pre-undo state hash-only when it is not lossless utf-8', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(dir, { durable: false });
+    writeFileSync(join(root, 'bin.dat'), 'v1\n');
+    store.append({
+      path: 'bin.dat',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    // The file has since become binary (invalid utf-8), and the entry is
+    // restored with --force (the disk no longer matches the recorded state).
+    const binary = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
+    writeFileSync(join(root, 'bin.dat'), binary);
+
+    const result = applyUndo(store, planUndo(store, {}), root, { force: true });
+    expect(result.restored).toEqual(['bin.dat']);
+    // The inverse record carries no mangled content: the raw hash, marked
+    // as a designed omission — never U+FFFD text.
+    const record = store.entries().at(-1);
+    expect(record?.agentId).toBe('kubic-undo');
+    expect(record?.beforeOmitted).toBe(true);
+    expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
+    expect(record === undefined ? null : store.readBefore(record)).toBeNull();
+    expect(result.warnings.join('\n')).toMatch(/bin\.dat.*cannot be redone/);
+
+    // The forced restore landed the journaled pre-image...
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).toBe('v1\n');
+    // ...and the redo refuses instead of writing mangled bytes back.
+    const redo = applyUndo(store, planUndo(store, { step: true }), root, {});
+    expect(redo.restored).toEqual([]);
+    expect(redo.skippedDetails[0]?.reason).toMatch(/no before-content/);
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).toBe('v1\n');
+    expect(readFileSync(join(root, 'bin.dat'), 'utf8')).not.toContain('\ufffd');
   });
 });

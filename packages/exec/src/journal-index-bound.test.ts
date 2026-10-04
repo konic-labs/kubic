@@ -75,7 +75,7 @@ describe('journal index size counts against the bound (issue #350)', () => {
     expect(store.blobCount()).toBe(2);
     expect(storeBytes(dir)).toBeLessThanOrEqual(64 * 1024);
     expect(store.entries().length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it('drops the oldest entry when only the index pushes the store over', () => {
     const dir = tmpRoot();

@@ -699,3 +699,138 @@ describe('model picker and thinking cycle (issue #328)', () => {
     expect(ui.isModelPickerOpen()).toBe(false);
   });
 });
+
+describe('slash commands in the app (issue #305)', () => {
+  const app = () =>
+    createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+  // Pi's editor resolves the autocomplete provider asynchronously; two turns
+  // of the microtask queue are enough for the suggestions to be rendered.
+  const settle = async (): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  it('lists the registry commands as soon as a slash is typed', async () => {
+    const ui = app();
+    ui.handleInput('/');
+    await settle();
+    const frame = ui.render(100).join('\n');
+    // The popup shows the first rows of the registry (Pi caps the list).
+    expect(frame).toContain('/help');
+    expect(frame).toContain('/session');
+    expect(frame).toContain('/new');
+    // The draft is still the operator's text.
+    expect(ui.editor.getText()).toBe('/');
+  });
+
+  it('renders a command notice in the transcript, and a lane snapshot clears it', () => {
+    const ui = app();
+    ui.appendNotice(['/help — the commands', '/session — id, tokens, cost']);
+    const doc = ui.render(100).join('\n');
+    expect(doc).toContain('/help — the commands');
+    expect(doc).toContain('/session — id, tokens, cost');
+    // A lane snapshot is the session's own transcript: the notice goes.
+    ui.applyLaneEntries([]);
+    expect(ui.render(100).join('\n')).not.toContain('/help — the commands');
+  });
+
+  it('reports the session id, tokens and cost from the status rows', () => {
+    const ui = app();
+    ui.setUsage([
+      {
+        model: MODEL,
+        provider: 'faux',
+        usage: {
+          input: 1200,
+          output: 340,
+          cacheRead: 10,
+          cacheWrite: 0,
+          totalTokens: 1550,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0.25,
+          },
+        },
+      },
+    ]);
+    const report = ui.sessionReport();
+    expect(report).toContain(`session ${SESSION}`);
+    expect(report).toContain(MODEL);
+    expect(report).toContain('in 1200 out 340');
+    expect(report).toContain('$0.25');
+  });
+
+  it('resets every session-scoped surface for /new and /resume', () => {
+    const ui = app();
+    ui.setUsage([
+      {
+        model: MODEL,
+        provider: 'faux',
+        usage: {
+          input: 10,
+          output: 5,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 15,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+        },
+      },
+    ]);
+    ui.appendNotice(['old turn']);
+    ui.applyLaneEvent({
+      type: 'tool-start',
+      toolCallId: 't1',
+      toolName: 'read',
+    });
+    ui.setPendingEcho('old echo');
+    ui.setQueuedPrompts(['old queue']);
+    expect(ui.render(100).join('\n')).toContain('old turn');
+
+    ui.resetSession({ sessionId: 'sess-2', model: 'alt/m2', thinking: 'high' });
+
+    const doc = ui.render(100).join('\n');
+    expect(doc).not.toContain('old turn');
+    expect(doc).not.toContain('old echo');
+    expect(doc).not.toContain('old queue');
+    expect(doc).not.toContain('● read');
+    expect(doc).toContain('alt/m2');
+    expect(doc).toContain('sess-2');
+    // The usage rows are the new session's (none here), not the old totals.
+    expect(ui.sessionReport()).toContain('in 0 out 0');
+    expect(ui.sessionReport()).toContain('session sess-2');
+  });
+
+  it('opens the generic picker for the palette and the session list', () => {
+    const ui = app();
+    const shown: Array<{ render: (width: number) => string[] }> = [];
+    ui.attachApprovalOverlay({
+      showOverlay: (component: unknown) => {
+        shown.push(component as { render: (width: number) => string[] });
+        return { unfocus: () => {}, hide: () => {} };
+      },
+    } as unknown as ApprovalOverlayTui);
+    const picked: string[] = [];
+    expect(
+      ui.openPicker({
+        rows: [
+          { value: '/help', label: '/help', description: 'list the commands' },
+          { value: '/quit', label: '/quit', description: 'leave the TUI' },
+        ],
+        onSelect: (value) => picked.push(value),
+      }),
+    ).toBe(true);
+    const frame = shown[0]?.render(80).join('\n') ?? '';
+    expect(frame).toContain('/help');
+    expect(frame).toContain('list the commands');
+    ui.handleInput('\r');
+    expect(picked).toEqual(['/help']);
+    expect(ui.isModelPickerOpen()).toBe(false);
+  });
+});

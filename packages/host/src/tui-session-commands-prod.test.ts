@@ -1,0 +1,270 @@
+// `/new`, `/resume` and `/undo` on the real `kubic tui` loop (issue #305).
+// The prod boot (`bootTuiLane`) is driven through the real alt-screen key
+// path with a temp sessions root and a temp workspace, so `/new` really
+// boots a second session, `/resume` really lists the store, and `/undo`
+// really restores a journaled file. Zero network, zero paid tokens.
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  bootTuiLane,
+  runTuiCommand,
+  type TuiRunDeps,
+} from '../../../apps/kubic/src/tui-run.js';
+import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '../../worker/src/pi-boundary.js';
+
+const made: string[] = [];
+
+function tmpRoot(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
+function fakeTerminal(width: number) {
+  const writes: string[] = [];
+  const counts = { started: 0, stopped: 0 };
+  let handler: ((data: string) => void) | undefined;
+  return {
+    writes,
+    counts,
+    get frame(): string {
+      return writes.join('');
+    },
+    feed: (data: string) => {
+      handler?.(data);
+    },
+    terminal: {
+      start: (input: (data: string) => void) => {
+        counts.started += 1;
+        handler = input;
+      },
+      stop: () => {
+        counts.stopped += 1;
+      },
+      drainInput: () => Promise.resolve(),
+      write: (data: string) => writes.push(data),
+      get columns(): number {
+        return width;
+      },
+      get rows(): number {
+        return 30;
+      },
+      get kittyProtocolActive(): boolean {
+        return false;
+      },
+      moveBy: () => {},
+      hideCursor: () => {},
+      showCursor: () => {},
+      clearLine: () => {},
+      clearFromCursor: () => {},
+      clearScreen: () => {},
+      setTitle: () => {},
+      setProgress: () => {},
+    },
+  };
+}
+
+// A prod boot (real harness, JSONL storage, a lane per session) is slower
+// than the faux-only loops: give these tests a wider window.
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 5000 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  expect(condition()).toBe(true);
+}
+
+function type(fake: ReturnType<typeof fakeTerminal>, text: string): void {
+  for (const ch of text) fake.feed(ch);
+  fake.feed('\r');
+}
+
+// One faux provider answering in order; the messages are consumed per turn.
+function providers(responses: ReturnType<typeof fauxAssistantMessage>[]) {
+  const models = createModels();
+  const faux = fauxProvider({
+    provider: 'faux',
+    models: [{ id: 'big', contextWindow: 200000 }],
+  });
+  faux.setResponses(
+    responses.map((message) =>
+      message.content.some((part) => part.type === 'toolCall')
+        ? fauxToolUse(message.content)
+        : message,
+    ),
+  );
+  models.setProvider(faux.provider);
+  return models;
+}
+
+function sessionIds(root: string): string[] {
+  return readdirSync(root).filter((entry) => entry.startsWith('0'));
+}
+
+describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
+  it('starts a fresh session with /new without leaving the alt-screen', {
+    timeout: 20000,
+  }, async () => {
+    const workspace = tmpRoot('tui-305-new-ws-');
+    const sessionsRoot = tmpRoot('tui-305-new-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    // ONE catalog per process, like the real boot: the shared faux script is
+    // consumed across sessions (the second session's turn takes response 2).
+    const models = providers([
+      fauxAssistantMessage('from faux'),
+      fauxAssistantMessage('from the new session'),
+    ]);
+    const bootLane: TuiRunDeps['bootLane'] = async (sid, answer) =>
+      bootTuiLane(sid, {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        ...(answer === undefined ? {} : { answer }),
+      });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane,
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    type(fake, 'first prompt');
+    await waitFor(() => fake.frame.includes('from faux'));
+    expect(sessionIds(sessionsRoot)).toHaveLength(1);
+
+    type(fake, '/new');
+    await waitFor(() => fake.frame.includes('(new)'));
+    // The session is a different one, and the store now holds both.
+    expect(sessionIds(sessionsRoot)).toHaveLength(2);
+    // The TUI never left the alt-screen and never re-entered it.
+    expect(fake.counts.stopped).toBe(0);
+    expect(fake.counts.started).toBe(1);
+    // The fresh session still works: a prompt runs on the new lane and its
+    // own answer lands (the shared faux script's second response).
+    type(fake, 'second prompt');
+    await waitFor(() => fake.frame.includes('from the new session'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
+    // The layout at quit is the NEW session's: the old transcript is gone.
+    const doc = lines.join('\n');
+    expect(doc).toContain('› second prompt');
+    expect(doc).not.toContain('› first prompt');
+  });
+
+  it('lists the store with /resume and loads the chosen transcript', {
+    timeout: 20000,
+  }, async () => {
+    const workspace = tmpRoot('tui-305-resume-ws-');
+    const sessionsRoot = tmpRoot('tui-305-resume-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const models = providers([
+      fauxAssistantMessage('first answer'),
+      fauxAssistantMessage('second answer'),
+    ]);
+    const bootLane: TuiRunDeps['bootLane'] = async (sid, answer) =>
+      bootTuiLane(sid, {
+        sessionsRoot,
+        models,
+        env: new NodeExecutionEnv(workspace),
+        ...(answer === undefined ? {} : { answer }),
+      });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane,
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    type(fake, 'the first session prompt');
+    await waitFor(() => fake.frame.includes('first answer'));
+    type(fake, '/new');
+    await waitFor(() => fake.frame.includes('(new)'));
+    const [first, second] = sessionIds(sessionsRoot);
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+
+    // `/resume` lists the OTHER session (the current one is not a choice).
+    const mark = fake.writes.length;
+    type(fake, '/resume');
+    // The picker's selected row (`→`, Pi's list marker): the overlay
+    // truncates the session id, so the marker is the picker's own signal.
+    await waitFor(() => fake.writes.slice(mark).join('').includes('→ '));
+    // Select the first row: the older session.
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('(resumed)'));
+    // The chosen session's transcript is what the screen now shows.
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('› the first session prompt');
+    expect(doc).toContain('first answer');
+  });
+
+  it('restores the journaled change with /undo', {
+    timeout: 20000,
+  }, async () => {
+    const workspace = tmpRoot('tui-305-undo-ws-');
+    const sessionsRoot = tmpRoot('tui-305-undo-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    writeFileSync(join(workspace, 'a.txt'), 'before\n');
+    const bootLane: TuiRunDeps['bootLane'] = async (sid, answer) =>
+      bootTuiLane(sid, {
+        sessionsRoot,
+        models: providers([
+          fauxAssistantMessage(
+            [fauxToolCall('write', { path: 'a.txt', content: 'after\n' })],
+            { stopReason: 'toolUse' },
+          ),
+          fauxAssistantMessage('wrote it'),
+        ]),
+        env: new NodeExecutionEnv(workspace),
+        ...(answer === undefined ? {} : { answer }),
+      });
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane,
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    type(fake, 'change the file');
+    await waitFor(() => fake.frame.includes('wrote it'));
+    expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('after\n');
+
+    type(fake, '/undo');
+    await waitFor(() => fake.frame.includes('undo: 1 restored'));
+    expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('before\n');
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('undo: 1 restored, 0 skipped');
+  });
+});

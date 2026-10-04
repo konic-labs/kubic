@@ -1134,6 +1134,81 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(lines.join('\n')).toContain('/thinking high');
   });
 
+  it('answers /help, /session and /diff locally and refuses an unknown command (#305)', async () => {
+    // Acceptance (#305): an unknown slash command is refused on the footer
+    // and NEVER reaches the model; the registry's own commands answer from
+    // the loop (no turn, no model call at all here).
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models, calls } = fauxModels(['never used']);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // A refused command keeps the draft (#334), so each one starts from an
+    // empty editor (Ctrl-U: delete to line start).
+    const run = (command: string): void => {
+      fake.feed('\x15');
+      for (const ch of command) fake.feed(ch);
+      fake.feed('\r');
+    };
+    run('/foo');
+    await waitFor(() =>
+      fake.writes.join('').includes("unknown command '/foo'"),
+    );
+    expect(calls()).toBe(0);
+    run('/help');
+    await waitFor(() => fake.writes.join('').includes('help: 10 commands'));
+    // The list itself landed in the transcript, generated from the registry.
+    expect(fake.writes.join('')).toContain('/quit — leave the TUI');
+    run('/help resume');
+    await waitFor(() => fake.writes.join('').includes('help: /resume'));
+    run('/session');
+    await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
+    expect(fake.writes.join('')).toContain('thinking off');
+    run('/diff');
+    await waitFor(() => fake.writes.join('').includes('diff: panel open'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // Not one of the commands spent a model call.
+    expect(calls()).toBe(0);
+  });
+
+  it('runs a command from the Ctrl-P palette (#305)', async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    const { models, calls } = fauxModels(['never used']);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Ctrl-P (0x10) opens the palette: the registry's rows, descriptions
+    // included.
+    fake.feed('\x10');
+    await waitFor(() => fake.writes.join('').includes('list the commands'));
+    expect(fake.writes.join('')).toContain('/session');
+    // Enter takes the first row: /help runs exactly as if it were typed.
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('help: 10 commands'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(calls()).toBe(0);
+  });
+
   it('a durably busy conversation refuses the second turn with the busy failure', async () => {
     // The runner-level half of the busy contract (D6.1), with the UI's own
     // submit guard bypassed on purpose: one turn is live on a REAL booted

@@ -10,7 +10,13 @@
 // callback. It never knows what a lane is.
 
 import { tuiTheme } from './theme.js';
-import type { Component, EditorTheme, Focusable, TUI } from './tui-boundary.js';
+import type {
+  AutocompleteProvider,
+  Component,
+  EditorTheme,
+  Focusable,
+  TUI,
+} from './tui-boundary.js';
 import { Editor } from './tui-boundary.js';
 
 // Pi's editor takes the owning TUI at construction (it reads terminal rows
@@ -113,6 +119,12 @@ export class PromptEditor implements Component, Focusable {
   // terminal dimensions. Called once by the composition root.
   bind(tui: TUI): void {
     this.delegate.bind(tui);
+  }
+
+  // Issue #305: the registry's `/`-command autocomplete, handed to Pi's
+  // editor (it owns the popup, the debounce and the completion keys).
+  setAutocomplete(provider: AutocompleteProvider): void {
+    this.inner.setAutocompleteProvider(provider);
   }
 
   getText(): string {

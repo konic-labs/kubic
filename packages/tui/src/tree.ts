@@ -479,6 +479,14 @@ export class AgentTreeView implements Component {
     return this.treeState;
   }
 
+  // Issue #305: `/new` and `/resume` show another session's work; the tree
+  // starts empty (collapsed state and label are the view's own defaults).
+  reset(label?: string): void {
+    this.treeState = createTreeState(label);
+    this.body = new TreeBody(this.treeState);
+    this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
+  }
+
   isCollapsed(): boolean {
     return this.treeState.collapsed;
   }

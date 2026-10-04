@@ -67,11 +67,14 @@ import {
   sanitizeLaneText,
 } from './lane-cells.js';
 import { buildLayoutRoot, type Viewport } from './layout.js';
+import { SlashCommandAutocomplete } from './slash-commands.js';
 import {
+  formatStatusCost,
   StatusBar,
   type StatusBarState,
   type StatusMode,
   type StatusUsageRow,
+  summarizeStatusRows,
 } from './status-bar.js';
 import {
   formatElapsed,
@@ -88,6 +91,7 @@ import {
 } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
 import type {
+  AutocompleteProvider,
   Component,
   SelectItem,
   SelectListTheme,
@@ -184,6 +188,9 @@ export interface TuiInputResult {
   // Issue #328: Alt+T cycles the thinking level over what the live model
   // supports (the loop owns the ladder and the commit).
   readonly cycleThinking?: boolean;
+  // Issue #305: Ctrl-P opens the command palette (the loop supplies the
+  // registry rows and dispatches the chosen command).
+  readonly palette?: boolean;
 }
 
 // Issue #334: what the loop did with a submitted prompt. `queued` means the
@@ -232,6 +239,9 @@ const GLOBAL_KEYS: ReadonlySet<string> = new Set([
   // free (Pi's editor claims alt+b/f/d/y and alt+arrows/backspace/delete).
   'alt+m',
   'alt+t',
+  // Issue #305: the command palette. Ctrl-P is free (the editor claims
+  // ctrl+b/f/a/e/]/d/w/u/k/y/- and the alt-screen the ctrl+arrow pair).
+  'ctrl+p',
 ]);
 
 function isGlobalKey(keyId: string | undefined): boolean {
@@ -248,6 +258,22 @@ export interface TuiModelPickerRow {
   readonly current?: boolean;
   /** A short note (provider origin / auth state), rendered dim. */
   readonly note?: string;
+}
+
+// Issue #305: the generic picker (the model picker, the command palette and
+// the session list all render through it).
+export interface TuiPickerRow {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+  /** Start the list on this row (the live model, the current session). */
+  readonly current?: boolean;
+}
+
+export interface TuiPickerOptions {
+  readonly rows: readonly TuiPickerRow[];
+  readonly onSelect: (value: string) => void;
+  readonly onCancel?: () => void;
 }
 
 export interface TuiModelPickerOptions {
@@ -338,6 +364,27 @@ export interface TuiApp {
   openModelPicker(options: TuiModelPickerOptions): boolean;
   /** Whether the picker overlay is showing (the loop refuses nested keys). */
   isModelPickerOpen(): boolean;
+  // Issue #305: the same overlay for the command palette and the session
+  // list; `openModelPicker` is this with the model rows mapped.
+  openPicker(options: TuiPickerOptions): boolean;
+  // Issue #305: a command's own output (the `/help` list, `/session`,
+  // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
+  // it, exactly like the orchestrator report.
+  appendNotice(lines: ReadonlyArray<string>): void;
+  // Issue #305: `/session` — id, model, thinking level, tokens and cost from
+  // the rows the status bar already carries (one source of truth).
+  sessionReport(): string;
+  // Issue #305: `/new` and `/resume` — clear every session-scoped surface
+  // (transcript, tree, usage, panels, echoes) and take the next session's
+  // identity, without recreating the app.
+  resetSession(options: {
+    readonly sessionId: string;
+    readonly model: string;
+    readonly thinking?: string;
+    readonly usage?: ReadonlyArray<StatusUsageRow>;
+  }): void;
+  // Issue #305: the editor's autocomplete (the registry's `/` commands).
+  setAutocomplete(provider: AutocompleteProvider): void;
   // Issue #334 (review): put a refused draft back in the editor, so a busy
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
@@ -580,9 +627,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // call keeps the three surfaces from drifting apart.
   let modelLabel = seed.model;
   let thinkingLabel = seed.thinking ?? 'off';
+  // Issue #305: `/new` and `/resume` keep the app but change the session it
+  // shows, so the id every lane apply, report cell and the welcome block are
+  // keyed by is state (declared before the first welcome render).
+  let sessionId = seed.sessionId;
   const refreshWelcome = (): void => {
     transcript.setWelcome(
-      welcomeLines({ sessionId: seed.sessionId, model: modelLabel, notice }),
+      welcomeLines({ sessionId, model: modelLabel, notice }),
     );
   };
   refreshWelcome();
@@ -605,12 +656,28 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       : { compactionThreshold: seed.compactionThreshold }),
   };
   const status = new StatusBar(barState);
+  // The live model label the header, welcome block and status bar show; one
+  // path for the boot, a `/model` switch and a session reset (#305).
+  const applyModel = (next: string, thinking?: string): void => {
+    modelLabel = sanitizeLaneText(next);
+    if (thinking !== undefined) thinkingLabel = thinking;
+    status.setState({
+      ...status.getState(),
+      model: modelLabel,
+      thinking: thinkingLabel,
+    });
+    refreshWelcome();
+  };
   const setMode = (next: StatusMode): void => {
     if (next === sessionMode.current) return;
     sessionMode.current = next;
     status.setMode(next);
   };
   const editor = new PromptEditor();
+  // Issue #305: the editor completes the registry's `/`-commands as they are
+  // typed (Pi's editor owns the popup and the completion keys); the submit
+  // path still parses and dispatches.
+  editor.setAutocomplete(new SlashCommandAutocomplete());
   const editorRow = new EditorRow(editor, () => sessionMode.current);
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
@@ -681,6 +748,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // snapshot clears the report (a report is not a session transcript).
   let reportRevision = 0;
   let reportCells: TranscriptEntry[] = [];
+  // Issue #305: a command's own output (`/help`, `/session`, `/undo`) lands
+  // as transcript text through its own lane/revision pair, so a later lane
+  // snapshot replaces it exactly like the orchestrator report.
+  let noticeRevision = 0;
+  let noticeCells: TranscriptEntry[] = [];
   let submitHandler:
     | ((prompt: string) => TuiSubmitOutcome | undefined)
     | undefined;
@@ -755,6 +827,41 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         readonly onCancel?: (() => void) | undefined;
       }
     | undefined;
+  // The palette and the session list reuse the picker seat; `closePicker`
+  // is the one teardown (the model picker's name is kept for its callers).
+  const openPickerOverlay = (options: TuiPickerOptions): boolean => {
+    if (overlayHost === undefined) return false;
+    closeModelPicker();
+    const rows = options.rows;
+    const items: SelectItem[] = rows.map((row) => ({
+      value: row.value,
+      label: row.current === true ? `${row.label} (current)` : row.label,
+      ...(row.description === undefined
+        ? {}
+        : { description: row.description }),
+    }));
+    const list = new SelectList(
+      items,
+      MODEL_PICKER_MAX_ROWS,
+      modelPickerTheme(),
+    );
+    const current = rows.findIndex((row) => row.current === true);
+    if (current >= 0) list.setSelectedIndex(current);
+    list.onSelect = (item: SelectItem): void => {
+      closeModelPicker();
+      options.onSelect(item.value);
+    };
+    list.onCancel = (): void => {
+      closeModelPicker(true);
+    };
+    modelPicker = {
+      list,
+      handle: overlayHost.showOverlay(list, modelPickerOverlayOptions()),
+      onCancel: options.onCancel,
+    };
+    overlayHost.requestRender?.();
+    return true;
+  };
   const closeModelPicker = (notifyCancel = false): void => {
     const open = modelPicker;
     modelPicker = undefined;
@@ -962,6 +1069,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         editor.setText('');
         return { quit: false, consumed: true, cancel: false, steer: text };
       }
+      // Issue #305: Ctrl-P opens the command palette (the registry's rows);
+      // the loop owns the list and the dispatch.
+      if (keyId === 'ctrl+p') {
+        return { quit: false, consumed: true, cancel: false, palette: true };
+      }
       // Issue #328: Alt+M opens the model picker; Alt+T cycles the thinking
       // level. Both are classified here and acted on by the loop.
       if (keyId === 'alt+m') {
@@ -996,7 +1108,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // transcript replaces its cells instead of appending duplicates.
       revision += 1;
       const cells = entriesToCells(entries);
-      transcript.applyLaneSnapshot({ laneId: seed.sessionId }, cells, revision);
+      transcript.applyLaneSnapshot({ laneId: sessionId }, cells, revision);
       // Issue #327: a solo lane snapshot is the session's own transcript, so
       // the orchestrator report stops being it.
       reportCells = [];
@@ -1013,14 +1125,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       status.setRows(rows);
     },
     setModel: (next: string, thinking?: string): void => {
-      modelLabel = sanitizeLaneText(next);
-      if (thinking !== undefined) thinkingLabel = thinking;
-      status.setState({
-        ...status.getState(),
-        model: modelLabel,
-        thinking: thinkingLabel,
-      });
-      refreshWelcome();
+      applyModel(next, thinking);
     },
     setContextLimits: (limits): void => {
       status.setState({
@@ -1038,13 +1143,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       reportCells = [
         ...reportCells,
         {
-          id: `${seed.sessionId}:report:${reportRevision}`,
+          id: `${sessionId}:report:${reportRevision}`,
           kind: 'text',
           markdown: clean.join('\n'),
         },
       ];
       transcript.applyLaneSnapshot(
-        { laneId: `${seed.sessionId}:orchestrator` },
+        { laneId: `${sessionId}:orchestrator` },
         reportCells,
         reportRevision,
       );
@@ -1091,41 +1196,83 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       restoreDraft(prompt);
     },
     openModelPicker: (options: TuiModelPickerOptions): boolean => {
-      if (overlayHost === undefined) return false;
-      closeModelPicker();
       const rows = options.rows;
-      const items: SelectItem[] = rows.map((row) => ({
-        value: `${row.provider}/${row.id}`,
-        label: row.current === true ? `${row.label} (current)` : row.label,
-        ...(row.note === undefined ? {} : { description: row.note }),
-      }));
-      const list = new SelectList(
-        items,
-        MODEL_PICKER_MAX_ROWS,
-        modelPickerTheme(),
-      );
-      // Start on the live model so Enter without a move is a no-op.
-      const current = rows.findIndex((row) => row.current === true);
-      if (current >= 0) list.setSelectedIndex(current);
-      list.onSelect = (item: SelectItem): void => {
-        const picked = rows.find(
-          (row) => `${row.provider}/${row.id}` === item.value,
-        );
-        closeModelPicker();
-        if (picked !== undefined) options.onSelect(picked);
-      };
-      list.onCancel = (): void => {
-        closeModelPicker(true);
-      };
-      modelPicker = {
-        list,
-        handle: overlayHost.showOverlay(list, modelPickerOverlayOptions()),
-        onCancel: options.onCancel,
-      };
-      overlayHost.requestRender?.();
-      return true;
+      return openPickerOverlay({
+        rows: rows.map((row) => ({
+          value: `${row.provider}/${row.id}`,
+          label: row.label,
+          ...(row.note === undefined ? {} : { description: row.note }),
+          ...(row.current === true ? { current: true } : {}),
+        })),
+        onSelect: (value) => {
+          const picked = rows.find(
+            (row) => `${row.provider}/${row.id}` === value,
+          );
+          if (picked !== undefined) options.onSelect(picked);
+        },
+        ...(options.onCancel === undefined
+          ? {}
+          : { onCancel: options.onCancel }),
+      });
     },
+    openPicker: (options: TuiPickerOptions): boolean =>
+      openPickerOverlay(options),
     isModelPickerOpen: (): boolean => modelPicker !== undefined,
+    setAutocomplete: (provider: AutocompleteProvider): void => {
+      editor.setAutocomplete(provider);
+    },
+    appendNotice: (lines: ReadonlyArray<string>): void => {
+      const clean = lines
+        .map((line) => sanitizeLaneText(line))
+        .filter((line) => line !== '');
+      if (clean.length === 0) return;
+      noticeRevision += 1;
+      noticeCells = [
+        ...noticeCells,
+        {
+          id: `${sessionId}:notice:${noticeRevision}`,
+          kind: 'text',
+          markdown: clean.join('\n'),
+        },
+      ];
+      transcript.applyLaneSnapshot(
+        { laneId: `${sessionId}:notice` },
+        noticeCells,
+        noticeRevision,
+      );
+      transcript.rePin();
+    },
+    sessionReport: (): string => {
+      const state = status.getState();
+      const summary = summarizeStatusRows(state.rows);
+      return `session ${sessionId} · ${state.model} · thinking ${state.thinking} · in ${summary.input} out ${summary.output} (cached ${summary.cacheRead}) · ${formatStatusCost(summary.costTotal)}`;
+    },
+    resetSession: (options): void => {
+      sessionId = options.sessionId;
+      revision += 1;
+      transcript.applyLaneSnapshot({ laneId: sessionId }, [], revision);
+      reportCells = [];
+      noticeCells = [];
+      pendingPrompt = undefined;
+      promptCells = 0;
+      promptCellsAtSubmit = 0;
+      transcript.setPendingPrompt(undefined);
+      transcript.setQueuedPrompts([]);
+      tree.reset();
+      mode = 'closed';
+      diffPanel.setChanges([]);
+      journalPanel.setChanges([]);
+      diffPanel.setToolCall(null);
+      editor.setText('');
+      editorRow.setFooter('');
+      applyModel(options.model, options.thinking);
+      status.setState({
+        ...status.getState(),
+        sessionId: options.sessionId,
+      });
+      status.setRows([...(options.usage ?? [])]);
+      refreshWelcome();
+    },
     setPendingEcho: (prompt: string | undefined): void => {
       if (prompt === undefined) {
         pendingPrompt = undefined;

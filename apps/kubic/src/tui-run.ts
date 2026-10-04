@@ -31,6 +31,10 @@ import {
   type RunReconciliation,
 } from '../../../packages/exec/src/journal-reconcile.js';
 import {
+  applyUndo,
+  planUndo,
+} from '../../../packages/exec/src/journal-undo.js';
+import {
   type ApprovalRequest,
   type ApprovalVerdict,
   enableSessionFullAccess,
@@ -95,6 +99,15 @@ import { createApprovalSurface } from '../../../packages/tui/src/approval-surfac
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
+import {
+  findSlashCommand,
+  helpLines,
+  type ParsedSlashCommand,
+  parseSlashCommand,
+  SLASH_COMMAND_NAMES,
+  SLASH_COMMANDS,
+  slashCommandRows,
+} from '../../../packages/tui/src/slash-commands.js';
 import type {
   StatusMode,
   StatusUsageRow,
@@ -147,6 +160,7 @@ import {
 import {
   attachSession,
   createSession,
+  listSessions,
   openSessionStore,
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
@@ -589,6 +603,13 @@ export class TuiCompactionTurn implements TuiTurnDriver {
   }
 }
 
+// Issue #305: one row of the `/resume` picker.
+export interface TuiSessionChoice {
+  readonly id: string;
+  readonly cwd?: string;
+  readonly createdAt?: string;
+}
+
 export interface TuiLaneBoot {
   sessionId: string;
   model: string;
@@ -627,6 +648,12 @@ export interface TuiLaneBoot {
   // Issue #308: warnings to print on stderr before the alt-screen opens
   // (the full-access grant/in-force warning).
   notices?: string[];
+  // Issue #305: `/resume`'s rows — the sessions store this boot belongs to,
+  // newest first. Absent (injected boots) means `/resume` refuses by name.
+  listSessions?: () => Promise<readonly TuiSessionChoice[]>;
+  // Issue #305: the workspace root the journal (and `/undo`) resolves paths
+  // against. Absent means `/undo` refuses by name rather than guessing.
+  cwd?: string;
   // Issue #327: the orchestrator lane this session can switch to with
   // Ctrl-G. The drive is the manager-lane path `kubic orchestrate` runs;
   // worker approval asks reach the TUI overlay through the seat the
@@ -1336,6 +1363,19 @@ export async function bootTuiLane(
         runningModel.id,
       ),
       journal,
+      // Issue #305: `/resume` lists THIS boot's sessions store; `/undo`
+      // resolves journal paths against the same workspace root.
+      listSessions: async () => {
+        const rows = await listSessions(store, context);
+        return rows.map((row) => ({
+          id: row.id,
+          ...(row.meta?.cwd === undefined ? {} : { cwd: row.meta.cwd }),
+          ...(row.meta?.createdAt === undefined
+            ? {}
+            : { createdAt: row.meta.createdAt }),
+        }));
+      },
+      cwd: env.cwd,
       reconcile: () => {
         reconciliation?.sweep();
       },
@@ -2675,12 +2715,17 @@ export async function runTuiCommand(
   // that the feed's catch would swallow on every boot.
   let screen: Screen | undefined;
   let stopped = false;
-  const journalStore = boot.journal;
+  // Issue #305: the feed reads the CURRENT boot's store, so `/new` and
+  // `/resume` never leave a stale reader behind (the feed itself is
+  // session-agnostic and is built once).
   const journalFeed =
-    journalStore === undefined
+    boot.journal === undefined && deps.journalFeedError === undefined
       ? undefined
       : new JournalPanelFeed({
-          read: () => diffEntries(journalStore, {}),
+          read: () => {
+            const store = boot.journal;
+            return store === undefined ? [] : diffEntries(store, {});
+          },
           apply: (rows) => {
             app.setJournalChanges(rows);
             if (!stopped) screen?.update();
@@ -2712,7 +2757,10 @@ export async function runTuiCommand(
         .filter((text): text is string => text !== undefined),
     );
   };
-  const turn =
+  // Issue #305: `/new` and `/resume` replace the lane, so the drivers are
+  // rebuilt (a fresh runner starts with an empty feed and no subscription).
+  let turn: TuiTurnRunner | undefined;
+  const buildTurn = (): TuiTurnRunner | undefined =>
     boot.loop === undefined
       ? undefined
       : new TuiTurnRunner(
@@ -2754,16 +2802,19 @@ export async function runTuiCommand(
           },
           boot.usageRows,
         );
+  turn = buildTurn();
   // Issue #327: the orchestrator turn the toggle switches to. Absent means
   // this boot is solo-only (viewer/fake lanes): the submit path refuses by
   // name instead of falling back into solo silently.
-  const orchestratorTurn =
+  let orchestratorTurn: TuiOrchestratorTurn | undefined;
+  const buildOrchestratorTurn = (): TuiOrchestratorTurn | undefined =>
     boot.orchestrator === undefined
       ? undefined
       : new TuiOrchestratorTurn(boot.orchestrator, (line) => {
           app.appendReport([line]);
           if (!stopped) screen?.update();
         });
+  orchestratorTurn = buildOrchestratorTurn();
   // The driver of the turn in flight, whichever lane owns it (#327).
   let activeTurn: TuiTurnDriver | undefined;
   // Issue #334 (review): the busy latch follows PLACED work, and the lane
@@ -2774,6 +2825,8 @@ export async function runTuiCommand(
   // router is registered first).
   let pickModelForLoop: (() => void) | undefined;
   let cycleThinkingForLoop: (() => void) | undefined;
+  // Issue #305: Ctrl-P's palette, defined with the submit path below.
+  let paletteForLoop: (() => void) | undefined;
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -3039,6 +3092,10 @@ export async function runTuiCommand(
         cycleThinkingForLoop?.();
         return { consume: true };
       }
+      if (routed.palette === true) {
+        paletteForLoop?.();
+        return { consume: true };
+      }
       if (routed.steer !== undefined) {
         const steered = routed.steer;
         const outcome = submitForLoop?.(steered, true);
@@ -3139,6 +3196,216 @@ export async function runTuiCommand(
         }
         switchModelTo(command.selection);
       };
+      // Issue #305: `/new` and `/resume` swap the session under the running
+      // TUI. The next lane boots FIRST (a failed boot keeps the session the
+      // operator was in), the previous one closes, and every lane-bound
+      // object and session-scoped surface is rebuilt — the alt-screen, the
+      // terminal and the app itself are never torn down.
+      const rebindSession = async (nextSessionId?: string): Promise<void> => {
+        const previous = boot;
+        const next = await deps.bootLane(nextSessionId, surface.seat, flags);
+        await previous.close?.();
+        boot = next;
+        activeTurn = undefined;
+        inFlightTurns = 0;
+        droppedOnCancel = 0;
+        queuedInbox = [];
+        queuedText.clear();
+        shellRanThisTurn = false;
+        turn = buildTurn();
+        orchestratorTurn = buildOrchestratorTurn();
+        app.resetSession({
+          sessionId: next.sessionId,
+          model: next.model,
+          usage: next.usageRows ?? [],
+        });
+        syncPosture();
+        for (const notice of next.notices ?? []) {
+          (deps.err ?? deps.out)(`warning: ${notice}`);
+        }
+        app.setEditorFooter(
+          [next.pendingNotice, next.modelNotice]
+            .filter((line): line is string => line !== undefined)
+            .join(' · ') || noticeFor(app.mode()),
+        );
+        journalFeed?.now();
+        await turn?.refreshTranscript();
+        if (!stopped) screen?.render();
+      };
+
+      // Issue #305: the commands this TUI answers itself. Every one of them
+      // reports on the footer (and, when there is something to read, in the
+      // transcript) and NONE of them reaches the model.
+      const runLocalCommand = (
+        command: ParsedSlashCommand,
+      ): TuiSubmitOutcome => {
+        switch (command.name) {
+          case 'help': {
+            const wanted =
+              command.argument === ''
+                ? undefined
+                : findSlashCommand(command.argument.replace(/^\//, ''));
+            if (command.argument !== '' && wanted === undefined) {
+              app.setEditorFooter(
+                `help: unknown command '${command.argument}' — /help lists the commands`,
+              );
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            const lines =
+              wanted === undefined
+                ? helpLines()
+                : [
+                    `${wanted.usage} — ${wanted.summary}${
+                      wanted.keys === undefined ? '' : ` (${wanted.keys})`
+                    }`,
+                  ];
+            app.appendNotice(lines);
+            app.setEditorFooter(
+              wanted === undefined
+                ? `help: ${SLASH_COMMANDS.length} commands — the list is in the transcript`
+                : `help: ${wanted.usage}`,
+            );
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
+          case 'session': {
+            const report = app.sessionReport();
+            app.appendNotice([report]);
+            app.setEditorFooter(report);
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
+          case 'diff': {
+            app.openPanel('diff');
+            app.setEditorFooter('diff: panel open (Ctrl-O closes)');
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
+          case 'undo': {
+            const store = boot.journal;
+            const root = boot.cwd;
+            if (store === undefined || root === undefined) {
+              app.setEditorFooter('undo: this session has no journal to undo');
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            const plan = planUndo(store, {}, root);
+            if (plan.steps.length === 0) {
+              app.setEditorFooter('undo: nothing to undo');
+              if (!stopped) screen?.render();
+              return 'accepted';
+            }
+            const result = applyUndo(store, plan, root, {});
+            const summary = `undo: ${result.restored.length} restored, ${result.skipped.length} skipped`;
+            app.appendNotice([
+              summary,
+              ...result.warnings.map((warning) => `warn: ${warning}`),
+            ]);
+            app.setEditorFooter(summary);
+            journalFeed?.now();
+            if (!stopped) screen?.render();
+            return 'accepted';
+          }
+          case 'quit': {
+            shutdown();
+            return 'accepted';
+          }
+          case 'new': {
+            app.setEditorFooter('session: booting a fresh session…');
+            if (!stopped) screen?.render();
+            void rebindSession(undefined)
+              .then(() => {
+                if (stopped) return;
+                app.setEditorFooter(`session: ${boot.sessionId} (new)`);
+                screen?.render();
+              })
+              .catch((error: unknown) => {
+                if (stopped) return;
+                app.setEditorFooter(
+                  `session: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                screen?.render();
+              });
+            return 'accepted';
+          }
+          case 'resume': {
+            const list = boot.listSessions;
+            if (list === undefined) {
+              app.setEditorFooter(
+                'resume: this session cannot list other sessions',
+              );
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            void list()
+              .then((rows) => {
+                if (stopped) return;
+                const others = rows.filter((row) => row.id !== boot.sessionId);
+                if (others.length === 0) {
+                  app.setEditorFooter('resume: no other sessions');
+                  screen?.render();
+                  return;
+                }
+                const opened = app.openPicker({
+                  rows: others.map((row) => ({
+                    value: row.id,
+                    label: row.id,
+                    description: [row.cwd, row.createdAt]
+                      .filter((part): part is string => part !== undefined)
+                      .join(' · '),
+                  })),
+                  onSelect: (id) => {
+                    app.setEditorFooter(`session: attaching ${id}…`);
+                    screen?.render();
+                    void rebindSession(id)
+                      .then(() => {
+                        if (stopped) return;
+                        app.setEditorFooter(
+                          `session: ${boot.sessionId} (resumed)`,
+                        );
+                        screen?.render();
+                      })
+                      .catch((error: unknown) => {
+                        if (stopped) return;
+                        app.setEditorFooter(
+                          `session: ${error instanceof Error ? error.message : String(error)}`,
+                        );
+                        screen?.render();
+                      });
+                  },
+                  onCancel: () => {
+                    if (stopped) return;
+                    app.setEditorFooter('resume: cancelled');
+                    screen?.render();
+                  },
+                });
+                if (!opened) {
+                  app.setEditorFooter(
+                    'resume needs a wider terminal — use kubic sessions list',
+                  );
+                }
+                screen?.render();
+              })
+              .catch((error: unknown) => {
+                if (stopped) return;
+                app.setEditorFooter(
+                  `resume: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                screen?.render();
+              });
+            return 'accepted';
+          }
+          default: {
+            app.setEditorFooter(
+              `'/${command.name}': not implemented in this session`,
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+        }
+      };
+
       // Issue #227/#328: one switch path for `/model <id>` and the picker's
       // Enter — the same footer wording and the same refusal text.
       const switchModelTo = (selection: ModelSelection): void => {
@@ -3275,7 +3542,10 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return;
         }
-        void turn
+        // Captured: the callbacks below run after a `/new` may have replaced
+        // the runner, and they must report the one this picker came from.
+        const runner = turn;
+        void runner
           .listModels()
           .then((rows) => {
             if (stopped) return;
@@ -3292,7 +3562,7 @@ export async function runTuiCommand(
               onCancel: () => {
                 if (stopped) return;
                 app.setEditorFooter(
-                  `model: ${turn.modelRef} (picker cancelled)`,
+                  `model: ${runner.modelRef} (picker cancelled)`,
                 );
                 screen?.render();
               },
@@ -3314,6 +3584,29 @@ export async function runTuiCommand(
       };
       pickModelForLoop = openModelPicker;
       cycleThinkingForLoop = cycleThinking;
+
+      // Issue #305: Ctrl-P's palette — the registry's rows in the same
+      // overlay the model picker uses; choosing a row submits it exactly as
+      // if it had been typed (the dispatcher above owns the rest).
+      const openPalette = (): void => {
+        if (stopped) return;
+        const opened = app.openPicker({
+          rows: slashCommandRows(),
+          onSelect: (value) => {
+            submitForLoop?.(value, false);
+          },
+          onCancel: () => {
+            if (stopped) return;
+            app.setEditorFooter('palette: cancelled');
+            screen?.render();
+          },
+        });
+        if (!opened) {
+          app.setEditorFooter('palette needs a wider terminal — type /help');
+        }
+        if (!stopped) screen?.render();
+      };
+      paletteForLoop = openPalette;
 
       // Issue #334: one accepted prompt → one turn on its driver. A busy
       // Enter starts a SECOND run while the first is still in flight (the
@@ -3423,6 +3716,20 @@ export async function runTuiCommand(
         // prompt. It runs through the same busy/cancel wrapper as a turn, so
         // the spinner shows and Ctrl-C aborts it; the command text itself
         // never reaches the model or the transcript.
+        // Issue #305: a slash command is never a prompt. An unknown one is
+        // refused locally — it must not reach the model — and the registry's
+        // own commands dispatch below.
+        const slashCommand = parseSlashCommand(prompt);
+        if (
+          slashCommand !== undefined &&
+          !SLASH_COMMAND_NAMES.has(slashCommand.name)
+        ) {
+          app.setEditorFooter(
+            `unknown command '/${slashCommand.name}' — /help lists the commands`,
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
         const compactCommand = parseTuiCompactCommand(prompt);
         if (compactCommand !== undefined) {
           const lane = boot.loop;
@@ -3493,6 +3800,10 @@ export async function runTuiCommand(
           );
           if (!stopped) screen?.render();
           return 'refused';
+        }
+        // Issue #305: the remaining registry commands answer locally.
+        if (slashCommand !== undefined) {
+          return runLocalCommand(slashCommand);
         }
         if (busy) {
           // Issue #334: the solo lane queues the prompt in the

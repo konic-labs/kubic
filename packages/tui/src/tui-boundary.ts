@@ -1,7 +1,8 @@
 // TUI presentation seam (issue #22).
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-tui presentation components (VStack layout,
-//     Text/ScrollView/Editor slots, TuiAltScreen, Terminal contract)
+//     Text/ScrollView/Editor slots, TuiAltScreen, Terminal contract, the
+//     editor's autocomplete contract of issue #305)
 //   used by: packages/tui/src/* (all layout and views)
 //   why Pi has no alternative: the terminal renderer, layout engine, and
 //     input handling ARE Pi's presentation layer (§16); Kubic owns only
@@ -9,6 +10,9 @@
 //   review: issue #22
 
 export type {
+  AutocompleteItem,
+  AutocompleteProvider,
+  AutocompleteSuggestions,
   Component,
   EditorTheme,
   Focusable,

@@ -5,9 +5,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { installedPolicyPosture } from './approvals.js';
 import type { DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels, providerProbesOf } from './models-cli.js';
+import {
+  enterpriseDoctorChecks,
+  resolveEffectivePolicy,
+} from './policy/enterprise.js';
 
 const made: string[] = [];
 
@@ -32,6 +37,124 @@ function cleanDeps(out: (line: string) => void): DoctorDeps {
     loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
   };
 }
+
+describe('policy:detection-only and enterprise checks (issue #289)', () => {
+  it('the default install names network=none as detection-only, exit stays 0', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        installedPolicy: () =>
+          installedPolicyPosture({ workspace: process.cwd() }),
+      },
+    );
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const check = report.checks.find(
+      (entry) => entry.id === 'policy:detection-only',
+    );
+    expect(check?.status).toBe('warn');
+    expect(check?.reason).toBe('detection-only');
+    expect(check?.detail).toContain('network=none');
+    expect(check?.detail).toContain('lexical');
+    expect(check?.detail).toContain('credentials=none');
+  });
+
+  it('emits no detection-only check without the installed-policy probe', async () => {
+    const lines: string[] = [];
+    await runDoctorCommand(
+      { json: true },
+      cleanDeps((line) => lines.push(line)),
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string }>;
+    };
+    expect(report.checks.map((check) => check.id)).not.toContain(
+      'policy:detection-only',
+    );
+  });
+
+  it('rides an unenforceable enterprise policy into the matrix and --json', async () => {
+    const policy = resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
+        policy: {
+          network: { mode: 'allowlist' },
+          audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
+        },
+      },
+    ]).policy;
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        installedPolicy: () =>
+          installedPolicyPosture({ workspace: process.cwd() }),
+        enterpriseChecks: () =>
+          enterpriseDoctorChecks(policy, { syslogAvailable: true }),
+      },
+    );
+    // The unenforceable allowlist (no domains) is a fail, so the exit flips.
+    expect(code).toBe(1);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const network = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise-network',
+    );
+    expect(network?.status).toBe('fail');
+    expect(network?.reason).toBe('policy-mismatch');
+    expect(network?.detail).toContain('no domains');
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:enterprise-enforceability',
+    );
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:detection-only',
+    );
+  });
+
+  it('a throwing enterprise probe is a named fail, never a crash', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        enterpriseChecks: () => {
+          throw new Error('policy disk gone');
+        },
+      },
+    );
+    expect(code).toBe(1);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const check = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise',
+    );
+    expect(check?.status).toBe('fail');
+    expect(check?.reason).toBe('policy-mismatch');
+    expect(check?.detail).toContain('policy disk gone');
+  });
+});
 
 describe('runDoctorCommand', () => {
   it('clean run passes with exit 0', async () => {

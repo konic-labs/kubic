@@ -151,6 +151,106 @@ describe('kubic audit from a subdirectory', () => {
   });
 });
 
+describe('kubic doctor: enterprise policy and detection-only (issue #289)', () => {
+  function providerFixture(root: string, port: number): void {
+    writeFileSync(
+      join(root, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'gw',
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            api: 'openai-completions',
+            apiKeyEnv: 'GW_API_KEY',
+            models: [{ id: 'm1' }],
+          },
+        ],
+      }),
+    );
+  }
+
+  it('the default install names the lexical classes and stays exit 0', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-default-'));
+    roots.push(root);
+    providerFixture(root, 9102);
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+        KUBIC_TRUST_PROJECT: '1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const detection = report.checks.find(
+      (entry) => entry.id === 'policy:detection-only',
+    );
+    expect(detection?.status).toBe('warn');
+    expect(detection?.detail).toContain('network=none');
+    // No `[policy]` section: the enterprise checks are not wired at all.
+    expect(report.checks.map((entry) => entry.id)).not.toContain(
+      'policy:enterprise-network',
+    );
+    expect(code).toBe(0);
+  });
+
+  it('a configured [policy] runs the enterprise checks in --json', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-policy-'));
+    roots.push(root);
+    providerFixture(root, 9103);
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[policy]\nnetwork_policy = "proxy"\n',
+    );
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        KUBIC_TRUST_PROJECT: '1',
+        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const network = report.checks.find(
+      (entry) => entry.id === 'policy:enterprise-network',
+    );
+    expect(network?.status).toBe('fail');
+    expect(network?.reason).toBe('policy-mismatch');
+    expect(network?.detail).toContain('no domains');
+    expect(report.checks.map((entry) => entry.id)).toContain(
+      'policy:enterprise-enforceability',
+    );
+    // The unenforceable value flips the exit (fail, not warn).
+    expect(code).toBe(1);
+  });
+});
+
 describe('kubic doctor: worker credential posture (issue #200)', () => {
   it('lists the provider each role gets credentials for, names only', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-doctor-creds-'));

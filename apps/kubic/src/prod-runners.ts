@@ -84,6 +84,7 @@ import {
   auditLedgerDirFor,
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
+import { enterpriseDoctorChecks } from '../../../packages/host/src/policy/enterprise.js';
 import {
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
@@ -444,6 +445,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
     },
     doctor: async (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
+      // §58 (issue #289): the enterprise checks run only when a `[policy]`
+      // section is actually configured — the resolved policy is always
+      // present (empty without one), and running the checks over an empty
+      // policy would fail the default matrix for a config that never asked
+      // for enterprise enforcement. `sources` carries one leaf per config
+      // key, so a `policy.` prefix IS "a [policy] section exists".
+      const policyConfigured = Object.keys(
+        cliConfig.runtime?.sources ?? {},
+      ).some((leaf) => leaf.startsWith('policy.'));
       const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
       // Default probes are faux-only: providers are listed (never dialed),
       // deps check the live node runtime, policy falls back to host
@@ -583,6 +593,22 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             workspace: process.cwd(),
             ...installedPolicyDeps(cliConfig),
           }),
+        // §58 enterprise policy (issue #289): the SAME effective resolution
+        // `kubic policy` reports, checked for enforceability. `syslogAvailable:
+        // false` is the honest value today: `[[audit]]` sinks are parsed and
+        // validated, but sink construction is a named follow-up
+        // (docs/cli/configuration.md), so a configured syslog sink cannot be
+        // written — the check fails closed instead of claiming an audit trail
+        // that does not exist. The probe is wired only for a configured
+        // `[policy]`, so the default matrix is unchanged.
+        ...(enterprisePolicy === undefined || !policyConfigured
+          ? {}
+          : {
+              enterpriseChecks: () =>
+                enterpriseDoctorChecks(enterprisePolicy, {
+                  syslogAvailable: false,
+                }),
+            }),
         // First-party extensions (issues #80, #93): doctor reports the SAME
         // startup object the lanes boot with — the load below is the one
         // shared loader (packages/extensions/src/startup.ts), projected to

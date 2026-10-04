@@ -6,7 +6,11 @@
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
-import { describeUnsupported } from '../../agents/src/policy.js';
+import {
+  describeUnsupported,
+  effectiveCredentialLevel,
+  effectiveNetworkLevel,
+} from '../../agents/src/policy.js';
 // License identity (issue #59; §75.1): constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -51,6 +55,7 @@ export type DoctorReason =
   | 'extension-posture'
   | 'full-access'
   | 'unsupported-level'
+  | 'detection-only'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -107,6 +112,12 @@ export interface DoctorDeps extends CliIo {
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
+  // §58 enterprise policy (issue #289): the checks `enterpriseDoctorChecks`
+  // derives from the resolved `[policy]` section, built by the composition
+  // root (host never imports the app). Absent — including when no `[policy]`
+  // is configured at all — means no enterprise checks and an unchanged
+  // default matrix. A throwing probe becomes one named failing check.
+  enterpriseChecks?: () => DoctorCheck[];
   // Repo-level session overlap (issue #118; §42.5): the local session
   // store's view of sessions recorded against one workspace — two or more
   // reports a warn note (concurrent different-session runs are legal; the
@@ -122,11 +133,11 @@ export interface InstalledPolicyPosture {
   source: 'config' | 'default';
   route: 'ask-user' | 'deny';
   classes: {
-    filesystem: string;
-    shell: boolean | string;
-    network: string;
-    git: boolean | string;
-    credentials: string;
+    filesystem: 'none' | 'read' | 'workspace-write' | 'full';
+    shell: false | 'read-only-allowlist' | true;
+    network: 'none' | 'allowlist' | 'full';
+    git: false | 'workspace' | 'full';
+    credentials: 'none' | 'allowlist';
   };
   allowlist: string[];
   interceptors: string[];
@@ -239,6 +250,42 @@ function installedPolicyCheck(
           ? '; FULL ACCESS recorded for this session — every guard stands down for challenged calls'
           : ''
       }${unsupportedTail}`,
+  };
+}
+
+// §58/§59.1 (issue #289): an installed class whose restriction is LEXICAL
+// DETECTION, not enforcement. `policy:installed` prints the classes as facts;
+// this check names the ones a run cannot actually hold, so the line is never
+// read as a sandbox. Warn only — it discloses a limit, it does not flip the
+// exit (the same contract as the static §59.1 notices). Omitted entirely when
+// every installed class is structurally enforced (or unrestricted), so a
+// matrix that has nothing to disclose gains no line.
+function detectionOnlyCheck(
+  posture: InstalledPolicyPosture,
+): DoctorCheck | undefined {
+  const lexical: string[] = [];
+  if (effectiveNetworkLevel(posture.classes.network) === 'none') {
+    lexical.push(
+      'network=none is a lexical bash command detector (approvals.ts isNetworkCommand) — a script the agent writes and runs can reach the network',
+    );
+  }
+  if (posture.classes.filesystem !== 'none') {
+    lexical.push(
+      `filesystem=${posture.classes.filesystem} is lexical path confinement (confinePath) — symlinks are not resolved and the shell can still read anything the command does not name`,
+    );
+  }
+  if (effectiveCredentialLevel(posture.classes.credentials) === 'none') {
+    lexical.push(
+      'credentials=none is a lexical credential-path detector (approvals-credentials.ts) — only the listed paths are challenged',
+    );
+  }
+  if (lexical.length === 0) return undefined;
+  return {
+    id: 'policy:detection-only',
+    label: 'policy detection only',
+    status: 'warn',
+    reason: 'detection-only',
+    detail: `detection only (not enforcement): ${lexical.join('; ')}`,
   };
 }
 
@@ -506,7 +553,12 @@ export function collectDoctorChecks(
   // fail the matrix with policy-mismatch, never pass quietly.
   if (deps.installedPolicy !== undefined) {
     try {
-      checks.push(installedPolicyCheck(deps.installedPolicy(), configured));
+      const posture = deps.installedPolicy();
+      checks.push(installedPolicyCheck(posture, configured));
+      // Issue #289: the same posture names its lexical classes, so the
+      // installed line is never read as enforcement.
+      const detection = detectionOnlyCheck(posture);
+      if (detection !== undefined) checks.push(detection);
     } catch (error) {
       checks.push({
         id: 'policy:installed',
@@ -544,6 +596,25 @@ export function collectDoctorChecks(
       checks.push({
         id: 'role:documents',
         label: 'role documents',
+        status: 'fail',
+        reason: 'policy-mismatch',
+        detail: probeMessage(error),
+      });
+    }
+  }
+  // §58 enterprise policy (issue #289): opt-in via the injected probe — the
+  // composition root builds it from the SAME effective `[policy]` resolution
+  // `kubic policy` reports (enterpriseDoctorChecks), and only when a
+  // `[policy]` section is actually configured. Absent means no enterprise
+  // checks, so the default matrix is unchanged. A throwing probe becomes one
+  // named failing check, never a crash.
+  if (deps.enterpriseChecks !== undefined) {
+    try {
+      checks.push(...deps.enterpriseChecks());
+    } catch (error) {
+      checks.push({
+        id: 'policy:enterprise',
+        label: 'policy enterprise',
         status: 'fail',
         reason: 'policy-mismatch',
         detail: probeMessage(error),

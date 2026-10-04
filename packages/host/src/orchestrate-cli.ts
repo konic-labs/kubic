@@ -286,6 +286,11 @@ export interface OrchestratorRunState {
   // of re-deriving (or dropping) it. A state written before #208 has none,
   // and a resume may then supply one.
   budget?: ParsedBudgetSpec;
+  // The worker-failure policy this run started with (issue #169 review):
+  // persisted so `--on-failure continue` survives a kill + `--resume`
+  // instead of silently reverting to all-or-nothing. A state written before
+  // the policy existed has none, and `stop` is the default it implies.
+  onFailure?: 'stop' | 'continue';
 }
 
 // Stored resume state is untrusted JSON (a torn write, a hand edit, or
@@ -330,6 +335,13 @@ export function parseOrchestratorRunState(
     }
   }
   if (typeof value.stopped !== 'boolean') return undefined;
+  if (
+    value.onFailure !== undefined &&
+    value.onFailure !== 'stop' &&
+    value.onFailure !== 'continue'
+  ) {
+    return undefined;
+  }
   if (!Array.isArray(value.records)) return undefined;
   for (const record of value.records) {
     if (typeof record !== 'object' || record === null) return undefined;
@@ -935,9 +947,9 @@ interface ParsedArgs {
   // This run's admission override (issue #206): absent means the scheduler's
   // own resolution (explicit limits cap > configured maxWorkers > 4) stands.
   concurrency?: number;
-  // This run's worker-failure policy (issue #169). `stop` is the shipped
-  // default; the flag only ever opts INTO continuing.
-  onFailure: 'stop' | 'continue';
+  // This run's worker-failure policy (issue #169), when the flag was given.
+  // Absent means the stored policy (on --resume) or the shipped `stop`.
+  onFailure?: 'stop' | 'continue';
 }
 
 // --budget maxToolCalls=10                                  (every worker)
@@ -1155,7 +1167,9 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
     ...(options.concurrency === undefined
       ? {}
       : { concurrency: options.concurrency }),
-    onFailure: options.onFailure ?? 'stop',
+    ...(options.onFailure === undefined
+      ? {}
+      : { onFailure: options.onFailure }),
   };
 }
 
@@ -1474,6 +1488,15 @@ export async function runOrchestrateCommand(
   // one supplied on resume.
   if (effectiveBudget !== undefined && state.budget === undefined) {
     state = { ...state, budget: effectiveBudget };
+  }
+  // The worker-failure policy travels with the state too (issue #169
+  // review): a fresh run adopts the flag (or `stop`), and `--resume`
+  // re-applies the stored policy — an explicit flag still wins, so a user can
+  // opt out of `continue` on the retry.
+  const effectiveOnFailure: 'stop' | 'continue' =
+    parsed.onFailure ?? state.onFailure ?? 'stop';
+  if (state.onFailure !== effectiveOnFailure) {
+    state = { ...state, onFailure: effectiveOnFailure };
   }
   // No approvals layer means no gate to enforce the spec. Refused, never
   // silently dropped — the exact false sense of cost control issue #208
@@ -2213,7 +2236,7 @@ export async function runOrchestrateCommand(
     outcome: WorkerFailureOutcome,
   ): 'stop' | 'continue' => {
     if (
-      parsed.onFailure === 'continue' &&
+      effectiveOnFailure === 'continue' &&
       outcome.exitCode !== RUN_EXIT_APPROVAL_DENIED
     ) {
       partialFailures.set(agentId, outcome);

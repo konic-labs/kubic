@@ -14,6 +14,7 @@ import type {
 } from './orchestrate-cli.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
+import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 
 interface FakeWorld {
   deps: OrchestrateCommandDeps;
@@ -73,7 +74,9 @@ interface EnvelopeWorker {
 }
 
 /** The three-worker run the acceptance criteria describe: #2 crashes. */
-function crashingWorld(): FakeWorld {
+function crashingWorld(
+  overrides: Partial<OrchestrateCommandDeps> = {},
+): FakeWorld {
   return makeWorld({
     runWorker: (agentId: string) => {
       if (agentId === 'w2') {
@@ -81,6 +84,7 @@ function crashingWorld(): FakeWorld {
       }
       return hunksFor(agentId);
     },
+    ...overrides,
   });
 }
 
@@ -248,5 +252,81 @@ describe('orchestrate --on-failure continue (issue #169, §9.2/§13)', () => {
     expect(world.merged).toEqual(['w1', 'w3']);
     const saved = world.saved[world.saved.length - 1] as OrchestratorRunState;
     expect(saved.pending).toEqual(['w2']);
+  });
+});
+
+describe('orchestrate --on-failure policy and unwakeable queues (issue #169 review)', () => {
+  it('re-applies the stored policy on --resume; an explicit flag still wins', async () => {
+    const first = crashingWorld();
+    expect(
+      await runOrchestrateCommand(
+        {
+          prompt: 'do it',
+          agents: ['w1', 'w2', 'w3'],
+          session: 'sess-1',
+          yes: true,
+          onFailure: 'continue',
+        },
+        first.deps,
+      ),
+    ).toBe(7);
+    const stored = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(stored.onFailure).toBe('continue');
+    expect(stored.pending).toEqual(['w2']);
+
+    // Resume WITHOUT the flag: the stored policy is re-applied, so the retried
+    // worker's second crash is a partial terminus (7), not all-or-nothing (1).
+    const resumed = crashingWorld({ loadState: () => structuredClone(stored) });
+    expect(
+      await runOrchestrateCommand(
+        { resume: true, session: 'sess-1', yes: true },
+        resumed.deps,
+      ),
+    ).toBe(7);
+
+    // An explicit `stop` on the retry wins over the stored policy.
+    const stopped = crashingWorld({ loadState: () => structuredClone(stored) });
+    expect(
+      await runOrchestrateCommand(
+        { resume: true, session: 'sess-1', yes: true, onFailure: 'stop' },
+        stopped.deps,
+      ),
+    ).toBe(1);
+  });
+
+  it('does not hang when a queued worker can never be admitted', async () => {
+    // The head is blocked by a provider rate window no release can free, so
+    // the run must refuse it and finish: `continue` used to re-find the same
+    // stuck agent forever (the guard was not idempotent).
+    const scheduler = new ParallelScheduler({
+      providerCaps: { prov: { maxPerWindow: 1, windowMs: 60_000 } },
+    });
+    const world = makeWorld({
+      scheduler,
+      loadWorkerRoles: (agents) => ({
+        assignments: agents.map((agentId) => ({
+          agentId,
+          role: 'worker',
+          promptText: '',
+          tools: [],
+          modelRef: 'prov/m1',
+        })),
+        refused: [],
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a1', 'a2'],
+        session: 'sess-1',
+        yes: true,
+        onFailure: 'continue',
+      },
+      world.deps,
+    );
+    expect(code).toBe(7);
+    expect(world.merged).toEqual(['a1']);
+    const saved = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(saved.pending).toEqual(['a2']);
   });
 });

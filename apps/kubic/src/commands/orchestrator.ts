@@ -12,7 +12,7 @@ import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
 import {
   BUDGET_DIMENSIONS,
   type ParsedBudgetSpec,
-  parseAgentList,
+  parseAgentBindings,
   parseBudgetSpec,
 } from '../../../../packages/host/src/orchestrate-cli.js';
 import type { CleanOptions } from '../../../../packages/host/src/orchestrator/worktree/clean.js';
@@ -30,13 +30,11 @@ function sessionId(raw: string): string {
 }
 
 function agentList(raw: string): string[] {
-  const agents = parseAgentList(raw);
-  if (agents === undefined) {
-    throw new InvalidArgumentError(
-      'Use unique comma-separated worker ids of [A-Za-z0-9_-].',
-    );
+  const parsed = parseAgentBindings(raw);
+  if (!parsed.ok) {
+    throw new InvalidArgumentError(parsed.reason);
   }
-  return agents;
+  return parsed.entries;
 }
 
 function budgetSpec(raw: string): ParsedBudgetSpec {
@@ -70,11 +68,15 @@ function failureMode(raw: string): 'stop' | 'continue' {
 const ORCHESTRATE_EXAMPLES = `
 Examples:
   kubic orchestrate -p "add input validation" --agents api,ui
+  kubic orchestrate -p "add input validation" --agents api:implementer,ui:reviewer
   kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
   kubic orchestrate -p "refactor" --concurrency 4 --agents api,ui,docs,cli
   kubic orchestrate -p "migrate the modules" --agents a,b,c --on-failure continue
   kubic orchestrate --resume --session orch-1790000000000
   kubic orchestrate -p "refactor" --json
+
+Each --agents entry is <id>[:<role>[:<provider/id>]], where <role> is one
+of planner, implementer, tester, debugger, reviewer (default: implementer).
 
 Needs a git repository (it never falls back to solo). Workers run
 concurrently up to --concurrency (default [orchestrator].maxWorkers, else
@@ -109,7 +111,7 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option(
       '--agents <ids>',
-      'comma-separated worker ids (default: worker-1,worker-2)',
+      'comma-separated workers as <id>[:<role>[:<provider/id>]]; roles: planner|implementer|tester|debugger|reviewer (default: worker-1,worker-2 as implementers)',
       agentList,
     )
     .option(

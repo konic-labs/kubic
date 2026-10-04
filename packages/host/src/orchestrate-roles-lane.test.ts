@@ -140,6 +140,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       bridge: createNodeFileBridge(cwd),
       cwd,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
     });
     expect(plan.assignments[0]?.role).toBe('planner');
     const composed = composeWorkerPrompt(
@@ -234,6 +235,7 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       bridge: createNodeFileBridge(cwd),
       cwd,
       agents: ['alpha'],
+      roles: { alpha: 'planner' },
       layers: [
         { layer: 'project', roles: { planner: { model: 'acme/planner-1' } } },
       ],

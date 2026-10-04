@@ -91,6 +91,7 @@ import {
 } from './orchestrator/parallel/visibility.js';
 import { validateAgentId } from './orchestrator/worktree/naming.js';
 import type { WorktreeStatus } from './orchestrator/worktree/status.js';
+import { BUILTIN_ROLE_NAMES, isBuiltinRole } from './roles/roles-data.js';
 import type { WorkerRolesPlan } from './roles/worker-roles.js';
 import {
   applyRolesToPlan,
@@ -136,11 +137,17 @@ export function workerApprovalBoundMs(managerBoundMs: number): number {
 // (apps/kubic/src/commands/orchestrator.ts) hands them over: argv syntax,
 // `--help`, unknown flags, and malformed `--agents` / `--budget` /
 // `--session` values are refused there (exit 2) before this runs — the
-// value parsers below (`parseAgentList`, `parseBudgetSpec`) are the ones
+// value parsers below (`parseAgentBindings`, `parseBudgetSpec`) are the ones
 // it calls. The cross-option rules (`-p` unless `--resume`, `--resume`
 // needs `--session`) stay here, with the run.
 export interface OrchestrateCliOptions {
   readonly prompt?: string;
+  /**
+   * The `--agents` entries as typed (issue #178): each is
+   * `<id>[:<role>[:<provider/id>]]`. `parseAgentBindings` turns them into
+   * the worker ids and the explicit role/model binding, and validates them
+   * (a malformed entry or an unknown role is a usage error, exit 2).
+   */
   readonly agents?: readonly string[];
   readonly session?: string;
   readonly resume?: boolean;
@@ -160,6 +167,128 @@ export interface OrchestrateCliOptions {
   // failed worker named. Always `stop` for an approval terminus — a denial is
   // the user's decision for the whole run, never a worker-local hiccup.
   readonly onFailure?: 'stop' | 'continue';
+}
+
+/**
+ * Explicit per-agent role/model binding (issue #178, §9.2/§38.1): the role
+ * each worker runs (one of the five §12 presets) and an optional
+ * `provider/id` pin, keyed by agent id. Empty records mean no binding was
+ * given, so the loader's own default applies.
+ */
+export interface WorkerRoleBinding {
+  roles: Record<string, string>;
+  models: Record<string, string>;
+}
+
+export type AgentBindingsParse =
+  | {
+      ok: true;
+      /** The entries as typed, suffixes intact (the option value shape). */
+      entries: string[];
+      /** The worker ids, in order — one worktree per id. */
+      ids: string[];
+      binding: WorkerRoleBinding;
+    }
+  | { ok: false; reason: string };
+
+// The `provider/id` shape an explicit per-agent model pin must carry.
+function isModelRef(raw: string): boolean {
+  const slash = raw.indexOf('/');
+  return slash > 0 && slash < raw.length - 1;
+}
+
+// `--agents <id>[:<role>[:<provider/id>]]` (issue #178): comma-separated
+// workers, each optionally bound to one of the five §12 roles and to an
+// explicit model pin. Parsed and validated BEFORE anything spawns — an
+// unknown role is a usage error (exit 2), never a mid-run refusal. Accepts
+// the raw option string or an already-split entry list (the run's own
+// programmatic callers), so both share one rule set.
+export function parseAgentBindings(
+  raw: string | readonly string[],
+): AgentBindingsParse {
+  const entries = (typeof raw === 'string' ? raw.split(',') : [...raw])
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (entries.length === 0) {
+    return { ok: false, reason: 'Name at least one worker id.' };
+  }
+  const ids: string[] = [];
+  const roles: Record<string, string> = {};
+  const models: Record<string, string> = {};
+  for (const entry of entries) {
+    const parts = entry.split(':').map((part) => part.trim());
+    if (parts.length > 3 || parts.some((part) => part === '')) {
+      return {
+        ok: false,
+        reason: `Use <id>[:<role>[:<provider/id>]] (got ${JSON.stringify(entry)}).`,
+      };
+    }
+    const [id = '', role, model] = parts;
+    const invalid = validateAgentId(id);
+    if (invalid.length > 0) {
+      return {
+        ok: false,
+        reason: `Worker id ${JSON.stringify(id)}: ${invalid.join('; ')}.`,
+      };
+    }
+    if (ids.includes(id)) {
+      return {
+        ok: false,
+        reason: `Worker id ${JSON.stringify(id)} is named twice (one worktree per writer).`,
+      };
+    }
+    if (role !== undefined && !isBuiltinRole(role)) {
+      return {
+        ok: false,
+        reason: `Unknown role ${JSON.stringify(role)} (one of ${BUILTIN_ROLE_NAMES.join(', ')}).`,
+      };
+    }
+    if (model !== undefined && !isModelRef(model)) {
+      return {
+        ok: false,
+        reason: `Model pin ${JSON.stringify(model)} must be 'provider/id'.`,
+      };
+    }
+    ids.push(id);
+    if (role !== undefined) roles[id] = role;
+    if (model !== undefined) models[id] = model;
+  }
+  return { ok: true, entries, ids, binding: { roles, models } };
+}
+
+// A stored binding's structural check (issue #178): the keys must name
+// workers of the run, a role must be one of the five, a model must be
+// `provider/id`. Undefined means the record is malformed — the state is
+// refused rather than half-read.
+function parseStoredBinding(
+  raw: unknown,
+  agents: readonly string[],
+  kind: 'roles' | 'models',
+): Record<string, string> | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const out: Record<string, string> = {};
+  for (const [agent, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== 'string') return undefined;
+    if (!agents.includes(agent)) return undefined;
+    if (kind === 'roles' && !isBuiltinRole(value)) return undefined;
+    if (kind === 'models' && !isModelRef(value)) return undefined;
+    out[agent] = value;
+  }
+  return out;
+}
+
+function bindingIsEmpty(binding: WorkerRoleBinding): boolean {
+  return (
+    Object.keys(binding.roles).length === 0 &&
+    Object.keys(binding.models).length === 0
+  );
+}
+
+function bindingsEqual(a: WorkerRoleBinding, b: WorkerRoleBinding): boolean {
+  const same = (left: Record<string, string>, right: Record<string, string>) =>
+    JSON.stringify(Object.entries(left).sort()) ===
+    JSON.stringify(Object.entries(right).sort());
+  return same(a.roles, b.roles) && same(a.models, b.models);
 }
 
 export class MergeConflictError extends Error {
@@ -263,6 +392,11 @@ export interface OrchestratorRunState {
   sessionId: string;
   prompt: string;
   agents: string[];
+  // Explicit per-agent role/model binding (issue #178), persisted so
+  // --resume replays the assignment the run was launched with instead of
+  // re-deriving a default. Absent when the run carried no binding.
+  roles?: Record<string, string>;
+  models?: Record<string, string>;
   merged: string[];
   pending: string[];
   stopped: boolean;
@@ -325,6 +459,19 @@ export function parseOrchestratorRunState(
     return undefined;
   }
   const agents = value.agents as string[];
+  // Explicit per-agent binding (issue #178): a record whose keys do not name
+  // this run's workers, whose role is outside the five, or whose model is
+  // not `provider/id` is refused, never half-applied.
+  let roles: Record<string, string> | undefined;
+  if (value.roles !== undefined) {
+    roles = parseStoredBinding(value.roles, agents, 'roles');
+    if (roles === undefined) return undefined;
+  }
+  let models: Record<string, string> | undefined;
+  if (value.models !== undefined) {
+    models = parseStoredBinding(value.models, agents, 'models');
+    if (models === undefined) return undefined;
+  }
   if (value.budget !== undefined) {
     const budget = parseStoredBudgetSpec(value.budget);
     if (budget === undefined) return undefined;
@@ -697,7 +844,10 @@ export interface OrchestrateCommandDeps {
   // resolver's named reason BEFORE anything spawns. Omitted means no role
   // documents (the plan prompt stands, unchanged). Synchronous so the
   // composition root can read the directory with the real FileBridge.
-  loadWorkerRoles?: (agents: readonly string[]) => WorkerRolesPlan;
+  loadWorkerRoles?: (
+    agents: readonly string[],
+    binding?: WorkerRoleBinding,
+  ) => WorkerRolesPlan;
   // §36.3 worker provider credentials (issue #200): called ONCE, with every
   // pending worker's role and resolved model pin, BEFORE any state write,
   // worktree or session exists. Returning a refusal fails the run closed
@@ -936,6 +1086,9 @@ export const RESOLVER_CONSTRAINTS: readonly string[] = [
 interface ParsedArgs {
   prompt?: string;
   agents: string[];
+  // The explicit per-agent binding (issue #178) the `--agents` entries
+  // carried; empty records mean none was given.
+  binding: WorkerRoleBinding;
   sessionId?: string;
   resume: boolean;
   autoApprove: boolean;
@@ -1129,31 +1282,18 @@ export function budgetSpecsEqual(
   });
 }
 
-// `--agents a,b`: comma-separated worker ids, each a valid agent id and
-// unique (one worktree per writer). Undefined when the list is malformed.
-// A worker set is non-empty, duplicate-free, and every id is a valid agent id.
-export function validAgentSet(agents: readonly string[]): boolean {
-  return (
-    agents.length > 0 &&
-    new Set(agents).size === agents.length &&
-    agents.every((agent) => validateAgentId(agent).length === 0)
-  );
-}
-
-export function parseAgentList(raw: string): string[] | undefined {
-  const agents = raw
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  return validAgentSet(agents) ? agents : undefined;
-}
+// `--agents a,b`: comma-separated workers, each a valid agent id and unique
+// (one worktree per writer) with an optional `:role[:provider/id]` binding.
+// `parseAgentBindings` is the one parser; `validAgentSet` was its id-only
+// predecessor and is gone with the syntax it validated.
 
 function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
+  const parsed = parseAgentBindings(
+    options.agents ?? ORCHESTRATE_DEFAULT_AGENTS,
+  );
   return {
-    agents:
-      options.agents === undefined
-        ? [...ORCHESTRATE_DEFAULT_AGENTS]
-        : [...options.agents],
+    agents: parsed.ok ? parsed.ids : [],
+    binding: parsed.ok ? parsed.binding : { roles: {}, models: {} },
     resume: options.resume === true,
     autoApprove: options.yes === true,
     json: options.json === true,
@@ -1242,12 +1382,14 @@ export async function runOrchestrateCommand(
   }
   // Defence in depth: agent ids name worktrees and branches, the session id
   // a state file under .kubic/orchestrator — a library caller cannot bypass
-  // the CLI's own --agents / --session checks.
-  if (options.agents !== undefined && !validAgentSet(options.agents)) {
-    log.error(
-      `invalid --agents ${JSON.stringify(options.agents)} (unique ids of [A-Za-z0-9_-])`,
-    );
-    return RUN_EXIT_USAGE;
+  // the CLI's own --agents / --session checks. An unknown role in an entry is
+  // the same usage error here (issue #178): nothing spawns, nothing is saved.
+  if (options.agents !== undefined) {
+    const parsedAgents = parseAgentBindings(options.agents);
+    if (!parsedAgents.ok) {
+      log.error(`invalid --agents: ${parsedAgents.reason}`);
+      return RUN_EXIT_USAGE;
+    }
   }
   if (
     parsed.sessionId !== undefined &&
@@ -1447,11 +1589,37 @@ export async function runOrchestrateCommand(
       sessionId,
       prompt: parsed.prompt as string,
       agents: parsed.agents,
+      // The explicit assignment travels with the state (issue #178):
+      // --resume replays it instead of falling back to a default role.
+      ...(bindingIsEmpty(parsed.binding)
+        ? {}
+        : {
+            roles: { ...parsed.binding.roles },
+            models: { ...parsed.binding.models },
+          }),
       merged: [],
       pending: [...parsed.agents],
       stopped: false,
       records: [],
     };
+  }
+  // The binding in force: the stored one on a resume (never re-derived from
+  // the CLI defaults), the parsed one otherwise.
+  const stateBinding: WorkerRoleBinding = {
+    roles: { ...(state.roles ?? {}) },
+    models: { ...(state.models ?? {}) },
+  };
+  // --resume re-applies the STORED assignment; a flag naming a different one
+  // is refused rather than silently mixed in (the --budget rule, issue #208).
+  if (
+    parsed.resume &&
+    options.agents !== undefined &&
+    !bindingsEqual(stateBinding, parsed.binding)
+  ) {
+    log.error(
+      `--agents differs from the assignment stored for session '${sessionId}': --resume re-applies the stored one — drop the flag to continue`,
+    );
+    return RUN_EXIT_USAGE;
   }
   // A per-agent clause must name an agent of THIS run: the stored session's
   // list on resume, the parsed --agents list otherwise. A clause for a worker
@@ -1515,9 +1683,12 @@ export async function runOrchestrateCommand(
   // the resolver's named reason — never a silent fallback to an
   // instruction-less prompt. Keyed on the STATE's agent list (not the
   // parsed one), because a --resume run carries no --agents and the workers
-  // it retries are the stored session's: assignment is a deterministic
-  // function of that order, so every worker keeps the role it had.
-  const rolePlan: WorkerRolesPlan = deps.loadWorkerRoles?.(state.agents) ?? {
+  // it retries are the stored session's: the explicit per-agent binding
+  // (issue #178) is the stored one, so every worker keeps the role it had.
+  const rolePlan: WorkerRolesPlan = deps.loadWorkerRoles?.(
+    state.agents,
+    stateBinding,
+  ) ?? {
     assignments: [],
     refused: [],
   };

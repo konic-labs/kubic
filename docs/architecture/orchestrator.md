@@ -35,7 +35,10 @@ solo) — and `run` never delegates.
   (`lane/turn.ts`). Since issue
   [#104](https://github.com/konic-labs/kubic/issues/104) each worker is also
   assigned one of the five §12 roles and runs that role's resolved tool set:
-  the worker prompt is the role document's `## Prompt` text plus the worker's
+  the `--agents <id>[:<role>]` binding names the role per worker (issue
+  [#178](https://github.com/konic-labs/kubic/issues/178); a worker with no
+  binding is an implementer, never a role picked by list position), the
+  worker prompt is the role document's `## Prompt` text plus the worker's
   step, the child `kubic run` is told `--role <name>` so its own lane
   registers exactly the role's tools (a withheld tool is never registered —
   absence, not approval), and the role's resolved model and thinking levels

@@ -276,9 +276,16 @@ export function workerCredentialDoctorProbe(
       detail: `no roles assigned; workers resolve ${deps.resolution.fallbackProvider ?? 'no provider'}`,
     };
   }
-  const parts = requests.map((request) => {
-    const grant = plan.grants.get(request.agentId);
-    return `${request.role}→${grant?.provider ?? 'no provider'}`;
-  });
+  // One entry per DISTINCT role→provider pair: two workers of the same role
+  // resolve the same provider, and the line names what each role gets
+  // (issue #178 — the default delegation set is now two implementers).
+  const parts = [
+    ...new Set(
+      requests.map((request) => {
+        const grant = plan.grants.get(request.agentId);
+        return `${request.role}→${grant?.provider ?? 'no provider'}`;
+      }),
+    ),
+  ];
   return { ok: true, detail: parts.join(', ') };
 }

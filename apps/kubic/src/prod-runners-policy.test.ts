@@ -730,12 +730,12 @@ describe('role documents under the enterprise tool policy on the doctor and orch
       return report.checks.find((c) => c.id.endsWith('credentials:roles'))
         ?.detail;
     };
-    // Control: both default workers get a role, so both are named.
+    // Control: both default workers get a role, so it is named once.
     expect(await credentials({})).toContain('implementer');
-    // Under the deny the manager would refuse the implementer, so the
-    // posture no longer claims a credential grant for it.
+    // Under the deny the manager would refuse the implementer — the only role
+    // the default set assigns (issue #178) — so the posture claims no grant.
     const gated = await credentials({ [ENTERPRISE]: DENY_BASH });
-    expect(gated).toContain('planner');
+    expect(gated).toContain('no roles assigned');
     expect(gated).not.toContain('implementer');
   });
 
@@ -805,6 +805,11 @@ describe('the worker credential preflight follows a frozen enterprise model (iss
       join(workspace, '.kubic', 'roles', 'planner.md'),
       '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nPlan it.\n',
     );
+    // The default delegation set is two implementers (issue #178).
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
+    );
     writeFileSync(
       join(workspace, 'models.json'),
       JSON.stringify({
@@ -836,7 +841,7 @@ describe('the worker credential preflight follows a frozen enterprise model (iss
     };
     const check = report.checks.find((c) => c.id.endsWith('credentials:roles'));
     expect(check?.status).toBe('pass');
-    expect(check?.detail).toBe('planner→gw');
+    expect(check?.detail).toBe('implementer→gw');
   });
 
   it('kubic orchestrate does not refuse the run over the dropped env pin provider', async () => {

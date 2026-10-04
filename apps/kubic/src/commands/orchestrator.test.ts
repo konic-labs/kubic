@@ -420,4 +420,35 @@ describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
     expect(result.err.join('\n')).toContain('--full-access is deprecated');
     expect(result.err.join('\n')).toContain('--dangerously-skip-approvals');
   });
+
+  it('accepts the id:role[:provider/id] binding syntax and hands the entries to the runner (issue #178)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--agents',
+      'a:implementer,b:reviewer:acme/m2,c',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toMatchObject({
+      agents: ['a:implementer', 'b:reviewer:acme/m2', 'c'],
+    });
+  });
+
+  it('refuses an unknown role in --agents as a usage error before the runner runs (issue #178)', async () => {
+    expectUsage(
+      await run(['orchestrate', '-p', 'x', '--agents', 'a:teleporter']),
+      /Unknown role "teleporter" \(one of planner, implementer, tester, debugger, reviewer\)/,
+    );
+    expectUsage(
+      await run([
+        'orchestrate',
+        '-p',
+        'x',
+        '--agents',
+        'a:implementer:not-a-ref',
+      ]),
+      /must be 'provider\/id'/,
+    );
+  });
 });

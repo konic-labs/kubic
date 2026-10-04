@@ -177,7 +177,7 @@ describe('orchestrate usage (issue #76)', () => {
         JSON.stringify(agents),
       ).toBe(2);
       expect(world.errLines).toEqual([
-        expect.stringMatching(/^error: invalid --agents /),
+        expect.stringMatching(/^error: invalid --agents/),
       ]);
       expect(world.calls.ensure).toEqual([]);
     }
@@ -195,6 +195,177 @@ describe('orchestrate usage (issue #76)', () => {
       'error: invalid --session id "../escape" (use [A-Za-z0-9_-])',
     ]);
     expect(world.calls.ensure).toEqual([]);
+  });
+});
+
+describe('per-agent role and model binding (issue #178)', () => {
+  // The role-plan hook echoes the binding it was given, so the test reads
+  // what the run resolved (the loader itself is covered by
+  // roles/worker-roles.test.ts and the prod orchestrate tests).
+  function echoRoles(
+    seen: Array<{
+      agents: readonly string[];
+      binding?: {
+        roles: Record<string, string>;
+        models: Record<string, string>;
+      };
+    }>,
+  ): NonNullable<OrchestrateCommandDeps['loadWorkerRoles']> {
+    return (agents, binding) => {
+      seen.push({ agents, ...(binding === undefined ? {} : { binding }) });
+      return {
+        assignments: agents.map((agentId) => ({
+          agentId,
+          role: binding?.roles[agentId] ?? 'implementer',
+          promptText: `role:${binding?.roles[agentId] ?? 'implementer'}`,
+          tools: [],
+          modelRef: binding?.models[agentId],
+          thinking: undefined,
+        })),
+        refused: [],
+      };
+    };
+  }
+
+  it('binds each worker to the role its --agents entry names (issue #178)', async () => {
+    const world = makeWorld();
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const roles: Array<{ agentId: string; role?: string }> = [];
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:implementer', 'b:reviewer'],
+        session: 'binding',
+        yes: true,
+      },
+      {
+        ...world.deps,
+        loadWorkerRoles: echoRoles(seen),
+        runWorker: async (agentId, worktree, prompt, info) => {
+          roles.push({ agentId, role: info?.role });
+          return world.deps.runWorker(agentId, worktree, prompt, info);
+        },
+      },
+    );
+    expect(code).toBe(0);
+    // The ids are the entry heads; the binding is the parsed roles.
+    expect(seen[0]?.agents).toEqual(['a', 'b']);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'implementer', b: 'reviewer' },
+      models: {},
+    });
+    expect(roles).toEqual([
+      { agentId: 'a', role: 'implementer' },
+      { agentId: 'b', role: 'reviewer' },
+    ]);
+  });
+
+  it('carries an explicit per-agent model pin through the same entry (issue #178)', async () => {
+    const world = makeWorld();
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const models: Array<string | undefined> = [];
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:tester:acme/m2'],
+        session: 'binding-model',
+        yes: true,
+      },
+      {
+        ...world.deps,
+        loadWorkerRoles: echoRoles(seen),
+        runWorker: async (agentId, worktree, prompt, info) => {
+          models.push(info?.modelRef);
+          return world.deps.runWorker(agentId, worktree, prompt, info);
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'tester' },
+      models: { a: 'acme/m2' },
+    });
+    expect(models).toEqual(['acme/m2']);
+  });
+
+  it('refuses an unknown role as a usage error before anything spawns (issue #178)', async () => {
+    const world = makeWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'demo', agents: ['a:teleporter'], session: 'badrole' },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(/Unknown role "teleporter"/);
+    expect(world.calls.ensure).toEqual([]);
+    expect(world.calls.run).toEqual([]);
+    expect(world.saved).toEqual([]);
+  });
+
+  it('persists the explicit assignment and replays it on --resume (issue #178)', async () => {
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'b') throw new Error('KILLED');
+      },
+    });
+    const code1 = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a:planner', 'b:reviewer'],
+        session: 'sess-bind',
+        yes: true,
+      },
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const stored = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(stored.roles).toEqual({ a: 'planner', b: 'reviewer' });
+
+    // The resume carries no --agents: the stored assignment is the one the
+    // role plan gets, so every retried worker keeps the role it had.
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const second = makeWorld({
+      loadState: () => structuredClone(stored),
+      loadWorkerRoles: echoRoles(seen),
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-bind' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.agents).toEqual(['a', 'b']);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'planner', b: 'reviewer' },
+      models: {},
+    });
+    expect(second.calls.run).toEqual(['b']);
+  });
+
+  it('refuses a --resume whose --agents binding differs from the stored one (issue #178)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-bind',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      roles: { a: 'planner', b: 'reviewer' },
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-bind',
+        agents: ['a:tester', 'b:reviewer'],
+      },
+      world.deps,
+    );
+    expect(code).toBe(2);
+    expect(world.errLines.join('\n')).toMatch(
+      /differs from the assignment stored/,
+    );
+    expect(world.calls.run).toEqual([]);
   });
 });
 

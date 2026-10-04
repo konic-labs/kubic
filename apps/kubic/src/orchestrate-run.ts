@@ -1484,7 +1484,7 @@ export async function orchestrateDepsWithDefaults(
     // projected to one role per worker. The refusal is fail-closed in the
     // CLI (role_refused) with the resolver's named reason; this hook only
     // reports what the documents say — it never invents a role.
-    loadWorkerRoles: (agents: readonly string[]) => {
+    loadWorkerRoles: (agents: readonly string[], binding?) => {
       const cwd = options.cwd ?? process.cwd();
       return planWorkerRoles({
         bridge: createNodeFileBridge(cwd),
@@ -1497,6 +1497,14 @@ export async function orchestrateDepsWithDefaults(
           ? {}
           : { parentModel: `${options.model.provider}/${options.model.id}` }),
         ...(thinkingOverride === undefined ? {} : { thinkingOverride }),
+        // The explicit per-agent binding (issue #178): the role each worker
+        // was told on the command line, and its own model pin.
+        ...(binding === undefined || Object.keys(binding.roles).length === 0
+          ? {}
+          : { roles: binding.roles }),
+        ...(binding === undefined || Object.keys(binding.models).length === 0
+          ? {}
+          : { models: binding.models }),
         ...(options.toolPolicy === undefined
           ? {}
           : { toolPolicy: options.toolPolicy }),

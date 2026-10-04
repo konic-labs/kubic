@@ -153,11 +153,18 @@ function makeWorld(overrides: Partial<OrchestrateCommandDeps> = {}): World {
 }
 
 function roleLoaderFor(files: Record<string, string>) {
-  return (agents: readonly string[]) =>
+  return (
+    agents: readonly string[],
+    binding?: { roles: Record<string, string>; models: Record<string, string> },
+  ) =>
     planWorkerRoles({
       bridge: memBridge(files),
       cwd: REPO,
       agents,
+      // The explicit per-agent binding the run resolved (issue #178).
+      ...(binding === undefined
+        ? {}
+        : { roles: binding.roles, models: binding.models }),
       // §38.1 (#202): the manager's effective model is the fallback under a
       // role's own `[roles.<r>].model` pin — the run's plan resolves the
       // value the child is then told.
@@ -175,7 +182,7 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     const code = await runOrchestrateCommand(
       {
         prompt: OBJECTIVE,
-        agents: ['alpha', 'beta'],
+        agents: ['alpha:planner', 'beta:implementer'],
         session: 'sess-1',
         yes: true,
       },
@@ -279,7 +286,7 @@ describe('a withholding role withholds by absence (issue #104, criterion 2)', ()
     await runOrchestrateCommand(
       {
         prompt: OBJECTIVE,
-        agents: ['alpha', 'beta'],
+        agents: ['alpha:planner', 'beta:implementer'],
         session: 'sess-1',
         yes: true,
       },

@@ -249,7 +249,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'credsession',
       },
@@ -281,7 +281,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'credsession2',
       },
@@ -322,7 +322,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'credsession4',
       },
@@ -347,7 +347,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'credsession3',
       },
@@ -389,7 +389,7 @@ describe('prod orchestrate worker credentials under a store trust grant (issue #
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'storetrust1',
       },
@@ -413,7 +413,7 @@ describe('prod orchestrate worker credentials under a store trust grant (issue #
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'storetrust2',
       },
@@ -448,7 +448,7 @@ describe('prod orchestrate worker credentials for multi-variable providers (issu
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'bedrocksession',
       },
@@ -487,7 +487,7 @@ describe('prod orchestrate under a frozen enterprise model (issue #295)', () => 
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'frozenmodel',
       },
@@ -530,7 +530,7 @@ describe('prod orchestrate under a frozen enterprise model (issue #295)', () => 
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
-        agents: ['alpha'],
+        agents: ['alpha:planner'],
         yes: true,
         session: 'vertexsession',
       },

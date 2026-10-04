@@ -211,7 +211,9 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     const code = await runOrchestrateCommand(
       {
         prompt: objective,
-        agents: ['alpha', 'beta'],
+        // The explicit per-agent binding (issue #178): alpha plans, beta
+        // implements.
+        agents: ['alpha:planner', 'beta:implementer'],
         yes: true,
         session: 'rolesession',
       },
@@ -280,7 +282,7 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
-        agents: ['alpha', 'beta'],
+        agents: ['alpha:planner', 'beta:implementer'],
         yes: true,
         session: 'rolepin',
       },
@@ -309,7 +311,10 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
         'You are the reviewer. Inspect the diff.',
       ),
     );
-    const plan = h.deps.loadWorkerRoles?.(['w1', 'w2', 'w3', 'w4', 'w5']);
+    const plan = h.deps.loadWorkerRoles?.(['w1', 'w2', 'w3', 'w4', 'w5'], {
+      roles: { w5: 'reviewer' },
+      models: {},
+    });
     const reviewer = plan?.assignments.find(
       (entry) => entry.role === 'reviewer',
     );
@@ -344,6 +349,40 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     );
     expect(code).toBe(0);
     expect(readDump(h.dumpDir, 'alpha', 'thinking')).toBe('xhigh');
+  });
+
+  it('defaults every worker of a two-agent run to the implementer (issue #178)', async () => {
+    // Acceptance: the default run no longer spends a worker on a planner
+    // whose plan nothing consumes — position is not a task.
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha', 'beta'],
+        yes: true,
+        session: 'defaultroles',
+      },
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(h.dumpDir, 'alpha', 'role')).toBe('implementer');
+    expect(readDump(h.dumpDir, 'beta', 'role')).toBe('implementer');
+  });
+
+  it('refuses an unknown role before anything spawns (issue #178)', async () => {
+    const h = await harness();
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
+        agents: ['alpha:teleporter'],
+        yes: true,
+        session: 'badrole',
+      },
+      h.deps,
+    );
+    expect(code).toBe(2);
+    expect(h.lines.join('\n')).toMatch(/Unknown role "teleporter"/);
+    expect(readdirSync(h.dumpDir)).toEqual([]);
   });
 
   it('refuses a contradictory role document before any worktree or spawn exists', async () => {

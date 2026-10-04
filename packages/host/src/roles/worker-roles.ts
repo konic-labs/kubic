@@ -20,6 +20,7 @@ import {
 } from './roles-boot.js';
 import {
   BUILTIN_ROLE_NAMES,
+  type BuiltinRoleName,
   isBuiltinRole,
   ROLE_THINKING_DEFAULTS,
 } from './roles-data.js';
@@ -79,6 +80,13 @@ export function workerRoleAssignment(
   return plan.assignments.find((entry) => entry.agentId === agentId);
 }
 
+// §38.1/§9.2 (issue #178): the role a worker with no explicit binding runs.
+// Position in the agent list is not a task — the first worker of a run is not
+// a planner by virtue of being first — so the default is the role that
+// produces a change. The five roles stay fixed (D11); only the default and
+// the per-agent binding decide which of them a worker gets.
+export const DEFAULT_WORKER_ROLE: BuiltinRoleName = 'implementer';
+
 export interface WorkerRolesInput {
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;
@@ -91,6 +99,12 @@ export interface WorkerRolesInput {
   // own selection/thinking defaults — never a hardcoded role provider.
   parentModel?: string;
   thinkingOverride?: string;
+  // Explicit per-agent binding (issue #178): `roles` names one of the five
+  // §12 roles for an agent id, `models` pins its `provider/id` — the highest
+  // model level (§38.1 agent/spawn override), above `[roles.<r>].model`.
+  // An id absent from `roles` takes DEFAULT_WORKER_ROLE.
+  roles?: Readonly<Record<string, string>>;
+  models?: Readonly<Record<string, string>>;
   // §58 enterprise policy (issue #288): each ASSIGNED role's declared tools
   // are checked against it, so the manager refuses — by name, before any
   // worktree or process exists — the assignment a worker's own
@@ -99,17 +113,17 @@ export interface WorkerRolesInput {
   toolPolicy?: EffectivePolicy;
 }
 
-// The §12 roles in the order the delegation path assigns them: the first
-// worker plans (it decomposes without mutating anything), the second
-// implements. Deterministic from the agent order alone — the run state
-// persists that order, so a --resume assigns each worker the same role.
+// The §12 role a worker runs (issue #178): the caller's explicit binding for
+// that agent when it gave one, else the implementer default. Deterministic —
+// the same binding plus the same agent list always resolves the same role, so
+// a --resume replays the stored assignment.
 export function roleForAgent(
   agents: readonly string[],
   agentId: string,
+  roles: Readonly<Record<string, string>> = {},
 ): string | undefined {
-  const index = agents.indexOf(agentId);
-  if (index === -1) return undefined;
-  return BUILTIN_ROLE_NAMES[index % BUILTIN_ROLE_NAMES.length];
+  if (!agents.includes(agentId)) return undefined;
+  return roles[agentId] ?? DEFAULT_WORKER_ROLE;
 }
 
 // The worker prompt: the role document's `## Prompt` text plus that
@@ -163,8 +177,17 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
   if (loaded.docs.length === 0) return { assignments: [], refused: [] };
   const assignments: WorkerRoleAssignment[] = [];
   for (const agentId of input.agents) {
-    const role = roleForAgent(input.agents, agentId);
+    const role = roleForAgent(input.agents, agentId, input.roles);
     if (role === undefined) continue;
+    // A binding outside the fixed five is refused by name (D11): the manager
+    // composes from the presets, never invents a role at runtime.
+    if (!isBuiltinRole(role)) {
+      refusedByName.set(
+        role,
+        `unknown role '${role}' (not one of ${BUILTIN_ROLE_NAMES.join(', ')}): refusing spawn`,
+      );
+      continue;
+    }
     try {
       const selected = selectRole({
         bridge: input.bridge,
@@ -179,18 +202,19 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         selected.doc,
         input.bridge.readTextFile(roleDocPath(input.cwd, role)),
       );
-      const fallbackThinking = isBuiltinRole(role)
-        ? ROLE_THINKING_DEFAULTS[role]
-        : undefined;
+      const fallbackThinking = ROLE_THINKING_DEFAULTS[role];
       assignments.push({
         agentId,
         role,
         promptText,
         tools: [...selected.resolved.tools],
-        // §38.1 (issue #202): the role's own config pin, then the manager's
-        // model — never the role NAME (a non-built-in role resolves no
-        // model of its own) and never a hardcoded provider.
-        modelRef: selected.resolved.model ?? input.parentModel,
+        // §38.1 (issue #202/#178): the explicit per-agent pin, then the
+        // role's own config pin, then the manager's model — never the role
+        // NAME and never a hardcoded provider.
+        modelRef:
+          input.models?.[agentId] ??
+          selected.resolved.model ??
+          input.parentModel,
         thinking: input.thinkingOverride ?? fallbackThinking,
       });
     } catch (error) {

@@ -177,6 +177,12 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
         '',
       ].join('\n'),
     );
+    // The default delegation set is two implementers (issue #178): the
+    // posture describes the roles a bare `kubic orchestrate` assigns.
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
+    );
     writeFileSync(
       join(root, 'models.json'),
       JSON.stringify({
@@ -214,7 +220,7 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
       entry.id.endsWith('credentials:roles'),
     );
     expect(check?.status).toBe('pass');
-    expect(check?.detail).toBe('planner→gw');
+    expect(check?.detail).toBe('implementer→gw');
     expect(check?.detail).not.toContain('sk-doctor-200-not-a-real-key');
   });
 
@@ -225,6 +231,10 @@ describe('kubic doctor: worker credential posture (issue #200)', () => {
     writeFileSync(
       join(root, '.kubic', 'roles', 'planner.md'),
       '---\nrole: planner\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# planner\n\n## Prompt\n\nYou are the planner.\n',
+    );
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep, write, edit, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nBuild it.\n',
     );
     writeFileSync(
       join(root, 'models.json'),

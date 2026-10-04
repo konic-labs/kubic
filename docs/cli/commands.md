@@ -380,7 +380,11 @@ they commit. **Each worker runs its own plan step under an assigned role**: the
 prompt a child receives cites that worker's step (`Plan step 2 of 2 for agent
 'beta': …`), carries the objective, and opens with the `## Prompt` text of the
 role that worker was assigned — `-p` is the objective the plan is derived from,
-never copied to a worker verbatim. The role also decides the worker's lane: the
+never copied to a worker verbatim. The role is chosen per worker by the
+`--agents` binding (issue #178): `<id>:<role>` names one of the five presets,
+and a worker with no binding runs as an **implementer** — never by list
+position, so the default two-worker run no longer spends a worker on a planner
+whose plan nothing consumes. The role also decides the worker's lane: the
 child is told `--role <name>` and registers exactly that role's resolved tool
 set, so a tool the role does not hold is never registered (absence, not
 approval, withholds it). Each worker's model and thinking level are resolved
@@ -571,7 +575,7 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required** (unless `--resume`). The objective the manager derives the plan from; each worker receives its own plan step built on this text, never the text verbatim. |
-| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, run concurrently). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
+| `--agents <a,b>` | Workers as `<id>[:<role>[:<provider/id>]]` (default `worker-1,worker-2`, both implementers — the two-worker demo, run concurrently). `<id>` accepts only `[A-Za-z0-9_-]` and must be unique (one worktree per writer); `<role>` is one of the five §12 presets (`planner`, `implementer`, `tester`, `debugger`, `reviewer`) and defaults to `implementer` — a worker with no binding never becomes a planner by list position (issue #178); `<provider/id>` is that worker's explicit model pin, the highest model level (§38.1), above `[roles.<name>].model` and the manager's own model. An unknown role, a duplicate id or a malformed model ref exits 2 before anything spawns. The binding persists with the session and `--resume` re-applies it (a `--agents` naming a different assignment on resume is refused, exit 2). |
 | `--concurrency <n>` | How many workers may run at once for **this run** (positive integer). Overrides `[orchestrator].maxWorkers` (and any explicit limits cap) for the run; workers past it wait in the admission layer's FIFO queue and start as slots free. Unset ⇒ the configured cap, else the shipped 4. |
 | `--on-failure <stop\|continue>` | What one worker's failure does to the **run** (issue #169, §9.2). `stop` (the default) is the all-or-nothing terminus: the run ends on the failed worker's own code (1 for a crash/spawn failure, 3 for its budget, 4 for an approval) and nothing merges — after a crash-class death has had its one §81 replacement (below), so a single crash that the replacement survives still completes. `continue` keeps the pending workers running, merges the ones that succeeded, lists every failed worker with its code, and exits **7** (`status: "partial"`, `code: partial_failure`); the failed workers stay pending, so `--resume` retries exactly them (the policy is stored with the session and re-applied — pass `--on-failure stop` to opt out). An approval terminus (exit 4) always stops the run — a denial is your decision, not a worker-local hiccup. |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |

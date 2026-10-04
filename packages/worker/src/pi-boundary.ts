@@ -323,3 +323,25 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //     is gone in 1.0, and Kubic owns no storage format of its own.
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
+
+// --- #398 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
+//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
+//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
+//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
+//     (per-response rows built from a committed assistant entry)
+//   why Pi has no alternative: these are the exact types of the events
+//     watchEvents delivers and of the ids Kubic keys its own lane events
+//     by; structural copies would drift from the committed stream (§15.3)
+//     and fail to type-check where Harness/watchEvents are called.
+//   review: issue #391 (K9 #398; CONTRACT decision D2)
+export type {
+  ConversationId,
+  EntryId,
+  JsonObject,
+  SnapshotEvent,
+  SubmissionId,
+  TaskId,
+  UsageState,
+} from '@earendil-works/pi-durable';

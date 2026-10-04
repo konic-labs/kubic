@@ -34,7 +34,11 @@ solo) — and `run` never delegates.
   admitted with `conversation.submit()` and settled by `submission.wait()`
   (`lane/turn.ts`). Since issue
   [#104](https://github.com/konic-labs/kubic/issues/104) each worker is also
-  assigned one of the five §12 roles and runs that role's resolved tool set:
+  assigned one of the five §12 roles and runs that role's resolved tool set
+  (the shipped presets follow §12/§12.1 — planner and reviewer read only,
+  through the read-only shell allowlist; tester holds no git tool;
+  implementer/debugger keep the full coding set — pinned by
+  `packages/host/src/roles/presets.test.ts`):
   the `--agents <id>[:<role>]` binding names the role per worker (issue
   [#178](https://github.com/konic-labs/kubic/issues/178); a worker with no
   binding is an implementer, never a role picked by list position), the

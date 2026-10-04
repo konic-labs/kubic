@@ -95,27 +95,34 @@ describe('built-in role documents (issue #44)', () => {
 });
 
 describe('spawn matrix (§12 tool sets)', () => {
-  it('planner is read-only: no write/edit/bash/git tools', () => {
+  it('planner is read-only: no write/edit/git tools, bash only via the read-only shell (issue #157)', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const planner = resolveRole(docNamed(docs, 'planner'), []);
     expect(planner.tools).toContain('read');
-    for (const banned of [
-      'write',
-      'edit',
-      'bash',
-      'git_status',
-      'git_commit',
-    ]) {
+    // §12.1 gives the planner read-only inspection commands: bash is present,
+    // and the read-only shell level is what keeps it from writing.
+    expect(planner.tools).toContain('bash');
+    expect(planner.classes.shell).toBe('read-only-allowlist');
+    for (const banned of ['write', 'edit', 'git_status', 'git_commit']) {
       expect(planner.tools).not.toContain(banned);
     }
   });
 
-  it('reviewer is read-only: no write/edit/commit/bash tools', () => {
+  it('reviewer is read-only: no write/edit/commit/git tools, bash only via the read-only shell (issue #157)', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const reviewer = resolveRole(docNamed(docs, 'reviewer'), []);
     expect(reviewer.tools).toContain('read');
-    expect(reviewer.tools).toContain('git_diff');
-    for (const banned of ['write', 'edit', 'bash', 'git_commit']) {
+    expect(reviewer.tools).toContain('bash');
+    expect(reviewer.classes.shell).toBe('read-only-allowlist');
+    // §12.1: `git: false` — read-only git runs through the allowlisted shell.
+    expect(reviewer.classes.git).toBe(false);
+    for (const banned of [
+      'write',
+      'edit',
+      'git_commit',
+      'git_status',
+      'git_diff',
+    ]) {
       expect(reviewer.tools).not.toContain(banned);
     }
   });

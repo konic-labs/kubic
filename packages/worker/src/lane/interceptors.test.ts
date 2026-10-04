@@ -748,6 +748,43 @@ describe('read-only shell allowlist (issue #161)', () => {
     ]);
   });
 
+  it('runs the read-only presets’ checks and blocks writes, destructive and network calls (issue #157)', async () => {
+    // The reviewer/planner presets run their targeted checks through this
+    // level (`.kubic/roles/{reviewer,planner}.md`: `shell:
+    // read-only-allowlist`, `git: false`), so a lane on it must let a
+    // read-only command through — including read-only git, which is how the
+    // reviewer inspects a diff without a git tool — and block everything that
+    // writes, destroys or dials out.
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'git diff --stat' } },
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'rm -rf build' } },
+        { name: 'bash', args: { command: 'curl https://example.com' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.isError).toBe(false);
+    // Each refusal names its own guard: the redirect is the read-only
+    // allowlist, the `rm` the destructive guard, the `curl` the network
+    // guard — all three blocked before the shell sees them.
+    expect(results[2]?.isError).toBe(true);
+    expect(results[2]?.text).toContain('read-only');
+    expect(results[3]?.isError).toBe(true);
+    expect(results[3]?.text).toMatch(/destructive/);
+    expect(results[4]?.isError).toBe(true);
+    expect(results[4]?.text).toMatch(/network/);
+    // Only the two read-only commands reached the shell.
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'git diff --stat',
+      'ls && cat a',
+    ]);
+  });
+
   it('leaves shell:true unchanged', async () => {
     const booted = await boot({
       calls: [

@@ -19,10 +19,24 @@ export interface PreImage {
   mode: number | undefined;
 }
 
+// Above this size the pre-image is never held in memory (issue #139): the
+// file is hashed in bounded chunks and recorded hash-only. 8 MiB matches the
+// text bound read and edit share (READ_MAX_BYTES / EDIT_MAX_BYTES): a text op
+// stays text up to there, and above it the journal keeps the change visible
+// at a bounded cost — undo reports the entry non-reversible, exactly as it
+// does for a binary pre-image or the sweep's hash-only after-side (#120).
+export const PREIMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+// Chunk size for that streamed hashing (issue #107's HASH_CHUNK_BYTES): peak
+// memory is one chunk, never the file.
+export const PREIMAGE_CHUNK_BYTES = 4 * 1024 * 1024;
+
 // Reads the file's bytes when the seam can (readFileRange), so the recorded
 // hash is of the real bytes and binary content is detected instead of being
 // decoded to U+FFFD and journaled as a mangled "pre-image" that undo would
-// then write back.
+// then write back. Above PREIMAGE_MAX_BYTES the bytes are streamed through
+// the hash instead of being held: same digest (it is over the raw bytes
+// either way), no decode, and the pre-image is hash-only.
 export function readPreImage(ctx: OpContext, path: string): PreImage {
   const fs = ctx.env.fs;
   let size: number;
@@ -36,7 +50,24 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
     return { exists: false, text: null, hash: null, bytes: 0, mode: undefined };
   }
   if (fs.readFileRange !== undefined) {
-    const raw = Buffer.from(fs.readFileRange(path, 0, size));
+    const readRange = fs.readFileRange.bind(fs);
+    if (size > PREIMAGE_MAX_BYTES) {
+      // Issue #139: a whole-file pre-image costs ~3x the file (buffer +
+      // decode + re-encode check) and `write` has no size guard, so one
+      // overwrite of a multi-GB file OOMs the worker and journals the
+      // content verbatim. Hash it chunk by chunk instead: bounded memory,
+      // the same digest, and text: null makes the entry hash-only
+      // (write.ts records beforeOmitted; undo reports it non-reversible).
+      const streamed = hashRawBytes(readRange, path, size);
+      return {
+        exists: true,
+        text: null,
+        hash: streamed.hash,
+        bytes: streamed.bytes,
+        mode,
+      };
+    }
+    const raw = Buffer.from(readRange(path, 0, size));
     const decoded = raw.toString('utf8');
     const lossless = Buffer.from(decoded, 'utf8').equals(raw);
     return {
@@ -55,6 +86,26 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
     bytes: Buffer.byteLength(text, 'utf8'),
     mode,
   };
+}
+
+// The sha256 of a file's raw bytes, one PREIMAGE_CHUNK_BYTES chunk at a
+// time (issue #139): peak memory is the chunk, never the file. Returns the
+// bytes actually read, so a file that changed size mid-flight is reported
+// as it was, not as `stat` claimed.
+function hashRawBytes(
+  readRange: NonNullable<FileSystem['readFileRange']>,
+  path: string,
+  size: number,
+): { hash: string; bytes: number } {
+  const hash = createHash('sha256');
+  let at = 0;
+  while (at < size) {
+    const end = Math.min(at + PREIMAGE_CHUNK_BYTES, size);
+    const chunk = readRange(path, at, end);
+    hash.update(chunk);
+    at = end;
+  }
+  return { hash: hash.digest('hex'), bytes: at };
 }
 
 // Journal-first replace: the entry is durable BEFORE the file changes, so a

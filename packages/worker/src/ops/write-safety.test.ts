@@ -1,5 +1,6 @@
 // Write/edit safety on the node seam: mode preservation across tmp+rename,
 // no lossy pre-image for binary files, journal intent before the rename.
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -25,6 +26,7 @@ import {
 import { diffEntries } from '../../../exec/src/journal-diff.js';
 import { journalStatus } from '../../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../../exec/src/journal-undo.js';
+import { PREIMAGE_CHUNK_BYTES, PREIMAGE_MAX_BYTES } from './atomic-file.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
@@ -124,6 +126,43 @@ describe('write/edit safety on the node seam', () => {
     expect(diffEntries(journal, {})[0]?.corrupt).toBe(false);
     // Undo must not write U+FFFD-mangled content, nor delete the file.
     expect(readFileSync(join(root, 'img.png'), 'utf8')).toBe('text\n');
+  });
+
+  it('hashes an oversized pre-image in bounded chunks, never a file-sized buffer (issue #139)', async () => {
+    const { root, journal, c } = setup();
+    const original = Buffer.alloc(PREIMAGE_MAX_BYTES + 4096, 0x61);
+    writeFileSync(join(root, 'big.txt'), original);
+    const reads: number[] = [];
+    const fs = Object.create(c.env.fs) as typeof c.env.fs;
+    fs.readFileRange = (path: string, start: number, end: number) => {
+      reads.push(end - start);
+      return c.env.fs.readFileRange?.(path, start, end) ?? new Uint8Array();
+    };
+    const out = await callOperation(
+      'write',
+      { path: 'big.txt', content: 'new\n' },
+      inv(),
+      { ...c, env: { ...c.env, fs } },
+    );
+    expect(out.ok).toBe(true);
+    expect(readFileSync(join(root, 'big.txt'), 'utf8')).toBe('new\n');
+    // Bounded: several chunk-sized reads, never one the size of the file.
+    expect(reads.length).toBeGreaterThan(1);
+    expect(Math.max(...reads)).toBeLessThanOrEqual(PREIMAGE_CHUNK_BYTES);
+    const entry = journal.entries()[0];
+    expect(entry?.beforeOmitted).toBe(true);
+    expect(entry?.beforeHash).toBe(
+      createHash('sha256').update(original).digest('hex'),
+    );
+    expect(entry === undefined ? 'x' : journal.readBefore(entry)).toBeNull();
+    // Hash-only is non-reversible: undo skips it, never inventing content.
+    const plan = planUndo(journal, {}, root);
+    expect(plan.nonReversible).toEqual(['big.txt']);
+    const result = applyUndo(journal, plan, root, {});
+    expect(result.restored).toEqual([]);
+    expect(result.skipped).toEqual(['big.txt']);
+    expect(result.skippedDetails[0]?.reason).toContain('no before-content');
+    expect(journalStatus(journal, root).corrupt).toBe(0);
   });
 
   it('records the journal intent before the rename: a failed journal leaves the file untouched', async () => {

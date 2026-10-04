@@ -209,6 +209,23 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
+### Write pre-image bound (issue #139)
+
+`readPreImage` (`ops/atomic-file.ts`) never holds a file it cannot bound.
+Above `PREIMAGE_MAX_BYTES` (8 MiB, the text bound read and edit share) the
+bytes are streamed through the sha256 one `PREIMAGE_CHUNK_BYTES` (4 MiB)
+chunk at a time and the pre-image is recorded hash-only (`text: null`, so
+`write` sets `beforeOmitted: true` alongside the digest). The digest is over
+the raw bytes on both paths, so it is identical either way; what changes is
+memory: overwriting a 1.5 GB file used to allocate roughly 3x its size
+(buffer + decode + re-encode lossless check) and journal the content
+verbatim — one `write` call away from OOMing the worker — and now costs one
+chunk. Undo reports the step non-reversible exactly as it does for a binary
+pre-image: it skips the entry (`non-reversible (skipped)`) instead of
+inventing content. `edit` is unaffected — it refuses above `EDIT_MAX_BYTES`
+before calling `readPreImage` — and a seam without `readFileRange` (a test
+double) keeps the whole-file fallback.
+
 ### Write/edit symlink safety (issue #140)
 
 `write` and `edit` share `replaceFile` (`ops/atomic-file.ts`), the

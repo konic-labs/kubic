@@ -28,8 +28,21 @@ import {
   attachSession,
   listSessions,
   openSessionStore,
+  SessionAttachError,
+  SessionFormatError,
+  SessionLockError,
 } from '../../../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type Storage,
+  type Usage,
+  UsageDoc,
+} from '../../../../worker/src/pi-boundary.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
@@ -65,9 +78,138 @@ export interface CostCommandDeps {
 
 const PLAIN = createCliTheme('none');
 
-// Prod loader: one row per real session out of the session store. Session
-// stats carry no per-model split at this seam, so each row is the session
-// aggregate (model 'aggregate'); the task total stays exactly Σ(rows).
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+// One usage bucket read from a conversation's `pi.usage` document: a model
+// (`provider/modelId`) or a tool name, and the counters it accumulated.
+export interface SessionUsageRow {
+  key: string;
+  kind: 'model' | 'tool';
+  usage: Usage;
+}
+
+// The session's own token/cost totals, summed over every conversation's
+// usage document — the same numbers `Harness.usage()` reports (issue #400).
+export interface SessionUsageTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+}
+
+function addCounters(total: Usage, usage: Usage): void {
+  total.input += num(usage.input);
+  total.output += num(usage.output);
+  total.cacheRead += num(usage.cacheRead);
+  total.cacheWrite += num(usage.cacheWrite);
+  total.totalTokens += num(usage.totalTokens);
+  const cost = (usage.cost ?? {}) as Partial<Usage['cost']>;
+  total.cost.input += num(cost.input);
+  total.cost.output += num(cost.output);
+  total.cost.cacheRead += num(cost.cacheRead);
+  total.cost.cacheWrite += num(cost.cacheWrite);
+  total.cost.total += num(cost.total);
+}
+
+function emptyUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+// Every usage bucket of one session, read straight from its Storage (#400):
+// one `pi.usage` document per conversation, summed by bucket key. No harness
+// is booted and nothing is written — `kubic cost` reads sessions it must not
+// open as a run.
+export async function readSessionUsage(
+  storage: Storage,
+  context: Context,
+): Promise<SessionUsageRow[]> {
+  const rows = new Map<string, SessionUsageRow>();
+  // Bounded paged scan, no unbounded query; the cursor's type comes from the
+  // storage's own signature.
+  const buckets: Array<
+    Awaited<ReturnType<Storage['scanConversations']>>['items'][number]
+  > = [];
+  let cursor: Awaited<ReturnType<Storage['scanConversations']>>['next'];
+  for (;;) {
+    const page = await storage.scanConversations({}, 256, cursor, context);
+    buckets.push(...page.items);
+    if (page.next === undefined) break;
+    cursor = page.next;
+  }
+  for (const conversation of buckets) {
+    const record = await storage.findDocument(
+      {
+        kind: UsageDoc.definition.kind,
+        scope: { kind: 'conversation', conversationId: conversation.id },
+      },
+      'current',
+      context,
+    );
+    if (record === undefined) continue;
+    const stored = await storage.document(record.id, 'current', context);
+    const state = stored?.value as
+      | { models?: Record<string, unknown>; tools?: Record<string, unknown> }
+      | undefined;
+    if (state === undefined) continue;
+    for (const [kind, map] of [
+      ['model', state.models],
+      ['tool', state.tools],
+    ] as const) {
+      for (const [key, raw] of Object.entries(map ?? {})) {
+        // A stored bucket is untrusted JSON: a torn or foreign value is
+        // skipped, never merged into the totals (and never a crash).
+        if (typeof raw !== 'object' || raw === null) continue;
+        const id = `${kind}:${key}`;
+        const row = rows.get(id) ?? {
+          key,
+          kind,
+          usage: emptyUsage(),
+        };
+        addCounters(row.usage, raw as Usage);
+        rows.set(id, row);
+      }
+    }
+  }
+  // Deterministic readout order: models, then tools, each alphabetically.
+  return [...rows.values()].sort(
+    (left, right) =>
+      left.kind.localeCompare(right.kind) || left.key.localeCompare(right.key),
+  );
+}
+
+// The session's totals over every bucket it holds.
+export function totalSessionUsage(
+  rows: readonly SessionUsageRow[],
+): SessionUsageTotals {
+  const total = emptyUsage();
+  for (const row of rows) addCounters(total, row.usage);
+  return {
+    input: total.input,
+    output: total.output,
+    cacheRead: total.cacheRead,
+    cacheWrite: total.cacheWrite,
+    costUsd: total.cost.total,
+  };
+}
+
+// Prod loader: one row per real session out of the session store, one row
+// per usage bucket the session recorded (each `provider/model`, and each tool
+// that reported its own usage), so the task total is still exactly Σ(rows).
+// A session whose storage another live run owns is SKIPPED, never opened
+// (pi-durable: one process per storage), and reported as a zero row so the
+// operator sees what the readout could not read. #251 owns the richer
+// skip/unreadable report (and the lock-free read that stops cost refreshing
+// the session dir's prune age).
 export async function loadSessionCostRows(
   sessionsRoot: string = defaultSessionsRoot(),
   sessionId?: string,
@@ -76,39 +218,78 @@ export async function loadSessionCostRows(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  const ids =
+  const entries =
     sessionId === undefined
-      ? (await listSessions(store, BACKGROUND_CONTEXT)).map((entry) => entry.id)
-      : [sessionId];
+      ? await listSessions(store, BACKGROUND_CONTEXT)
+      : [{ id: sessionId }];
   const rows: AgentCostInput[] = [];
-  for (const id of ids) {
-    const session = await attachSession(store, id, BACKGROUND_CONTEXT);
+  for (const entry of entries) {
+    let session: Awaited<ReturnType<typeof attachSession>>;
     try {
-      const stats = await session.getStats(BACKGROUND_CONTEXT);
-      rows.push({
-        agentId: id,
-        model: 'aggregate',
-        costUsd: stats.usage.cost.total,
-        input: stats.usage.input,
-        output: stats.usage.output,
-        // §62 lever 2 (issue #98): the real prefix-cache counters off the
-        // session's usage rollup — this is what makes the reported hit-rate
-        // a measurement instead of an assumption.
-        cacheRead: stats.usage.cacheRead,
-        cacheWrite: stats.usage.cacheWrite,
-      });
+      session = await attachSession(store, entry.id, BACKGROUND_CONTEXT);
+    } catch (error) {
+      // A session the operator NAMED is never silently skipped: an unknown
+      // id, a live lock and a 0.87 transcript all escape so
+      // `runCostCommand` prints the refusal and exits 1, as it did before
+      // the durable store. Marker rows are for the listing sweep only.
+      if (
+        sessionId !== undefined &&
+        (error instanceof SessionAttachError ||
+          error instanceof SessionLockError ||
+          error instanceof SessionFormatError)
+      ) {
+        throw error;
+      }
+      if (
+        error instanceof SessionLockError ||
+        error instanceof SessionAttachError ||
+        error instanceof SessionFormatError
+      ) {
+        // Never opened: the lock is taken before the storage (and a 0.87
+        // directory has no storage at all).
+        rows.push({
+          agentId: entry.id,
+          model:
+            error instanceof SessionLockError ? '(locked)' : '(unreadable)',
+          costUsd: 0,
+          input: 0,
+          output: 0,
+        });
+        continue;
+      }
+      throw error;
+    }
+    try {
+      for (const row of await readSessionUsage(
+        session.storage,
+        BACKGROUND_CONTEXT,
+      )) {
+        rows.push({
+          agentId: entry.id,
+          // A tool bucket has no provider/model identity: it is labelled
+          // `tool:<name>` so the readout never looks like a model row.
+          model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
+          costUsd: num(row.usage.cost?.total),
+          input: row.usage.input,
+          output: row.usage.output,
+          // §62 lever 2 (issue #98): the real prefix-cache counters off the
+          // session's usage rollup.
+          cacheRead: row.usage.cacheRead,
+          cacheWrite: row.usage.cacheWrite,
+        });
+      }
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await session.release(BACKGROUND_CONTEXT);
     }
   }
   return rows;
 }
 
 // One run's usage as its `--json` report carries it (issue #185; §39,
-// §68): the session's own usage rollup (the numbers `kubic cost` reads),
-// the tool calls it executed, and the `provider/id` of the model that
-// answered last. The orchestrator builds each worker's §68 metrics and
-// provenance from this — never invented zeros.
+// §68): the session's own usage rollup (the numbers `kubic cost` reads), the
+// tool calls it executed, and the `provider/id` of the model that answered
+// last. The orchestrator builds each worker's §68 metrics and provenance
+// from this — never invented zeros.
 export async function readSessionRunUsage(
   sessionsRoot: string,
   sessionId: string,
@@ -119,39 +300,37 @@ export async function readSessionRunUsage(
   );
   const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
   try {
-    const stats = await session.getStats(BACKGROUND_CONTEXT);
-    const entries = (await session.findEntries(
-      undefined,
-      BACKGROUND_CONTEXT,
-    )) as {
-      message?: { role?: unknown; provider?: unknown; model?: unknown };
-    }[];
+    const totals = totalSessionUsage(
+      await readSessionUsage(session.storage, BACKGROUND_CONTEXT),
+    );
+    const items = entriesToTranscript(
+      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+    );
     let toolCalls = 0;
     let model: string | undefined;
-    for (const entry of entries) {
-      const message = entry.message;
-      if (message?.role === 'toolResult') toolCalls += 1;
+    for (const item of items) {
+      if (item.kind === 'tool-result') toolCalls += 1;
       if (
-        message?.role === 'assistant' &&
-        typeof message.provider === 'string' &&
-        typeof message.model === 'string'
+        item.kind === 'assistant' &&
+        item.provider !== undefined &&
+        item.model !== undefined
       ) {
-        model = `${message.provider}/${message.model}`;
+        model = `${item.provider}/${item.model}`;
       }
     }
     return {
       usage: {
-        input: stats.usage.input,
-        output: stats.usage.output,
-        cacheRead: stats.usage.cacheRead,
-        cacheWrite: stats.usage.cacheWrite,
-        costUsd: stats.usage.cost.total,
+        input: totals.input,
+        output: totals.output,
+        cacheRead: totals.cacheRead,
+        cacheWrite: totals.cacheWrite,
+        costUsd: totals.costUsd,
         toolCalls,
       },
       ...(model === undefined ? {} : { model }),
     };
   } finally {
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
   }
 }
 

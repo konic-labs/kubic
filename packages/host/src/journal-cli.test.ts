@@ -12,7 +12,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CliUsageError } from '../../core/src/cli/exit-codes.js';
 import { createCliTheme } from '../../core/src/cli/theme.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../exec/src/journal.js';
+import {
+  createSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import {
   colorizeDiffLine,
   type JournalRequest,
@@ -1106,5 +1112,56 @@ describe('journal CLI presentation (themes, tables)', () => {
     );
     expect(errs).toHaveLength(1);
     expect(errs[0]?.startsWith(COLOR.accent('info:'))).toBe(true);
+  });
+});
+
+// Issue #400: the default session-workspace lookup reads the durable session
+// store's own metadata (`kubic.session` → listing meta), so a real session
+// created by the store associates its journal with the workspace it recorded.
+describe('journal CLI default session workspaces over the durable store (issue #400)', () => {
+  it('finds the latest journal of a session the store recorded for this workspace', async () => {
+    const sessionsRoot = mkTmp('sr-');
+    const root = mkTmp('ws-');
+    // The session ran in a subdirectory but declared the repo as its
+    // workspace: `kubic diff` from the repo must still find it.
+    const store = openSessionStore(
+      sessionsRoot,
+      createNodeFileBridge(sessionsRoot),
+    );
+    const session = await createSession(
+      store,
+      { cwd: join(root, 'pkg'), workspace: root },
+      BACKGROUND_CONTEXT,
+    );
+    await session.release(BACKGROUND_CONTEXT);
+    const journalDir = join(sessionsRoot, session.id, 'journal');
+    new FileJournalStore(journalDir).append({
+      path: 'durable.txt',
+      op: 'write',
+      before: 'd1\n',
+      after: 'd2\n',
+      bytesDelta: 0,
+      sessionId: session.id,
+      agentId: 'root',
+      toolCallId: 'call-1',
+      timestamp: 1700000000000,
+    });
+
+    // No injected sessionWorkspaces: the default lookup must read the
+    // session's recorded cwd out of the durable store.
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runJournalCommand(
+      { command: 'diff' },
+      {
+        root,
+        sessionsRoot,
+        out: (line) => lines.push(line),
+        err: (line) => errs.push(line),
+      },
+    );
+    expect(code).toBe(0);
+    expect(errs[0]).toContain(`session: ${session.id}`);
+    expect(lines.join('\n')).toContain('durable.txt');
   });
 });

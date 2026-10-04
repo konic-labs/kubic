@@ -37,6 +37,8 @@ export type EvalRunnerErrorCode =
   | 'usage-mismatch'
   | 'missing-usage-rows'
   | 'invalid-trajectory'
+  | 'trajectory-unreadable'
+  | 'trajectory-malformed'
   | 'provenance-mismatch';
 
 export class EvalRunnerError extends Error {

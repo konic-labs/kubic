@@ -14,6 +14,7 @@ import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
 import type { EvalDeterminism, EvalRecord } from './records.js';
 import {
   checkEvalProvenance,
@@ -38,6 +39,12 @@ export const EVAL_EXIT_USAGE = EXIT_USAGE;
 export const EVAL_DEFAULT_MODEL = 'faux/echo';
 
 export interface EvalCliDeps extends EvalTaskDeps {
+  // §48 (issue #258): `--trajectory <file>` reads the export through this
+  // seam (the exec FileBridge in prod); `--trajectory -` reads stdin.
+  // Absent means a path operand is refused by name (the inline-JSON form
+  // stays available).
+  readFile?: (path: string) => string;
+  readStdin?: () => string;
   // stdout: the record line / matrix table, or the one `--json` envelope.
   out: (line: string) => void;
   // stderr: diagnostics — usage refusals and, off --json, runner errors as
@@ -201,6 +208,69 @@ function emitError(
   return EVAL_EXIT_FAILED;
 }
 
+// §48 (issue #258): `--trajectory` takes a file path like `export` and
+// `replay` do; `-` reads stdin; a value that starts with `{`/`[` is the
+// pre-#258 inline-JSON form, kept for back-compat. Every failure is a named
+// refusal: `trajectory-unreadable` (the read failed) or
+// `trajectory-malformed` (not JSON, or not a valid §46 export).
+function loadTrajectoryInput(value: string, deps: EvalCliDeps): unknown {
+  const trimmed = value.trim();
+  const inline = trimmed.startsWith('{') || trimmed.startsWith('[');
+  let raw: string;
+  if (inline) {
+    raw = trimmed;
+  } else if (trimmed === '-') {
+    if (deps.readStdin === undefined) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        '--trajectory - reads stdin, but this caller supplied no stdin reader',
+      );
+    }
+    try {
+      raw = deps.readStdin();
+    } catch (error) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `cannot read stdin: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  } else {
+    if (deps.readFile === undefined) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `--trajectory ${JSON.stringify(value)} is a file path, but this caller supplied no file reader`,
+      );
+    }
+    try {
+      raw = deps.readFile(value);
+    } catch (error) {
+      throw new EvalRunnerError(
+        'trajectory-unreadable',
+        `cannot read trajectory ${JSON.stringify(value)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new EvalRunnerError(
+      'trajectory-malformed',
+      inline
+        ? `--trajectory inline JSON is malformed: ${error instanceof Error ? error.message : String(error)}`
+        : `trajectory ${JSON.stringify(value)} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    return parseTrajectoryExport(parsed);
+  } catch (error) {
+    throw new EvalRunnerError(
+      'trajectory-malformed',
+      `trajectory ${JSON.stringify(value)} is not a valid §46 export: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 // kubic eval --task ... | --trajectory ... (design §48).
 export async function runEvalCommand(
   options: EvalOptions,
@@ -251,10 +321,12 @@ export async function runEvalCommand(
     if (parsed.trajectory !== undefined) {
       let payload: unknown;
       try {
-        payload = JSON.parse(parsed.trajectory) as unknown;
-      } catch {
-        log.error('--trajectory needs inline trajectory export JSON');
-        return EVAL_EXIT_USAGE;
+        payload = loadTrajectoryInput(parsed.trajectory, deps);
+      } catch (error) {
+        if (error instanceof EvalRunnerError) {
+          return emitError(deps.out, log, error, parsed.json);
+        }
+        throw error;
       }
       const record = await runEvalTrajectory({
         suite: suiteId,

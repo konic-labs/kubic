@@ -160,7 +160,13 @@ function realRunners(channels: {
         ...io,
         loadRecords: () => [FLOW_AUDIT_FIXTURE],
       }),
-    eval: (options) => runEvalCommand(options, { ...io, ...faux }),
+    eval: (options) =>
+      runEvalCommand(options, {
+        ...io,
+        ...faux,
+        // §48 (issue #258): --trajectory takes a file path.
+        readFile: () => JSON.stringify(makeExport()),
+      }),
     benchmark: (options) => runBenchmarkCommand(options, { ...io, ...faux }),
     replay: (options) =>
       runReplayCommand(options, {
@@ -242,7 +248,7 @@ describe('analysis commands: generated help', () => {
       eval: [
         '--suite <id>',
         '--task <prompt>',
-        '--trajectory <json>',
+        '--trajectory <file>',
         '--model <id>',
         '--worktree <path>',
         '--generation <n>',
@@ -367,7 +373,7 @@ describe('analysis commands: usage errors exit 2 (§78)', () => {
       '--suite',
       's',
       '--trajectory',
-      '{}',
+      't.json',
       '--size',
       'smoke',
     ]);

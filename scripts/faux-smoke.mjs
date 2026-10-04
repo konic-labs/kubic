@@ -15,8 +15,9 @@
 //   - the tool run's §46 trajectory (issue #383): the envelope's trajectory
 //     ref is the absolute path of `<sessions-root>/<id>/trajectory.json`,
 //     the file parses, and `replay <file> --tier recorded`, `eval
-//     --trajectory <json>` and `export --trajectory <file> --type sft` all
-//     succeed on it;
+//     --trajectory <file>` (issue #258; the inline-JSON form is also
+//     exercised for back-compat) and `export --trajectory <file> --type
+//     sft` all succeed on it;
 //   - `benchmark --model faux/echo --worktree <scratch> --generation 0
 //     --size smoke --json`: the built-in fixture suites (issue #262) run
 //     through the real lane in a temp workspace, every executed row is
@@ -118,6 +119,27 @@ function consumeTrajectory(run, path, readFile, problems) {
       `eval --trajectory of a run trajectory: exit ${scored.code}, want 0 (${scored.stdout.trim().slice(-300)} ${scored.stderr.trim().slice(-300)})`,
     );
   }
+  // Issue #258: `--trajectory <file>` is the documented form (the inline
+  // JSON stays for back-compat); the file the run wrote must score.
+  const scoredFile = run(
+    [
+      'eval',
+      '--trajectory',
+      path,
+      '--suite',
+      'bugfix-repro',
+      '--size',
+      'smoke',
+      '--json',
+    ],
+    { env: FAUX_ENV },
+  );
+  if (scoredFile.code !== 0) {
+    problems.push(
+      `eval --trajectory <file> of a run trajectory: exit ${scoredFile.code}, want 0 (${scoredFile.stdout.trim().slice(-300)} ${scoredFile.stderr.trim().slice(-300)})`,
+    );
+  }
+
   const exported = run(['export', '--trajectory', path, '--type', 'sft'], {
     env: FAUX_ENV,
   });

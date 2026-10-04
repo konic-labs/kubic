@@ -550,16 +550,97 @@ describe('eval/benchmark semantics over parsed options', () => {
     ]);
   });
 
-  it('refuses a --trajectory that is not JSON', async () => {
+  it('refuses a malformed inline --trajectory by name (back-compat form)', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', trajectory: '{not json', ...PROVENANCE },
       { ...deps, out: o.write, err: o.err },
     );
     expect(exit).toBe(2);
+    expect(o.errs[0]).toMatch(/^error: \[trajectory-malformed\] /);
+    expect(o.errs[0]).toMatch(/inline JSON is malformed/);
+  });
+
+  it('scores a --trajectory FILE (issue #258)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
+      {
+        ...deps,
+        readFile: (path: string) => {
+          expect(path).toBe('run.json');
+          // PROVENANCE's worktree must agree with the export's (§48).
+          return JSON.stringify(makeExport({ worktree: '/wt/a' }));
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
+  });
+
+  it('reads --trajectory - from stdin (issue #258)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: '-', ...PROVENANCE },
+      {
+        ...deps,
+        readStdin: () => JSON.stringify(makeExport({ worktree: '/wt/a' })),
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
+  });
+
+  it('names an unreadable trajectory file (trajectory-unreadable, exit 2)', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'missing.json', ...PROVENANCE },
+      {
+        ...deps,
+        readFile: () => {
+          throw new Error('ENOENT: no such file');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(2);
+    expect(o.lines).toEqual([]);
     expect(o.errs).toEqual([
-      'error: --trajectory needs inline trajectory export JSON',
+      'error: [trajectory-unreadable] cannot read trajectory "missing.json": ENOENT: no such file',
     ]);
+  });
+
+  it('names a malformed trajectory file (trajectory-malformed, exit 2)', async () => {
+    for (const [body, message] of [
+      ['{not json', /is not valid JSON/],
+      ['{}', /is not a valid §46 export/],
+    ] as const) {
+      const o = out();
+      const exit = await runEvalCommand(
+        { suite: 'swe-bench-mini', trajectory: 'bad.json', ...PROVENANCE },
+        { ...deps, readFile: () => body, out: o.write, err: o.err },
+      );
+      expect(exit, body).toBe(2);
+      expect(o.lines, body).toEqual([]);
+      expect(o.errs[0], body).toMatch(/^error: \[trajectory-malformed\] /);
+      expect(o.errs[0], body).toMatch(message);
+    }
+  });
+
+  it('refuses a file path when the caller supplied no reader', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    expect(o.errs[0]).toMatch(/^error: \[trajectory-unreadable\] /);
+    expect(o.errs[0]).toMatch(/no file reader/);
   });
 
   it('exits 2 with the named refusal in the --json envelope', async () => {

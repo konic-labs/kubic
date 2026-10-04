@@ -36,8 +36,8 @@ kubic eval --task "fix the widget" --suite my-suite \
   --model faux/echo --worktree /wt/eval-1 --generation 1 \
   --size smoke --json
 
-# Score an existing trajectory without re-running it
-kubic eval --trajectory "$(cat run.trajectory.json)" --suite my-suite \
+# Score an existing trajectory file without re-running it (`-` reads stdin)
+kubic eval --trajectory run.trajectory.json --suite my-suite \
   --model faux/echo --worktree /wt/eval-1 --generation 1 \
   --size smoke --json
 

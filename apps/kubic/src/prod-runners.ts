@@ -35,6 +35,7 @@ import { runExportCommand as runTrajectoryExportCommand } from '../../../package
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
+import { readStdinText } from '../../../packages/exec/src/stdin.js';
 import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
 import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
 import {
@@ -804,6 +805,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       runEvalCommand(options, {
         runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
+        // §48 (issue #258): --trajectory takes a file path (or `-` for
+        // stdin) like export/replay; relative to the user's cwd.
+        readFile: (path: string) =>
+          createNodeFileBridge(process.cwd()).readTextFile(path),
+        readStdin: readStdinText,
         ...report(),
       }),
     benchmark: (options, cliConfig) =>

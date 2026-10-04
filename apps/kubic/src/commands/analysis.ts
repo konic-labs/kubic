@@ -163,7 +163,10 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   )
     .requiredOption('--suite <id>', 'built-in suite to score')
     .option('--task <prompt>', 'execute the suite against a task prompt')
-    .option('--trajectory <json>', 'score an inline trajectory export (JSON)')
+    .option(
+      '--trajectory <file>',
+      'score a trajectory export file (`-` reads stdin; inline JSON is kept for back-compat)',
+    )
     .option(
       '--model <id>',
       `${MODEL_HELP} (--task default ${EVAL_DEFAULT_MODEL})${FROM_EXPORT}`,

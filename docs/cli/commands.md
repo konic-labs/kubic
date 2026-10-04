@@ -1684,7 +1684,7 @@ flag, a stray operand, or a value on a boolean flag (`--json=1`) prints one
   which is a usage error, leaves stdout empty and prints its `error:`
   line on stderr.
 
-## `kubic eval --suite <id> (--task <prompt> | --trajectory <json>) [--generation <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <file>) [--generation <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Scores one suite against a task prompt or an existing trajectory
 export. Every record needs its provenance (`model`, `thinking`,
@@ -1714,7 +1714,7 @@ a skipped stub, which names the tier it would run at).
 | --- | --- |
 | `--suite <id>` | **Required.** A built-in suite id — `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live` — or a **category alias** (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`); `kubic eval` scores one record, so a category with more than one suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with exit 2. An unknown selector exits 2. |
 | `--task <prompt>` | Runs the suite's fixture through the real solo lane and scores the trajectory it writes: the fixture's prompt is the run, its gate command(s) decide the verdict, and the record carries the §73 fields. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`/`--generation`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
-| `--trajectory <json>` | Scores an existing trajectory export, given as inline JSON, without re-running anything. Fully live: exits 0 with the record, or 1 when the gates fail it. Text that is not JSON exits 2. |
+| `--trajectory <file>` | Scores an existing trajectory export file, without re-running anything (issue #258): the same file form `replay` and `export` take. `-` reads the export from stdin; a value starting with `{`/`[` is the pre-#258 inline-JSON form and still works. Fully live: exits 0 with the record, or 1 when the gates fail it. An unreadable file exits 2 (`trajectory-unreadable`), a file that is not JSON or not a valid §46 export exits 2 (`trajectory-malformed`). |
 | `--generation <n>` | The worker generation that ran. Must be an integer; anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
 | `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
 | `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a §47.1 tier. Published on every record; a missing or unknown size exits 2 on both paths. |

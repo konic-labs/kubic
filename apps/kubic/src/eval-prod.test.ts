@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { createProdRunners } from './prod-runners.js';
 
@@ -213,6 +214,110 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     expect(
       envelope.results.filter((row) => row.skipped).map((row) => row.suite),
     ).toEqual(['terminal-live']);
+  });
+
+  it('scores a --trajectory FILE through the prod reader (issue #258)', {
+    timeout: 60_000,
+  }, async () => {
+    const workspace = tmp('kubic-eval-ws-');
+    const path = join(workspace, 'run.json');
+    writeFileSync(
+      path,
+      JSON.stringify(
+        buildTrajectoryExport({
+          task: { taskId: 'task-1', objective: 'fix', role: 'writer' },
+          identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+          model: {
+            provider: 'faux',
+            model: 'echo',
+            thinking: null,
+            escalations: [],
+          },
+          prompt: { text: 'fix', constraints: [] },
+          resources: { skills: [], promptTemplates: [] },
+          transfer: null,
+          actions: [],
+          observations: [],
+          state: { phase: 'done', snapshot: null },
+          provenance: {
+            sessionId: 'sess-1',
+            agentId: 'agent-1',
+            pid: null,
+            generation: 0,
+            worktree: workspace,
+            model: 'faux/echo',
+          },
+          environment: { capturedFrom: 'used', cwd: workspace, env: {} },
+          worktree: { path: workspace, baseRevision: 'abc', branch: null },
+          diff: { filesChanged: [], files: [] },
+          approvals: [],
+          timestamps: {
+            startedAt: '2026-09-23T10:00:00.000Z',
+            endedAt: '2026-09-23T10:01:00.000Z',
+          },
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cachedTokens: 0,
+            requests: 1,
+            costUsd: 0.01,
+            byModel: {},
+          },
+          result: {
+            status: 'completed',
+            summary: 'done',
+            failureCategory: null,
+            error: null,
+          },
+        }),
+      ),
+    );
+    const { r, lines, errs } = runners(workspace);
+    const code = await r.eval(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: path,
+        worktree: workspace,
+        generation: '0',
+        size: 'smoke',
+        json: true,
+      },
+      cliConfig(),
+    );
+    expect(errs).toEqual([]);
+    expect(code).toBe(0);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      ok: boolean;
+      record: { determinism: string; worktree: string };
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.record.determinism).toBe('recorded');
+    expect(envelope.record.worktree).toBe(workspace);
+  });
+
+  it('names an unreadable trajectory file (exit 2, trajectory-unreadable)', {
+    timeout: 60_000,
+  }, async () => {
+    const workspace = tmp('kubic-eval-ws-');
+    const { r, lines } = runners(workspace);
+    const code = await r.eval(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: join(workspace, 'missing.json'),
+        worktree: workspace,
+        generation: '0',
+        size: 'smoke',
+        json: true,
+      },
+      cliConfig(),
+    );
+    expect(code).toBe(2);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('trajectory-unreadable');
   });
 
   it('resolves the §73 category alias (--suite swe)', {

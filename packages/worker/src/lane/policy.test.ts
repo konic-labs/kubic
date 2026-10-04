@@ -1,55 +1,118 @@
-// Slice B: allowlisting on the solo lane (issue #15).
-import { afterAll, describe, expect, it } from 'vitest';
+// Slice B: allowlisting on the solo lane (issue #15), ported to the durable
+// harness in #394. The class-derived allowlist is now a
+// `conversation.configure({ tools })` against the registry's registrations.
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
+  AgentDoc,
   BACKGROUND_CONTEXT,
+  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-  MemorySessionRepo,
-  type Session,
+  MemoryStorage,
+  type Storage,
 } from '../pi-boundary.js';
 import { applyToolPolicy } from './policy.js';
-import { bootSoloLane } from './solo.js';
+import { bootSoloLane, type SoloLane } from './solo.js';
 
-const sessions: Session[] = [];
-afterAll(async () => {
-  for (const session of sessions) {
-    try {
-      await session.close(BACKGROUND_CONTEXT);
-    } catch {
-      // Best-effort teardown.
-    }
+vi.mock('./interceptors.js', () => ({
+  policyInterceptorHooks: () => [],
+}));
+
+vi.mock('../compaction.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../compaction.js')>();
+  return {
+    ...original,
+    soloCompactionSettings: (options: {
+      configuredReserveTokens?: number;
+      currentWindow?: () => number | undefined;
+    }) => ({
+      enabled: true,
+      keepRecentTokens: 20_000,
+      get reserveTokens() {
+        return (
+          options.configuredReserveTokens ?? original.DEFAULT_RESERVE_TOKENS
+        );
+      },
+    }),
+  };
+});
+
+vi.mock('./tools-adapter.js', async () => {
+  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { OPERATIONS } = await import('../ops/registry.js');
+  return {
+    kubicToolsToPiTools: () =>
+      Object.keys(OPERATIONS).map((name) =>
+        defineTool({
+          name,
+          description: `${name} (faux)`,
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [{ type: 'text' as const, text: name }],
+          }),
+        }),
+      ),
+  };
+});
+
+const SOLOS: SoloLane[] = [];
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  for (const solo of SOLOS.splice(0)) {
+    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
-async function booted() {
-  const env = new FakeExecutionEnv({});
-  const repo = new MemorySessionRepo();
-  const session = await repo.create({}, BACKGROUND_CONTEXT);
+type TestSession = {
+  id: string;
+  dir: string;
+  storage: Storage;
+  meta: { cwd: string; createdAt: string };
+  release(context: Context): Promise<void>;
+};
+function handle(id = 'sess-1'): TestSession {
+  return {
+    id,
+    dir: `/tmp/kubic-solo-policy/${id}`,
+    storage: new MemoryStorage(),
+    meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    release: vi.fn(async () => undefined),
+  };
+}
+
+async function booted(): Promise<SoloLane> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const bootedLane = await bootSoloLane({
-    session,
+  const solo = await bootSoloLane({
+    session: handle() as never,
     models,
     model: faux.getModel(),
-    env,
-    sessionId: session.metadata.id,
+    env: new FakeExecutionEnv({}),
+    sessionId: 'sess-1',
     agentId: 'root',
   });
-  sessions.push(session);
-  return bootedLane;
+  SOLOS.push(solo);
+  return solo;
+}
+
+async function offered(solo: SoloLane): Promise<string[]> {
+  return (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools.map(
+    (tool) => tool.name,
+  );
 }
 
 describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
-  it('boots with all fifteen tools active under solo defaults', async () => {
-    const { harness, lane } = await booted();
+  it('allowlists all fifteen tools active under solo defaults', async () => {
+    const solo = await booted();
     const allowed = await applyToolPolicy(
-      harness,
-      lane,
+      solo.registry,
+      solo.conversation,
       SOLO_DEFAULTS,
       BACKGROUND_CONTEXT,
     );
@@ -72,25 +135,32 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
         'write',
       ].sort(),
     );
-    // The lane enforces exactly the allowlist the policy reported.
-    expect([...(await lane.getActiveTools(BACKGROUND_CONTEXT))].sort()).toEqual(
+    // The conversation offers exactly the allowlist the policy reported.
+    expect([...(await offered(solo))].sort()).toEqual(allowed.sort());
+    // ... and the durable agent document stores the same names.
+    const stored = await solo.harness.snapshot(
+      AgentDoc,
+      solo.conversation.id,
+      BACKGROUND_CONTEXT,
+    );
+    expect([...((stored?.tools as string[] | undefined) ?? [])].sort()).toEqual(
       allowed.sort(),
     );
   });
 
   it('allowlist removes tools outside the classes', async () => {
-    const { harness, lane } = await booted();
+    const solo = await booted();
     await applyToolPolicy(
-      harness,
-      lane,
+      solo.registry,
+      solo.conversation,
       { ...SOLO_DEFAULTS, filesystem: 'none', shell: false, git: false },
       BACKGROUND_CONTEXT,
     );
-    expect(await lane.getActiveTools(BACKGROUND_CONTEXT)).toEqual([]);
+    expect(await offered(solo)).toEqual([]);
   });
 
-  it('derives the allowlist the lane actually enforces', async () => {
-    const { harness, lane } = await booted();
+  it('derives the allowlist the conversation actually offers', async () => {
+    const solo = await booted();
     const classes = {
       ...SOLO_DEFAULTS,
       filesystem: 'read' as const,
@@ -98,14 +168,32 @@ describe('tool policy allowlisting (issue #15, slice B; extended #19)', () => {
       git: false as const,
     };
     const allowed = await applyToolPolicy(
-      harness,
-      lane,
+      solo.registry,
+      solo.conversation,
       classes,
       BACKGROUND_CONTEXT,
     );
     expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
-    expect([...(await lane.getActiveTools(BACKGROUND_CONTEXT))].sort()).toEqual(
-      allowed.sort(),
-    );
+    expect([...(await offered(solo))].sort()).toEqual(allowed.sort());
+  });
+
+  it('refuses classes that demand a tool the registry does not carry', async () => {
+    const solo = await booted();
+    // The mock registry carries the full set; a policy that demands git
+    // tools on a registry without them is the refused half. Drop the git
+    // registrations by constructing a registry with only read tools.
+    const onlyRead = {
+      snapshot: () => ({
+        tools: () => [{ extension: { name: 'kubic' }, tool: { name: 'read' } }],
+      }),
+    };
+    await expect(
+      applyToolPolicy(
+        onlyRead as never,
+        solo.conversation,
+        SOLO_DEFAULTS,
+        BACKGROUND_CONTEXT,
+      ),
+    ).rejects.toThrow(/not registered/);
   });
 });

@@ -360,3 +360,17 @@ export type {
 //   review: issue #399 (CONTRACT D3)
 // TaskId is re-exported by the #398 block above (deduped at merge).
 export type { CompactionResult } from '@earendil-works/pi-durable';
+
+// --- #394 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#Registry
+//   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
+//     per-process registry the boot installs the Kubic extensions into)
+//     and lane/policy.ts (resolving a name-based allowlist back to the
+//     ToolRegistration objects configure({ tools }) takes)
+//   why Pi has no alternative: HarnessOptions takes exactly this Registry,
+//     and a Kubic-shaped copy would neither type against Harness.open nor
+//     publish the ToolRegistration objects an allowlist must reference.
+//   review: issue #389 (K4 #394)
+export type { Registry } from '@earendil-works/pi-durable';

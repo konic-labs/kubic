@@ -44,6 +44,8 @@ export interface PersistRunTrajectoryInput {
   agentId: string;
   role: string;
   prompt: string;
+  // §67 (issue #191): the manager's task, when the run was handed one.
+  task?: { taskId: string; objective: string; role: string };
   entries: readonly unknown[];
   model?: { provider: string; id: string };
   thinking?: string | null;
@@ -150,6 +152,7 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
     workerId,
     role: input.role,
     prompt: input.prompt,
+    ...(input.task === undefined ? {} : { task: input.task }),
     entries: input.entries,
     model: {
       ...(input.model ?? NO_MODEL),

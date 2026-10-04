@@ -16,9 +16,16 @@ import {
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
+import {
+  type AgentTask,
+  validateAgentTask,
+} from '../../../packages/agents/src/task.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  type FileBridge,
+} from '../../../packages/exec/src/file-bridge.js';
 import {
   gitHeadOf,
   withDetachedCheckout,
@@ -637,6 +644,40 @@ async function ensurePromptDurable(
 
 // What the settled run leaves for its §46 trajectory (issue #383): filled
 // as the run boots, read once after it settles.
+// §67 (issue #191): read the manager-written task named by KUBIC_TASK_FILE.
+// Absent/empty means no task (a solo run, or a worker the manager gave no
+// grant); an unreadable or invalid file, or one naming a different worktree,
+// is a named refusal — never a half-applied grant.
+function readAgentTask(
+  bridge: Pick<FileBridge, 'readTextFile'>,
+  path: string | undefined,
+): { task?: AgentTask; error?: string } {
+  if (path === undefined || path === '') return {};
+  let raw: string;
+  try {
+    raw = bridge.readTextFile(path);
+  } catch (error) {
+    return {
+      error: `agent task ${path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      error: `agent task ${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const validation = validateAgentTask(parsed);
+  if (!validation.valid) {
+    return {
+      error: `agent task ${path} refused: ${validation.errors.join('; ')}`,
+    };
+  }
+  return { task: validation.task };
+}
+
 interface RunCapture {
   startedAt: number;
   sessionsRoot?: string;
@@ -644,6 +685,8 @@ interface RunCapture {
   cwd?: string;
   model?: { provider: string; id: string };
   role?: string;
+  /** §67 (issue #191): the manager's task, when this run was handed one. */
+  task?: AgentTask;
   skills: string[];
   entries: unknown[];
   lane?: RunOutcome['lane'];
@@ -762,6 +805,17 @@ export async function runHeadlessPrompt(
       agentId: deps.agentId ?? 'root',
       role: capture.role ?? 'solo',
       prompt: scrub(prompt),
+      // §67 (issue #191): the worker's task is recorded with the run, so a
+      // trajectory names the grant the agent actually ran under.
+      ...(capture.task === undefined
+        ? {}
+        : {
+            task: {
+              taskId: capture.task.taskId,
+              objective: capture.task.objective,
+              role: capture.task.role,
+            },
+          }),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
       cwd: cwd ?? process.cwd(),
@@ -1140,6 +1194,21 @@ async function runHeadlessPromptImpl(
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
+    // §67 (issue #191): the manager hands the worker its task — the
+    // capability grant travels with the work, so the child registers exactly
+    // `task.toolNames` instead of re-deriving a role from its own worktree
+    // (a checkout of HEAD, not the working tree the plan was composed from).
+    // A task that cannot be read or validated fails the run closed, and a
+    // task naming a different worktree than the child's cwd is a mismatch,
+    // never a silent adaptation.
+    const agentTask = readAgentTask(bridge, process.env.KUBIC_TASK_FILE);
+    if (agentTask.error !== undefined) {
+      return finished(id, 'failed', agentTask.error, agentTask.error);
+    }
+    const task = agentTask.task;
+    if (task !== undefined) {
+      capture.task = task;
+    }
     // §58 enterprise gates (issue #288): one local view of the resolved
     // policy, so the role resolution, the model selection and the lane tool
     // set all read the same object.
@@ -1156,7 +1225,17 @@ async function runHeadlessPromptImpl(
         ? (provider: string, modelId: string): boolean =>
             isModelAllowed(enterprisePolicy, provider, modelId)
         : undefined;
-    if (options.role !== undefined) {
+    if (task !== undefined) {
+      // The task IS the assignment: its role name and tool set are
+      // authoritative, and the prompt was composed by the manager (it already
+      // carries the role's `## Prompt` text). No role document is read, so an
+      // uncommitted `.kubic/roles/<name>.md` in the manager's working tree
+      // still gives the worker the tool set the manager resolved.
+      capture.role = task.role;
+      debug?.(
+        `[policy] task=${task.taskId} role=${task.role} tools=${task.toolNames.join(',')}`,
+      );
+    } else if (options.role !== undefined) {
       const rolesBridge = createNodeFileBridge(
         deps.roles?.cwd ?? process.cwd(),
       );
@@ -1320,6 +1399,23 @@ async function runHeadlessPromptImpl(
     }
     capture.model = { provider: model.provider, id: model.id };
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
+    // §67 (issue #191): the task names the worktree the child must run in —
+    // a mismatch is a fail-closed refusal, never a silent adaptation. The
+    // physical path is compared (the env's own realpath), so a symlinked
+    // worktree root is the same worktree.
+    if (task !== undefined) {
+      const physical = (path: string): string | null => {
+        try {
+          return env.fs.realpath?.(path) ?? path;
+        } catch {
+          return null;
+        }
+      };
+      if (physical(task.worktree) !== physical(env.cwd)) {
+        const message = `agent task '${task.taskId}' names worktree ${task.worktree}, but this run is in ${env.cwd}`;
+        return finished(id, 'failed', message, message);
+      }
+    }
     capture.cwd = env.cwd;
     // Installed policy (issue #86; §40, §41): the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
@@ -1568,14 +1664,21 @@ async function runHeadlessPromptImpl(
         ...(skills.readRoots.length === 0
           ? {}
           : { skillReadRoots: skills.readRoots }),
-        ...(role === undefined
-          ? {}
-          : {
-              rolePrompt: role.prompt,
-              ...(role.resolved.tools.length === 0
-                ? {}
-                : { toolAllowlist: role.resolved.tools }),
-            }),
+        // §67 (issue #191): a task's tool set is the grant, and it outranks
+        // any role document; without a task the role document's resolved set
+        // is what narrows the lane (absence, not approval).
+        ...(task !== undefined
+          ? { toolAllowlist: [...task.toolNames] }
+          : role === undefined
+            ? {}
+            : {
+                rolePrompt: role.prompt,
+                ...(role.resolved.tools.length === 0
+                  ? {}
+                  : { toolAllowlist: role.resolved.tools }),
+              }),
+        // The explicit CLI selection narrows whatever the task or role
+        // granted: the lane intersects it (never widens).
         ...(options.noTools === true ? { noTools: true } : {}),
         ...(options.tools === undefined
           ? {}

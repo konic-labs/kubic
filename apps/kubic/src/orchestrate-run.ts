@@ -15,13 +15,22 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+// §67 (issue #191): the task and the capability grant travel together — the
+// manager builds and validates the task it hands a worker child.
+import {
+  type AgentTask,
+  buildAgentTask,
+} from '../../../packages/agents/src/task.js';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
 import type { Shell, ShellResult } from '../../../packages/exec/src/env.js';
 import {
   NodeExecutionEnv,
   ROOT_PROVENANCE,
 } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  type FileBridge,
+} from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
 import { enableSessionFullAccess } from '../../../packages/host/src/approvals.js';
@@ -545,6 +554,49 @@ const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 // (§13, issue #94) lives on the CHILD side (headless-run.ts) — a worker
 // announces itself the moment its session is attached, so the launch
 // handshake times the real startup instead of prompt construction.
+
+// The file a worker child reads its §67 task from (issue #191): written into
+// the worker's own session dir by the manager, named to the child through
+// KUBIC_TASK_FILE.
+export const AGENT_TASK_FILE = 'agent-task.json';
+
+// The resolver shares the conflicted worker's session dir, so its task file
+// is named apart from that worker's own (issue #191).
+export const RESOLVER_TASK_FILE = 'resolver-task.json';
+
+// §67 (issue #191): a task that fails validation refuses the spawn before the
+// child exists. Named so the run's terminus says why.
+export class AgentTaskRefusedError extends Error {
+  readonly code = 'task_refused';
+  constructor(agentId: string, errors: readonly string[]) {
+    super(`worker '${agentId}' task refused: ${errors.join('; ')}`);
+    this.name = 'AgentTaskRefusedError';
+  }
+}
+
+// Write the task into the worker's session dir and return its absolute path —
+// the value the child gets in KUBIC_TASK_FILE. The child reads it back from
+// its own side of the session store, never from the manager's process.
+function writeAgentTask(
+  sessionBridge: Pick<FileBridge, 'writeFile' | 'absolutePath'>,
+  sessionId: string,
+  task: AgentTask,
+): string {
+  const relative = join(sessionId, AGENT_TASK_FILE);
+  sessionBridge.writeFile(relative, `${JSON.stringify(task)}\n`);
+  return sessionBridge.absolutePath(relative);
+}
+
+// `provider/id` → the task's model selection; a ref without a usable split
+// names no model (the child's own pin still travels on KUBIC_MODEL).
+function modelOfRef(
+  ref: string | undefined,
+): { provider: string; model: string } | undefined {
+  if (ref === undefined) return undefined;
+  const slash = ref.indexOf('/');
+  if (slash <= 0 || slash === ref.length - 1) return undefined;
+  return { provider: ref.slice(0, slash), model: ref.slice(slash + 1) };
+}
 
 export class WorkerRunFailure extends Error {
   readonly code:
@@ -1893,6 +1945,37 @@ export async function orchestrateDepsWithDefaults(
         info?.role ?? 'worker',
         info?.modelRef,
       );
+      // §67 (issue #191): the task and the capability grant travel together.
+      // The manager builds and VALIDATES the worker's task before the child
+      // exists — a task whose worktree is not absolute or whose tool set is
+      // empty refuses the spawn by name — and writes it into the worker's
+      // session dir, so the child registers exactly `task.toolNames` instead
+      // of re-deriving a role from its own worktree (a checkout of HEAD, not
+      // the working tree the plan was composed from). No role assignment
+      // means no grant to transmit: no task file, and the child keeps its own
+      // default lane.
+      const taskFile = ((): string | undefined => {
+        // No role assignment means no grant to transmit (the child keeps its
+        // own default lane). An assignment with an EMPTY tool set is a task
+        // that cannot validate — refused below, never silently widened to the
+        // full solo set.
+        if (info?.role === undefined) return undefined;
+        const model = modelOfRef(info.modelRef);
+        const built = buildAgentTask({
+          taskId: `${workerSession}:${agentId}`,
+          parentSessionId: info.sessionId,
+          role: info.role,
+          objective: prompt,
+          worktree: worktree.path,
+          toolNames: info.tools ?? [],
+          ...(budgetForSpawn === undefined ? {} : { budget: budgetForSpawn }),
+          ...(model === undefined ? {} : { model }),
+        });
+        if (!built.valid) {
+          throw new AgentTaskRefusedError(agentId, built.errors);
+        }
+        return writeAgentTask(sessionBridge, workerSession, built.task);
+      })();
       if (credentialGrant.refusal !== undefined) {
         // Defence in depth: the preflight checks this same memoized lookup
         // for every pending agent before any worktree exists, so reaching
@@ -1956,6 +2039,10 @@ export async function orchestrateDepsWithDefaults(
             ...(info?.thinking === undefined
               ? {}
               : { KUBIC_MODEL_THINKING: info.thinking }),
+            // §67 (issue #191): the worker's task — the capability grant the
+            // child's lane registers. Non-secret (tool names, worktree, the
+            // objective it already runs), the same class as the pins above.
+            ...(taskFile === undefined ? {} : { KUBIC_TASK_FILE: taskFile }),
             ...approvalsChildEnv(
               workerSession,
               info?.sessionId ?? orchestratorSessionId ?? 'orch',
@@ -2419,6 +2506,35 @@ export async function orchestrateDepsWithDefaults(
       if (resolverGrant.refusal !== undefined) {
         return { resolved: false, reason: resolverGrant.refusal.message };
       }
+      // §67 (issue #191): the resolver gets an explicit task too — its spec's
+      // tool set (the implementer/debugger writer set) travels as
+      // `task.toolNames`, so a worktree without the role document no longer
+      // drops the resolver onto a default lane. Its session dir is the
+      // conflicted worker's (same session id), so the file is named apart
+      // from that worker's own task.
+      const resolverTask = buildAgentTask({
+        taskId: `${workerSession}:${request.agentId}:resolver`,
+        parentSessionId: sessionId,
+        role: request.spec.role,
+        objective: request.prompt,
+        worktree: request.worktree.path,
+        toolNames: request.spec.tools,
+        constraints: request.spec.constraints,
+      });
+      if (!resolverTask.valid) {
+        return {
+          resolved: false,
+          reason: `resolver '${request.agentId}' task refused: ${resolverTask.errors.join('; ')}`,
+        };
+      }
+      const resolverTaskFile = ((): string => {
+        const relative = join(workerSession, RESOLVER_TASK_FILE);
+        sessionBridge.writeFile(
+          relative,
+          `${JSON.stringify(resolverTask.task)}\n`,
+        );
+        return sessionBridge.absolutePath(relative);
+      })();
       const launched = launchWorker(
         {
           workerId: request.agentId,
@@ -2440,6 +2556,9 @@ export async function orchestrateDepsWithDefaults(
             ...approvalsChildEnv(workerSession, sessionId),
             ...modelsRootEnv(),
             ...trustEnv(),
+            // §67 (issue #191): the resolver's task — explicit toolNames, so
+            // it never falls back to the child's default writer set.
+            KUBIC_TASK_FILE: resolverTaskFile,
           },
           cmd:
             options.resolverEntry?.cmd ??

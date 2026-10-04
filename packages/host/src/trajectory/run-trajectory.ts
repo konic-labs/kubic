@@ -70,6 +70,10 @@ export interface RunTrajectoryInput {
   // The role the lane ran as: 'solo', or the `--role` name.
   role: string;
   prompt: string;
+  // §67 (issue #191): the manager's task, when this run was handed one. Its
+  // identity replaces the prompt-derived one, so a worker's trajectory names
+  // the task the manager composed instead of a digest of the composed prompt.
+  task?: { taskId: string; objective: string; role: string };
   // The session's durable entries (any order; older runs filtered here).
   entries: readonly unknown[];
   model: { provider: string; id: string; thinking: string | null };
@@ -363,11 +367,15 @@ export function assembleRunTrajectory(
   const entries = runEntries(input.entries, input.startedAt);
   const items = entriesToTranscript(entries);
   const { actions, observations } = actionsAndObservations(items);
-  const taskId = taskIdForPrompt(input.prompt);
+  const taskId = input.task?.taskId ?? taskIdForPrompt(input.prompt);
   const modelRef = `${input.model.provider}/${input.model.id}`;
   const result = trajectoryResultFor(input.outcome);
   return buildTrajectoryExport({
-    task: { taskId, objective: input.prompt, role: input.role },
+    task: {
+      taskId,
+      objective: input.task?.objective ?? input.prompt,
+      role: input.task?.role ?? input.role,
+    },
     identity: {
       sessionId: input.sessionId,
       agentId: input.agentId,

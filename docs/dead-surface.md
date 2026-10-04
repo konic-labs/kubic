@@ -131,7 +131,7 @@ file that no longer exists, or when a row's file has become reachable
 | 4 | `packages/agents/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/lifecycle.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/agents/src/roles.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 133 | `packages/agents/src/task.ts` | #99 | keep: type-only contract (`AgentTask`, `TaskResources`, `WorkspaceMode`, `validateAgentTask`, …) consumed by LIVE modules through `import type` — `host/src/workers-cli.ts`, `worker/src/lifecycle/{rows,registry}.ts`, `trajectory/src/schema.ts` (its schema mirrors the fields) and `roles-data.ts` (#104). The gate walks VALUE imports, so a types-only module can never be `reachable` by its own rule; deleting it would break the typecheck of live files. Re-owned from `wire:` to a named reason because #99 could not make it reachable without inventing a value import |
+
 | 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/protocol.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |

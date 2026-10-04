@@ -128,6 +128,23 @@ solo) — and `run` never delegates.
   registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
   do and which tools exist on its lane; a contradictory document refuses the
   run before anything spawns, and `kubic doctor` prints the same refusal.
+- **A worker's assignment travels as its §67 task (issue
+  [#191](https://github.com/konic-labs/kubic/issues/191); §67, §11.1).** The
+  manager composes a worker's role from its OWN working tree, so the manager
+  builds and validates that worker's task — identity, objective, worktree,
+  the resolved tool set, the budget — writes it into the worker's session dir
+  and names it to the child in `KUBIC_TASK_FILE`. The child registers exactly
+  `task.toolNames` and never re-derives a role from its own worktree (a
+  checkout of HEAD, not the working tree the plan came from): an uncommitted
+  `.kubic/roles/<name>.md` in the manager still gives the worker the tool set
+  the manager resolved, and a document that differs in the worktree cannot
+  narrow or widen the lane. An assignment whose task cannot validate (an
+  empty tool set, a worktree that is not absolute) refuses the spawn by name
+  (`code=task_refused`), and a child whose cwd is not the task's worktree
+  fails closed. A worker with no role assignment gets no task file and keeps
+  its own default lane. The resolver gets the same treatment, with its spec's
+  writer tool set — never a fallback to the child's default. The task's
+  identity is what the worker's trajectory records.
 - **What reaches a worker's env (issue
   [#201](https://github.com/konic-labs/kubic/issues/201); §3.8, §35.1, §36.3).**
   A worker child starts from a fresh env built by the spawn allowlist
@@ -142,7 +159,8 @@ solo) — and `run` never delegates.
   ids, §23, so a worker's §60 row is attributable to its run — the approval
   mailbox `KUBIC_APPROVALS_DIR` with the manager's public verification key
   `KUBIC_APPROVALS_VERIFY_KEY`, the approval bound
-  `KUBIC_APPROVALS_BOUND_MS`, and the `KUBIC_BUDGET` spec); the manager's repo
+  `KUBIC_APPROVALS_BOUND_MS`, the `KUBIC_BUDGET` spec, and the §67 task file
+  `KUBIC_TASK_FILE`); the manager's repo
   root (`KUBIC_MODELS_ROOT`) with its project-trust decision
   (`KUBIC_TRUST_PROJECT`, synthesized from the durable store when the operator
   did not export it); and the documented runtime config overrides

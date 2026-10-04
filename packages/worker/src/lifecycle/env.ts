@@ -68,6 +68,10 @@ export const ENV_ALLOWLIST: readonly string[] = [
   'KUBIC_MODEL_THINKING',
   'KUBIC_APPROVALS_ROUTE',
   'KUBIC_JOURNAL_RETENTION_DAYS',
+  // The worker's §67 task file (issue #191): the manager writes it into the
+  // worker's own session dir and names it here. Tool names, the worktree and
+  // the objective the child already runs — a location, not a secret.
+  'KUBIC_TASK_FILE',
   // Per-spawn budget (issue #208, §71): the orchestration run hands its child
   // the resolved spec (JSON) so the child's own lane enforces maxToolCalls /
   // maxTokens / maxCostUsd — non-secret limits, the same class as the

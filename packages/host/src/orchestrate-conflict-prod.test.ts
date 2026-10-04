@@ -62,6 +62,7 @@ import { writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] ?? '';
 writeFileSync('resolver-prompt.txt', prompt);
+writeFileSync('resolver-task-file.txt', process.env.KUBIC_TASK_FILE ?? '(none)');
 for (const file of ['shared.txt']) {
   const target = execFileSync('git', ['show', 'main:' + file], {
     encoding: 'utf8',
@@ -244,6 +245,23 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     // file in each side's changes since the merge base.
     expect(resolverPrompt).toContain('shared.txt');
     expect(resolverPrompt).not.toContain('(no file headers in either diff)');
+    // §67 (issue #191): the resolver gets an explicit task too — the spec's
+    // writer tool set travels as `task.toolNames`, so a worktree without the
+    // role document no longer drops it onto a default lane.
+    const taskFile = readFileSync(
+      join(resolverWorktree, 'resolver-task-file.txt'),
+      'utf8',
+    );
+    expect(taskFile).not.toBe('(none)');
+    const resolverTask = JSON.parse(readFileSync(taskFile, 'utf8')) as {
+      role: string;
+      toolNames: string[];
+      workspaceMode: string;
+    };
+    expect(resolverTask.role).toBe('implementer');
+    expect(resolverTask.workspaceMode).toBe('worktree');
+    expect(resolverTask.toolNames).toContain('write');
+    expect(resolverTask.toolNames).toContain('edit');
     // The merge target ends up with the resolver's settlement.
     // main holds alpha's line: the resolver took the merge target's version,
     // so the settling content is alpha's, and the merge is clean afterwards.

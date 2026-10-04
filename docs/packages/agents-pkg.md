@@ -18,7 +18,7 @@ budgets by default: `createBudget` never injects limits (issue #9; §71).
 
 | Module | Exports |
 | --- | --- |
-| `task.ts` | `AgentTask`, `AGENT_TASK_FIELDS`, `AgentRole`, `ModelSelection`, `ScopedModel`, `TaskResources`, `TaskArtifactRef`, `WorkspaceMode`, `WORKSPACE_MODES`, `TaskValidation`, `validateAgentTask` |
+| `task.ts` | `AgentTask`, `AGENT_TASK_FIELDS`, `AgentRole`, `ModelSelection`, `ScopedModel`, `TaskResources`, `TaskArtifactRef`, `WorkspaceMode`, `WORKSPACE_MODES`, `TaskValidation`, `validateAgentTask`, `AgentTaskInput`, `buildAgentTask` (live on the delegation path, issue #191) |
 | `budget.ts` | `AgentBudget`, `RetryBudget`, `createBudget`, `BudgetLimit`, `BUDGET_LIMITS`, `BUDGET_OWNERSHIP`, `BudgetEnforcer`, `BudgetTermination`, `terminateForBudget`, `ReplayPin`, `REPLAY_PIN_FIELDS`, `REPLAY_PIN_DIMS`, `diffReplayPin`, `RunMode`, `BlockedSpawnOutcome`, `resolveBlockedSpawn` |
 | `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `validateClasses`, `PolicyValidationError` |
 | `graph.ts` | `EdgeKind`, `EDGE_KINDS`, `AgentEdge`, `EDGE_FIELDS`, `GraphError`, `GraphStore`, `createGraph`, `addNode`, `addEdge`, `consumers`, `producers`, `topoOrder`, `subgraph`, `renderDag`, `CostRollup`, `rollupCost`, `serializeGraph`, `attachGraph`, `estimateEdgeTokens` |
@@ -52,7 +52,13 @@ budgets by default: `createBudget` never injects limits (issue #9; §71).
 | `artifacts` | `TaskArtifactRef[]` | no |
 
 `AGENT_TASK_FIELDS` pins all 16 keys via
-`satisfies Record<keyof AgentTask, true>`. Supporting shapes:
+`satisfies Record<keyof AgentTask, true>`. `buildAgentTask` assembles and
+validates the task the manager hands a worker or resolver (issue #191):
+`workspaceMode` is always `worktree` on that path (§11.1), the manager writes
+the JSON into the worker's session dir, names it to the child in
+`KUBIC_TASK_FILE`, and the child registers exactly `task.toolNames` — the
+capability grant travels with the work, never re-derived from the child's own
+worktree. Supporting shapes:
 
 | Interface | Fields |
 | --- | --- |

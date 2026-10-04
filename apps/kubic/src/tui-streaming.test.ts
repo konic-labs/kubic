@@ -113,9 +113,14 @@ describe('live assistant streaming (issue #296)', () => {
     expect(partial.length).toBeGreaterThanOrEqual(2);
     expect(partial[0]).toContain('Hel');
     expect(partial.some((frame) => frame.includes('Hello world'))).toBe(true);
-    // The committed entry replaces the draft: the text appears exactly once.
+    // The committed entry replaces the draft: the text appears exactly once —
+    // in the FINAL frame and in EVERY frame on the way (the fold's paint must
+    // not carry the committed cell and the draft side by side).
     const final = target.render(100).join('\n');
     expect(final.match(/Hello world/g)).toHaveLength(1);
+    for (const frame of frames) {
+      expect(frame.match(/Hello world/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    }
   });
 
   it('clears a draft the turn never commits (an abort mid-stream)', async () => {

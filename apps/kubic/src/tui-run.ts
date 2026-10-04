@@ -2293,11 +2293,13 @@ export class TuiTurnRunner {
           : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
-      // Issue #296: the committed assistant entry is here — the feed is
-      // applied FIRST and the draft cleared after, so a frame never shows the
-      // text vanishing before its committed cell lands.
-      this.foldLaneEntries([event.entry]);
+      // Issue #296: the committed assistant entry is here. Clear the draft
+      // FIRST — `clearStream` paints nothing, so no frame can show the text
+      // vanishing — and fold second, because the fold's own paint is the one
+      // frame that must carry the committed cell WITHOUT the draft beside it
+      // (folding first would paint the just-committed text twice).
       this.clearStream();
+      this.foldLaneEntries([event.entry]);
       return;
     }
     if (event.type === 'entry') {

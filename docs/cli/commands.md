@@ -810,11 +810,19 @@ a large workspace pays it (and the screen pauses) after every turn that used
 
 **Screen layout.** Top to bottom: a one-line header (the Konic `■ kubic`
 wordmark, mode and model); the agent tree, sized to its content (at most 6
-rows — older calls fold into `… N earlier calls`); the transcript, which
-follows the end as the turn streams (your prompt is echoed as `› …` the
-moment you submit, assistant prose renders as markdown, and each tool call
-renders as `● name args` with its output folded underneath `⎿`); the
-status bar, whose second row is the always-visible mode indicator
+rows). The tree's root row carries the run glyph plus the session's
+`$cost in/out` tokens once usage arrives (`● solo $0.02 2.0k/1.0k`); each
+tool row shows the glyph, the tool name, a one-line summary of its key
+argument (the `bash` command, the `read`/`edit` path), the duration and a
+short outcome (a detected test summary like `17 passed`, or a non-zero
+exit code) — a failed call renders `✗` in the error colour, never `✓`.
+Calls are grouped per turn: a new turn starts a new group, and earlier
+turns fold into one `… N earlier calls in M turns` line above the live
+turn (calls beyond the row cap fold into `… N earlier calls`). The
+transcript follows the end as the turn streams (your prompt is echoed as
+`› …` the moment you submit, assistant prose renders as markdown, and each
+tool call renders as `● name args` with its output folded underneath `⎿`);
+the status bar, whose second row is the always-visible mode indicator
 (`solo • approvals:on`, or the warning-styled
 `! warning: approvals OFF (full-access)` when the session's installed
 policy auto-approves every challenged call — read from that policy, at

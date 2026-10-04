@@ -93,6 +93,76 @@ export function summarizeToolArguments(args: unknown): string {
   return `${oneLine.slice(0, TOOL_DETAIL_MAX_CHARS - 1)}…`;
 }
 
+// The one-line OUTCOME of a finished tool call (issue #345; §18): the test
+// summary the operator reads first (`17 passed`), else a non-zero shell exit
+// code. Both are derived from the tool-result entry, which is untrusted tool
+// output, so the returned text is sanitized and newline-collapsed before it
+// reaches the tree.
+export const TOOL_OUTCOME_MAX_CHARS = 60;
+
+// A tool-result entry carries its message as the first model message
+// (pi-durable's EntryRecord) or as a plain `message` (the coarse lane cell
+// shape); accept both so one helper serves the tree and the transcript.
+function toolResultMessage(
+  entry: unknown,
+): Record<string, unknown> | undefined {
+  if (!isRecord(entry)) return undefined;
+  const model = entry.model;
+  if (Array.isArray(model) && isRecord(model[0])) return model[0];
+  return isRecord(entry.message) ? entry.message : undefined;
+}
+
+function toolResultText(entry: unknown): string | undefined {
+  const message = toolResultMessage(entry);
+  if (message === undefined || message.role !== ROLE_TOOL_RESULT) {
+    return undefined;
+  }
+  if (!Array.isArray(message.content)) return undefined;
+  const parts = (message.content as unknown[])
+    .map(textOf)
+    .filter((part): part is string => part !== undefined);
+  return parts.length === 0 ? undefined : parts.join('\n');
+}
+
+// `Tests  17 passed (17)`, `Tests: 3 passed, 1 failed`, `ok 12 passed` — the
+// first line carrying a count is the summary the operator wants.
+function testSummaryOf(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    const passed = /\b(\d+)\s+passed\b/iu.exec(line)?.[1];
+    const failed = /\b(\d+)\s+failed\b/iu.exec(line)?.[1];
+    if (passed === undefined && failed === undefined) continue;
+    const parts: string[] = [];
+    if (passed !== undefined) parts.push(`${passed} passed`);
+    if (failed !== undefined) parts.push(`${failed} failed`);
+    return parts.join(', ');
+  }
+  return undefined;
+}
+
+// The pi-durable bash text opens with `[bash exit N (shell)]`; the older
+// JSON shell record is unpacked to a trailing `exit N` line.
+const BASH_EXIT_HEAD = /\[bash exit (\d+)\b/u;
+const JSON_EXIT_LINE = /^exit (\d+)$/mu;
+
+export function summarizeToolOutcome(entry: unknown): string | undefined {
+  const text = toolResultText(entry);
+  if (text === undefined) return undefined;
+  const body = unpackShellRecord(text);
+  const summary = testSummaryOf(body);
+  if (summary !== undefined) return boundOutcome(summary);
+  const exit = BASH_EXIT_HEAD.exec(text)?.[1] ?? JSON_EXIT_LINE.exec(body)?.[1];
+  // Exit 0 is the unremarkable case: the row stays short, only a failure
+  // (or a test summary) earns an outcome.
+  if (exit === undefined || exit === '0') return undefined;
+  return `exit ${exit}`;
+}
+
+function boundOutcome(text: string): string {
+  const oneLine = sanitizeLaneText(text).replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= TOOL_OUTCOME_MAX_CHARS) return oneLine;
+  return `${oneLine.slice(0, TOOL_OUTCOME_MAX_CHARS - 1)}…`;
+}
+
 // Shell tools return a JSON record ({stdout, stderr, exitCode, …}); showing
 // the raw JSON buries the output in escapes. The record is unpacked into
 // what a terminal would have shown, plus a non-zero exit code.

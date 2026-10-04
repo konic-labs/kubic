@@ -13,6 +13,9 @@ import {
   toggleTree,
   toolGlyph,
 } from './tree.js';
+import { visibleWidth } from './tui-boundary.js';
+
+const ESC = String.fromCharCode(27);
 
 function startTool(
   id: string,
@@ -47,6 +50,11 @@ describe('tree glyphs (issue #24; §49.1)', () => {
   it('maps tool state to ●/✓', () => {
     expect(toolGlyph('running')).toBe('●');
     expect(toolGlyph('done')).toBe('✓');
+  });
+
+  it('maps an errored finish to ✗ (issue #345)', () => {
+    expect(toolGlyph('done', true)).toBe('✗');
+    expect(toolGlyph('running', true)).toBe('●');
   });
 });
 
@@ -93,7 +101,7 @@ describe('tree lane feed (issue #24; §18)', () => {
       isError: true,
       terminate: false,
     });
-    expect(renderTreeLines(state, 100)).toContain('  ✓ bash error');
+    expect(renderTreeLines(state, 100)).toContain('  ✗ bash');
   });
 });
 
@@ -258,10 +266,245 @@ describe('tree snapshots (issue #24; headless, no VirtualTerminal)', () => {
   });
 });
 
-function visibleWidth(line: string): number {
-  const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
-  return line.replace(sgr, '').length;
+function usageEvent(
+  input: number,
+  output: number,
+  total: number,
+): {
+  type: 'usage';
+  row: unknown;
+  entry: unknown;
+} {
+  return {
+    type: 'usage',
+    row: {
+      model: 'faux/faux',
+      provider: 'faux',
+      usage: {
+        input,
+        output,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: input + output,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total },
+      },
+    },
+    entry: {},
+  };
 }
+
+function toolResult(text: string, isError = false): Record<string, unknown> {
+  return {
+    id: 1,
+    conversationId: 1,
+    kind: 'pi.tool-result',
+    model: [
+      {
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError,
+        content: [{ type: 'text', text }],
+      },
+    ],
+  };
+}
+
+describe('tree tool detail (issue #345; §18, §49.1)', () => {
+  it('renders a running bash call with its command, truncated to width', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, {
+      type: 'tool-start',
+      toolCallId: 'c1',
+      toolName: 'bash',
+      args: { command: 'pnpm test auth' },
+    });
+    expect(renderTreeLines(state, 100)).toEqual([
+      '● solo',
+      '  ● bash pnpm test auth',
+    ]);
+    const narrow = renderTreeLines(state, 20)[1] ?? '';
+    expect(visibleWidth(narrow)).toBe(20);
+    expect(narrow).toContain('bash pnpm');
+  });
+
+  it('shows the path for read/edit args and the exit code on finish', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-start',
+        toolCallId: 'c1',
+        toolName: 'read',
+        args: { path: 'src/tree.ts' },
+      },
+      () => 0,
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe('  ● read src/tree.ts');
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        toolCallId: 'c1',
+        toolName: 'read',
+        isError: true,
+        entry: toolResult('[bash exit 1 (bash)]\n--- stdout ---\nboom'),
+      },
+      () => 12,
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe(
+      '  ✗ read src/tree.ts 12ms · exit 1',
+    );
+  });
+
+  it('shows a detected test summary as the outcome', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-start',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        args: { command: 'pnpm test auth' },
+      },
+      () => 0,
+    );
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError: false,
+        entry: toolResult(
+          '[bash exit 0 (bash)]\n--- stdout ---\nTests  17 passed (17)',
+        ),
+      },
+      () => 142,
+    );
+    expect(renderTreeLines(state, 100)[1]).toBe(
+      '  ✓ bash pnpm test auth 142ms · 17 passed',
+    );
+  });
+
+  it('marks a failed call ✗ and never ✓', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, {
+      type: 'tool-end',
+      toolCallId: 'c9',
+      toolName: 'bash',
+      isError: true,
+    });
+    const lines = renderTreeLines(state, 100);
+    expect(lines[1]).toBe('  ✗ bash');
+    expect(lines.join('\n')).not.toContain('✓');
+  });
+
+  it('shows $cost and in/out tokens on the root row after usage', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo');
+    applyLaneEvent(state, usageEvent(1200, 300, 0));
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.00 1.2k/0.3k');
+    applyLaneEvent(state, usageEvent(800, 700, 0.02));
+    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.02 2.0k/1.0k');
+  });
+
+  it('leaves the root row alone for a malformed usage row', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'usage', row: { usage: {} }, entry: {} });
+    applyLaneEvent(state, { type: 'usage', row: 'nope', entry: {} });
+    expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
+  });
+
+  it('starts a new group on the second run-start', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, startTool('c1', 'bash'), () => 0);
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError: false,
+      },
+      () => 142,
+    );
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, startTool('c2', 'read'));
+    expect(state.tools.map((tool) => tool.id)).toEqual(['c2']);
+    // Completed turns are kept as rollups, never as calls: the state stays
+    // bounded by the turn count, not the session's tool count.
+    expect(state.previousTurns).toEqual([{ calls: 1, durationMs: 142 }]);
+    expect(renderTreeLines(state, 100)).toEqual([
+      '● solo',
+      '  … 1 earlier call in 1 turn',
+      '  ● read',
+    ]);
+  });
+
+  it('folds every turn into the collapsed summary', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, startTool('c1', 'bash'), () => 0);
+    applyLaneEvent(
+      state,
+      {
+        type: 'tool-end',
+        toolCallId: 'c1',
+        toolName: 'bash',
+        isError: false,
+      },
+      () => 40,
+    );
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, startTool('c2', 'read'), () => 0);
+    toggleTree(state);
+    expect(renderTreeLines(state, 100)[1]).toBe('  …2 calls, 40ms');
+  });
+
+  it('truncates CJK args to exactly the column width', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, {
+      type: 'tool-start',
+      toolCallId: 'c1',
+      toolName: 'bash',
+      args: { command: '测试命令测试命令测试命令测试命令' },
+    });
+    for (const width of [40, 17, 10]) {
+      const line = renderTreeLines(state, width)[1] ?? '';
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+    // A cut that lands on a glyph boundary fills the row exactly: the old
+    // String.length math counted a CJK glyph as one column and overflowed.
+    const exact = renderTreeLines(state, 14)[1] ?? '';
+    expect(visibleWidth(exact)).toBe(14);
+    expect(exact).toContain('…');
+  });
+
+  it('never lets control characters in args reach the lines', () => {
+    const state = createTreeState();
+    applyLaneEvent(state, { type: 'run-start' });
+    applyLaneEvent(state, {
+      type: 'tool-start',
+      toolCallId: 'c1',
+      toolName: 'bash',
+      args: { command: `echo${ESC}[2J\r${ESC}[31mboom` },
+    });
+    const rendered = renderTreeLines(state, 100).join('\n');
+    expect(rendered).toContain('echo');
+    expect(rendered).toContain('boom');
+    expect(rendered).not.toContain(`${ESC}[2J`);
+    expect(rendered).not.toContain(`${ESC}[31m`);
+    expect(rendered).not.toContain('\r');
+  });
+});
 
 describe('tree mutation hardening (issue #68)', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {

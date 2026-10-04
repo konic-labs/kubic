@@ -22,9 +22,9 @@ TUI-side analogue of the worker Pi boundary.
 | `screen.ts` | `Screen`, `bootScreen` |
 | `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusMode`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptDelta`, `LaneSnapshot` (re-export), `TranscriptSnapshotOp`, `TranscriptDeltaOp`, `TranscriptOp`, `TranscriptView`, `createTranscriptView`, `replayTranscript` |
-| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `AgentTreeState`, `createTreeState`, `toggleTree`, `LaneEventLike`, `applyLaneEvent`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
+| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `TreeToolCall`, `TreeUsage`, `TreeTurnSummary`, `AgentTreeState`, `createTreeState`, `toggleTree`, `LaneEventLike`, `applyLaneEvent`, `collapsedSummary`, `formatTreeTokens`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `EDITOR_FALLBACK_ROWS`, `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding) |
-| `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `sanitizeLaneText`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal |
+| `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_CALL_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells (§15.2); every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal |
 | `tui-app.ts` | `TuiAppSeed`, `TuiInputResult`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines`, `DiffView` |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `shouldUseInlineFallback`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `renderApprovalLines`, `renderApprovalInline`, `APPROVAL_DEFAULT_KEYS`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `showApprovalOverlay`, `dismissApprovalOverlay` |
@@ -65,8 +65,13 @@ module owns arrangement only.
   (`TranscriptOp`) and replays via `replayTranscript`.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
   `AgentTreeState` toggles (`toggleTree`), consumes lane events
-  (`LaneEventLike` via `applyLaneEvent`), and renders
-  (`renderTreeLines`, `collapsedSummary`, glyphs).
+  (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage
+  rows) and renders (`renderTreeLines`, `collapsedSummary`, glyphs,
+  `formatTreeTokens`). Tool rows carry the args summary and outcome
+  (`summarizeToolArguments`/`summarizeToolOutcome`), a failed call renders
+  `✗`, the root row carries `$cost in/out` (`TreeUsage`), and calls are
+  grouped per turn (a `run-start` rolls the live group into
+  `previousTurns` as a `TreeTurnSummary`, which folds to one line).
 - **Diff** (`diff-view.ts`): `DiffOp` mirrors the journal ops
   (`write|edit|create|delete|rename`); `DiffFileChange` renders headers
   + unified hunks (`renderDiffHeader`, `renderDiffLines`,

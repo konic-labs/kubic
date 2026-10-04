@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 import {
   entriesToCells,
   summarizeToolArguments,
+  summarizeToolOutcome,
   TOOL_DETAIL_MAX_CHARS,
+  TOOL_OUTCOME_MAX_CHARS,
   TOOL_RESULT_MAX_CHARS,
 } from './lane-cells.js';
 
@@ -152,5 +154,67 @@ describe('lane entries to transcript cells (issue #88)', () => {
       'a2:1',
       'a2:text:2',
     ]);
+  });
+});
+
+describe('tool outcome summary (issue #345)', () => {
+  function resultEntry(text: string, role = 'toolResult'): unknown {
+    return {
+      id: 1,
+      kind: 'pi.tool-result',
+      model: [{ role, content: [{ type: 'text', text }] }],
+    };
+  }
+
+  it('reads the pi-durable bash header, the JSON record and the lane shape', () => {
+    expect(
+      summarizeToolOutcome(resultEntry('[bash exit 1 (bash)]\nboom')),
+    ).toBe('exit 1');
+    expect(
+      summarizeToolOutcome(
+        resultEntry(JSON.stringify({ stdout: 'x', exitCode: 3 })),
+      ),
+    ).toBe('exit 3');
+    expect(
+      summarizeToolOutcome({
+        message: {
+          role: 'toolResult',
+          content: [{ type: 'text', text: 'Tests: 3 passed, 1 failed' }],
+        },
+      }),
+    ).toBe('3 passed, 1 failed');
+  });
+
+  it('prefers a test summary over a zero exit and hides a clean exit', () => {
+    expect(
+      summarizeToolOutcome(
+        resultEntry('[bash exit 0 (bash)]\n--- stdout ---\n17 passed'),
+      ),
+    ).toBe('17 passed');
+    expect(
+      summarizeToolOutcome(resultEntry('[bash exit 0 (bash)]\nnothing')),
+    ).toBeUndefined();
+  });
+
+  it('sanitizes, collapses and bounds what it returns', () => {
+    const ESC = String.fromCharCode(27);
+    const summary = summarizeToolOutcome(
+      resultEntry(`\n\nTests ${'9'.repeat(80)} passed${ESC}[2J`),
+    );
+    expect(summary).toBeDefined();
+    expect(summary?.length).toBeLessThanOrEqual(TOOL_OUTCOME_MAX_CHARS);
+    expect(summary).not.toContain(ESC);
+  });
+
+  it('ignores anything that is not a tool result', () => {
+    expect(summarizeToolOutcome(undefined)).toBeUndefined();
+    expect(summarizeToolOutcome('nope')).toBeUndefined();
+    expect(
+      summarizeToolOutcome(resultEntry('text', 'assistant')),
+    ).toBeUndefined();
+    expect(summarizeToolOutcome({ model: [] })).toBeUndefined();
+    expect(
+      summarizeToolOutcome({ model: [{ role: 'toolResult', content: [] }] }),
+    ).toBeUndefined();
   });
 });

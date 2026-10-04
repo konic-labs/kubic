@@ -159,7 +159,11 @@ interface Harness {
 }
 
 async function harness(
-  options: { readyTimeoutMs?: number } = {},
+  options: {
+    readyTimeoutMs?: number;
+    worktreeDiskQuotaMb?: number;
+    workerMemoryLimitMb?: number;
+  } = {},
 ): Promise<Harness> {
   const root = await initRepo();
   const sessionsRoot = scratchRoot('kubic-orch-lifecycle-sessions-');
@@ -731,5 +735,32 @@ describe('prod orchestrate path: §13 settling is per agent (issue #151 review)'
     );
     const failedRows = persisted.filter((row) => row.agentStatus === 'failed');
     expect(failedRows).toHaveLength(1);
+  }, 60_000);
+});
+
+describe('prod orchestrate path: §82 resource enforcement (issue #163)', () => {
+  it('stops a worker whose worktree breaches the disk quota, with the named code', async () => {
+    // A 0 MB quota is breached by any worktree at all: the run must stop the
+    // worker through the resource path and name the code end to end.
+    const h = await harness({ worktreeDiskQuotaMb: 0 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=0 SLEEP=5000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+        json: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(
+      h.lines.filter((line) => line.startsWith('{')).pop() as string,
+    ) as { error?: { code?: string }; workers?: { error?: unknown }[] };
+    expect(envelope.error).toMatchObject({ code: 'resource_disk_exceeded' });
+    expect(h.registry.get('worker-1')).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
   }, 60_000);
 });

@@ -365,6 +365,18 @@ Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
+Per-agent **resource limits** (issue #163, §82) are enforced at runtime when a
+run is started with one: a memory cap (`workerMemoryLimitMb`) is handed to the
+child as `--max-old-space-size` and the manager samples the worker's RSS
+(`ps`) once a second, and a worktree disk quota (`worktreeDiskQuotaMb`) is
+checked with `du` on the same cadence. A breach stops the worker through the
+cancel path and names why — `code=resource_memory_exceeded` or
+`code=resource_disk_exceeded` in the run's envelope, the worker's §68 result
+and its row. The shipped CLI exposes no flag or config key for these (they are
+composition-root options for embedders and the TUI), so a stock
+`kubic orchestrate` run enforces wall clock only; `kubic doctor`'s
+`limit:resources` line states exactly which limits this platform can enforce.
+
 A cancelled worker is given a **worker grace** (a fixed 10 s for the shipped
 CLI — no flag or config key; an embedder or the TUI can pass its own, issue
 #249) between the SIGTERM to its process group and the SIGKILL escalation — its own
@@ -1694,6 +1706,12 @@ Human lines keep the `STATUS id (reason): detail` shape; on a colour
 terminal the status is coloured (pass green, warn amber, fail red, skip
 grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
+
+The `limit:resources` line (issue #163, §82) states which per-agent limits
+this build can enforce on this platform — wall clock always, memory (RSS
+sampling via `ps`, POSIX only) and disk (worktree quota via `du`) when their
+probes exist — and names the ones it cannot, so the posture is never read as
+a protection claim.
 
 ## `kubic workers [--json] [--debug]`
 

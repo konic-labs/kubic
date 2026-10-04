@@ -17,6 +17,7 @@ import {
   limitsDoctorExit,
   policyEnforceabilityCheck,
   providerAvailabilityCheck,
+  resourceEnforcementCheck,
   staticLimitChecks,
 } from './doctor-limits.js';
 
@@ -269,5 +270,37 @@ describe('collectLimitChecks (issue #58)', () => {
     expect(
       checks.find((check) => check.id === 'policy:enforceability')?.status,
     ).toBe('pass');
+  });
+});
+
+describe('resource enforcement posture (§82, issue #163)', () => {
+  it('lists enforced and not-enforced limits, naming both sides', () => {
+    const enforced = resourceEnforcementCheck({
+      platform: 'darwin',
+      memoryProbe: true,
+      diskProbe: true,
+    });
+    expect(enforced).toMatchObject({
+      id: 'limit:resources',
+      status: 'pass',
+      reason: 'ok',
+    });
+    expect(enforced.detail).toContain('wall clock');
+    expect(enforced.detail).toContain('memory');
+    expect(enforced.detail).toContain('disk');
+    expect(enforced.detail).not.toContain('NOT enforced');
+  });
+
+  it('warns when a limit cannot be enforced on this platform', () => {
+    const degraded = resourceEnforcementCheck({
+      platform: 'win32',
+      memoryProbe: false,
+      diskProbe: false,
+    });
+    expect(degraded.status).toBe('warn');
+    expect(degraded.detail).toContain(
+      'NOT enforced: memory (no RSS probe on win32), disk (no worktree probe on win32)',
+    );
+    expect(degraded.detail).toContain('enforced: wall clock');
   });
 });

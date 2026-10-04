@@ -592,6 +592,15 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
             workspace: process.cwd(),
             ...installedPolicyDeps(cliConfig),
           }),
+        // §82 resource enforcement (issue #163): which per-agent limits this
+        // platform can actually enforce — memory needs the RSS probe (`ps`,
+        // POSIX only) and disk the worktree probe (`du`). Wall clock is
+        // always enforced by the per-worker `--timeout`.
+        resourceEnforcement: () => ({
+          platform: process.platform,
+          memoryProbe: process.platform !== 'win32',
+          diskProbe: process.platform !== 'win32',
+        }),
         // §58 enterprise policy (issue #289): the SAME effective resolution
         // `kubic policy` reports, checked for enforceability. `syslogAvailable:
         // false` is the honest value today: `[[audit]]` sinks are parsed and

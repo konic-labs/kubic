@@ -480,8 +480,10 @@ export function launchWorker(
     if (reason === 'resource' && agent !== 'spawn_failed') {
       // §82 (issue #163): the manager stopped the worker because a limit was
       // breached — the agent FAILED on the named resource code, never
-      // CANCELLED (nobody asked it to stop).
-      runFailure = resourceFailure ?? runFailure;
+      // CANCELLED (nobody asked it to stop). The resource verdict WINS over
+      // the exit the kill produced (the wait may have settled first, calling
+      // the signal death a generic crash).
+      if (resourceFailure !== undefined) runFailure = resourceFailure;
       if (agent !== 'failed') {
         agent = 'failed';
         registry.updateAgentStatus(request.workerId, agent);
@@ -529,6 +531,10 @@ export function launchWorker(
               kind: 'process',
               message: breach.message,
             };
+            // Recorded BEFORE the kill: the run reads `failure()` as soon as
+            // the child settles, and the wait may settle before the reap's own
+            // branch runs — the breach is the manager's verdict either way.
+            runFailure = resourceFailure;
             deps.debug?.(
               `resource: worker '${request.workerId}' — ${breach.message}`,
             );

@@ -16,8 +16,11 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
-import type { ShellResult } from '../../../packages/exec/src/env.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import type { Shell, ShellResult } from '../../../packages/exec/src/env.js';
+import {
+  NodeExecutionEnv,
+  ROOT_PROVENANCE,
+} from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
 import type { PostureOptions } from '../../../packages/extensions/src/startup.js';
@@ -181,6 +184,14 @@ export interface OrchestrateRunOptions {
    * is deliberately longer than the 2 s tool grace.
    */
   workerCancelGraceMs?: number;
+  /**
+   * §82 per-agent limits (issue #163): the RSS cap (MB) each worker runs
+   * under and the worktree disk quota (MB) checked on an interval. Absent
+   * means the corresponding limit is not enforced (and `kubic doctor` says
+   * so). Memory is also handed to the child as `--max-old-space-size`.
+   */
+  workerMemoryLimitMb?: number;
+  worktreeDiskQuotaMb?: number;
   /**
    * How the resolver child is reached (issue #106, §45.2). Defaults to
    * `workerEntry` — the resolver IS a `kubic run` child, so a test that
@@ -440,6 +451,60 @@ export function workerAskStateObserver(
   };
 }
 
+// §82 resource probes (issue #163): the manager's own readings, through the
+// exec Shell seam (never /proc directly, and never inside the worker). Both
+// return undefined when the reading is not available — an unenforceable limit
+// is reported as such, never guessed.
+export async function processMemoryMb(
+  cwd: string,
+  pid: number,
+  shell: Shell = new NodeExecutionEnv(cwd).shell,
+): Promise<number | undefined> {
+  // The process GROUP first (a worker's tools are its children), then the
+  // leader alone when the group query is unsupported.
+  for (const args of [
+    ['-o', 'rss=', '-g', String(pid)],
+    ['-o', 'rss=', '-p', String(pid)],
+  ]) {
+    try {
+      const done = await shell
+        .spawn('ps', args, {
+          provenance: ROOT_PROVENANCE,
+        })
+        .wait();
+      if (done.exitCode !== 0) continue;
+      const kb = done.stdout
+        .split('\n')
+        .map((line) => Number(line.trim()))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .reduce((sum, value) => sum + value, 0);
+      if (kb > 0) return Math.round(kb / 1024);
+    } catch {
+      // Probe unavailable — try the next form.
+    }
+  }
+  return undefined;
+}
+
+export async function worktreeDiskMb(
+  cwd: string,
+  path: string,
+  shell: Shell = new NodeExecutionEnv(cwd).shell,
+): Promise<number | undefined> {
+  try {
+    const done = await shell
+      .spawn('du', ['-sk', path], {
+        provenance: ROOT_PROVENANCE,
+      })
+      .wait();
+    if (done.exitCode !== 0) return undefined;
+    const kb = Number(done.stdout.trim().split(/\s+/)[0]);
+    return Number.isFinite(kb) ? Math.round(kb / 1024) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function provenanceFor(sessionId: string, agentId: string, tool: string) {
   return {
     sessionId,
@@ -486,7 +551,12 @@ export class WorkerRunFailure extends Error {
     | 'spawn_failed'
     | 'worker_failed'
     | 'result_invalid'
-    | 'cancelled';
+    | 'cancelled'
+    // §82 resource enforcement (issue #163): a worker the manager stopped
+    // because a configured limit was breached keeps that named code as the
+    // run's terminus, so the envelope says WHY it stopped.
+    | 'resource_memory_exceeded'
+    | 'resource_disk_exceeded';
   /**
    * The approval-layer terminus the child declared for itself (issue #105).
    * A worker child denies closed on its own bounded wait or on a configured
@@ -503,7 +573,13 @@ export class WorkerRunFailure extends Error {
   result?: AgentResult;
 
   constructor(
-    code: 'spawn_failed' | 'worker_failed' | 'result_invalid' | 'cancelled',
+    code:
+      | 'spawn_failed'
+      | 'worker_failed'
+      | 'result_invalid'
+      | 'cancelled'
+      | 'resource_memory_exceeded'
+      | 'resource_disk_exceeded',
     message: string,
     approval?: { code: string; exitCode: number },
   ) {
@@ -796,6 +872,17 @@ function workerRunError(
     return new WorkerRunFailure(
       'spawn_failed',
       `spawn failed for worker '${agentId}': ${failure.message}`,
+    );
+  }
+  // A resource breach is the manager's own terminus (issue #163): the run
+  // reports the named code, never a generic worker_failed.
+  if (
+    failure?.code === 'resource_memory_exceeded' ||
+    failure?.code === 'resource_disk_exceeded'
+  ) {
+    return new WorkerRunFailure(
+      failure.code,
+      `worker '${agentId}' stopped: ${failure.message}`,
     );
   }
   const suffix = failure === undefined ? '' : ` [${failure.code}]`;
@@ -1880,6 +1967,11 @@ export async function orchestrateDepsWithDefaults(
           },
           cmd: options.workerEntry?.cmd ?? process.execPath,
           args: [
+            // §82 (issue #163): the per-worker heap bound travels as a node
+            // flag ahead of the entry script.
+            ...(options.workerMemoryLimitMb === undefined
+              ? []
+              : [`--max-old-space-size=${options.workerMemoryLimitMb}`]),
             ...(options.workerEntry?.args ?? [entryScript()]),
             'run',
             '-p',
@@ -1900,6 +1992,14 @@ export async function orchestrateDepsWithDefaults(
           ...(options.workerCancelGraceMs === undefined
             ? {}
             : { cancelGraceMs: options.workerCancelGraceMs }),
+          // §82 runtime limits (issue #163): the cap the manager samples and
+          // the quota it checks, with the probes that make them enforceable.
+          ...(options.workerMemoryLimitMb === undefined
+            ? {}
+            : { memoryLimitMb: options.workerMemoryLimitMb }),
+          ...(options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : { diskQuotaMb: options.worktreeDiskQuotaMb }),
           worktreeMs: (() => {
             const started = worktreeStartedAt.get(agentId);
             return started === undefined ? undefined : Date.now() - started;
@@ -1912,6 +2012,18 @@ export async function orchestrateDepsWithDefaults(
           shell: shellForWorktree(worktree.path),
           registry: workerRegistry,
           debug: (line) => debug(line),
+          // §82 (issue #163): the probes are LAUNCHER deps (they sample the
+          // running child), wired only when a limit is configured — a limit
+          // with no probe is not enforced, and `kubic doctor` says so.
+          ...(options.workerMemoryLimitMb === undefined &&
+          options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : {
+                resourceProbes: {
+                  memoryMb: (pid: number) => processMemoryMb(root ?? cwd, pid),
+                  diskMb: (path: string) => worktreeDiskMb(root ?? cwd, path),
+                },
+              }),
         },
       );
       launchedByAgent.set(agentId, launched);
@@ -2339,6 +2451,23 @@ export async function orchestrateDepsWithDefaults(
           ...(options.workerCancelGraceMs === undefined
             ? {}
             : { cancelGraceMs: options.workerCancelGraceMs }),
+          // §82 runtime limits (issue #163): the cap the manager samples and
+          // the quota it checks, with the probes that make them enforceable.
+          ...(options.workerMemoryLimitMb === undefined
+            ? {}
+            : { memoryLimitMb: options.workerMemoryLimitMb }),
+          ...(options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : { diskQuotaMb: options.worktreeDiskQuotaMb }),
+          ...(options.workerMemoryLimitMb === undefined &&
+          options.worktreeDiskQuotaMb === undefined
+            ? {}
+            : {
+                resourceProbes: {
+                  memoryMb: (pid: number) => processMemoryMb(root ?? cwd, pid),
+                  diskMb: (path: string) => worktreeDiskMb(root ?? cwd, path),
+                },
+              }),
         },
         {
           shell: shellForWorktree(request.worktree.path),

@@ -606,3 +606,82 @@ describe('launchWorker (issue #94)', () => {
     expect(bare.usage().requests).toBe(0);
   });
 });
+
+describe('launchWorker §82 resource enforcement (issue #163)', () => {
+  it('stops a worker whose RSS breaches the cap, with the named resource code', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const debugLines: string[] = [];
+    const launched = launchWorker(
+      { ...request(), memoryLimitMb: 500 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+        resourceProbes: { memoryMb: () => 900 },
+        debug: (line) => debugLines.push(line),
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    // Deterministic: poll the watchdog the way its interval does.
+    expect(await launched.resources()?.poll()).toMatchObject({
+      code: 'resource_memory_exceeded',
+    });
+    child.exit(137, 'SIGKILL');
+    await launched.reap('resource');
+    expect(launched.failure()).toMatchObject({
+      code: 'resource_memory_exceeded',
+    });
+    expect(launched.failure()?.message).toMatch(/500MB/);
+    expect(launched.agentStatus()).toBe('failed');
+    expect(registry.get('worker-1')?.agentStatus).toBe('failed');
+    expect(debugLines.join('\n')).toMatch(/resource_memory_exceeded/);
+  });
+
+  it('stops a worker whose worktree breaches its quota', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const launched = launchWorker(
+      { ...request(), diskQuotaMb: 10 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+        resourceProbes: { diskMb: () => 900 },
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    expect(await launched.resources()?.poll()).toMatchObject({
+      code: 'resource_disk_exceeded',
+    });
+    child.exit(137, 'SIGKILL');
+    await launched.reap('resource');
+    expect(launched.failure()).toMatchObject({
+      code: 'resource_disk_exceeded',
+    });
+    expect(launched.agentStatus()).toBe('failed');
+  });
+
+  it('enforces nothing when no probe is wired (and says so)', async () => {
+    const child = controllable();
+    const registry = new WorkerRegistry(() => 0);
+    const launched = launchWorker(
+      { ...request(), memoryLimitMb: 1 },
+      {
+        shell: child.shell,
+        registry,
+        clock: () => 0,
+      },
+    );
+    child.emit(`${READY}\n`);
+    await launched.ready;
+    // No probe: the limit cannot be enforced, so there is no watchdog and no
+    // breach to report — the posture `kubic doctor` prints.
+    expect(launched.resources()).toBeUndefined();
+    child.exit(0);
+    await launched.wait();
+    expect(launched.failure()).toBeUndefined();
+  });
+});

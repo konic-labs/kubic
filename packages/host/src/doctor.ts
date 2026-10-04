@@ -31,9 +31,11 @@ import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 // Issue #58 honest limits (§59.1, §78): registration import only — no
 // existing check builder in this file was modified for #58. Exit codes
 // route through the limits mapper so provider-down exits 6.
+import type { ResourceEnforcementProbe } from './limits/doctor-limits.js';
 import {
   collectLimitChecksFromDeps,
   limitsDoctorExit,
+  resourceEnforcementCheck,
 } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = EXIT_OK;
@@ -101,6 +103,10 @@ export interface DoctorDeps extends CliIo {
   // not enforce. Absent (legacy callers/tests): no installed-policy check,
   // the existing matrix is unchanged.
   installedPolicy?: () => InstalledPolicyPosture;
+  // §82 per-agent resource enforcement (issue #163): which limits this build
+  // can enforce on this platform. Absent (legacy callers/tests) means no
+  // resources line, the existing matrix unchanged.
+  resourceEnforcement?: () => ResourceEnforcementProbe;
   // First-party extension posture (issue #80): structural input so host
   // never imports the extensions package — the composition root maps the
   // real startup probe onto this shape. Absent (tests, unwired callers):
@@ -567,6 +573,21 @@ export function collectDoctorChecks(
       reason: 'deps-missing',
       detail: probeMessage(error),
     });
+  }
+  // §82 resource enforcement posture (issue #163): opt-in via the injected
+  // probe, so legacy matrices are unchanged.
+  if (deps.resourceEnforcement !== undefined) {
+    try {
+      checks.push(resourceEnforcementCheck(deps.resourceEnforcement()));
+    } catch (error) {
+      checks.push({
+        id: 'limit:resources',
+        label: 'limit resources',
+        status: 'warn',
+        reason: 'ok',
+        detail: `per-agent limits — could not be probed: ${probeMessage(error)}`,
+      });
+    }
   }
   let configured: ConfiguredApprovals | undefined;
   try {

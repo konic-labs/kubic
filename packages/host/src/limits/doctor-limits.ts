@@ -93,6 +93,44 @@ export function staticLimitChecks(): DoctorCheck[] {
   ];
 }
 
+// §82 per-agent resource enforcement (issue #163): which limits this build
+// can actually enforce on this platform. Reported as a warn when a limit
+// cannot be enforced (informational, never exit-flipping) and ok when it can —
+// the line names both sides, so it is never read as a protection claim.
+export interface ResourceEnforcementProbe {
+  platform: string;
+  /** The memory probe (RSS sampling + the child's heap bound) is available. */
+  memoryProbe: boolean;
+  /** The worktree disk probe is available. */
+  diskProbe: boolean;
+}
+
+export function resourceEnforcementCheck(
+  probe: ResourceEnforcementProbe,
+): DoctorCheck {
+  const enforced = ['wall clock (per-worker --timeout)'];
+  const missing: string[] = [];
+  if (probe.memoryProbe) {
+    enforced.push('memory (RSS sampling + --max-old-space-size)');
+  } else {
+    missing.push(`memory (no RSS probe on ${probe.platform})`);
+  }
+  if (probe.diskProbe) {
+    enforced.push('disk (per-worktree quota)');
+  } else {
+    missing.push(`disk (no worktree probe on ${probe.platform})`);
+  }
+  return {
+    id: 'limit:resources',
+    label: 'limit resources',
+    status: missing.length === 0 ? 'pass' : 'warn',
+    reason: 'ok',
+    detail: `per-agent limits — enforced: ${enforced.join(', ')}${
+      missing.length === 0 ? '' : `; NOT enforced: ${missing.join(', ')}`
+    }`,
+  };
+}
+
 // Missing provider (§78): no provider is configured, which is a different
 // statement from "a provider was dialled and did not answer" — the line never
 // implies a dial that did not happen (issue #86; §59.1). Failing here names

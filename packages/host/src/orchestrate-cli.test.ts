@@ -356,6 +356,97 @@ describe('per-agent role and model binding (issue #178)', () => {
     expect(second.calls.run).toEqual(['b']);
   });
 
+  it('persists the run’s --skill values and re-applies them on --resume (issue #170)', async () => {
+    const first = makeWorld({
+      mergeBranch: (agentId: string) => {
+        if (agentId === 'beta') throw new Error('KILLED');
+      },
+    });
+    const code1 = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['alpha', 'beta'],
+        session: 'sess-skills',
+        yes: true,
+        skills: ['./skills/house.md'],
+      },
+      first.deps,
+    );
+    expect(code1).toBe(1);
+    const stored = first.saved[first.saved.length - 1] as OrchestratorRunState;
+    expect(stored.skills).toEqual(['./skills/house.md']);
+
+    // The resume carries no flags: the stored skills are what the retried
+    // worker is told (the run resolves them against its own cwd later).
+    const seen: WorkerSpawnInfo[] = [];
+    const second = makeWorld({
+      loadState: () => structuredClone(stored),
+      runWorker: (agentId, _worktree, _prompt, info) => {
+        seen.push(info as WorkerSpawnInfo);
+        return [];
+      },
+    });
+    const code2 = await runOrchestrateCommand(
+      { resume: true, session: 'sess-skills' },
+      second.deps,
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.skills).toEqual(['./skills/house.md']);
+  });
+
+  it('refuses a --skill differing from the stored one, and adopts one for a pre-#170 state (issue #170)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-skills',
+      prompt: 'demo',
+      agents: ['alpha'],
+      skills: ['./skills/house.md'],
+      merged: [],
+      pending: ['alpha'],
+      stopped: false,
+      records: [],
+    };
+    const refused = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-skills',
+        skills: ['./skills/other.md'],
+      },
+      refused.deps,
+    );
+    expect(code).toBe(2);
+    expect(refused.errLines.join('\n')).toMatch(
+      /--skill differs from the skills stored/,
+    );
+    expect(refused.calls.run).toEqual([]);
+
+    // A state written before #170 has none: the flag is adopted and persisted.
+    const legacy = { ...structuredClone(stored), skills: undefined };
+    const adopted = makeWorld({ loadState: () => structuredClone(legacy) });
+    const seen: WorkerSpawnInfo[] = [];
+    const code2 = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-skills',
+        skills: ['./skills/house.md'],
+      },
+      {
+        ...adopted.deps,
+        runWorker: (agentId, _worktree, _prompt, info) => {
+          seen.push(info as WorkerSpawnInfo);
+          return [];
+        },
+      },
+    );
+    expect(code2).toBe(0);
+    expect(seen[0]?.skills).toEqual(['./skills/house.md']);
+    const saved = adopted.saved[
+      adopted.saved.length - 1
+    ] as OrchestratorRunState;
+    expect(saved.skills).toEqual(['./skills/house.md']);
+  });
+
   it('adopts an --agents assignment for a state written before the binding persisted (issue #178)', async () => {
     // The pre-#178 state has nothing to differ from (the --budget rule,
     // issue #208): the flag is adopted and persisted, never refused.
@@ -1470,6 +1561,12 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
       { models: { alpha: '/m1' } },
       { models: { ghost: 'acme/m1' } },
       { models: { alpha: 7 } },
+      // §67 task resources (issue #170): the stored skills are a non-empty
+      // list of non-empty strings, or the state is refused.
+      { skills: 'x' },
+      { skills: [] },
+      { skills: [42] },
+      { skills: [''] },
     ];
     for (const binding of bindings) {
       expect(

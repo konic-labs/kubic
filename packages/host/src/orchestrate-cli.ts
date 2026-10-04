@@ -450,6 +450,11 @@ export interface OrchestratorRunState {
   // of re-deriving (or dropping) it. A state written before #208 has none,
   // and a resume may then supply one.
   budget?: ParsedBudgetSpec;
+  // The `--skill` grants this run started with (issue #170): persisted for
+  // the same reason — a resume with no flags must not silently retry the
+  // pending workers without the skills the run was launched with. A state
+  // written before #170 has none, and a resume may then supply them.
+  skills?: string[];
   // The worker-failure policy this run started with (issue #169 review):
   // persisted so `--on-failure continue` survives a kill + `--resume`
   // instead of silently reverting to all-or-nothing. A state written before
@@ -501,6 +506,17 @@ export function parseOrchestratorRunState(
   if (value.models !== undefined) {
     models = parseStoredBinding(value.models, agents, 'models');
     if (models === undefined) return undefined;
+  }
+  if (value.skills !== undefined) {
+    if (
+      !Array.isArray(value.skills) ||
+      value.skills.length === 0 ||
+      value.skills.some(
+        (entry) => typeof entry !== 'string' || entry.trim() === '',
+      )
+    ) {
+      return undefined;
+    }
   }
   if (value.budget !== undefined) {
     const budget = parseStoredBudgetSpec(value.budget);
@@ -1692,6 +1708,8 @@ export async function runOrchestrateCommand(
             roles: { ...parsed.binding.roles },
             models: { ...parsed.binding.models },
           }),
+      // The skills the run was launched with travel with it (issue #170).
+      ...(parsed.skills.length === 0 ? {} : { skills: [...parsed.skills] }),
       merged: [],
       pending: [...parsed.agents],
       stopped: false,
@@ -1722,6 +1740,28 @@ export async function runOrchestrateCommand(
     );
     return RUN_EXIT_USAGE;
   }
+  // The skills in force: the stored ones on a resume — never re-derived from
+  // the CLI defaults — the parsed ones otherwise. A state written before
+  // #170 has none and adopts the flag (the budget rule, issue #208), and a
+  // flag naming a DIFFERENT list than the stored one is refused rather than
+  // silently mixed in.
+  const stateSkills = state.skills ?? [];
+  if (
+    parsed.resume &&
+    options.skills !== undefined &&
+    options.skills.length > 0 &&
+    stateSkills.length > 0 &&
+    JSON.stringify(stateSkills) !== JSON.stringify(parsed.skills)
+  ) {
+    log.error(
+      `--skill differs from the skills stored for session '${sessionId}': --resume re-applies the stored ones — drop the flag to continue`,
+    );
+    return RUN_EXIT_USAGE;
+  }
+  if (parsed.resume && stateSkills.length === 0 && parsed.skills.length > 0) {
+    state = { ...state, skills: [...parsed.skills] };
+  }
+  const effectiveSkills = state.skills ?? parsed.skills;
   // A pre-#178 state adopts the flag's assignment, so a later resume replays
   // it (the budget rule's adoption, issue #208).
   if (parsed.resume && !stateStoresBinding && flagCarriesBinding) {
@@ -2475,8 +2515,11 @@ export async function runOrchestrateCommand(
           // document exists for this worker, so nothing is narrowed.
           ...spawnRoleInfo(agentId, rolePlan),
           // §67 task resources (issue #170): the run's `--skill` values reach
-          // every worker, and the run resolves them against its own cwd.
-          ...(parsed.skills.length === 0 ? {} : { skills: [...parsed.skills] }),
+          // every worker (the STORED ones on a resume), and the run resolves
+          // them against its own cwd.
+          ...(effectiveSkills.length === 0
+            ? {}
+            : { skills: [...effectiveSkills] }),
         }),
       );
       if (output.result !== undefined) {
@@ -3070,6 +3113,11 @@ export async function runOrchestrateCommand(
         worktree: { path: worktree.path, branch: worktree.branch },
         spec,
         prompt: resolverPromptFor(spec),
+        // §67 task resources (issue #170): the resolver is a child like any
+        // other, so it gets the same skills (L-D9).
+        ...(effectiveSkills.length === 0
+          ? {}
+          : { skills: [...effectiveSkills] }),
       });
     } catch (error) {
       // A resolver that throws may still have ended on a named approval

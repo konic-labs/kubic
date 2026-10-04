@@ -220,6 +220,9 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
         agents: ['alpha', 'beta'],
         session: 'iss106',
         yes: true,
+        // §67 task resources (issue #170): the resolver gets the run's
+        // skills, like every worker (L-D9).
+        skills: ['./skills/house.md'],
       },
       h.deps,
     );
@@ -262,6 +265,12 @@ describe('prod orchestrate path: conflict delegation (issue #106, §45.2)', () =
     expect(resolverTask.workspaceMode).toBe('worktree');
     expect(resolverTask.toolNames).toContain('write');
     expect(resolverTask.toolNames).toContain('edit');
+    // The resolver is granted the run's skills, resolved against the
+    // manager's cwd (its own worktree would resolve the relative path
+    // elsewhere).
+    expect(
+      (resolverTask as { resources?: { skills?: string[] } }).resources,
+    ).toEqual({ skills: [join(h.root, 'skills', 'house.md')] });
     // The merge target ends up with the resolver's settlement.
     // main holds alpha's line: the resolver took the merge target's version,
     // so the settling content is alpha's, and the merge is clean afterwards.

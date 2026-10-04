@@ -18,9 +18,12 @@ import {
 import {
   BACKGROUND_CONTEXT,
   createModels,
+  createRegistry,
   fauxAssistantMessage,
   fauxProvider,
+  Harness,
   type MutableModels,
+  UserEntry,
 } from '../../worker/src/pi-boundary.js';
 import { collectDoctorChecks } from './doctor.js';
 import { mapTerminusToExitCode } from './run-cli.js';
@@ -69,29 +72,34 @@ function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
 // observable on the CLI output.
 async function closedSessionWithEntry(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-  const id = session.metadata.id;
-  await session.mutate(async (mutator) => {
-    await mutator.commit(
-      [
-        {
-          kind: 'entry',
-          entry: {
-            id: 'e-lock',
-            parentId: null,
-            type: 'message',
-            message: {
-              role: 'user',
-              content: [{ type: 'text', text: 'transcript-marker' }],
-              timestamp: Date.now(),
-            },
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const id = session.id;
+  const harness = await Harness.open(
+    session.adopt(),
+    { models: createModels(), registry: createRegistry() },
+    BACKGROUND_CONTEXT,
+  );
+  try {
+    const conversation = await harness.root(BACKGROUND_CONTEXT);
+    await conversation.commit(async (tx) => {
+      await tx.appendEntry(UserEntry, conversation.id, {
+        model: [
+          {
+            role: 'user',
+            content: 'transcript-marker',
+            timestamp: Date.now(),
           },
-        },
-      ],
-      BACKGROUND_CONTEXT,
-    );
-  }, BACKGROUND_CONTEXT);
-  await session.close(BACKGROUND_CONTEXT);
+        ],
+      });
+    }, BACKGROUND_CONTEXT);
+  } finally {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
+  await session.release(BACKGROUND_CONTEXT);
   return id;
 }
 
@@ -174,8 +182,12 @@ describe('repo-level overlap warning (issue #118)', () => {
     const root = tmpRoot();
     const workspace = tmpRoot('ws-');
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const sibling = await createSession(store, workspace, BACKGROUND_CONTEXT);
-    await sibling.close(BACKGROUND_CONTEXT);
+    const sibling = await createSession(
+      store,
+      { cwd: workspace },
+      BACKGROUND_CONTEXT,
+    );
+    await sibling.release(BACKGROUND_CONTEXT);
     const debugLines: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
@@ -200,8 +212,12 @@ describe('repo-level overlap warning (issue #118)', () => {
     const root = tmpRoot();
     const workspace = tmpRoot('ws-');
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const sibling = await createSession(store, workspace, BACKGROUND_CONTEXT);
-    await sibling.close(BACKGROUND_CONTEXT);
+    const sibling = await createSession(
+      store,
+      { cwd: workspace },
+      BACKGROUND_CONTEXT,
+    );
+    await sibling.release(BACKGROUND_CONTEXT);
     const sinkLines: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
@@ -227,10 +243,10 @@ describe('repo-level overlap warning (issue #118)', () => {
     const store = openSessionStore(root, createNodeFileBridge(root));
     const sibling = await createSession(
       store,
-      tmpRoot('elsewhere-'),
+      { cwd: tmpRoot('elsewhere-') },
       BACKGROUND_CONTEXT,
     );
-    await sibling.close(BACKGROUND_CONTEXT);
+    await sibling.release(BACKGROUND_CONTEXT);
     const debugLines: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',

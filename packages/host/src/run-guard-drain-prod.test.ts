@@ -55,13 +55,16 @@ function hangingBashModels(pidName: string): MutableModels {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
-    fauxAssistantMessage([
-      fauxToolCall('bash', {
-        // Inside-workspace redirect (no approval): publish the shell pid,
-        // then hang — the guard fires while this op is in flight.
-        command: `echo $$ > ${pidName}; sleep 60`,
-      }),
-    ]),
+    fauxAssistantMessage(
+      [
+        fauxToolCall('bash', {
+          // Inside-workspace redirect (no approval): publish the shell pid,
+          // then hang — the guard fires while this op is in flight.
+          command: `echo $$ > ${pidName}; sleep 60`,
+        }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
   ]);
   return models;
 }

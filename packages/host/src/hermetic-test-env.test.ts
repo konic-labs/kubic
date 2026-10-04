@@ -21,12 +21,46 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
-  AgentHarness,
+  attachSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../worker/src/lane/solo.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  SystemEntry,
 } from '../../worker/src/pi-boundary.js';
+
+// The solo prompt the lane committed for this session (#400's reader).
+async function committedPrompt(
+  root: string,
+  sessionId: string,
+): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const entries = await readSessionEntries(
+      session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of [...entries].reverse()) {
+      if (!SystemEntry.is(entry)) continue;
+      const messages = entry.model as unknown as
+        | Array<{ sections?: Record<string, string | null> }>
+        | undefined;
+      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      if (typeof prompt === 'string' && prompt !== '') return prompt;
+    }
+    return '';
+  } finally {
+    await session.release(BACKGROUND_CONTEXT);
+  }
+}
 
 const made: string[] = [];
 
@@ -93,21 +127,18 @@ describe('hermetic unit-test environment (issue #377)', () => {
         const models = createModels();
         models.setProvider(faux.provider);
         faux.setResponses([fauxAssistantMessage('done')]);
-        const createSpy = vi.spyOn(AgentHarness, 'create');
+        const sessionsRoot = tmpRoot('hermetic-sessions-');
         const result = await runHeadlessPrompt(
           'hello',
           {},
           {
-            sessionsRoot: tmpRoot('hermetic-sessions-'),
+            sessionsRoot,
             models,
             env: new FakeExecutionEnv({}),
           },
         );
         expect(result.terminus).toBe('completed');
-        const options = createSpy.mock.calls[0]?.[0] as
-          | { systemPrompt?: string }
-          | undefined;
-        const prompt = options?.systemPrompt ?? '';
+        const prompt = await committedPrompt(sessionsRoot, result.sessionId);
         expect(prompt).toContain('cwd:');
         expect(prompt).not.toContain('dev-agents-skill');
         expect(prompt).not.toContain('dev-pi-skill');

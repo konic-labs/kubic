@@ -14,11 +14,18 @@ import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
-  AgentHarness,
+  attachSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../worker/src/lane/solo.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
+  SystemEntry,
 } from '../../worker/src/pi-boundary.js';
 import { createRoleToolGuard } from './roles/resolver.js';
 import { ROLE_MODEL_DEFAULTS } from './roles/roles-data.js';
@@ -73,13 +80,38 @@ const WRITER =
 // The `tools:` line the assembled solo prompt carries is derived from the
 // tool set the lane registered — it is the model-visible statement of
 // §40.3's truth-telling rule, so reading it proves what was registered.
-function toolsLineOf(spy: ReturnType<typeof vi.spyOn>): string[] {
-  const call = (spy as unknown as { mock: { calls: unknown[][] } }).mock
-    .calls[0];
-  const options = call?.[0] as { systemPrompt?: string } | undefined;
-  expect(options?.systemPrompt).toBeTypeOf('string');
-  const line =
-    /^tools: (.*)$/m.exec(options?.systemPrompt as string)?.[1] ?? '';
+// The solo prompt the lane committed for this session (#400's reader): the
+// run's own durable record of the bytes the model saw.
+async function committedPrompt(
+  root: string,
+  sessionId: string,
+): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const entries = await readSessionEntries(
+      session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of [...entries].reverse()) {
+      if (!SystemEntry.is(entry)) continue;
+      const messages = entry.model as unknown as
+        | Array<{ sections?: Record<string, string | null> }>
+        | undefined;
+      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      if (typeof prompt === 'string' && prompt !== '') return prompt;
+    }
+    return '';
+  } finally {
+    await session.release(BACKGROUND_CONTEXT);
+  }
+}
+
+// The `tools:` line the assembled solo prompt carries is derived from the
+// tool set the lane registered — it is the model-visible statement of
+// §40.3's truth-telling rule, so reading it proves what was registered.
+function toolsLineOf(prompt: string): string[] {
+  const line = /^tools: (.*)$/m.exec(prompt)?.[1] ?? '';
   return line.split(',').map((name) => name.trim());
 }
 
@@ -118,19 +150,20 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
     expect(composed).toContain('You are the planner.');
     expect(composed).toContain("Plan step 1 of 1 for agent 'alpha'");
 
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const root = scratchRoot('roles-lane-sessions-');
     const result = await runHeadlessPrompt(
       composed,
       { role: plan.assignments[0]?.role },
       {
-        sessionsRoot: scratchRoot('roles-lane-sessions-'),
+        sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
         roles: { cwd },
       },
     );
     expect(result.terminus).toBe('completed');
-    const registered = toolsLineOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
+    const registered = toolsLineOf(prompt);
     expect(registered).toContain('read');
     for (const withheld of ['write', 'edit', 'bash']) {
       expect(registered).not.toContain(withheld);
@@ -161,25 +194,25 @@ describe('a delegated worker lane runs its assigned role (issue #104)', () => {
       WRITER,
       'You are the implementer. Execute the plan inside your worktree.',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const root = scratchRoot('roles-lane-sessions-');
     const result = await runHeadlessPrompt(
       'implement it',
       { role: 'implementer' },
       {
-        sessionsRoot: scratchRoot('roles-lane-sessions-'),
+        sessionsRoot: root,
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
         roles: { cwd },
       },
     );
     expect(result.terminus).toBe('completed');
-    const registered = toolsLineOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
+    const registered = toolsLineOf(prompt);
     for (const held of ['read', 'write', 'edit', 'bash']) {
       expect(registered).toContain(held);
     }
     // And the role's own prompt text is what the lane was seeded with.
-    const options = createSpy.mock.calls[0]?.[0] as { systemPrompt?: string };
-    expect(options.systemPrompt).toContain(
+    expect(prompt).toContain(
       'You are the implementer. Execute the plan inside your worktree.',
     );
   });

@@ -106,7 +106,7 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
     );
     const assistant = items
       .filter((item) => item.kind === 'assistant')
-      .map((item) => `${item.provider}/${item.model}`);
+      .map((item) => `${item.provider ?? ''}/${item.model ?? ''}`);
     return assistant.at(-1) ?? '';
   } finally {
     await session.release(BACKGROUND_CONTEXT);

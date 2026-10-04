@@ -24,14 +24,20 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
-  AgentHarness,
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
+import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
+  SystemEntry,
 } from '../../worker/src/pi-boundary.js';
 import { runRunCommand } from './run-cli.js';
 
@@ -64,12 +70,31 @@ function writeSkill(root: string, name: string, description: string): string {
   return file;
 }
 
-function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
-  const call = (spy as unknown as { mock: { calls: unknown[][] } }).mock
-    .calls[0];
-  const options = call?.[0] as { systemPrompt?: string } | undefined;
-  expect(options?.systemPrompt).toBeTypeOf('string');
-  return options?.systemPrompt as string;
+// The solo prompt the lane committed for this session (#400's reader): the
+// run's own durable record of the bytes the model saw.
+async function committedPrompt(
+  root: string,
+  sessionId: string,
+): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const entries = await readSessionEntries(
+      session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of [...entries].reverse()) {
+      if (!SystemEntry.is(entry)) continue;
+      const messages = entry.model as unknown as
+        | Array<{ sections?: Record<string, string | null> }>
+        | undefined;
+      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      if (typeof prompt === 'string' && prompt !== '') return prompt;
+    }
+    return '';
+  } finally {
+    await session.release(BACKGROUND_CONTEXT);
+  }
 }
 
 beforeEach(() => {
@@ -94,7 +119,6 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
       'deploy-widget',
       'Ship the widget to staging',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     const root = tmpRoot('skills-sessions-');
     const result = await runHeadlessPrompt(
       'hello',
@@ -109,7 +133,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
-    const prompt = promptOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
     // The §29 injection block itself.
     expect(prompt).toContain('<skills>');
     expect(prompt).toContain('<name>deploy-widget</name>');
@@ -130,9 +154,8 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
       'project-only',
       'Lives in the repo',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     const root = tmpRoot('skills-sessions-');
-    await runHeadlessPrompt(
+    const untrusted = await runHeadlessPrompt(
       'hello',
       {},
       {
@@ -143,14 +166,13 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
         skills: { homeDir: home, cwd, trusted: false },
       },
     );
-    const untrustedPrompt = promptOf(createSpy);
+    const untrustedPrompt = await committedPrompt(root, untrusted.sessionId);
     expect(untrustedPrompt).not.toContain('project-only');
     expect(untrustedPrompt).not.toContain(`<filePath>${skillFile}</filePath>`);
 
     // Same tree, trusted: the skill appears — so the exclusion above is
     // the trust gate, not a loader that never finds anything.
-    createSpy.mockClear();
-    await runHeadlessPrompt(
+    const trusted = await runHeadlessPrompt(
       'hello',
       {},
       {
@@ -160,7 +182,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
         skills: { homeDir: home, cwd, trusted: true },
       },
     );
-    const trustedPrompt = promptOf(createSpy);
+    const trustedPrompt = await committedPrompt(root, trusted.sessionId);
     expect(trustedPrompt).toContain('<name>project-only</name>');
     expect(trustedPrompt).toContain(`<filePath>${skillFile}</filePath>`);
   });
@@ -172,9 +194,8 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
       'deploy-widget',
       'Ship the widget to staging',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     const root = tmpRoot('skills-sessions-');
-    await runHeadlessPrompt(
+    const result = await runHeadlessPrompt(
       'hello',
       { noSkills: true },
       {
@@ -184,7 +205,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
         skills: { homeDir: home, trusted: true },
       },
     );
-    const prompt = promptOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
     expect(prompt).not.toContain('<skills>');
     expect(prompt).not.toContain('deploy-widget');
   });
@@ -246,9 +267,8 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
     const cwd = tmpRoot('skills-cwd-');
     writeSkill(join(cwd, '.agents', 'skills'), 'env-gated', 'Needs the opt-in');
     const root = tmpRoot('skills-sessions-');
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     vi.stubEnv('KUBIC_TRUST_PROJECT', undefined);
-    await runHeadlessPrompt(
+    const untrusted = await runHeadlessPrompt(
       'hello',
       {},
       {
@@ -259,11 +279,12 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
         skills: { homeDir: home, cwd },
       },
     );
-    expect(promptOf(createSpy)).not.toContain('env-gated');
+    expect(await committedPrompt(root, untrusted.sessionId)).not.toContain(
+      'env-gated',
+    );
 
     vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    createSpy.mockClear();
-    await runHeadlessPrompt(
+    const trusted = await runHeadlessPrompt(
       'hello',
       {},
       {
@@ -273,7 +294,9 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
         skills: { homeDir: home, cwd },
       },
     );
-    expect(promptOf(createSpy)).toContain('<name>env-gated</name>');
+    expect(await committedPrompt(root, trusted.sessionId)).toContain(
+      '<name>env-gated</name>',
+    );
   });
 });
 
@@ -288,9 +311,8 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage(
-        calls.map((call) => fauxToolCall(call.name, call.args)),
-      ),
+      // Only a toolUse turn runs its calls (fauxToolUse, #401).
+      fauxToolUse(calls.map((call) => fauxToolCall(call.name, call.args))),
       fauxAssistantMessage('done'),
     ]);
     const result = await runHeadlessPrompt(
@@ -310,30 +332,17 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
       BACKGROUND_CONTEXT,
     );
     try {
-      const entries = (await session.findEntries(
-        undefined,
-        BACKGROUND_CONTEXT,
-      )) as {
-        message?: {
-          role?: string;
-          toolName?: string;
-          isError?: boolean;
-          content?: { type: string; text?: string }[];
-        };
-      }[];
-      return entries
-        .filter((entry) => entry.message?.role === 'toolResult')
-        .map((entry) => ({
-          ...(entry.message?.toolName === undefined
-            ? {}
-            : { toolName: entry.message.toolName }),
-          ...(entry.message?.isError === undefined
-            ? {}
-            : { isError: entry.message.isError }),
-          text: JSON.stringify(entry.message?.content ?? []),
+      return entriesToTranscript(
+        await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+      )
+        .filter((item) => item.kind === 'tool-result')
+        .map((item) => ({
+          toolName: item.name,
+          isError: item.isError,
+          text: item.text,
         }));
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await session.release(BACKGROUND_CONTEXT);
     }
   }
 

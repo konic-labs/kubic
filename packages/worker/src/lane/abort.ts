@@ -1,12 +1,19 @@
-// Lane abort with kill tree (issue #11, slice C). requestAbort is durable:
-// the harness records the operation_abort event in-session, so a crashed
-// host re-reads cancel_requested instead of re-driving a dead run. The
-// kill registry drains in-flight op processes (bash hands its detached
-// group kill over via OpContext.trackHandle); every kill is attempted even
-// when one throws, and failures aggregate into one LaneDriveError.
+// Lane abort with kill tree (issue #11 slice C; ported to pi-durable in
+// #395). `conversation.abort(context)` is the durable stop: it withdraws
+// queued inputs, marks every live task of the conversation's ordinary scope,
+// signals them, and resolves once the scope is idle (README "Abort and
+// Subagents"). Kubic's bash children run in detached process groups, so the
+// harness's own cancellation cannot reach them: every such child is tracked
+// in the lane's OperationKillRegistry under its conversation id (D1) and is
+// killed here.
+//
+// Order matters: the durable abort is started FIRST (against a context that
+// is not the cancelled one), then every tracked kill runs, then the abort is
+// awaited — so a child that ignores cancellation cannot stall the stop. Every
+// kill is attempted even when one throws, and all failures aggregate into one
+// LaneDriveError.
 
-import type { Context } from '../pi-boundary.js';
-import { LaneDriveError } from './solo.js';
+import type { Context, Conversation } from '../pi-boundary.js';
 
 export type KillFn = () => void;
 
@@ -26,90 +33,69 @@ export class OperationKillRegistry {
   }
 }
 
-export interface LaneAborter {
-  requestAbort(
-    operationId: string,
-    context: Context,
-  ): Promise<
-    | { ok: true; value: { operationId: string; newlyRequested: boolean } }
-    | { ok: false; error: unknown }
-  >;
+// The structural lane surface the abort paths need: SoloLane satisfies it,
+// and so do unit stubs.
+export interface AbortableLane {
+  readonly conversation: Conversation;
+  readonly kills: OperationKillRegistry;
 }
 
 export interface LaneAbortResult {
-  newlyRequested: boolean;
+  /** Kills that ran. Every tracked kill is attempted; a throwing one counts
+   *  as a failure, never as a reason to skip the rest. */
   killed: number;
 }
 
-export async function requestLaneAbort(
-  lane: LaneAborter,
-  kills: OperationKillRegistry,
-  operationId: string,
+export class LaneDriveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LaneDriveError';
+  }
+}
+
+function failureText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// Durable abort of the conversation plus the drain of every process group the
+// lane tracked for it: the one stop path shared by the guard, the interrupt
+// and the TUI quit. Cannot settle `conversation.abort()` on a context that is
+// already cancelled, so callers hand it a live one (BACKGROUND_CONTEXT on the
+// headless guard path).
+export async function abortLane(
+  solo: AbortableLane,
   context: Context,
 ): Promise<LaneAbortResult> {
-  const requested = await lane.requestAbort(operationId, context);
-  if (!requested.ok) {
-    // Intentional: kills stay tracked so a retried abort still drains them.
-    // Draining here would either leak (never killed) or kill processes for
-    // an operation the harness refused to stop.
-    const detail =
-      requested.error instanceof Error
-        ? requested.error.message
-        : JSON.stringify(requested.error);
-    throw new LaneDriveError(`lane abort failed for ${operationId}: ${detail}`);
-  }
-  let killed = 0;
+  const conversationId = String(solo.conversation.id);
+  // Started, not awaited: the kills below are what unblocks a child that
+  // ignores cancellation.
+  const aborting = solo.conversation.abort(context);
   const failures: string[] = [];
-  for (const kill of kills.drain(operationId)) {
+  let killed = 0;
+  for (const kill of solo.kills.drain(conversationId)) {
     try {
       kill();
       killed += 1;
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      failures.push(failureText(error));
     }
+  }
+  try {
+    await aborting;
+  } catch (error) {
+    failures.push(`lane abort failed: ${failureText(error)}`);
   }
   if (failures.length > 0) {
     throw new LaneDriveError(
-      `lane abort kills failed for ${operationId}: ${failures.join('; ')}`,
+      `lane abort failed for ${conversationId}: ${failures.join('; ')}`,
     );
   }
-  return { newlyRequested: requested.value.newlyRequested, killed };
+  return { killed };
 }
 
-// Best-effort drain of one in-flight operation (issue #109; shared with the
-// TUI quit path, issue #312): the durable abort request first (the harness
-// records operation_abort in-session, so a resume sees a settled operation),
-// then EVERY registered kill (detached process groups, so grandchildren die
-// with them). Never throws: a refused or throwing abort is reported and the
-// kills still run — the drain is the backstop and must not be skipped.
-export async function drainOperation(
-  lane: LaneAborter,
-  kills: OperationKillRegistry,
-  operationId: string,
-  context: Context,
-  report?: (message: string) => void,
-): Promise<void> {
-  try {
-    const requested = await lane.requestAbort(operationId, context);
-    if (!requested.ok) {
-      report?.(
-        `requestAbort refused: ${
-          requested.error instanceof Error
-            ? requested.error.message
-            : JSON.stringify(requested.error)
-        }`,
-      );
-    }
-  } catch (error) {
-    report?.(
-      `requestAbort refused: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  for (const kill of kills.drain(operationId)) {
-    try {
-      kill();
-    } catch {
-      // Already exited — the registry drains every entry regardless.
-    }
-  }
+// The settled-turn path: the kills are already dead (the tool tasks
+// finished), so drop their handles without running them — a later abort of
+// the conversation must not signal a process group that no longer is one.
+export function forgetLaneKills(solo: AbortableLane): void {
+  solo.kills.drain(String(solo.conversation.id));
 }

@@ -14,11 +14,13 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { resolveEffectivePolicy } from './policy/enterprise.js';
@@ -60,20 +62,50 @@ function entryTexts(entries: unknown): string[] {
   if (!Array.isArray(entries)) return [];
   const out: string[] = [];
   for (const entry of entries) {
-    const message = (entry as { message?: unknown }).message as {
-      content?: unknown;
-    };
-    if (!Array.isArray(message?.content)) continue;
-    for (const part of message.content) {
-      const text = (part as { type?: unknown; text?: unknown }).text;
-      if (
-        (part as { type?: unknown }).type === 'text' &&
-        typeof text === 'string'
-      )
-        out.push(text);
+    const model = (entry as { model?: unknown }).model;
+    if (!Array.isArray(model)) continue;
+    for (const message of model) {
+      const content = (message as { content?: unknown }).content;
+      if (typeof content === 'string') {
+        out.push(content);
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        const text = (part as { type?: unknown; text?: unknown }).text;
+        if (
+          (part as { type?: unknown }).type === 'text' &&
+          typeof text === 'string'
+        )
+          out.push(text);
+      }
     }
   }
   return out;
+}
+
+// The user-message texts of a session's active transcript, in order: the
+// unit #247's "exactly one user entry per prompt" counts.
+function userTexts(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return [];
+  const out: string[] = [];
+  for (const entry of entries) {
+    if ((entry as { kind?: unknown }).kind !== 'pi.user') continue;
+    out.push(...entryTexts([entry]));
+  }
+  return out;
+}
+
+// Read a session's active transcript the way a CLI reader does (#400): the
+// storage directly, no harness boot, and the handle gives the lock back.
+async function readTranscript(root: string, id: string): Promise<unknown[]> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await attachSession(store, id, BACKGROUND_CONTEXT);
+  try {
+    return await readSessionEntries(session.storage, BACKGROUND_CONTEXT);
+  } finally {
+    await session.release(BACKGROUND_CONTEXT);
+  }
 }
 
 describe('prod run path, live lane (issue #28, E1)', () => {
@@ -93,17 +125,8 @@ describe('prod run path, live lane (issue #28, E1)', () => {
     expect(result.summary).toContain('all done');
     expect(result.sessionId).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(existsSync(join(root, result.sessionId, 'journal'))).toBe(true);
-    const reopened = await attachSession(
-      store,
-      result.sessionId,
-      BACKGROUND_CONTEXT,
-    );
-    try {
-      const entries = await reopened.findEntries(undefined, BACKGROUND_CONTEXT);
-      expect(entryTexts(entries).join('\n')).toMatch(/do it/);
-    } finally {
-      await reopened.close(BACKGROUND_CONTEXT);
-    }
+    const entries = await readTranscript(root, result.sessionId);
+    expect(entryTexts(entries).join('\n')).toMatch(/do it/);
   });
 
   it('maps a starved lane drive to failed', async () => {
@@ -122,10 +145,9 @@ describe('prod run path, live lane (issue #28, E1)', () => {
 });
 
 describe('prod run path, resume chain (issue #28, E4)', () => {
-  it('links the resumed prompt to the tip with a collision-free id', async () => {
+  it('resumes the same session and keeps one user entry per prompt (#247)', async () => {
     const root = tmpRoot();
     const env = new FakeExecutionEnv({});
-    const store = openSessionStore(root, createNodeFileBridge(root));
     const first = await runHeadlessPrompt(
       'first prompt',
       {},
@@ -133,21 +155,6 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
     );
     expect(first.terminus).toBe('completed');
     const id = first.sessionId;
-    const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
-    let tipAfterFirst = '';
-    try {
-      const entries = await attached.findEntries(undefined, BACKGROUND_CONTEXT);
-      let bestSeq = -1;
-      for (const entry of entries) {
-        const seq = (entry as { seq?: unknown }).seq;
-        if (typeof seq === 'number' && seq >= bestSeq) {
-          bestSeq = seq;
-          tipAfterFirst = entry.id;
-        }
-      }
-    } finally {
-      await attached.close(BACKGROUND_CONTEXT);
-    }
     const second = await runHeadlessPrompt(
       'second prompt',
       { sessionId: id },
@@ -155,43 +162,78 @@ describe('prod run path, resume chain (issue #28, E4)', () => {
     );
     expect(second.terminus).toBe('completed');
     expect(second.sessionId).toBe(id);
-    const reopened = await attachSession(store, id, BACKGROUND_CONTEXT);
-    try {
-      const entries = await reopened.findEntries(undefined, BACKGROUND_CONTEXT);
-      const ids = entries.map((entry) => entry.id);
-      expect(new Set(ids).size).toBe(ids.length);
-      const byId = new Set(ids);
-      for (const entry of entries) {
-        if (entry.parentId === null) continue;
-        expect(byId.has(entry.parentId)).toBe(true);
-      }
-      const linked = entries.filter(
-        (entry) => entry.parentId === tipAfterFirst,
-      );
-      expect(linked.length).toBeGreaterThan(0);
-      expect(linked[0]?.id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      );
-      // E4 (§28): the -p prompt itself commits parent-linked to the tip
-      // under a random v4 id. The lane keeps its own prompt copy under a
-      // lane-shaped id, so the v4 shape identifies the composition root's
-      // commit — a null tip here means the resume broke the chain.
-      const v4 =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-      const own = entries.filter(
-        (entry) =>
-          entry.parentId === tipAfterFirst &&
-          v4.test(entry.id) &&
-          entryTexts([entry])
-            .join('\n')
-            .match(/second prompt/),
-      );
-      expect(own.length).toBeGreaterThan(0);
-      expect(entryTexts(entries).join('\n')).toMatch(/first prompt/);
-      expect(entryTexts(entries).join('\n')).toMatch(/second prompt/);
-    } finally {
-      await reopened.close(BACKGROUND_CONTEXT);
-    }
+    const entries = await readTranscript(root, id);
+    // The 1.0 store is linear and identifies entries by its own ids; what
+    // the resume must preserve is the transcript: both prompts, once each.
+    const ids = entries.map((entry) => String((entry as { id?: unknown }).id));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(userTexts(entries)).toEqual(['first prompt', 'second prompt']);
+    expect(entryTexts(entries).join('\n')).toMatch(/first prompt/);
+    expect(entryTexts(entries).join('\n')).toMatch(/second prompt/);
+    expect(entryTexts(entries).join('\n')).toMatch(/first done/);
+    expect(entryTexts(entries).join('\n')).toMatch(/second done/);
+  });
+});
+
+describe('exactly one user entry per kubic run prompt (issue #247)', () => {
+  it('writes ONE user entry for a turn that calls a tool', async () => {
+    const root = tmpRoot();
+    const env = new FakeExecutionEnv({});
+    env.fs.writeFile('a.txt', 'one entry reads this\n');
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('read it'),
+    ]);
+    const result = await runHeadlessPrompt(
+      'read the file',
+      {},
+      { sessionsRoot: root, models, env },
+    );
+    expect(result.terminus).toBe('completed');
+    const entries = await readTranscript(root, result.sessionId);
+    // #247: the raw pre-boot prompt write duplicated submit's own pi.user
+    // entry on every run; the prompt must appear exactly once.
+    expect(userTexts(entries)).toEqual(['read the file']);
+    expect(entryTexts(entries).join('\n')).toMatch(/one entry reads this/);
+  });
+
+  it('writes ONE user entry per prompt across a resume', async () => {
+    const root = tmpRoot();
+    const env = new FakeExecutionEnv({});
+    const first = await runHeadlessPrompt(
+      'first prompt',
+      {},
+      { sessionsRoot: root, models: fauxModels(['first done']), env },
+    );
+    const second = await runHeadlessPrompt(
+      'second prompt',
+      { sessionId: first.sessionId },
+      { sessionsRoot: root, models: fauxModels(['second done']), env },
+    );
+    expect(second.terminus).toBe('completed');
+    const entries = await readTranscript(root, second.sessionId);
+    expect(userTexts(entries)).toEqual(['first prompt', 'second prompt']);
+  });
+
+  it('writes the prompt once even when the turn never started (no model)', async () => {
+    const root = tmpRoot();
+    const result = await runHeadlessPrompt(
+      'durable no-model prompt',
+      {},
+      {
+        sessionsRoot: root,
+        models: createModels(),
+        env: new FakeExecutionEnv({}),
+      },
+    );
+    expect(result.terminus).toBe('provider_probe_failed');
+    const entries = await readTranscript(root, result.sessionId);
+    expect(userTexts(entries)).toEqual(['durable no-model prompt']);
   });
 });
 
@@ -493,16 +535,7 @@ describe('prod run path, result refs (issue #68; mutation hardening)', () => {
     );
     expect(result.terminus).toBe('provider_probe_failed');
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const reopened = await attachSession(
-      store,
-      result.sessionId,
-      BACKGROUND_CONTEXT,
-    );
-    try {
-      const entries = await reopened.findEntries(undefined, BACKGROUND_CONTEXT);
-      expect(entryTexts(entries).join('\n')).toMatch(/durable hello/);
-    } finally {
-      await reopened.close(BACKGROUND_CONTEXT);
-    }
+    const entries = await readTranscript(root, result.sessionId);
+    expect(entryTexts(entries).join('\n')).toMatch(/durable hello/);
   });
 });

@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { FileJournalStore, restoreEntry } from '../../exec/src/journal.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -57,7 +58,7 @@ function bashMutationModels(): MutableModels {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
-    fauxAssistantMessage([
+    fauxToolUse([
       fauxToolCall('bash', {
         command: 'printf "bash wrote this\\n" > mutated.txt',
       }),
@@ -200,7 +201,7 @@ describe('end-of-run reconciliation, prod path (issue #87)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('write', { path: 'via-tool.txt', content: 'tool\n' }),
       ]),
       fauxAssistantMessage('wrote it'),

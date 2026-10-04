@@ -28,6 +28,7 @@ import { FileJournalStore } from '../../exec/src/journal.js';
 import {
   createSession,
   openSessionStore,
+  type SessionHandle,
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
 import {
@@ -272,7 +273,11 @@ function fauxLaneBoot(
     const bridge = createNodeFileBridge(root);
     const store = openSessionStore(root, bridge);
     const context = BACKGROUND_CONTEXT;
-    const session = await createSession(store, { cwd: root }, context);
+    const session: SessionHandle = await createSession(
+      store,
+      { cwd: root },
+      context,
+    );
     const id = sessionId ?? session.id;
     bridge.createDir(join(id, 'journal'));
     const provider = models.getProviders()[0];

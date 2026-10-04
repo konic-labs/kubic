@@ -31,7 +31,13 @@ function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
+  // One response per request, stamped when the request runs: the §46 reader
+  // filters a run's evidence by its messages' timestamps, so a fixture built
+  // at boot would look older than the run it answers (real providers stamp
+  // at generation time).
+  faux.setResponses(
+    texts.map((text) => async () => fauxAssistantMessage(text)),
+  );
   return models;
 }
 

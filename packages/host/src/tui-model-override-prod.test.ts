@@ -16,17 +16,14 @@ import { bootTuiLane } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
-  attachSession,
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { SOLO_LANE_NAME } from '../../worker/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-  laneConfig,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 
@@ -85,9 +82,13 @@ function pinnedWorkspace(): { cwd: string; home: string } {
 
 async function newSession(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-  const id = session.metadata.id;
-  await session.close(BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const id = session.id;
+  await session.release(BACKGROUND_CONTEXT);
   return id;
 }
 
@@ -182,22 +183,18 @@ describe('kubic tui model selection (issue #227)', () => {
     } finally {
       await second.close?.();
     }
-    const store = openSessionStore(
+    // The switch is durable: a third boot with no pin reads the committed
+    // `pi.agent` document and keeps the session's own model (#148's stored
+    // rule) — never the default pick.
+    const third = await bootTuiLane(id, {
       sessionsRoot,
-      createNodeFileBridge(sessionsRoot),
-    );
-    const session = await attachSession(store, id, BACKGROUND_CONTEXT);
+      models: twoProviders(),
+      env: new FakeExecutionEnv({}),
+    });
     try {
-      const stored = await session.getValue(
-        laneConfig(SOLO_LANE_NAME),
-        BACKGROUND_CONTEXT,
-      );
-      expect(stored?.value.model).toMatchObject({
-        provider: 'alt',
-        modelId: 'm1',
-      });
+      expect(third.model).toBe('alt/m1');
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await third.close?.();
     }
   });
 });

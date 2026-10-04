@@ -25,6 +25,7 @@ import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -148,7 +149,7 @@ describe('config feeds the live run path (issue #90)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', { command: 'printf "x\\n" > created.txt' }),
       ]),
       fauxAssistantMessage('done'),
@@ -212,7 +213,7 @@ describe('config feeds the live run path (issue #90)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', {
           command:
             'printf "rebuilt\\n" > vendor/out.js; printf "v2\\n" > in-scope.txt',
@@ -277,7 +278,7 @@ describe('config feeds the live run path (issue #90)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', { command: 'printf "x\\n" > created.txt' }),
       ]),
       fauxAssistantMessage('done'),
@@ -337,7 +338,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', { command: 'printf "v2\\n" > note.txt' }),
       ]),
       fauxAssistantMessage('mutated'),
@@ -399,7 +400,7 @@ describe('solo-lane projections reach the live path (issue #133)', () => {
     const bareModels = createModels();
     bareModels.setProvider(bareFaux.provider);
     bareFaux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', { command: 'printf "v3\\n" > note.txt' }),
       ]),
       fauxAssistantMessage('mutated'),

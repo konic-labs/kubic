@@ -1,0 +1,182 @@
+// The Kubic turn glue on pi-durable (issue #395; §20.5, §20.6, §20.7).
+// A turn is one durably admitted input and its wait:
+//
+//   conversation.submit({ type: 'input', content, requestId, whenBusy })
+//     → submission.wait(context)
+//
+// Kubic adds NO loop: durable retry/backoff is a property of the harness's
+// generation task (`HarnessSettings.retry`), provider-deferred responses are
+// polled inside generation, and the caller's guards (wall clock, turn count,
+// SIGINT) are one cancellable Chord Context plus `conversation.abort()`
+// (lane/abort.ts) on expiry. This replaces the 0.87 accept → driveToSettled →
+// DriveOutcome loop (deleted from lane/solo.ts).
+//
+// Idempotency: `requestId` is a stable per-invocation value, so re-submitting
+// after a crash returns the SAME submission instead of prompting twice.
+
+import type { Context, Submission } from '../pi-boundary.js';
+import { ConversationBusy } from '../pi-boundary.js';
+import type { FailureCode } from './failures.js';
+import type {
+  LaneTerminalStatus,
+  OperationErrorLike,
+  SubmissionFailure,
+} from './settle.js';
+import { classifySubmissionFailure, classifyThrownError } from './settle.js';
+import type { SoloLane } from './solo.js';
+
+// `TurnOutcome.failed.reason` for the one refusal Kubic raises itself: the
+// conversation is busy and the caller asked to be rejected rather than
+// queued (#334 keeps today's reject behaviour until then).
+export const TURN_BUSY_REASON = 'busy';
+
+export type TurnAbortReason = 'guard' | 'user' | 'signal';
+
+// §52 code, or the one refusal Kubic raises itself (busy).
+export type TurnFailureReason = FailureCode | typeof TURN_BUSY_REASON;
+
+export type TurnOutcome =
+  | { kind: 'completed'; submissionId: string }
+  | { kind: 'failed'; reason: TurnFailureReason; error?: string }
+  | { kind: 'aborted'; reason: TurnAbortReason };
+
+// A cancelled turn's abort reason, carried on the Context's AbortSignal.
+// `runTurn` classifies a cancellation from this marker; an unmarked
+// cancellation is a guard (the run's own bound), and a durable
+// `unanswered`/'aborted' settlement with a live context is a user abort
+// (conversation.abort(), or the TUI's Esc).
+export class TurnAbort extends Error {
+  readonly turnAbort: TurnAbortReason;
+  constructor(reason: TurnAbortReason, message: string) {
+    super(message);
+    this.name = 'TurnAbort';
+    this.turnAbort = reason;
+  }
+}
+
+export function turnAbort(reason: TurnAbortReason, message: string): TurnAbort {
+  return new TurnAbort(reason, message);
+}
+
+export function turnAbortReasonOf(cause: unknown): TurnAbortReason | undefined {
+  return cause instanceof TurnAbort ? cause.turnAbort : undefined;
+}
+
+// The abort reason the turn's own context carries, if it was cancelled:
+// undefined for a live context. Unmarked cancellations read as a guard.
+function cancelledReason(context: Context): TurnAbortReason | undefined {
+  const signal = context.abortSignal;
+  if (signal === undefined || !signal.aborted) return undefined;
+  return turnAbortReasonOf(signal.reason) ?? 'guard';
+}
+
+export interface RunTurnOptions {
+  // Stable per invocation: a re-submit with the same id finds the same
+  // submission (README "Persist and Resume"), never a second prompt.
+  requestId: string;
+  context: Context;
+  // Busy handling (README "Busy Conversations"): queued follow-up by
+  // default, `reject` throws ConversationBusy — mapped to the named busy
+  // failure below.
+  whenBusy?: 'reject' | 'followUp' | 'steer';
+}
+
+// One turn, settled. Never throws for a refusal, a failed run or a cancelled
+// guard: every way a durable run can end is one `TurnOutcome` (§7, §78).
+export async function runTurn(
+  solo: SoloLane,
+  prompt: string,
+  options: RunTurnOptions,
+): Promise<TurnOutcome> {
+  let submission: Submission;
+  try {
+    submission = await solo.conversation.submit(
+      {
+        type: 'input',
+        content: prompt,
+        requestId: options.requestId,
+        ...(options.whenBusy === undefined
+          ? {}
+          : { whenBusy: options.whenBusy }),
+      },
+      options.context,
+    );
+  } catch (error) {
+    return submissionFailure(error, options.context);
+  }
+  return awaitTurn(submission, options.context);
+}
+
+// The wait half of a turn, for a submission admitted elsewhere: the durable
+// settlement of an input this process did not submit (issue #147's "resume
+// the pending run that carries this prompt as this run"). Same outcome
+// vocabulary as runTurn.
+export async function awaitTurn(
+  submission: Submission,
+  context: Context,
+): Promise<TurnOutcome> {
+  let settled: Awaited<ReturnType<Submission['wait']>>;
+  try {
+    settled = await submission.wait(context);
+  } catch (error) {
+    return submissionFailure(error, context);
+  }
+  if (settled.status === 'done') {
+    return { kind: 'completed', submissionId: String(settled.id) };
+  }
+  // A cancelled context wins over the durable settlement: the guard that
+  // cancelled the turn may race the `conversation.abort()` it triggered, and
+  // the caller's own reason is the truthful one.
+  const cancelled = cancelledReason(context);
+  if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
+  if (settled.reason === 'aborted') return { kind: 'aborted', reason: 'user' };
+  return failureOutcome(
+    classifySubmissionFailure(settled.reason, settled.detail),
+  );
+}
+
+// A throw from submit/wait: a cancelled context is the turn's own abort
+// reason, anything else is a classified failure.
+function submissionFailure(error: unknown, context: Context): TurnOutcome {
+  const cancelled = cancelledReason(context);
+  if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
+  if (error instanceof ConversationBusy) {
+    return {
+      kind: 'failed',
+      reason: TURN_BUSY_REASON,
+      error: error.message,
+    };
+  }
+  return failureOutcome(classifyThrownError(error));
+}
+
+function failureOutcome(failure: SubmissionFailure): TurnOutcome {
+  return {
+    kind: 'failed',
+    reason: failure.code,
+    error: failure.message,
+  };
+}
+
+// D6.1: the lane/trajectory record for one settled turn. The `error` carries
+// the §52 code as `code` and the human message, the shape §46/§52 readers
+// classify; an aborted turn records no error (its cause is the abort).
+export function turnLaneRecord(outcome: TurnOutcome): {
+  status: LaneTerminalStatus;
+  error?: OperationErrorLike;
+} {
+  switch (outcome.kind) {
+    case 'completed':
+      return { status: 'completed' };
+    case 'aborted':
+      return { status: 'aborted' };
+    case 'failed':
+      return {
+        status: 'failed',
+        error: {
+          code: outcome.reason,
+          message: outcome.error ?? outcome.reason,
+        },
+      };
+  }
+}

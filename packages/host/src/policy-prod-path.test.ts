@@ -18,6 +18,11 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -69,7 +74,7 @@ function modelsWith(
 
 function destructiveThenDone(): MutableModels {
   return modelsWith([
-    fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+    fauxToolUse([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
     fauxAssistantMessage('done'),
   ]);
 }
@@ -79,10 +84,10 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   const reopened = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
   try {
     return JSON.stringify(
-      await reopened.findEntries(undefined, BACKGROUND_CONTEXT),
+      await readSessionEntries(reopened.storage, BACKGROUND_CONTEXT),
     );
   } finally {
-    await reopened.close(BACKGROUND_CONTEXT);
+    await reopened.release(BACKGROUND_CONTEXT);
   }
 }
 
@@ -152,9 +157,13 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
   it('runs it when session-scoped full access was explicitly recorded', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const created = await createSession(store, root, BACKGROUND_CONTEXT);
-    const id = created.metadata.id;
-    await created.close(BACKGROUND_CONTEXT);
+    const created = await createSession(
+      store,
+      { cwd: root },
+      BACKGROUND_CONTEXT,
+    );
+    const id = created.id;
+    await created.release(BACKGROUND_CONTEXT);
     enableFullAccess(new FileApprovalStore(join(root, id)), 'test');
 
     const result = await runHeadlessPrompt(
@@ -180,7 +189,7 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
       {
         sessionsRoot: root,
         models: modelsWith([
-          fauxAssistantMessage([fauxToolCall('bash', { command: 'echo hi' })]),
+          fauxToolUse([fauxToolCall('bash', { command: 'echo hi' })]),
           fauxAssistantMessage('done'),
         ]),
         env: new FakeExecutionEnv({}),
@@ -202,7 +211,7 @@ describe('prod run path: second-segment outside redirect (issue #326)', () => {
       {
         sessionsRoot: root,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('bash', {
               command: 'echo a > notes.txt && echo b > /etc/cron.d/kubic-326',
             }),
@@ -235,7 +244,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
       {
         sessionsRoot: root,
         models: modelsWith([
-          fauxAssistantMessage([fauxToolCall('bash', { command: 'echo hi' })]),
+          fauxToolUse([fauxToolCall('bash', { command: 'echo hi' })]),
           fauxAssistantMessage('done'),
         ]),
         env: new FakeExecutionEnv({}),
@@ -245,7 +254,8 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
     expect(result.terminus).toBe('completed');
     const transcript = await transcriptOf(root, result.sessionId);
     // The lane refused the call and named it; the shell never ran.
-    expect(transcript).toContain('is unavailable');
+    // pi-durable's own refusal text for a call the agent does not offer.
+    expect(transcript).toContain('is not available');
     expect(transcript).toContain('bash');
     expect(transcript).not.toContain('"stdout":"hi');
   });
@@ -258,7 +268,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
       {
         sessionsRoot: root,
         models: modelsWith([
-          fauxAssistantMessage([fauxToolCall('bash', { command: 'echo hi' })]),
+          fauxToolUse([fauxToolCall('bash', { command: 'echo hi' })]),
           fauxAssistantMessage('done'),
         ]),
         env: new FakeExecutionEnv({}),
@@ -266,7 +276,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
     );
     expect(result.terminus).toBe('completed');
     const transcript = await transcriptOf(root, result.sessionId);
-    expect(transcript).not.toContain('is unavailable');
+    expect(transcript).not.toContain('is not available');
     expect(transcript).toContain('echo hi');
   });
 
@@ -294,7 +304,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
       {
         sessionsRoot: root,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('bash', { command: 'curl https://example.com' }),
           ]),
           fauxAssistantMessage('done'),
@@ -306,28 +316,23 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
     // capability either, so the run reports the refused approval (exit 4)
     // rather than claiming a success that reached the network. The refusal is
     // the toolResult — the call was never executed, so no curl output exists.
-    const transcript = await transcriptOf(root, result.sessionId);
-    const entries = JSON.parse(transcript) as {
-      type?: string;
-      message?: {
-        role?: string;
-        toolName?: string;
-        isError?: boolean;
-        content?: { type: string; text?: string }[];
-      };
-    }[];
-    const toolResults = entries.filter(
-      (entry) => entry.message?.role === 'toolResult',
-    );
+    const toolResults = entriesToTranscript(
+      await readSessionEntries(
+        (
+          await attachSession(
+            openSessionStore(root, createNodeFileBridge(root)),
+            result.sessionId,
+            BACKGROUND_CONTEXT,
+          )
+        ).storage,
+        BACKGROUND_CONTEXT,
+      ),
+    ).filter((item) => item.kind === 'tool-result');
     expect(toolResults).toHaveLength(1);
-    expect(toolResults[0]?.message?.toolName).toBe('bash');
-    expect(toolResults[0]?.message?.isError).toBe(true);
-    expect(toolResults[0]?.message?.content?.[0]?.text).toContain(
-      'not approved',
-    );
-    expect(toolResults[0]?.message?.content?.[0]?.text).toContain(
-      'no approval surface is installed',
-    );
+    expect(toolResults[0]?.name).toBe('bash');
+    expect(toolResults[0]?.isError).toBe(true);
+    expect(toolResults[0]?.text).toContain('not approved');
+    expect(toolResults[0]?.text).toContain('no approval surface is installed');
     expect(mapTerminusToExitCode(result.terminus)).toBe(4);
   });
 });

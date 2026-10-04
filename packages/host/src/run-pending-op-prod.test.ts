@@ -17,6 +17,7 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -59,36 +60,46 @@ function stubDeadHolder(): void {
   }) as never);
 }
 
-// The dead process: accept a prompt, never drive, never close; its lock is
-// left behind as a crashed holder.
+// The dead process: admit a prompt durably, never wait, never close — its
+// lock is left behind as a crashed holder, and the model request it started
+// never settles (the hanging faux factory consumes no scripted response).
 async function crashAfterAccept(
   root: string,
   prompt: string,
-): Promise<{ id: string; operationId: string }> {
+): Promise<{ id: string; submissionId: string }> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage('never')]);
+  faux.setResponses([() => new Promise<never>(() => undefined)]);
   const solo = await bootSoloLane({
     session,
     models,
     model: faux.getModel(),
     env: new FakeExecutionEnv({}),
-    sessionId: session.metadata.id,
+    sessionId: session.id,
     agentId: 'root',
   });
-  const admission = await solo.lane.accept(
-    { kind: 'prompt', prompt },
+  const submission = await solo.conversation.submit(
+    { type: 'input', content: prompt, requestId: 'crashed-run' },
     BACKGROUND_CONTEXT,
   );
-  if (!admission.ok) throw new Error('accept failed');
+  // The process is gone: its storage is closed (commits flushed, no live
+  // writer left) and the lock file is rewritten as the dead holder. The
+  // handle's own release() cannot stand in for the death any more — the
+  // lane adopted the storage (D8.1), so release only gives the lock back
+  // and would leave a live writer on the file.
+  await session.storage.close(BACKGROUND_CONTEXT);
   writeFileSync(
-    join(root, session.metadata.id, 'lock.json'),
+    join(root, session.id, 'lock.json'),
     JSON.stringify({ pid: 424242, startedAt: Date.now() }),
   );
-  return { id: session.metadata.id, operationId: admission.value.operationId };
+  return { id: session.id, submissionId: String(submission.id) };
 }
 
 async function transcript(root: string, id: string): Promise<string> {
@@ -96,10 +107,10 @@ async function transcript(root: string, id: string): Promise<string> {
   const session = await attachSession(store, id, BACKGROUND_CONTEXT);
   try {
     return JSON.stringify(
-      await session.findEntries(undefined, BACKGROUND_CONTEXT),
+      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
     );
   } finally {
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
   }
 }
 
@@ -110,7 +121,7 @@ function count(haystack: string, needle: string): number {
 describe('kubic run --session after a crash (issue #147)', () => {
   it('resumes the pending op, then accepts the new prompt without LaneBusy', async () => {
     const root = tmpRoot();
-    const { id, operationId } = await crashAfterAccept(root, 'first task');
+    const { id, submissionId } = await crashAfterAccept(root, 'first task');
     stubDeadHolder();
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
@@ -123,13 +134,15 @@ describe('kubic run --session after a crash (issue #147)', () => {
         notice: (line) => notices.push(line),
       },
     );
-    expect(result.error?.message ?? '').not.toContain('LaneBusy');
+    expect(result.error?.message ?? '').not.toContain('busy');
     expect(result.terminus).toBe('completed');
     expect(result.summary).toBe('second reply');
+    // The report names the durable work: the generation task behind the
+    // placed submission, then the submission itself.
     expect(notices).toEqual([
       expect.stringMatching(
         new RegExp(
-          `^pending operation ${operationId} \\(run, started .+\\) resumed after an interrupted run: completed$`,
+          `^pending work: pi\\.generation \\d+ \\(ready\\), submission ${submissionId} \\(placed\\) resumed after an interrupted run: done$`,
         ),
       ),
     ]);
@@ -142,7 +155,7 @@ describe('kubic run --session after a crash (issue #147)', () => {
 
   it('resumes instead of re-prompting when the new prompt is the pending one', async () => {
     const root = tmpRoot();
-    const { id, operationId } = await crashAfterAccept(root, 'plan prompt');
+    const { id, submissionId } = await crashAfterAccept(root, 'plan prompt');
     stubDeadHolder();
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
@@ -157,13 +170,9 @@ describe('kubic run --session after a crash (issue #147)', () => {
     );
     expect(result.terminus).toBe('completed');
     expect(result.summary).toBe('resumed reply');
-    expect(notices).toEqual([
-      expect.stringContaining(
-        `pending operation ${operationId} (run, started `,
-      ),
-    ]);
+    expect(notices).toHaveLength(1);
     expect(notices[0]).toContain(
-      'carries this prompt: resuming it instead of re-prompting',
+      `submission ${submissionId} (placed) carries this prompt: resuming it instead of re-prompting`,
     );
     vi.restoreAllMocks();
     const text = await transcript(root, id);
@@ -172,9 +181,13 @@ describe('kubic run --session after a crash (issue #147)', () => {
     // a resume must leave exactly as many copies, never one more.
     const clean = tmpRoot();
     const cleanStore = openSessionStore(clean, createNodeFileBridge(clean));
-    const fresh = await createSession(cleanStore, '/work', BACKGROUND_CONTEXT);
-    const freshId = fresh.metadata.id;
-    await fresh.close(BACKGROUND_CONTEXT);
+    const fresh = await createSession(
+      cleanStore,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const freshId = fresh.id;
+    await fresh.release(BACKGROUND_CONTEXT);
     await runHeadlessPrompt(
       'plan prompt',
       { sessionId: freshId },
@@ -194,9 +207,13 @@ describe('kubic run --session after a crash (issue #147)', () => {
   it('a session with no pending op runs exactly as before (no notice)', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
@@ -216,7 +233,7 @@ describe('kubic run --session after a crash (issue #147)', () => {
 describe('kubic sessions attach with a pending op (issue #147)', () => {
   it('prints the pending operation line', async () => {
     const root = tmpRoot();
-    const { id, operationId } = await crashAfterAccept(root, 'first task');
+    const { id, submissionId } = await crashAfterAccept(root, 'first task');
     stubDeadHolder();
     const lines: string[] = [];
     const code = await runSessionsCommand(
@@ -227,19 +244,24 @@ describe('kubic sessions attach with a pending op (issue #147)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(lines).toContainEqual(
-      expect.stringMatching(
-        new RegExp(`^pending operation: ${operationId} \\(run, started .+\\)$`),
+    expect(
+      lines.some((line) =>
+        line.includes(`submission ${submissionId} (placed)`),
       ),
-    );
+    ).toBe(true);
+    expect(lines.some((line) => line.startsWith('pending work'))).toBe(true);
   });
 
   it('prints no pending line for a settled session', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     const lines: string[] = [];
     const code = await runSessionsCommand(
       { command: 'attach', id },
@@ -249,8 +271,6 @@ describe('kubic sessions attach with a pending op (issue #147)', () => {
       },
     );
     expect(code).toBe(0);
-    expect(lines.some((line) => line.startsWith('pending operation'))).toBe(
-      false,
-    );
+    expect(lines.some((line) => line.startsWith('pending work'))).toBe(false);
   });
 });

@@ -100,10 +100,7 @@ import type { EffectivePolicy } from '../../../packages/host/src/policy/enterpri
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import {
-  inspectOpenOperations,
-  pendingHead,
-} from '../../../packages/worker/src/lane/pending.js';
+import { inspectStoredWork } from '../../../packages/worker/src/lane/pending.js';
 import {
   attachSession,
   createSession,
@@ -1572,18 +1569,21 @@ export async function orchestrateDepsWithDefaults(
         // worktree: a session recorded against a different cwd (a hand
         // re-pointed id, a worktree moved and re-added) would silently
         // journal somewhere else. Fail closed rather than misuse it.
-        const recorded = existing.metadata.cwd;
+        const recorded = existing.meta.cwd;
         // Issue #147 (§21): a turn the killed worker left open is resumed by
         // the child itself — its `kubic run -p` carries the same plan-step
         // prompt, so the pending run is resumed AS this run, never
-        // re-prompted. Named here so the resume is observable.
+        // re-prompted. Named here so the resume is observable; the probe is
+        // a read of the session's own storage (#396), no harness boot.
         let pending: string[] = [];
         try {
-          pending = (
-            await inspectOpenOperations(existing, BACKGROUND_CONTEXT)
-          ).map((op) => pendingHead(op));
+          const report = await inspectStoredWork(
+            existing.storage,
+            BACKGROUND_CONTEXT,
+          );
+          pending = report.summary === undefined ? [] : [report.summary];
         } finally {
-          await existing.close(BACKGROUND_CONTEXT);
+          await existing.release(BACKGROUND_CONTEXT);
         }
         if (recorded !== input.worktree.path) {
           throw new Error(
@@ -1603,18 +1603,17 @@ export async function orchestrateDepsWithDefaults(
       }
       const session = await createSession(
         sessionStore,
-        input.worktree.path,
+        { id: input.workerSessionId, cwd: input.worktree.path },
         BACKGROUND_CONTEXT,
-        input.workerSessionId,
       );
-      const id = session.metadata.id;
+      const id = session.id;
       try {
         // The session dir exists; create the journal dir the worker's
         // file effects will land in (same layout as `kubic run`, E3) so
         // `journal:<id>` resolves for the worker's worktree effects.
         sessionBridge.createDir(join(id, 'journal'));
       } finally {
-        await session.close(BACKGROUND_CONTEXT);
+        await session.release(BACKGROUND_CONTEXT);
       }
       debug(
         `session: created '${id}' for worker '${input.agentId}' (cwd ${input.worktree.path})`,

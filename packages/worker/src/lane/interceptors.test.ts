@@ -671,6 +671,9 @@ describe('read-only shell allowlist (issue #161)', () => {
     'git --no-pager log -1',
     'git show HEAD',
     'cat < f',
+    // Single-quoted text is literal to the shell: no expansion, no redirect.
+    "cat '$F'",
+    "R='> out'; cat a",
   ])('allows %s', (command) => {
     expect(readOnlyViolation(command), command).toBeUndefined();
   });
@@ -691,6 +694,22 @@ describe('read-only shell allowlist (issue #161)', () => {
     ['node -e "fs.writeFileSync(1,2)"', 'node'],
     ['rm -rf x', 'rm'],
     ['ls | xargs rm', 'xargs'],
+    // Review of #161: a single `&` is a separator too, or everything after
+    // it escapes the allowlist.
+    ['ls & git commit -m x', 'commit'],
+    ['ls & sed -i s/a/b/ f', 'sed -i'],
+    ['ls & tee y', 'tee'],
+    ['ls & cp a b', 'cp'],
+    // Shell expansion is never interpreted, so an allowed head verb must not
+    // launder another command through it (fail closed on `$`).
+    ['cat $(git commit -m x)', 'command substitution'],
+    ['cat `npm test`', 'command substitution'],
+    ["R='> out'; cat a $R", 'shell-expanded'],
+    ['cat a $R', 'shell-expanded'],
+    ['cat "$R"', 'shell-expanded'],
+    // Write/exec flags under an allowed verb.
+    ['git diff --output=out.patch', '--output'],
+    ['rg --pre "cat" pattern', '--pre'],
   ])('blocks %s naming %s', (command, needle) => {
     const reason = readOnlyViolation(command);
     expect(reason, command).toBeDefined();

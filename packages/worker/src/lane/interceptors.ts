@@ -13,9 +13,10 @@
 //     here instead of silently "handled".
 //   shell true — bash present, destructive commands blocked.
 //   shell read-only-allowlist — bash present, destructive AND network
-//     commands blocked, and every command must pass the explicit read-only
-//     verb allowlist (issue #161): redirection, in-place edits, find write
-//     actions and any non-allowlisted verb are refused by name.
+//     commands blocked, and every `|`/`&&`/`;`/`&`/newline segment must pass
+//     the explicit read-only verb allowlist (issue #161): redirection,
+//     in-place edits, find write actions, write/exec flags, shell expansion
+//     and any non-allowlisted verb are refused by name.
 //   shell false — bash absent via allowlist.
 //   network none (and a domain-less allowlist, enforced as none — issue
 //     #166) — network-command verbs blocked in bash. full
@@ -300,8 +301,22 @@ const FIND_WRITE_ACTION =
 // `-pi`), or the long form.
 const IN_PLACE_FLAG = /^-[A-Za-z]*i/;
 
-const SEGMENT_SPLIT = /\|\||&&|[|;\n]/;
+// Flags that write or execute under an otherwise read-only verb (review of
+// #161): `git diff --output=<file>` writes, `rg --pre=<command>` runs a
+// command per file, `rg --hostname-bin` runs one per hostname lookup.
+const WRITE_FLAG = /^--(?:output|pre|hostname-bin)(?:=|$)/;
+
+// `|`, `||`, `&&`, `;`, a single `&` and a newline all start a new command:
+// checking only the first verb of `ls & git commit -m x` left everything
+// after the `&` unchecked (review of #161). `&&` matches first, so it stays
+// one separator, and `&>`/`&>>` land in a segment whose `>` scan blocks them.
+const SEGMENT_SPLIT = /\|\||&&|[|;&\n]/;
+// Both quote forms, for the redirect and verb scans: a quoted `>` is an
+// argument, and a quoted command name is still that command.
 const QUOTED_SPAN = /'[^']*'|"[^"]*"/g;
+// Only single quotes are literal to the shell, so only they may be stripped
+// before the expansion scan: `"$R"` still expands.
+const SINGLE_QUOTED_SPAN = /'[^']*'/g;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 function gitReadOnlyViolation(tokens: readonly string[]): string | undefined {
@@ -338,6 +353,10 @@ function readOnlySegmentViolation(segment: string): string | undefined {
   const verb = tokens[i];
   if (verb === undefined) return undefined;
   const rest = tokens.slice(i + 1);
+  const writeFlag = rest.find((token) => WRITE_FLAG.test(token));
+  if (writeFlag !== undefined) {
+    return `${verb} ${writeFlag} writes or executes`;
+  }
   if (verb === 'git') return gitReadOnlyViolation(rest);
   if (verb === 'find') {
     const action = rest.find((token) => FIND_WRITE_ACTION.test(token));
@@ -366,6 +385,18 @@ export function readOnlyViolation(command: string): string | undefined {
     // quoted command name is still that command (and is refused).
     const bare = segment.replace(QUOTED_SPAN, ' ');
     if (bare.includes('>')) return 'redirection is not read-only';
+    // Expansion is never interpreted, so it can launder another command
+    // (`cat $(git commit -m x)`) or a redirect (`R='> out'; cat a $R`): a
+    // substitution or any unquoted `$` is refused, fail-closed, like the
+    // outside-write detector's expanded targets. Single-quoted text is
+    // literal and stripped first; double quotes are not.
+    const unquoted = segment.replace(SINGLE_QUOTED_SPAN, ' ');
+    if (unquoted.includes('$(') || unquoted.includes('`')) {
+      return 'a command substitution is not read-only';
+    }
+    if (unquoted.includes('$')) {
+      return 'a shell-expanded value is not read-only';
+    }
     const violation = readOnlySegmentViolation(bare);
     if (violation !== undefined) return violation;
   }

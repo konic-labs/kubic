@@ -8,7 +8,11 @@ import type {
   KubicPresentationState,
   LaneSnapshot,
 } from '../../core/src/presentation.js';
-import type { ApprovalOverlayTui } from './approval-view.js';
+import { createApprovalSurface } from './approval-surface.js';
+import type {
+  ApprovalOverlayTui,
+  ApprovalViewRequest,
+} from './approval-view.js';
 import { createTuiApp, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
@@ -1015,5 +1019,108 @@ describe('slash commands in the app (issue #305)', () => {
     ui.handleInput('\r');
     expect(picked).toEqual(['/help']);
     expect(ui.isModelPickerOpen()).toBe(false);
+  });
+});
+
+describe('app-level wiring that no test executed (issue #320)', () => {
+  const REQUEST: ApprovalViewRequest = {
+    key: 'k-320',
+    capability: 'destructive-shell',
+    toolName: 'bash',
+    command: 'rm -rf build',
+  };
+
+  function seat(): {
+    host: ApprovalOverlayTui;
+    shown: unknown[];
+    renders: number;
+  } {
+    const state = { shown: [] as unknown[], renders: 0 };
+    const host = {
+      showOverlay: (component: unknown) => {
+        state.shown.push(component);
+        return { unfocus: () => {}, hide: () => {} };
+      },
+      requestRender: () => {
+        state.renders += 1;
+      },
+      terminal: { columns: 120, rows: 30 },
+    } as unknown as ApprovalOverlayTui;
+    return Object.assign(state, { host });
+  }
+
+  it('repaints the live screen when an ask arrives after the overlay is attached', async () => {
+    // armingMs 0: this test is about the repaint, not the arming delay.
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const ui = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      approvalSurface: surface,
+    });
+    const seatState = seat();
+    ui.attachApprovalOverlay(seatState.host);
+    expect(ui.hasPendingApproval()).toBe(false);
+    const before = seatState.renders;
+    const pending = ui.requestApproval(REQUEST);
+    // The ask itself asks for a frame: an async lane turn must not wait for
+    // the next keypress to show its dialog.
+    expect(seatState.renders).toBeGreaterThan(before);
+    expect(seatState.shown).toHaveLength(1);
+    expect(ui.hasPendingApproval()).toBe(true);
+    surface.decide('d');
+    await pending;
+  });
+
+  it('shows an ask that arrived before the overlay was attached', async () => {
+    const surface = createApprovalSurface({ armingMs: 0 });
+    const ui = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+      approvalSurface: surface,
+    });
+    // The lane asked while the app had no seat (the boot order in tui-run).
+    const pending = ui.requestApproval(REQUEST);
+    const seatState = seat();
+    ui.attachApprovalOverlay(seatState.host);
+    // Attaching syncs the overlay to the surface's pending request.
+    expect(seatState.shown).toHaveLength(1);
+    expect(ui.hasPendingApproval()).toBe(true);
+    surface.decide('d');
+    await pending;
+  });
+
+  it('clears the echoed prompt when a busy turn ends with no lane commit', () => {
+    const ui = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    ui.onSubmit(() => 'accepted');
+    ui.setBusy(true);
+    for (const ch of 'zzz echo me') ui.handleInput(ch);
+    ui.handleInput('\r');
+    // The prompt is echoed while the lane works (#88).
+    expect(ui.render(100).join('\n')).toContain('› zzz echo me');
+    // The turn ends without committing the entry (an abort, or a settle with
+    // no commit): the echo must not outlive the turn it belongs to.
+    ui.setBusy(false);
+    const doc = ui.render(100).join('\n');
+    expect(doc).not.toContain('› zzz echo me');
+    expect(doc).not.toContain('zzz echo me');
+  });
+
+  it('has no uncalled setNotice on the app surface (issue #320)', () => {
+    const ui = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    expect('setNotice' in ui).toBe(false);
   });
 });

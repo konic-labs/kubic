@@ -421,9 +421,6 @@ export interface TuiApp {
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
   restoreDraft(prompt: string): void;
-  // TUI polish: the solo notice lives in the welcome block (wrapped in
-  // full) instead of a truncated footer line.
-  setNotice(text: string): void;
   // Ms since the in-flight turn started (undefined when idle); the root's
   // spinner timer re-renders while this is defined.
   busyElapsedMs(now?: number): number | undefined;
@@ -672,7 +669,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ? approvalSurface.renderInline(width)
         : undefined,
   });
-  let notice = '';
   // Issue #227: the live model label (seed = the boot's model, replaced by
   // `/model`). The header, welcome block and status bar all read it, so one
   // call keeps the three surfaces from drifting apart.
@@ -683,9 +679,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // keyed by is state (declared before the first welcome render).
   let sessionId = seed.sessionId;
   const refreshWelcome = (): void => {
-    transcript.setWelcome(
-      welcomeLines({ sessionId, model: modelLabel, notice }),
-    );
+    // Issue #320: no `notice` argument — the app had a `setNotice` setter with
+    // zero callers (the boot's notices go to stderr before the alt-screen
+    // opens, #308), so it was deleted rather than tested. `welcomeLines` keeps
+    // its optional parameter for a host that does have one to render.
+    transcript.setWelcome(welcomeLines({ sessionId, model: modelLabel }));
   };
   refreshWelcome();
   // Issue #327: the session mode is live state, not a boot-time literal:
@@ -1346,10 +1344,6 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     mode: (): StatusMode => sessionMode.current,
     setMode,
-    setNotice: (text: string): void => {
-      notice = sanitizeLaneText(text);
-      refreshWelcome();
-    },
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
       editorRow.setFooter(text);

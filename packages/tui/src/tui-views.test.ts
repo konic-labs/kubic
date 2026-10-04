@@ -472,3 +472,50 @@ describe('panel keys do not disturb the draft (issue #96, criterion 3)', () => {
     expect(app.render(100).join('\n')).not.toContain('no changes');
   });
 });
+
+describe('diff panel follows the run (issue #320)', () => {
+  const tool = (toolCallId: string) => ({
+    toolCallId,
+    toolName: 'edit',
+    status: 'done' as const,
+    isError: false,
+  });
+
+  it('follows the newest tool call as the run progresses', () => {
+    const app = appWithRun([
+      change({ path: 'one.ts', toolCallId: 'tc-1' }),
+      change({ path: 'two.ts', toolCallId: 'tc-2' }),
+    ]);
+    app.handleInput(OPEN_DIFF);
+    expect(app.render(100).join('\n')).toContain('one.ts');
+    // A second tool call lands while the panel is open: the panel follows the
+    // run, so the newest call's effects are what it shows.
+    app.applyPresentation(
+      presentation({ status: 'running', tools: [tool('tc-1'), tool('tc-2')] }),
+    );
+    const frame = app.render(100).join('\n');
+    expect(frame).toContain('two.ts');
+    expect(frame).not.toContain('one.ts');
+  });
+
+  it('keeps an explicit pin across later tool events', () => {
+    const app = appWithRun([
+      change({ path: 'one.ts', toolCallId: 'tc-1' }),
+      change({ path: 'two.ts', toolCallId: 'tc-2' }),
+    ]);
+    app.handleInput(OPEN_DIFF);
+    app.setDiffToolCall('tc-1');
+    expect(app.render(100).join('\n')).toContain('one.ts');
+    // The run moves on; the pinned call is the operator's choice and wins.
+    app.applyPresentation(
+      presentation({
+        status: 'running',
+        tools: [tool('tc-1'), tool('tc-2'), tool('tc-3')],
+      }),
+    );
+    expect(app.render(100).join('\n')).toContain('one.ts');
+    // Releasing the pin hands the panel back to the run's newest call.
+    app.setDiffToolCall(null);
+    expect(app.render(100).join('\n')).toContain('two.ts');
+  });
+});

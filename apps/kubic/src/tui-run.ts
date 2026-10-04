@@ -17,14 +17,16 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir, constants as osConstants } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import {
   checkAgreement,
   SOLO_DEFAULTS,
   validateClasses,
 } from '../../../packages/agents/src/policy.js';
+import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import type { FileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   FileJournalStore,
@@ -102,6 +104,13 @@ import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js'
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
 import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
+import {
+  type AttachmentImage,
+  formatImageBytes,
+  IMAGE_MAX_BYTES,
+  parseInlineImageSequence,
+  validateImageAttachment,
+} from '../../../packages/tui/src/attachments.js';
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
@@ -253,6 +262,9 @@ export interface TuiLaneLoop {
       // #334: the admitted submission's id and whether it was placed at
       // once or queued in the inbox — the busy latch follows placed work.
       onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
+      // #338: images attached to this prompt (§16.8). They become Pi's
+      // user-message content parts, so the committed entry stores them.
+      images?: readonly LaneImagePart[];
     },
   ): Promise<TurnOutcome>;
   /**
@@ -308,6 +320,14 @@ export interface TuiLaneLoop {
   ) => Promise<string>;
   /** The live model label (provider/id) — the status bar and usage rows. */
   model?: (context: Context) => Promise<string>;
+  /**
+   * Issue #338 (§16.8): whether the conversation's CURRENT model accepts
+   * image input. Read when an attachment is offered, so a model without
+   * image support refuses it by name instead of sending bytes the provider
+   * would reject mid-turn. Absent (injected viewer shells) refuses too: the
+   * attach path never guesses.
+   */
+  supportsImages?: (context: Context) => Promise<boolean>;
   // Issue #347: the resolved model's context window and compaction
   // threshold, so the gauge follows a `/model` switch. Absent (injected
   // viewer loops) leaves the seeded limits in place — the gauge never keeps
@@ -399,6 +419,8 @@ function terminusOfFailure(reason: string): RunTerminusKind {
 export interface TuiTurnOptions {
   whenBusy?: 'followUp' | 'steer';
   onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
+  // Issue #338: images attached to this prompt, in order.
+  images?: readonly LaneImagePart[];
 }
 
 // One turn's driver, whichever lane owns it (issue #327): the solo
@@ -981,6 +1003,10 @@ export function soloTuiLoop(
 ): TuiLaneLoop {
   return {
     runTurn: (prompt, opts) => runTurn(solo, prompt, opts),
+    // Issue #338: the live model's own input modalities (§16.8). The boot
+    // model is what this closure can see; `bootTuiLane` overrides it with
+    // the catalog read so a `/model` switch moves the verdict with it.
+    supportsImages: async () => solo.model.input.includes('image'),
     subscribe: (sink, loopContext) =>
       subscribeLaneEvents(
         solo.harness,
@@ -1542,6 +1568,18 @@ export async function bootTuiLane(
 
       loop: {
         ...soloTuiLoop(booted, context),
+        // Issue #338: the LIVE model's modalities, resolved against the same
+        // catalog `/model` switches through — a switch to a text-only model
+        // refuses the next attachment (and clears the pending ones).
+        supportsImages: async (loopContext) => {
+          const live = await liveModelOf(booted, loopContext);
+          return (
+            models
+              .getModels(live.provider)
+              .find((model) => model.id === live.id)
+              ?.input.includes('image') === true
+          );
+        },
         // Issue #347: a `/model` switch moves the context window with it, so
         // the gauge never keeps the old model's percentage.
         contextLimits: (provider, id) => contextLimitsOf(models, provider, id),
@@ -2580,6 +2618,9 @@ export class TuiTurnRunner {
         // operator really sent (#395 idempotency rule).
         requestId: randomUUID(),
         context: this.loop.context,
+        ...(options.images === undefined || options.images.length === 0
+          ? {}
+          : { images: options.images }),
         // Issue #334: a queued follow-up / steer is the caller's explicit
         // mode; anything else keeps `reject` — a submit that races a
         // settling turn fails loudly instead of sitting in the inbox.
@@ -2706,6 +2747,65 @@ export class TuiTurnRunner {
     // replaces it with the completed one (D6.5's readConversationEntries).
     this.replaceLaneEntries(entries);
   }
+}
+
+// The `/image <path>` command of the interactive loop (issue #338; §16.8).
+// `undefined` means the draft is a prompt, not the command. One parser for
+// the dispatch and its tests: `/image` alone is the usage error, anything
+// after it is the path (spaces included — a screenshot path often has them).
+export type TuiImageCommand =
+  | { kind: 'attach'; path: string }
+  | { kind: 'invalid'; message: string };
+
+export const IMAGE_COMMAND_USAGE =
+  'usage: /image <path> (png, jpeg, webp or gif)';
+
+export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
+  const trimmed = prompt.trim();
+  if (trimmed !== '/image' && !trimmed.startsWith('/image ')) {
+    return undefined;
+  }
+  const path =
+    trimmed === '/image' ? '' : trimmed.slice('/image '.length).trim();
+  if (path === '') return { kind: 'invalid', message: IMAGE_COMMAND_USAGE };
+  return { kind: 'attach', path };
+}
+
+// The file half of the attach path: the composition root owns I/O, so the
+// read, the regular-file check and the size guard live here — through the
+// exec file bridge (§9 I/O confinement), never `node:fs` directly — and the
+// tui package only ever sees bytes. An absolute path is taken as typed (the
+// operator named it); a relative one resolves against the workspace. A
+// missing file, a directory or a file over the cap is refused by name, and
+// the read is bounded so an oversize file is never loaded in full.
+export type ImageFileRead =
+  | { readonly ok: true; readonly filename: string; readonly bytes: Uint8Array }
+  | { readonly ok: false; readonly message: string };
+
+export function readImageFile(files: FileBridge, path: string): ImageFileRead {
+  const full = files.absolutePath(path);
+  const filename = basename(full);
+  let bytes: Uint8Array;
+  try {
+    bytes =
+      files.readFileRange?.(full, 0, IMAGE_MAX_BYTES + 1) ??
+      files.readBinaryFile(full);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('ENOENT') || message.includes('no such file')) {
+      return { ok: false, message: `no such image: ${path}` };
+    }
+    return { ok: false, message: `cannot read ${path}: ${message}` };
+  }
+  if (bytes.byteLength > IMAGE_MAX_BYTES) {
+    return {
+      ok: false,
+      message:
+        `'${filename}' is too large ` +
+        `(> ${formatImageBytes(IMAGE_MAX_BYTES)})`,
+    };
+  }
+  return { ok: true, filename, bytes };
 }
 
 // The `/model` command of the interactive loop (issue #227; §38.1). One
@@ -2988,6 +3088,10 @@ export async function runTuiCommand(
   // state and cannot promise a delivery the harness did not take.
   let queuedInbox: readonly KubicInboxItem[] = [];
   const queuedText = new Map<string, string>();
+  // Issue #338: the images a queued follow-up carries, keyed by submission
+  // id — the inbox carries ids, not content, so the echo that replaces the
+  // queued row when the harness PLACES it must render them from here.
+  const queuedImages = new Map<string, readonly LaneImagePart[]>();
   const queuedCount = (): number =>
     queuedInbox.filter((item) => queuedText.has(item.id)).length;
   // Issue #333 (review): no `app.setQueuedPrompts` here — the state carries
@@ -3029,6 +3133,12 @@ export async function runTuiCommand(
             const text = queuedText.get(id);
             if (text === undefined) continue;
             queuedText.delete(id);
+            // Issue #338: the queued draft's attachments ride with its echo
+            // (`setPendingImages` before `setPendingEcho`, the order the
+            // echo's render reads them in).
+            const images = queuedImages.get(id) ?? [];
+            queuedImages.delete(id);
+            app.setPendingImages(images);
             app.setPendingEcho(text);
           }
           // The placed submission is work in flight now: a queued
@@ -3311,6 +3421,68 @@ export async function runTuiCommand(
     // footer of every cancelled turn names the count — deterministic,
     // whichever of the running/queued turns settles last.
     let droppedOnCancel = 0;
+    // Issue #338 (§16.8): the images the next submitted prompt carries.
+    // Each one is validated (magic bytes, size) and capability-checked
+    // against the live model at ATTACH time, so a submit never spends a turn
+    // on bytes the provider would reject.
+    let pendingImages: AttachmentImage[] = [];
+    // The exec file bridge the `/image` read goes through (§9): the same
+    // seam the session store uses, rooted at the workspace, and an absolute
+    // path is taken as typed because the operator named it.
+    const imageFiles = createNodeFileBridge(process.cwd());
+    const setImagesFooter = (text: string): void => {
+      app.setEditorFooter(text);
+      if (!stopped) screen?.render();
+    };
+    const attachImage = async (offer: {
+      filename: string;
+      bytes: Uint8Array;
+    }): Promise<void> => {
+      const verdict = validateImageAttachment({
+        filename: offer.filename,
+        bytes: offer.bytes,
+      });
+      if (!verdict.ok) {
+        setImagesFooter(verdict.message);
+        return;
+      }
+      const loop = boot.loop;
+      const supported = await loop?.supportsImages?.(loop.context);
+      if (supported !== true) {
+        setImagesFooter(
+          `image refused: ${turn?.modelRef ?? boot.model} does not accept image input`,
+        );
+        return;
+      }
+      const image: AttachmentImage = {
+        filename: offer.filename,
+        mimeType: verdict.mimeType,
+        bytes: offer.bytes.byteLength,
+        data: Buffer.from(offer.bytes).toString('base64'),
+      };
+      pendingImages = [...pendingImages, image];
+      app.setPendingImages(pendingImages);
+      setImagesFooter(
+        `image attached: ${image.filename} (${formatImageBytes(image.bytes)}) — Enter sends it`,
+      );
+    };
+    const attachFromPath = async (path: string): Promise<void> => {
+      const read = readImageFile(imageFiles, path);
+      if (!read.ok) {
+        setImagesFooter(read.message);
+        return;
+      }
+      await attachImage({ filename: read.filename, bytes: read.bytes });
+    };
+    const attachPasted = async (
+      base64: string,
+      filename: string,
+    ): Promise<void> => {
+      await attachImage({
+        filename,
+        bytes: Buffer.from(base64, 'base64'),
+      });
+    };
     const routeInput = (data: string): { consume: true } | undefined => {
       if (stopped) {
         // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
@@ -3326,6 +3498,14 @@ export async function runTuiCommand(
       // even if a future caller routes around it — a Ctrl-C release counted
       // as the second Ctrl-C would quit the session on key-up.
       if (isKeyRelease(data)) return { consume: true };
+      // Issue #338: a terminal that pastes an image inline (iTerm2's OSC
+      // 1337 `File=` sequence) hands the bytes to the attach path — the
+      // editor would otherwise insert the base64 payload as draft text.
+      const pastedImage = parseInlineImageSequence(data);
+      if (pastedImage !== undefined) {
+        void attachPasted(pastedImage.base64, pastedImage.filename);
+        return { consume: true };
+      }
       const routed = app.handleInput(data);
       // Issue #334: Alt+Enter carried the draft out of the editor. Busy, the
       // text steers the running turn through the harness' steer queue; idle,
@@ -3739,8 +3919,26 @@ export async function runTuiCommand(
         if (!stopped) screen?.render();
         void turn
           .switchModel(selection)
-          .then((label) => {
+          .then(async (label) => {
             if (stopped) return;
+            // Issue #338: the new model may not accept images (§16.8). The
+            // attachments were validated against the OLD model, so they are
+            // dropped rather than sent to a model that cannot take them.
+            if (pendingImages.length > 0) {
+              const loop = boot.loop;
+              const supported = await loop?.supportsImages?.(loop.context);
+              if (stopped) return;
+              if (supported !== true) {
+                const dropped = pendingImages.length;
+                pendingImages = [];
+                app.setPendingImages([]);
+                app.setEditorFooter(
+                  `model: ${label} (switched) · dropped ${dropped} attached image${dropped === 1 ? '' : 's'} — ${label} does not accept image input`,
+                );
+                screen?.render();
+                return;
+              }
+            }
             app.setEditorFooter(`model: ${label} (switched)`);
             screen?.render();
           })
@@ -4117,6 +4315,20 @@ export async function runTuiCommand(
       ): TuiSubmitOutcome => {
         if (stopped) return 'refused';
         const busy = activeTurn?.isRunning() === true;
+        // Issue #338 (`/image <path>`): the command attaches one image to
+        // the next prompt. Nothing is echoed and nothing is restored on
+        // success — the draft was a command, and the footer names the
+        // attachment; a usage error hands the draft back.
+        const imageCommand = parseImageCommand(prompt);
+        if (imageCommand !== undefined) {
+          if (imageCommand.kind === 'invalid') {
+            app.setEditorFooter(imageCommand.message);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          void attachFromPath(imageCommand.path);
+          return 'command';
+        }
         // Issue #330: `/compact [instructions]` is a lane operation, never a
         // prompt. It runs through the same busy/cancel wrapper as a turn, so
         // the spinner shows and Ctrl-C aborts it; the command text itself
@@ -4219,6 +4431,24 @@ export async function runTuiCommand(
         if (slashCommand !== undefined) {
           return runLocalCommand(slashCommand);
         }
+        // Issue #338: the orchestrator lane takes an objective, not a
+        // session prompt with images — refused by name, attachments kept.
+        if (pendingImages.length > 0 && driver !== turn) {
+          app.setEditorFooter(
+            'image attachments need the solo lane — switch back with ctrl+g',
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        const sentImages = pendingImages;
+        const imageOptions: TuiTurnOptions =
+          sentImages.length === 0 ? {} : { images: sentImages };
+        const imagesSent = (): void => {
+          pendingImages = [];
+          // The app keeps the sent images on the echo until the lane's own
+          // prompt cell replaces it; the composer itself is empty again.
+          app.setPendingImages(sentImages);
+        };
         if (busy) {
           // Issue #334: the solo lane queues the prompt in the
           // conversation's OWN inbox — a follow-up (placed when the run
@@ -4237,20 +4467,27 @@ export async function runTuiCommand(
             driver,
             prompt,
             steer
-              ? { whenBusy: 'steer' }
+              ? { whenBusy: 'steer', ...imageOptions }
               : {
                   whenBusy: 'followUp',
                   onSubmitted: (id) => {
                     // The rows follow from the state: the id's text is what
                     // the projector resolves against this map.
                     queuedText.set(id, prompt);
+                    // Issue #338: the images of a queued draft are remembered
+                    // per submission id, so the echo that replaces the row
+                    // carries them too.
+                    if (sentImages.length > 0) queuedImages.set(id, sentImages);
                     turn?.refreshPresentation();
                   },
+                  ...imageOptions,
                 },
           );
+          imagesSent();
           return 'queued';
         }
-        startTurn(driver, prompt);
+        startTurn(driver, prompt, imageOptions);
+        imagesSent();
         return 'accepted';
       };
 

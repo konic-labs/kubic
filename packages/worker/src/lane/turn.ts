@@ -14,6 +14,7 @@
 // Idempotency: `requestId` is a stable per-invocation value, so re-submitting
 // after a crash returns the SAME submission instead of prompting twice.
 
+import type { LaneImagePart } from '../../../core/src/presentation.js';
 import type { Context, Submission } from '../pi-boundary.js';
 import { ConversationBusy } from '../pi-boundary.js';
 import type { FailureCode } from './failures.js';
@@ -77,6 +78,12 @@ export interface RunTurnOptions {
   // submission (README "Persist and Resume"), never a second prompt.
   requestId: string;
   context: Context;
+  // Issue #338 (§16.8): images attached to this prompt, in order. They are
+  // admitted as Pi's own user-message content parts (`{type:'image'}`), so
+  // the committed entry stores them and a resumed session replays them. No
+  // images (or an empty list) keeps the plain-string content the lane has
+  // always sent.
+  images?: readonly LaneImagePart[];
   // Busy handling (README "Busy Conversations"): queued follow-up by
   // default, `reject` throws ConversationBusy — mapped to the named busy
   // failure below.
@@ -101,7 +108,7 @@ export async function runTurn(
     submission = await solo.conversation.submit(
       {
         type: 'input',
-        content: prompt,
+        content: promptContent(prompt, options.images),
         requestId: options.requestId,
         ...(options.whenBusy === undefined
           ? {}
@@ -117,6 +124,30 @@ export async function runTurn(
     await admissionState(submission, options.context),
   );
   return awaitTurn(submission, options.context);
+}
+
+// The user-message content one turn admits (#338): the prompt as a text part
+// plus one image part per attachment. Without attachments the content stays
+// the bare string every existing reader (and the faux provider tests)
+// expects.
+function promptContent(
+  prompt: string,
+  images: readonly LaneImagePart[] | undefined,
+):
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image'; data: string; mimeType: string }
+    > {
+  if (images === undefined || images.length === 0) return prompt;
+  return [
+    { type: 'text', text: prompt },
+    ...images.map((image) => ({
+      type: 'image' as const,
+      data: image.data,
+      mimeType: image.mimeType,
+    })),
+  ];
 }
 
 // Whether the harness admitted the input as a placed entry (an idle

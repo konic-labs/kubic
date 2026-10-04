@@ -13,6 +13,19 @@
 // (root lane), workers in #42 (worker lifecycle), approvals in #16,
 // usage in #20 (models/cost).
 
+// Issue #338 (§16.8 "Images"): one image content part of a prompt. The
+// lane prompt contract carries text plus optional images; the worker maps
+// these onto Pi's user-message content parts unchanged, so a session stores
+// (and a resumed session replays) them exactly as Pi does. `data` is
+// base64 without a `data:` prefix; `bytes` is the decoded size the
+// transcript placeholder prints.
+export interface LaneImagePart {
+  readonly mimeType: string;
+  readonly data: string;
+  readonly filename?: string;
+  readonly bytes?: number;
+}
+
 export interface SessionSnapshot {
   sessionId: string;
   // Issue #333 (§66): the live session's replicated facts.

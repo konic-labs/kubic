@@ -7,6 +7,11 @@
 // The ScrollView owns follow state (follow:'end', primary nearest,
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
+import type {
+  LaneImagePart,
+  LaneSnapshot,
+} from '../../core/src/presentation.js';
+import { createAttachmentComponent } from './attachments.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
@@ -39,6 +44,9 @@ export interface TranscriptEntry {
   readonly isError?: boolean;
   // Pairs a call with its output so the output renders under the call.
   readonly toolCallId?: string;
+  // Issue #338: images attached to this prompt (§16.8). Rendered under the
+  // prompt text as the real image or the terminal placeholder.
+  readonly images?: readonly LaneImagePart[];
 }
 
 export interface TranscriptDelta {
@@ -109,6 +117,14 @@ function cellIdOf(key: string): string {
   return at === -1 ? key : key.slice(at + 1);
 }
 
+// The image cache keys are `cellId\u0000index` (#338): the id is everything
+// before the last separator, so the cell's components can be pruned with the
+// markdown caches when a snapshot drops the cell.
+function imageCellIdOf(key: string): string {
+  const at = key.lastIndexOf('\u0000');
+  return at === -1 ? key : key.slice(0, at);
+}
+
 // The rendered document: welcome block, then one block per cell. Pure over
 // its fields — the active theme is read per render, so a theme set after
 // construction (the composition root) takes effect on the next frame.
@@ -116,6 +132,8 @@ class TranscriptDocument implements Component {
   cells: TranscriptEntry[] = [];
   welcome: string[] = [];
   pending: string | undefined;
+  // Issue #338: the images the echoed prompt carries.
+  pendingImages: readonly LaneImagePart[] = [];
   // Issue #334: follow-ups the conversation's inbox holds but no turn has
   // placed yet. Rendered dim under the transcript (and under the pending
   // echo), so the operator sees the prompt was accepted — never dropped.
@@ -140,16 +158,22 @@ class TranscriptDocument implements Component {
   // A parse is forced by constructing a Markdown or by setText; tests pin
   // that a steady frame adds none.
   private parses = 0;
+  // Issue #338: one component per attached image, keyed by cell and index —
+  // the kitty protocol path allocates an image id that must be reused
+  // across frames instead of re-uploaded.
+  private readonly imageCache = new Map<string, Component>();
 
   invalidate(): void {
     this.markdownCache.clear();
     this.markdownText.clear();
     this.lineCache.clear();
+    this.imageCache.clear();
   }
 
   // Issue #298: the cells a snapshot carries REPLACE the previous set, so a
   // cache entry whose id left the snapshot is dead weight (a long session
-  // would otherwise hold every markdown cell it ever showed).
+  // would otherwise hold every markdown cell it ever showed). The image
+  // components are keyed by cell too (#338), so they are pruned the same way.
   setCells(cells: TranscriptEntry[]): void {
     this.cells = cells;
     const live = new Set(cells.map((cell) => cell.id));
@@ -161,6 +185,9 @@ class TranscriptDocument implements Component {
     }
     for (const key of this.lineCache.keys()) {
       if (!live.has(cellIdOf(key))) this.lineCache.delete(key);
+    }
+    for (const key of this.imageCache.keys()) {
+      if (!live.has(imageCellIdOf(key))) this.imageCache.delete(key);
     }
   }
 
@@ -241,7 +268,7 @@ class TranscriptDocument implements Component {
       switch (cell.kind) {
         case 'prompt': {
           gap();
-          this.renderPrompt(out, cell.markdown, w, theme);
+          this.renderPrompt(out, cell.markdown, w, theme, cell.images, cell.id);
           break;
         }
         case 'tool': {
@@ -307,7 +334,14 @@ class TranscriptDocument implements Component {
         default: {
           if (cell.markdown.startsWith(`${PROMPT_MARK} `)) {
             gap();
-            this.renderPrompt(out, cell.markdown, w, theme);
+            this.renderPrompt(
+              out,
+              cell.markdown,
+              w,
+              theme,
+              cell.images,
+              cell.id,
+            );
             break;
           }
           gap();
@@ -355,7 +389,14 @@ class TranscriptDocument implements Component {
     }
     if (this.pending !== undefined) {
       gap();
-      this.renderPrompt(out, `${PROMPT_MARK} ${this.pending}`, w, theme);
+      this.renderPrompt(
+        out,
+        `${PROMPT_MARK} ${this.pending}`,
+        w,
+        theme,
+        this.pendingImages,
+        'pending',
+      );
     }
     for (const prompt of this.queued) {
       gap();
@@ -369,12 +410,38 @@ class TranscriptDocument implements Component {
     markdown: string,
     width: number,
     theme: TuiTheme,
+    images?: readonly LaneImagePart[],
+    cellId?: string,
   ): void {
     const text = stripPrefix(markdown, `${PROMPT_MARK} `);
     const lines = wrapTextWithAnsi(text, Math.max(1, width - 2));
     lines.forEach((line, index) => {
       const mark = index === 0 ? theme.accentBold(PROMPT_MARK) : ' ';
       out.push(fit(`${mark} ${theme.prompt(line)}`, width));
+    });
+    this.renderImages(out, images, width, theme, cellId ?? '');
+  }
+
+  // Issue #338: one attached image under the prompt text. Protocol lines are
+  // pushed unchanged (truncating a kitty/iTerm2 sequence would corrupt it);
+  // the placeholder component already fits itself to the width.
+  private renderImages(
+    out: string[],
+    images: readonly LaneImagePart[] | undefined,
+    width: number,
+    theme: TuiTheme,
+    key: string,
+  ): void {
+    if (images === undefined || images.length === 0) return;
+    const inner = Math.max(1, width - 2);
+    images.forEach((image, index) => {
+      const cacheKey = `${key}\u0000${index}`;
+      let component = this.imageCache.get(cacheKey);
+      if (component === undefined) {
+        component = createAttachmentComponent(image, theme);
+        this.imageCache.set(cacheKey, component);
+      }
+      for (const line of component.render(inner)) out.push(`  ${line}`);
     });
   }
 
@@ -480,7 +547,10 @@ export interface TranscriptView {
   // TUI polish: the welcome block at the top of the document, the prompt
   // echoed before the lane commits it, and the expand-all toggle.
   setWelcome(lines: ReadonlyArray<string>): void;
-  setPendingPrompt(prompt: string | undefined): void;
+  setPendingPrompt(
+    prompt: string | undefined,
+    images?: readonly LaneImagePart[],
+  ): void;
   // Issue #296: the streamed draft of the in-flight generation (undefined
   // clears it). The committed entry replaces it.
   setStream(text: string | undefined): void;
@@ -658,8 +728,12 @@ export function createTranscriptView(
     setWelcome(lines: ReadonlyArray<string>): void {
       document.welcome = [...lines];
     },
-    setPendingPrompt(prompt: string | undefined): void {
+    setPendingPrompt(
+      prompt: string | undefined,
+      images?: readonly LaneImagePart[],
+    ): void {
       document.pending = prompt;
+      document.pendingImages = images ?? [];
     },
     setStream(text: string | undefined): void {
       // Issue #296 (review): the streamed draft is untrusted lane text like

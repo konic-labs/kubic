@@ -16,12 +16,15 @@ export type {
   Component,
   EditorTheme,
   Focusable,
+  ImageProtocol,
+  ImageTheme,
   MarkdownTheme,
   MouseRegionHandler,
   SelectItem,
   SelectListTheme,
   StackEntryOptions,
   Terminal,
+  TerminalCapabilities,
   TUI,
 } from '@earendil-works/pi-tui';
 // JUSTIFICATION:
@@ -35,9 +38,23 @@ export type {
 //     layout and render primitives above; Kubic re-implementing them would
 //     fork terminal handling, wrapping and key parsing (§16)
 //   review: issue #197 (folded into #391)
+// --- #338 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui terminal-image probing and the Image
+//     component (getCapabilities/resetCapabilitiesCache/setCapabilities and
+//     the Component it renders)
+//   used by: packages/tui/src/attachments.ts (prompt image attachments),
+//     plus the headless tests that pin both terminals (`setCapabilities`)
+//   why Pi has no alternative: the capability probe (kitty/iTerm2 protocol,
+//     truecolor, hyperlinks) and the protocol encoders ARE Pi's terminal
+//     layer; Kubic owns only the placeholder fallback and the decision to
+//     attach (§16.5 Image, §16.8 Images)
+//   review: issue #338
 export {
   CURSOR_MARKER,
   Editor,
+  getCapabilities,
+  Image,
   isKeyRelease,
   isKeyRepeat,
   Markdown,
@@ -45,8 +62,10 @@ export {
   matchesKey,
   ProcessTerminal,
   parseKey,
+  resetCapabilitiesCache,
   ScrollView,
   SelectList,
+  setCapabilities,
   Text,
   TuiAltScreen,
   truncateToWidth,

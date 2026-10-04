@@ -828,6 +828,23 @@ interrupted run`) from the first render, together with the prompt the dead
 process had already admitted (`— interrupted prompt: <text>`) when there
 was one.
 
+**Prompt images (§16.8, issue #338).** `/image <path>` attaches one image
+to the next submitted prompt — `png`, `jpeg`, `webp` or `gif`, up to 5 MB,
+checked by magic bytes rather than the file name, and the footer names the
+file and its size (`image attached: screenshot.png 120 KB — Enter sends it`).
+A terminal that pastes an image inline (iTerm2's `OSC 1337 File=` sequence)
+attaches it the same way. The attachment is refused — with the reason in the
+footer and nothing sent — when the file is missing, is not one of those four
+formats, is over the cap, or when the live model's own input modalities do
+not include images (§37.2; a `/model` switch to a text-only model drops the
+pending attachments and says so). An attached image travels as Pi's own
+user-message image content part, so the session stores it and a resumed
+session replays it; on a terminal with a kitty or iTerm2 image protocol the
+transcript draws the image itself, and everywhere else it renders one
+placeholder row (`[image: screenshot.png 120 KB]`). Attachments belong to
+the solo lane: an orchestrator run takes an objective, not a session prompt,
+and refuses them by name.
+
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
 the derived allowlist, and the destructive/network/confine guards with the
@@ -1034,6 +1051,7 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `/resume` | List this store's sessions (newest first, the current one excluded) in a picker; choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
 | `/diff` | Open the diff panel — the same panel `Ctrl-O` toggles. |
 | `/undo` | Restore the session journal's changes (the same plan/apply path as `kubic undo`, without `--step`): the footer reports `undo: N restored, M skipped` and warnings land in the transcript. Refused while a turn runs (`undo: finish the current turn before switching`) — it rewrites the workspace the turn is working in. |
+| `/image <path>` | Attach one image (`png`, `jpeg`, `webp`, `gif`, ≤ 5 MB — verified by magic bytes) to the next submitted prompt (§16.8). The footer names the file and its size, and the prompt renders it (the real image on kitty/iTerm2 terminals, a `[image: <name> <size>]` row otherwise; a resumed session's committed entry has no file name and shows the MIME type instead). Enter on an empty draft sends the attachment alone. Refused in the footer when the path is not a regular file, the file is missing or unsupported, it is over the cap, or the live model takes no image input — nothing is sent. A pasted inline image (iTerm2 `OSC 1337`, reassembled across reads) attaches the same way. |
 | `/quit` | Leave the TUI (same as `Esc`). |
 | `/foo` (unknown) | **Refused locally** — `unknown command '/foo' — /help lists the commands` on the footer, with the draft kept in the editor. A slash command is never sent to the model; `//text` is the escape hatch for a prompt that starts with a slash. |
 | `Ctrl-P` | Open the **command palette**: the registry's commands in a picker (`Enter` runs the selected one exactly as if it were typed, `Esc`/`Ctrl-C` cancels). |

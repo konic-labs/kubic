@@ -39,7 +39,10 @@
 //   Esc              quit
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 
-import type { KubicPresentationState } from '../../core/src/presentation.js';
+import type {
+  KubicPresentationState,
+  LaneImagePart,
+} from '../../core/src/presentation.js';
 import {
   type ApprovalSurface,
   createApprovalSurface,
@@ -196,8 +199,9 @@ export interface TuiInputResult {
 // 'followUp'`) — the app must NOT echo it as a pending turn; the queued row
 // does that. `refused` means no lane could take it at all (an orchestrator
 // run is busy, or the session has no lane); the loop has put the reason on
-// the footer.
-export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused';
+// the footer. Issue #338 adds `command`: the draft was a TUI command
+// (`/image`), which ran — nothing is echoed and nothing is restored.
+export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused' | 'command';
 
 // The global keys are classified by pi-tui's own `parseKey`, never by
 // comparing raw bytes (issue #88, reviewer finding): a Kitty-class terminal
@@ -378,6 +382,8 @@ export interface TuiApp {
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
   setPendingEcho(prompt: string | undefined): void;
+  // Issue #305: the editor's autocomplete (the registry's `/` commands).
+  setAutocomplete(provider: AutocompleteProvider): void;
   // Issue #328: the model picker (§66 model.select). The loop supplies the
   // catalog rows and handles the choice; the app owns the overlay, the
   // modal input and the cancel. Returns false when this boot has no overlay
@@ -412,6 +418,9 @@ export interface TuiApp {
   openConfirm(options: TuiConfirmOptions): boolean;
   /** Whether a confirmation is showing (a public accessor for embedders). */
   isConfirmOpen(): boolean;
+  // Issue #338 (§16.8): the images the next echoed prompt carries, set by
+  // the loop together with the submit it accepted.
+  setPendingImages(images: readonly LaneImagePart[]): void;
   // Issue #334 (review): put a refused draft back in the editor, so a busy
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
@@ -801,6 +810,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     | ((prompt: string) => TuiSubmitOutcome | undefined)
     | undefined;
   let pendingPrompt: string | undefined;
+  // Issue #338: the images the next echoed prompt carries. The loop sets
+  // them on the same keystroke as the submit it accepted, the echo renders
+  // them, and clearing the echo clears them.
+  let pendingImages: readonly LaneImagePart[] = [];
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
   editor.onSubmit = (prompt: string): void => {
@@ -827,7 +840,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const echoPendingPrompt = (prompt: string): void => {
     pendingPrompt = sanitizeLaneText(prompt);
     promptCellsAtSubmit = promptCells;
-    transcript.setPendingPrompt(pendingPrompt);
+    transcript.setPendingPrompt(pendingPrompt, pendingImages);
   };
   // Issue #334 (review): put a draft the loop refused back in the editor.
   const restoreDraft = (prompt: string): void => {
@@ -1276,6 +1289,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
       if (pendingPrompt !== undefined && promptCells > promptCellsAtSubmit) {
         pendingPrompt = undefined;
+        pendingImages = [];
         transcript.setPendingPrompt(undefined);
       }
     },
@@ -1329,6 +1343,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       editorRow.setFooter('');
       if (!next && pendingPrompt !== undefined) {
         pendingPrompt = undefined;
+        pendingImages = [];
         transcript.setPendingPrompt(undefined);
       }
     },
@@ -1446,11 +1461,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setPendingEcho: (prompt: string | undefined): void => {
       if (prompt === undefined) {
         pendingPrompt = undefined;
+        pendingImages = [];
         transcript.setPendingPrompt(undefined);
         return;
       }
       echoPendingPrompt(prompt);
       transcript.rePin();
+    },
+    // Issue #338: the attachments the next echo carries. The loop sets them
+    // as part of the submit it accepted, so the echoed prompt renders the
+    // images the lane was actually given.
+    setPendingImages: (images: readonly LaneImagePart[]): void => {
+      pendingImages = images;
+      if (pendingPrompt !== undefined) {
+        transcript.setPendingPrompt(pendingPrompt, pendingImages);
+      }
     },
     setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
       diffPanel.setChanges(rows);

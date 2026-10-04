@@ -10,6 +10,8 @@
 // entry id plus the part index, so a re-render replaces cells instead of
 // duplicating them.
 
+import type { LaneImagePart } from '../../core/src/presentation.js';
+import { imagePartOf } from './attachments.js';
 import type { TranscriptEntry, TranscriptEntryKind } from './transcript.js';
 import { visibleWidth } from './tui-boundary.js';
 
@@ -369,19 +371,35 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
     kind: TranscriptEntryKind,
     markdown: string,
     extra: Partial<
-      Pick<TranscriptEntry, 'detail' | 'isError' | 'toolCallId'>
+      Pick<TranscriptEntry, 'detail' | 'isError' | 'toolCallId' | 'images'>
     > = {},
   ): void => {
     if (markdown === '') return;
     cells.push({ id: `${id}:${key}`, kind, markdown, ...extra });
   };
   if (role === ROLE_USER) {
+    // Issue #338: an attached image is part of the prompt, not text. A
+    // prompt cell with images and no text (an image-only submit) still
+    // renders, so the attachment is never invisible.
+    const images = parts
+      .map(imagePartOf)
+      .filter((part): part is LaneImagePart => part !== undefined);
     const text = parts
       .map(textOf)
       .filter((t) => t !== undefined)
       .map((t) => sanitizeLaneText(t))
       .join('\n');
-    push('user', 'prompt', text === '' ? '' : `${PROMPT_PREFIX}${text}`);
+    const hasImages = images.length > 0;
+    push(
+      'user',
+      'prompt',
+      text === ''
+        ? hasImages
+          ? PROMPT_PREFIX
+          : ''
+        : `${PROMPT_PREFIX}${text}`,
+      hasImages ? { images } : {},
+    );
     return cells;
   }
   if (role === ROLE_TOOL_RESULT) {

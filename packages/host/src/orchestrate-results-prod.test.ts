@@ -50,6 +50,18 @@ process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.ind
 process.exit(1);
 `;
 
+// Issue #244: the exact envelope `kubic run --json` prints when the config
+// load is refused (dispatch's pre-lane failure envelope) — the manager must
+// surface the named reason from it.
+const refusedConfigFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const message = "layer 'project': unknown key 'bogus_key'";
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: 'unassigned', status: 'failed', result: { summary: message }, journal: { ref: 'journal:unassigned' }, usage: { ref: 'usage:unassigned' }, trajectory: { ref: 'trajectory:unassigned' }, error: { kind: 'failed', message } }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
 const scratchDirs: string[] = [];
 
 function scratch(prefix: string): string {
@@ -228,6 +240,46 @@ describe('§68 worker results on the prod path (issue #185)', () => {
     expect(
       savedState(root, 'r155').records[0]?.result?.error?.details?.code,
     ).toBe('model_failed');
+  });
+
+  it('a worker config refusal is reported with the named reason, not result_invalid (issue #244)', async () => {
+    const root = initRepo185();
+    const child = join(scratch('kubic-orch-244-child-'), 'worker-refused.mjs');
+    writeFileSync(child, refusedConfigFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-244-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r244',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: {
+        status?: string;
+        summary?: string;
+        error?: { message?: string; details?: { code?: string } };
+      }[];
+    };
+    const worker = envelope.workers[0];
+    expect(worker?.status).toBe('failed');
+    expect(worker?.error?.details?.code).not.toBe('result_invalid');
+    expect(worker?.summary).toContain("unknown key 'bogus_key'");
+    expect(worker?.error?.message).toContain("unknown key 'bogus_key'");
+    expect(savedState(root, 'r244').records[0]?.result?.summary).toContain(
+      "unknown key 'bogus_key'",
+    );
   });
 });
 

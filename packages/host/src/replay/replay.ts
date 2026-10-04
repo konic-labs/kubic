@@ -194,6 +194,21 @@ function resolveTier(raw: string | undefined): ReplayTier | 'unknown' {
 
 const PLAIN = createCliTheme('none');
 
+// The refused-config envelope (issue #244): the same failure shape the tiered
+// envelope uses, with no invocation to report, so a `--json` consumer still
+// parses exactly one document. The reason is the config refusal's own.
+export function refusedReplayEnvelope(message: string): ReplayEnvelope {
+  return {
+    ok: false,
+    exitCode: RUN_EXIT_FAILED,
+    tier: 'unknown',
+    invocation: null,
+    trajectory: null,
+    changed: [],
+    error: { code: 'config_refused', message },
+  };
+}
+
 function fail(
   deps: ReplayCommandDeps,
   options: { json: boolean; tier: ReplayTier | 'unknown'; log: CliLogger },

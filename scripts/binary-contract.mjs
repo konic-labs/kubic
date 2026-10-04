@@ -53,6 +53,13 @@ export const DOCTOR_PROVIDER_EXIT = 6;
 export const USAGE_EXIT = 2;
 export const WORKSPACE_EXIT = 5;
 
+// Issue #244: the models.json receipt is a diagnostic; under --json stdout
+// is exactly one JSON document. Pinned literally so a leak fails here.
+export const MODELS_RECEIPT_PREFIX = 'loaded models.json:';
+// The config refusal the refused-config probes trigger (an unknown key in
+// the project layer, loaded through KUBIC_TRUST_PROJECT=1).
+export const CONFIG_REFUSAL_KEY = 'bogus_key';
+
 // The root dispatcher's usage line (issue #128): one string serves
 // `kubic --help` / `kubic -h` (exit 0 — help is success, §78) and the
 // bare invocation off a TTY (exit 1 — POSIX usage-on-no-args; a bare
@@ -122,7 +129,14 @@ function probeProblems(label, probe) {
 // takes `(args, opts?)`; `opts` carries the hermetic overrides the real
 // spawn supports (a stubbed `process.versions.node`, extra child env) and
 // is ignored by direct probes.
-export function binaryContract({ distPresent, expectedLine, run, nonRepoCwd }) {
+export function binaryContract({
+  distPresent,
+  expectedLine,
+  run,
+  nonRepoCwd,
+  modelsCwd,
+  refusedCwd,
+}) {
   const problems = [];
   if (!distPresent) {
     problems.push(
@@ -381,6 +395,145 @@ export function binaryContract({ distPresent, expectedLine, run, nonRepoCwd }) {
     }
   }
 
+  // Issue #244: the models.json receipt is a diagnostic (stderr) and the
+  // --json document is the ONLY stdout content, for both commands that
+  // assemble the catalog. The probes run in a scratch dir holding a
+  // models.json, trusted through the documented env opt-in.
+  for (const [label, args] of [
+    ['kubic models --json', ['models', '--json']],
+    ['kubic doctor --json', ['doctor', '--json']],
+  ]) {
+    const probe = run(args, {
+      cwd: modelsCwd,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (!probe.stderr.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`${label}\` did not print the models.json receipt on stderr (stderr was ${JSON.stringify(probe.stderr.trimEnd())})`,
+      );
+    }
+    if (probe.stdout.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`${label}\` leaked the models.json receipt to stdout — under --json stdout is exactly one document`,
+      );
+    }
+    try {
+      JSON.parse(probe.stdout);
+    } catch (error) {
+      problems.push(
+        `\`${label}\` stdout is not one JSON document: ${error instanceof Error ? error.message : String(error)} (stdout was ${JSON.stringify(probe.stdout.slice(0, 200))})`,
+      );
+    }
+  }
+
+  // Issue #244: the receipt is a stderr diagnostic in text mode too — the
+  // catalog is the stdout data.
+  const modelsText = run(['models'], {
+    cwd: modelsCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const modelsTextFailed = probeProblems('kubic models', modelsText);
+  if (modelsTextFailed.length > 0) {
+    problems.push(...modelsTextFailed);
+  } else {
+    if (!modelsText.stderr.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`kubic models\` did not print the models.json receipt on stderr (stderr was ${JSON.stringify(modelsText.stderr.trimEnd())})`,
+      );
+    }
+    if (modelsText.stdout.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`kubic models\` leaked the models.json receipt to stdout — it is a stderr diagnostic`,
+      );
+    }
+  }
+
+  // Issue #244: a refused config under `--json` is the command's standard
+  // failure envelope on stdout (exit 1) with the reason on stderr; without
+  // --json stdout stays empty. The probes run in a scratch dir whose
+  // project config names an unknown key.
+  const refusedReason = run(['run', '-p', 'x'], {
+    cwd: refusedCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const refusedTextFailed = probeProblems(
+    'kubic run (refused config)',
+    refusedReason,
+  );
+  if (refusedTextFailed.length > 0) {
+    problems.push(...refusedTextFailed);
+  } else {
+    if (refusedReason.code !== 1) {
+      problems.push(
+        `\`kubic run\` with a refused config exited ${refusedReason.code} (expected 1)`,
+      );
+    }
+    if (!refusedReason.stderr.includes(CONFIG_REFUSAL_KEY)) {
+      problems.push(
+        `\`kubic run\` with a refused config did not name the reason on stderr (stderr was ${JSON.stringify(refusedReason.stderr.trimEnd())})`,
+      );
+    }
+    if (refusedReason.stdout !== '') {
+      problems.push(
+        `\`kubic run\` with a refused config wrote ${JSON.stringify(refusedReason.stdout)} to stdout without --json — the refusal is stderr-only there`,
+      );
+    }
+  }
+
+  const refusedJson = run(['run', '-p', 'x', '--json'], {
+    cwd: refusedCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const refusedJsonFailed = probeProblems(
+    'kubic run --json (refused config)',
+    refusedJson,
+  );
+  if (refusedJsonFailed.length > 0) {
+    problems.push(...refusedJsonFailed);
+  } else {
+    if (refusedJson.code !== 1) {
+      problems.push(
+        `\`kubic run --json\` with a refused config exited ${refusedJson.code} (expected 1)`,
+      );
+    }
+    if (!refusedJson.stderr.includes(CONFIG_REFUSAL_KEY)) {
+      problems.push(
+        `\`kubic run --json\` with a refused config did not name the reason on stderr (stderr was ${JSON.stringify(refusedJson.stderr.trimEnd())})`,
+      );
+    }
+    const documents = lines(refusedJson.stdout);
+    if (documents.length !== 1) {
+      problems.push(
+        `\`kubic run --json\` with a refused config printed ${documents.length} stdout line(s) — expected exactly one envelope (stdout was ${JSON.stringify(refusedJson.stdout.slice(0, 200))})`,
+      );
+    } else {
+      try {
+        const envelope = JSON.parse(documents[0]);
+        if (envelope.ok !== false || envelope.exitCode !== 1) {
+          problems.push(
+            `\`kubic run --json\` refused-config envelope is ${JSON.stringify({ ok: envelope.ok, exitCode: envelope.exitCode })} — expected ok:false, exitCode:1`,
+          );
+        }
+        if (
+          !String(envelope.error?.message ?? '').includes(CONFIG_REFUSAL_KEY)
+        ) {
+          problems.push(
+            `\`kubic run --json\` refused-config envelope does not name the reason (error was ${JSON.stringify(envelope.error)})`,
+          );
+        }
+      } catch (error) {
+        problems.push(
+          `\`kubic run --json\` refused-config stdout is not one JSON envelope: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
   const doctor = run(['doctor']);
   const doctorFailed = probeProblems('kubic doctor', doctor);
   if (doctorFailed.length > 0) {
@@ -517,10 +670,33 @@ if (import.meta.main) {
   try {
     const cwd = join(scratch, 'cwd');
     const nonRepoCwd = join(scratch, 'non-repo');
+    const modelsCwd = join(scratch, 'models');
+    const refusedCwd = join(scratch, 'refused');
     const home = join(scratch, 'home');
     mkdirSync(cwd);
     mkdirSync(nonRepoCwd);
+    mkdirSync(modelsCwd);
+    mkdirSync(join(refusedCwd, '.kubic'), { recursive: true });
     mkdirSync(home);
+    // Issue #244 fixtures: a models.json the receipt names, and a project
+    // config with an unknown key that fails the load closed.
+    writeFileSync(
+      join(modelsCwd, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            baseUrl: 'http://127.0.0.1:11434',
+            api: 'openai-completions',
+            models: [{ id: 'llama3' }],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(refusedCwd, '.kubic', 'config.toml'),
+      '[policy]\nbogus_key = 1\n',
+    );
     const stubPath = join(scratch, 'node-version-stub.mjs');
     writeFileSync(stubPath, nodeStubPreload());
     const manifest = JSON.parse(
@@ -531,6 +707,8 @@ if (import.meta.main) {
       distPresent: existsSync(join(root, DIST_ENTRY)),
       expectedLine,
       nonRepoCwd,
+      modelsCwd,
+      refusedCwd,
       run: realRunner(root, { cwd, home, stubPath }),
     });
     if (result.problems.length > 0) {
@@ -545,7 +723,7 @@ if (import.meta.main) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT}; orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT}; orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

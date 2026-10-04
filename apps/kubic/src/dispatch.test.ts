@@ -506,13 +506,93 @@ describe('config refusal (issue #90 policy, moved)', () => {
     }
   });
 
-  it('prints the refusal on stderr, keeping stdout for data', async () => {
+  it('prints the refusal on stderr, keeping stdout for data without --json', async () => {
     const h = harness({ config: refusedConfig('unknown key [nope]') });
     const errs: string[] = [];
     const deps = { ...h.deps, err: (line: string) => errs.push(line) };
-    expect(await dispatchCommand('run', ['-p', 'hi', '--json'], deps)).toBe(1);
+    expect(await dispatchCommand('run', ['-p', 'hi'], deps)).toBe(1);
     expect(h.lines).toEqual([]);
     expect(errs).toEqual(['error: unknown key [nope]']);
+  });
+
+  it('prints the command’s failure envelope on stdout under --json (issue #244)', async () => {
+    const cases: Array<{
+      command: string;
+      rest: string[];
+      check: (envelope: Record<string, unknown>) => void;
+    }> = [
+      {
+        command: 'run',
+        rest: ['-p', 'hi', '--json'],
+        check: (envelope) => {
+          expect(envelope.status).toBe('failed');
+          expect(envelope.sessionId).toBe('unassigned');
+          expect(envelope.result).toEqual({ summary: 'unknown key [nope]' });
+          expect(envelope.error).toEqual({
+            kind: 'failed',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+      {
+        command: 'orchestrate',
+        rest: ['-p', 'hi', '--json'],
+        check: (envelope) => {
+          expect(envelope.status).toBe('failed');
+          expect(envelope.sessionId).toBe('unassigned');
+          expect(envelope.workers).toEqual([]);
+          expect(envelope.error).toEqual({
+            kind: 'failed',
+            message: 'unknown key [nope]',
+            code: 'config_refused',
+          });
+        },
+      },
+      {
+        command: 'replay',
+        rest: ['t.json', '--json'],
+        check: (envelope) => {
+          expect(envelope.tier).toBe('unknown');
+          expect(envelope.error).toEqual({
+            code: 'config_refused',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+    ];
+    for (const { command, rest, check } of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+      expect(h.lines, command).toHaveLength(1);
+      const envelope = JSON.parse(h.lines[0] as string) as Record<
+        string,
+        unknown
+      >;
+      expect(envelope.ok, command).toBe(false);
+      expect(envelope.exitCode, command).toBe(1);
+      check(envelope);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
+  it('a refusal without --json stays stdout-empty for every consuming command', async () => {
+    const cases: Array<[string, string[]]> = [
+      ['run', ['-p', 'hi']],
+      ['orchestrate', ['-p', 'hi']],
+      ['replay', ['t.json']],
+      ['tui', []],
+    ];
+    for (const [command, rest] of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(h.lines, command).toEqual([]);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+    }
   });
 
   it('a refused config short-circuits before the runtime-exclude step', async () => {

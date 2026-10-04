@@ -33,6 +33,15 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   bad subcommand, exit 2 (issue #372). The one exception is the bare
   `kubic` (no command) off a TTY: the identical usage line, exit 1 —
   POSIX usage-on-no-args, the deliberate scripted posture.
+- **Diagnostics vs `--json`**: receipts, warnings and refusals — the
+  `loaded models.json: …` note, the config refusal, colour/TTY notices — go
+  to stderr, so a `--json` stdout is exactly one document (issue #244).
+- **Refused config**: one `error: <reason>` line on stderr, exit 1, for the
+  agent-executing commands (`run`, `orchestrate`, `tui`, `replay`); the
+  reporting commands (`config`, `doctor`, `trust`) still run so the reason
+  can be read. Under `--json` (`run`, `orchestrate`, `replay`) stdout
+  carries exactly one failure envelope instead of nothing — `ok:false`, the
+  documented exit code, the named reason (issue #244).
 - **`kubic doctor`**: 0 clean (warns included — `warn` is informational
   and never exit-flipping), 6 on any provider-down fail, 1 on any other
   fail, 2 on usage errors. `--json` reports the same code in its

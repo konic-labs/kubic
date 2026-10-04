@@ -15,7 +15,14 @@ import {
   EXIT_FAILED,
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
+import { formatJson } from '../../../packages/core/src/cli/output.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
+import { refusedOrchestrateEnvelope } from '../../../packages/host/src/orchestrate-cli.js';
+import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.js';
+import {
+  buildRunEnvelope,
+  refusedRunResult,
+} from '../../../packages/host/src/run-cli.js';
 import {
   type ModelSelection,
   parseModelFlag,
@@ -94,6 +101,19 @@ const CLI_MODEL_COMMANDS: ReadonlySet<string> = new Set([
   'tui',
   'config',
 ]);
+
+// The refused-config envelopes (issue #244), keyed by command: the same
+// `--json` shape the command itself prints — `run`'s compact one-liner (the
+// orchestrator reads a worker's last stdout line), orchestrate's and
+// replay's pretty-printed documents. `tui` has no --json and is absent.
+const REFUSAL_ENVELOPES: Readonly<
+  Record<string, (message: string, exitCode: number) => string>
+> = {
+  run: (message, exitCode) =>
+    JSON.stringify(buildRunEnvelope(refusedRunResult(message), exitCode)),
+  orchestrate: (message) => formatJson(refusedOrchestrateEnvelope(message)),
+  replay: (message) => formatJson(refusedReplayEnvelope(message)),
+};
 
 function tryParseCliModel(value: string): ModelSelection | undefined {
   try {
@@ -255,8 +275,18 @@ export async function dispatchCommand(
   // `config` and `doctor` still run so the named reason can be reported.
   const refusalExit = configRefusalExit(cliConfig, command);
   if (refusalExit !== undefined) {
-    // A diagnostic, so stderr: a `--json` consumer's stdout stays empty.
-    (deps.err ?? deps.out)(`error: ${cliConfig.error ?? 'config refused'}`);
+    const reason = cliConfig.error ?? 'config refused';
+    // A diagnostic, so stderr.
+    (deps.err ?? deps.out)(`error: ${reason}`);
+    // Issue #244: under `--json` the refusal is also the command's standard
+    // failure envelope on stdout, so a consumer still parses exactly one
+    // document instead of getting nothing. Commander has not parsed argv yet,
+    // so the raw tokens are scanned for the standalone flag.
+    const envelope =
+      command === undefined ? undefined : REFUSAL_ENVELOPES[command];
+    if (envelope !== undefined && args.includes('--json')) {
+      deps.out(envelope(reason, refusalExit));
+    }
     return refusalExit;
   }
   // Issue #91 (design §35, D34/D35): `.kubic/` runtime state must never

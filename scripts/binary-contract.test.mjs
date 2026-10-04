@@ -20,9 +20,11 @@ import { fileURLToPath } from 'node:url';
 import { nodeVersionSupported } from '../bin/node-guard.mjs';
 import {
   binaryContract,
+  CONFIG_REFUSAL_KEY,
   CRASH_PROBE_ENV,
   CRASH_PROBE_MESSAGE,
   expectedVersionLine,
+  MODELS_RECEIPT_PREFIX,
   nodeGuardLine,
   ROOT_USAGE_LINE,
 } from './binary-contract.mjs';
@@ -131,6 +133,66 @@ function applyOverride(override, stub) {
   return typeof override === 'function' ? override(stub) : override;
 }
 
+// Issue #244: the models.json receipt is a diagnostic, so `--json` stdout is
+// one document. The fake mirrors the real split.
+function modelsJsonOut() {
+  return {
+    code: 0,
+    stdout: `${JSON.stringify([{ id: 'local/llama3' }])}\n`,
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+function doctorJsonOut() {
+  return {
+    code: 0,
+    stdout: `${JSON.stringify({ ok: true, exitCode: 0, checks: [] })}\n`,
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+function modelsTextOut() {
+  return {
+    code: 0,
+    stdout: 'local/llama3\n',
+    stderr: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n`,
+    error: null,
+  };
+}
+
+// The refusal a project config with an unknown key produces (issue #244).
+const REFUSAL_MESSAGE = `layer 'project': unknown key '${CONFIG_REFUSAL_KEY}'`;
+
+function refusedRunTextOut() {
+  return {
+    code: 1,
+    stdout: '',
+    stderr: `error: ${REFUSAL_MESSAGE}\n`,
+    error: null,
+  };
+}
+
+function refusedRunJsonOut() {
+  return {
+    code: 1,
+    stdout: `${JSON.stringify({
+      ok: false,
+      exitCode: 1,
+      sessionId: 'unassigned',
+      status: 'failed',
+      result: { summary: REFUSAL_MESSAGE },
+      journal: { ref: 'journal:unassigned' },
+      usage: { ref: 'usage:unassigned' },
+      trajectory: { ref: 'trajectory:unassigned' },
+      error: { kind: 'failed', message: REFUSAL_MESSAGE },
+    })}\n`,
+    stderr: `error: ${REFUSAL_MESSAGE}\n`,
+    error: null,
+  };
+}
+
 // Replays the probes with the given per-command overrides. The stubbed-node
 // probes (issue #128) key on `opts.nodeStub`: the contract only stubs
 // below-the-floor values and the exact floor, so the fake mirrors a working
@@ -164,6 +226,32 @@ function fakeRun(overrides = {}) {
       );
       return overrides[args[0]] ?? refusal;
     }
+    if (args[0] === 'models' && args.includes('--json')) {
+      if (opts.cwd === undefined) {
+        throw new Error('the models --json probe must run in the models cwd');
+      }
+      return overrides.modelsJson ?? modelsJsonOut();
+    }
+    if (args[0] === 'models') {
+      if (opts.cwd === undefined) {
+        throw new Error('the models probe must run in the models cwd');
+      }
+      return overrides.modelsText ?? modelsTextOut();
+    }
+    if (args[0] === 'doctor' && args.includes('--json')) {
+      if (opts.cwd === undefined) {
+        throw new Error('the doctor --json probe must run in the models cwd');
+      }
+      return overrides.doctorJson ?? doctorJsonOut();
+    }
+    // The refused-config probes are the only ones carrying the trust env
+    // opt-in; the provider-less `run -p` probe stays on its own case below.
+    if (opts.env?.KUBIC_TRUST_PROJECT === '1') {
+      if (args.includes('--json')) {
+        return overrides.refusedRunJson ?? refusedRunJsonOut();
+      }
+      return overrides.refusedRunText ?? refusedRunTextOut();
+    }
     if (args[0] === '__crash-probe') {
       // Without the contract's env gate the seam is unreachable (issue
       // #128): the command falls through to the unknown-command path —
@@ -190,6 +278,8 @@ function contractWith(overrides = {}, options = {}) {
     distPresent: options.distPresent ?? true,
     expectedLine: VERSION_LINE,
     nonRepoCwd: options.nonRepoCwd ?? '/non-repo',
+    modelsCwd: options.modelsCwd ?? '/models',
+    refusedCwd: options.refusedCwd ?? '/refused',
     run: fakeRun(overrides),
   });
 }
@@ -862,5 +952,92 @@ describe('CI wiring (issue #101)', () => {
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
+  });
+});
+
+describe('binary contract --json purity probes (issue #244)', () => {
+  it('fails when the models.json receipt leaks to stdout', () => {
+    const result = contractWith({
+      modelsJson: {
+        ...modelsJsonOut(),
+        stdout: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n[]\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /leaked the models.json receipt/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when models --json stdout is not one JSON document', () => {
+    const result = contractWith({
+      modelsJson: { ...modelsJsonOut(), stdout: 'not json\n' },
+    });
+    assert.ok(
+      result.problems.some((p) => /not one JSON document/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the receipt is missing from stderr', () => {
+    const result = contractWith({
+      doctorJson: { ...doctorJsonOut(), stderr: '' },
+    });
+    assert.ok(
+      result.problems.some((p) =>
+        /did not print the models.json receipt/.test(p),
+      ),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config text run leaks the reason to stdout', () => {
+    const result = contractWith({
+      refusedRunText: {
+        ...refusedRunTextOut(),
+        stdout: `error: ${REFUSAL_MESSAGE}\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /stderr-only/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope is missing under --json', () => {
+    const result = contractWith({
+      refusedRunJson: { ...refusedRunJsonOut(), stdout: '' },
+    });
+    assert.ok(
+      result.problems.some((p) => /exactly one envelope/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope reports a different exit', () => {
+    const result = contractWith({
+      refusedRunJson: { ...refusedRunJsonOut(), code: 2 },
+    });
+    assert.ok(
+      result.problems.some((p) => /exited 2 \(expected 1/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when the refused-config envelope does not name the reason', () => {
+    const result = contractWith({
+      refusedRunJson: {
+        ...refusedRunJsonOut(),
+        stdout: `${JSON.stringify({
+          ok: false,
+          exitCode: 1,
+          error: { kind: 'failed', message: 'refused' },
+        })}\n`,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /does not name the reason/.test(p)),
+      JSON.stringify(result.problems),
+    );
   });
 });

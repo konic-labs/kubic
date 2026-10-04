@@ -452,6 +452,22 @@ function runFailure(
   };
 }
 
+// A refused config stops the run before any lane exists (issue #244): the
+// documented exit-1 failure, shaped as the standard run envelope so a
+// `--json` consumer still parses exactly one document (compact, the same
+// line shape every run envelope has — `kubic orchestrate` reads it).
+export function refusedRunResult(message: string): HeadlessRunResult {
+  return {
+    terminus: 'failed',
+    summary: message,
+    sessionId: 'unassigned',
+    journalRef: 'journal:unassigned',
+    usageRef: 'usage:unassigned',
+    trajectoryRef: 'trajectory:unassigned',
+    error: { kind: 'failed', message },
+  };
+}
+
 // POSIX single-quote escaping for suggested commands: nothing inside '…'
 // expands ($, backticks, !), and an embedded ' becomes '\''.
 export function shellQuote(value: string): string {

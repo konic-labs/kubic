@@ -1120,6 +1120,25 @@ function statusForExit(exitCode: number, code: string): OrchestrateStatus {
   return 'failed';
 }
 
+// The refused-config envelope (issue #244): the same shape a pre-lane
+// failure emits — no session, no workers — so a `--json` consumer still
+// parses exactly one document. The reason is the config refusal's own.
+export function refusedOrchestrateEnvelope(
+  message: string,
+): OrchestrateEnvelope {
+  return {
+    ok: false,
+    exitCode: RUN_EXIT_FAILED,
+    sessionId: 'unassigned',
+    status: 'failed',
+    workers: [],
+    mergeOrder: [],
+    attribution: [],
+    graph: [],
+    error: { kind: 'failed', message, code: 'config_refused' },
+  };
+}
+
 export async function runOrchestrateCommand(
   options: OrchestrateCliOptions,
   deps: OrchestrateCommandDeps,

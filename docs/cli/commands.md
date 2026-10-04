@@ -133,6 +133,15 @@ value, an unknown option, an invalid `--session` id, a non-positive or
 non-integer `--timeout`/`--max-turns` (or a `--timeout` above
 `2147483647`), and a stray operand all exit 2 with one `error: …` line.
 
+**A refused config** stops `kubic run` before any lane (issue #244): one
+`error: <reason>` line on stderr, exit 1. Under `--json` stdout carries the
+same compact failure envelope every run emits (`ok:false`, `exitCode:1`,
+`status:"failed"`, the reason in `error.message`) — never plain text — so a
+scripted consumer always parses exactly one document; without `--json`
+stdout stays empty. The same split holds for `kubic orchestrate` and
+`kubic replay` (their own envelope shapes) and for the `loaded models.json:
+…` receipt, which is a stderr diagnostic under both modes.
+
 **Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>` and
 `-p<text>` all work. The typo guard stays: a separate-token value that
 starts with `--` is a mistyped flag, not a prompt — `kubic run -p --json`
@@ -1462,7 +1471,8 @@ project's `models.json` at the project root — the git top level or nearest
 `.kubic/`, so any subdirectory sees the same providers — only once the
 project is trusted (`KUBIC_TRUST_PROJECT=1`). Each file found is reported as an
 `info: loaded models.json: <path> (global|project, trusted): …` /
-`info: models.json ignored: <path> …` line on stderr — untrusted, invalid
+`info: models.json ignored: <path> …` line on stderr (under `--json` too:
+stdout stays one document, issue #244) — untrusted, invalid
 or colliding files are named, never fatal (see
 [configuration](configuration.md#modelsjson)). A built-in is
 **usable** when its auth is configured: its documented env key

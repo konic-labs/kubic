@@ -192,10 +192,13 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   `--json` reports the same code in its `exitCode` field; `ok` is
   `exitCode === 0`.
 - **`kubic benchmark`**: 0 every executed suite succeeded; 1 any executed
-  suite failed; 2 usage errors and a runner that threw (including the
-  live-runner refusal the binary does not ship). Stub suites are reported
-  `skipped (stub)` and never count toward the verdict. `--json` reports the
-  same code in its `exitCode` field.
+  suite failed; 2 usage errors, a runner that threw (including the
+  live-runner refusal the binary does not ship) and a selection with no
+  executable suite (`no-executable-suites` — `benchmark: no executable
+  suites selected`). In a matrix with at least one executable suite, stub
+  suites are reported `skipped (stub)` and never count toward the verdict;
+  an all-stub selection refuses before the table is printed. `--json`
+  reports the same code in its `exitCode` field.
 - **`kubic export`**: 0 the record was exported or the file described;
   1 the record failed to build or validate (`invalid-record`,
   `export-failed`); 2 a usage error or a refusal (a missing or unknown

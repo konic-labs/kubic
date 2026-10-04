@@ -77,7 +77,10 @@ describe('a killed session cannot fail the next one (issue #152)', () => {
     const stale = publishWorkerAsk(runA.mailboxDir(), ask('worker-1'));
 
     // B pumps ITS worker-1: no prompt, no timeout, no termination — the run is
-    // not ended by an ask its own worker never made.
+    // not ended by an ask its own worker never made. (The same-SESSION case —
+    // a `--resume` of a killed run, where the ids match and the mailbox dir is
+    // literally the same — is pinned by mailbox-authenticity.test.ts's "does
+    // not inherit asks left by an earlier process", #149.)
     expect(await runB.pump(scope('sess-b', 'worker-1'))).toBeUndefined();
     expect(runB.takeTermination('worker-1')).toBeUndefined();
     // A's ask is untouched, and still A's own.

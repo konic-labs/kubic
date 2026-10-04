@@ -1978,11 +1978,13 @@ line to stderr. `kubic doctor` names the same set on its
 ## `kubic audit [--mode <m>] [--posture <p>] [--result <r>] [--session <id>] [--json]`
 
 Queries the audit trail, matching each supplied filter exactly. `--session`
-takes an **orchestration** session id and reads that whole run: the manager's
-own rows (`agent.session` is the run) plus every worker ask the run spawned
-(`agent.session` is the worker's own `<orch>-<agent>`, `agent.parent` is the
-run), so one filter answers "what did this delegation decide" — including the
-role each worker asked as (issue #159).
+takes an **orchestration** session id and reads that run's decision rows: the
+manager's own rows (`agent.session` is the run) plus every worker ask the run
+spawned (`agent.session` is the worker's own `<orch>-<agent>`, `agent.parent`
+is the run), so one filter answers "what did this delegation decide" —
+including the role each worker asked as (issue #159). A worker's
+credential-use rows name only its own session and are not returned; filter on
+that `<orch>-<agent>` id for them.
 
 **Output.** Text mode prints a table with the columns `WHEN`, `MODE`,
 `POSTURE`, `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`.

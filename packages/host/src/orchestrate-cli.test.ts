@@ -18,6 +18,7 @@ import type {
   WorkerSpawnInfo,
 } from './orchestrate-cli.js';
 import {
+  assignedApprovalRole,
   MergeConflictError,
   managerCallsForMerge,
   parseOrchestratorRunState,
@@ -2457,5 +2458,27 @@ describe('failure results persist in the saved records (issue #185)', () => {
     expect(lastState(kept).records).toEqual([
       { agentId: 'alpha', branch: 'kubic/alpha', hunks: [], result: completed },
     ]);
+  });
+});
+
+// Issue #159 review finding 1: the approval scope's role is the FALLBACK for an
+// ask that carries none of its own, so the fallback itself is pinned here —
+// otherwise nothing observes it (the child's seat always sets a role).
+describe('the assigned approval role (issue #159)', () => {
+  it('names the assigned §12 role, and `worker` when the plan has none', () => {
+    expect(
+      assignedApprovalRole(
+        {
+          assignments: [
+            { agentId: 'beta', role: 'implementer', tools: [], refused: [] },
+          ],
+          refused: [],
+        } as unknown as Parameters<typeof assignedApprovalRole>[0],
+        'beta',
+      ),
+    ).toBe('implementer');
+    expect(
+      assignedApprovalRole({ assignments: [], refused: [] }, 'gamma'),
+    ).toBe('worker');
   });
 });

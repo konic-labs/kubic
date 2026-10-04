@@ -367,12 +367,22 @@ export function formatWorkerAskQuestion(
 export function workerAskIdentity(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): { sessionId: string; agentId: string; parentSessionId: string } {
-  const agentId = env.KUBIC_WORKER_ID ?? 'worker';
+  // A blank value is ABSENT, not an id (#159 review finding 3): passing ''
+  // through would make buildOrchestratorRequest throw on a blank env var
+  // instead of using the documented fallback (orchestratedWorkerFromEnv reads
+  // blank the same way).
+  const agentId = blankToUndefined(env.KUBIC_WORKER_ID) ?? 'worker';
   return {
-    sessionId: env.KUBIC_WORKER_SESSION ?? agentId,
+    sessionId: blankToUndefined(env.KUBIC_WORKER_SESSION) ?? agentId,
     agentId,
-    parentSessionId: env.KUBIC_ORCHESTRATOR_SESSION ?? 'orchestrator',
+    parentSessionId:
+      blankToUndefined(env.KUBIC_ORCHESTRATOR_SESSION) ?? 'orchestrator',
   };
+}
+
+function blankToUndefined(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  return value;
 }
 
 // The worker CHILD's seat: what a spawned `kubic run` attaches so a

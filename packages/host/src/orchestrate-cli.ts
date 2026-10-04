@@ -964,6 +964,18 @@ export interface OrchestrateCommandDeps {
   saveState?: (state: OrchestratorRunState) => void | Promise<void>;
 }
 
+// The role an approval scope names for one worker (issue #159): the assigned
+// §12 role when the plan has one, the shipped `worker` label otherwise. It is
+// the FALLBACK for an ask whose own envelope carries no role (inputFromRequest
+// prefers `request.role`), and it is exported so that fallback is pinned by a
+// test instead of being unobservable behind a child that always sets one.
+export function assignedApprovalRole(
+  roles: WorkerRolesPlan,
+  agentId: string,
+): string {
+  return workerRoleAssignment(roles, agentId)?.role ?? 'worker';
+}
+
 // Launch accounting of this run's workers (issue #94), as the host sees it:
 // rows are registry rows (shape-only — host never imports worker), failure
 // is the §78 code the lifecycle layer reported, and perf carries the §61
@@ -1906,8 +1918,11 @@ export async function runOrchestrateCommand(
     worktree: worktree.path,
     // Issue #159: the role this worker was ASSIGNED (the same plan the spawn
     // info and the credential preflight read), never a hardcoded label — the
-    // manager's §60 rows and the child's ask must name the same role.
-    role: spawnRoleInfo(agentId, rolePlan).role ?? 'worker',
+    // manager's §60 rows and the child's ask must name the same role. It is
+    // the FALLBACK for an ask that carries no role of its own, so it is
+    // exported and unit-tested (assignedApprovalRole) rather than trusted to
+    // the child always supplying one (#159 review finding 1).
+    role: assignedApprovalRole(rolePlan, agentId),
   });
 
   // One row per agent of the run, in AGENT order whatever order the records

@@ -274,6 +274,39 @@ describe("the manager's §60 row carries that ancestry (issue #159)", () => {
   });
 });
 
+describe('a blank identity env var is absent, never an empty id (issue #159 review)', () => {
+  it('falls back to the worker id instead of throwing on an empty session', async () => {
+    vi.stubEnv('KUBIC_WORKER_ID', 'worker-1');
+    vi.stubEnv('KUBIC_WORKER_SESSION', '   ');
+    vi.stubEnv('KUBIC_ORCHESTRATOR_SESSION', '');
+    const dir = tmpDir();
+    const signer = createApprovalSigner();
+    const seat = createWorkerMailboxSeat({
+      dir,
+      maxPendingMs: 500,
+      pollMs: 5,
+      verifyKey: signer.verifyKey,
+      role: 'implementer',
+    });
+    const verdict = seat(lane);
+    const [published] = readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+    });
+    if (published === undefined) throw new Error('no ask published');
+    // The blank session falls back to the worker id; the blank parent to the
+    // documented default (a thrown buildOrchestratorRequest here was the bug).
+    expect(published.request.sessionId).toBe('worker-1');
+    expect(published.request.provenance.parentSessionId).toBe('orchestrator');
+    answerWorkerAsk(
+      dir,
+      published,
+      { approved: false, reason: 'blank-env probe done' },
+      signer,
+    );
+    await verdict;
+  });
+});
+
 describe('publishWorkerAsk keeps whatever it was handed (issue #159)', () => {
   it('carries the caller identity verbatim — the seat is what derives it', () => {
     const dir = tmpDir();

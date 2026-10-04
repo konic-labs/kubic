@@ -327,9 +327,9 @@ export class BudgetExceededError extends Error {
   }
 }
 
-// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the drive like a guard does: control
-// flow, mapped to `failed` (exit 1) after the drain — §78 has no separate
-// interrupt code.
+// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the turn like a guard does:
+// control flow, mapped to `failed` (exit 1) after the drain — §78 has no
+// separate interrupt code.
 class InterruptedError extends Error {
   constructor(signal: string) {
     super(`run interrupted by ${signal}`);
@@ -1453,6 +1453,11 @@ async function runHeadlessPromptImpl(
       // prompt is admitted; a resume that cannot settle (guard fired,
       // approval with no TTY) is durably aborted. Each choice is named on
       // stderr.
+      // §49.3 lane spans (§98): `accept` covers admitting this run's work —
+      // the pending turn a dead process left, settled first — and `drive`
+      // covers the durable turn itself (submit → wait → settlement). Tool
+      // spans nest under `drive` because `startLane('drive')` is the lane
+      // open when the harness runs them.
       const pending = await inspectPending(solo, context);
       const acceptSpan = spans.startLane('accept');
       let resumed: Awaited<ReturnType<typeof solo.harness.submission>>;

@@ -90,8 +90,11 @@ async function crashAfterAccept(
     BACKGROUND_CONTEXT,
   );
   // The process is gone: its storage is closed (commits flushed, no live
-  // writer left), and the lock file is rewritten as the dead holder.
-  await session.release(BACKGROUND_CONTEXT);
+  // writer left) and the lock file is rewritten as the dead holder. The
+  // handle's own release() cannot stand in for the death any more — the
+  // lane adopted the storage (D8.1), so release only gives the lock back
+  // and would leave a live writer on the file.
+  await session.storage.close(BACKGROUND_CONTEXT);
   writeFileSync(
     join(root, session.id, 'lock.json'),
     JSON.stringify({ pid: 424242, startedAt: Date.now() }),

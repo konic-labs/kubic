@@ -400,11 +400,13 @@ commit, which recovery drops whole instead of leaving a torn session. The
 change journal stays Kubic's fsync'd store (§42.4): that is where "this
 change can be undone" is guaranteed.
 
-File modes are unchanged by this migration: the storage writes through the
-same bridge calls as before, so session JSONL is still created with the
-umask default. [#361](https://github.com/konic-labs/kubic/issues/361)
-(restrictive 0600/0700 modes for session and journal state) is independent of
-this port and stays open.
+Session state is private ([#361](https://github.com/konic-labs/kubic/issues/361)):
+the session directory and the sessions root are 0700, and the JSONL files, the
+`session.json` header, the lock file and the stored thinking level are created
+0600 through the same bridge calls the port uses (the mode is applied at
+creation only — an existing file keeps its own). An existing loose directory is
+tightened when the next session lock is taken, and `kubic doctor`'s
+`state:permissions` check names one that is still loose.
 
 **Legacy sessions (Pi 0.87).** A transcript written by the removed
 `JsonlSessionRepo` lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a

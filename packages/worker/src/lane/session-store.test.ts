@@ -856,6 +856,23 @@ describe('session state permissions (issue #361)', () => {
   );
 
   it.skipIf(process.platform === 'win32')(
+    'tightens an existing loose sessions root when the lock is taken',
+    async () => {
+      const root = tmpRoot();
+      chmodSync(root, 0o755);
+      expect(statSync(root).mode & 0o777).toBe(0o755);
+      const store = storeFor(root);
+      const session = track(
+        await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
+      );
+      // The root is what `kubic doctor` reports; the open closes it, so the
+      // warn cannot outlive the next session.
+      expect(statSync(root).mode & 0o777).toBe(0o700);
+      await session.release(BACKGROUND_CONTEXT);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
     'tightens an existing loose session directory when the lock is taken',
     async () => {
       const root = tmpRoot();

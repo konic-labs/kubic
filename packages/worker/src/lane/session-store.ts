@@ -35,7 +35,7 @@
 // `format: 'legacy'` and refused on attach with SessionFormatError — no
 // converter, the repo is unreleased (§21).
 
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type {
   BridgeFileInfo,
   FileBridge,
@@ -239,8 +239,12 @@ export function acquireSessionLock(
   sessionId: string,
 ): void {
   // Issue #361: a session directory is private state; an existing loose one
-  // (created before this, or by hand) is closed on the way in.
+  // (created before this, or by hand) is closed on the way in — and so is the
+  // sessions root, which is what `kubic doctor` reports and what the docs
+  // promise the next open tightens. The root holds nothing but these session
+  // directories, so 0700 is its correct posture.
   tightenStateDir(sessionDir);
+  tightenStateDir(dirname(sessionDir));
   const lockPath = join(sessionDir, 'lock.json');
   const payload = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
   // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the

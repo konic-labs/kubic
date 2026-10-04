@@ -180,7 +180,10 @@ export function saveThinkingLevel(
   sessionDir: string,
   level: ModelThinkingLevel,
 ): void {
-  bridge.writeFile(join(sessionDir, THINKING_FILE), JSON.stringify({ level }));
+  // Issue #361: the stored thinking level is session state; 0600 at creation.
+  bridge.writeFile(join(sessionDir, THINKING_FILE), JSON.stringify({ level }), {
+    mode: 0o600,
+  });
 }
 
 export function loadThinkingLevel(

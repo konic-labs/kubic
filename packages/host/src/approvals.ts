@@ -1537,7 +1537,8 @@ export class FileApprovalStore implements ApprovalStore {
   save(decisions: Record<string, ApprovalVerdict>): void {
     const bridge = createNodeFileBridge('/');
     const tmp = `${this.file}.${process.pid}.tmp`;
-    bridge.writeFile(tmp, JSON.stringify(decisions));
+    // Issue #361: approval state is private like the rest of the session dir.
+    bridge.writeFile(tmp, JSON.stringify(decisions), { mode: 0o600 });
     try {
       bridge.renameFile(tmp, this.file);
     } catch (error) {
@@ -1563,7 +1564,8 @@ export class FileApprovalStore implements ApprovalStore {
   savePosture(posture: AccessPosture): void {
     const bridge = createNodeFileBridge('/');
     const tmp = `${this.postureFile}.${process.pid}.tmp`;
-    bridge.writeFile(tmp, JSON.stringify(posture));
+    // Issue #361: posture state is private like the rest of the session dir.
+    bridge.writeFile(tmp, JSON.stringify(posture), { mode: 0o600 });
     try {
       bridge.renameFile(tmp, this.postureFile);
     } catch (error) {

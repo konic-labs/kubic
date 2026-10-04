@@ -45,6 +45,9 @@ export function createLockFile(path: string, payload: string): boolean {
  * already private, so a probe never invents a finding.
  */
 export function looseStateDirMode(path: string): number | undefined {
+  // Windows cannot change the mode it reports, so a warn there would name a
+  // fix that does nothing: the probe is POSIX-only, like the modes themselves.
+  if (process.platform === 'win32') return undefined;
   try {
     const mode = statSync(path).mode & 0o777;
     return (mode & 0o077) !== 0 ? mode : undefined;

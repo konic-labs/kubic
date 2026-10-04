@@ -18,12 +18,21 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileJournalStore, type JournalEntryInput } from './journal.js';
 
 const roots: string[] = [];
+let priorUmask = 0o022;
+
+// The modes are asserted exactly, so the ambient umask must not decide the
+// outcome: under umask 077 the pre-fix code also produced 0700/0600 and the
+// RED would be invisible. Pinned to the common 022 and restored per test.
+beforeEach(() => {
+  priorUmask = process.umask(0o022);
+});
 
 afterEach(() => {
+  process.umask(priorUmask);
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });

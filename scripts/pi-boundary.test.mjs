@@ -80,6 +80,27 @@ function unjustifiedExports(source) {
   return bad;
 }
 
+// Issue #401 / commit 83ee635: exactly ONE hoisted copy of every Pi package.
+// Walks the lockfile's `packages` map (v3 is authoritative) and returns one
+// `{ name, paths }` entry per `@earendil-works/*` package resolved at more
+// than one path — a hoisted root copy plus a nested one under a workspace or
+// under pi-durable. Sub-paths (a `dist/` entry) never match: the check is
+// about package roots. Sorted by name for a stable assertion.
+function duplicatePiCopies(lock) {
+  const pkgs = lock?.packages ?? {};
+  const copies = new Map();
+  for (const path of Object.keys(pkgs)) {
+    const match = /(?:^|\/)node_modules\/(@earendil-works\/[^/]+)$/.exec(path);
+    if (match === null) continue;
+    const name = match[1];
+    copies.set(name, [...(copies.get(name) ?? []), path]);
+  }
+  return [...copies.entries()]
+    .filter(([, paths]) => paths.length > 1)
+    .map(([name, paths]) => ({ name, paths: [...paths].sort() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 describe('pi pinning + boundary (issue #4)', () => {
   it('worker pins all four Pi deps exactly and drops the removed three', () => {
     const pkg = JSON.parse(
@@ -264,6 +285,76 @@ describe('pi pinning + boundary (issue #4)', () => {
       'utf8',
     );
     assert.ok(yml.includes('check:pi'), 'ci.yml must run check:pi');
+  });
+
+  // Issue #401 / commit 83ee635: the built binary could not load
+  // @earendil-works/chord from dist/ because the #390 lockfile NESTED a
+  // second copy of pi-ai and chord (under packages/worker and under
+  // pi-durable) instead of hoisting them — all at 1.0.2, so the pin check
+  // below stayed green, vitest resolved from source so the suite stayed
+  // green, and only the binary contract caught it. One hoisted copy of every
+  // `@earendil-works/*` package is the invariant a lockfile refresh must not
+  // break; two copies of pi-ai would also give Kubic and pi-durable separate
+  // module instances.
+  it('the lockfile resolves exactly one copy of every Pi package (issue #401)', () => {
+    const lock = JSON.parse(
+      readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      duplicatePiCopies(lock),
+      [],
+      'the lockfile must hoist ONE copy of every @earendil-works/* package ' +
+        '(a nested duplicate broke the built binary: 83ee635)',
+    );
+  });
+
+  it('the one-copy gate fails a fixture lock with a nested duplicate (#401)', () => {
+    const fixture = {
+      lockfileVersion: 3,
+      packages: {
+        '': { name: 'fixture' },
+        'node_modules/@earendil-works/chord': { version: '1.0.2' },
+        'node_modules/@earendil-works/pi-ai': { version: '1.0.2' },
+        // The 83ee635 shape: pi-durable nests its own pi-ai copy.
+        'node_modules/@earendil-works/pi-durable/node_modules/@earendil-works/pi-ai':
+          { version: '1.0.2' },
+        // A workspace-level nest counts too (packages/worker held one).
+        'packages/worker/node_modules/@earendil-works/chord': {
+          version: '1.0.2',
+        },
+        // Unrelated packages and deeper sub-paths never participate.
+        'node_modules/lodash': { version: '4.17.21' },
+        'node_modules/@earendil-works/pi-tui/dist': { version: '1.0.2' },
+      },
+    };
+    assert.deepEqual(duplicatePiCopies(fixture), [
+      {
+        name: '@earendil-works/chord',
+        paths: [
+          'node_modules/@earendil-works/chord',
+          'packages/worker/node_modules/@earendil-works/chord',
+        ],
+      },
+      {
+        name: '@earendil-works/pi-ai',
+        paths: [
+          'node_modules/@earendil-works/pi-ai',
+          'node_modules/@earendil-works/pi-durable/node_modules/@earendil-works/pi-ai',
+        ],
+      },
+    ]);
+    // One copy each: the gate stays silent.
+    assert.deepEqual(
+      duplicatePiCopies({
+        packages: {
+          'node_modules/@earendil-works/pi-durable': { version: '1.0.2' },
+          'node_modules/@earendil-works/pi-telemetry': { version: '1.0.2' },
+        },
+      }),
+      [],
+    );
+    // A missing/absent `packages` map is not a duplicate report.
+    assert.deepEqual(duplicatePiCopies({}), []);
   });
 
   it('lockfile pins every copy of the Pi deps and drops the removed two', () => {

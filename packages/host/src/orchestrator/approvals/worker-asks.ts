@@ -596,6 +596,40 @@ export function answerFilePath(key: string): string {
   return join(ASKS_DIR, `${key}.answer.json`);
 }
 
+// Removes the mailbox files of ONE settled worker (issue #152): its ask and
+// its answer, together, so a finished worker's files cannot accumulate in a
+// long run's mailbox. An ask that was never answered goes too — the worker it
+// belonged to is gone, so nobody can consume it — while a sibling's files stay
+// (they are still live). A torn ask cannot be attributed to a worker and is
+// left for the run's own mailbox retirement; the §60 ledger is the durable
+// record of every decision, so nothing auditable lives only here.
+export function sweepWorkerAsks(dir: string, agentId: string): number {
+  const bridge = createNodeFileBridge(dir);
+  if (!bridge.exists(ASKS_DIR)) return 0;
+  let removed = 0;
+  for (const entry of bridge.listDir(ASKS_DIR)) {
+    if (!entry.name.endsWith('.json') || entry.name.endsWith('.answer.json')) {
+      continue;
+    }
+    const key = entry.name.slice(0, -'.json'.length);
+    let owner: unknown;
+    try {
+      owner = (
+        JSON.parse(
+          bridge.readTextFile(join(ASKS_DIR, entry.name)),
+        ) as Partial<PublishedWorkerAsk>
+      ).request?.agentId;
+    } catch {
+      continue;
+    }
+    if (owner !== agentId) continue;
+    bridge.remove(join(ASKS_DIR, entry.name), false, true);
+    bridge.remove(answerFilePath(key), false, true);
+    removed += 1;
+  }
+  return removed;
+}
+
 // The worker child's side: publish the ask it cannot answer itself, written
 // atomically (tmp+rename) so the manager never reads a torn ask.
 export function publishWorkerAsk(
@@ -1441,6 +1475,14 @@ export function createOrchestratorApprovalsRun(
       if (timer !== undefined) {
         clearInterval(timer);
         intervals.delete(agentId);
+      }
+      // The worker settled, so its mailbox files are consumed (issue #152):
+      // the caller has just pumped whatever raced its exit, and nothing
+      // remains for this worker to publish or await. A long run's mailbox
+      // therefore holds only live asks.
+      const swept = sweepWorkerAsks(dir, agentId);
+      if (swept > 0) {
+        debug(`approvals: swept ${swept} settled ask(s) for '${agentId}'`);
       }
     },
     mailboxDir: () => dir,

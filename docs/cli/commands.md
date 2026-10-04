@@ -419,7 +419,11 @@ record or memoized decisions. The run hands each child the ask mailbox and the
 manager's public verification key through the child env
 (`KUBIC_APPROVALS_DIR`, `KUBIC_APPROVALS_VERIFY_KEY`). The mailbox is per
 session, so two runs — in one checkout or in different linked worktrees —
-never answer each other's asks even though both use `worker-1`. A challenged call — network, destructive shell,
+never answer each other's asks even though both use `worker-1`, and a worker
+that settles has its ask and answer files swept (asks left by an earlier
+process are retired when the next run of that session starts), so a killed
+session's unanswered ask cannot be routed — let alone fail — during a later
+run (issue #152). A challenged call — network, destructive shell,
 outside-write, install, push — publishes its ask, the manager presents it to
 you, and your verdict travels back to the worker (sealed, so only the manager
 can produce one):

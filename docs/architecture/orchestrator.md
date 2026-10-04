@@ -96,7 +96,13 @@ solo) — and `run` never delegates.
   manager answers it or the child's bound denies closed — a planted file can
   neither approve nor deny. A planted `decisions.json` or full-access record
   is dropped at router construction, audited (one §60 `state:dropped` row per
-  drop) and scrubbed rather than honoured. Honest limit (§59.1): a key held
+  drop) and scrubbed rather than honoured. The mailbox is also scoped to the
+  run: a worker that settles has its ask and answer files swept, asks left by
+  an earlier process are retired when the next run of that session starts, and
+  a killed session's state is disposed by `kubic clean --session`. Because one
+  run's mailbox is its own directory, a stale unanswered ask from a killed
+  session can never be routed (or fail) during a later session's run, not even
+  when both runs use `worker-1` (issues #279, #152). Honest limit (§59.1): a key held
   only in the parent process cannot authenticate state an *earlier* process
   wrote, so a resumed run re-asks instead of inheriting an approval, and a
   `--full-access` grant is not continued unless the flag is given again.

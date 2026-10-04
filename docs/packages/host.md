@@ -46,7 +46,11 @@ sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
 maps what the lane and the harness actually do onto it and
 `apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
 `kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
-`pi.tool.execute`, with parent linkage and per-span ms.
+`pi.tool.execute`, with parent linkage and per-span ms. Tool spans attach
+as the `kubic.spans` extension's `ToolTask` hooks (`runSpanHooks`, #397:
+`beforeTool` opens the span, `afterTool` closes it and returns the result
+unchanged), so a blocked call never reaches `afterTool` and no span fails
+a call.
 
 Two destinations, both documented on the
 [commands page](../cli/commands.md#where-the-spans-go):
@@ -84,7 +88,12 @@ session root in use, `installSoloPolicy({ home, sessionsRoot })`, issue #324).
 `ApprovalStore` (`load`/`save`) has memory and file backings;
 `ApprovalService` + `createApprovalAsk` serve the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
-`TriggerContext`. The bash detectors are literal-pattern heuristics with
+`TriggerContext`. The lane awaits the ask inside its pi-durable
+`ToolTask.beforeTool` hook (#397), which runs before the tool's intent is
+committed — so the service's `maxPendingMs` bound still denies a seat that
+never answers, and a crash mid-ask re-raises the ask on resume instead of
+resuming the call unapproved. The bash detectors are literal-pattern
+heuristics with
 two documented shapes: a `tee`/`cp`/`mv`/`install` write target is the
 last argument of the command segment (last-argument heuristic), and
 `sudo` matches by word anywhere in the raw command — deliberately

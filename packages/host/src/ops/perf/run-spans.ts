@@ -8,9 +8,13 @@
 //   - stderr debug lines on the existing §50 vocabulary (`[agent]` lane
 //     lines, `[tool]` in/out lines) behind `kubic run --debug`.
 // No new debug class is invented: DEBUG_CLASSES stays the pinned nine.
-// Never blocks a tool call — the hook handlers are total and return
-// undefined, so telemetry can only observe the lane, never fail it.
+// Since issue #397 the attachment is a pi-durable `ToolTask` hook (beforeTool
+// opens the span, afterTool closes it and returns the result unchanged).
+// Never blocks a tool call — the handlers return undefined except for the
+// untouched result, so telemetry can only observe the lane, never fail it.
 
+import type { HookRegistration } from '../../../../worker/src/pi-boundary.js';
+import { hook, ToolTask } from '../../../../worker/src/pi-boundary.js';
 import {
   DebugLog,
   type DebugSink,
@@ -30,22 +34,6 @@ export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.
   toolName?: string;
-}
-
-export interface ToolHookEvent {
-  toolCallId: string;
-  toolName: string;
-  isError?: boolean;
-}
-
-// The minimal slice of the harness hook registry this module needs. The real
-// `Hooks` seam (worker/pi-boundary) satisfies it structurally, so the
-// composition root passes `harness.hooks` straight through.
-export interface ToolHookRegistry {
-  on(
-    name: 'before_tool' | 'after_tool',
-    handler: (event: ToolHookEvent) => undefined,
-  ): () => void;
 }
 
 export class RunSpans {
@@ -179,26 +167,26 @@ export function serializeSpanArtifact(
     .join('\n')}\n`;
 }
 
-// Harness hook attachment: opens a pi.tool.execute span on before_tool and
-// closes it on after_tool. Returns the detach function the caller runs on
-// the way out. Handlers resolve undefined — telemetry never blocks a call.
-export function attachToolSpans(
-  registry: ToolHookRegistry,
-  spans: RunSpans,
-): () => void {
-  const offBefore = registry.on('before_tool', (event) => {
-    spans.startTool(event.toolCallId, event.toolName);
-    return undefined;
-  });
-  const offAfter = registry.on('after_tool', (event) => {
-    spans.endTool(
-      event.toolCallId,
-      event.isError === true ? 'tool reported an error' : undefined,
-    );
-    return undefined;
-  });
-  return () => {
-    offBefore();
-    offAfter();
-  };
+// Harness hook attachment for the `kubic.spans` extension (issue #397):
+// opens a pi.tool.execute span on beforeTool and closes it on afterTool.
+// Handlers never block a call; afterTool returns the result unchanged.
+// Blocked calls never reach the tool task's afterTool (a block settles
+// before execution), so a span only exists for a call that ran — the same
+// shape the removed pi-agent-core attachToolSpans had.
+export function runSpanHooks(spans: RunSpans): HookRegistration[] {
+  return [
+    hook(ToolTask, {
+      beforeTool: (call) => {
+        spans.startTool(call.id, call.name);
+        return undefined;
+      },
+      afterTool: (call, result) => {
+        spans.endTool(
+          call.id,
+          result.isError === true ? 'tool reported an error' : undefined,
+        );
+        return result;
+      },
+    }),
+  ];
 }

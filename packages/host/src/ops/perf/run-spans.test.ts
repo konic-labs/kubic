@@ -4,38 +4,28 @@
 // Faux-only: injected clock, no I/O, no network.
 import { describe, expect, it } from 'vitest';
 import {
-  attachToolSpans,
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  defineExtension,
+  defineTool,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  MemoryStorage,
+  Type,
+} from '../../../../worker/src/pi-boundary.js';
+import {
   RUN_SPAN_NAMES,
   RunSpans,
+  runSpanHooks,
   serializeSpanArtifact,
 } from './run-spans.js';
 
 function ticks(values: number[]): () => number {
   const queue = [...values];
   return () => queue.shift() ?? values[values.length - 1] ?? 0;
-}
-
-// Minimal stand-in for the harness hook registry: same shape as the Pi
-// `Hooks.on` seam (register → unsubscribe), no Pi import in the test.
-function hookRegistry() {
-  const before: Array<(event: unknown) => unknown> = [];
-  const after: Array<(event: unknown) => unknown> = [];
-  return {
-    hooks: {
-      on: (name: string, handler: (event: never) => unknown): (() => void) => {
-        const list = name === 'before_tool' ? before : after;
-        list.push(handler as (event: unknown) => unknown);
-        return () => {
-          const at = list.indexOf(handler as (event: unknown) => unknown);
-          if (at !== -1) list.splice(at, 1);
-        };
-      },
-    },
-    fireBefore: (event: unknown) => Promise.all(before.map((h) => h(event))),
-    fireAfter: (event: unknown) => Promise.all(after.map((h) => h(event))),
-    beforeCount: () => before.length,
-    afterCount: () => after.length,
-  };
 }
 
 describe('RunSpans lane/tool trace (issue #98)', () => {
@@ -179,79 +169,158 @@ describe('span artifact serialization (issue #98)', () => {
   });
 });
 
-describe('attachToolSpans (issue #98)', () => {
-  it('opens a tool span on before_tool and closes it on after_tool', async () => {
-    const spans = new RunSpans(ticks([0, 0, 4]));
+describe('runSpanHooks (issue #98, #397)', () => {
+  it('records one before/after pair per tool call on a real harness', async () => {
+    const spans = new RunSpans();
     const run = spans.startRun();
-    const registry = hookRegistry();
-    const detach = attachToolSpans(registry.hooks, spans);
-    await registry.fireBefore({
-      toolCallId: 'c1',
-      toolName: 'read',
-      args: { path: 'a.txt' },
-    });
-    await registry.fireAfter({
-      toolCallId: 'c1',
-      toolName: 'read',
-      isError: false,
-    });
-    spans.endRun(run);
-    const tool = spans
-      .trace()
-      .find((span) => span.name === RUN_SPAN_NAMES.tool);
-    expect(tool?.toolName).toBe('read');
-    expect(tool?.endMs).toBe(4);
-    detach();
-    expect(registry.beforeCount()).toBe(0);
-    expect(registry.afterCount()).toBe(0);
-  });
-
-  it('records the error when the harness reports an errored call', async () => {
-    const spans = new RunSpans(ticks([0, 0, 2]));
-    const run = spans.startRun();
-    const registry = hookRegistry();
-    attachToolSpans(registry.hooks, spans);
-    await registry.fireBefore({ toolCallId: 'c2', toolName: 'bash', args: {} });
-    await registry.fireAfter({
-      toolCallId: 'c2',
-      toolName: 'bash',
-      isError: true,
-    });
-    spans.endRun(run);
-    const tool = spans
-      .trace()
-      .find((span) => span.name === RUN_SPAN_NAMES.tool);
-    expect(tool?.error).toBe('tool reported an error');
-  });
-
-  it('never blocks a tool call: handlers resolve undefined', async () => {
-    const spans = new RunSpans(ticks([0, 0, 1]));
-    const registry = hookRegistry();
-    attachToolSpans(registry.hooks, spans);
-    const results = await registry.fireBefore({
-      toolCallId: 'c3',
-      toolName: 'read',
-      args: {},
-    });
-    expect(results).toEqual([undefined]);
-    const after = await registry.fireAfter({
-      toolCallId: 'c3',
-      toolName: 'read',
-      isError: false,
-    });
-    expect(after).toEqual([undefined]);
-  });
-
-  it('does not throw when an after_tool event has no matching start', async () => {
-    const spans = new RunSpans(ticks([0]));
-    const registry = hookRegistry();
-    attachToolSpans(registry.hooks, spans);
-    await expect(
-      registry.fireAfter({
-        toolCallId: 'ghost',
-        toolName: 'read',
-        isError: false,
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('probe', { value: 'a' }), {
+        stopReason: 'toolUse',
       }),
-    ).resolves.toEqual([undefined]);
+      fauxAssistantMessage('done'),
+    ]);
+    const registry = createRegistry();
+    registry.install(
+      defineExtension({ name: 'kubic.spans', hooks: runSpanHooks(spans) }),
+    );
+    registry.install(
+      defineExtension({
+        name: 'kubic',
+        tools: [
+          defineTool({
+            name: 'probe',
+            description: 'returns after doing nothing',
+            parameters: Type.Object({ value: Type.String() }),
+            execute: async () => ({
+              content: [{ type: 'text', text: 'probed' }],
+            }),
+          }),
+        ],
+      }),
+    );
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      { models, registry },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const model = faux.getModel();
+      const root = await harness.root(BACKGROUND_CONTEXT, {
+        agent: { model: { provider: model.provider, modelId: model.id } },
+      });
+      const submission = await root.submit(
+        { type: 'input', content: 'go' },
+        BACKGROUND_CONTEXT,
+      );
+      expect((await submission.wait(BACKGROUND_CONTEXT)).status).toBe('done');
+      spans.endRun(run);
+      const tools = spans
+        .trace()
+        .filter((span) => span.name === RUN_SPAN_NAMES.tool);
+      expect(tools).toHaveLength(1);
+      expect(tools[0]?.toolName).toBe('probe');
+      expect(tools[0]?.endMs).not.toBeNull();
+      expect(
+        spans.debugLines().some((line) => line.startsWith('[tool] in probe')),
+      ).toBe(true);
+      expect(
+        spans
+          .debugLines()
+          .some(
+            (line) =>
+              line.startsWith('[tool] out probe') && line.includes('ok'),
+          ),
+      ).toBe(true);
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('marks an errored tool result on the span', async () => {
+    const spans = new RunSpans();
+    const run = spans.startRun();
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('failing', {}), {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('done'),
+    ]);
+    const registry = createRegistry();
+    registry.install(
+      defineExtension({ name: 'kubic.spans', hooks: runSpanHooks(spans) }),
+    );
+    registry.install(
+      defineExtension({
+        name: 'kubic',
+        tools: [
+          defineTool({
+            name: 'failing',
+            description: 'fails on purpose',
+            parameters: Type.Object({}),
+            execute: async () => ({
+              content: [{ type: 'text', text: 'boom' }],
+              isError: true,
+            }),
+          }),
+        ],
+      }),
+    );
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      { models, registry },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const model = faux.getModel();
+      const root = await harness.root(BACKGROUND_CONTEXT, {
+        agent: { model: { provider: model.provider, modelId: model.id } },
+      });
+      const submission = await root.submit(
+        { type: 'input', content: 'go' },
+        BACKGROUND_CONTEXT,
+      );
+      await submission.wait(BACKGROUND_CONTEXT);
+      spans.endRun(run);
+      const tool = spans
+        .trace()
+        .find((span) => span.name === RUN_SPAN_NAMES.tool);
+      expect(tool?.error).toBe('tool reported an error');
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('never blocks a call and returns the afterTool result unchanged', async () => {
+    const spans = new RunSpans(ticks([0, 0, 1]));
+    const registration = runSpanHooks(spans)[0];
+    const handlers = registration?.handlers as {
+      beforeTool?: (
+        call: { id: string; name: string },
+        api: unknown,
+        context: unknown,
+      ) => unknown;
+      afterTool?: (
+        call: { id: string; name: string },
+        result: unknown,
+        api: unknown,
+        context: unknown,
+      ) => unknown;
+    };
+    expect(
+      await handlers.beforeTool?.({ id: 'c1', name: 'read' }, {}, {}),
+    ).toBe(undefined);
+    const result = {
+      content: [{ type: 'text' as const, text: 'x' }],
+      isError: false,
+    };
+    expect(
+      await handlers.afterTool?.({ id: 'c1', name: 'read' }, result, {}, {}),
+    ).toBe(result);
   });
 });

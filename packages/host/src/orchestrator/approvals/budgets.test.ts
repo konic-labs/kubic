@@ -1,8 +1,22 @@
 // Opt-in orchestrator budgets (issue #48; §71 enforcement table).
-// RED first: no defaults, burn-down per dim, before_tool gate at
+// RED first: no defaults, burn-down per dim, beforeTool gate at
 // maxToolCalls=5→6th as budget_exhausted (exit 3, never failure),
 // self-raise refused, trajectory event emitted.
 import { describe, expect, it } from 'vitest';
+import { policyInterceptorHooks } from '../../../../worker/src/lane/interceptors.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  defineExtension,
+  defineTool,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  MemoryStorage,
+  Type,
+} from '../../../../worker/src/pi-boundary.js';
 import { MAX_RUN_TIMEOUT_MS, RUN_EXIT_BUDGET } from '../../run-cli.js';
 import {
   applyBudgetRaise,
@@ -21,6 +35,7 @@ import {
   mintUserBudgetApproval,
   OrchestratorBudgetError,
   parseWorkerBudgetEnv,
+  type RunBudgetEnforcer,
   recordToolCall,
   refuseSelfRaise,
   usageSpendOf,
@@ -206,7 +221,6 @@ describe('child run budget enforcement (issue #208)', () => {
     };
     expect(usageSpendOf(row)).toEqual({ tokens: 7, costUsd: 1.25 });
   });
-
   it('childBudgetOf strips the manager-owned wall clock and keeps the rest', () => {
     expect(
       childBudgetOf({
@@ -257,23 +271,25 @@ describe('child run budget enforcement (issue #208)', () => {
   });
 
   it('createRunBudgetEnforcer counts every tool attempt and stops at the cap', () => {
-    // The real BEFORE_TOOL semantics: the cap-th attempt runs and the next
-    // is blocked with the named limit — the wiring, not just the meter.
+    // The real ToolTask.beforeTool semantics: the cap-th attempt runs and
+    // the next is blocked with the named limit — the hook, not just the meter.
     const breaches: BudgetTermination[] = [];
     const enforcer = createRunBudgetEnforcer({ maxToolCalls: 2 }, (t) =>
       breaches.push(t),
     );
-    expect(enforcer.onToolAttempt()).toBeUndefined();
-    expect(enforcer.onToolAttempt()).toBeUndefined();
-    const blocked = enforcer.onToolAttempt();
-    expect(blocked?.block.reason).toContain(BUDGET_EXHAUSTED);
-    expect(blocked?.block.reason).toContain('limit=toolCalls');
-    expect(blocked?.block.terminate).toBe(false);
+    const attempt = beforeToolAttempt(enforcer);
+    expect(attempt({ id: 'c1', name: 'bash', arguments: {} })).toBeUndefined();
+    expect(attempt({ id: 'c2', name: 'bash', arguments: {} })).toBeUndefined();
+    const blocked = attempt({ id: 'c3', name: 'bash', arguments: {} }) as {
+      block: string;
+    };
+    expect(blocked.block).toContain(BUDGET_EXHAUSTED);
+    expect(blocked.block).toContain('limit=toolCalls');
     // The breach is reported exactly once — a fourth attempt must not repeat it.
     expect(breaches).toEqual([
       { status: 'budget_exhausted', limit: 'toolCalls' },
     ]);
-    expect(enforcer.onToolAttempt()).toBeDefined();
+    expect(attempt({ id: 'c4', name: 'bash', arguments: {} })).toBeDefined();
     expect(breaches).toHaveLength(1);
   });
 
@@ -282,18 +298,147 @@ describe('child run budget enforcement (issue #208)', () => {
     const enforcer = createRunBudgetEnforcer({ maxCostUsd: 1 }, (t) =>
       breaches.push(t),
     );
-    enforcer.onUsage({
-      row: {
-        usage: {
-          input: 100,
-          output: 100,
-          cost: { total: 2.5 },
-        },
-      },
-    });
+    enforcer.onUsage(fixtureUsageRow(2.5));
     expect(breaches).toEqual([{ status: 'budget_exhausted', limit: 'cost' }]);
     // A later attempt is still blocked by the exhausted meter.
-    expect(enforcer.onToolAttempt()?.block.reason).toContain('limit=cost');
+    const blocked = beforeToolAttempt(enforcer)({
+      id: 'c1',
+      name: 'bash',
+      arguments: {},
+    }) as { block: string };
+    expect(blocked.block).toContain('limit=cost');
+  });
+});
+
+// Drives the enforcer's real beforeTool handler the way the harness does:
+// one hook registration, one handler, the call as pi-durable passes it.
+function beforeToolAttempt(
+  enforcer: RunBudgetEnforcer,
+): (call: {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}) => unknown {
+  const registration = enforcer.hooks()[0];
+  const handlers = registration?.handlers as {
+    beforeTool?: (
+      call: { id: string; name: string; arguments: Record<string, unknown> },
+      api: unknown,
+      context: unknown,
+    ) => unknown;
+  };
+  return (call) => handlers.beforeTool?.(call, {}, {});
+}
+
+function fixtureUsageRow(costUsd: number) {
+  return {
+    model: 'faux',
+    provider: 'faux',
+    usage: {
+      input: 100,
+      output: 100,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 200,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: costUsd,
+      },
+    },
+  };
+}
+
+// Issue #208 parity on the real harness (issue #397): the budget meter lives
+// in the `kubic.budget` extension installed BEFORE `kubic.policy`, so an
+// attempt the destructive guard blocks is still counted and the budget can
+// trip on a later call.
+describe('budget ordering against the policy guards (issue #208/#397)', () => {
+  it('counts attempts the destructive guard blocks, then blocks on the budget', async () => {
+    const world: string[] = [];
+    const breaches: BudgetTermination[] = [];
+    const enforcer = createRunBudgetEnforcer({ maxToolCalls: 2 }, (t) =>
+      breaches.push(t),
+    );
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall('bash', { command: 'rm -rf /tmp/a' }),
+          fauxToolCall('bash', { command: 'rm -rf /tmp/b' }),
+          fauxToolCall('bash', { command: 'rm -rf /tmp/c' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('done'),
+    ]);
+    const registry = createRegistry();
+    registry.install(
+      defineExtension({ name: 'kubic.budget', hooks: enforcer.hooks() }),
+    );
+    registry.install(
+      defineExtension({
+        name: 'kubic.policy',
+        hooks: policyInterceptorHooks({ workspace: '/work' }),
+      }),
+    );
+    registry.install(
+      defineExtension({
+        name: 'kubic',
+        tools: [
+          defineTool({
+            name: 'bash',
+            description: 'run a shell command',
+            parameters: Type.Object({ command: Type.String() }),
+            execute: async (args) => {
+              world.push(args.command);
+              return { content: [{ type: 'text', text: 'ran' }] };
+            },
+          }),
+        ],
+      }),
+    );
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      { models, registry },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const model = faux.getModel();
+      const root = await harness.root(BACKGROUND_CONTEXT, {
+        agent: { model: { provider: model.provider, modelId: model.id } },
+      });
+      const submission = await root.submit(
+        { type: 'input', content: 'clean up' },
+        BACKGROUND_CONTEXT,
+      );
+      const settled = await submission.wait(BACKGROUND_CONTEXT);
+      expect(settled.status).toBe('done');
+      const view = await root.context(BACKGROUND_CONTEXT);
+      const results = view.messages
+        .filter((message) => message.role === 'toolResult')
+        .map((message) =>
+          JSON.stringify(
+            (message as unknown as { content?: unknown }).content ?? '',
+          ),
+        );
+      // The two guard-blocked attempts were counted; the third hit the cap.
+      expect(results).toHaveLength(3);
+      expect(results[0]).toContain('destructive command blocked');
+      expect(results[1]).toContain('destructive command blocked');
+      expect(results[2]).toContain(BUDGET_EXHAUSTED);
+      expect(results[2]).toContain('limit=toolCalls');
+      expect(breaches).toEqual([
+        { status: 'budget_exhausted', limit: 'toolCalls' },
+      ]);
+      expect(world).toEqual([]);
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
   });
 });
 

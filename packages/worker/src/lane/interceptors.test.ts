@@ -1,326 +1,478 @@
-// Slice C: before_tool interceptors on the solo lane (issue #15).
-import { afterAll, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+// Policy interceptors as pi-durable ToolTask hooks (issues #15, #208, #397).
+// Every behaviour here runs through a REAL Harness over MemoryStorage with
+// the faux provider: first-block-wins, throw-to-block and argument chaining
+// are the harness's own hook semantics, not a hand-rolled stand-in.
+import { afterEach, describe, expect, it } from 'vitest';
 import {
-  type AgentLane,
   BACKGROUND_CONTEXT,
+  type Conversation,
   createModels,
+  createRegistry,
+  defineExtension,
+  defineTool,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type HarnessEvent,
+  Harness,
+  type HookRegistration,
+  hook,
   type JsonValue,
-  MemorySessionRepo,
-  type Session,
+  MemoryStorage,
+  ToolResultEntry,
+  ToolTask,
+  Type,
 } from '../pi-boundary.js';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
+  type PolicyInterceptorOptions,
+  policyInterceptorHooks,
   redactReason,
-  registerPolicyInterceptors,
 } from './interceptors.js';
-import { bootSoloLane, driveToSettled } from './solo.js';
 
-const sessions: Session[] = [];
-afterAll(async () => {
-  for (const session of sessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT);
+const openHarnesses: Harness[] = [];
+
+afterEach(async () => {
+  for (const harness of openHarnesses.splice(0)) {
+    await harness.close(BACKGROUND_CONTEXT);
   }
 });
 
-interface Booted {
-  harness: {
-    events: {
-      on: (
-        type: 'tool_end',
-        listener: (event: HarnessEvent) => void,
-      ) => () => void;
-    };
-    hooks: Parameters<typeof registerPolicyInterceptors>[0];
-  };
-  lane: AgentLane;
-  env: FakeExecutionEnv;
+interface World {
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
 }
 
-async function boot(
-  calls: Array<{ name: string; args: Record<string, JsonValue> }>,
-): Promise<Booted> {
-  const env = new FakeExecutionEnv({});
-  env.fs.writeFile('notes.txt', 'workspace notes\n');
-  const repo = new MemorySessionRepo();
-  const session = await repo.create({}, BACKGROUND_CONTEXT);
+interface SeenToolResult {
+  toolName: string;
+  isError: boolean;
+  text: string;
+  code?: string;
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part: unknown) => {
+      if (typeof part !== 'object' || part === null) return '';
+      const block = part as { type?: unknown; text?: unknown };
+      return block.type === 'text' && typeof block.text === 'string'
+        ? block.text
+        : '';
+    })
+    .join('');
+}
+
+// What the model actually sees: the harness's own model context, in order.
+async function toolResults(root: Conversation): Promise<SeenToolResult[]> {
+  const view = await root.context(BACKGROUND_CONTEXT);
+  return view.messages
+    .filter((message) => message.role === 'toolResult')
+    .map((message) => {
+      const result = message as unknown as {
+        toolName?: string;
+        isError?: boolean;
+        content?: unknown;
+      };
+      return {
+        toolName: result.toolName ?? '',
+        isError: result.isError === true,
+        text: textOf(result.content),
+      };
+    });
+}
+
+async function errorCodes(
+  root: Conversation,
+): Promise<Array<string | undefined>> {
+  const page = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT);
+  return page.items
+    .filter((entry) => ToolResultEntry.is(entry))
+    .reverse()
+    .map((entry) => {
+      const data = entry.data as unknown as
+        | { diagnostics?: Array<{ code?: string }> }
+        | undefined;
+      return data?.diagnostics?.[0]?.code;
+    });
+}
+
+// The probe tools record what the tool layer received, so an interceptor's
+// rewrite is observable at the seam the tool executes against.
+function probeTools(world: World) {
+  const record = (
+    name: string,
+    args: Record<string, unknown>,
+  ): { content: Array<{ type: 'text'; text: string }> } => {
+    world.calls.push({ name, args });
+    return { content: [{ type: 'text', text: `${name} ran` }] };
+  };
+  return [
+    defineTool({
+      name: 'bash',
+      description: 'run a shell command',
+      parameters: Type.Object({ command: Type.String() }),
+      execute: async (args) => record('bash', args),
+    }),
+    defineTool({
+      name: 'read',
+      description: 'read a file',
+      parameters: Type.Object({ path: Type.String() }),
+      execute: async (args) => record('read', args),
+    }),
+    defineTool({
+      name: 'write',
+      description: 'write a file',
+      parameters: Type.Object({
+        path: Type.String(),
+        content: Type.Optional(Type.String()),
+      }),
+      execute: async (args) => record('write', args),
+    }),
+    defineTool({
+      name: 'ls',
+      description: 'list a directory',
+      parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+      execute: async (args) => record('ls', args),
+    }),
+  ];
+}
+
+interface BootOptions {
+  calls: Array<{ name: string; args: Record<string, JsonValue> }>;
+  policy?: PolicyInterceptorOptions;
+  // A hook in the `kubic.budget` extension, installed BEFORE kubic.policy.
+  budgetHooks?: HookRegistration[];
+  // Hooks appended after the policy hooks, inside kubic.policy.
+  extraHooks?: HookRegistration[];
+}
+
+interface Booted {
+  harness: Harness;
+  root: Conversation;
+  world: World;
+}
+
+async function boot(options: BootOptions): Promise<Booted> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
     fauxAssistantMessage(
-      calls.map((call) => fauxToolCall(call.name, call.args)),
+      options.calls.map((call) => fauxToolCall(call.name, call.args)),
+      { stopReason: 'toolUse' },
     ),
     fauxAssistantMessage('done'),
   ]);
-  const booted = await bootSoloLane({
-    session,
-    models,
-    model: faux.getModel(),
-    env,
-    sessionId: session.metadata.id,
-    agentId: 'root',
+  const world: World = { calls: [] };
+  const registry = createRegistry();
+  registry.install(
+    defineExtension({
+      name: 'kubic.budget',
+      hooks: options.budgetHooks ?? [],
+    }),
+  );
+  registry.install(
+    defineExtension({
+      name: 'kubic.policy',
+      hooks: [
+        ...policyInterceptorHooks(options.policy ?? { workspace: '/work' }),
+        ...(options.extraHooks ?? []),
+      ],
+    }),
+  );
+  registry.install(
+    defineExtension({ name: 'kubic', tools: probeTools(world) }),
+  );
+  const harness = await Harness.open(
+    new MemoryStorage(),
+    { models, registry },
+    BACKGROUND_CONTEXT,
+  );
+  openHarnesses.push(harness);
+  const model = faux.getModel();
+  const root = await harness.root(BACKGROUND_CONTEXT, {
+    agent: { model: { provider: model.provider, modelId: model.id } },
   });
-  sessions.push(session);
-  return { ...(booted as unknown as Booted), env };
+  return { harness, root, world };
 }
 
-async function driveToolEnds(booted: Booted): Promise<HarnessEvent[]> {
-  const ends: HarnessEvent[] = [];
-  const off = booted.harness.events.on('tool_end', (event) => {
-    ends.push(event);
-  });
-  try {
-    const admission = await booted.lane.accept(
-      { kind: 'prompt', prompt: 'run the tools' },
-      BACKGROUND_CONTEXT,
-    );
-    if (!admission.ok) throw new Error('accept failed');
-    await driveToSettled(
-      booted.lane,
-      admission.value.operationId,
-      BACKGROUND_CONTEXT,
-    );
-  } finally {
-    off();
-  }
-  return ends;
+async function drive(booted: Booted, prompt = 'go'): Promise<void> {
+  const submission = await booted.root.submit(
+    { type: 'input', content: prompt },
+    BACKGROUND_CONTEXT,
+  );
+  const settled = await submission.wait(BACKGROUND_CONTEXT);
+  expect(settled.status).toBe('done');
 }
 
-describe('policy interceptors (issue #15, slice C)', () => {
-  it('blocks destructive bash with a reason and terminate:false', async () => {
-    const booted = await boot([
-      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-    ]);
-    registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(1);
-    const end = ends[0];
-    expect(end.type).toBe('tool_end');
-    if (end.type !== 'tool_end') throw new Error('unreachable');
-    expect(end.isError).toBe(true);
-    expect(end.terminate).toBe(false);
-    expect(JSON.stringify(end.result)).toContain('destructive command blocked');
-  });
-
-  it('confines reads outside the workspace, chained across two interceptors', async () => {
-    const booted = await boot([
-      { name: 'read', args: { path: '/etc/passwd' } },
-    ]);
-    registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
-    const seenBySecond: Array<Record<string, unknown>> = [];
-    booted.harness.hooks.on('before_tool', (event) => {
-      seenBySecond.push({ ...(event.args as Record<string, unknown>) });
-      return undefined;
+describe('policyInterceptorHooks on a real harness (issue #397)', () => {
+  it('blocks a destructive bash call with a redacted reason the model sees as an error', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'rm -rf /tmp/x token=abc123' } },
+      ],
     });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(1);
-    // The second interceptor saw the confined args (chaining), and the tool ran confined.
-    expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.path).toBe('/work/etc/passwd');
-    const end = ends[0];
-    if (end.type !== 'tool_end') throw new Error('unreachable');
-    expect(JSON.stringify(end.result)).toContain('/work/etc/passwd');
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.isError).toBe(true);
+    expect(results[0]?.text).toContain('destructive command blocked');
+    expect(results[0]?.text).toContain('token=[REDACTED]');
+    expect(results[0]?.text).not.toContain('abc123');
+    expect(await errorCodes(booted.root)).toEqual(['blocked']);
+    expect(booted.world.calls).toHaveLength(0);
   });
 
-  it('confines write paths the same as reads', async () => {
-    const booted = await boot([
-      { name: 'write', args: { path: '/etc/cron.d/x', content: 'nope' } },
-    ]);
-    registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
-    const seenBySecond: Array<Record<string, unknown>> = [];
-    booted.harness.hooks.on('before_tool', (event) => {
-      seenBySecond.push({ ...(event.args as Record<string, unknown>) });
-      return undefined;
+  it('fails closed when a policy option throws, redacting the reason', async () => {
+    const booted = await boot({
+      calls: [{ name: 'bash', args: { command: 'ls -la' } }],
+      policy: {
+        workspace: '/work',
+        isDestructive: () => {
+          throw new Error('policy exploded token=SECRET');
+        },
+      },
     });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(1);
-    expect(seenBySecond).toHaveLength(1);
-    expect(seenBySecond[0]?.path).toBe('/work/etc/cron.d/x');
-    const end = ends[0];
-    if (end?.type !== 'tool_end') throw new Error('unreachable');
-    expect(end.isError).toBe(false);
-    // The write landed at the confined path, never the requested one.
-    expect(booted.env.fs.readFile('/work/etc/cron.d/x')).toBe('nope');
-    expect(() => booted.env.fs.readFile('/etc/cron.d/x')).toThrow();
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(true);
+    expect(results[0]?.text).toContain('policy exploded');
+    expect(results[0]?.text).toContain('token=[REDACTED]');
+    expect(results[0]?.text).not.toContain('SECRET');
+    expect(booted.world.calls).toHaveLength(0);
   });
 
-  it('lets read open an advertised skill root, and nothing else (issue #173)', async () => {
+  it('blocks when any hook throws (fail closed)', async () => {
+    const booted = await boot({
+      calls: [{ name: 'ls', args: { path: '.' } }],
+      extraHooks: [
+        hook(ToolTask, {
+          beforeTool: () => {
+            throw new Error('guard exploded');
+          },
+        }),
+      ],
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(true);
+    expect(results[0]?.text).toContain('guard exploded');
+    expect(booted.world.calls).toHaveLength(0);
+  });
+
+  it('rewrites confined paths, and a later hook sees the rewritten arguments', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const booted = await boot({
+      calls: [
+        { name: 'read', args: { path: '/etc/passwd' } },
+        { name: 'write', args: { path: '/etc/cron.d/x', content: 'nope' } },
+      ],
+      extraHooks: [
+        hook(ToolTask, {
+          beforeTool: (call) => {
+            seen.push({ ...call.arguments });
+            return undefined;
+          },
+        }),
+      ],
+    });
+    await drive(booted);
+    expect(booted.world.calls.map((call) => call.args.path)).toEqual([
+      '/work/etc/passwd',
+      '/work/etc/cron.d/x',
+    ]);
+    expect(seen.map((args) => args.path)).toEqual([
+      '/work/etc/passwd',
+      '/work/etc/cron.d/x',
+    ]);
+  });
+
+  it('lets read open an advertised skill root and confines everything else (issue #173)', async () => {
     const skill = '/home/u/.agents/skills/a/SKILL.md';
-    const booted = await boot([
-      { name: 'read', args: { path: skill } },
-      { name: 'write', args: { path: skill, content: 'pwned' } },
-      { name: 'edit', args: { path: skill, oldText: 'a', newText: 'b' } },
-      { name: 'read', args: { path: '/etc/passwd' } },
-      { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
-    ]);
-    const seen: { tool: string; path: unknown }[] = [];
-    registerPolicyInterceptors(booted.harness.hooks, {
-      workspace: '/work',
-      readRoots: ['/home/u/.agents/skills/a'],
-    });
-    booted.harness.hooks.on('before_tool', (event) => {
-      seen.push({ tool: event.toolName, path: event.args.path });
-      return undefined;
-    });
-    await driveToolEnds(booted);
-    expect(seen).toEqual([
-      { tool: 'read', path: skill },
-      { tool: 'write', path: '/work/home/u/.agents/skills/a/SKILL.md' },
-      { tool: 'edit', path: '/work/home/u/.agents/skills/a/SKILL.md' },
-      { tool: 'read', path: '/work/etc/passwd' },
-      { tool: 'ls', path: '/work/home/u/.agents/skills/a' },
-    ]);
-  });
-
-  it('blocks network commands under a domain-less allowlist (issue #166)', async () => {
-    const blocked = await boot([
-      { name: 'bash', args: { command: 'curl https://evil.example' } },
-    ]);
-    registerPolicyInterceptors(blocked.harness.hooks, {
-      workspace: '/work',
-      network: 'allowlist',
-    });
-    const ends = await driveToolEnds(blocked);
-    expect(JSON.stringify(ends[0])).toContain('network command blocked');
-    expect(JSON.stringify(ends[0])).toContain('allowlist');
-  });
-
-  it('blocks network commands when network is none, allows otherwise', async () => {
-    const blocked = await boot([
-      { name: 'bash', args: { command: 'curl https://example.com' } },
-    ]);
-    registerPolicyInterceptors(blocked.harness.hooks, {
-      workspace: '/work',
-      network: 'none',
-    });
-    const blockedEnds = await driveToolEnds(blocked);
-    expect(JSON.stringify(blockedEnds[0])).toContain('network command blocked');
-
-    const allowed = await boot([
-      { name: 'bash', args: { command: 'curl https://example.com' } },
-    ]);
-    registerPolicyInterceptors(allowed.harness.hooks, { workspace: '/work' });
-    const allowedEnds = await driveToolEnds(allowed);
-    expect(allowedEnds).toHaveLength(1);
-    const allowedEnd = allowedEnds[0];
-    if (allowedEnd?.type !== 'tool_end') throw new Error('unreachable');
-    expect(allowedEnd.isError).toBe(false);
-    expect(JSON.stringify(allowedEnd)).not.toContain('network command blocked');
-  });
-
-  it('denies through the approval decider and stands down guards only when challenged', async () => {
-    const denied = await boot([
-      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-    ]);
-    registerPolicyInterceptors(denied.harness.hooks, {
-      workspace: '/work',
-      approve: () =>
-        Promise.resolve({ approved: false, reason: 'user said no' }),
-    });
-    const deniedEnds = await driveToolEnds(denied);
-    expect(JSON.stringify(deniedEnds[0])).toContain(
-      'not approved: user said no',
-    );
-
-    // Challenged + granted: the destructive guard stands down and the call runs.
-    const challenged = await boot([
-      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-    ]);
-    registerPolicyInterceptors(challenged.harness.hooks, {
-      workspace: '/work',
-      approve: () => Promise.resolve({ approved: true, challenged: true }),
-    });
-    const challengedEnds = await driveToolEnds(challenged);
-    expect(challengedEnds).toHaveLength(1);
-    const challengedEnd = challengedEnds[0];
-    if (challengedEnd?.type !== 'tool_end') throw new Error('unreachable');
-    expect(challengedEnd.isError).toBe(false);
-    expect(JSON.stringify(challengedEnd)).not.toContain('blocked');
-
-    // Unchallenged fast-path: approved, but every #15 guard stays up — the
-    // outside read is still confined.
-    const fast = await boot([{ name: 'read', args: { path: '/etc/passwd' } }]);
-    registerPolicyInterceptors(fast.harness.hooks, {
-      workspace: '/work',
-      approve: () => Promise.resolve({ approved: true, challenged: false }),
-    });
-    const fastEnds = await driveToolEnds(fast);
-    expect(fastEnds).toHaveLength(1);
-    expect(JSON.stringify(fastEnds[0])).toContain('/work/etc/passwd');
-  });
-
-  it('counts blocked attempts against the budget', async () => {
-    const booted = await boot([
-      { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
-      { name: 'ls', args: { path: '.' } },
-    ]);
-    const triggers: Array<{ kind: string; count: number }> = [];
-    registerPolicyInterceptors(booted.harness.hooks, {
-      workspace: '/work',
-      maxToolCalls: 1,
-      onTrigger: (trigger) => {
-        triggers.push(trigger);
+    const booted = await boot({
+      calls: [
+        { name: 'read', args: { path: skill } },
+        { name: 'write', args: { path: skill, content: 'pwned' } },
+        { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
+        { name: 'read', args: { path: '/etc/passwd' } },
+      ],
+      policy: {
+        workspace: '/work',
+        readRoots: ['/home/u/.agents/skills/a'],
       },
     });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(2);
-    // First attempt passes the budget (count 1) but the destructive guard
-    // blocks it; the second attempt exceeds the budget.
-    expect(JSON.stringify(ends)).toContain('destructive command blocked');
-    expect(JSON.stringify(ends)).toContain('maxToolCalls (1) exceeded');
+    await drive(booted);
+    expect(booted.world.calls.map((call) => call.args.path)).toEqual([
+      skill,
+      '/work/home/u/.agents/skills/a/SKILL.md',
+      '/work/home/u/.agents/skills/a',
+      '/work/etc/passwd',
+    ]);
+  });
+
+  it('blocks network commands when network is none and admits them otherwise', async () => {
+    const blocked = await boot({
+      calls: [{ name: 'bash', args: { command: 'curl https://evil.example' } }],
+      policy: { workspace: '/work', network: 'none' },
+    });
+    await drive(blocked);
+    const blockedResults = await toolResults(blocked.root);
+    expect(blockedResults[0]?.isError).toBe(true);
+    expect(blockedResults[0]?.text).toContain('network command blocked');
+    expect(blocked.world.calls).toHaveLength(0);
+
+    const allowed = await boot({
+      calls: [{ name: 'bash', args: { command: 'curl https://example.com' } }],
+      policy: { workspace: '/work' },
+    });
+    await drive(allowed);
+    const allowedResults = await toolResults(allowed.root);
+    expect(allowedResults[0]?.isError).toBe(false);
+    expect(allowed.world.calls).toHaveLength(1);
+  });
+
+  it('lets an approved call through and blocks a denied one (issue #16)', async () => {
+    const denied = await boot({
+      calls: [{ name: 'bash', args: { command: 'rm -rf /tmp/x' } }],
+      policy: {
+        workspace: '/work',
+        approve: async () => ({ approved: false, reason: 'user said no' }),
+      },
+    });
+    await drive(denied);
+    const deniedResults = await toolResults(denied.root);
+    expect(deniedResults[0]?.isError).toBe(true);
+    expect(deniedResults[0]?.text).toContain('not approved: user said no');
+    expect(denied.world.calls).toHaveLength(0);
+
+    const allowed = await boot({
+      calls: [{ name: 'bash', args: { command: 'rm -rf /tmp/x' } }],
+      policy: {
+        workspace: '/work',
+        approve: async () => ({ approved: true, challenged: true }),
+      },
+    });
+    await drive(allowed);
+    const allowedResults = await toolResults(allowed.root);
+    expect(allowedResults[0]?.isError).toBe(false);
+    expect(allowed.world.calls).toHaveLength(1);
+  });
+
+  it('stands down the guards only for a challenged approval', async () => {
+    const fast = await boot({
+      calls: [{ name: 'read', args: { path: '/etc/passwd' } }],
+      policy: {
+        workspace: '/work',
+        approve: async () => ({ approved: true, challenged: false }),
+      },
+    });
+    await drive(fast);
+    expect(fast.world.calls[0]?.args.path).toBe('/work/etc/passwd');
+  });
+
+  it('stands down per call id, never by tool name (issue #194)', async () => {
+    let asks = 0;
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+      ],
+      policy: {
+        workspace: '/work',
+        approve: async () => {
+          asks += 1;
+          // Only the first call is challenged and granted; the identical
+          // second call is approved on the fast path and gets no stand-down.
+          return asks === 1
+            ? { approved: true, challenged: true }
+            : { approved: true, challenged: false };
+        },
+      },
+    });
+    await drive(booted);
+    expect(asks).toBe(2);
+    expect(booted.world.calls).toHaveLength(1);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('destructive command blocked');
+  });
+});
+
+describe('hook ordering (issue #208)', () => {
+  it('a budget hook installed before the policy guards counts a blocked attempt', async () => {
+    const attempts: string[] = [];
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+        { name: 'ls', args: { path: '.' } },
+      ],
+      budgetHooks: [
+        hook(ToolTask, {
+          beforeTool: (call) => {
+            attempts.push(call.name);
+            return undefined;
+          },
+        }),
+      ],
+      policy: { workspace: '/work' },
+    });
+    await drive(booted);
+    // The first attempt was counted even though a later guard blocked it.
+    expect(attempts).toEqual(['bash', 'ls']);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.text).toContain('destructive command blocked');
+    expect(booted.world.calls.map((call) => call.name)).toEqual(['ls']);
+  });
+
+  it('stops at the first block: a budget block skips the later policy hooks', async () => {
+    const booted = await boot({
+      calls: [{ name: 'bash', args: { command: 'rm -rf /tmp/x' } }],
+      budgetHooks: [
+        hook(ToolTask, {
+          beforeTool: (call) =>
+            call.name === 'bash' ? { block: 'budget stop' } : undefined,
+        }),
+      ],
+      policy: { workspace: '/work' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.text).toContain('budget stop');
+    expect(results[0]?.text).not.toContain('destructive command blocked');
+    expect(booted.world.calls).toHaveLength(0);
+  });
+
+  it('counts blocked attempts against maxToolCalls and triggers once', async () => {
+    const triggers: Array<{ kind: string; toolName: string; count: number }> =
+      [];
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'rm -rf /tmp/x' } },
+        { name: 'ls', args: { path: '.' } },
+      ],
+      policy: {
+        workspace: '/work',
+        maxToolCalls: 1,
+        onTrigger: (trigger) => {
+          triggers.push(trigger);
+        },
+      },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.text).toContain('destructive command blocked');
+    expect(results[1]?.text).toContain('maxToolCalls (1) exceeded');
     expect(triggers).toEqual([
       { kind: 'max_tool_calls', toolName: 'ls', count: 2 },
     ]);
+    expect(booted.world.calls).toHaveLength(0);
   });
+});
 
-  it('fails closed when a policy handler throws', async () => {
-    const booted = await boot([{ name: 'ls', args: { path: '.' } }]);
-    registerPolicyInterceptors(booted.harness.hooks, { workspace: '/work' });
-    booted.harness.hooks.on('before_tool', () => {
-      throw new Error('policy exploded');
-    });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(1);
-    const end = ends[0];
-    if (end.type !== 'tool_end') throw new Error('unreachable');
-    expect(end.isError).toBe(true);
-    expect(JSON.stringify(end.result)).toContain('policy exploded');
-  });
-
-  it('blocks past maxToolCalls and emits the trigger once', async () => {
-    const booted = await boot([
-      { name: 'ls', args: { path: '.' } },
-      { name: 'ls', args: { path: '.' } },
-    ]);
-    const triggers: Array<{ kind: string; count: number }> = [];
-    registerPolicyInterceptors(booted.harness.hooks, {
-      workspace: '/work',
-      maxToolCalls: 1,
-      onTrigger: (trigger) => {
-        triggers.push(trigger);
-      },
-    });
-    const ends = await driveToolEnds(booted);
-    expect(ends).toHaveLength(2);
-    const blocked = ends.find((end) =>
-      JSON.stringify(end).includes('maxToolCalls (1) exceeded'),
-    );
-    if (blocked?.type !== 'tool_end')
-      throw new Error('no blocked call observed');
-    expect(blocked.isError).toBe(true);
-    expect(triggers).toEqual([
-      { kind: 'max_tool_calls', toolName: 'ls', count: 2 },
-    ]);
-  });
-
-  it('matches destructive commands and confines paths at unit level', () => {
+describe('destructive/confine matchers (unit)', () => {
+  it('matches destructive commands and confines paths', () => {
     expect(defaultIsDestructive('rm -rf /tmp/x')).toBe(true);
     expect(defaultIsDestructive('rm -Rf --no-preserve-root /')).toBe(true);
     expect(defaultIsDestructive('rm -f ~/.ssh/id_rsa', '/work')).toBe(true);

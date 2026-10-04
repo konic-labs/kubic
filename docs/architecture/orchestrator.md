@@ -231,14 +231,18 @@ solo) — and `run` never delegates.
   `untracked` kept apart). A status that cannot be read prints
   `clean=unknown` with the reason, never a false clean.
 
-The manager toolset the design fixes in §40 (`spawn_agent`, `wait_for_agent`,
-`workspace_merge`, …) is live: `packages/host/src/orchestrator/manager.ts`
-exports `MANAGER_ALLOWLIST` and the registration the run validates itself
-against, so the allowlist is what constrains delegation on this path — a
-requested lane that differs from it refuses to start with the named
-`ManagerToolsetError` (exit 1, `code=manager_toolset_refused`). The root is
-still the CLI process rather than a model-driven agent; what the lane adds is
-the toolset gate and the plan.
+The manager toolset the design fixes in §40/§43.1 (`spawn_agent`,
+`wait_for_agent`, `workspace_merge`, `git_status`/`git_diff`/`git_log`, …) is
+live: `packages/host/src/orchestrator/manager.ts` exports `MANAGER_ALLOWLIST`
+and the registration the run validates itself against, so the allowlist is
+what constrains delegation on this path — a requested lane that differs from
+it refuses to start with the named `ManagerToolsetError` (exit 1,
+`code=manager_toolset_refused`). The three git tools are read-only
+inspection (§43.1, issue #205): the writer git tools
+(`git_commit`/`git_stage`/`git_branch`/`git_checkpoint`) are not in the
+allowlist, so a lane carrying one refuses to start and `checkManagerCall`
+refuses the name. The root is still the CLI process rather than a
+model-driven agent; what the lane adds is the toolset gate and the plan.
 
 ## Worker lifecycle: crash and replacement
 

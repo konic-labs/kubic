@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { runBenchmarkCommand, runEvalCommand } from './cli.js';
+import {
+  EVAL_EXIT_FAILED,
+  EVAL_EXIT_USAGE,
+  runBenchmarkCommand,
+  runEvalCommand,
+} from './cli.js';
 import { makeExport } from './rl/fixtures.js';
 import type { EvalSignals } from './signals.js';
 
@@ -216,6 +221,33 @@ describe('eval --trajectory provenance (issue #256)', () => {
       model: 'acme/m1',
       worktree: '/wt/agent-1',
       generation: 3,
+    });
+  });
+
+  it('exits 1 when the trajectory gates fail, and the envelope follows it', async () => {
+    const red = JSON.stringify(
+      makeExport({
+        model: 'acme/m1',
+        generation: 3,
+        evalLabels: { 'signal:tests': 'fail' },
+      }),
+    );
+    const o = out();
+    const exit = await runEvalCommand(
+      {
+        suite: 'swe-bench-mini',
+        trajectory: red,
+        tier: 'standard',
+        json: true,
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(EVAL_EXIT_FAILED);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toMatchObject({
+      ok: false,
+      exitCode: EVAL_EXIT_FAILED,
+      record: { success: false },
     });
   });
 
@@ -450,6 +482,166 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs).toEqual([
       'error: --trajectory needs inline trajectory export JSON',
     ]);
+  });
+
+  it('exits 2 with the named refusal in the --json envelope', async () => {
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'terminal-live', task: 'fix', ...PROVENANCE, json: true },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_USAGE,
+      error: {
+        code: 'stub-suite',
+        message:
+          'suite "terminal-live" is a stub — refusing to score unimplemented work',
+      },
+    });
+  });
+
+  it('exits 1 when the record gates fail, and the envelope follows it', async () => {
+    const red = {
+      runSuite: async () => ({
+        success: false,
+        signals: signals(),
+        usageRows: [
+          {
+            inputTokens: 100,
+            outputTokens: 50,
+            costUsd: 0.02,
+            latencyMs: 60000,
+          },
+        ],
+      }),
+    };
+    const text = out();
+    const textExit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE },
+      { ...red, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(EVAL_EXIT_FAILED);
+    expect(text.lines).toHaveLength(1);
+    expect(text.lines[0]).toMatch(
+      /^eval ok: suite swe-bench-mini success=false /,
+    );
+    expect(text.errs).toEqual([]);
+    const json = out();
+    const jsonExit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, json: true },
+      { ...red, out: json.write, err: json.err },
+    );
+    expect(jsonExit).toBe(EVAL_EXIT_FAILED);
+    expect(json.errs).toEqual([]);
+    expect(JSON.parse(json.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_FAILED,
+      record: expect.objectContaining({ success: false }),
+    });
+  });
+
+  it('exits 2 when benchmark runs without --generation, before any suite runs', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      { tier: 'standard' },
+      {
+        ...deps,
+        runSuite: async () => {
+          throw new Error('a refused benchmark must not run a suite');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.lines).toEqual([]);
+    expect(o.errs).toEqual([
+      "error: required option '--generation <n>' not specified",
+    ]);
+  });
+
+  it('wraps a benchmark runner failure in the --json envelope', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      { suite: 'swe-bench-mini', ...PROVENANCE, json: true },
+      {
+        runSuite: async () => {
+          throw new Error('suite exploded');
+        },
+        out: o.write,
+        err: o.err,
+      },
+    );
+    expect(exit).toBe(EVAL_EXIT_USAGE);
+    expect(o.errs).toEqual([]);
+    expect(JSON.parse(o.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: EVAL_EXIT_USAGE,
+      error: { code: 'eval-failed', message: 'suite exploded' },
+    });
+  });
+
+  it('exits 1 with ok:false when an executed benchmark suite fails, reporting every suite', async () => {
+    const oneRed = {
+      runSuite: async (suiteId: string) => ({
+        success: suiteId !== 'bugfix-repro',
+        signals: signals(),
+        usageRows: [
+          {
+            inputTokens: 100,
+            outputTokens: 50,
+            costUsd: 0.02,
+            latencyMs: 60000,
+          },
+        ],
+      }),
+    };
+    const json = out();
+    const jsonExit = await runBenchmarkCommand(
+      { ...PROVENANCE, json: true },
+      { ...oneRed, out: json.write, err: json.err },
+    );
+    expect(jsonExit).toBe(EVAL_EXIT_FAILED);
+    const envelope = JSON.parse(json.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      results: Array<{
+        suite: string;
+        stub: boolean;
+        skipped: boolean;
+        success: boolean;
+      }>;
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(EVAL_EXIT_FAILED);
+    expect(envelope.results).toHaveLength(8);
+    expect(
+      envelope.results.map((r) => `${r.suite}:${r.skipped}:${r.success}`),
+    ).toEqual([
+      'swe-bench-mini:false:true',
+      'repo-mod-rename:false:true',
+      'bugfix-repro:false:false',
+      'refactor-extract:false:true',
+      'testgen-cover:false:true',
+      'review-diff:false:true',
+      'terminal-live:true:false',
+      'agentic-live:true:false',
+    ]);
+    const text = out();
+    const textExit = await runBenchmarkCommand(
+      { ...PROVENANCE },
+      { ...oneRed, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(EVAL_EXIT_FAILED);
+    expect(text.lines[0]).toMatch(/bugfix-repro +bugfix +FAIL/);
+    expect(text.lines[0]).toMatch(/swe-bench-mini +swe +pass/);
+    expect(text.lines.at(-1)).toBe(
+      'benchmark FAILED: 5/6 suites passed, 2 stub(s) skipped',
+    );
+    expect(text.errs).toEqual([]);
   });
 
   it('reports a runner failure on stderr off --json, as an envelope under --json', async () => {

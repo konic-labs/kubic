@@ -142,7 +142,17 @@ function emitRecord(
   json: boolean,
 ): void {
   if (json) {
-    out(formatJson({ ok: true, exitCode: EVAL_EXIT_OK, record }));
+    // The envelope reports the record's own verdict (issue #370): `ok` and
+    // `exitCode` follow `record.success`, exactly like benchmark's
+    // `{ok: allOk, exitCode}` — a gated-fail record must not print
+    // `exitCode: 0` from a process that exits 1.
+    out(
+      formatJson({
+        ok: record.success,
+        exitCode: record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED,
+        record,
+      }),
+    );
     return;
   }
   out(

@@ -151,6 +151,24 @@
   one commander `error: …` line on stderr and nothing on stdout, even
   under `--json`. Syntax errors are an unknown option, a missing value,
   a missing required option, or an extra operand.
+- **`kubic eval`**: 0 a record whose gates pass; 1 a record whose gates
+  fail (a red tests/build/lint/typecheck signal, an incomplete run, or an
+  unnamed runner failure as `eval-failed`); 2 usage errors and named
+  runner refusals (`error: [<code>] …` — a missing or invalid `--tier`,
+  `--generation` or `--worktree`, a dirty `--workspace worktree`, a
+  `--trajectory` provenance mismatch, an unknown suite, or a stub suite).
+  `--json` reports the same code in its `exitCode` field; `ok` is
+  `exitCode === 0`.
+- **`kubic benchmark`**: 0 every executed suite succeeded; 1 any executed
+  suite failed; 2 usage errors and a runner that threw (including the
+  live-runner refusal the binary does not ship). Stub suites are reported
+  `skipped (stub)` and never count toward the verdict. `--json` reports the
+  same code in its `exitCode` field.
+- **`kubic export`**: 0 the record was exported or the file described;
+  1 the record failed to build or validate (`invalid-record`,
+  `export-failed`); 2 a usage error or a refusal (a missing or unknown
+  flag, an unreadable or malformed trajectory, or stripped provenance —
+  `rl-refused`). `--json` reports the same code in its `exitCode` field.
 - **`kubic cost`**: 0 success, including `no cost rows` on an empty
   store; 1 an unknown session or a store failure; 2 usage errors.
   `--json` emits the `toCostJson` shape field-for-field.

@@ -81,10 +81,12 @@ export interface RunTurnOptions {
   // default, `reject` throws ConversationBusy — mapped to the named busy
   // failure below.
   whenBusy?: 'reject' | 'followUp' | 'steer';
-  // #334: the admitted submission's id, called the moment the harness
-  // accepts it (queued or placed). The TUI keys its `queued: …` rows by it
-  // and drops each row when the id leaves the inbox.
-  onSubmitted?: (submissionId: string) => void;
+  // #334: the admitted submission's id and whether the harness QUEUED it
+  // (a busy conversation's follow-up/steer) or PLACED it at once. The TUI's
+  // busy latch follows placed work only: a queue a failed run left behind
+  // waits in the inbox without a spinner (pi-durable keeps queued inputs
+  // when a run faults).
+  onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
 }
 
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
@@ -110,8 +112,27 @@ export async function runTurn(
   } catch (error) {
     return submissionFailure(error, options.context);
   }
-  options.onSubmitted?.(String(submission.id));
+  options.onSubmitted?.(
+    String(submission.id),
+    await admissionState(submission, options.context),
+  );
   return awaitTurn(submission, options.context);
+}
+
+// Whether the harness admitted the input as a placed entry (an idle
+// conversation) or queued it in the inbox (#334). A status read that fails
+// (a closed session) reports `placed`: the run's own settlement, never a
+// guess, decides what the caller sees next.
+async function admissionState(
+  submission: Submission,
+  context: Context,
+): Promise<'placed' | 'queued'> {
+  try {
+    const record = await submission.status(context);
+    return record.status === 'queued' ? 'queued' : 'placed';
+  } catch {
+    return 'placed';
+  }
 }
 
 // The wait half of a turn, for a submission admitted elsewhere: the durable

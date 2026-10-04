@@ -238,6 +238,24 @@ describe('queued follow-ups (issue #334)', () => {
     );
   });
 
+  it('sanitizes a queued draft at ingress (#334 review)', () => {
+    const view = createTranscriptView();
+    // A paste can carry ESC-prefixed sequences and C0 controls; a tab also
+    // breaks the width math. The row is content, so it is stripped like the
+    // pending echo.
+    view.setQueuedPrompts(['\u001b[2Jclear\u0007\tend']);
+    const row = view.render(80).find((line) => line.includes('queued:')) ?? '';
+    // The ESC and BEL bytes are gone; the sequence's printable parameters
+    // stay as literal text (the shipped sanitizer strips controls, it does
+    // not interpret them).
+    expect(row).toContain('queued: [2Jclear');
+    expect(row).not.toContain('\u001b');
+    expect(row).not.toContain('\u0007');
+    // The tab is expanded to a column stop, not passed through.
+    expect(row).not.toContain('\t');
+    expect(row).toMatch(/clear +end/);
+  });
+
   it('renders the queued rows dim', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const view = createTranscriptView();

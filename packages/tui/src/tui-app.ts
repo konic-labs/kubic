@@ -263,6 +263,10 @@ export interface TuiApp {
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
   setPendingEcho(prompt: string | undefined): void;
+  // Issue #334 (review): put a refused draft back in the editor, so a busy
+  // orchestrator run (or a `/model` typed mid-turn) never eats the text the
+  // operator typed.
+  restoreDraft(prompt: string): void;
   // TUI polish: the solo notice lives in the welcome block (wrapped in
   // full) instead of a truncated footer line.
   setNotice(text: string): void;
@@ -616,6 +620,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     // says why. Both still pin the transcript: the operator asked to see
     // the tail.
     const outcome = submitHandler(prompt) ?? 'accepted';
+    if (outcome === 'refused') {
+      // Issue #334 (review): a refused prompt never eats the draft. Pi's
+      // editor clears the draft BEFORE onSubmit fires, so the text has to go
+      // back — the footer says why it was refused, and the operator can fix
+      // the draft instead of retyping it.
+      restoreDraft(prompt);
+      return;
+    }
     if (outcome === 'accepted') echoPendingPrompt(prompt);
     transcript.rePin();
   };
@@ -625,6 +637,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     pendingPrompt = sanitizeLaneText(prompt);
     promptCellsAtSubmit = promptCells;
     transcript.setPendingPrompt(pendingPrompt);
+  };
+  // Issue #334 (review): put a draft the loop refused back in the editor.
+  const restoreDraft = (prompt: string): void => {
+    editor.setText(prompt);
+    transcript.rePin();
   };
   const quit = (): TuiInputResult => ({
     quit: true,
@@ -949,6 +966,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     setQueuedPrompts: (prompts: readonly string[]): void => {
       transcript.setQueuedPrompts(prompts);
+    },
+    restoreDraft: (prompt: string): void => {
+      restoreDraft(prompt);
     },
     setPendingEcho: (prompt: string | undefined): void => {
       if (prompt === undefined) {

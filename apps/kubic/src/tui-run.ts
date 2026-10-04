@@ -174,6 +174,7 @@ import {
   ConversationBusy,
   type EntryRecord,
   type MutableModels,
+  type SubmissionId,
 } from '../../../packages/worker/src/pi-boundary.js';
 import {
   type runtimeLaneDeps,
@@ -215,8 +216,9 @@ export interface TuiLaneLoop {
       requestId: string;
       context: Context;
       whenBusy?: 'reject' | 'followUp' | 'steer';
-      // #334: the admitted submission's id, the moment the harness takes it.
-      onSubmitted?: (submissionId: string) => void;
+      // #334: the admitted submission's id and whether it was placed at
+      // once or queued in the inbox — the busy latch follows placed work.
+      onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
     },
   ): Promise<TurnOutcome>;
   /**
@@ -328,7 +330,7 @@ function terminusOfFailure(reason: string): RunTerminusKind {
 // moment the harness takes it, so the loop can key its `queued: …` rows.
 export interface TuiTurnOptions {
   whenBusy?: 'followUp' | 'steer';
-  onSubmitted?: (submissionId: string) => void;
+  onSubmitted?: (submissionId: string, state: 'placed' | 'queued') => void;
 }
 
 // One turn's driver, whichever lane owns it (issue #327): the solo
@@ -1766,20 +1768,32 @@ export function footerForOutcome(outcome: TuiTurnOutcome): string {
 // while the submit is still in flight is replayed on the real turn rather
 // than being lost (or worse, treated as a quit, which would kill the
 // process mid-turn).
+// Issue #334: what the busy latch reads for one submitted turn. `pending` is
+// the window between `run()` and the harness' admission answer (a Ctrl-C
+// there must cancel, never quit); `placed` is work the harness put in the
+// transcript. Neither is true for a submission waiting in the inbox — a
+// follow-up admitted during a turn, or one a failed run left behind.
+interface TuiRunState {
+  placed: boolean;
+  pending: boolean;
+  submissionId?: string;
+}
+
 export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
   private model: string;
   // Issue #334: every turn in flight, from the moment a submit is accepted
-  // by the runner. A busy Enter adds a QUEUED follow-up's own run here while
-  // the running turn is still in it, and the single subscription below
-  // serves both: the follow-up's run streams into the same transcript
-  // (exactly one lane consumer per conversation, §15.3).
-  private readonly runs = new Set<Promise<TuiTurnOutcome>>();
-  // Turns between their submit call and their settlement: `runs` is not
-  // populated until `run()` returns, so this is the count the `isRunning`
-  // latch reads in that window.
-  private starting = 0;
+  // by the runner, with the placement fact the busy latch reads. A busy
+  // Enter adds a QUEUED follow-up's own run here while the running turn is
+  // still in it, and the single subscription below serves both: the
+  // follow-up's run streams into the same transcript (exactly one lane
+  // consumer per conversation, §15.3).
+  private readonly runs = new Map<Promise<TuiTurnOutcome>, TuiRunState>();
+  // The first run of the busy period owns the placement latch (Ctrl-C waits
+  // for THE running turn to be placed, not for a queued follow-up's
+  // admission, which is immediate and needs no placement).
+  private placementOwned = false;
   // The one lane-event subscription of the current busy period.
   private attached = false;
   private attaching: Promise<void> | undefined;
@@ -1851,11 +1865,15 @@ export class TuiTurnRunner {
 
   // Busy from the moment a submit is accepted by the loop — not from the
   // moment the durable turn lands — so the Ctrl-C that follows Enter by a
-  // keystroke still cancels instead of quitting. A queued follow-up keeps
-  // the runner busy until ITS turn settles too (#334): the conversation is
-  // still working, and another Enter keeps queueing.
+  // keystroke still cancels instead of quitting. Busy means PLACED work
+  // (#334): a follow-up waiting in the inbox — admitted while a turn ran, or
+  // left behind by a failed run — is not a run, so the spinner stops and the
+  // queued row is the state the operator sees.
   isRunning(): boolean {
-    return this.starting > 0 || this.runs.size > 0;
+    for (const state of this.runs.values()) {
+      if (state.pending || state.placed) return true;
+    }
+    return false;
   }
 
   // The single lane-event consumer for this conversation (§15.3: exactly
@@ -1867,8 +1885,11 @@ export class TuiTurnRunner {
     this.app.applyLaneEvent(event);
     this.onLaneEvent?.(event);
     if (event.type === 'run-start') {
-      // The run is placed: a latched Ctrl-C may now abort it for real.
+      // The run is placed: a latched Ctrl-C may now abort it for real, and a
+      // submission the harness queued earlier (a follow-up waiting behind a
+      // failed run) counts as work in flight from this moment (#334).
       this.markPlaced();
+      this.markPlacedInputs(event.inputs);
     }
     if (event.type === 'snapshot') {
       // REPLACE semantics (D2): the attach snapshot is the transcript.
@@ -1938,10 +1959,28 @@ export class TuiTurnRunner {
   }
 
   // The in-flight runs (issue #312): a quit waits on them, bounded. The
-  // runner is idle when neither a submit is starting nor a run is open.
+  // runner is BUSY while a submit is still being admitted or a run is placed
+  // — a queued item waiting in the inbox is not work in flight (#334).
   run(prompt: string, options: TuiTurnOptions = {}): Promise<TuiTurnOutcome> {
-    const running = this.runTurn(prompt, options);
-    this.runs.add(running);
+    const state: TuiRunState = { placed: false, pending: true };
+    const running = this.runTurn(
+      prompt,
+      {
+        ...options,
+        onSubmitted: (submissionId, admitted) => {
+          state.pending = false;
+          state.submissionId = submissionId;
+          // A submission admitted into the inbox (a busy follow-up, or one
+          // queued behind a failed run's leftovers) is not placed work: it
+          // becomes busy only if the harness places it later, which the
+          // `run-start` event below reports.
+          state.placed = admitted === 'placed';
+          options.onSubmitted?.(submissionId, admitted);
+        },
+      },
+      state,
+    );
+    this.runs.set(running, state);
     const finished = (): void => {
       this.runs.delete(running);
       // The busy period ends with its LAST turn: only then is the lane-event
@@ -1951,6 +1990,17 @@ export class TuiTurnRunner {
     };
     void running.then(finished, finished);
     return running;
+  }
+
+  // Issue #334: the harness placed a submission (`run-start`): the run that
+  // was waiting for it is working now, so the busy latch must follow.
+  private markPlacedInputs(inputs: readonly SubmissionId[]): void {
+    for (const state of this.runs.values()) {
+      if (state.submissionId === undefined) continue;
+      if (inputs.some((input) => String(input) === state.submissionId)) {
+        state.placed = true;
+      }
+    }
   }
 
   // Issue #334: the busy period's ONE subscription. It is taken by the first
@@ -2023,7 +2073,7 @@ export class TuiTurnRunner {
     // Every turn of the busy period settles before the quit resolves: the
     // follow-ups the abort withdrew settle as aborted on the same path.
     const settled = Promise.all(
-      [...this.runs].map((running) =>
+      [...this.runs.keys()].map((running) =>
         running.then(
           () => undefined,
           () => undefined,
@@ -2043,10 +2093,11 @@ export class TuiTurnRunner {
   private async runTurn(
     prompt: string,
     options: TuiTurnOptions,
+    state: TuiRunState,
   ): Promise<TuiTurnOutcome> {
     const startedAt = Date.now();
     const record: { turn?: TurnOutcome } = {};
-    const outcome = await this.drive(prompt, options, record);
+    const outcome = await this.drive(prompt, options, record, state);
     try {
       await this.loop.recordTurn?.({
         prompt,
@@ -2064,13 +2115,14 @@ export class TuiTurnRunner {
     prompt: string,
     options: TuiTurnOptions,
     record: { turn?: TurnOutcome },
+    state: TuiRunState,
   ): Promise<TuiTurnOutcome> {
-    this.starting += 1;
     this.aborted = false;
     // The first run of the busy period owns the placement latch: Ctrl-C
     // waits for THE running turn to be placed, not for a queued follow-up's
     // admission (which is immediate and needs no placement).
-    const first = this.starting === 1;
+    const first = !this.placementOwned;
+    this.placementOwned = true;
     let markPlaced: () => void = () => {};
     const placed = new Promise<void>((resolve) => {
       markPlaced = resolve;
@@ -2149,9 +2201,11 @@ export class TuiTurnRunner {
       }
       throw error;
     } finally {
-      this.starting -= 1;
       // A run that never started (a refused submit, a failure) must not
-      // leave a latched Ctrl-C waiting for a placement that cannot come.
+      // leave a latched Ctrl-C waiting for a placement that cannot come, nor
+      // hold the busy latch as a pending submit forever.
+      state.pending = false;
+      if (first) this.placementOwned = false;
       markPlaced();
     }
   }
@@ -2484,6 +2538,10 @@ export async function runTuiCommand(
                 app.setPendingEcho(text);
               }
               syncQueuedRows();
+              // The placed submission is work in flight now: a queued
+              // follow-up that waited behind a failed run starts the spinner
+              // again (#334 review).
+              syncBusyForLoop?.();
               if (!stopped) screen?.update();
             }
           },
@@ -2501,6 +2559,10 @@ export async function runTuiCommand(
         });
   // The driver of the turn in flight, whichever lane owns it (#327).
   let activeTurn: TuiTurnDriver | undefined;
+  // Issue #334 (review): the busy latch follows PLACED work, and the lane
+  // event handler above (registered before the submit path exists) must
+  // re-sync it when the harness places a queued submission.
+  let syncBusyForLoop: (() => void) | undefined;
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -2766,6 +2828,10 @@ export async function runTuiCommand(
           parseModelCommand(steered) === undefined
         ) {
           app.setPendingEcho(steered);
+        } else if (outcome !== 'queued') {
+          // Issue #334 (review): a refused (or unreachable) steer hands the
+          // draft back — the app already cleared it for the key.
+          app.restoreDraft(steered);
         }
         return { consume: true };
       }
@@ -2876,6 +2942,25 @@ export async function runTuiCommand(
       // holding one: the spinner and the editor stay in flight until the
       // last settles.
       let inFlightTurns = 0;
+      // Issue #334 (review): the busy latch follows PLACED work, not
+      // submitted promises. A follow-up waiting in the inbox — admitted while
+      // a turn ran, or left behind by a failed run (pi-durable keeps queued
+      // inputs after a fault) — is not a run: the spinner stops and the
+      // queued row is what the operator sees. `activeTurn` outlives it, so a
+      // later submit places the queue and the same driver runs again.
+      const syncBusy = (): void => {
+        if (stopped) return;
+        const running = activeTurn?.isRunning() === true;
+        if (running && !app.isBusy()) {
+          app.setBusy(true);
+          startSpinner();
+        } else if (!running && app.isBusy()) {
+          app.setBusy(false);
+          stopSpinner();
+        }
+        if (!stopped) screen?.render();
+      };
+      syncBusyForLoop = syncBusy;
       const startTurn = (
         driver: TuiTurnDriver,
         prompt: string,
@@ -2891,7 +2976,15 @@ export async function runTuiCommand(
         // `then` would be wiped when the last turn of the busy period ends.
         let footer: string | undefined;
         void driver
-          .run(prompt, options)
+          .run(prompt, {
+            ...(options ?? {}),
+            // The admission answer decides the latch: placed work keeps the
+            // spinner, a queued item releases it (#334 review).
+            onSubmitted: (submissionId, admitted) => {
+              options?.onSubmitted?.(submissionId, admitted);
+              syncBusy();
+            },
+          })
           .then((outcome) => {
             syncPosture();
             // Issue #311: a bash-made change is journaled only by the sweep;
@@ -2928,11 +3021,11 @@ export async function runTuiCommand(
           .finally(() => {
             inFlightTurns -= 1;
             if (inFlightTurns === 0) {
-              app.setBusy(false);
-              stopSpinner();
               droppedOnCancel = 0;
               if (activeTurn === driver) activeTurn = undefined;
             }
+            // Sync BEFORE the footer: `setBusy(false)` clears the footer row.
+            syncBusy();
             if (footer !== undefined && !stopped) app.setEditorFooter(footer);
             if (!stopped) screen?.render();
           });

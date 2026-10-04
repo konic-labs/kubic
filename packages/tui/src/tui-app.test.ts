@@ -421,6 +421,25 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     const doc = refused.render(100).join('\n');
     expect(doc).not.toContain('› dropped');
     expect(doc).toContain('error: an orchestrator run is in flight');
+    // Issue #334 (review): a refused prompt never eats the draft — Pi's
+    // editor cleared it before onSubmit fired, so it is put back.
+    expect(refused.editor.getText()).toBe('dropped');
+    expect(refused.render(100).join('\n')).toContain('dropped');
+    // A restored draft is editable again, and Enter submits it once the loop
+    // accepts (no stale refusal latch).
+    refused.onSubmit(() => 'accepted');
+    refused.handleInput('\r');
+    expect(refused.editor.getText()).toBe('');
+  });
+
+  it('hands a draft back through restoreDraft (#334 review)', () => {
+    const ui = app();
+    ui.onSubmit(() => 'accepted');
+    for (const ch of 'keep me') ui.handleInput(ch);
+    ui.editor.setText('');
+    ui.restoreDraft('keep me');
+    expect(ui.editor.getText()).toBe('keep me');
+    expect(ui.render(100).join('\n')).toContain('keep me');
   });
 
   it('echoes a queued prompt once its turn starts', () => {

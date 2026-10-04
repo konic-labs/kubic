@@ -8,6 +8,7 @@
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
 import type { LaneSnapshot } from '../../core/src/presentation.js';
+import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
 import {
@@ -400,7 +401,11 @@ export function createTranscriptView(
       document.pending = prompt;
     },
     setQueuedPrompts(prompts: readonly string[]): void {
-      document.queued = [...prompts];
+      // Issue #334 (review): a queued draft is untrusted terminal input like
+      // every other operator-facing string — a paste can carry ESC/C0 and a
+      // tab breaks the width math. Sanitized at ingress, exactly like the
+      // pending echo and the journal rows.
+      document.queued = prompts.map((prompt) => sanitizeLaneText(prompt));
     },
     toggleExpanded(): boolean {
       document.expanded = !document.expanded;

@@ -138,10 +138,14 @@ describe('runTurn on pi-durable (issue #395)', () => {
       ],
       env,
     );
+    const admissions: string[] = [];
     const outcome = await runTurn(solo, 'read the file', {
       requestId: 'req-1',
       context: BACKGROUND_CONTEXT,
+      onSubmitted: (_id, state) => admissions.push(state),
     });
+    // An idle submit is placed at once: the TUI's busy latch stays on.
+    expect(admissions).toEqual(['placed']);
     expect(outcome.kind).toBe('completed');
     if (outcome.kind !== 'completed') throw new Error('unreachable');
     expect(outcome.submissionId).not.toBe('');
@@ -216,11 +220,15 @@ describe('runTurn on pi-durable (issue #395)', () => {
     });
     await landed;
     const ids: string[] = [];
+    const admissions: string[] = [];
     const second = runTurn(solo, 'second prompt', {
       requestId: 'req-second',
       context: BACKGROUND_CONTEXT,
       whenBusy: 'followUp',
-      onSubmitted: (id) => ids.push(id),
+      onSubmitted: (id, state) => {
+        ids.push(id);
+        admissions.push(state);
+      },
     });
     // The busy Enter is ADMITTED at once (never refused): the id lands while
     // the first run is still in flight, and the item sits queued in the
@@ -228,6 +236,9 @@ describe('runTurn on pi-durable (issue #395)', () => {
     // Kubic-owned list).
     await vi.waitFor(() => expect(ids).toHaveLength(1));
     expect(ids[0]).not.toBe('');
+    // The admission answer is what the TUI's busy latch reads: a queued
+    // follow-up is not placed work (#334 review).
+    expect(admissions).toEqual(['queued']);
     const queued = await solo.harness.inspect(BACKGROUND_CONTEXT);
     expect(
       queued.submissions.find((row) => String(row.id) === ids[0]),

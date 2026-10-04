@@ -104,6 +104,9 @@ function fauxLaneBoot(
   options: {
     // #330: a smaller keep-recent window lets a test-sized context compact.
     compaction?: Parameters<typeof bootSoloLane>[0]['compaction'];
+    // #334 review: boot-time harness settings (retry off, so a scripted
+    // provider error fails the turn deterministically).
+    settings?: Parameters<typeof bootSoloLane>[0]['settings'];
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
     onBoot?: (solo: SoloLane) => void;
@@ -131,6 +134,7 @@ function fauxLaneBoot(
       ...(options.compaction === undefined
         ? {}
         : { compaction: options.compaction }),
+      ...(options.settings === undefined ? {} : { settings: options.settings }),
     });
     options.onBoot?.(solo);
     return {
@@ -784,6 +788,183 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\x03');
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
+  });
+
+  it('keeps the draft when a submit is refused (#334 review)', async () => {
+    // A refused prompt must never eat the text: the editor is live during a
+    // turn (#334), so `/model` while busy (and any orchestrator-busy submit)
+    // hands the draft back instead of clearing it.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    const mark = fake.writes.length;
+    for (const ch of '/model faux/other') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.writes
+        .slice(mark)
+        .join('')
+        .includes('model: finish the current turn before switching'),
+    );
+    // The draft is back in the editor row (frames are differential, so the
+    // restored row may land in a later frame than the footer).
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('/model faux/other'),
+    );
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('keeps the draft when a steer is refused (#334 review)', async () => {
+    // The Alt+Enter path clears the editor before the loop decides; a refusal
+    // (a model command sent as a steer) must put it back too.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    const mark = fake.writes.length;
+    for (const ch of '/model faux/other') fake.feed(ch);
+    fake.feed('\x1b\r');
+    await waitFor(() =>
+      fake.writes
+        .slice(mark)
+        .join('')
+        .includes('model: finish the current turn before switching'),
+    );
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('/model faux/other'),
+    );
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+  });
+
+  it('releases the busy latch when a failed run leaves a queued follow-up (#334 review)', async () => {
+    // pi-durable keeps queued inputs when a run faults. The waiting follow-up
+    // is not work in flight: the spinner must stop, the queued row stays, and
+    // the next submit places the queue (oldest first) and runs it.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models, calls } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('', {
+          stopReason: 'error',
+          errorMessage: 'provider exploded',
+        });
+      },
+      'second answer',
+      'third answer',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models, {
+          // Retry off: the scripted provider error fails the turn at once.
+          settings: { retry: { enabled: false } },
+        }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('queued: second prompt'));
+    release();
+    // The turn failed and the follow-up stayed queued in the inbox.
+    await waitFor(() => fake.writes.join('').includes('error:'));
+    expect(calls()).toBe(1);
+    expect(fake.writes.join('')).toContain('queued: second prompt');
+    // The latch really released: Ctrl-G is refused only while the app is
+    // busy, so the toggle must flip the session mode (and back).
+    const mark = fake.writes.length;
+    // Ctrl-G (0x07): the app refuses the toggle only while it is busy.
+    fake.feed('\x07');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('orchestrator ·'),
+    );
+    expect(fake.writes.slice(mark).join('')).not.toContain(
+      'mode: finish the current turn',
+    );
+    fake.feed('\x07');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('solo · faux'),
+    );
+    // The next submit places the queue: the waiting follow-up runs first,
+    // and the new prompt follows it (oldest first, one per boundary).
+    for (const ch of 'third prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('second answer'));
+    await waitFor(() => fake.writes.join('').includes('third answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('› second prompt');
+    expect(doc).toContain('› third prompt');
+    expect(calls()).toBe(3);
+    // The quit document is the whole layout: the editor row shows the idle
+    // key hints, never the working line — the queue waiting in the inbox did
+    // not keep the session busy.
+    expect(doc).toContain('enter send');
+    expect(doc).not.toContain('working…');
   });
 
   it('a durably busy conversation refuses the second turn with the busy failure', async () => {

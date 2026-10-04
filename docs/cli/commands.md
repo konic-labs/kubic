@@ -558,7 +558,7 @@ worker session's own usage rollup, the numbers `kubic cost` reads),
 ever existed —, `generation`, `worktree`, `model` as `provider/id` or
 `unresolved`, `role`, optional `thinking`) and, for a failure, `error`
 (`kind` from the §68 vocabulary, `message`, `details.code` — read from the
-child's own `failure.code`/`error.kind` when its report carries them, so a
+child's own `failure.code` when its report carries one, so a
 model error is `model_failed` with `kind: model` instead of the exit-code
 guess `process_crashed`; the exit-code mapping is only the fallback for a
 child that printed no report, issue #155). A completed

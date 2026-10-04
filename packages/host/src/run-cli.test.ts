@@ -21,6 +21,7 @@ import {
   UserEntry,
 } from '../../worker/src/pi-boundary.js';
 import {
+  failureForTerminus,
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
@@ -297,6 +298,74 @@ describe('mapLaneOutcomeToFailure (issue #155)', () => {
     });
     expect(model.terminus).toBe('failed');
     expect(model.failure?.code).toBe('model_failed');
+  });
+
+  it('decides the approval terminus by the timeout marker, not by wording (issue #129)', () => {
+    // An elapsed wait whose reason also says "denied" is still a timeout;
+    // a refusal worded "refused" is still a refusal. The marker rule is the
+    // one all three readers share.
+    const elapsed = mapLaneOutcomeToFailure('failed', {
+      code: 'approval_denied',
+      message: "approval denied for worker 'x': timed out after 25ms",
+    });
+    expect(elapsed.terminus).toBe('approval_timed_out');
+    expect(elapsed.failure?.code).toBe('approval_timed_out');
+    const refused = mapLaneOutcomeToFailure('failed', {
+      code: 'approval_denied',
+      message: 'approval refused: no approval surface',
+    });
+    expect(refused.terminus).toBe('approval_denied');
+    expect(refused.failure?.code).toBe('approval_denied');
+  });
+});
+
+describe('failureForTerminus (issue #155)', () => {
+  it('gives every fixed-code terminus its §52 classification', () => {
+    expect(failureForTerminus('budget_exhausted')).toMatchObject({
+      code: 'budget_exhausted',
+      strategy: 'abandon',
+    });
+    expect(failureForTerminus('approval_denied')).toMatchObject({
+      code: 'approval_denied',
+      strategy: 'abandon',
+    });
+    expect(failureForTerminus('approval_timed_out')).toMatchObject({
+      code: 'approval_timed_out',
+      strategy: 'escalate',
+    });
+    expect(failureForTerminus('workspace_unavailable')).toMatchObject({
+      code: 'workspace_failed',
+      strategy: 'escalate',
+    });
+    expect(failureForTerminus('provider_transient')).toMatchObject({
+      code: 'provider_transient',
+      strategy: 'retry_same',
+    });
+    expect(failureForTerminus('provider_auth')).toMatchObject({
+      code: 'provider_auth',
+      strategy: 'abandon',
+    });
+  });
+
+  it('classifies the pre-run probe as a non-retryable setup failure', () => {
+    // The probe covers "no provider configured" and "the stored model is no
+    // longer registered": both are setup failures, never provider_transient
+    // — a retry chooser must not be told to retry.
+    const probe = failureForTerminus('provider_probe_failed');
+    expect(probe).toMatchObject({ code: 'provider_auth', strategy: 'abandon' });
+    expect(probe?.remedy).toMatch(/register|pin/i);
+  });
+
+  it('carries no §52 code for termini that have none', () => {
+    for (const terminus of [
+      'completed',
+      'failed',
+      'usage',
+      'timeout',
+      'cancelled',
+    ] as const) {
+      expect(failureForTerminus(terminus), terminus).toBeUndefined();
+    }
   });
 });
 
@@ -899,6 +968,33 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
       failure?: { code: string; strategy: string };
     };
     expect(envelope.failure?.code).toBe('budget_exhausted');
+    expect(envelope.failure?.strategy).toBe('abandon');
+  });
+
+  it('classifies the pre-run probe envelope as provider_auth/abandon (review finding)', async () => {
+    const o = out();
+    const message =
+      "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)";
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'provider_probe_failed',
+            summary: message,
+            error: { kind: 'provider_probe_failed', message },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(6);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      failure?: { code: string; strategy: string };
+    };
+    // Exit 6 tells a consumer the provider is unavailable; the §52 half must
+    // not contradict it with a retryable transient code.
+    expect(envelope.failure?.code).toBe('provider_auth');
     expect(envelope.failure?.strategy).toBe('abandon');
   });
 

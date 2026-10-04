@@ -39,14 +39,14 @@ process.exit(1);
 `;
 
 // Issue #155: the exact envelope a `kubic run` whose lane failed with a
-// model error prints — the §52 failure code and the error domain travel
-// with the child's own report.
+// model error prints — the §52 failure code travels with the child's own
+// report (the envelope's `error.kind` is the §78 terminus, never a §68 kind).
 const modelFailureFixture = `
 import { writeFileSync } from 'node:fs';
 writeFileSync('work.txt', 'work\\n');
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
 const a = process.argv;
-process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'failed', result: { summary: 'the model produced nothing' }, error: { kind: 'model', message: 'the model produced nothing' }, failure: { code: 'model_failed', remedy: 'inspect the model error', strategy: 'retry_same' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'failed', result: { summary: 'the model produced nothing' }, error: { kind: 'failed', message: 'the model produced nothing' }, failure: { code: 'model_failed', remedy: 'inspect the model error', strategy: 'retry_same' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
 process.exit(1);
 `;
 

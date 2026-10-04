@@ -188,37 +188,45 @@ describe('the §68 result is complete (issue #185)', () => {
     expect(denied.error?.kind).toBe('approval');
   });
 
-  it('reads the child’s §52 failure code and kind instead of guessing from the exit code (issue #155)', () => {
-    const result = workerFailureResult(
-      'w1',
-      new WorkerRunFailure(
-        'worker_failed',
-        'worker run exited 1: the model produced nothing',
-      ),
-      {
-        exitCode: 1,
-        stdout: JSON.stringify({
-          ok: false,
+  it('reads the child’s §52 failure code instead of guessing from the exit code (issue #155)', () => {
+    // The real envelope shape: `error.kind` is the §78 terminus, never a §68
+    // kind — the domain comes from `failure.code`. Both a real envelope and
+    // one with no `error` field at all must derive `kind: model`.
+    for (const error of [
+      { kind: 'failed', message: 'the model produced nothing' },
+      undefined,
+    ]) {
+      const result = workerFailureResult(
+        'w1',
+        new WorkerRunFailure(
+          'worker_failed',
+          'worker run exited 1: the model produced nothing',
+        ),
+        {
           exitCode: 1,
-          sessionId: 's-w1',
-          status: 'failed',
-          result: { summary: 'the model produced nothing' },
-          error: { kind: 'model', message: 'the model produced nothing' },
-          failure: {
-            code: 'model_failed',
-            remedy: 'inspect the model error',
-            strategy: 'retry_same',
-          },
-        }),
-        stderr: '',
-      },
-      OBSERVED,
-    );
-    // Exit 1 alone would have said process_crashed; the child's own report
-    // names the §52 code and its domain.
-    expect(result.status).toBe('failed');
-    expect(result.error?.kind).toBe('model');
-    expect(result.error?.details).toMatchObject({ code: 'model_failed' });
+          stdout: JSON.stringify({
+            ok: false,
+            exitCode: 1,
+            sessionId: 's-w1',
+            status: 'failed',
+            result: { summary: 'the model produced nothing' },
+            ...(error === undefined ? {} : { error }),
+            failure: {
+              code: 'model_failed',
+              remedy: 'inspect the model error',
+              strategy: 'retry_same',
+            },
+          }),
+          stderr: '',
+        },
+        OBSERVED,
+      );
+      // Exit 1 alone would have said process_crashed; the child's own report
+      // names the §52 code and its domain.
+      expect(result.status).toBe('failed');
+      expect(result.error?.kind).toBe('model');
+      expect(result.error?.details).toMatchObject({ code: 'model_failed' });
+    }
   });
 
   it('maps a child timeout/cancelled report to its own §68 status (issue #280)', () => {

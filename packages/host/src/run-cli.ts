@@ -27,6 +27,7 @@ import {
   settleTerminalStatus,
 } from '../../worker/src/lane/settle.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
+import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.js';
 
 export const RUN_EXIT_OK = EXIT_OK;
 export const RUN_EXIT_FAILED = EXIT_FAILED;
@@ -118,17 +119,22 @@ export function mapLaneOutcomeToFailure(
   if (status === 'completed') return { terminus: 'completed' };
   const settled = settleTerminalStatus(status, error).error;
   const kind = settled?.kind ?? 'process';
-  const failure = classifyFailure(
-    kind,
-    error?.code ?? '',
-    settled?.message ?? '',
-  );
+  const message = settled?.message ?? '';
+  // The approval terminus follows the shipped marker rule (issue #129,
+  // TIMEOUT_REASON_MARKER): the reason text decides refusal vs elapsed wait,
+  // never a classifier keyword — an elapse whose wording also says "denied"
+  // must stay `approval_timed_out`, and a refusal worded "refused" must
+  // stay `approval_denied` (review finding, issue #155).
+  if (kind === 'approval') {
+    const code = message.includes(TIMEOUT_REASON_MARKER)
+      ? 'approval_timed_out'
+      : 'approval_denied';
+    return { terminus: code, failure: classifyFailure('approval', code, '') };
+  }
+  const failure = classifyFailure(kind, error?.code ?? '', message);
   switch (failure.code) {
     case 'budget_exhausted':
       return { terminus: 'budget_exhausted', failure };
-    case 'approval_denied':
-    case 'approval_timed_out':
-      return { terminus: failure.code, failure };
     case 'workspace_failed':
       return { terminus: 'workspace_unavailable', failure };
     case 'provider_auth':
@@ -156,27 +162,37 @@ export function mapLaneOutcomeToTerminus(
 
 // §52 classification of a terminus whose code is implied (issue #155): the
 // guard and gate termini each have exactly one §52 code, and the boot probe
-// is the provider setup failure. `failed` reads its code from the result's
-// own `failure`; `timeout`/`cancelled` have no §52 code.
+// is the provider setup failure. The classification never reads the
+// summary — a failure's wording must not flip a fixed code (review finding).
+// `failed` reads its code from the result's own `failure`;
+// `timeout`/`cancelled` have no §52 code.
 export function failureForTerminus(
   terminus: RunTerminusKind,
-  summary: string,
 ): ClassifiedFailure | undefined {
   switch (terminus) {
     case 'budget_exhausted':
-      return classifyFailure('budget', 'budget_exhausted', summary);
+      return classifyFailure('budget', 'budget_exhausted', '');
     case 'approval_denied':
-      return classifyFailure('approval', 'approval_denied', summary);
+      return classifyFailure('approval', 'approval_denied', '');
     case 'approval_timed_out':
-      return classifyFailure('approval', 'approval_timed_out', summary);
+      return classifyFailure('approval', 'approval_timed_out', '');
     case 'workspace_unavailable':
-      return classifyFailure('workspace', 'workspace_failed', summary);
+      return classifyFailure('workspace', 'workspace_failed', '');
     case 'provider_probe_failed':
-      return classifyFailure('provider', summary, summary);
+      // A probe failure is a setup failure, never transient (the same
+      // decision as CODE_BY_SUBMISSION_REASON.no_model): an unknown model
+      // or an unregistered stored model cannot be retried unchanged, so a
+      // retry chooser must not be told to retry.
+      return {
+        code: 'provider_auth',
+        remedy:
+          'No provider/model is available, or the stored model is no longer registered; register a provider (kubic models) or pin a registered model, then rerun.',
+        strategy: 'abandon',
+      };
     case 'provider_transient':
-      return classifyFailure('provider', 'provider_transient', summary);
+      return classifyFailure('provider', 'provider_transient', '');
     case 'provider_auth':
-      return classifyFailure('provider', 'provider_auth', summary);
+      return classifyFailure('provider', 'provider_auth', '');
     default:
       return undefined;
   }
@@ -239,8 +255,7 @@ export function buildRunEnvelope(
 ): RunEnvelope {
   // Issue #155: the lane path carries its own classification; every other
   // failure terminus has exactly one implied §52 code.
-  const failure =
-    result.failure ?? failureForTerminus(result.terminus, result.summary);
+  const failure = result.failure ?? failureForTerminus(result.terminus);
   return {
     ok: exitCode === RUN_EXIT_OK,
     exitCode,

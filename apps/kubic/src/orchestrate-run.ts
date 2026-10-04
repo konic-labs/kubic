@@ -139,7 +139,6 @@ import type {
 } from '../../../packages/worker/src/result.js';
 import {
   buildAgentResult,
-  ERROR_KINDS,
   UNRESOLVED_MODEL,
 } from '../../../packages/worker/src/result.js';
 import { runtimeExcludeEntriesFor } from './config-runtime.js';
@@ -522,10 +521,11 @@ interface ChildReport {
   sessionId?: unknown;
   result?: { summary?: unknown };
   model?: unknown;
-  // Issue #155: the child's own §52 classification and error domain, when
-  // it printed one — the precise half the exit code cannot carry.
+  // Issue #155: the child's own §52 classification, when it printed one —
+  // the precise half the exit code cannot carry. The envelope's `error.kind`
+  // is the §78 terminus (never a §68 kind), so the manager derives the
+  // domain from this code instead (review finding).
   failure?: { code?: unknown };
-  error?: { kind?: unknown; message?: unknown };
   usage?: {
     input?: unknown;
     output?: unknown;
@@ -670,11 +670,6 @@ export function workerFailureResult(
     report?.failure !== undefined && isFailureCode(report.failure.code)
       ? report.failure.code
       : undefined;
-  const childKind =
-    typeof report?.error?.kind === 'string' &&
-    (ERROR_KINDS as readonly string[]).includes(report.error.kind)
-      ? (report.error.kind as ResultErrorKind)
-      : undefined;
   // Issue #280: a wall-clock timeout and a cancellation keep their own §68
   // status, read from the child's own report — only a configured budget
   // (exit 3 / approval terminus) is `budget_exhausted`.
@@ -696,8 +691,7 @@ export function workerFailureResult(
       : approval !== undefined
         ? 'approval'
         : failure.code === 'worker_failed'
-          ? (childKind ??
-            (childCode === undefined
+          ? ((childCode === undefined
               ? undefined
               : errorKindForFailureCode(childCode)) ??
             launchFailure?.kind ??

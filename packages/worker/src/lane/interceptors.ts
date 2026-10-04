@@ -13,7 +13,9 @@
 //     here instead of silently "handled".
 //   shell true — bash present, destructive commands blocked.
 //   shell read-only-allowlist — bash present, destructive AND network
-//     commands blocked.
+//     commands blocked, and every command must pass the explicit read-only
+//     verb allowlist (issue #161): redirection, in-place edits, find write
+//     actions and any non-allowlisted verb are refused by name.
 //   shell false — bash absent via allowlist.
 //   network none (and a domain-less allowlist, enforced as none — issue
 //     #166) — network-command verbs blocked in bash. full
@@ -240,6 +242,134 @@ const NETWORK_PATTERNS = [
 
 export function isNetworkCommand(command: string): boolean {
   return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+// --- read-only shell allowlist (issue #161; §12.1, §40) -------------------
+//
+// `shell: 'read-only-allowlist'` used to mean "full shell minus network", so
+// a read-only role could still write files and git state through bash. The
+// level now enforces an explicit, closed allowlist: every pipeline/`&&`/`;`
+// segment must head with a read-only verb, redirection is refused, and the
+// verbs that can write as a side effect (git, find, sed/perl) are checked
+// for their write forms. Anything else is blocked with a named reason —
+// never silently allowed. The parser is lexical (quotes are stripped, not
+// interpreted), so it errs toward blocking, like every guard here.
+
+// The verbs a read-only role may run. Deliberately a closed set: adding a
+// verb is a product decision, not a fallthrough.
+const READ_ONLY_VERBS: ReadonlySet<string> = new Set([
+  'ls',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'grep',
+  'rg',
+  'find',
+  'git',
+]);
+
+// The git subcommands that only read — the same set §40 derives the git read
+// tools from.
+const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  'status',
+  'diff',
+  'log',
+  'show',
+]);
+
+// git global options that take a separate argument, so the option's value is
+// not mistaken for the subcommand.
+const GIT_OPTION_ARGUMENTS: ReadonlySet<string> = new Set([
+  '-C',
+  '-c',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--config-env',
+  '--exec-path',
+  '--super-prefix',
+  '--attr-source',
+]);
+
+// find actions that write or run another command.
+const FIND_WRITE_ACTION =
+  /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/;
+
+// sed/perl in-place editing: `-i`, `-i.bak`, a combined cluster (`-ni`,
+// `-pi`), or the long form.
+const IN_PLACE_FLAG = /^-[A-Za-z]*i/;
+
+const SEGMENT_SPLIT = /\|\||&&|[|;\n]/;
+const QUOTED_SPAN = /'[^']*'|"[^"]*"/g;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+function gitReadOnlyViolation(tokens: readonly string[]): string | undefined {
+  let i = 0;
+  while (i < tokens.length) {
+    const token = tokens[i] ?? '';
+    if (token === '--') break;
+    if (token.startsWith('-')) {
+      i += GIT_OPTION_ARGUMENTS.has(token) ? 2 : 1;
+      continue;
+    }
+    return READ_ONLY_GIT_SUBCOMMANDS.has(token)
+      ? undefined
+      : `git '${token}' is not read-only`;
+  }
+  return 'git without a read-only subcommand';
+}
+
+function readOnlySegmentViolation(segment: string): string | undefined {
+  const tokens = segment
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token !== '');
+  let i = 0;
+  // Leading `VAR=value` assignments are not the command; a command
+  // substitution inside one is another command and is refused.
+  while (i < tokens.length && ASSIGNMENT.test(tokens[i] ?? '')) {
+    const value = (tokens[i] ?? '').split('=').slice(1).join('=');
+    if (value.includes('$(') || value.includes('`')) {
+      return 'a command substitution is not read-only';
+    }
+    i += 1;
+  }
+  const verb = tokens[i];
+  if (verb === undefined) return undefined;
+  const rest = tokens.slice(i + 1);
+  if (verb === 'git') return gitReadOnlyViolation(rest);
+  if (verb === 'find') {
+    const action = rest.find((token) => FIND_WRITE_ACTION.test(token));
+    if (action !== undefined) return `find ${action} is not read-only`;
+  }
+  if (verb === 'sed' || verb === 'perl') {
+    const inPlace = rest.find(
+      (token) =>
+        token === '--in-place' ||
+        token.startsWith('--in-place=') ||
+        IN_PLACE_FLAG.test(token),
+    );
+    if (inPlace !== undefined) return `${verb} -i edits in place`;
+  }
+  if (!READ_ONLY_VERBS.has(verb)) {
+    return `'${verb}' is not on the read-only allowlist`;
+  }
+  return undefined;
+}
+
+// The reason a command is not read-only, or undefined when every segment
+// passes. Exported so the level's contract is unit-testable without a lane.
+export function readOnlyViolation(command: string): string | undefined {
+  for (const segment of command.split(SEGMENT_SPLIT)) {
+    // Quotes are stripped, not interpreted: a quoted `>` is an argument, a
+    // quoted command name is still that command (and is refused).
+    const bare = segment.replace(QUOTED_SPAN, ' ');
+    if (bare.includes('>')) return 'redirection is not read-only';
+    const violation = readOnlySegmentViolation(bare);
+    if (violation !== undefined) return violation;
+  }
+  return undefined;
 }
 
 export function confinePath(
@@ -555,6 +685,14 @@ export function policyInterceptorHooks(
             return block(
               `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
             );
+          }
+          // §12.1 (issue #161): a read-only role gets the explicit allowlist,
+          // not the full shell minus network.
+          if (options.shell === 'read-only-allowlist') {
+            const violation = readOnlyViolation(command);
+            if (violation !== undefined) {
+              return block(`read-only shell blocked: ${violation}: ${command}`);
+            }
           }
           return undefined;
         }),

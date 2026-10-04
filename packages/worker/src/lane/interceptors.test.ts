@@ -28,6 +28,7 @@ import {
   isNetworkCommand,
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
+  readOnlyViolation,
   redactReason,
   redactSecrets,
 } from './interceptors.js';
@@ -652,6 +653,88 @@ describe('secret redaction (issue #192)', () => {
     );
     expect(reason).not.toContain('sk-live-123');
     expect(reason).toContain('[REDACTED]');
+  });
+});
+
+describe('read-only shell allowlist (issue #161)', () => {
+  it.each([
+    'ls',
+    'ls -la',
+    'ls && cat a',
+    'cat a | grep x',
+    'head -n 5 f; tail -n 5 f',
+    'wc -l f',
+    'rg TODO src',
+    'find . -name "*.ts"',
+    'git status',
+    'git -C /work diff HEAD',
+    'git --no-pager log -1',
+    'git show HEAD',
+    'cat < f',
+  ])('allows %s', (command) => {
+    expect(readOnlyViolation(command), command).toBeUndefined();
+  });
+
+  it.each([
+    ['echo x > a', 'redirection'],
+    ['echo x >> a', 'redirection'],
+    ['ls > out.txt', 'redirection'],
+    ['cat x | tee y', 'tee'],
+    ['sed -i s/a/b/ f', 'sed -i'],
+    ['sed --in-place s/a/b/ f', 'sed -i'],
+    ['perl -pi -e s/a/b/ f', 'perl -i'],
+    ['find . -exec rm {} ;', '-exec'],
+    ['find . -delete', '-delete'],
+    ['git commit -m x', 'commit'],
+    ['git push', 'push'],
+    ['npm test', 'npm'],
+    ['node -e "fs.writeFileSync(1,2)"', 'node'],
+    ['rm -rf x', 'rm'],
+    ['ls | xargs rm', 'xargs'],
+  ])('blocks %s naming %s', (command, needle) => {
+    const reason = readOnlyViolation(command);
+    expect(reason, command).toBeDefined();
+    expect(reason, command).toContain(needle);
+  });
+
+  it('blocks a write anywhere in a pipeline, not only the head', () => {
+    expect(readOnlyViolation('cat a; echo x > b')).toContain('redirection');
+    expect(readOnlyViolation('ls && git commit -m x')).toContain('commit');
+  });
+
+  it('blocks non-allowlisted commands in the lane and lets the allowlist run', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('read-only');
+    expect(results[2]?.text).toContain('read-only');
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'ls && cat a',
+    ]);
+  });
+
+  it('leaves shell:true unchanged', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+        { name: 'bash', args: { command: 'node -e "1"' } },
+      ],
+      policy: { workspace: '/work', shell: true },
+    });
+    await drive(booted);
+    expect(
+      (await toolResults(booted.root)).every((result) => !result.isError),
+    ).toBe(true);
+    expect(booted.world.calls).toHaveLength(3);
   });
 });
 

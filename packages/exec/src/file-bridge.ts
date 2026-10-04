@@ -19,6 +19,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -87,6 +88,22 @@ export interface FileBridge {
    * `durable` retention knob can opt out of the fsync cost explicitly.
    */
   appendDurably?(path: string, content: string | Uint8Array): void;
+  /**
+   * Truncate (or extend) a file to exactly `size` bytes (issue #392): the
+   * pi-durable JSONL storage core drops a torn trailing record with this on
+   * recovery, so a crash mid-append is recovered instead of poisoning the
+   * session. Optional so existing test doubles stay valid; a bridge without
+   * it surfaces as a `not_supported` FileError at the session seam.
+   */
+  truncateFile?(path: string, size: number): void;
+  /**
+   * Flush a file's contents and the metadata needed to read them back
+   * (issue #392): the session storage's fsync seam. Kubic opens its sessions
+   * without it (the journal is the fsync'd store — see
+   * docs/packages/worker.md), so this exists for a caller that asks for
+   * durability explicitly. Optional like the rest.
+   */
+  flushFile?(path: string): void;
   renameFile(source: string, destination: string): void;
   /**
    * Set a path's permission bits (issue #117 review): the seam that lets a
@@ -226,6 +243,20 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     },
     renameFile: (source: string, destination: string): void => {
       renameSync(absolutePath(source), absolutePath(destination));
+    },
+    truncateFile: (path: string, size: number): void => {
+      truncateSync(absolutePath(path), size);
+    },
+    // A writable handle: every platform can flush one, and the JSONL core
+    // only flushes files it just appended to. The directory entry of a
+    // fresh file is deliberately out of scope, like appendDurably's.
+    flushFile: (path: string): void => {
+      const fd = openSync(absolutePath(path), 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
     },
     chmod: (path: string, mode: number): void => {
       chmodSync(absolutePath(path), mode);

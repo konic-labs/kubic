@@ -428,8 +428,9 @@ function entryScript(): string {
 
 // Wall-clock bound handed to each child `kubic run` (issue #94). A worker
 // that never settles is the failure mode with no named code: the child's
-// own guard turns it into exit 3 (budget_exhausted), which the lifecycle
-// layer reports as the §52 budget code — never a hang.
+// own guard turns it into exit 1 with status `timeout` (issue #280), which
+// the lifecycle layer reports as that §68 status — never a hang, and never
+// a budget breach the user did not configure.
 const DEFAULT_WORKER_TIMEOUT_MS = 600_000;
 
 // The readiness marker the child prints before its prompt is submitted
@@ -653,6 +654,9 @@ export function workerFailureResult(
 ): AgentResult {
   const report = done === undefined ? undefined : childReportOf(done.stdout);
   const approval = failure.approval?.code;
+  // Issue #280: a wall-clock timeout and a cancellation keep their own §68
+  // status, read from the child's own report — only a configured budget
+  // (exit 3 / approval terminus) is `budget_exhausted`.
   const status: ResultStatus =
     failure.code === 'spawn_failed'
       ? 'spawn_failed'
@@ -660,9 +664,11 @@ export function workerFailureResult(
         ? 'cancelled'
         : approval === 'BUDGET_EXHAUSTED'
           ? 'budget_exhausted'
-          : report?.status === 'budget_exhausted'
+          : report?.status === 'timeout'
             ? 'timeout'
-            : 'failed';
+            : report?.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
   const kind: ResultErrorKind =
     approval === 'BUDGET_EXHAUSTED'
       ? 'budget'

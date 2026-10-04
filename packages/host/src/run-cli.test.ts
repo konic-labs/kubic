@@ -86,20 +86,39 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('provider_probe_failed')).toBe(6);
   });
 
+  it('a timeout is a task failure, never budget_exhausted (issue #280)', () => {
+    // §78 has no timeout code; the --json status is the honest half, and a
+    // bound the user did not configure as a budget must not claim one.
+    expect(mapTerminusToExitCode('timeout')).toBe(1);
+  });
+
+  it('a cancelled run keeps the POSIX 128+signo convention (issue #280)', () => {
+    // The same convention `kubic tui` pins for a signalled quit (#313).
+    expect(mapTerminusToExitCode('cancelled', 'SIGHUP')).toBe(129);
+    expect(mapTerminusToExitCode('cancelled', 'SIGINT')).toBe(130);
+    expect(mapTerminusToExitCode('cancelled', 'SIGTERM')).toBe(143);
+    // No signal known (a caller-built result): SIGINT's code, never 1.
+    expect(mapTerminusToExitCode('cancelled')).toBe(130);
+  });
+
   it('returns each code end-to-end through runRunCommand', async () => {
     const cases: Array<{
       terminus: HeadlessRunResult['terminus'];
       code: number;
+      signal?: string;
     }> = [
       { terminus: 'completed', code: 0 },
       { terminus: 'failed', code: 1 },
+      { terminus: 'timeout', code: 1 },
+      { terminus: 'cancelled', code: 130, signal: 'SIGINT' },
+      { terminus: 'cancelled', code: 143, signal: 'SIGTERM' },
       { terminus: 'budget_exhausted', code: 3 },
       { terminus: 'approval_denied', code: 4 },
       { terminus: 'approval_timed_out', code: 4 },
       { terminus: 'workspace_unavailable', code: 5 },
       { terminus: 'provider_probe_failed', code: 6 },
     ];
-    for (const { terminus, code } of cases) {
+    for (const { terminus, code, signal } of cases) {
       const o = out();
       const exit = await runRunCommand(
         { prompt: 'hello' },
@@ -109,6 +128,7 @@ describe('run -p exit-code contract (§78)', () => {
             completedResult({
               terminus,
               summary: terminus,
+              ...(signal === undefined ? {} : { signal }),
               error:
                 terminus === 'completed'
                   ? undefined
@@ -117,7 +137,7 @@ describe('run -p exit-code contract (§78)', () => {
           ),
         },
       );
-      expect(exit).toBe(code);
+      expect(exit, `${terminus} ${signal ?? ''}`).toBe(code);
     }
   });
 

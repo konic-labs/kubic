@@ -291,8 +291,18 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
   let category: TrajectoryFailureCode;
   switch (terminus) {
     case 'budget_exhausted':
-      status = /timed out/.test(summary) ? 'timeout' : 'budget_exhausted';
+      status = 'budget_exhausted';
       category = 'budget_exhausted';
+      break;
+    case 'timeout':
+      // Issue #280: a wall-clock bound is its own terminus. The §52
+      // taxonomy has no timeout code, so the category stays the guard's.
+      status = 'timeout';
+      category = 'budget_exhausted';
+      break;
+    case 'cancelled':
+      status = 'cancelled';
+      category = 'process_crashed';
       break;
     case 'approval_denied':
       category = 'approval_denied';

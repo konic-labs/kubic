@@ -106,6 +106,14 @@ async function pollUntil(
 
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
+// Issue #280: a cancelled run keeps the POSIX 128+signo convention
+// (`kubic tui` pins the same one, #313).
+const SIGNAL_EXIT: Readonly<Record<(typeof SIGNALS)[number], number>> = {
+  SIGHUP: 129,
+  SIGINT: 130,
+  SIGTERM: 143,
+};
+
 describe('headless run signal handling (solo lane)', () => {
   for (const signal of SIGNALS) {
     it(`${signal} mid-drive kills the detached bash child and settles a mapped result`, {
@@ -138,8 +146,11 @@ describe('headless run signal handling (solo lane)', () => {
       expect(signals.listenerCount(signal)).toBe(1);
       signals.emit(signal, signal);
       const result = await pending;
-      expect(result.terminus).toBe('failed');
-      expect(mapTerminusToExitCode(result.terminus)).toBe(1);
+      expect(result.terminus).toBe('cancelled');
+      expect(result.signal).toBe(signal);
+      expect(mapTerminusToExitCode(result.terminus, result.signal)).toBe(
+        SIGNAL_EXIT[signal],
+      );
       expect(result.summary).toContain(`interrupted by ${signal}`);
       expect(await pollUntil(() => shState(pid) !== 'alive', 2_000)).toBe(true);
       for (const name of SIGNALS) expect(signals.listenerCount(name)).toBe(0);
@@ -200,7 +211,8 @@ describe('headless run signal handling (solo lane)', () => {
         },
       },
     );
-    expect(result.terminus).toBe('failed');
+    expect(result.terminus).toBe('cancelled');
+    expect(result.signal).toBe('SIGINT');
     expect(result.summary).toContain('interrupted by SIGINT');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await attachSession(
@@ -259,7 +271,8 @@ describe('headless run signal handling (solo lane)', () => {
         },
       },
     );
-    expect(result.terminus).toBe('failed');
+    expect(result.terminus).toBe('cancelled');
+    expect(result.signal).toBe('SIGINT');
     expect(result.summary).toContain('interrupted by SIGINT');
     expect(drove).toBe(false);
     // Boot stopped: the lane never admitted the prompt.

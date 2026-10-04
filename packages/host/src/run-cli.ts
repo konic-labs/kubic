@@ -37,21 +37,48 @@ export type RunTerminusKind =
   | 'failed'
   | 'usage'
   | 'budget_exhausted'
+  | 'timeout'
+  | 'cancelled'
   | 'approval_denied'
   | 'approval_timed_out'
   | 'workspace_unavailable'
   | 'provider_probe_failed';
 
-export function mapTerminusToExitCode(terminus: RunTerminusKind): number {
+// POSIX 128+signo for the interrupts a headless run handles (issue #280),
+// the same convention `kubic tui` pins for a signalled quit (#313).
+const INTERRUPT_SIGNAL_NUMBER: Readonly<Record<string, number>> = {
+  SIGHUP: 1,
+  SIGINT: 2,
+  SIGTERM: 15,
+};
+
+// §78's table names six codes; a run's finer terminus rides on the `--json`
+// status. `timeout` is a plain task failure (1) — §78 has no timeout code,
+// and a wall-clock bound the user did not configure as a budget must not
+// claim `budget_exhausted` (§71, issue #280). `cancelled` keeps POSIX
+// 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143; SIGINT when no signal is
+// known) so a signalled run reads like a signalled process.
+const INTERRUPT_EXIT_DEFAULT = 128 + 2;
+
+export function mapTerminusToExitCode(
+  terminus: RunTerminusKind,
+  signal?: string,
+): number {
   switch (terminus) {
     case 'completed':
       return RUN_EXIT_OK;
     case 'failed':
+    case 'timeout':
       return RUN_EXIT_FAILED;
     case 'usage':
       return RUN_EXIT_USAGE;
     case 'budget_exhausted':
       return RUN_EXIT_BUDGET;
+    case 'cancelled': {
+      const number =
+        signal === undefined ? undefined : INTERRUPT_SIGNAL_NUMBER[signal];
+      return number === undefined ? INTERRUPT_EXIT_DEFAULT : 128 + number;
+    }
     case 'approval_denied':
     case 'approval_timed_out':
       return RUN_EXIT_APPROVAL_DENIED;
@@ -91,6 +118,9 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // Issue #280: the interrupt that ended the run, present exactly when the
+  // terminus is `cancelled`; the exit code is 128+signo from it.
+  signal?: string;
   // Issue #185 (§39, §68): the run's own usage rollup and the model that
   // answered, read back from its session after the run. Absent when no
   // session was ever created (a usage refusal before attach).
@@ -178,13 +208,13 @@ export interface RunCommandDeps extends CliIo {
 export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // Default wall-clock bound for a headless run (issue #84): a model that
-// never stops thinking settles as budget_exhausted instead of hanging
-// the process forever. Overridable per invocation with --timeout.
+// never stops thinking settles as `timeout` (issue #280) instead of
+// hanging the process forever. Overridable per invocation with --timeout.
 export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 
 // setTimeout stores its delay in a 32-bit signed int: anything above this
 // clamps to 1 ms (TimeoutOverflowWarning), so an accepted "bound" would
-// fire almost immediately and misreport budget_exhausted. Parse-time
+// fire almost immediately and misreport a timeout. Parse-time
 // ceiling, not a clamp: a silently shortened bound is worse than a refusal.
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
@@ -367,7 +397,7 @@ export async function runRunCommand(
   } catch (error) {
     result = runFailure(options.session, error);
   }
-  const exitCode = mapTerminusToExitCode(result.terminus);
+  const exitCode = mapTerminusToExitCode(result.terminus, result.signal);
   if (options.json === true) {
     // One compact line, deliberately not pretty-printed: `kubic
     // orchestrate` reads a worker's envelope as the LAST stdout line.

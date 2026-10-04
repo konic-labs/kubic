@@ -646,9 +646,14 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
       'budget_exhausted',
     ],
     [
-      { terminus: 'budget_exhausted', summary: 'run timed out after 5ms' },
+      { terminus: 'timeout', summary: 'run timed out after 5ms' },
       'timeout',
       'budget_exhausted',
+    ],
+    [
+      { terminus: 'cancelled', summary: 'run interrupted by SIGINT' },
+      'cancelled',
+      'process_crashed',
     ],
     [
       { terminus: 'approval_denied', summary: 'no' },

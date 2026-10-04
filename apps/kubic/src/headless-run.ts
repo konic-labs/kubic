@@ -296,7 +296,8 @@ const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
 const DEFAULT_WORKER_APPROVAL_BOUND_MS = 120_000;
 
 // Guard exhaustion surfaces as control flow, never as a lane failure:
-// caught below and mapped to budget_exhausted with the ref triple intact.
+// caught below and mapped to budget_exhausted (--max-turns) or timeout
+// (wall clock) with the ref triple intact.
 class TurnBudgetError extends Error {
   readonly turns: number;
   constructor(turns: number) {
@@ -329,11 +330,13 @@ export class BudgetExceededError extends Error {
 }
 
 // An interrupt (SIGINT/SIGTERM/SIGHUP) ends the turn like a guard does:
-// control flow, mapped to `failed` (exit 1) after the drain — §78 has no
-// separate interrupt code.
+// control flow, mapped to `cancelled` (issue #280) after the drain — the
+// run's exit code is 128+signo, the POSIX convention `kubic tui` uses.
 class InterruptedError extends Error {
+  readonly signal: string;
   constructor(signal: string) {
     super(`run interrupted by ${signal}`);
+    this.signal = signal;
   }
 }
 
@@ -352,12 +355,14 @@ function finished(
   terminus: HeadlessRunResult['terminus'],
   summary: string,
   errorMessage?: string,
+  signal?: string,
 ): HeadlessRunResult {
   return {
     terminus,
     summary,
     sessionId: id,
     ...refs(id),
+    ...(signal === undefined ? {} : { signal }),
     ...(errorMessage === undefined
       ? {}
       : { error: { kind: terminus, message: errorMessage } }),
@@ -415,8 +420,10 @@ function failedTurnTerminus(outcome: TurnOutcome): RunTerminusKind {
 }
 
 // §78 terminus for a guard that stopped the run before or instead of a
-// settlement: an interrupt is a failed run (no separate §78 code), every
-// guard exhaustion is budget_exhausted with the ref triple intact.
+// settlement (issue #280): an interrupt is `cancelled` (128+signo), a
+// wall-clock bound is `timeout` (exit 1 — never the budget code), and the
+// remaining guards — `--max-turns` and a configured §71 budget — are
+// `budget_exhausted` (exit 3) with the ref triple intact.
 function stoppedResult(
   id: string,
   error: Error,
@@ -424,7 +431,16 @@ function stoppedResult(
 ): HeadlessRunResult {
   if (error instanceof InterruptedError) {
     capture.interrupted = true;
-    return finished(id, 'failed', error.message, error.message);
+    return finished(
+      id,
+      'cancelled',
+      error.message,
+      error.message,
+      error.signal,
+    );
+  }
+  if (error instanceof WallClockError) {
+    return finished(id, 'timeout', error.message, error.message);
   }
   return finished(id, 'budget_exhausted', error.message, error.message);
 }
@@ -937,7 +953,7 @@ async function runHeadlessPromptImpl(
     if (interruptedBy === undefined) return undefined;
     capture.interrupted = true;
     const message = new InterruptedError(interruptedBy).message;
-    return finished(id, 'failed', message, message);
+    return finished(id, 'cancelled', message, message, interruptedBy);
   };
   // The span artifact is the durable half of criterion 1: written on every
   // exit path (success or mapped failure) next to the session journal.

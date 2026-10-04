@@ -27,6 +27,17 @@ process.stdout.write(JSON.stringify({ ok: ${exit === 0}, exitCode: ${exit}, sess
 process.exit(${exit});
 `;
 
+// Issue #280: the exact envelope a `kubic run` that hit its own wall-clock
+// bound prints — status timeout, exit 1 (never the budget code).
+const timeoutFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'timeout', result: { summary: 'run timed out after 50ms' }, error: { kind: 'timeout', message: 'run timed out after 50ms' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
 const scratchDirs: string[] = [];
 
 function scratch(prefix: string): string {
@@ -132,6 +143,38 @@ describe('§68 worker results on the prod path (issue #185)', () => {
       workerId: 'worker-1',
       model: 'faux/faux-1',
     });
+  });
+
+  it('a worker that timed out reports status timeout, never budget_exhausted (issue #280)', async () => {
+    const root = initRepo185();
+    const child = join(scratch('kubic-orch-280-child-'), 'worker-timeout.mjs');
+    writeFileSync(child, timeoutFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-280-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r280',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: { status?: string }[];
+    };
+    // The child's own terminus survives the manager: a wall-clock bound is
+    // not a configured budget (§71, issue #280).
+    expect(envelope.workers[0]?.status).toBe('timeout');
+    expect(savedState(root, 'r280').records[0]?.result?.status).toBe('timeout');
   });
 });
 

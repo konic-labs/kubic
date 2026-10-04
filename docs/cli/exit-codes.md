@@ -12,12 +12,17 @@
 `kubic doctor` exits through the same mapper shape
 (`limitsDoctorExit` in `packages/host/src/limits/doctor-limits.ts`).
 
+Two signal-driven exits sit outside the six codes, using the POSIX
+convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
+`SIGINT`/`SIGTERM`/`SIGHUP` settles `status: cancelled` and exits
+`128+signo` — 129 `SIGHUP`, 130 `SIGINT`, 143 `SIGTERM` (issue #280).
+
 | Code | Terminus / meaning | When you see it |
 | --- | --- | --- |
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
-| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` IO errors; journal IO failures; an `undo` that restored but skipped steps (issue #372 — the partial outcome has its own code, never the usage one). |
+| 1 | `failed` | Run failed without a more specific cause (including a headless `kubic run` that hit its wall-clock bound — `status: timeout` with `--timeout`, default 300000 ms, issue #280; §78 has no timeout code and a bound nobody configured as a budget is not one); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` IO errors; journal IO failures; an `undo` that restored but skipped steps (issue #372 — the partial outcome has its own code, never the usage one). |
 | 2 | `usage` | Bad invocation: an unknown command or subcommand, unknown flags, missing flag values, an invalid `--session` id, `run` without `-p`, `doctor --skip` without a value or with an unknown check id, a stray operand, `sessions` without a subcommand. |
-| 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
+| 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its turn guard (`--max-turns`) or a configured §71 budget (`KUBIC_BUDGET`). The wall-clock `--timeout` is **not** here: it is `timeout`, exit 1 (issue #280). |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Orchestrator mode outside a git repository (`kubic orchestrate`, `kubic clean`, `kubic tui --orchestrator` and the bare `kubic --orchestrator` — issue #372), and session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
 | 6 | `provider_probe_failed` / provider-down | No reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). Doctor exits 6 when any failing check has reason `provider-down`. |
@@ -90,6 +95,8 @@
   missing or invalid value, stray operand), before any lane boots.
   `KUBIC_PROVIDER` set to anything but `faux` ends `provider_probe_failed`
   (6). `--json`: the envelope's `ok` field is `exitCode === 0`.
+  A wall-clock `--timeout` elapse is `status: timeout`, exit 1 (issue #280);
+  a `SIGINT`/`SIGTERM`/`SIGHUP` is `status: cancelled`, exit 128+signo.
 - **`kubic run` approvals (exit 4)**: the code is 4 for the whole approval
   terminus; the `status` string is the honest half — `approval_denied` for a
   recorded refusal (no installed approval surface, a policy route, a

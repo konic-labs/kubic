@@ -187,4 +187,28 @@ describe('the §68 result is complete (issue #185)', () => {
     expect(denied.status).toBe('failed');
     expect(denied.error?.kind).toBe('approval');
   });
+
+  it('maps a child timeout/cancelled report to its own §68 status (issue #280)', () => {
+    for (const status of ['timeout', 'cancelled'] as const) {
+      const result = workerFailureResult(
+        'w1',
+        new WorkerRunFailure('worker_failed', `worker run exited 1: ${status}`),
+        {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            ok: false,
+            exitCode: 1,
+            sessionId: 's-w1',
+            status,
+            error: { kind: status, message: status },
+          }),
+          stderr: '',
+        },
+        OBSERVED,
+      );
+      // The child's own report names the terminus; a wall-clock timeout is
+      // not a budget breach (§71) and a cancellation is not a failure.
+      expect(result.status, status).toBe(status);
+    }
+  });
 });

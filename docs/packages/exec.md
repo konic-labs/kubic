@@ -179,7 +179,8 @@ what `kubic clean --journal` and the read-time self-heal use to step aside.
 
 Retention fast path (issues #124, #349, #350): both bounds are proven from
 cache on every append — the tracked byte total (index + blobs) must be at or
-under the size cap, and the index's oldest timestamp (the minimum, re-seeded
+under the size cap, and the index's oldest timestamp (the minimum, folded with
+every append so an out-of-order stamp cannot hide an expired entry, re-seeded
 by every full pass and by every rewrite) must be inside the age window. A
 session under either bound therefore pays no index read and no blob stat per
 append, with or without `journal.retentionDays` configured; the slow pass

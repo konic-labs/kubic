@@ -284,6 +284,38 @@ describe('retention fast path with an age policy (issue #349)', () => {
     }
   });
 
+  it('folds an out-of-order append into the cached oldest timestamp', () => {
+    const store = new FileJournalStore(tmpRoot(), {
+      maxBytes: 10 * 1024 * 1024,
+      maxAgeMs: 1000,
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Seed the cache with a fresh entry: the pass proves the window from
+      // cache and leaves oldestTimestamp at "now".
+      vi.setSystemTime(1_000_000);
+      store.append(entry({ path: 'fresh.txt', after: 'f\n' }));
+      expect(store.entries().map((e) => e.path)).toEqual(['fresh.txt']);
+      // A backwards clock step appends an entry already outside the window.
+      // The cache must fold to its stamp, or the next pass proves "nothing
+      // aged out" from a minimum that is higher than the truth.
+      store.append(
+        entry({
+          path: 'stale.txt',
+          after: 's\n',
+          timestamp: 1_000_000 - 5_000,
+        }),
+      );
+      store.append(entry({ path: 'after.txt', after: 'a\n' }));
+      expect(store.entries().map((e) => e.path)).toEqual([
+        'fresh.txt',
+        'after.txt',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps pruning on later appends once the boundary has been crossed', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, {
@@ -291,17 +323,20 @@ describe('retention fast path with an age policy (issue #349)', () => {
       maxAgeMs: 15_000,
     });
     vi.useFakeTimers({ toFake: ['Date'] });
+    counts.indexReads = 0;
     try {
       vi.setSystemTime(2_000_000);
       store.append(
         entry({ path: 'a.txt', after: 'a\n', timestamp: 2_000_000 }),
       );
+      const r1 = counts.indexReads;
       // Ten seconds later a.txt is still inside the 15-second window: the
       // cached oldest proves it and the pass is skipped.
       vi.setSystemTime(2_010_000);
       store.append(
         entry({ path: 'b.txt', after: 'b\n', timestamp: 2_010_000 }),
       );
+      const r2 = counts.indexReads;
       // Twenty seconds after a.txt, the boundary is crossed: the pass runs
       // and drops it while keeping b.txt and c.txt.
       vi.setSystemTime(2_020_000);
@@ -309,6 +344,12 @@ describe('retention fast path with an age policy (issue #349)', () => {
         entry({ path: 'c.txt', after: 'c\n', timestamp: 2_020_000 }),
       );
       expect(store.entries().map((e) => e.path)).toEqual(['b.txt', 'c.txt']);
+      // One read seeds the cache; the middle append adds none — it proved the
+      // window from cache, which is the whole point of the age fast path. The
+      // crossing pass is the only other reader (one read for the entries, one
+      // for its post-rewrite re-seed). Without the fast path every append is a
+      // slow pass: [1, 2, 4] instead of [1, 1, 3].
+      expect([r1, r2, counts.indexReads]).toEqual([1, 1, 3]);
     } finally {
       vi.useRealTimers();
     }

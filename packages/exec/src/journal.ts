@@ -619,6 +619,14 @@ export class FileJournalStore {
     // tracked size moves with the append (the repair byte included — it is
     // bytes in the file like any other).
     if (this.indexBytes !== null) this.indexBytes += written;
+    // Issue #349 review: entries can be appended out of timestamp order (a
+    // backwards clock step), so the cached minimum is folded with this entry
+    // too — otherwise the age fast path could prove "nothing aged out" from a
+    // cache that is higher than the truth and an expired entry would linger.
+    // A null cache stays null: only a pass may seed it.
+    if (this.oldestTimestamp !== null) {
+      this.oldestTimestamp = Math.min(this.oldestTimestamp, entry.timestamp);
+    }
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
     this.enforceRetention({ ...this.limits });

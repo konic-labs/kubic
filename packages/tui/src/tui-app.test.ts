@@ -116,6 +116,70 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
+  it('clears a composed draft on Esc before quitting (issue #302)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    for (const ch of 'hello') app.handleInput(ch);
+    expect(app.editor.getText()).toBe('hello');
+    // The first Esc clears the draft — one press must never throw away a
+    // composed prompt — and the session stays.
+    expect(app.handleInput('\x1b')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
+    expect(app.editor.getText()).toBe('');
+    // Only a second Esc, on the now-empty draft, quits.
+    expect(app.handleInput('\x1b')).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: false,
+    });
+  });
+
+  it('clears a composed draft on idle Ctrl-C before quitting (issue #302)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    for (const ch of 'hi') app.handleInput(ch);
+    expect(app.handleInput('\x03')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
+    expect(app.editor.getText()).toBe('');
+    expect(app.handleInput('\x03')).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: true,
+    });
+  });
+
+  it('routes Esc through the cancel-first path while a turn runs (issue #302)', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    app.setBusy(true);
+    for (const ch of 'queued thought') app.handleInput(ch);
+    // Busy: Esc is a cancel, exactly like Ctrl-C — the root aborts the turn
+    // and keeps the session, so the draft is NOT silently dropped either.
+    expect(app.handleInput('\x1b')).toEqual({
+      quit: true,
+      consumed: true,
+      cancel: true,
+    });
+  });
+
   it('keeps Ctrl-D as delete-forward while the draft is non-empty', () => {
     const app = createTuiApp({
       sessionId: SESSION,

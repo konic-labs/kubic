@@ -1006,9 +1006,13 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
 | `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
-| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
-| `Esc` | Quit (while no approval is pending — during an approval it denies). Quitting mid-turn aborts and drains the run like `Ctrl-C`, so queued follow-ups go with it. |
+| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. **A composed draft is never discarded**: idle with text in the editor the first press clears the draft (footer `ctrl+c: draft cleared — press ctrl+c again on an empty draft to quit`) and the session stays — the second press, on the empty draft, quits. A second `Ctrl-C` during a turn also quits. **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
+| `Esc` | Quit on an **empty** draft (while no approval is pending — during an approval it denies). With text in the editor the first `Esc` clears the draft instead (footer `esc: draft cleared — press esc again on an empty draft to quit`) and keeps the session; only the second press quits. While a turn runs it goes through the same cancel-first path as `Ctrl-C`: the turn aborts, the session stays, and the draft is kept. Quitting mid-turn aborts and drains the run like `Ctrl-C`, so queued follow-ups go with it. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
+| `PageUp` / `PageDown` | Scroll the transcript one page (pi-tui's alt-screen binding; the editor does not see these keys). |
+| `Home` / `End` | Scroll the transcript to its top / bottom — which is why they do not move the editor's cursor: `Ctrl-A` / `Ctrl-E` move to the line start / end instead. |
+| `Ctrl-Up` / `Ctrl-Down` (`Ctrl-Shift-Up` / `Ctrl-Shift-Down`) | Jump to the previous / next prompt in the transcript. |
+| `Ctrl-Shift-F` | Search the transcript: `Enter` (or `Ctrl-G`) selects the next match, `Shift-Enter` (`Ctrl-Shift-G`) the previous one, `Esc` closes the search and returns the keys to the editor. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
 
 Both panels read the session's own journal through the same projection
@@ -1142,8 +1146,7 @@ terminal's width — header, tree, the transcript including the last
 assistant answer, status bar, editor and footer — on stdout, without the
 editor's cursor artifacts (the hardware-cursor marker and the inverse-video
 cursor cell are stripped, as Pi's own stop path strips the marker). A crash
-restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
-`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the turn
+restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs (and `Esc`/`Ctrl-C` from their *second* press: the first one cancels the turn and keeps the session, issue #302): the turn
 is aborted (durably recorded in the session, so a resumed session shows no
 unfinished work), every tool process group it started is killed, and
 the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before

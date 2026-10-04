@@ -740,6 +740,12 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(
       page.items.filter((entry) => CompactionEntry.is(entry)),
     ).toHaveLength(0);
+    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
+    // (the footer says so — that message exists only for a non-empty draft),
+    // so quitting needs the second press.
+    fake.feed('\x03');
+    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     expect(await pending).toBe(0);
   });
@@ -823,6 +829,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first prompt'));
     for (const ch of '/model faux/other') fake.feed(ch);
+    const refusedAt = fake.writes.length;
     fake.feed('\r');
     await waitFor(() =>
       fake.writes
@@ -831,12 +838,20 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
+    // (the footer says so — that message exists only for a non-empty draft),
+    // so quitting needs the second press.
+    fake.feed('\x03');
+    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    // The whole layout at quit carries the draft in the editor row: a
-    // refused submit put it back (a frame scan could match the characters as
-    // they were TYPED, before the Enter cleared them).
-    expect(lines.join('\n')).toContain('/model faux/other');
+    // Issue #302: the frames drawn after the Enter carry the draft (the
+    // typing that preceded the clear is outside the slice, so this proves
+    // the restore rather than the input).
+    expect(fake.writes.slice(refusedAt).join('')).toContain(
+      '/model faux/other',
+    );
   });
 
   it('keeps the draft when a steer is refused (#334 review)', async () => {
@@ -869,6 +884,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first prompt'));
     for (const ch of '/model faux/other') fake.feed(ch);
+    const refusedAt = fake.writes.length;
     fake.feed('\x1b\r');
     await waitFor(() =>
       fake.writes
@@ -877,9 +893,17 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
+    // (the footer says so — that message exists only for a non-empty draft),
+    // so quitting needs the second press.
+    fake.feed('\x03');
+    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('/model faux/other');
+    expect(fake.writes.slice(refusedAt).join('')).toContain(
+      '/model faux/other',
+    );
   });
 
   it('releases the busy latch when a failed run leaves a queued follow-up (#334 review)', async () => {
@@ -1077,10 +1101,19 @@ describe('kubic tui prompt loop (issue #88)', () => {
         .join('')
         .includes('the orchestrator lane has no session transcript to compact'),
     );
+    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
+    // (the footer says so — that message exists only for a non-empty draft),
+    // so quitting needs the second press.
+    fake.feed('\x03');
+    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    // Refused, so the draft came back (finding 1 of the #334 review).
-    expect(lines.join('\n')).toContain('/compact');
+    // Refused, so the draft came back (finding 1 of the #334 review). The
+    // restore is not itself re-rendered until the next frame, so the
+    // evidence is the state it leaves behind (issue #302): the first Ctrl-C
+    // found a non-empty editor — its footer says the draft was cleared and
+    // the process stayed alive — and only the second one quit.
   });
 
   it('refuses /thinking and the cycle key while a turn runs (#328)', async () => {
@@ -1112,6 +1145,7 @@ describe('kubic tui prompt loop (issue #88)', () => {
     await waitFor(() => fake.writes.join('').includes('first prompt'));
     // The command form is refused with the reason, and the draft comes back.
     for (const ch of '/thinking high') fake.feed(ch);
+    const refusedAt = fake.writes.length;
     fake.feed('\r');
     await waitFor(() =>
       fake.writes
@@ -1129,9 +1163,15 @@ describe('kubic tui prompt loop (issue #88)', () => {
     );
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Issue #302: with a draft in the editor the first Ctrl-C only clears it
+    // (the footer says so — that message exists only for a non-empty draft),
+    // so quitting needs the second press.
+    fake.feed('\x03');
+    await waitFor(() => fake.writes.join('').includes('ctrl+c: draft cleared'));
+    expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     expect(await pending).toBe(0);
-    expect(lines.join('\n')).toContain('/thinking high');
+    expect(fake.writes.slice(refusedAt).join('')).toContain('/thinking high');
   });
 
   it('answers /help, /session and /diff locally and refuses an unknown command (#305)', async () => {
@@ -1417,6 +1457,70 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // the process holds no dangling handler on the real stream.
     process.stdin.emit('end');
     expect(fake.counts.stopped).toBe(1);
+  });
+
+  it('Esc clears a composed draft and cancels a busy turn, never quitting it (#302)', async () => {
+    // Busy: Esc goes through the same cancel-first path as Ctrl-C.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('never delivered');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'slow one') fake.feed(ch);
+    fake.feed('\r');
+    fake.feed('\x1b');
+    await waitFor(() => fake.writes.join('').includes('cancelling'));
+    expect(fake.counts.stopped).toBe(0);
+    release();
+    await waitFor(() => fake.writes.join('').includes('cancelled'));
+    expect(fake.counts.stopped).toBe(0);
+    // Idle, empty draft: Esc quits.
+    fake.feed('\x1b');
+    expect(await pending).toBe(0);
+    expect(fake.counts.stopped).toBe(1);
+
+    // Idle with a composed draft: the first Esc only clears it.
+    const draftRoot = tmpRoot();
+    const draftLines: string[] = [];
+    const draftFake = fakeTerminal(100);
+    const draftModels = fauxModels([]);
+    const draftPending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => draftLines.push(line),
+        createTerminal: () => draftFake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(draftRoot, draftModels.models),
+      },
+    );
+    await waitFor(() => draftFake.counts.started === 1);
+    for (const ch of 'hello') draftFake.feed(ch);
+    draftFake.feed('\x1b');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(draftFake.counts.stopped).toBe(0);
+    // The cleared draft is gone from the rendered editor row.
+    expect(draftFake.writes.join('')).not.toContain('hello');
+    draftFake.feed('\x1b');
+    expect(await draftPending).toBe(0);
+    expect(draftFake.counts.stopped).toBe(1);
   });
 
   it('quits on Esc and on Ctrl-D with an empty draft', async () => {

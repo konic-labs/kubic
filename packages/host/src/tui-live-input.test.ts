@@ -205,6 +205,9 @@ describe('idle input repaints (issue #274)', () => {
     const mark = fake.mark();
     fake.feed('a');
     await waitFor(() => fake.since(mark).includes('a'), RENDER_TICK_STEPS);
+    // Issue #302: the draft is on screen, so the first Ctrl-C only clears
+    // it; the second press quits.
+    fake.feed('\x03');
     fake.feed('\x03');
     expect(await exit).toBe(0);
   });

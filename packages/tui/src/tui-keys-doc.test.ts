@@ -105,6 +105,19 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       expect(section).not.toMatch(/\| `J` \|/);
     });
 
+    it('documents the transcript scroll keys the alt screen claims (#302)', () => {
+      // pi-tui's alt screen registers these ahead of the Kubic listener, so
+      // they scroll the transcript and Home/End never reach the editor —
+      // an operator who is not told that concludes the keys are broken.
+      const section = tuiSection();
+      expect(section).toMatch(/\| `PageUp` \/ `PageDown` \|/);
+      expect(section).toMatch(/\| `Home` \/ `End` \|/);
+      expect(section).toMatch(/`Ctrl-Up` \/ `Ctrl-Down`/);
+      expect(section).toMatch(/`Ctrl-Shift-F`/);
+      // The line-start/end replacement is named, or the loss looks silent.
+      expect(section).toMatch(/`Ctrl-A` \/ `Ctrl-E`[^|]*line start \/ end/i);
+    });
+
     it('documents the approval decision keys the surface actually binds', () => {
       // The shipped binding table itself, not a regex over its source text.
       expect(APPROVAL_DEFAULT_KEYS).toEqual({

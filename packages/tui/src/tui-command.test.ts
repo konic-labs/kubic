@@ -99,6 +99,9 @@ describe('kubic tui (issue #75)', () => {
     );
     await waitFor(() => terminal.started === 1);
     input('T');
+    // Issue #302: with the draft on screen the first Ctrl-C clears it and
+    // the second one quits.
+    input('\x03');
     input('\x03');
     const code = await pending;
     expect(code).toBe(0);

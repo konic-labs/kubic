@@ -468,12 +468,24 @@ export interface JournalFilterLike {
 export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
   ['enter', 'send'],
   ['ctrl+j', 'newline'],
+  ['ctrl+a/ctrl+e', 'line start/end'],
   ['ctrl+x', 'expand output'],
   ['ctrl+o', 'diff'],
   ['ctrl+r', 'journal'],
   ['ctrl+t', 'tree'],
   ['ctrl+g', 'mode'],
   ['esc', 'quit'],
+];
+
+// Issue #302: pi-tui's alt screen claims these keys ahead of the editor, so
+// they scroll the transcript — which is also why Home/End no longer reach
+// the line ends (Ctrl-A/Ctrl-E do). The welcome block names them: a key the
+// operator cannot discover is a key that does not exist (§17).
+export const TRANSCRIPT_KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
+  ['pgup/pgdn', 'scroll'],
+  ['home/end', 'top/bottom'],
+  ['ctrl+up/down', 'prev/next prompt'],
+  ['ctrl+shift+f', 'search'],
 ];
 
 export function renderKeyHints(
@@ -552,12 +564,16 @@ export function welcomeLines(info: {
     lines.push(`  ${theme.warning('!')} ${theme.muted(info.notice)}`);
   }
   lines.push('', `  ${theme.muted('Type a task and press enter.')}`);
-  const half = Math.ceil(KEY_HINTS.length / 2);
+  // Three hints per row keeps every row inside a narrow terminal: the hint
+  // rows are rendered at their natural width (the welcome block is not
+  // re-wrapped), so a long row would be cut rather than continued.
+  for (let i = 0; i < KEY_HINTS.length; i += 3) {
+    lines.push(
+      `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(i, i + 3))}`,
+    );
+  }
   lines.push(
-    `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(0, half))}`,
-  );
-  lines.push(
-    `  ${renderKeyHints(Number.POSITIVE_INFINITY, KEY_HINTS.slice(half))}`,
+    `  ${theme.muted('transcript:')} ${renderKeyHints(Number.POSITIVE_INFINITY, TRANSCRIPT_KEY_HINTS)}`,
   );
   return lines;
 }
@@ -1089,18 +1105,39 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         modelPicker.list.handleInput(data);
         return { quit: false, consumed: true, cancel: false };
       }
-      if (keyId === 'ctrl+c') {
-        // Always classified as cancel; the root decides whether the process
-        // exits (idle) or the in-flight turn aborts (busy). A pending approval
-        // is denied first: nobody is left waiting on a verdict that can no
-        // longer arrive (the turn would otherwise hang to the lane's timeout).
+      // Issue #302: Esc and Ctrl-C share one path. Both are classified as
+      // cancel (the root decides: a running turn aborts and the session
+      // stays; idle it exits), and NEITHER throws away a composed draft —
+      // the first press clears it, a second press on the empty draft quits.
+      // A pending approval is denied first: nobody is left waiting on a
+      // verdict that can no longer arrive (the turn would otherwise hang to
+      // the lane's timeout).
+      const cancelOrClearDraft = (): TuiInputResult => {
         if (approvalSurface.isShowing()) {
           approvalSurface.cancelPending();
           settleApproval();
         }
-        return { quit: true, consumed: true, cancel: true };
+        if (!busy && editor.getText() !== '') {
+          editor.setText('');
+          editorRow.setFooter(
+            keyId === 'escape'
+              ? 'esc: draft cleared — press esc again on an empty draft to quit'
+              : 'ctrl+c: draft cleared — press ctrl+c again on an empty draft to quit',
+          );
+          return { quit: false, consumed: true, cancel: false };
+        }
+        // Idle Esc keeps its shipped classification (quit, not cancel);
+        // Ctrl-C is always a cancel and a BUSY Esc is one too, which is what
+        // makes the root abort the turn instead of exiting.
+        return {
+          quit: true,
+          consumed: true,
+          cancel: keyId === 'ctrl+c' || busy,
+        };
+      };
+      if (keyId === 'ctrl+c' || keyId === 'escape') {
+        return cancelOrClearDraft();
       }
-      if (keyId === 'escape') return quit();
       if (keyId === 'ctrl+d') {
         // Ctrl-D quits only on an empty draft — the shell convention. While
         // typing it stays Pi's delete-forward, so the key is never a silent

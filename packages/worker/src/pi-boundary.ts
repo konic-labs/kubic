@@ -345,3 +345,18 @@ export type {
   TaskId,
   UsageState,
 } from '@earendil-works/pi-durable';
+
+// --- #399 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
+//   used by: packages/worker/src/compaction.ts (compactSoloLane returns the
+//     admitted manual compaction's id; callers wait with
+//     harness.waitForTask and match LiveDoc.compactions entries)
+//   why Pi has no alternative: TaskId is the branded id the durable task
+//     graph hands back from Conversation.compact(); a Kubic string handle
+//     would not type-check against waitForTask/getTask and would drift from
+//     the ids in LiveDoc.compactions and the pi.compaction entries.
+//   review: issue #399 (CONTRACT D3)
+// TaskId is re-exported by the #398 block above (deduped at merge).
+export type { CompactionResult } from '@earendil-works/pi-durable';

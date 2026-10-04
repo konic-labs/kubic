@@ -1,7 +1,10 @@
 // Slice A: models.json custom/local providers (issue #20; §37).
 // RED: parseModelsJson/registerCustomProviders do not exist yet.
 import { describe, expect, it } from 'vitest';
-import { compactionThreshold, DEFAULT_RESERVE_TOKENS } from './compaction.js';
+import {
+  DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
+} from './compaction.js';
 import {
   LOCAL_MODELS_EXAMPLE,
   ModelsJsonError,
@@ -207,8 +210,9 @@ describe('models.json defaults (compaction headroom)', () => {
     expect(model?.maxTokens).toBe(2048);
     // The reserve clamp keeps the threshold positive for the small default
     // window (otherwise every turn compacts: one extra model call each).
+    const window = model?.contextWindow ?? 0;
     expect(
-      compactionThreshold(model?.contextWindow ?? 0, DEFAULT_RESERVE_TOKENS),
+      window - effectiveReserveTokens(window, DEFAULT_RESERVE_TOKENS),
     ).toBeGreaterThan(0);
   });
 });

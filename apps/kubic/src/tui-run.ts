@@ -165,15 +165,23 @@ import {
   turnLaneRecord,
 } from '../../../packages/worker/src/lane/turn.js';
 import {
+  type AnyModel,
+  clampThinking,
   ModelSelectError,
   type ModelSelection,
   parseModelFlag,
+  supportedThinking,
 } from '../../../packages/worker/src/model-select.js';
+import {
+  isThinkingLevel,
+  THINKING_LEVELS,
+} from '../../../packages/worker/src/models-config.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
   ConversationBusy,
   type EntryRecord,
+  type ModelThinkingLevel,
   type MutableModels,
   type SubmissionId,
 } from '../../../packages/worker/src/pi-boundary.js';
@@ -284,10 +292,41 @@ export interface TuiLaneLoop {
   // viewer loops) leaves the seeded limits in place — the gauge never keeps
   // a window that belongs to a model the session no longer runs.
   contextLimits?: (provider: string, id: string) => ContextLimits;
+  /**
+   * #328: the thinking level the live conversation's agent carries (the
+   * `pi.agent` document), for `/thinking`'s report and the cycle key.
+   */
+  thinking?: (context: Context) => Promise<ModelThinkingLevel>;
+  /**
+   * #328: `/thinking <level>` — commit the level through the conversation's
+   * agent (`configure`), CLAMPED to what the live model supports, and return
+   * the effective level Pi will use. Absent means this boot has no live lane.
+   */
+  switchThinking?: (
+    level: ModelThinkingLevel,
+    context: Context,
+  ) => Promise<ModelThinkingLevel>;
+  /** #328: the levels the LIVE model supports, in ladder order. */
+  supportedThinking?: (
+    context: Context,
+  ) => Promise<readonly ModelThinkingLevel[]>;
+  /**
+   * #328: the catalog rows the `/model` picker offers (usable providers
+   * only), the live model marked. Absent means this boot cannot list them.
+   */
+  listModels?: (context: Context) => Promise<readonly TuiModelChoice[]>;
   // §46 trajectory per settled turn (issue #383): the prod boot persists
   // <sessions-root>/<id>/trajectory.json here. Absent (injected test loops)
   // means no trajectory; a failure never changes the turn's outcome.
   recordTurn?: (turn: TuiTurnRecord) => Promise<void> | void;
+}
+
+// Issue #328: one row of the model picker's catalog (the lane's `listModels`
+// member, projected into the tui app's own row shape by the loop).
+export interface TuiModelChoice {
+  readonly provider: string;
+  readonly id: string;
+  readonly current: boolean;
 }
 
 // One settled turn as the runner saw it: the prompt, when it started, the
@@ -1418,6 +1457,60 @@ export async function bootTuiLane(
           const running = await liveModelOf(booted, loopContext);
           return `${running.provider}/${running.id}`;
         },
+        // Issue #328: the thinking level lives in the same `pi.agent`
+        // document as the model (#394) — nothing extra to persist, and a
+        // resume restores it. The clamp is Kubic's own (#20/#225): a level
+        // the live model does not support resolves to the nearest one, and
+        // the caller reports the EFFECTIVE value, never the requested one.
+        thinking: async (loopContext) => {
+          const agent = await booted.conversation.agent(loopContext);
+          return agent.thinkingLevel ?? 'off';
+        },
+        switchThinking: async (level, loopContext) => {
+          const live = await liveModelOf(booted, loopContext);
+          const model = models.getModel(live.provider, live.id) as
+            | AnyModel
+            | undefined;
+          const effective =
+            model === undefined ? level : clampThinking(models, model, level);
+          await booted.conversation.configure(
+            { thinkingLevel: effective },
+            loopContext,
+          );
+          const agent = await booted.conversation.agent(loopContext);
+          return agent.thinkingLevel ?? effective;
+        },
+        supportedThinking: async (loopContext) => {
+          const live = await liveModelOf(booted, loopContext);
+          const model = models.getModel(live.provider, live.id) as
+            | AnyModel
+            | undefined;
+          return model === undefined
+            ? ['off']
+            : supportedThinking(models, model);
+        },
+        // Issue #328: the picker's catalog. Only providers the assembly
+        // marked usable are offered (a keyless built-in would fail at the
+        // request, not at the switch); an injected test catalog has no
+        // receipt, so every registered provider counts as usable there.
+        listModels: async (loopContext) => {
+          const live = await liveModelOf(booted, loopContext);
+          const rows: TuiModelChoice[] = [];
+          for (const provider of models.getProviders()) {
+            if (assembled !== undefined) {
+              const info = assembled.providers.get(provider.id);
+              if (info !== undefined && !info.usable) continue;
+            }
+            for (const model of models.getModels(provider.id)) {
+              rows.push({
+                provider: provider.id,
+                id: model.id,
+                current: provider.id === live.provider && model.id === live.id,
+              });
+            }
+          }
+          return rows;
+        },
         // §46 trajectory per settled turn (issue #383): the same record
         // `kubic run` writes, holding the session's latest settled turn.
         // D6.5: the entries and the transcript come from #400's adapter —
@@ -1898,6 +1991,58 @@ export class TuiTurnRunner {
     return label;
   }
 
+  // Issue #328: the live thinking level (the `pi.agent` document). Read once
+  // from the lane, then kept by every switch — the status bar and the
+  // `/thinking` report read the same value.
+  private thinking: ModelThinkingLevel | undefined;
+
+  get thinkingRef(): ModelThinkingLevel | undefined {
+    return this.thinking;
+  }
+
+  /** #328: the live level, read from the lane on first use. */
+  async liveThinking(): Promise<ModelThinkingLevel> {
+    if (this.thinking !== undefined) return this.thinking;
+    const read = this.loop.thinking;
+    if (read === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    this.thinking = await read(this.loop.context);
+    return this.thinking;
+  }
+
+  // Issue #328: `/thinking <level>` and the cycle key. The lane clamps to
+  // what the live model supports and returns the EFFECTIVE level; the app's
+  // status bar moves to it (the header keeps the model).
+  async switchThinking(level: ModelThinkingLevel): Promise<ModelThinkingLevel> {
+    const switchThinking = this.loop.switchThinking;
+    if (switchThinking === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    const effective = await switchThinking(level, this.loop.context);
+    this.thinking = effective;
+    this.app.setModel(this.model, effective);
+    return effective;
+  }
+
+  /** #328: the levels the live model supports, in ladder order. */
+  async supportedThinking(): Promise<readonly ModelThinkingLevel[]> {
+    const supported = this.loop.supportedThinking;
+    if (supported === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    return supported(this.loop.context);
+  }
+
+  /** #328: the catalog rows the picker offers, the live model marked. */
+  async listModels(): Promise<readonly TuiModelChoice[]> {
+    const list = this.loop.listModels;
+    if (list === undefined) {
+      throw new Error('this session has no live lane to switch');
+    }
+    return list(this.loop.context);
+  }
+
   // Busy from the moment a submit is accepted by the loop — not from the
   // moment the durable turn lands — so the Ctrl-C that follows Enter by a
   // keystroke still cancels instead of quitting. Busy means PLACED work
@@ -2347,6 +2492,33 @@ export function parseTuiCompactCommand(
   return { focus: focus === '' ? undefined : focus };
 }
 
+// The `/thinking <level>` command of the interactive loop (#328; §66
+// thinking.cycle). `undefined` means the draft is a prompt, not the command;
+// the level vocabulary is the config layer's own (`THINKING_LEVELS`), so
+// `/thinking bogus` is refused by name with the levels that exist.
+export type TuiThinkingCommand =
+  | { kind: 'report' }
+  | { kind: 'switch'; level: ModelThinkingLevel }
+  | { kind: 'invalid'; message: string };
+
+export function parseThinkingCommand(
+  prompt: string,
+): TuiThinkingCommand | undefined {
+  if (prompt !== '/thinking' && !prompt.startsWith('/thinking ')) {
+    return undefined;
+  }
+  const argument =
+    prompt === '/thinking' ? '' : prompt.slice('/thinking '.length).trim();
+  if (argument === '') return { kind: 'report' };
+  if (!isThinkingLevel(argument)) {
+    return {
+      kind: 'invalid',
+      message: `unknown thinking level '${argument}' (levels: ${THINKING_LEVELS.join(', ')})`,
+    };
+  }
+  return { kind: 'switch', level: argument };
+}
+
 // The parsed `kubic tui` invocation (commander owns the argv:
 // ./commands/solo.ts). The parity flags (issue #113) carry the same names
 // and value rules as their `kubic run` counterparts.
@@ -2598,6 +2770,10 @@ export async function runTuiCommand(
   // event handler above (registered before the submit path exists) must
   // re-sync it when the harness places a queued submission.
   let syncBusyForLoop: (() => void) | undefined;
+  // Issue #328: Alt+M / Alt+T, defined with the lane wiring below (the key
+  // router is registered first).
+  let pickModelForLoop: (() => void) | undefined;
+  let cycleThinkingForLoop: (() => void) | undefined;
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -2855,6 +3031,14 @@ export async function runTuiCommand(
       // Issue #334: Alt+Enter carried the draft out of the editor. Busy, the
       // text steers the running turn through the harness' steer queue; idle,
       // it submits like Enter (with the same pending echo).
+      if (routed.pickModel === true) {
+        pickModelForLoop?.();
+        return { consume: true };
+      }
+      if (routed.cycleThinking === true) {
+        cycleThinkingForLoop?.();
+        return { consume: true };
+      }
       if (routed.steer !== undefined) {
         const steered = routed.steer;
         const outcome = submitForLoop?.(steered, true);
@@ -2953,12 +3137,22 @@ export async function runTuiCommand(
           if (!stopped) screen?.render();
           return;
         }
+        switchModelTo(command.selection);
+      };
+      // Issue #227/#328: one switch path for `/model <id>` and the picker's
+      // Enter — the same footer wording and the same refusal text.
+      const switchModelTo = (selection: ModelSelection): void => {
+        if (turn === undefined) {
+          app.setEditorFooter('model switch needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
         app.setEditorFooter(
-          `switching model to ${command.selection.provider}/${command.selection.id}…`,
+          `switching model to ${selection.provider}/${selection.id}…`,
         );
         if (!stopped) screen?.render();
         void turn
-          .switchModel(command.selection)
+          .switchModel(selection)
           .then((label) => {
             if (stopped) return;
             app.setEditorFooter(`model: ${label} (switched)`);
@@ -2972,6 +3166,155 @@ export async function runTuiCommand(
             screen?.render();
           });
       };
+
+      // Issue #328: `/thinking <level>` — report, switch (clamped by the lane
+      // to what the live model supports) or refuse an unknown level by name.
+      const handleThinkingCommand = (command: TuiThinkingCommand): void => {
+        if (turn === undefined) {
+          app.setEditorFooter('thinking needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
+        if (command.kind === 'report') {
+          void turn
+            .liveThinking()
+            .then((level) => {
+              if (stopped) return;
+              app.setEditorFooter(`thinking: ${level}`);
+              screen?.render();
+            })
+            .catch((error: unknown) => {
+              if (stopped) return;
+              app.setEditorFooter(
+                `thinking: ${error instanceof Error ? error.message : String(error)}`,
+              );
+              screen?.render();
+            });
+          return;
+        }
+        if (command.kind === 'invalid') {
+          app.setEditorFooter(`thinking: ${command.message}`);
+          if (!stopped) screen?.render();
+          return;
+        }
+        const requested = command.level;
+        void turn
+          .switchThinking(requested)
+          .then((effective) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              effective === requested
+                ? `thinking: ${effective}`
+                : `thinking: ${effective} (clamped from ${requested})`,
+            );
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `thinking switch failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
+
+      // Issue #328: Alt+T cycles the level over what the live model supports
+      // (§66 thinking.cycle), committing each step through the same path.
+      const cycleThinking = (): void => {
+        if (stopped) return;
+        if (activeTurn?.isRunning() === true) {
+          app.setEditorFooter(
+            'thinking: finish the current turn before switching',
+          );
+          screen?.render();
+          return;
+        }
+        if (turn === undefined) {
+          app.setEditorFooter('thinking needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
+        void (async () => {
+          const [current, levels] = await Promise.all([
+            turn.liveThinking(),
+            turn.supportedThinking(),
+          ]);
+          if (levels.length === 0) {
+            app.setEditorFooter('thinking: this model has no thinking levels');
+            if (!stopped) screen?.render();
+            return;
+          }
+          const at = levels.indexOf(current);
+          const next = levels[(at + 1) % levels.length] ?? levels[0];
+          const effective = await turn.switchThinking(next);
+          if (stopped) return;
+          app.setEditorFooter(`thinking: ${effective}`);
+          screen?.render();
+        })().catch((error: unknown) => {
+          if (stopped) return;
+          app.setEditorFooter(
+            `thinking switch failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          screen?.render();
+        });
+      };
+
+      // Issue #328: Alt+M opens the picker over the usable catalog rows. The
+      // overlay owns the modal input; a pick goes through `switchModelTo`.
+      const openModelPicker = (): void => {
+        if (stopped) return;
+        if (activeTurn?.isRunning() === true) {
+          app.setEditorFooter(
+            'model: finish the current turn before switching',
+          );
+          screen?.render();
+          return;
+        }
+        if (turn === undefined) {
+          app.setEditorFooter('model switch needs the solo lane');
+          if (!stopped) screen?.render();
+          return;
+        }
+        void turn
+          .listModels()
+          .then((rows) => {
+            if (stopped) return;
+            const opened = app.openModelPicker({
+              rows: rows.map((row) => ({
+                provider: row.provider,
+                id: row.id,
+                label: `${row.provider}/${row.id}`,
+                current: row.current,
+              })),
+              onSelect: (row) => {
+                switchModelTo({ provider: row.provider, id: row.id });
+              },
+              onCancel: () => {
+                if (stopped) return;
+                app.setEditorFooter(
+                  `model: ${turn.modelRef} (picker cancelled)`,
+                );
+                screen?.render();
+              },
+            });
+            if (!opened) {
+              app.setEditorFooter(
+                'model picker needs a wider terminal — use /model <provider/id>',
+              );
+            }
+            if (!stopped) screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `model picker failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+      };
+      pickModelForLoop = openModelPicker;
+      cycleThinkingForLoop = cycleThinking;
+
       // Issue #334: one accepted prompt → one turn on its driver. A busy
       // Enter starts a SECOND run while the first is still in flight (the
       // harness queues it), so the busy latch counts turns instead of
@@ -3107,6 +3450,20 @@ export async function runTuiCommand(
             return 'refused';
           }
           startTurn(new TuiCompactionTurn(lane, compactCommand.focus), prompt);
+          return 'accepted';
+        }
+        // Issue #328: `/thinking <level>` — same busy rule as `/model`: a
+        // live switch never races a run.
+        const thinkingCommand = parseThinkingCommand(prompt);
+        if (thinkingCommand !== undefined) {
+          if (busy) {
+            app.setEditorFooter(
+              'thinking: finish the current turn before switching',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          handleThinkingCommand(thinkingCommand);
           return 'accepted';
         }
         const modelCommand = parseModelCommand(prompt);

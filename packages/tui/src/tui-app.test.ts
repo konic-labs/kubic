@@ -4,6 +4,7 @@
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
 import { describe, expect, it } from 'vitest';
+import type { ApprovalOverlayTui } from './approval-view.js';
 import { createTuiApp, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
@@ -573,5 +574,128 @@ describe('lane snapshot feed (issue #88)', () => {
     app.setModel('alt/m1');
     expect(app.status.getState().model).toBe('alt/m1');
     expect(app.status.getState().thinking).toBe('off');
+  });
+});
+
+describe('model picker and thinking cycle (issue #328)', () => {
+  const app = () =>
+    createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+
+  // The overlay seat the composition root attaches in prod: the picker is
+  // shown through the same host the approval dialog uses.
+  const pickerHost = () => {
+    const shown: Array<{ render: (width: number) => string[] }> = [];
+    let hidden = 0;
+    return {
+      shown,
+      get hidden() {
+        return hidden;
+      },
+      host: {
+        showOverlay: (component: unknown) => {
+          shown.push(component as { render: (width: number) => string[] });
+          return {
+            unfocus: () => {},
+            hide: () => {
+              hidden += 1;
+            },
+          };
+        },
+      } as unknown as ApprovalOverlayTui,
+    };
+  };
+
+  it('classifies Alt+M and Alt+T for the loop', () => {
+    const ui = app();
+    expect(ui.handleInput('\u001bm')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+      pickModel: true,
+    });
+    expect(ui.handleInput('\u001bt')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+      cycleThinking: true,
+    });
+    // Kitty CSI-u encodings classify the same (parseKey, not raw bytes).
+    expect(ui.handleInput('\u001b[109;3u')).toMatchObject({ pickModel: true });
+    expect(ui.handleInput('\u001b[116;3u')).toMatchObject({
+      cycleThinking: true,
+    });
+  });
+
+  it('opens the picker overlay and reports the chosen row', () => {
+    const ui = app();
+    const seat = pickerHost();
+    ui.attachApprovalOverlay(seat.host);
+    const picked: string[] = [];
+    expect(
+      ui.openModelPicker({
+        rows: [
+          { provider: 'faux', id: 'big', label: 'faux/big', current: true },
+          {
+            provider: 'alt',
+            id: 'm1',
+            label: 'alt/m1',
+            note: 'models.json',
+          },
+        ],
+        onSelect: (row) => picked.push(`${row.provider}/${row.id}`),
+      }),
+    ).toBe(true);
+    expect(ui.isModelPickerOpen()).toBe(true);
+    const frame = seat.shown[0]?.render(80).join('\n') ?? '';
+    // The live model is marked and the note renders as its description.
+    expect(frame).toContain('faux/big (current)');
+    expect(frame).toContain('alt/m1');
+    expect(frame).toContain('models.json');
+    // The picker is modal: arrows move it and Enter selects the second row.
+    ui.handleInput('\u001b[B');
+    ui.handleInput('\r');
+    expect(picked).toEqual(['alt/m1']);
+    expect(ui.isModelPickerOpen()).toBe(false);
+    expect(seat.hidden).toBe(1);
+    // Modal means the editor never saw those keys.
+    expect(ui.editor.getText()).toBe('');
+  });
+
+  it('cancels the picker with Esc and leaves the model alone', () => {
+    const ui = app();
+    const seat = pickerHost();
+    ui.attachApprovalOverlay(seat.host);
+    let cancelled = 0;
+    ui.openModelPicker({
+      rows: [{ provider: 'faux', id: 'big', label: 'faux/big', current: true }],
+      onSelect: () => {},
+      onCancel: () => {
+        cancelled += 1;
+      },
+    });
+    expect(ui.handleInput('\u001b')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
+    expect(ui.isModelPickerOpen()).toBe(false);
+    expect(cancelled).toBe(1);
+    expect(seat.hidden).toBe(1);
+  });
+
+  it('refuses to open the picker without an overlay seat', () => {
+    const ui = app();
+    expect(
+      ui.openModelPicker({
+        rows: [{ provider: 'faux', id: 'big', label: 'faux/big' }],
+        onSelect: () => {},
+      }),
+    ).toBe(false);
+    expect(ui.isModelPickerOpen()).toBe(false);
   });
 });

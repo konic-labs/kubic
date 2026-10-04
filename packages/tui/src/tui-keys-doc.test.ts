@@ -69,15 +69,22 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       // The reverse direction of the drift: a binding the doc never mentions is
       // a feature the operator cannot discover.
       const section = tuiSection();
+      // The key-table spelling of a binding id: Esc, the Alt keys by name
+      // (the shipped table writes them with the modifier first), and
+      // Ctrl-X for the rest.
+      const ALT_NAMES: Readonly<Record<string, string>> = {
+        'alt+enter': 'Alt+Enter',
+        'alt+m': 'Alt+M',
+        'alt+t': 'Alt+T',
+      };
       const docName = (id: string): string =>
         id === 'escape'
           ? 'Esc'
-          : id === 'alt+enter'
-            ? 'Alt+Enter'
-            : id.replace(
-                /^ctrl\+(.)$/,
-                (_, k: string) => `Ctrl-${k.toUpperCase()}`,
-              );
+          : (ALT_NAMES[id] ??
+            id.replace(
+              /^ctrl\+(.)$/,
+              (_, k: string) => `Ctrl-${k.toUpperCase()}`,
+            ));
       const escapeRe = (text: string): string =>
         text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       for (const id of boundKeyIds()) {

@@ -70,6 +70,28 @@ function twoProviders(
   return models;
 }
 
+// One provider whose faux factory records every request's options: the
+// thinking level travels there as `reasoning` (#328).
+function thinkingProviders(
+  record: (options: { reasoning?: string } | undefined) => void,
+): MutableModels {
+  const models = createModels();
+  const faux = fauxProvider({
+    provider: 'faux',
+    models: [{ id: 'big', contextWindow: 200000, reasoning: true }],
+  });
+  const factory = (
+    _context: unknown,
+    options?: { reasoning?: string },
+  ): FauxMessage => {
+    record(options);
+    return fauxAssistantMessage('from faux');
+  };
+  faux.setResponses([factory, factory, factory, factory]);
+  models.setProvider(faux.provider);
+  return models;
+}
+
 function fakeTerminal(width: number) {
   const writes: string[] = [];
   const counts = { started: 0, stopped: 0 };
@@ -232,6 +254,132 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     expect(doc).toContain('switched');
     // The editor row at quit is empty: nothing resurrected the command.
     expect(doc).not.toContain('/model alt/m1');
+  });
+
+  it('switches the thinking level and sends it with the next request (#328)', async () => {
+    const workspace = tmpRoot('tui-328-thinking-ws-');
+    const sessionsRoot = tmpRoot('tui-328-thinking-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const seen: Array<string | undefined> = [];
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: thinkingProviders((options) =>
+              seen.push(options?.reasoning),
+            ),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // The report names the boot level, and an unknown level is refused by
+    // name with the vocabulary.
+    type(fake, '/thinking');
+    await waitFor(() => fake.frame.includes('thinking: off'));
+    type(fake, '/thinking bogus');
+    await waitFor(() => fake.frame.includes("unknown thinking level 'bogus'"));
+    // The switch rides the NEXT request as `reasoning`.
+    type(fake, '/thinking high');
+    await waitFor(() => fake.frame.includes('thinking: high'));
+    type(fake, 'hello');
+    await waitFor(() => fake.frame.includes('from faux'));
+    expect(seen).toContain('high');
+    // A level above what the model supports clamps, and the footer says so.
+    type(fake, '/thinking xhigh');
+    await waitFor(() => fake.frame.includes('(clamped from xhigh)'));
+    // Alt+T cycles from high back to off (this model's ladder ends at high).
+    const mark = fake.writes.length;
+    fake.feed('\u001bt');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('thinking: off'),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // The status bar carries the live level, not the boot one.
+    expect(lines.join('\n')).toContain('thinking off');
+  });
+
+  it('picks a model from the Alt+M overlay (#328)', async () => {
+    const workspace = tmpRoot('tui-328-picker-ws-');
+    const sessionsRoot = tmpRoot('tui-328-picker-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    let sessionId = '';
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) => {
+          const boot = await bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          });
+          sessionId = boot.sessionId;
+          return boot;
+        },
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // Alt+M opens the picker: the usable catalog rows, the live one marked.
+    fake.feed('\u001bm');
+    await waitFor(() => fake.frame.includes('faux/big (current)'));
+    expect(fake.frame).toContain('alt/m1');
+    // Move to the next row and select it: the same switch path as /model.
+    fake.feed('\u001b[B');
+    fake.feed('\r');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('faux/small');
+    // The picker switched the real lane: a fresh attach resumes on it.
+    expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
+      provider: 'faux',
+      modelId: 'small',
+    });
+  });
+
+  it('cancels the picker with Esc, leaving the model alone (#328)', async () => {
+    const workspace = tmpRoot('tui-328-cancel-ws-');
+    const sessionsRoot = tmpRoot('tui-328-cancel-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    fake.feed('\u001bm');
+    await waitFor(() => fake.frame.includes('faux/big (current)'));
+    fake.feed('\u001b');
+    await waitFor(() => fake.frame.includes('(picker cancelled)'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    // Still the boot model.
+    expect(lines.join('\n')).toContain('faux/big');
+    expect(lines.join('\n')).not.toContain('faux/small');
   });
 
   it('reports the current model and refuses an unknown one by name', async () => {

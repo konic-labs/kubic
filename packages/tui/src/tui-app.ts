@@ -48,6 +48,7 @@ import type {
   ApprovalDecision,
   ApprovalKeyOverrides,
   ApprovalOverlayHandle,
+  ApprovalOverlayOptions,
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
@@ -86,12 +87,18 @@ import {
   type TranscriptView,
 } from './transcript.js';
 import { AgentTreeView, type LaneEventLike } from './tree.js';
-import type { Component, VStack } from './tui-boundary.js';
+import type {
+  Component,
+  SelectItem,
+  SelectListTheme,
+  VStack,
+} from './tui-boundary.js';
 import {
   isKeyRelease,
   isKeyRepeat,
   parseKey,
   ScrollView,
+  SelectList,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -172,6 +179,11 @@ export interface TuiInputResult {
   // becomes (steer the running turn, or submit it when idle), because only
   // the loop knows a lane and its busy state.
   readonly steer?: string;
+  // Issue #328: Alt+M opens the model picker (the loop supplies the rows).
+  readonly pickModel?: boolean;
+  // Issue #328: Alt+T cycles the thinking level over what the live model
+  // supports (the loop owns the ladder and the commit).
+  readonly cycleThinking?: boolean;
 }
 
 // Issue #334: what the loop did with a submitted prompt. `queued` means the
@@ -216,10 +228,66 @@ const GLOBAL_KEYS: ReadonlySet<string> = new Set([
   // the newline keys Ctrl-J / Shift+Enter / backslash-Enter, never
   // alt+enter, and the command repaints below must classify it here.
   'alt+enter',
+  // Issue #328: the model picker and the thinking cycle. Alt+M / Alt+T are
+  // free (Pi's editor claims alt+b/f/d/y and alt+arrows/backspace/delete).
+  'alt+m',
+  'alt+t',
 ]);
 
 function isGlobalKey(keyId: string | undefined): boolean {
   return keyId !== undefined && GLOBAL_KEYS.has(keyId);
+}
+
+// Issue #328: one row of the `/model` picker overlay. `label` is the
+// `provider/id` the operator sees and the value the loop resolves.
+export interface TuiModelPickerRow {
+  readonly provider: string;
+  readonly id: string;
+  readonly label: string;
+  /** Marked as the live model (the picker highlights it). */
+  readonly current?: boolean;
+  /** A short note (provider origin / auth state), rendered dim. */
+  readonly note?: string;
+}
+
+export interface TuiModelPickerOptions {
+  readonly rows: readonly TuiModelPickerRow[];
+  readonly onSelect: (row: TuiModelPickerRow) => void;
+  readonly onCancel?: () => void;
+}
+
+// How many picker rows fit at once; the list scrolls beyond it.
+export const MODEL_PICKER_MAX_ROWS = 10;
+// The overlay's share of the terminal: wide enough for `provider/id` rows,
+// tall enough for MODEL_PICKER_MAX_ROWS plus the list's scroll hint.
+export const MODEL_PICKER_WIDTH_PERCENT = 60;
+export const MODEL_PICKER_HEIGHT_PERCENT = 60;
+// Below this the overlay cannot composite (Pi's own visible() gate refuses),
+// so the picker stays closed and the loop reports it on the footer.
+export const MODEL_PICKER_MIN_WIDTH = 60;
+
+// The picker's overlay placement: centered, capturing, and hidden on
+// terminals too narrow to composite it (the same rule the approval dialog
+// uses, with its own minimum).
+function modelPickerOverlayOptions(): ApprovalOverlayOptions {
+  return {
+    width: `${MODEL_PICKER_WIDTH_PERCENT}%`,
+    maxHeight: `${MODEL_PICKER_HEIGHT_PERCENT}%`,
+    anchor: 'center',
+    visible: (termWidth: number): boolean =>
+      termWidth >= MODEL_PICKER_MIN_WIDTH,
+  };
+}
+
+function modelPickerTheme(): SelectListTheme {
+  const theme = tuiTheme();
+  return {
+    selectedPrefix: (text: string): string => theme.accent(text),
+    selectedText: (text: string): string => theme.accentBold(text),
+    description: (text: string): string => theme.muted(text),
+    scrollInfo: (text: string): string => theme.muted(text),
+    noMatch: (text: string): string => theme.muted(text),
+  };
 }
 
 export interface TuiApp {
@@ -263,6 +331,13 @@ export interface TuiApp {
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
   setPendingEcho(prompt: string | undefined): void;
+  // Issue #328: the model picker (§66 model.select). The loop supplies the
+  // catalog rows and handles the choice; the app owns the overlay, the
+  // modal input and the cancel. Returns false when this boot has no overlay
+  // seat (the loop then reports it on the footer instead of failing silent).
+  openModelPicker(options: TuiModelPickerOptions): boolean;
+  /** Whether the picker overlay is showing (the loop refuses nested keys). */
+  isModelPickerOpen(): boolean;
   // Issue #334 (review): put a refused draft back in the editor, so a busy
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
@@ -672,6 +747,26 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   approvalSurface.checkKeys([...GLOBAL_KEYS]);
   let overlayHost: ApprovalOverlayTui | undefined;
   let overlayHandle: ApprovalOverlayHandle | undefined;
+  // Issue #328: the model picker overlay (at most one at a time).
+  let modelPicker:
+    | {
+        readonly list: SelectList;
+        readonly handle: ApprovalOverlayHandle;
+        readonly onCancel?: (() => void) | undefined;
+      }
+    | undefined;
+  const closeModelPicker = (notifyCancel = false): void => {
+    const open = modelPicker;
+    modelPicker = undefined;
+    if (open === undefined) return;
+    try {
+      open.handle.unfocus({ target: editor });
+      open.handle.hide();
+    } catch {
+      // A torn-down overlay is already gone; the state above is the truth.
+    }
+    if (notifyCancel) open.onCancel?.();
+  };
   let overlayView: ApprovalView | undefined;
   const dismissOverlay = (): void => {
     if (overlayView !== undefined && overlayHandle !== undefined) {
@@ -788,6 +883,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         panelStep(keyId === 'alt+down' ? 1 : -1);
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #328: the picker is modal while it shows — arrows move, typing
+      // filters, Enter selects, Esc/Ctrl-C cancel (Pi's own list bindings).
+      // Global keys other than the cancel pair stay swallowed so a stray
+      // Ctrl-T cannot toggle a tree behind the overlay.
+      if (modelPicker !== undefined) {
+        if (keyId === 'escape' || keyId === 'ctrl+c') {
+          closeModelPicker(true);
+          return { quit: false, consumed: true, cancel: false };
+        }
+        modelPicker.list.handleInput(data);
+        return { quit: false, consumed: true, cancel: false };
+      }
       if (keyId === 'ctrl+c') {
         // Always classified as cancel; the root decides whether the process
         // exits (idle) or the in-flight turn aborts (busy). A pending approval
@@ -854,6 +961,19 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         if (text === '') return { quit: false, consumed: true, cancel: false };
         editor.setText('');
         return { quit: false, consumed: true, cancel: false, steer: text };
+      }
+      // Issue #328: Alt+M opens the model picker; Alt+T cycles the thinking
+      // level. Both are classified here and acted on by the loop.
+      if (keyId === 'alt+m') {
+        return { quit: false, consumed: true, cancel: false, pickModel: true };
+      }
+      if (keyId === 'alt+t') {
+        return {
+          quit: false,
+          consumed: true,
+          cancel: false,
+          cycleThinking: true,
+        };
       }
       editor.handleInput(data);
       return { quit: false, consumed: true, cancel: false };
@@ -970,6 +1090,42 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     restoreDraft: (prompt: string): void => {
       restoreDraft(prompt);
     },
+    openModelPicker: (options: TuiModelPickerOptions): boolean => {
+      if (overlayHost === undefined) return false;
+      closeModelPicker();
+      const rows = options.rows;
+      const items: SelectItem[] = rows.map((row) => ({
+        value: `${row.provider}/${row.id}`,
+        label: row.current === true ? `${row.label} (current)` : row.label,
+        ...(row.note === undefined ? {} : { description: row.note }),
+      }));
+      const list = new SelectList(
+        items,
+        MODEL_PICKER_MAX_ROWS,
+        modelPickerTheme(),
+      );
+      // Start on the live model so Enter without a move is a no-op.
+      const current = rows.findIndex((row) => row.current === true);
+      if (current >= 0) list.setSelectedIndex(current);
+      list.onSelect = (item: SelectItem): void => {
+        const picked = rows.find(
+          (row) => `${row.provider}/${row.id}` === item.value,
+        );
+        closeModelPicker();
+        if (picked !== undefined) options.onSelect(picked);
+      };
+      list.onCancel = (): void => {
+        closeModelPicker(true);
+      };
+      modelPicker = {
+        list,
+        handle: overlayHost.showOverlay(list, modelPickerOverlayOptions()),
+        onCancel: options.onCancel,
+      };
+      overlayHost.requestRender?.();
+      return true;
+    },
+    isModelPickerOpen: (): boolean => modelPicker !== undefined,
     setPendingEcho: (prompt: string | undefined): void => {
       if (prompt === undefined) {
         pendingPrompt = undefined;

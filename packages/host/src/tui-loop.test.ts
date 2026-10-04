@@ -1083,6 +1083,57 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(lines.join('\n')).toContain('/compact');
   });
 
+  it('refuses /thinking and the cycle key while a turn runs (#328)', async () => {
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    // The command form is refused with the reason, and the draft comes back.
+    for (const ch of '/thinking high') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() =>
+      fake.writes
+        .join('')
+        .includes('thinking: finish the current turn before switching'),
+    );
+    // The cycle key is refused the same way.
+    const mark = fake.writes.length;
+    fake.feed('\u001bt');
+    await waitFor(() =>
+      fake.writes
+        .slice(mark)
+        .join('')
+        .includes('thinking: finish the current turn before switching'),
+    );
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('/thinking high');
+  });
+
   it('a durably busy conversation refuses the second turn with the busy failure', async () => {
     // The runner-level half of the busy contract (D6.1), with the UI's own
     // submit guard bypassed on purpose: one turn is live on a REAL booted

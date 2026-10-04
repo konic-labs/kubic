@@ -7,6 +7,7 @@ import type { TuiApp } from '../../../packages/tui/src/tui-app.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   parseModelCommand,
+  parseThinkingCommand,
   type TuiLaneLoop,
   TuiTurnRunner,
 } from './tui-run.js';
@@ -49,5 +50,30 @@ describe('TuiTurnRunner model switch (issue #227)', () => {
     await expect(
       runner.switchModel({ provider: 'alt', id: 'm1' }),
     ).rejects.toThrow('this session has no live lane to switch');
+  });
+});
+
+describe('parseThinkingCommand (issue #328)', () => {
+  it('reads the report and switch forms', () => {
+    expect(parseThinkingCommand('/thinking')).toEqual({ kind: 'report' });
+    expect(parseThinkingCommand('/thinking   ')).toEqual({ kind: 'report' });
+    expect(parseThinkingCommand('/thinking high')).toEqual({
+      kind: 'switch',
+      level: 'high',
+    });
+  });
+
+  it('refuses an unknown level by name, with the vocabulary', () => {
+    expect(parseThinkingCommand('/thinking bogus')).toEqual({
+      kind: 'invalid',
+      message:
+        "unknown thinking level 'bogus' (levels: off, minimal, low, medium, high, xhigh, max)",
+    });
+  });
+
+  it('leaves prompts — including /thinking lookalikes — to the lane', () => {
+    expect(parseThinkingCommand('hello')).toBeUndefined();
+    expect(parseThinkingCommand('/thinkings')).toBeUndefined();
+    expect(parseThinkingCommand('/thinking=high')).toBeUndefined();
   });
 });

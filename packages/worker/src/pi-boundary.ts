@@ -323,3 +323,28 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //     is gone in 1.0, and Kubic owns no storage format of its own.
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
+
+// --- #400 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#ResetEntry
+//   used by: packages/worker/src/lane/transcript.ts (the shared pi-durable →
+//     Kubic transcript adapter maps a pi.reset entry: a plain reset, or one
+//     carrying the handoff text as a user message)
+//   why Pi has no alternative: the token carries the stored entry kind
+//     (`pi.reset`) the adapter matches on; a Kubic string copy would drift
+//     from storage on an upstream kind rename. The other five entry tokens
+//     are already exported above; ResetEntry was missed in that block.
+//   review: issue #391 (K10 #400)
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#ROOT_CONVERSATION_ID
+//   used by: packages/worker/src/lane/transcript.ts (readSessionEntries
+//     reads a session's active transcript straight from its Storage — the
+//     CLI readers attach to a session without booting a harness, and the
+//     solo lane's transcript is its reserved root conversation)
+//   why Pi has no alternative: the id is reserved by pi-durable's Session
+//     (the harness creates the root conversation under it); Kubic could only
+//     guess a numeric literal, which would silently read nothing after an
+//     upstream change.
+//   review: issue #391 (K10 #400)
+export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';

@@ -225,6 +225,13 @@ export async function loadSessionCostRows(
     try {
       session = await attachSession(store, entry.id, BACKGROUND_CONTEXT);
     } catch (error) {
+      // An explicit --session that does not exist is the documented exit-1
+      // refusal (`error: unknown session: <id>`), never a silent skip; the
+      // marker rows are for sessions the readout did find but could not
+      // read.
+      if (error instanceof SessionAttachError && sessionId !== undefined) {
+        throw error;
+      }
       if (
         error instanceof SessionLockError ||
         error instanceof SessionAttachError ||

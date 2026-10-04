@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+import { stripUnsafeCharacters } from '../../exec/src/runtime-exclude.js';
 import {
   attachSession,
   createSession,
@@ -249,10 +250,15 @@ export async function runSessionsCommand(
     const theme = themeOf(deps);
     deps.out(
       renderTable(
-        sessions.map((entry) => [
-          theme.bold(entry.id),
-          entry.meta?.cwd ?? theme.muted('(no cwd)'),
-        ]),
+        sessions.map((entry) => {
+          const cwd = entry.meta?.cwd ?? theme.muted('(no cwd)');
+          return [
+            theme.bold(entry.id),
+            entry.format === 'legacy'
+              ? `${cwd} ${theme.muted('(legacy pi 0.87 — cannot attach)')}`
+              : cwd,
+          ];
+        }),
         [{ header: 'SESSION' }, { header: 'CWD' }],
         { fancy: deps.fancy === true, theme },
       ),
@@ -368,10 +374,13 @@ async function pendingLines(
 // One attach line per transcript item (#318): role + text, one line each.
 // Whitespace is collapsed so a multi-line message or tool output stays one
 // readable row, and the line keeps the documented 300-character bound.
+// Transcript text is untrusted (model- and tool-authored): control
+// characters — ESC sequences above all — are stripped before it reaches the
+// operator's terminal, exactly as the display-only strip does elsewhere.
 const ATTACH_LINE_CHARS = 300;
 
 function oneLine(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
+  const collapsed = stripUnsafeCharacters(text).replace(/\s+/g, ' ').trim();
   return collapsed.length <= ATTACH_LINE_CHARS
     ? collapsed
     : `${collapsed.slice(0, ATTACH_LINE_CHARS - 1)}…`;

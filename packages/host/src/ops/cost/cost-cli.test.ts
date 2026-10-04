@@ -470,6 +470,13 @@ describe('kubic cost durable usage (issue #400)', () => {
     expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
   });
 
+  it('still refuses an unknown explicit --session (exit 1), never a marker row', async () => {
+    const root = tmpRoot();
+    await expect(loadSessionCostRows(root, 'missing')).rejects.toMatchObject({
+      name: 'SessionAttachError',
+    });
+  });
+
   it('skips a session whose storage a live run owns, without opening it', async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));

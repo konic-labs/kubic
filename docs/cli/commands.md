@@ -104,6 +104,8 @@ absolute path. The file holds the session's latest settled run; a resumed
 
 - the prompt, its tool calls (actions) and their results (observations)
 - per-request token and cost usage
+- the thinking level the responses ran at (`model.thinking`, from the
+  stored assistant responses when the caller named none)
 - the journal diff of this run
 - this session's approvals from the audit ledger
 - provenance: session, agent, pid, worker generation (0 for a solo run),
@@ -193,8 +195,9 @@ approval that cannot arrive without a TTY — is durably aborted instead
 (`… aborted after an interrupted run (resume could not settle: <why>)`).
 A never-replay tool (bash, write, edit, VCS mutations) the dead process
 was running is never executed again: the resumed turn sees it as
-interrupted. `kubic sessions attach X` prints `pending operation: <id>
-(<kind>, started <iso>)` for such a session.
+interrupted. `kubic sessions attach X` prints one `pending task: <kind>
+(<status>)` (or `pending submission: <type> (<status>)`) line per piece of
+unfinished durable work such a session holds.
 
 **Concurrent runs in one workspace** (issue #118). A run drives one
 session, and a session takes one live attachment. `kubic run --session X`
@@ -1001,8 +1004,8 @@ its own generated help (`kubic sessions prune --help`).
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. Sessions written by Kubic on Pi 0.87 are reported by the store as `format: 'legacy'` ([below](#legacy-pi-087-sessions)); the row that renders that flag lands with the session readers (#400). |
-| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then a `pending operation: <id> (<kind>, started <iso>)` line for each operation a crashed run left open (settled by the next `run`/`tui --session`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#legacy-pi-087-sessions)). |
+| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), one `pending task: <kind> (<status>)` / `pending submission: <type> (<status>)` line per piece of unfinished durable work a crashed run left (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text is untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
 Usage errors exit 2 on stderr: a missing subcommand (commander prints the
@@ -1016,6 +1019,11 @@ the holder's pid and start time are named) and exits 1 without reading
 the transcript. Attaching a session written by Kubic on Pi 0.87 exits 1
 with `session <id> was written by Kubic on Pi 0.87; start a new session`
 ([below](#legacy-pi-087-sessions)).
+
+The transcript `attach` prints is the durable one, read through the shared
+pi-durable adapter (`packages/worker/src/lane/transcript.ts`, issue #400)
+and never by booting a lane: a reader must be able to inspect a session it
+may not run.
 
 ### Session storage and legacy Pi 0.87 sessions
 
@@ -1671,10 +1679,20 @@ otherwise. The exit code is:
 
 ## `kubic cost [--session <id>] [--json]`
 
-Reads per-agent cost from real session stats. It prints one aggregate
-row per session in an `AGENT / MODEL / TOKENS / COST` table, followed by
+Reads real usage out of the durable session store: one `AGENT / MODEL /
+TOKENS / COST` row per usage bucket a session recorded — each
+`provider/model`, and each tool that reported its own spend — followed by
 `task total $<sum> (<n> agents)`. The total is exactly the sum of the
 rows.
+
+The numbers are the session's `pi.usage` documents, summed per bucket, so
+they match what `Harness.usage()` reports for the same run. Reading is
+read-only and never boots a lane. A session whose storage a live run owns
+is skipped, never opened (pi-durable: one process per storage), and
+reported as a zero row with `MODEL` `(locked)`; a session that cannot be
+read at all (a Pi 0.87 transcript, a half-written directory) is `
+(unreadable)` the same way. Skip reporting, the lock-free read and the
+session-dir mtime question are [#251](https://github.com/konic-labs/kubic/issues/251)'s.
 
 When the sessions carry prefix-cache counters, the readout adds the
 cache line and the transparent-caching note. With no sessions stored it

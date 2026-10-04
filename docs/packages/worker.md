@@ -330,7 +330,36 @@ already held.
   non-reversible entries. Never a block.
 
 The lock covers the session's journal too (it lives under the session
-dir) — the journal store is not locked separately.
+dir) — the journal is not locked separately.
+
+### Session transcript (`lane/transcript.ts`, issue #400)
+
+One adapter turns a session's durable entries into Kubic's
+`TranscriptItem` vocabulary. Pi 0.87 stored a tree of
+`{id, parentId, type: 'message', message}` entries; pi-durable stores
+typed records (`pi.user`, `pi.assistant` with `model: [AssistantMessage]`,
+`pi.tool-result`, `pi.system`, `pi.compaction`, `pi.reset`), so every
+reader — `kubic sessions attach`, the run-envelope usage, the §46
+trajectory, replay/export/eval — goes through this module instead of
+matching entry-kind strings itself.
+
+- `entriesToTranscript(entries)` is pure: it maps each known kind (user
+text, assistant text + tool calls + usage + `provider/model` +
+`thinkingLevel`, tool result with its `isError`, system instruction,
+compaction summary, reset handoff), skips unknown kinds and payload-less
+message entries, and returns the transcript in entry-id order whatever
+order it was handed.
+- `readConversationEntries(conversation, context)` reads a live harness
+conversation's active context (the newest head marker and the entries it
+keeps) — the trajectory capture path.
+- `readSessionEntries(storage, context)` reads the same active transcript
+straight from a session's pi-durable Storage: no harness, no model layer,
+no writes. A session whose root conversation does not exist yet (a fresh
+`sessions create`) reads as an empty transcript, never a throw. This is
+the path CLI readers take, so a reader never opens what it may not run.
+
+Pi seam: all pi-durable symbols come from `pi-boundary.ts` (§65); the
+adapter adds only `ResetEntry` and `ROOT_CONVERSATION_ID` there.
 
 ## Contracts
 

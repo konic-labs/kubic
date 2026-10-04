@@ -4,7 +4,7 @@
 // into a pi-durable Harness over MemoryStorage-free JSONL storage with the
 // faux provider (zero network, zero paid tokens), and released before the
 // CLI attaches to it.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,6 +22,7 @@ import {
   fauxProvider,
   fauxToolCall,
   Harness,
+  ToolResultEntry,
 } from '../../worker/src/pi-boundary.js';
 import { runSessionsCommand } from './sessions-cli.js';
 
@@ -41,6 +42,13 @@ afterEach(() => {
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
   return { lines, write: (line: string) => lines.push(line) };
+}
+
+function fauxModels() {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  return models;
 }
 
 // One real session with one faux turn stored, released for the CLI to attach.
@@ -125,6 +133,33 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines).toEqual(['[]']);
   });
 
+  it('marks a Pi 0.87 session in the listing as legacy', async () => {
+    const root = tmpRoot();
+    // Exactly what 0.87's JsonlSessionRepo wrote: <root>/--<cwd>--/<ts>_<id>.jsonl
+    // whose first line is the format-4 header.
+    const dir = join(root, '--work--');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-01-01T00-00-00-000Z_legacy-1.jsonl'),
+      `${JSON.stringify({
+        v: 4,
+        kind: 'header',
+        id: 'legacy-1',
+        storageVersion: 1,
+        createdAt: 1_700_000_000_000,
+        cwd: '/work',
+      })}\n`,
+    );
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'list' },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    expect(o.lines.join('\n')).toContain('legacy-1');
+    expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
+  });
+
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const o = out();
@@ -207,6 +242,54 @@ describe('sessions CLI (issue #14, slice F)', () => {
       },
     );
     expect(o.lines.at(-1)).toBe('assistant: cli hello back');
+  });
+
+  it('strips terminal control sequences out of stored transcript text', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const harness = await Harness.open(
+      session.storage,
+      { models: fauxModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    // A hostile tool result: clearing the screen and recolouring the
+    // operator's terminal is the payload, not the text.
+    await harness.commit(
+      (tx) =>
+        tx.appendEntry(ToolResultEntry, conversation.id, {
+          model: [
+            {
+              role: 'toolResult',
+              toolCallId: 'call-evil',
+              toolName: 'bash',
+              content: [{ type: 'text', text: '\u001b[2J\u001b[31mowned' }],
+              isError: false,
+              timestamp: Date.now(),
+            },
+          ],
+        }),
+      BACKGROUND_CONTEXT,
+    );
+    await harness.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id: session.id, tail: 10 },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).toContain('owned');
+    expect(text).not.toContain('\u001b');
   });
 
   it('fails cleanly for unknown sessions and unsafe ids', async () => {

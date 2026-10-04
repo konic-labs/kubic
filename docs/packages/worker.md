@@ -499,13 +499,15 @@ retry spend lands on `RetryBudget`, never the task budget.
 ### Usage (`usage.ts`, §39)
 
 `KubicUsageRow` is `{ model, provider, usage: Usage (Pi type),
-ttftMs?, latencyMs?, toolCallId?, entryId? }`. `summarizeUsage` folds
+toolCallId?, entryId? }`. `summarizeUsage` folds
 rows into `UsageSummary` (`requests`, `input`, `output`, `cacheRead`,
 `cacheWrite`, `costTotal`, plus `byModel` per model) — pure, so cost
 tests use fixture rows, never network or paid tokens. Since #398 the rows
 are built by `usageRowFromEntry` from the committed assistant entry, so
 `provider`/`model` are the ones that really answered (not the lane name or
-the boot model — #287).
+the boot model — #287). Issue #346 deleted the never-written
+`ttftMs`/`latencyMs` fields with the status bar's TTFT/tool-ms segments:
+Pi 1.0 reports no timing Kubic can read.
 
 ### Worker lifecycle (`lifecycle/`)
 

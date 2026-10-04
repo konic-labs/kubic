@@ -57,6 +57,10 @@ import {
   assembleModels,
 } from '../../../packages/host/src/models-cli.js';
 import {
+  readSessionUsage,
+  type SessionUsageRow,
+} from '../../../packages/host/src/ops/cost/cost-cli.js';
+import {
   buildOrchestratorRefusal,
   resolveOrchestratorMode,
 } from '../../../packages/host/src/orchestrator/manager.js';
@@ -91,7 +95,10 @@ import { createApprovalSurface } from '../../../packages/tui/src/approval-surfac
 import type { LaneEntryLike } from '../../../packages/tui/src/lane-cells.js';
 import type { Screen } from '../../../packages/tui/src/screen.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
-import type { StatusMode } from '../../../packages/tui/src/status-bar.js';
+import type {
+  StatusMode,
+  StatusUsageRow,
+} from '../../../packages/tui/src/status-bar.js';
 import {
   type ColorLevel,
   createTuiTheme,
@@ -423,6 +430,32 @@ export interface TuiLaneBoot {
   // orchestrator then refuses by name at submit time, never a silent
   // fallback into solo.
   orchestrator?: TuiOrchestratorRun;
+  // Issue #346: the session's committed spend, read from its `pi.usage`
+  // ledger before the first frame, so a resumed session never renders
+  // $0.00. Absent for a fresh session and for injected viewer boots.
+  usageRows?: StatusUsageRow[];
+}
+
+// Issue #346: a session's `pi.usage` buckets as status-bar rows. A model
+// bucket is keyed `provider/modelId` — split at the FIRST slash, because a
+// model id may itself contain slashes (openrouter/anthropic/…) — and a tool
+// bucket has no provider/model identity, so it is labelled `tool:<name>`
+// exactly as `kubic cost` labels it. The bar reads only the counters; the
+// names keep the row shape honest.
+export function statusRowsFromSessionUsage(
+  rows: readonly SessionUsageRow[],
+): StatusUsageRow[] {
+  return rows.map((row) => {
+    if (row.kind === 'tool') {
+      return { provider: 'tool', model: row.key, usage: row.usage };
+    }
+    const at = row.key.indexOf('/');
+    return {
+      provider: at === -1 ? '' : row.key.slice(0, at),
+      model: at === -1 ? row.key : row.key.slice(at + 1),
+      usage: row.usage,
+    };
+  });
 }
 
 export interface TuiRunDeps {
@@ -692,6 +725,18 @@ export async function bootTuiLane(
       ? await createSession(store, { cwd: process.cwd() }, context)
       : await attachSession(store, sessionId, context);
   const id = session.id;
+  // Issue #346: the session's committed spend, read from its own `pi.usage`
+  // ledger (#400's reader — the same numbers `kubic cost` prints) BEFORE the
+  // lane adopts the storage. Best-effort: a torn or foreign usage document
+  // must never block a boot; the bar then starts from zero as it used to.
+  let usageRows: StatusUsageRow[] = [];
+  try {
+    usageRows = statusRowsFromSessionUsage(
+      await readSessionUsage(session.storage, context),
+    );
+  } catch {
+    usageRows = [];
+  }
   // §42.5 baseline + end-of-run sweep (issue #87): the TUI's run end is its
   // close — quit, SIGINT, EOF — so the sweep rides that `close`. There is no
   // closed-latch: idempotence comes from `reconcile`'s per-path after-hash
@@ -1046,6 +1091,7 @@ export async function bootTuiLane(
         ? {}
         : { pendingNotice: pendingNotices.join('; ') }),
       fullAccess,
+      usageRows,
       ...(fullAccess
         ? {
             notices: [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)],
@@ -1565,12 +1611,17 @@ export class TuiTurnRunner {
     model: string,
     onUpdate?: () => void,
     onLaneEvent?: (event: KubicLaneEvent) => void,
+    // Issue #346: the session's committed spend, so the first live usage
+    // event APPENDS to it instead of replacing the bar with the new row
+    // alone (a resumed session's earlier turns are not re-emitted).
+    usageRows: ReadonlyArray<StatusUsageRow> = [],
   ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
     this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
+    this.usageRows = [...usageRows];
   }
 
   // Issue #227: the live model label (updated by a `/model` switch), so the
@@ -1645,8 +1696,7 @@ export class TuiTurnRunner {
     }
   };
 
-  private readonly usageRows: Array<Parameters<TuiApp['setUsage']>[0][number]> =
-    [];
+  private readonly usageRows: StatusUsageRow[];
 
   // The accumulated committed-transcript feed: the attach snapshot replaces
   // it, every later entry-bearing event upserts into it, and every apply is a
@@ -2026,6 +2076,9 @@ export async function runTuiCommand(
     mode,
     approvalsSkipped: boot.approvalsSkipped?.() ?? boot.fullAccess === true,
   });
+  // Issue #346: the resumed session's committed spend is on the bar from the
+  // first frame, not only after the next turn's usage event.
+  app.setUsage(boot.usageRows ?? []);
   // Re-read after each turn (and each mid-turn refresh): a posture change
   // lands on the indicator in the same frame the loop paints next.
   const syncPosture = (): void => {
@@ -2102,6 +2155,7 @@ export async function runTuiCommand(
               journalFeed?.request();
             }
           },
+          boot.usageRows,
         );
   // Issue #327: the orchestrator turn the toggle switches to. Absent means
   // this boot is solo-only (viewer/fake lanes): the submit path refuses by

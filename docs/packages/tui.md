@@ -59,7 +59,11 @@ module owns arrangement only.
   usage/cost rollups (`StatusUsage`, `StatusUsageRow`,
   `StatusUsageCost`, `StatusSummary`, `summarizeStatusRows`,
   `formatStatusCost`) feed `StatusBarState`, rendered by
-  `renderStatusLines` under `DEFAULT_STATUS_THEME`.
+  `renderStatusLines` under `DEFAULT_STATUS_THEME`. The bar shows
+  model/thinking/tokens/cache/cost only: the TTFT and tool-ms segments
+  were deleted in #346 (Pi 1.0 routes no timing Kubic could read), and
+  `kubic tui --session` seeds the rows from the session's `pi.usage`
+  ledger before the first frame.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `text|tool|output`; `TranscriptView` applies snapshot/delta ops
   (`TranscriptOp`) and replays via `replayTranscript`.

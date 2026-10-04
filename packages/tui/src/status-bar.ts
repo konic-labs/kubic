@@ -11,9 +11,11 @@
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //
-// TTFT/latency choice: last-wins. The bar shows the LIVE reading, so
-// the latest row reporting ttftMs/latencyMs wins (a silent row never
-// clears a previous reading).
+// Issue #346: the TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
+// routes no streaming/timing field Kubic could read (message deltas stay
+// inside the harness; the lane watch commits whole entries), so the two
+// segments could never render — dead code, which was the bug. The bar shows
+// what the lane really reports: tokens, cache, cost, mode, posture.
 import { tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
 
@@ -38,8 +40,6 @@ export interface StatusUsageRow {
   readonly model: string;
   readonly provider: string;
   readonly usage: StatusUsage;
-  readonly ttftMs?: number;
-  readonly latencyMs?: number;
   readonly toolCallId?: string;
   readonly entryId?: string;
 }
@@ -51,8 +51,6 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
-  readonly ttftMs?: number;
-  readonly toolMs?: number;
 }
 
 export function summarizeStatusRows(
@@ -64,8 +62,6 @@ export function summarizeStatusRows(
   let cacheRead = 0;
   let cacheWrite = 0;
   let costTotal = 0;
-  let ttftMs: number | undefined;
-  let toolMs: number | undefined;
   for (const row of rows) {
     requests += 1;
     input += row.usage.input;
@@ -73,8 +69,6 @@ export function summarizeStatusRows(
     cacheRead += row.usage.cacheRead;
     cacheWrite += row.usage.cacheWrite;
     costTotal += row.usage.cost.total;
-    if (row.ttftMs !== undefined) ttftMs = row.ttftMs;
-    if (row.latencyMs !== undefined) toolMs = row.latencyMs;
   }
   return {
     requests,
@@ -83,8 +77,6 @@ export function summarizeStatusRows(
     cacheRead,
     cacheWrite,
     costTotal,
-    ttftMs,
-    toolMs,
   };
 }
 
@@ -149,7 +141,7 @@ function shortModel(model: string, width: number, rest: string): string {
 }
 
 // Row 1 segments, highest truncation priority last: model goes first,
-// thinking / tool-ms / TTFT drop next, tokens + session cost never go.
+// thinking drops next, tokens + session cost never go.
 function renderRow1(
   state: StatusBarState,
   summary: StatusSummary,
@@ -157,16 +149,8 @@ function renderRow1(
 ): string {
   const tokens = `in ${summary.input} out ${summary.output} (cached ${summary.cacheRead})`;
   const cost = formatStatusCost(summary.costTotal);
-  const ttft =
-    summary.ttftMs === undefined ? '' : ` • TTFT ${summary.ttftMs}ms`;
-  const tool =
-    summary.toolMs === undefined ? '' : ` • tool ${summary.toolMs}ms`;
-  const full = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}${ttft}${tool}`;
+  const full = `${state.model} • thinking ${state.thinking} • ${tokens} • ${cost}`;
   if (statusVisibleWidth(full) <= width) return full;
-  const noThinking = `${shortModel(state.model, width, ` • ${tokens} • ${cost}${ttft}${tool}`)} • ${tokens} • ${cost}${ttft}${tool}`;
-  if (statusVisibleWidth(noThinking) <= width) return noThinking;
-  const noTool = `${shortModel(state.model, width, ` • ${tokens} • ${cost}${ttft}`)} • ${tokens} • ${cost}${ttft}`;
-  if (statusVisibleWidth(noTool) <= width) return noTool;
   const bare = `${shortModel(state.model, width, ` • ${tokens} • ${cost}`)} • ${tokens} • ${cost}`;
   if (statusVisibleWidth(bare) <= width) return bare;
   return truncateLine(` • ${tokens} • ${cost}`, width);

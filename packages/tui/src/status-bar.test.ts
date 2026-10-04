@@ -1,6 +1,7 @@
 // Slice A: session aggregates from usage rows (issue #27; §39).
 // Fixture rows must sum to exact session cost/tokens with the cache
-// split kept; TTFT/tool-ms are last-wins (latest row reporting wins).
+// split kept. Issue #346 deleted the TTFT/tool-ms segments (Pi 1.0 routes
+// no timing Kubic can read); the bar renders what the lane really reports.
 // Headless + faux-only: no network, no VirtualTerminal (Pi 0.85.1).
 import { describe, expect, it } from 'vitest';
 import {
@@ -84,20 +85,9 @@ describe('status aggregates (issue #27, slice A)', () => {
     expect(formatStatusCost(summary.costTotal)).toBe('$0.04');
   });
 
-  it('resolves TTFT/tool-ms last-wins from the latest reporting row', () => {
-    const summary = summarizeStatusRows([
-      row({ ttftMs: 100, latencyMs: 40 }),
-      row({ ttftMs: 250, latencyMs: 60 }),
-      row({}),
-    ]);
-    expect(summary.ttftMs).toBe(250);
-    expect(summary.toolMs).toBe(60);
-  });
-
   it('empty rows aggregate without NaN and format $0.00', () => {
     const summary = summarizeStatusRows([]);
     expect(summary.requests).toBe(0);
-    expect(summary.ttftMs).toBeUndefined();
     expect(formatStatusCost(summary.costTotal)).toBe('$0.00');
   });
 });
@@ -132,14 +122,12 @@ function priced(over: Partial<StatusUsageRow> = {}): StatusUsageRow {
         total: 0.033,
       },
     },
-    ttftMs: 120,
-    latencyMs: 45,
     ...over,
   };
 }
 
 describe('status bar rows (issue #27, slice B)', () => {
-  it('renders model/thinking/tokens/cache/cost/TTFT/tool + mode/approvals/session', () => {
+  it('renders model/thinking/tokens/cache/cost + mode/approvals/session', () => {
     const lines = renderStatusLines(state({ rows: [priced()] }), 100);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('test/model-long-name');
@@ -147,8 +135,6 @@ describe('status bar rows (issue #27, slice B)', () => {
     expect(lines[0]).toContain('100');
     expect(lines[0]).toContain('cached 20');
     expect(lines[0]).toContain('$0.03');
-    expect(lines[0]).toContain('120ms');
-    expect(lines[0]).toContain('45ms');
     expect(lines[1]).toContain('solo');
     expect(lines[1]).toContain('approvals:on');
     expect(lines[1]).toContain('sess-abc123');
@@ -175,12 +161,12 @@ describe('status bar rows (issue #27, slice B)', () => {
     expect(statusVisibleWidth(lines[1])).toBeLessThanOrEqual(100);
   });
 
-  it('truncates the model first at 70 cols, keeps $ and mode', () => {
+  it('truncates the model first at 50 cols, keeps $ and mode', () => {
     const full = 'test/model-long-name';
-    const lines = renderStatusLines(state({ rows: [priced()] }), 70);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 50);
     expect(lines).toHaveLength(2);
     for (const line of lines) {
-      expect(statusVisibleWidth(line)).toBeLessThanOrEqual(70);
+      expect(statusVisibleWidth(line)).toBeLessThanOrEqual(50);
     }
     expect(lines[0]).toContain('$');
     expect(lines[1]).toContain('solo');
@@ -237,15 +223,15 @@ describe('status bar rows (issue #27, slice B)', () => {
     const frame = (bar: StatusBar, width: number): string[] =>
       bar.render(width).map(stripSgr);
     expect(frame(basic, 100)).toEqual([
-      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03',
       'solo • approvals:on • session sess-abc123',
     ]);
     expect(frame(skipped, 100)).toEqual([
-      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
+      'test/model-long-name • thinking medium • in 100 out 50 (cached 20) • $0.03',
       'solo • ! warning: approvals OFF (full-access) • session sess-abc123',
     ]);
     expect(frame(basic, 60)).toEqual([
-      'test/model… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms',
+      'test/model-long-name • in 100 out 50 (cached 20) • $0.03',
       'solo • approvals:on • session sess-abc123',
     ]);
   });
@@ -307,15 +293,11 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
       readonly model: string;
       readonly provider: string;
       readonly usage: ExpectedWorkerUsage;
-      readonly ttftMs?: number;
-      readonly latencyMs?: number;
       readonly toolCallId?: string;
       readonly entryId?: string;
     }
     // Type-level: assignability holds in both directions.
     const probe: StatusUsageRow = row({
-      ttftMs: 1,
-      latencyMs: 2,
       toolCallId: 'tool-1',
       entryId: 'entry-1',
     });
@@ -340,11 +322,9 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
     ]);
     expect(Object.keys(backToStatus).sort()).toEqual([
       'entryId',
-      'latencyMs',
       'model',
       'provider',
       'toolCallId',
-      'ttftMs',
       'usage',
     ]);
     expect(Object.keys(row({})).sort()).toEqual(['model', 'provider', 'usage']);
@@ -358,53 +338,25 @@ describe('status bar mutation hardening (issue #68)', () => {
     bar.setRows([priced()]);
     const lines = bar.render(100);
     expect(lines[0]).toContain('$0.03');
-    expect(lines[0]).toContain('120ms');
     expect(bar.getState().rows.length).toBe(1);
   });
 
-  it('drops thinking before tool-ms at 90 cols (priority: thinking first)', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 90);
-    expect(lines[0]).toContain('test/model-long-name');
-    expect(lines[0]).not.toContain('thinking');
-    expect(lines[0]).toContain('tool 45ms');
-    expect(lines[0]).toContain('TTFT 120ms');
-  });
-
-  it('drops tool-ms before TTFT at 60 cols (priority: tool next)', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 60);
-    expect(lines[0]).toContain('TTFT 120ms');
-    expect(lines[0]).not.toContain('tool 45ms');
-    expect(lines[0]).toContain('$0.03');
-  });
-
-  it('renders the bare cost line at 40 cols without TTFT or tool-ms', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 40);
-    expect(lines[0]).toContain('$0.03');
+  it('never renders a TTFT or tool-ms segment (issue #346 deleted them)', () => {
+    const lines = renderStatusLines(state({ rows: [priced()] }), 100);
     expect(lines[0]).not.toContain('TTFT');
-    expect(lines[0]).not.toContain('tool 45ms');
-  });
-
-  it('a silent row never clears the last TTFT/tool reading', () => {
-    const summary = summarizeStatusRows([
-      row({ ttftMs: 100, latencyMs: 40 }),
-      row({}),
-    ]);
-    expect(summary.ttftMs).toBe(100);
-    expect(summary.toolMs).toBe(40);
+    expect(lines[0]).not.toContain('tool ');
   });
 
   it('truncates the model with an ellipsis when exactly 4 columns remain', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 65);
-    expect(statusVisibleWidth(lines[0])).toBe(65);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 40);
+    expect(statusVisibleWidth(lines[0])).toBe(40);
     // The ellipsis lands on the model (3 chars + '…'), not on the tail.
-    expect(stripSgr(lines[0])).toBe(
-      'tes… • in 100 out 50 (cached 20) • $0.03 • TTFT 120ms • tool 45ms',
-    );
+    expect(stripSgr(lines[0])).toBe('tes… • in 100 out 50 (cached 20) • $0.03');
   });
 
   it('returns the full line when it fits the width exactly', () => {
-    const lines = renderStatusLines(state({ rows: [priced()] }), 99);
-    expect(statusVisibleWidth(lines[0])).toBe(99);
+    const lines = renderStatusLines(state({ rows: [priced()] }), 74);
+    expect(statusVisibleWidth(lines[0])).toBe(74);
     expect(lines[0]).toContain('thinking medium');
     expect(lines[0]).not.toContain('…');
   });

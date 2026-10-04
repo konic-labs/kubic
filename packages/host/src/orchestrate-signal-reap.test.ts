@@ -462,12 +462,14 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
 
   it('is settled even when a grandchild outlives the SIGTERM (issue #249 review)', async () => {
     // The leader exits cooperatively inside the grace while a grandchild
-    // ignores SIGTERM: the group SIGKILL is cleanup, not a forced worker.
+    // ignores SIGTERM: the group SIGKILL is cleanup, not a forced worker —
+    // and the manager's settle budget must cover the whole drain (abort +
+    // reapGroup), not just the kill.
     const signals = fakeSignals();
     const marker = join(scratchRoot('kubic-orch-settle-'), 'abort.done');
     const { settled, deps } = await startLiveWorker(signals, {
-      prompt: `work SLOW_ABORT=1000 ABORT_MARKER=${marker} STUBBORN_GRANDCHILD`,
-      cancelGraceMs: 5_000,
+      prompt: `work SLOW_ABORT=500 ABORT_MARKER=${marker} STUBBORN_GRANDCHILD`,
+      cancelGraceMs: 2_000,
     });
     deps.cancelWorker?.('worker-1');
     await settled;
@@ -475,6 +477,9 @@ describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
       () => expect(deps.launches?.rows()[0]?.cancel).toBe('settled'),
       { timeout: 10_000 },
     );
+    // The cooperative settle COMPLETED (the marker exists) and it did so
+    // inside the manager's budget: the row is `settled`, not a timeout.
     expect(existsSync(marker)).toBe(true);
+    expect(deps.launches?.rows()[0]?.cancel).not.toBe('forced');
   }, 30_000);
 });

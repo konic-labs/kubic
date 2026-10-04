@@ -39,6 +39,21 @@ import { checkPerfGate } from './budgets.js';
 import type { ExitReport } from './reap.js';
 import { reapDetached, TEARDOWN_BUDGET_MS } from './reap.js';
 import type { WorkerRegistry } from './registry.js';
+import type {
+  ResourceBreach,
+  ResourceKind,
+  ResourceLimits,
+  ResourceProbes,
+  ResourceWatchdog,
+} from './resources.js';
+import {
+  createResourceWatchdog,
+  type RESOURCE_LIMIT_CODES,
+} from './resources.js';
+
+/** The named §82 codes a breached limit settles on. */
+export type ResourceLimitCode = (typeof RESOURCE_LIMIT_CODES)[ResourceKind];
+
 import { StaleGenerationError } from './replace.js';
 import type { SpawnWorkerRequest, WorkerShell } from './spawn.js';
 import { spawnWorker } from './spawn.js';
@@ -82,6 +97,13 @@ export interface LaunchWorkerRequest {
   provenance: Provenance;
   readyTimeoutMs?: number;
   /**
+   * §82 per-agent limits (issue #163): the RSS cap (MB) the manager samples
+   * and the worktree disk quota (MB) it checks. A limit without its probe is
+   * not enforced (`enforcedLimits`); absent means no runtime limit.
+   */
+  memoryLimitMb?: number;
+  diskQuotaMb?: number;
+  /**
    * §51 cancellation grace (issue #249): how long the worker's own
    * cooperative shutdown gets after SIGTERM before the group SIGKILL
    * escalation. The worker's settle (durable abort, kill-registry drain,
@@ -114,10 +136,22 @@ export interface LaunchWorkerDeps {
    * reports an empty rollup rather than inventing one.
    */
   usageRows?: () => KubicUsageRow[];
+  /**
+   * §82 resource probes (issue #163): RSS of the worker's process group and
+   * the worktree's size. The composition root supplies them (this layer never
+   * reads /proc or runs `du`); absent means the corresponding limit cannot be
+   * enforced, and `enforcedLimits` reports that.
+   */
+  resourceProbes?: ResourceProbes;
+  /** Resource poll cadence; the default is one second. */
+  resourcePollMs?: number;
 }
 
 export interface WorkerFailure {
-  code: FailureCode;
+  // §82 resource codes (issue #163) are lifecycle-owned: they are not part of
+  // the §52 lane taxonomy, but a worker stopped by a breached limit names
+  // which one on the same failure view.
+  code: FailureCode | ResourceLimitCode;
   message: string;
   /** §52 error kind the code belongs to (result.ts ERROR_KINDS). */
   kind: ResultErrorKind;
@@ -157,6 +191,9 @@ export interface LaunchedWorker {
   ) => AgentStatus;
   /** §52 failure view of a launch/run that did not complete cleanly. */
   failure: () => WorkerFailure | undefined;
+  /** §82 resource watchdog (issue #163), when a probe was wired: `poll()`
+   *  runs one sample deterministically, `stop()` ends the interval. */
+  resources: () => ResourceWatchdog | undefined;
   /** The §68 worker result for this launch, built from what the child did:
    *  provenance always, error kind on failure, and the §61 sample as the
    *  wall-clock metric. Validated against the contract before it is
@@ -165,8 +202,13 @@ export interface LaunchedWorker {
   /** §39 usage rollup of the child session (empty when the caller wired no
    *  usage reader — never a fabricated rollup). */
   usage: () => UsageSummary;
-  /** Kill + drain, land the terminal §13 status, return the exit report. */
-  reap: () => Promise<ExitReport>;
+  /** Kill + drain, land the terminal §13 status, return the exit report.
+   *  `reason` names the manager's terminus (issue #151/#163): `cancel`
+   *  (default), `timeout`, `budget` or `resource` — a live worker settles on
+   *  that state, not on a generic crash. */
+  reap: (
+    reason?: 'cancel' | 'timeout' | 'budget' | 'resource',
+  ) => Promise<ExitReport>;
   /** The §61 sample with its budget verdict (startup/teardown measured here). */
   perf: () => PerfGateResult & { sample: PerfSample };
 }
@@ -295,6 +337,8 @@ export function launchWorker(
   let detail = '';
   let spawnFailureReason: string | undefined;
   let runFailure: WorkerFailure | undefined;
+  // §82 (issue #163): the named breach that stopped this worker, if any.
+  let resourceFailure: WorkerFailure | undefined;
 
   const markSpawnFailed = (reason: string): void => {
     if (agent === 'spawn_failed') return;
@@ -381,14 +425,16 @@ export function launchWorker(
   let teardownInitiateMs = 0;
   let teardownSettledMs = 0;
   let report: ExitReport | undefined;
-  const reap = async (): Promise<ExitReport> => {
+  const reap = async (
+    reason: 'cancel' | 'timeout' | 'budget' | 'resource' = 'cancel',
+  ): Promise<ExitReport> => {
     if (report !== undefined) return report;
     // §51 (issue #151): a reap of a STILL-LIVE worker is the manager's
     // cancellation; a reap of one that already exited on its own keeps the
     // exit's own verdict (a settling agent is settled by the run path).
     const cancelling =
       agent === 'starting' || agent === 'running' || agent === 'waiting';
-    if (cancelling) cancelRequested = true;
+    if (cancelling && reason === 'cancel') cancelRequested = true;
     const reapStartedAt = clock();
     const detached = reapDetached(
       {
@@ -418,6 +464,7 @@ export function launchWorker(
     teardownInitiateMs = detached.teardownInitiateMs;
     report = await detached.reaped;
     teardownSettledMs = clock() - reapStartedAt;
+    resourceWatchdog?.stop();
     // A launch that never became ready and a worker the run already settled
     // keep their verdict; anything else is the cancellation this call made.
     // §51 cancel outcome (issue #249): the row says whether the child's own
@@ -430,7 +477,16 @@ export function launchWorker(
         report.forced === true ? 'forced' : 'settled',
       );
     }
-    if (cancelling && agent !== 'spawn_failed') {
+    if (reason === 'resource' && agent !== 'spawn_failed') {
+      // §82 (issue #163): the manager stopped the worker because a limit was
+      // breached — the agent FAILED on the named resource code, never
+      // CANCELLED (nobody asked it to stop).
+      runFailure = resourceFailure ?? runFailure;
+      if (agent !== 'failed') {
+        agent = 'failed';
+        registry.updateAgentStatus(request.workerId, agent);
+      }
+    } else if (cancelling && agent !== 'spawn_failed') {
       if (agent === 'failed' || agent === 'settling') {
         // The wait already settled the exit (a signal death is an
         // unclassified FAILED); the manager's kill is the terminus that wins
@@ -442,6 +498,43 @@ export function launchWorker(
     }
     return report;
   };
+
+  // §82 runtime enforcement (issue #163): sample the worker's RSS and its
+  // worktree on an interval. A breach stops the worker through the same reap
+  // path a cancel uses, with the named resource code carried into the failure
+  // (and so into the §68 result, the row and the run's terminus).
+  const limits: ResourceLimits = {
+    ...(request.memoryLimitMb === undefined
+      ? {}
+      : { memMb: request.memoryLimitMb }),
+    ...(request.diskQuotaMb === undefined
+      ? {}
+      : { diskMb: request.diskQuotaMb }),
+  };
+  const resourceWatchdog =
+    deps.resourceProbes === undefined
+      ? undefined
+      : createResourceWatchdog({
+          limits,
+          probes: deps.resourceProbes,
+          ...(deps.resourcePollMs === undefined
+            ? {}
+            : { pollMs: deps.resourcePollMs }),
+          pid: () => pid,
+          worktree:
+            request.worktree ?? `(unrecorded worktree of ${request.workerId})`,
+          onBreach: (breach: ResourceBreach) => {
+            resourceFailure = {
+              code: breach.code,
+              kind: 'process',
+              message: breach.message,
+            };
+            deps.debug?.(
+              `resource: worker '${request.workerId}' — ${breach.message}`,
+            );
+            void reap('resource').catch(() => undefined);
+          },
+        });
 
   const sample = (): PerfSample => ({
     // spawnMs is the measured start-to-marker span; an unfinished launch
@@ -553,6 +646,7 @@ export function launchWorker(
             kind: 'process',
             message: `spawn failed for worker ${request.workerId}: ${spawnFailureReason}`,
           },
+    resources: () => resourceWatchdog,
     result,
     usage: () => summarizeUsage(deps.usageRows?.() ?? []),
     reap,

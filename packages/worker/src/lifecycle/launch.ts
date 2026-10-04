@@ -453,11 +453,15 @@ export function launchWorker(
         cancelled: cancelling,
       },
       {
-        // The manager waits at least as long as the grace it gave the child,
-        // plus the teardown budget — a wait that expired exactly with the
-        // SIGKILL would make the outcome a coin toss (issue #249).
+        // The manager waits for the child's WHOLE cooperative drain, not just
+        // the kill (issue #249): the abort may take up to the grace, and the
+        // exec seam then reaps the process group for up to the grace again
+        // (abort <= grace, then reapGroup <= grace), so the budget is twice
+        // the grace plus the teardown budget. A shorter wait would report a
+        // timeout — `cancel: "forced"` — for a worker that was still settling
+        // inside the grace it was given.
         settleTimeoutMs:
-          (request.cancelGraceMs ?? DEFAULT_WORKER_CANCEL_GRACE_MS) +
+          2 * (request.cancelGraceMs ?? DEFAULT_WORKER_CANCEL_GRACE_MS) +
           TEARDOWN_BUDGET_MS,
       },
     );

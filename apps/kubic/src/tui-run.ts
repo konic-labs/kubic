@@ -513,12 +513,18 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
 export class TuiCompactionTurn implements TuiTurnDriver {
   private readonly loop: TuiLaneLoop;
   private readonly focus: string | undefined;
+  private readonly onSettled: (() => Promise<void>) | undefined;
   private running: Promise<TuiTurnOutcome> | undefined;
   private outcome: ManualCompactionOutcome | undefined;
   private aborted = false;
 
-  constructor(loop: TuiLaneLoop, focus: string | undefined) {
+  constructor(
+    loop: TuiLaneLoop,
+    focus: string | undefined,
+    onSettled?: () => Promise<void>,
+  ) {
     this.loop = loop;
+    this.onSettled = onSettled;
     this.focus = focus;
   }
 
@@ -555,7 +561,11 @@ export class TuiCompactionTurn implements TuiTurnDriver {
         },
       });
       this.outcome = outcome;
-      if (outcome.status === 'completed') return { status: 'completed' };
+      if (outcome.status === 'completed') {
+        // Issue #317: the new compaction entry reaches the transcript.
+        await this.onSettled?.();
+        return { status: 'completed' };
+      }
       // Pi's own "nothing to compact" completion: the turn succeeded, the
       // footer says what really happened (no entry was placed).
       if (outcome.status === 'nothing') return { status: 'completed' };
@@ -1738,10 +1748,10 @@ async function liveModelOf(
 
 // One durable entry → the coarse transcript cell the TUI app renders. The
 // tui package may not import worker types (dep-lint), so the entry is
-// projected into the structural `LaneEntryLike` by hand. The renderable
-// kinds are the message-bearing ones; the positional prompt/system,
-// compaction and reset entries have no transcript cell of their own, exactly
-// as 0.87's non-message entries had none.
+// projected into the structural `LaneEntryLike` by hand. Message-bearing
+// entries render as prompt/assistant/tool cells; a `pi.compaction` summary
+// and a `pi.reset` handoff render as their own cells (#317), while the
+// positional `pi.system` prompt carries empty content and has none.
 export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
   const role =
     entry.kind === 'pi.user'
@@ -2287,6 +2297,12 @@ export class TuiTurnRunner {
           : { toolCallId: event.row.toolCallId }),
       });
       this.app.setUsage([...this.usageRows]);
+      this.foldLaneEntries([event.entry]);
+      return;
+    }
+    if (event.type === 'entry') {
+      // Issue #317: a committed non-assistant entry (a compaction summary, a
+      // reset handoff, a user turn) joins the transcript live.
       this.foldLaneEntries([event.entry]);
       return;
     }
@@ -4111,7 +4127,16 @@ export async function runTuiCommand(
             if (!stopped) screen?.render();
             return 'refused';
           }
-          startTurn(new TuiCompactionTurn(lane, compactCommand.focus), prompt);
+          startTurn(
+            new TuiCompactionTurn(lane, compactCommand.focus, async () => {
+              // Issue #317: the compaction entry is committed by the task, not
+              // by a turn's event stream, so the transcript is re-read once
+              // the task settles — the compaction cell then appears in the
+              // same session (and in the quit's printed document).
+              await turn?.refreshTranscript();
+            }),
+            prompt,
+          );
           return 'accepted';
         }
         // Issue #328: `/thinking <level>` — same busy rule as `/model`: a

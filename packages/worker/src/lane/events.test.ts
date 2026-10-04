@@ -202,21 +202,23 @@ describe('toKubicLaneEvent (§15.3)', () => {
     );
   });
 
-  it('ignores message ends that are not assistant responses', () => {
+  it('carries non-assistant message ends as committed entries (#317)', () => {
+    // A compaction summary and a reset handoff are user messages with no
+    // usage row; the transcript still needs the entry, so it rides its own
+    // event instead of being dropped.
     const user = entry(8, 'pi.user', {
       role: 'user',
       content: 'hi',
       timestamp: 0,
     });
+    expect(toKubicLaneEvent({ type: 'message_end', entry: user })).toEqual({
+      type: 'entry',
+      entry: user,
+    });
+    const toolResult = toolResultEntry(9);
     expect(
-      toKubicLaneEvent({ type: 'message_end', entry: user }),
-    ).toBeUndefined();
-    expect(
-      toKubicLaneEvent({
-        type: 'message_end',
-        entry: toolResultEntry(9),
-      }),
-    ).toBeUndefined();
+      toKubicLaneEvent({ type: 'message_end', entry: toolResult }),
+    ).toEqual({ type: 'entry', entry: toolResult });
   });
 
   it('maps retries, compactions and task failures', () => {
@@ -606,16 +608,24 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     // Fold like the TUI feed does: a snapshot REPLACES the transcript
     // cells, an entry-bearing event appends exactly that entry.
     const cells: number[] = [];
-    const ids = new Set<number>();
+    const index = new Map<number, number>();
+    // The TUI feed UPSERTS by entry id (a re-delivered entry replaces its
+    // cell, it never appends a second one), so the fold here does the same.
     const push = (committed: EntryRecord): void => {
-      cells.push(committed.id as number);
-      ids.add(committed.id as number);
+      const id = committed.id as number;
+      const at = index.get(id);
+      if (at === undefined) {
+        index.set(id, cells.length);
+        cells.push(id);
+      } else {
+        cells[at] = id;
+      }
     };
     let snapshotted = 0;
     for (const event of seen) {
       if (event.type === 'snapshot') {
         cells.length = 0;
-        ids.clear();
+        index.clear();
         for (const committed of event.entries) push(committed);
         snapshotted = event.entries.length;
       } else if ('entry' in event && event.entry !== undefined) {
@@ -627,6 +637,6 @@ describe('subscribeLaneEvents over watchEvents (#398)', () => {
     // The second turn appended its cells on top of the snapshot.
     expect(cells.length).toBeGreaterThan(snapshotted);
     // No cell appears twice.
-    expect(cells.length).toBe(ids.size);
+    expect(cells.length).toBe(index.size);
   });
 });

@@ -93,6 +93,13 @@ export type KubicLaneEvent =
       entry: EntryRecord;
     }
   | {
+      // Issue #317: a committed entry that carries no assistant response —
+      // a user turn, a compaction summary, a reset handoff. The transcript
+      // folds it live instead of waiting for the next full read.
+      type: 'entry';
+      entry: EntryRecord;
+    }
+  | {
       type: 'inbox';
       // The inbox as of this commit: admission, placement and withdrawal all
       // emit it, so the list is a snapshot, never a delta.
@@ -228,7 +235,7 @@ export function toKubicLaneEvent(
     case 'message_end': {
       const row = usageRowFromEntry(event.entry);
       return row === undefined
-        ? undefined
+        ? { type: 'entry', entry: event.entry }
         : { type: 'usage', row, entry: event.entry };
     }
     case 'inbox_update': {

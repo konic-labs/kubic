@@ -685,6 +685,13 @@ describe('kubic tui prompt loop (issue #88)', () => {
     const users = entries.filter((entry) => entry.kind === 'pi.user');
     expect(users.length).toBeGreaterThan(0);
     expect(JSON.stringify(users)).not.toContain('/compact');
+    // Issue #317: the committed compaction entry reaches the transcript as
+    // its own marker cell with the summary — the whole production wire
+    // (laneEntryFor → entriesToCells → the render) in one assertion, so a
+    // dropped join cannot stay green.
+    const document = lines.join('\n');
+    expect(document).toContain('context compacted');
+    expect(document).toContain('## Goal');
   });
 
   it('refuses /compact while a turn runs, with the reason on the footer (#330)', async () => {

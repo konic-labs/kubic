@@ -265,7 +265,10 @@ describe('prompt loop routing (issue #88)', () => {
       approvalsSkipped: false,
     });
     const submitted: string[] = [];
-    app.onSubmit((text) => submitted.push(text));
+    app.onSubmit((text) => {
+      submitted.push(text);
+      return 'accepted';
+    });
     for (const ch of 'fix the bug') app.handleInput(ch);
     expect(app.handleInput('\r')).toEqual({
       quit: false,
@@ -290,7 +293,10 @@ describe('prompt loop routing (issue #88)', () => {
       approvalsSkipped: false,
     });
     const submitted: string[] = [];
-    app.onSubmit((text) => submitted.push(text));
+    app.onSubmit((text) => {
+      submitted.push(text);
+      return 'accepted';
+    });
     for (const ch of 'tT x') app.handleInput(ch);
     // T/t are prompt characters while typing, never toggles.
     expect(app.handleInput('\r')).toEqual({
@@ -320,7 +326,10 @@ describe('prompt loop routing (issue #88)', () => {
       approvalsSkipped: false,
     });
     const submitted: string[] = [];
-    app.onSubmit((text) => submitted.push(text));
+    app.onSubmit((text) => {
+      submitted.push(text);
+      return 'accepted';
+    });
     for (const ch of 'first') app.handleInput(ch);
     app.handleInput('\n');
     for (const ch of 'second') app.handleInput(ch);
@@ -336,7 +345,10 @@ describe('prompt loop routing (issue #88)', () => {
       approvalsSkipped: false,
     });
     const submitted: string[] = [];
-    app.onSubmit((text) => submitted.push(text));
+    app.onSubmit((text) => {
+      submitted.push(text);
+      return 'accepted';
+    });
     expect(app.handleInput('\r')).toEqual({
       quit: false,
       consumed: true,
@@ -357,6 +369,91 @@ describe('prompt loop routing (issue #88)', () => {
     expect(app.isBusy()).toBe(true);
     app.setBusy(false);
     expect(app.isBusy()).toBe(false);
+  });
+});
+
+describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
+  const app = () =>
+    createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+
+  it('keeps Enter live during a turn and renders the queued row from the inbox', () => {
+    const ui = app();
+    const submitted: string[] = [];
+    ui.onSubmit((text) => {
+      submitted.push(text);
+      return 'queued';
+    });
+    ui.setBusy(true);
+    for (const ch of 'also run the tests') ui.handleInput(ch);
+    expect(ui.handleInput('\r')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
+    expect(submitted).toEqual(['also run the tests']);
+    // A queued prompt is NOT echoed as a pending turn: the queued row is the
+    // feedback (the lane's inbox drives it).
+    expect(ui.render(100).join('\n')).not.toContain('› also run the tests');
+    ui.setQueuedPrompts(['also run the tests']);
+    const doc = ui.render(100).join('\n');
+    expect(doc).toContain('queued: also run the tests');
+    // The inbox list is a snapshot: a fresh call replaces it.
+    ui.setQueuedPrompts([]);
+    expect(ui.render(100).join('\n')).not.toContain('queued:');
+  });
+
+  it('echoes an accepted submit, and a refused one instead names the reason', () => {
+    const ui = app();
+    ui.onSubmit(() => 'accepted');
+    for (const ch of 'first') ui.handleInput(ch);
+    ui.handleInput('\r');
+    expect(ui.render(100).join('\n')).toContain('› first');
+    const refused = app();
+    refused.setEditorFooter('error: an orchestrator run is in flight');
+    refused.onSubmit(() => 'refused');
+    for (const ch of 'dropped') refused.handleInput(ch);
+    refused.handleInput('\r');
+    const doc = refused.render(100).join('\n');
+    expect(doc).not.toContain('› dropped');
+    expect(doc).toContain('error: an orchestrator run is in flight');
+  });
+
+  it('echoes a queued prompt once its turn starts', () => {
+    const ui = app();
+    ui.setQueuedPrompts(['queued prompt']);
+    expect(ui.render(100).join('\n')).toContain('queued: queued prompt');
+    // The inbox placed it: the row goes, the pending echo takes over.
+    ui.setQueuedPrompts([]);
+    ui.setPendingEcho('queued prompt');
+    const doc = ui.render(100).join('\n');
+    expect(doc).not.toContain('queued: queued prompt');
+    expect(doc).toContain('› queued prompt');
+  });
+
+  it('Alt+Enter hands the draft to the loop as a steer and clears it', () => {
+    const ui = app();
+    ui.onSubmit(() => 'accepted');
+    for (const ch of 'use pnpm') ui.handleInput(ch);
+    // Legacy encoding (\x1b\r) — parseKey classifies it as alt+enter when
+    // the Kitty protocol is not active, which is the test terminal's case.
+    expect(ui.handleInput('\x1b\r')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+      steer: 'use pnpm',
+    });
+    expect(ui.editor.getText()).toBe('');
+    // An empty draft is a no-op, never a blank steer.
+    expect(ui.handleInput('\x1b\r')).toEqual({
+      quit: false,
+      consumed: true,
+      cancel: false,
+    });
   });
 });
 

@@ -49,6 +49,10 @@ const PROMPT_MARK = '›';
 const ASSISTANT_MARK = '▪';
 const TOOL_MARK = '●';
 const OUTPUT_ELBOW = '⎿';
+// Issue #334: the label in front of a queued follow-up's first line. Plain
+// ASCII, because it prefixes untrusted prompt text and must never be
+// confused with a committed prompt row (`›`).
+export const QUEUED_LABEL = 'queued:';
 
 export function markdownThemeFor(theme: TuiTheme): MarkdownTheme {
   return {
@@ -73,6 +77,13 @@ function stripPrefix(text: string, prefix: string): string {
   return text.startsWith(prefix) ? text.slice(prefix.length) : text;
 }
 
+// One queued row's text: the label plus the prompt's first line. A multi-line
+// draft is summarised, not dumped — the committed entry shows it in full.
+export function queuedLine(prompt: string): string {
+  const first = prompt.split('\n', 1)[0] ?? '';
+  return `${QUEUED_LABEL} ${first}`;
+}
+
 function fit(line: string, width: number): string {
   return truncateToWidth(line, Math.max(0, width), '…');
 }
@@ -84,6 +95,10 @@ class TranscriptDocument implements Component {
   cells: TranscriptEntry[] = [];
   welcome: string[] = [];
   pending: string | undefined;
+  // Issue #334: follow-ups the conversation's inbox holds but no turn has
+  // placed yet. Rendered dim under the transcript (and under the pending
+  // echo), so the operator sees the prompt was accepted — never dropped.
+  queued: string[] = [];
   expanded = false;
   inline: ((width: number) => string[] | undefined) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
@@ -187,6 +202,10 @@ class TranscriptDocument implements Component {
       gap();
       this.renderPrompt(out, `${PROMPT_MARK} ${this.pending}`, w, theme);
     }
+    for (const prompt of this.queued) {
+      gap();
+      out.push(fit(`  ${theme.dim(queuedLine(prompt))}`, w));
+    }
     return out;
   }
 
@@ -266,6 +285,9 @@ export interface TranscriptView {
   // echoed before the lane commits it, and the expand-all toggle.
   setWelcome(lines: ReadonlyArray<string>): void;
   setPendingPrompt(prompt: string | undefined): void;
+  // Issue #334: the queued follow-ups (`pi.inbox`), newest last. A fresh
+  // call REPLACES the rows — the inbox event is a snapshot, not a delta.
+  setQueuedPrompts(prompts: readonly string[]): void;
   toggleExpanded(): boolean;
   readonly expanded: boolean;
 }
@@ -376,6 +398,9 @@ export function createTranscriptView(
     },
     setPendingPrompt(prompt: string | undefined): void {
       document.pending = prompt;
+    },
+    setQueuedPrompts(prompts: readonly string[]): void {
+      document.queued = [...prompts];
     },
     toggleExpanded(): boolean {
       document.expanded = !document.expanded;

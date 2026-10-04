@@ -217,9 +217,39 @@ describe('app chrome', () => {
     expect(app.render(100).at(-1)).toContain('enter send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    expect(app.render(100).at(-1)).toMatch(/working… \ds · ctrl\+c cancels/);
+    expect(app.render(100).at(-1)).toMatch(
+      /working… \ds · enter queues · alt\+enter steers · ctrl\+c cancels/,
+    );
     app.setBusy(false);
     expect(app.busyElapsedMs()).toBeUndefined();
+  });
+
+  it('names the queue and steer keys only on the solo lane (#334)', () => {
+    const solo = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    solo.setBusy(true);
+    expect(solo.render(100).at(-1)).toContain(
+      'enter queues · alt+enter steers',
+    );
+    const orchestrator = createTuiApp({
+      sessionId: 's',
+      model: 'faux/m',
+      mode: 'orchestrator',
+      approvalsSkipped: false,
+    });
+    orchestrator.setBusy(true);
+    const line = orchestrator.render(100).at(-1) ?? '';
+    // The orchestrator lane has no inbox and refuses both keys: naming them
+    // would promise a queue that does not exist.
+    expect(line).toMatch(/working… \ds · ctrl\+c cancels/);
+    expect(line).not.toContain('enter queues');
+    expect(plain(renderWorkingLine(1500, 80, { queues: false }))).toBe(
+      `${spinnerFrame(1500)} working… 1s · ctrl+c cancels`,
+    );
   });
 
   it('toggles tool output expansion with Ctrl-X', () => {
@@ -259,7 +289,7 @@ describe('app chrome', () => {
     );
     expect(renderKeyHints(20)).toBe('enter send');
     expect(plain(renderWorkingLine(1500, 80))).toBe(
-      `${spinnerFrame(1500)} working… 1s · ctrl+c cancels`,
+      `${spinnerFrame(1500)} working… 1s · enter queues · alt+enter steers · ctrl+c cancels`,
     );
   });
 });

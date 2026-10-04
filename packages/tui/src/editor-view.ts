@@ -101,9 +101,10 @@ export class PromptEditor implements Component, Focusable {
     this.inner.focused = value;
   }
 
-  // While a turn is in flight the loop disables submit: the lane refuses a
-  // second concurrent accept, and a queued prompt would silently vanish.
-  // Pi's `disableSubmit` keeps editing (and history) alive but drops Enter.
+  // While a turn is in flight the loop keeps the editor ENABLED (#334):
+  // Enter queues the draft as a follow-up in the conversation's inbox and
+  // Alt+Enter steers, so there is nothing to disable. `disableSubmit` stays
+  // available for embedders that own a stricter loop.
   setDisabled(disabled: boolean): void {
     this.inner.disableSubmit = disabled;
   }

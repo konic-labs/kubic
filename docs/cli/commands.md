@@ -879,7 +879,8 @@ stdout (`FORCE_COLOR=0..3` overrides).
 
 | Key | Meaning |
 | --- | --- |
-| `Enter` | **Submit** the prompt (an empty draft submits nothing). |
+| `Enter` | **Submit** the prompt (an empty draft submits nothing). While a turn is running the prompt is **queued as a follow-up** in the conversation's own inbox (pi-durable `whenBusy: followUp`): a dim `queued: …` row appears under the transcript the moment the harness admits it, and the harness delivers it — its own user entry, answer, usage row and journal effects — when the running turn settles. Nothing is dropped silently. |
+| `Alt+Enter` | **Steer** the running turn with the draft: the text joins the work already in flight (the harness places it after the current tool round), and the editor is cleared like `Enter`. With no turn running it submits the draft exactly like `Enter`. An empty draft steers nothing. |
 | `/model <provider/id>` | Switch the live lane's model (the §38.1 session override): resolved against the catalogue, committed to the session, and shown in the header and status bar. `/model` alone reports the current model; an unknown or malformed id is refused in the footer and the lane keeps its model. |
 | `Ctrl-J`, `Shift+Enter`, `\` then `Enter` | Insert a newline (multi-line entry). |
 | `Ctrl-T` | Toggle the tree (collapsed summary ↔ per-call rows). |
@@ -891,8 +892,8 @@ stdout (`FORCE_COLOR=0..3` overrides).
 | `Ctrl-S` | Approval overlay: **allow for the session** — after the arming delay and the quiet period, and only while the overlay can show the whole command; never a bare letter. Latched in `<session>/approvals.json`; identical calls in this session are not asked again (also after re-attach). |
 | `d`, `Esc` | Approval overlay: **deny** the challenged call. `Esc` acts at once (the only immediate action), `d` after the arming delay. A denial latches for the session like `Ctrl-S`, so the same operation is refused without asking again. |
 | `v` | Approval overlay: show the next page of a command too tall for the dialog (never decides). |
-| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
-| `Esc` | Quit (while no approval is pending — during an approval it denies). |
+| `Ctrl-C` | Cancel the in-flight turn; while idle, quit. A second `Ctrl-C` during a turn also quits. **Cancelling clears the queue**: the abort withdraws every queued follow-up, and the footer names the count (`cancelled · dropped 2 queued prompts`). A prompt queued after a *failed* run stays in the inbox and is placed by the next submit (pi-durable's own rule). During an **orchestrator** run (which cannot be cancelled from the TUI) it quits directly — the manager's signal guard reaps its live workers as the process exits. |
+| `Esc` | Quit (while no approval is pending — during an approval it denies). Quitting mid-turn aborts and drains the run like `Ctrl-C`, so queued follow-ups go with it. |
 | `Ctrl-D` | Quit on an empty draft; while typing it stays delete-forward. |
 | EOF (closed stdin) | Quit — a detached tty or `kubic tui < /dev/null` never hangs the alt-screen. |
 

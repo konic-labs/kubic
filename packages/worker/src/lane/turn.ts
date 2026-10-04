@@ -27,7 +27,9 @@ import type { SoloLane } from './solo.js';
 
 // `TurnOutcome.failed.reason` for the one refusal Kubic raises itself: the
 // conversation is busy and the caller asked to be rejected rather than
-// queued (#334 keeps today's reject behaviour until then).
+// queued. `reject` stays the default (a submit that races a settling turn
+// must fail loudly, never sit in the inbox unannounced); the TUI's busy
+// Enter passes `followUp` and its steer key `steer` (#334).
 export const TURN_BUSY_REASON = 'busy';
 
 export type TurnAbortReason = 'guard' | 'user' | 'signal';
@@ -79,6 +81,10 @@ export interface RunTurnOptions {
   // default, `reject` throws ConversationBusy — mapped to the named busy
   // failure below.
   whenBusy?: 'reject' | 'followUp' | 'steer';
+  // #334: the admitted submission's id, called the moment the harness
+  // accepts it (queued or placed). The TUI keys its `queued: …` rows by it
+  // and drops each row when the id leaves the inbox.
+  onSubmitted?: (submissionId: string) => void;
 }
 
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
@@ -104,6 +110,7 @@ export async function runTurn(
   } catch (error) {
     return submissionFailure(error, options.context);
   }
+  options.onSubmitted?.(String(submission.id));
   return awaitTurn(submission, options.context);
 }
 

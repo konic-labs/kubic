@@ -225,11 +225,34 @@ describe('toKubicLaneEvent (§15.3)', () => {
     ).toEqual({ type: 'fault', code: 'pi.generation', message: 'boom' });
   });
 
+  it('maps an inbox update to the queued items, ids as strings (#334)', () => {
+    expect(
+      toKubicLaneEvent({
+        type: 'inbox_update',
+        items: [
+          { id: 11 as SubmissionId, mode: 'followUp' },
+          { id: 12 as SubmissionId, mode: 'steer' },
+        ],
+      }),
+    ).toEqual({
+      type: 'inbox',
+      items: [
+        { id: '11', mode: 'followUp' },
+        { id: '12', mode: 'steer' },
+      ],
+    });
+    // Placement and withdrawal emit the same event with the remaining items
+    // (here: none) — the list is a snapshot, so a renderer replaces its rows.
+    expect(toKubicLaneEvent({ type: 'inbox_update', items: [] })).toEqual({
+      type: 'inbox',
+      items: [],
+    });
+  });
+
   it('ignores event kinds Kubic does not route', () => {
     const ignored = [
       { type: 'turn_start' },
       { type: 'turn_end' },
-      { type: 'inbox_update', items: [] },
       { type: 'deferred_poll', pollAt: 1 },
       { type: 'usage_changed', usage: { models: {}, tools: {} } },
       { type: 'agent_changed', agent: {} },

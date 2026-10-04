@@ -3,8 +3,17 @@
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // ScrollView root directly (Component.render is pure) and assert document
 // text plus follow/pinned offsets across batches.
-import { describe, expect, it } from 'vitest';
-import { createTranscriptView, replayTranscript } from './transcript.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createTuiTheme, setTuiTheme } from './theme.js';
+import {
+  createTranscriptView,
+  QUEUED_LABEL,
+  replayTranscript,
+} from './transcript.js';
+
+afterEach(() => {
+  setTuiTheme(createTuiTheme('none'));
+});
 
 describe('transcript view (issue #23, slice A)', () => {
   it('appends a text delta and shows it in a headless snapshot', () => {
@@ -210,5 +219,39 @@ describe('transcript snapshot guards (issue #68; mutation hardening)', () => {
     const doc = view.render(80).join('\n');
     expect(doc).toContain('snapshot text');
     expect(doc).not.toContain('stale delta');
+  });
+});
+
+describe('queued follow-ups (issue #334)', () => {
+  it('renders each queued prompt under the transcript, first line only', () => {
+    const view = createTranscriptView();
+    view.appendDelta({ id: 'a1', kind: 'text', append: 'assistant spoke' });
+    view.setQueuedPrompts(['fix the flaky test\nand the docs', 'second']);
+    const rows = view.render(80);
+    const doc = rows.join('\n');
+    expect(doc).toContain(`${QUEUED_LABEL} fix the flaky test`);
+    expect(doc).toContain(`${QUEUED_LABEL} second`);
+    // A multi-line draft is summarised: the committed entry shows it whole.
+    expect(doc).not.toContain('and the docs');
+    expect(rows.findIndex((row) => row.includes(QUEUED_LABEL))).toBeGreaterThan(
+      rows.findIndex((row) => row.includes('assistant spoke')),
+    );
+  });
+
+  it('renders the queued rows dim', () => {
+    setTuiTheme(createTuiTheme('truecolor'));
+    const view = createTranscriptView();
+    view.setQueuedPrompts(['later']);
+    const row = view.render(80).find((line) => line.includes('later')) ?? '';
+    // SGR 2 is the dim style the operator-facing contract names.
+    expect(row).toContain('\u001b[2m');
+  });
+
+  it('replaces the rows on every call: the inbox list is a snapshot', () => {
+    const view = createTranscriptView();
+    view.setQueuedPrompts(['first', 'second']);
+    expect(view.render(80).join('\n')).toContain('queued: second');
+    view.setQueuedPrompts([]);
+    expect(view.render(80).join('\n')).not.toContain(QUEUED_LABEL);
   });
 });

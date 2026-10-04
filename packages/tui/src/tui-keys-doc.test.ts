@@ -72,12 +72,18 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       const docName = (id: string): string =>
         id === 'escape'
           ? 'Esc'
-          : id.replace(
-              /^ctrl\+(.)$/,
-              (_, k: string) => `Ctrl-${k.toUpperCase()}`,
-            );
+          : id === 'alt+enter'
+            ? 'Alt+Enter'
+            : id.replace(
+                /^ctrl\+(.)$/,
+                (_, k: string) => `Ctrl-${k.toUpperCase()}`,
+              );
+      const escapeRe = (text: string): string =>
+        text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       for (const id of boundKeyIds()) {
-        expect(section).toMatch(new RegExp(`\\| \`${docName(id)}\` \\|`));
+        expect(section).toMatch(
+          new RegExp(`\\| \`${escapeRe(docName(id))}\` \\|`),
+        );
       }
     });
 

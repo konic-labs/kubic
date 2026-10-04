@@ -2,9 +2,9 @@
 // #398; §15, §15.3, §20.6, §27.1). Exactly one subscription per
 // conversation relays the §15 groups Kubic routes — run status, tool
 // status, usage, faults — plus the retry and compaction state the 1.0
-// harness commits. Everything else (message deltas, inbox updates,
-// navigation, config) stays inside Pi: Kubic defines no parallel event
-// vocabulary.
+// harness commits and the inbox queue the TUI renders (#334). Everything
+// else (message deltas, navigation, config) stays inside Pi: Kubic defines
+// no parallel event vocabulary.
 //
 // `watchEvents` is experimental upstream, so it is isolated here: every
 // Kubic consumer sees `KubicLaneEvent`, and `viewState()` (`pi.live`) can
@@ -49,6 +49,15 @@ export interface KubicLaneCompaction {
   readonly error?: string;
 }
 
+// One queued submission of the conversation's inbox (#334): the id and the
+// mode (`followUp` / `steer`, or a passive `write`). The text is the
+// submitter's own — the inbox document carries no content — so a renderer
+// keys its own prompt text by id and drops the row when the id leaves.
+export interface KubicInboxItem {
+  readonly id: string;
+  readonly mode: 'steer' | 'followUp' | 'write';
+}
+
 export type KubicLaneEvent =
   | { type: 'run-start'; inputs: readonly SubmissionId[] }
   | { type: 'run-end'; inputs: readonly SubmissionId[] }
@@ -73,6 +82,12 @@ export type KubicLaneEvent =
       // that answered (#287); `entry` carries its transcript cell.
       row: KubicUsageRow;
       entry: EntryRecord;
+    }
+  | {
+      type: 'inbox';
+      // The inbox as of this commit: admission, placement and withdrawal all
+      // emit it, so the list is a snapshot, never a delta.
+      items: readonly KubicInboxItem[];
     }
   | { type: 'fault'; code: string; message: string }
   | {
@@ -197,6 +212,15 @@ export function toKubicLaneEvent(
       return row === undefined
         ? undefined
         : { type: 'usage', row, entry: event.entry };
+    }
+    case 'inbox_update': {
+      return {
+        type: 'inbox',
+        items: event.items.map((item) => ({
+          id: String(item.id),
+          mode: item.mode,
+        })),
+      };
     }
     case 'auto_retry_start': {
       return {

@@ -34,6 +34,8 @@
 //   Ctrl-X           expand / collapse every tool output block
 //   Ctrl-C           cancel the in-flight turn; quit when idle (a second
 //                    Ctrl-C during a turn also quits)
+//   Alt+Enter        steer the running turn with the draft (submits it when
+//                    idle; issue #334)
 //   Esc              quit
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 
@@ -165,7 +167,20 @@ export interface TuiInputResult {
   // exiting. The root owns the busy/idle decision; the app only
   // classifies the key, so the count and the exit stay in one place.
   readonly cancel: boolean;
+  // Issue #334: Alt+Enter handed the app a non-empty draft as a steer. The
+  // app has already cleared the editor; the loop decides what the text
+  // becomes (steer the running turn, or submit it when idle), because only
+  // the loop knows a lane and its busy state.
+  readonly steer?: string;
 }
+
+// Issue #334: what the loop did with a submitted prompt. `queued` means the
+// follow-up went into the conversation's inbox (pi-durable `whenBusy:
+// 'followUp'`) — the app must NOT echo it as a pending turn; the queued row
+// does that. `refused` means no lane could take it at all (an orchestrator
+// run is busy, or the session has no lane); the loop has put the reason on
+// the footer.
+export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused';
 
 // The global keys are classified by pi-tui's own `parseKey`, never by
 // comparing raw bytes (issue #88, reviewer finding): a Kitty-class terminal
@@ -197,6 +212,10 @@ const GLOBAL_KEYS: ReadonlySet<string> = new Set([
   'ctrl+o',
   'ctrl+r',
   'ctrl+x',
+  // Issue #334: Alt+Enter steers (or submits when idle). Pi's editor claims
+  // the newline keys Ctrl-J / Shift+Enter / backslash-Enter, never
+  // alt+enter, and the command repaints below must classify it here.
+  'alt+enter',
 ]);
 
 function isGlobalKey(keyId: string | undefined): boolean {
@@ -231,10 +250,19 @@ export interface TuiApp {
   // output) rendered as transcript text. Presentation only: the report
   // never drives state, and a solo lane snapshot replaces it.
   appendReport(lines: ReadonlyArray<string>): void;
-  onSubmit(handler: (prompt: string) => void): void;
+  onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
   setEditorFooter(text: string): void;
+  // Issue #334: the queued follow-ups (`pi.inbox`), oldest first. The loop
+  // keys its own prompt text by submission id (the inbox carries ids, not
+  // text) and calls this on every inbox change; a fresh call replaces the
+  // rows.
+  setQueuedPrompts(prompts: readonly string[]): void;
+  // Issue #334: the echo row for a prompt whose turn has STARTED but whose
+  // user entry is not committed yet — a queued follow-up the inbox placed.
+  // A later committed prompt cell clears it, exactly like a direct submit.
+  setPendingEcho(prompt: string | undefined): void;
   // TUI polish: the solo notice lives in the welcome block (wrapped in
   // full) instead of a truncated footer line.
   setNotice(text: string): void;
@@ -313,9 +341,23 @@ export function renderKeyHints(
 }
 
 // The working indicator: spinner, elapsed time and the cancel key.
-export function renderWorkingLine(elapsedMs: number, width: number): string {
+// One line under the editor while a turn runs: the elapsed clock plus the
+// keys that still act. Enter and Alt+Enter are named for the SOLO lane
+// because they are the two ways to keep talking to a busy turn (#334); the
+// orchestrator lane has no inbox and refuses both, so its working line keeps
+// the Ctrl-C hint alone. Ctrl-C keeps its shipped meaning throughout (first
+// cancels, second quits).
+export function renderWorkingLine(
+  elapsedMs: number,
+  width: number,
+  options: { queues?: boolean } = {},
+): string {
   const theme = tuiTheme();
-  const line = `${theme.warm(spinnerFrame(elapsedMs))} ${theme.warm('working…')} ${theme.muted(`${formatElapsed(elapsedMs)} · ctrl+c cancels`)}`;
+  const tail =
+    options.queues === false
+      ? `${formatElapsed(elapsedMs)} · ctrl+c cancels`
+      : `${formatElapsed(elapsedMs)} · enter queues · alt+enter steers · ctrl+c cancels`;
+  const line = `${theme.warm(spinnerFrame(elapsedMs))} ${theme.warm('working…')} ${theme.muted(tail)}`;
   return truncateToWidth(line, Math.max(0, width), '…');
 }
 
@@ -373,11 +415,15 @@ export function welcomeLines(info: {
 // while a turn runs, else the key hints.
 class EditorRow implements Component {
   private readonly editor: PromptEditor;
+  // Issue #334: the busy line names the keys that act on a running turn,
+  // which differ by lane (the orchestrator lane queues nothing).
+  private readonly mode: () => StatusMode;
   private footer: string;
   busySince: number | undefined;
 
-  constructor(editor: PromptEditor) {
+  constructor(editor: PromptEditor, mode: () => StatusMode) {
     this.editor = editor;
+    this.mode = mode;
     this.footer = '';
     this.busySince = undefined;
   }
@@ -411,7 +457,12 @@ class EditorRow implements Component {
       ];
     }
     if (this.busySince !== undefined) {
-      return [...lines, renderWorkingLine(Date.now() - this.busySince, width)];
+      return [
+        ...lines,
+        renderWorkingLine(Date.now() - this.busySince, width, {
+          queues: this.mode() === 'solo',
+        }),
+      ];
     }
     return [...lines, renderKeyHints(width)];
   }
@@ -481,7 +532,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     status.setMode(next);
   };
   const editor = new PromptEditor();
-  const editorRow = new EditorRow(editor);
+  const editorRow = new EditorRow(editor, () => sessionMode.current);
   // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
@@ -551,19 +602,29 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // snapshot clears the report (a report is not a session transcript).
   let reportRevision = 0;
   let reportCells: TranscriptEntry[] = [];
-  let submitHandler: ((prompt: string) => void) | undefined;
+  let submitHandler:
+    | ((prompt: string) => TuiSubmitOutcome | undefined)
+    | undefined;
   let pendingPrompt: string | undefined;
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
   editor.onSubmit = (prompt: string): void => {
     if (submitHandler === undefined) return;
-    // Echo the prompt at once: the lane commits it asynchronously, and a
-    // prompt that vanishes until the turn ends reads as a dropped key.
+    // Issue #334: the loop decides which submit outcome this is. A queued
+    // follow-up must not render as a pending turn (the queued row is its
+    // feedback), and a refused prompt must not either — the loop's footer
+    // says why. Both still pin the transcript: the operator asked to see
+    // the tail.
+    const outcome = submitHandler(prompt) ?? 'accepted';
+    if (outcome === 'accepted') echoPendingPrompt(prompt);
+    transcript.rePin();
+  };
+  // The prompt echo before the lane commits it (issue #88), also reused for
+  // a queued follow-up whose turn has started (#334).
+  const echoPendingPrompt = (prompt: string): void => {
     pendingPrompt = sanitizeLaneText(prompt);
     promptCellsAtSubmit = promptCells;
     transcript.setPendingPrompt(pendingPrompt);
-    transcript.rePin();
-    submitHandler(prompt);
   };
   const quit = (): TuiInputResult => ({
     quit: true,
@@ -766,6 +827,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         transcript.toggleExpanded();
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #334: Alt+Enter is the steer key. The draft leaves the editor
+      // here (like Enter clears it) and the loop decides: a running turn is
+      // steered through the harness' own steer queue, an idle session gets
+      // the text as a normal submit. An empty draft is a no-op, never a
+      // blank steer.
+      if (keyId === 'alt+enter') {
+        const text = editor.getText().trim();
+        if (text === '') return { quit: false, consumed: true, cancel: false };
+        editor.setText('');
+        return { quit: false, consumed: true, cancel: false, steer: text };
+      }
       editor.handleInput(data);
       return { quit: false, consumed: true, cancel: false };
     },
@@ -840,14 +912,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         reportRevision,
       );
     },
-    onSubmit: (handler: (prompt: string) => void): void => {
+    onSubmit: (
+      handler: (prompt: string) => TuiSubmitOutcome | undefined,
+    ): void => {
       submitHandler = handler;
     },
     setBusy: (next: boolean): void => {
       busy = next;
-      // Submit is disabled for the duration of a turn: the lane refuses a
-      // second concurrent accept, so the loop never offers one.
-      editor.setDisabled(next);
+      // Issue #334: the editor stays ENABLED through a turn. Enter is no
+      // longer a silent no-op while the lane works: the loop submits it as
+      // a follow-up into the conversation's inbox, and Alt+Enter steers.
       editorRow.busySince = next ? Date.now() : undefined;
       editorRow.setFooter('');
       if (!next && pendingPrompt !== undefined) {
@@ -872,6 +946,18 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     isBusy: (): boolean => busy,
     setEditorFooter: (text: string): void => {
       editorRow.setFooter(text);
+    },
+    setQueuedPrompts: (prompts: readonly string[]): void => {
+      transcript.setQueuedPrompts(prompts);
+    },
+    setPendingEcho: (prompt: string | undefined): void => {
+      if (prompt === undefined) {
+        pendingPrompt = undefined;
+        transcript.setPendingPrompt(undefined);
+        return;
+      }
+      echoPendingPrompt(prompt);
+      transcript.rePin();
     },
     setJournalChanges: (rows: ReadonlyArray<JournalChangeLike>): void => {
       diffPanel.setChanges(rows);

@@ -2,7 +2,11 @@
 // way a run can end as one TurnOutcome. Faux provider only, MemoryStorage,
 // zero network.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import {
+  type ExecutionEnv,
+  FakeExecutionEnv,
+  type Shell,
+} from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -69,7 +73,7 @@ function catalog() {
 
 async function boot(
   responses: Parameters<Faux['setResponses']>[0],
-  env = new FakeExecutionEnv({}),
+  env: ExecutionEnv = new FakeExecutionEnv({}),
   extra: Partial<Parameters<typeof bootSoloLane>[0]> = {},
 ): Promise<{ solo: SoloLane; faux: Faux }> {
   const { faux, models } = catalog();
@@ -187,6 +191,133 @@ describe('runTurn on pi-durable (issue #395)', () => {
     expect(busy.error).toMatch(/busy/i);
     await abortLane(solo, BACKGROUND_CONTEXT);
     await first.catch(() => undefined);
+  });
+
+  it('queues a busy follow-up, reports its id, and delivers it after settlement (#334)', async () => {
+    let admitted: () => void = () => {};
+    const landed = new Promise<void>((resolve) => {
+      admitted = resolve;
+    });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { solo } = await boot([
+      async () => {
+        admitted();
+        await gate;
+        return fauxAssistantMessage('first answer');
+      },
+      fauxAssistantMessage('second answer'),
+    ]);
+    const first = runTurn(solo, 'first prompt', {
+      requestId: 'req-first',
+      context: BACKGROUND_CONTEXT,
+    });
+    await landed;
+    const ids: string[] = [];
+    const second = runTurn(solo, 'second prompt', {
+      requestId: 'req-second',
+      context: BACKGROUND_CONTEXT,
+      whenBusy: 'followUp',
+      onSubmitted: (id) => ids.push(id),
+    });
+    // The busy Enter is ADMITTED at once (never refused): the id lands while
+    // the first run is still in flight, and the item sits queued in the
+    // conversation's own inbox (#334: the queue is pi-durable's, not a
+    // Kubic-owned list).
+    await vi.waitFor(() => expect(ids).toHaveLength(1));
+    expect(ids[0]).not.toBe('');
+    const queued = await solo.harness.inspect(BACKGROUND_CONTEXT);
+    expect(
+      queued.submissions.find((row) => String(row.id) === ids[0]),
+    ).toMatchObject({ status: 'queued' });
+    const inbox = await solo.conversation.viewState(BACKGROUND_CONTEXT);
+    expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
+      '"mode":"followUp"',
+    );
+    // Nothing of the queued prompt is in the transcript yet.
+    expect(userTexts(await transcript(solo))).toEqual(['first prompt']);
+    release();
+    await expect(first).resolves.toMatchObject({ kind: 'completed' });
+    // The harness places the follow-up when the run answers and starts the
+    // next run with it: the same settlement path as any other submit.
+    await expect(second).resolves.toMatchObject({ kind: 'completed' });
+    const texts = userTexts([...(await transcript(solo))].reverse());
+    expect(texts).toEqual(['first prompt', 'second prompt']);
+    expect(JSON.stringify(await transcript(solo))).toContain('second answer');
+  });
+
+  it('places a busy steer on the running operation, never as a queued turn (#334)', async () => {
+    const base = new FakeExecutionEnv({});
+    base.fs.writeFile('a.txt', 'steer me\n');
+    let toolStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      toolStarted = resolve;
+    });
+    let releaseTool: () => void = () => {};
+    const toolGate = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    // A bash round that stays in flight until the test releases it: the
+    // steer below lands INSIDE that tool round's turn.
+    const gatedShell: Shell = {
+      spawn: (cmd, args, options) => {
+        const handle = base.shell.spawn(cmd, args, options);
+        return {
+          ...handle,
+          wait: async () => {
+            toolStarted();
+            await toolGate;
+            return handle.wait();
+          },
+        };
+      },
+    };
+    const env: ExecutionEnv = {
+      cwd: base.cwd,
+      fs: base.fs,
+      provenance: base.provenance,
+      shell: gatedShell,
+      withProvenance: (next) => ({ ...env, provenance: next }),
+    };
+    const seen: string[] = [];
+    const { solo } = await boot(
+      [
+        fauxAssistantMessage([fauxToolCall('bash', { command: 'echo hi' })], {
+          stopReason: 'toolUse',
+        }),
+        (context) => {
+          seen.push(context.messages.map((m) => JSON.stringify(m)).join('\n'));
+          return fauxAssistantMessage('steered answer');
+        },
+      ],
+      env,
+    );
+    const first = runTurn(solo, 'first prompt', {
+      requestId: 'req-first',
+      context: BACKGROUND_CONTEXT,
+    });
+    await started;
+    const ids: string[] = [];
+    const steered = runTurn(solo, 'prefer pnpm', {
+      requestId: 'req-steer',
+      context: BACKGROUND_CONTEXT,
+      whenBusy: 'steer',
+      onSubmitted: (id) => ids.push(id),
+    });
+    await vi.waitFor(() => expect(ids).toHaveLength(1));
+    const inbox = await solo.conversation.viewState(BACKGROUND_CONTEXT);
+    expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
+      '"mode":"steer"',
+    );
+    releaseTool();
+    await expect(first).resolves.toMatchObject({ kind: 'completed' });
+    await expect(steered).resolves.toMatchObject({ kind: 'completed' });
+    // The steer joined the RUNNING work: the model request that followed the
+    // tool round carried it as a user message, in the same turn.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('prefer pnpm');
   });
 
   it('maps a cancelled guard to aborted/guard', async () => {

@@ -110,6 +110,7 @@ import {
   createTuiApp,
   type JournalChangeLike,
   type TuiApp,
+  type TuiSubmitOutcome,
 } from '../../../packages/tui/src/tui-app.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import {
@@ -128,6 +129,7 @@ import {
   type OperationKillRegistry,
 } from '../../../packages/worker/src/lane/abort.js';
 import type {
+  KubicInboxItem,
   KubicLaneEvent,
   LaneEventSink,
 } from '../../../packages/worker/src/lane/events.js';
@@ -199,8 +201,10 @@ export type TuiApprovalSeat = (
 export interface TuiLaneLoop {
   /**
    * #395: one turn on the durable lane (lane/turn.ts). The busy policy is
-   * `reject` until #334 lands: a prompt submitted while the conversation
-   * runs comes back `{kind:'failed', reason:'busy'}` — it is never queued.
+   * the caller's: the loop's own submits use `reject` (a race with a
+   * settling turn fails loudly), while a busy Enter passes `followUp` and
+   * the steer key `steer`, so pi-durable queues them in the conversation's
+   * inbox (#334).
    */
   runTurn(
     prompt: string,
@@ -208,6 +212,8 @@ export interface TuiLaneLoop {
       requestId: string;
       context: Context;
       whenBusy?: 'reject' | 'followUp' | 'steer';
+      // #334: the admitted submission's id, the moment the harness takes it.
+      onSubmitted?: (submissionId: string) => void;
     },
   ): Promise<TurnOutcome>;
   /**
@@ -303,6 +309,15 @@ function terminusOfFailure(reason: string): RunTerminusKind {
   }
 }
 
+// Issue #334: a turn's own options. The solo lane queues a busy follow-up
+// in the conversation's inbox (`followUp`) or joins the running work with a
+// steer (`steer`); `onSubmitted` reports the admitted submission's id the
+// moment the harness takes it, so the loop can key its `queued: …` rows.
+export interface TuiTurnOptions {
+  whenBusy?: 'followUp' | 'steer';
+  onSubmitted?: (submissionId: string) => void;
+}
+
 // One turn's driver, whichever lane owns it (issue #327): the solo
 // TuiTurnRunner already has this shape, and TuiOrchestratorTurn mirrors it,
 // so the input loop's busy latch, Ctrl-C handling and quit drain stay one
@@ -314,7 +329,7 @@ export interface TuiTurnDriver {
   // showing a "cancelling…" that the lane cannot honour. The solo lane
   // always can; an orchestrator run only when its drive exposes `abort`.
   canCancel(): boolean;
-  run(prompt: string): Promise<TuiTurnOutcome>;
+  run(prompt: string, options?: TuiTurnOptions): Promise<TuiTurnOutcome>;
   cancel(): Promise<boolean>;
   drainForQuit(bound: Promise<void>): Promise<void>;
 }
@@ -363,7 +378,10 @@ export class TuiOrchestratorTurn implements TuiTurnDriver {
     return this.drive.abort !== undefined;
   }
 
-  run(prompt: string): Promise<TuiTurnOutcome> {
+  // Issue #334: the orchestrator lane has one objective and no inbox, so a
+  // passed option (only busy submits carry one, and those are refused for
+  // this driver) never applies; the signature is the shared driver's.
+  run(prompt: string, _options?: TuiTurnOptions): Promise<TuiTurnOutcome> {
     this.aborted = false;
     const running = this.drive.run(prompt, this.onReport).finally(() => {
       if (this.running === running) this.running = undefined;
@@ -1635,16 +1653,26 @@ export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
   private model: string;
-  // The turn in flight, from the moment a submit is accepted by the runner:
-  // `starting` covers the window before the durable submit lands.
-  private starting = false;
-  // The durable turn outcome of the turn in flight (§46 lane record, #395).
-  private settledTurn: TurnOutcome | undefined;
+  // Issue #334: every turn in flight, from the moment a submit is accepted
+  // by the runner. A busy Enter adds a QUEUED follow-up's own run here while
+  // the running turn is still in it, and the single subscription below
+  // serves both: the follow-up's run streams into the same transcript
+  // (exactly one lane consumer per conversation, §15.3).
+  private readonly runs = new Set<Promise<TuiTurnOutcome>>();
+  // Turns between their submit call and their settlement: `runs` is not
+  // populated until `run()` returns, so this is the count the `isRunning`
+  // latch reads in that window.
+  private starting = 0;
+  // The one lane-event subscription of the current busy period.
+  private attached = false;
+  private attaching: Promise<void> | undefined;
   private detach: (() => Promise<void>) | undefined;
   private aborted = false;
   // The durable run has started (the `run-start` lane event): the placement
   // signal a pre-submit Ctrl-C waits for, so its abort cannot slip between
-  // the submit and the moment the run owns the conversation.
+  // the submit and the moment the run owns the conversation. Kept from the
+  // FIRST run of the busy period: a queued follow-up is admitted at once,
+  // so the turn the operator asked to cancel is the one that was running.
   private placed: Promise<void> = Promise.resolve();
   private markPlaced: () => void = () => {};
   // Set once a quit starts draining: from then on the operation's kills stay
@@ -1706,9 +1734,11 @@ export class TuiTurnRunner {
 
   // Busy from the moment a submit is accepted by the loop — not from the
   // moment the durable turn lands — so the Ctrl-C that follows Enter by a
-  // keystroke still cancels instead of quitting.
+  // keystroke still cancels instead of quitting. A queued follow-up keeps
+  // the runner busy until ITS turn settles too (#334): the conversation is
+  // still working, and another Enter keeps queueing.
   isRunning(): boolean {
-    return this.starting || this.running !== undefined;
+    return this.starting > 0 || this.runs.size > 0;
   }
 
   // The single lane-event consumer for this conversation (§15.3: exactly
@@ -1790,17 +1820,60 @@ export class TuiTurnRunner {
     this.onUpdate?.();
   }
 
-  // The in-flight run (issue #312): a quit waits on it, bounded.
-  private running: Promise<TuiTurnOutcome> | undefined;
-
-  run(prompt: string): Promise<TuiTurnOutcome> {
-    const running = this.runTurn(prompt).finally(() => {
-      // The runner is idle again once the turn settles: a stale `running`
-      // would make every later quit look like a mid-turn cancel.
-      if (this.running === running) this.running = undefined;
-    });
-    this.running = running;
+  // The in-flight runs (issue #312): a quit waits on them, bounded. The
+  // runner is idle when neither a submit is starting nor a run is open.
+  run(prompt: string, options: TuiTurnOptions = {}): Promise<TuiTurnOutcome> {
+    const running = this.runTurn(prompt, options);
+    this.runs.add(running);
+    const finished = (): void => {
+      this.runs.delete(running);
+      // The busy period ends with its LAST turn: only then is the lane-event
+      // subscription released (a queued follow-up still streaming must keep
+      // its consumer).
+      if (this.runs.size === 0) void this.releaseSubscription();
+    };
+    void running.then(finished, finished);
     return running;
+  }
+
+  // Issue #334: the busy period's ONE subscription. It is taken by the first
+  // turn and dropped when the last settles, so a queued follow-up's run —
+  // placed by the harness after the first turn answers — keeps feeding the
+  // same app feed. The attach snapshot is snapshot-safe (#398): REPLACE
+  // semantics mean re-taking it loses nothing.
+  private async ensureSubscription(): Promise<void> {
+    if (this.attached) return;
+    const attaching =
+      this.attaching ??
+      (async () => {
+        this.detach = await this.loop.subscribe(this.sink, this.loop.context);
+        this.attached = true;
+      })();
+    this.attaching = attaching;
+    try {
+      await attaching;
+    } finally {
+      if (this.attaching === attaching) this.attaching = undefined;
+    }
+  }
+
+  private async releaseSubscription(): Promise<void> {
+    // A turn may have subscribed and settled inside the same tick: wait for
+    // that attempt before reading what it installed.
+    if (this.attaching !== undefined) {
+      await this.attaching.catch(() => undefined);
+    }
+    // A turn may have arrived while this release waited for the attach:
+    // never drop the consumer of a live run.
+    if (this.runs.size > 0 || !this.attached) return;
+    const detach = this.detach;
+    this.detach = undefined;
+    this.attached = false;
+    try {
+      await detach?.();
+    } catch {
+      // A torn-down watch is not a turn failure.
+    }
   }
 
   // Issue #312 (§18, #109): quitting mid-turn aborts and drains the
@@ -1830,7 +1903,16 @@ export class TuiTurnRunner {
         // Already exited — the registry drains every entry regardless.
       }
     }
-    const settled = (this.running ?? Promise.resolve()).then(
+    // Every turn of the busy period settles before the quit resolves: the
+    // follow-ups the abort withdrew settle as aborted on the same path.
+    const settled = Promise.all(
+      [...this.runs].map((running) =>
+        running.then(
+          () => undefined,
+          () => undefined,
+        ),
+      ),
+    ).then(
       () => undefined,
       () => undefined,
     );
@@ -1839,17 +1921,21 @@ export class TuiTurnRunner {
 
   // One turn: settle it on the durable lane, then hand the turn's own record
   // to the run's §46 trajectory (issue #383) — the recording never changes
-  // the turn's outcome.
-  private async runTurn(prompt: string): Promise<TuiTurnOutcome> {
+  // the turn's outcome. The record is per-turn (#334): two runs can overlap
+  // while a follow-up waits in the inbox.
+  private async runTurn(
+    prompt: string,
+    options: TuiTurnOptions,
+  ): Promise<TuiTurnOutcome> {
     const startedAt = Date.now();
-    this.settledTurn = undefined;
-    const outcome = await this.drive(prompt);
+    const record: { turn?: TurnOutcome } = {};
+    const outcome = await this.drive(prompt, options, record);
     try {
       await this.loop.recordTurn?.({
         prompt,
         startedAt,
         outcome,
-        ...(this.settledTurn === undefined ? {} : { turn: this.settledTurn }),
+        ...(record.turn === undefined ? {} : { turn: record.turn }),
       });
     } catch {
       // The trajectory observes the turn; it never changes its outcome.
@@ -1857,29 +1943,46 @@ export class TuiTurnRunner {
     return outcome;
   }
 
-  private async drive(prompt: string): Promise<TuiTurnOutcome> {
-    this.starting = true;
+  private async drive(
+    prompt: string,
+    options: TuiTurnOptions,
+    record: { turn?: TurnOutcome },
+  ): Promise<TuiTurnOutcome> {
+    this.starting += 1;
     this.aborted = false;
-    this.placed = new Promise<void>((resolve) => {
-      this.markPlaced = resolve;
+    // The first run of the busy period owns the placement latch: Ctrl-C
+    // waits for THE running turn to be placed, not for a queued follow-up's
+    // admission (which is immediate and needs no placement).
+    const first = this.starting === 1;
+    let markPlaced: () => void = () => {};
+    const placed = new Promise<void>((resolve) => {
+      markPlaced = resolve;
     });
+    if (first) {
+      this.placed = placed;
+      this.markPlaced = markPlaced;
+    }
     try {
       // The subscription is snapshot-safe (#398): the attach snapshot
       // replaces the feed, so nothing committed between the boot read and
       // this turn can be lost, and no event can arrive before the sink is
-      // listening.
-      this.detach = await this.loop.subscribe(this.sink, this.loop.context);
+      // listening. ONE subscription serves the whole busy period (#334).
+      await this.ensureSubscription();
       const turn = await this.loop.runTurn(prompt, {
         // The prompt is this invocation's own intent: a fresh id per submit
         // so pi-durable's requestId dedupe never collapses two prompts the
         // operator really sent (#395 idempotency rule).
         requestId: randomUUID(),
         context: this.loop.context,
-        // Until #334 lands a busy conversation refuses the submit instead of
-        // queueing it (lane/turn.ts: {kind:'failed', reason:'busy'}).
-        whenBusy: 'reject',
+        // Issue #334: a queued follow-up / steer is the caller's explicit
+        // mode; anything else keeps `reject` — a submit that races a
+        // settling turn fails loudly instead of sitting in the inbox.
+        whenBusy: options.whenBusy ?? 'reject',
+        ...(options.onSubmitted === undefined
+          ? {}
+          : { onSubmitted: options.onSubmitted }),
       });
-      this.settledTurn = turn;
+      record.turn = turn;
       // A SETTLED turn's kills are forgotten, not run: a kept background job
       // outlives Kubic, and a recycled pid must not receive a stale group
       // SIGTERM. A failed outcome is not settled — the busy refusal never
@@ -1929,17 +2032,10 @@ export class TuiTurnRunner {
       }
       throw error;
     } finally {
-      this.starting = false;
+      this.starting -= 1;
       // A run that never started (a refused submit, a failure) must not
       // leave a latched Ctrl-C waiting for a placement that cannot come.
-      this.markPlaced();
-      const detach = this.detach;
-      this.detach = undefined;
-      try {
-        await detach?.();
-      } catch {
-        // A torn-down watch is not a turn failure.
-      }
+      markPlaced();
     }
   }
 
@@ -2201,6 +2297,23 @@ export async function runTuiCommand(
   // needs the reconcile sweep (which walks and hashes the whole workspace:
   // not free, so file-tool and read-only turns skip it).
   let shellRanThisTurn = false;
+  // Issue #334: the conversation's inbox as the lane reports it (`pi.inbox`
+  // via `inbox_update`), plus the prompt text of every submission the loop
+  // queued — the inbox carries ids, not content. The `queued: …` rows are
+  // derived from the two (and only from them), so admission, placement and
+  // withdrawal all come from pi-durable's own queue: Kubic owns no queue
+  // state and cannot promise a delivery the harness did not take.
+  let queuedInbox: readonly KubicInboxItem[] = [];
+  const queuedText = new Map<string, string>();
+  const queuedCount = (): number =>
+    queuedInbox.filter((item) => queuedText.has(item.id)).length;
+  const syncQueuedRows = (): void => {
+    app.setQueuedPrompts(
+      queuedInbox
+        .map((item) => queuedText.get(item.id))
+        .filter((text): text is string => text !== undefined),
+    );
+  };
   const turn =
     boot.loop === undefined
       ? undefined
@@ -2216,6 +2329,25 @@ export async function runTuiCommand(
             if (event.type === 'tool-end') {
               if (event.toolName === SHELL_TOOL_NAME) shellRanThisTurn = true;
               journalFeed?.request();
+            }
+            // Issue #334: a fresh inbox list replaces the queued rows (it is
+            // a snapshot); a `run-start` names the submission the harness
+            // just PLACED, so its row becomes the pending echo instead.
+            if (event.type === 'inbox') {
+              queuedInbox = event.items;
+              syncQueuedRows();
+              if (!stopped) screen?.update();
+            }
+            if (event.type === 'run-start') {
+              for (const input of event.inputs) {
+                const id = String(input);
+                const text = queuedText.get(id);
+                if (text === undefined) continue;
+                queuedText.delete(id);
+                app.setPendingEcho(text);
+              }
+              syncQueuedRows();
+              if (!stopped) screen?.update();
             }
           },
           boot.usageRows,
@@ -2459,6 +2591,17 @@ export async function runTuiCommand(
         return { consume: true };
       }
     });
+    // Issue #334: the one submit path is defined with the lane wiring below
+    // (it needs the drivers and the session mode), while this key router is
+    // registered first — so the steer key reaches it through this holder.
+    let submitForLoop:
+      | ((prompt: string, steer: boolean) => TuiSubmitOutcome)
+      | undefined;
+    // Issue #334: how many queued prompts the cancel in flight is about to
+    // withdraw. pi-durable's abort clears the inbox, so the settlement
+    // footer of every cancelled turn names the count — deterministic,
+    // whichever of the running/queued turns settles last.
+    let droppedOnCancel = 0;
     const routeInput = (data: string): { consume: true } | undefined => {
       if (stopped) {
         // Issue #312: while a quit drains, a second Ctrl-C ends the wait.
@@ -2475,6 +2618,20 @@ export async function runTuiCommand(
       // as the second Ctrl-C would quit the session on key-up.
       if (isKeyRelease(data)) return { consume: true };
       const routed = app.handleInput(data);
+      // Issue #334: Alt+Enter carried the draft out of the editor. Busy, the
+      // text steers the running turn through the harness' steer queue; idle,
+      // it submits like Enter (with the same pending echo).
+      if (routed.steer !== undefined) {
+        const steered = routed.steer;
+        const outcome = submitForLoop?.(steered, true);
+        if (
+          outcome === 'accepted' &&
+          parseModelCommand(steered) === undefined
+        ) {
+          app.setPendingEcho(steered);
+        }
+        return { consume: true };
+      }
       if (routed.quit) {
         if (routed.cancel && activeTurn?.isRunning()) {
           // Issue #327: a lane that cannot cancel never fakes it — Ctrl-C
@@ -2491,6 +2648,11 @@ export async function runTuiCommand(
           // visible on the very next frame — the abort itself is async.
           if (!activeTurn.isCancelling()) {
             const cancelling = activeTurn;
+            // Issue #334: the queue is pi-durable's, and the abort withdraws
+            // every queued input with it (`conversation.abort()`). Count what
+            // goes so the cancelled turns' footers can say it, instead of
+            // the prompts silently vanishing.
+            droppedOnCancel = queuedCount();
             app.setEditorFooter('cancelling…');
             screen?.render();
             void cancelling
@@ -2501,8 +2663,10 @@ export async function runTuiCommand(
                 // operator presses Ctrl-C, the lane refuses (requestLaneAbort
                 // throws LaneDriveError), and the screen shows nothing —
                 // a no-op key with no explanation. The loop keeps running.
-                if (!accepted)
+                if (!accepted) {
+                  droppedOnCancel = 0;
                   app.setEditorFooter('cancel failed — turn still running');
+                }
                 screen?.render();
               })
               .catch((error: unknown) => {
@@ -2569,37 +2733,29 @@ export async function runTuiCommand(
             screen?.render();
           });
       };
-      app.onSubmit((prompt: string) => {
-        if (stopped || activeTurn?.isRunning() === true) return;
-        const modelCommand = parseModelCommand(prompt);
-        if (modelCommand !== undefined) {
-          handleModelCommand(modelCommand);
-          return;
-        }
-        // Issue #327: the NEXT submit goes to the lane the session mode
-        // names. The mode is read at submit time, so a Ctrl-G between turns
-        // routes the very next prompt — and a session booted without the
-        // lane refuses by name instead of pretending it ran there.
-        const wantsOrchestrator = app.mode() === 'orchestrator';
-        const driver = wantsOrchestrator ? orchestratorTurn : turn;
-        if (driver === undefined) {
-          app.setEditorFooter(
-            wantsOrchestrator
-              ? 'error: orchestrator mode is unavailable in this session'
-              : 'error: the solo lane is unavailable in this session',
-          );
-          if (!stopped) screen?.render();
-          return;
-        }
+      // Issue #334: one accepted prompt → one turn on its driver. A busy
+      // Enter starts a SECOND run while the first is still in flight (the
+      // harness queues it), so the busy latch counts turns instead of
+      // holding one: the spinner and the editor stay in flight until the
+      // last settles.
+      let inFlightTurns = 0;
+      const startTurn = (
+        driver: TuiTurnDriver,
+        prompt: string,
+        options?: TuiTurnOptions,
+      ): void => {
         activeTurn = driver;
+        inFlightTurns += 1;
         app.setBusy(true);
         startSpinner();
         screen?.render();
+        // The settlement footer is applied in `finally`, AFTER the busy
+        // reset: `setBusy(false)` clears the footer row, so a footer set in
+        // `then` would be wiped when the last turn of the busy period ends.
+        let footer: string | undefined;
         void driver
-          .run(prompt)
+          .run(prompt, options)
           .then((outcome) => {
-            app.setBusy(false);
-            stopSpinner();
             syncPosture();
             // Issue #311: a bash-made change is journaled only by the sweep;
             // run it BEFORE the panel read so this turn's shell effects are
@@ -2619,23 +2775,102 @@ export async function runTuiCommand(
             // falls back to the lane's trust statement instead of going
             // blank (issue #89) — a cancelled/failed turn keeps its own
             // report.
-            app.setEditorFooter(
-              footerForOutcome(outcome) || noticeFor(app.mode()),
-            );
-            if (!stopped) screen?.render();
+            footer = footerForOutcome(outcome) || noticeFor(app.mode());
+            if (outcome.status === 'cancelled' && droppedOnCancel > 0) {
+              footer = `${footer} · dropped ${droppedOnCancel} queued prompt${droppedOnCancel === 1 ? '' : 's'}`;
+            }
           })
           .catch((error: unknown) => {
-            app.setBusy(false);
-            stopSpinner();
             const message =
               error instanceof Error ? error.message : String(error);
-            app.setEditorFooter(`error: ${message}`);
-            if (!stopped) screen?.render();
+            footer = `error: ${message}`;
           })
           .finally(() => {
-            if (activeTurn === driver) activeTurn = undefined;
+            inFlightTurns -= 1;
+            if (inFlightTurns === 0) {
+              app.setBusy(false);
+              stopSpinner();
+              droppedOnCancel = 0;
+              if (activeTurn === driver) activeTurn = undefined;
+            }
+            if (footer !== undefined && !stopped) app.setEditorFooter(footer);
+            if (!stopped) screen?.render();
           });
-      });
+      };
+
+      // Issue #334: the one submit path — Enter, and Alt+Enter when idle.
+      // `steer` marks the Alt+Enter form, which becomes a harness steer
+      // while a turn runs instead of a queued follow-up.
+      const submitPrompt = (
+        prompt: string,
+        steer: boolean,
+      ): TuiSubmitOutcome => {
+        if (stopped) return 'refused';
+        const busy = activeTurn?.isRunning() === true;
+        const modelCommand = parseModelCommand(prompt);
+        if (modelCommand !== undefined) {
+          // A live switch is a conversation.configure: it never races a run.
+          if (busy) {
+            app.setEditorFooter(
+              'model: finish the current turn before switching',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          handleModelCommand(modelCommand);
+          return 'accepted';
+        }
+        // Issue #327: the NEXT submit goes to the lane the session mode
+        // names. The mode is read at submit time, so a Ctrl-G between turns
+        // routes the very next prompt — and a session booted without the
+        // lane refuses by name instead of pretending it ran there.
+        const wantsOrchestrator = app.mode() === 'orchestrator';
+        const driver = wantsOrchestrator ? orchestratorTurn : turn;
+        if (driver === undefined) {
+          app.setEditorFooter(
+            wantsOrchestrator
+              ? 'error: orchestrator mode is unavailable in this session'
+              : 'error: the solo lane is unavailable in this session',
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        if (busy) {
+          // Issue #334: the solo lane queues the prompt in the
+          // conversation's OWN inbox — a follow-up (placed when the run
+          // answers) for Enter, a steer (placed after the current tool
+          // round, joining the running work) for Alt+Enter. The orchestrator
+          // lane has one objective and no inbox: it refuses by name instead
+          // of pretending to queue.
+          if (driver !== turn) {
+            app.setEditorFooter(
+              'error: an orchestrator run is in flight — wait for it to finish',
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
+          startTurn(
+            driver,
+            prompt,
+            steer
+              ? { whenBusy: 'steer' }
+              : {
+                  whenBusy: 'followUp',
+                  onSubmitted: (id) => {
+                    queuedText.set(id, prompt);
+                    syncQueuedRows();
+                  },
+                },
+          );
+          return 'queued';
+        }
+        startTurn(driver, prompt);
+        return 'accepted';
+      };
+
+      app.onSubmit((prompt: string) => submitPrompt(prompt, false));
+      // The steer key's own entry point (the key router is defined above).
+      submitForLoop = submitPrompt;
       await turn?.refreshTranscript();
     }
   } catch (error) {

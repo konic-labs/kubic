@@ -319,8 +319,20 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
   });
 
   it("the run's explicit thinking level outranks the role's own default (issue #202)", async () => {
+    // The plan the run uses resolves it per worker: the role's own default
+    // when nothing explicit is set, the run's level for every worker when it
+    // is — and the same value is what the child is told below.
+    const bare = await harness();
+    expect(
+      bare.deps
+        .loadWorkerRoles?.(['alpha', 'beta'])
+        ?.assignments.map((entry) => entry.thinking),
+    ).toEqual(['medium', 'medium']);
     vi.stubEnv('KUBIC_MODEL_THINKING', 'xhigh');
     const h = await harness();
+    expect(h.deps.loadWorkerRoles?.(['alpha'])?.assignments[0]?.thinking).toBe(
+      'xhigh',
+    );
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,

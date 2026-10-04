@@ -143,6 +143,19 @@ in kubic's environment never reaches a tool. `SSH_AUTH_SOCK` and
 credential helpers' variables are not passed either. Worker processes
 use their own launch allowlist plus role-scoped grants.
 
+**Proxy URLs lose their userinfo (issue #366).** A proxy variable is
+allowlisted for reachability, and its value may carry credentials that the
+NAME does not reveal — `HTTPS_PROXY=http://user:password@proxy.corp:3128`.
+That is a credential in the §3.8 sense, and §36.1 rule 2 forbids it in any
+agent-visible string: the model's shell can read the child env, so the
+password would be one `echo $HTTPS_PROXY` away. Every tool child therefore
+receives the value with its userinfo stripped — scheme, host, port, path and
+query survive verbatim (`http://proxy.corp:3128`) — and the strip is the
+same in both spellings of the variable. A proxy that REQUIRES that
+authentication is consequently not usable from a tool child; Kubic does not
+broker proxy auth (a tool that needs it must be run outside the model's
+shell). `NO_PROXY` lists hosts, never credentials, and is passed through.
+
 ## What the model does and does not promise (§59.1)
 
 It promises: every edit recorded and reversible by default, every

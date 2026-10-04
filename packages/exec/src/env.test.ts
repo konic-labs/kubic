@@ -701,6 +701,63 @@ describe('toolSpawnEnv allowlist coverage', () => {
   });
 });
 
+// Issue #366: a proxy URL's userinfo (`http://user:password@proxy:3128`) is a
+// credential in the §3.8 sense, but the NAME looks benign, so `looksSecret`
+// never sees it and it reached every tool child — where the model can read it
+// with `echo $HTTPS_PROXY` (§36.1 rule 2). The value keeps its scheme, host
+// and port and loses the userinfo; a proxy that REQUIRES that auth is not
+// usable from a tool child (Kubic does not broker proxy auth).
+describe('proxy credentials in the tool env (issue #366)', () => {
+  it('strips the userinfo, keeping scheme, host and port', () => {
+    const out = toolSpawnEnv({
+      HTTPS_PROXY: 'http://user:sekret-pass@proxy.corp:3128',
+      http_proxy: 'http://u:p@h:1',
+    });
+    expect(out.HTTPS_PROXY).toBe('http://proxy.corp:3128');
+    expect(out.http_proxy).toBe('http://h:1');
+    expect(JSON.stringify(out)).not.toContain('sekret-pass');
+    expect(JSON.stringify(out)).not.toContain('@');
+  });
+
+  it('passes a proxy URL without userinfo through unchanged', () => {
+    const out = toolSpawnEnv({
+      HTTPS_PROXY: 'http://proxy.corp:3128',
+      http_proxy: 'socks5h://proxy.corp:1080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      no_proxy: 'localhost,127.0.0.1',
+    });
+    expect(out).toEqual({
+      HTTPS_PROXY: 'http://proxy.corp:3128',
+      http_proxy: 'socks5h://proxy.corp:1080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      no_proxy: 'localhost,127.0.0.1',
+    });
+  });
+
+  it('handles the shapes a proxy value can take', () => {
+    const out = toolSpawnEnv({
+      // No scheme: the whole value is the authority.
+      HTTP_PROXY: 'user:sekret@proxy.corp:3128',
+      // Userinfo with no password.
+      http_proxy: 'http://user@proxy.corp:3128',
+      // Path and query survive the strip.
+      HTTPS_PROXY: 'http://u:sekret@proxy.corp:3128/path?x=1',
+      // An '@' that is not userinfo stays put.
+      NO_PROXY: 'proxy.corp/@scope',
+      // Percent-encoded userinfo is still userinfo.
+      https_proxy: 'http://u%40x:sekret@proxy.corp:3128',
+    });
+    expect(out).toEqual({
+      HTTP_PROXY: 'proxy.corp:3128',
+      http_proxy: 'http://proxy.corp:3128',
+      HTTPS_PROXY: 'http://proxy.corp:3128/path?x=1',
+      NO_PROXY: 'proxy.corp/@scope',
+      https_proxy: 'http://proxy.corp:3128',
+    });
+    expect(JSON.stringify(out)).not.toContain('sekret');
+  });
+});
+
 describe('kill escalation reaches the whole group', () => {
   it.runIf(process.platform !== 'win32')(
     'SIGKILLs group members that ignore SIGTERM even after the leader exits',

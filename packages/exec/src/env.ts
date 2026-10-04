@@ -388,7 +388,9 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'GIT_CONFIG_NOSYSTEM',
   // Network reachability and trust roots (not credentials): tools behind
   // a corporate proxy or custom CA must keep working. Both spellings of
-  // the proxy vars are conventional.
+  // the proxy vars are conventional — and their VALUES are scrubbed of
+  // userinfo before they reach a child (issue #366): a proxy URL's
+  // `user:password@` is a credential the name does not reveal.
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'NO_PROXY',
@@ -414,6 +416,40 @@ export const TOOL_ENV_ALLOWLIST: readonly string[] = [
 
 const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 
+// Issue #366: the proxy variables are allowlisted for reachability, but a
+// proxy URL can carry userinfo — `http://user:password@proxy:3128` — which is
+// a credential in the §3.8 sense even though the NAME looks benign, so
+// `looksSecret` never sees it. §36.1 rule 2: a credential must never reach an
+// agent-visible string, and the model's shell can read the child env. The
+// value keeps its scheme, host and port and loses the userinfo; a proxy that
+// REQUIRES that auth is therefore not usable from a tool child (Kubic does
+// not broker proxy auth — see docs/architecture/journal-and-safety.md).
+const PROXY_VARS = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+]);
+
+// The value without its userinfo: scheme and everything from the host on
+// survive verbatim, so no URL parser normalization (a trailing slash, a
+// lower-cased host) creeps into a value other tools must match byte for byte.
+function stripProxyUserinfo(value: string): string {
+  const schemeAt = value.indexOf('://');
+  const start = schemeAt === -1 ? 0 : schemeAt + 3;
+  let end = value.length;
+  for (const separator of ['/', '?', '#']) {
+    const at = value.indexOf(separator, start);
+    if (at !== -1 && at < end) end = at;
+  }
+  const authority = value.slice(start, end);
+  // The LAST '@' in the authority is the userinfo separator (an earlier one
+  // belongs to percent-encoded userinfo).
+  const at = authority.lastIndexOf('@');
+  if (at === -1) return value;
+  return `${value.slice(0, start)}${authority.slice(at + 1)}${value.slice(end)}`;
+}
+
 const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
 
 function looksSecret(upper: string): boolean {
@@ -423,7 +459,9 @@ function looksSecret(upper: string): boolean {
 }
 
 // Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
-// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY).
+// secret-shaped name is dropped even if it matches a pattern (LC_*_KEY), and
+// a proxy URL loses its userinfo (issue #366) — the one credential an
+// allowlisted NAME could hide.
 export function toolSpawnEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
@@ -437,7 +475,8 @@ export function toolSpawnEnv(
         : TOOL_ENV_ALLOWLIST.includes(key)) ||
       key.startsWith('LC_') ||
       key.startsWith('XDG_');
-    if (allowed && !looksSecret(upper)) out[key] = value;
+    if (!allowed || looksSecret(upper)) continue;
+    out[key] = PROXY_VARS.has(upper) ? stripProxyUserinfo(value) : value;
   }
   return out;
 }

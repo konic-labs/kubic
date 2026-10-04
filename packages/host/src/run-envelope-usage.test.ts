@@ -40,7 +40,9 @@ describe('run envelope usage (issue #185)', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('ls', { path: '.' })]),
+      fauxAssistantMessage([fauxToolCall('ls', { path: '.' })], {
+        stopReason: 'toolUse',
+      }),
       fauxAssistantMessage('did X'),
     ]);
     const result = await runHeadlessPrompt(

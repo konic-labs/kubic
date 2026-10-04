@@ -1,20 +1,20 @@
 // Run guard (issue #84, follow-up to #81 live smoke G2): a never-settling
 // model terminates within the bound with a §78 budget_exhausted exit and
-// the journal:/usage:/trajectory: ref triple intact. Faux-only: the lane
-// is stubbed at the boot seam, the drive loop runs real — zero network.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+// the journal:/usage:/trajectory: ref triple intact. Faux-only, real lane:
+// the wall clock, the turn count and the signal handlers all run for real —
+// zero network.
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { parseTrajectoryExportJSON } from '../../trajectory/src/schema.js';
-import { bootSoloLane, type SoloLane } from '../../worker/src/lane/solo.js';
 import {
-  type AgentLane,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import {
@@ -25,12 +25,6 @@ import {
   parseRunTimeout,
   runRunCommand,
 } from './run-cli.js';
-
-vi.mock('../../worker/src/lane/solo.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../worker/src/lane/solo.js')>();
-  return { ...actual, bootSoloLane: vi.fn() };
-});
 
 const made: string[] = [];
 
@@ -48,6 +42,33 @@ function fauxModels(texts: string[]): MutableModels {
   return models;
 }
 
+// A model that never answers: the run's guards are the only way out.
+function hangingModels(): MutableModels {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([() => new Promise<never>(() => undefined)]);
+  return models;
+}
+
+// A model that keeps calling a tool: every response commits one usage event,
+// which is the turn unit `--max-turns` bounds.
+function spinningModels(rounds: number): MutableModels {
+  const env = new FakeExecutionEnv({});
+  env.fs.writeFile('a.txt', 'spin\n');
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses(
+    Array.from({ length: rounds }, () =>
+      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+        stopReason: 'toolUse',
+      }),
+    ),
+  );
+  return models;
+}
+
 // Issue #383: the trajectory ref names the written §46 file, and a guard
 // exhaustion is recorded with its §52 category (never a missing one).
 function expectBudgetTrajectory(result: HeadlessRunResult): void {
@@ -60,27 +81,9 @@ function expectBudgetTrajectory(result: HeadlessRunResult): void {
   expect(exported.result.failureCategory).toBe('budget_exhausted');
 }
 
-function deps() {
-  return {
-    sessionsRoot: tmpRoot(),
-    models: fauxModels(['unused']),
-    env: new FakeExecutionEnv({}),
-  };
-}
-
-function stubLane(drive: AgentLane['drive']): AgentLane {
-  return {
-    accept: async () => ({
-      ok: true as const,
-      value: { operationId: 'op-guard', kind: 'run' as const, startedAt: 0 },
-    }),
-    findEntries: async () => [],
-    drive,
-  } as unknown as AgentLane;
-}
-
-function bootWith(lane: AgentLane): void {
-  vi.mocked(bootSoloLane).mockResolvedValue({ lane } as unknown as SoloLane);
+function out(): { lines: string[]; write: (line: string) => void } {
+  const lines: string[] = [];
+  return { lines, write: (line: string) => lines.push(line) };
 }
 
 function completedResult(
@@ -97,18 +100,10 @@ function completedResult(
   };
 }
 
-function out(): { lines: string[]; write: (line: string) => void } {
-  const lines: string[] = [];
-  return { lines, write: (line: string) => lines.push(line) };
-}
-
 beforeEach(() => {
   // The solo notice is not under test here (solo-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
-  bootWith(
-    stubLane((() => new Promise<never>(() => {})) as AgentLane['drive']),
-  );
 });
 
 afterEach(() => {
@@ -207,13 +202,18 @@ describe('run guard mapping (issue #84)', () => {
     expect(DEFAULT_RUN_TIMEOUT_MS).toBe(300_000);
   });
 
-  it('maps a never-settling drive to budget_exhausted with the ref triple intact', {
+  it('maps a never-settling turn to budget_exhausted with the ref triple intact', {
     timeout: 10_000,
   }, async () => {
+    const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'think forever',
       { timeoutMs: 60 },
-      deps(),
+      {
+        sessionsRoot: root,
+        models: hangingModels(),
+        env: new FakeExecutionEnv({}),
+      },
     );
     expect(result.terminus).toBe('budget_exhausted');
     expect(mapTerminusToExitCode(result.terminus)).toBe(3);
@@ -228,8 +228,21 @@ describe('run guard mapping (issue #84)', () => {
   it('applies the default bound when no override is passed', async () => {
     vi.useFakeTimers();
     try {
-      const pending = runHeadlessPrompt('think forever', {}, deps());
+      const pending = runHeadlessPrompt(
+        'think forever',
+        {},
+        {
+          sessionsRoot: tmpRoot(),
+          models: hangingModels(),
+          env: new FakeExecutionEnv({}),
+        },
+      );
+      // Let the boot's real I/O (session store, harness) settle before the
+      // clock moves, then exhaust the default bound and the bounded cleanup
+      // that follows it (2 s abort + 2 s close, see LANE_ABORT_BOUND_MS).
+      await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(DEFAULT_RUN_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(10_000);
       const result = await pending;
       expect(result.terminus).toBe('budget_exhausted');
       expect(mapTerminusToExitCode(result.terminus)).toBe(3);
@@ -241,25 +254,21 @@ describe('run guard mapping (issue #84)', () => {
     }
   });
 
-  it('maps a turn-spinning drive to budget_exhausted once maxTurns is exceeded', async () => {
-    const drive = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        kind: 'waiting' as const,
-        operationId: 'op-guard',
-        reason: 'retry' as const,
-        notBefore: Date.now(),
-      },
-    }));
-    bootWith(stubLane(drive as unknown as AgentLane['drive']));
+  it('maps a turn-spinning run to budget_exhausted once maxTurns is exceeded', {
+    timeout: 10_000,
+  }, async () => {
+    const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'spin forever',
       { maxTurns: 3 },
-      deps(),
+      {
+        sessionsRoot: root,
+        models: spinningModels(6),
+        env: new FakeExecutionEnv({}),
+      },
     );
     expect(result.terminus).toBe('budget_exhausted');
     expect(mapTerminusToExitCode(result.terminus)).toBe(3);
-    expect(drive).toHaveBeenCalledTimes(3);
     expect(result.journalRef).toBe(`journal:${result.sessionId}`);
     expect(result.usageRef).toBe(`usage:${result.sessionId}`);
     expectBudgetTrajectory(result);
@@ -271,24 +280,35 @@ describe('run guard mapping (issue #84)', () => {
   it.each([{ timeoutMs: -1 }, { timeoutMs: 0 }, { maxTurns: 0 }])(
     'rejects an invalid guard override %j with the usage terminus',
     async (override) => {
-      const result = await runHeadlessPrompt('hi', override, deps());
+      const root = tmpRoot();
+      const result = await runHeadlessPrompt('hi', override, {
+        sessionsRoot: root,
+        models: fauxModels(['unused']),
+        env: new FakeExecutionEnv({}),
+      });
       expect(result.terminus).toBe('usage');
       expect(mapTerminusToExitCode(result.terminus)).toBe(2);
       expect(result.sessionId).toBe('unassigned');
-      expect(vi.mocked(bootSoloLane)).not.toHaveBeenCalled();
+      // Refused before any store or lane existed.
+      expect(readdirSync(root)).toEqual([]);
     },
   );
 
   it('rejects a timeoutMs above the setTimeout ceiling (direct caller)', async () => {
+    const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'hi',
       { timeoutMs: 3_000_000_000 },
-      deps(),
+      {
+        sessionsRoot: root,
+        models: fauxModels(['unused']),
+        env: new FakeExecutionEnv({}),
+      },
     );
     expect(result.terminus).toBe('usage');
     expect(mapTerminusToExitCode(result.terminus)).toBe(2);
     expect(result.sessionId).toBe('unassigned');
     expect(result.error?.message).toMatch(/max 2147483647/);
-    expect(vi.mocked(bootSoloLane)).not.toHaveBeenCalled();
+    expect(readdirSync(root)).toEqual([]);
   });
 });

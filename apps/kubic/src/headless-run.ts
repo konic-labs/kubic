@@ -433,7 +433,28 @@ async function captureEntries(
 // How long the end-of-run lane abort may take before the run gives up on it.
 // The kills have already run by then; this bounds a harness that is waiting
 // on a task that ignores cancellation.
-const LANE_ABORT_BOUND_MS = 5_000;
+// How long the end-of-run lane abort may take before the run gives up on it.
+// The kills have already run by then; this bounds a harness that is waiting
+// on a task that ignores cancellation (a provider that never settles its
+// stream), so the run always reports its own result.
+const LANE_ABORT_BOUND_MS = 2_000;
+
+// Waits for `work` for at most `ms`; undefined when the bound elapses. The
+// promise is observed either way, so a late rejection is never unhandled.
+async function settledWithin<T>(
+  work: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => undefined), bound]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 // Best-effort conversation abort + kill drain on the divert paths (a guard
 // or an interrupt abandoned a live turn): the durable stop is stated against
@@ -1602,9 +1623,17 @@ async function runHeadlessPromptImpl(
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back (and closes a storage no
     // harness took). The result is already mapped: a close failure must
-    // neither escape nor mask it.
+    // neither escape nor mask it. An abandoned turn may still hold a stuck
+    // invocation, so THAT close is bounded — the run's own result wins.
     try {
-      await solo?.close(context);
+      if (solo !== undefined) {
+        const closing = solo.close(context);
+        if (abandoned) {
+          await settledWithin(closing, LANE_ABORT_BOUND_MS);
+        } else {
+          await closing;
+        }
+      }
     } catch {
       // Intentionally swallowed — the mapped result stands.
     }

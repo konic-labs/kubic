@@ -20,7 +20,7 @@ function envelope(status, summary, extra = {}) {
 
 function trajectory(overrides = {}) {
   return {
-    schema_version: '1.0',
+    schema_version: '1.1',
     identity: { sessionId: 'tool-1', agentId: 'root', workerId: null },
     provenance: {
       sessionId: 'tool-1',
@@ -255,6 +255,30 @@ describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
         p.includes('is not a §46 trajectory export'),
       ),
     );
+  });
+
+  it('accepts a legacy 1.0 §46 record and the current 1.1 one', () => {
+    // 1.1 additions are optional on read (issue #329): both majors pass.
+    const legacy = smoke(
+      {},
+      {
+        ...healthyFiles(),
+        [TOOL_TRAJECTORY]: JSON.stringify(
+          trajectory({ schema_version: '1.0' }),
+        ),
+      },
+    );
+    assert.deepEqual(legacy.problems, []);
+    const current = smoke(
+      {},
+      {
+        ...healthyFiles(),
+        [TOOL_TRAJECTORY]: JSON.stringify(
+          trajectory({ schema_version: '1.1' }),
+        ),
+      },
+    );
+    assert.deepEqual(current.problems, []);
   });
 
   it('names a trajectory for another session or without the tool call', () => {

@@ -68,7 +68,13 @@ function trajectoryAt(label, path, readFile, problems) {
   }
   try {
     const parsed = JSON.parse(readFile(path));
-    if (parsed?.schema_version !== '1.0' || parsed?.provenance === undefined) {
+    // The §46 reader supports major 1; the 1.1 additions are optional on
+    // read (issue #329), so pin the major, not the minor.
+    if (
+      typeof parsed?.schema_version !== 'string' ||
+      !parsed.schema_version.startsWith('1.') ||
+      parsed?.provenance === undefined
+    ) {
       problems.push(`${label}: ${path} is not a §46 trajectory export`);
       return undefined;
     }

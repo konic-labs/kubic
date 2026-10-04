@@ -191,11 +191,11 @@ import {
   parseModelFlag,
   supportedThinking,
 } from '../../../packages/worker/src/model-select.js';
-import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
 import {
   isThinkingLevel,
   THINKING_LEVELS,
 } from '../../../packages/worker/src/models-config.js';
+import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,

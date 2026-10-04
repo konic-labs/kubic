@@ -1,52 +1,10 @@
 // Slice B: alt-screen boot/stop lifecycle (issue #22; §16.1).
 import { describe, expect, it } from 'vitest';
+// One shared fake Terminal (issue #403; #321 owns the full consolidation).
+import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
-import type { Terminal } from './tui-boundary.js';
-import { CURSOR_MARKER, Text } from './tui-boundary.js';
-
-function fakeTerminal(width: number): Terminal & {
-  writes: string[];
-  started: number;
-  stopped: number;
-} {
-  const writes: string[] = [];
-  const counts = { started: 0, stopped: 0 };
-  return {
-    writes,
-    get started(): number {
-      return counts.started;
-    },
-    get stopped(): number {
-      return counts.stopped;
-    },
-    start: () => {
-      counts.started++;
-    },
-    stop: () => {
-      counts.stopped++;
-    },
-    drainInput: () => Promise.resolve(),
-    write: (data: string) => writes.push(data),
-    get columns() {
-      return width;
-    },
-    get rows() {
-      return 30;
-    },
-    get kittyProtocolActive() {
-      return false;
-    },
-    moveBy: () => {},
-    hideCursor: () => {},
-    showCursor: () => {},
-    clearLine: () => {},
-    clearFromCursor: () => {},
-    clearScreen: () => {},
-    setTitle: () => {},
-    setProgress: () => {},
-  };
-}
+import { CURSOR_MARKER, Text, visibleWidth } from './tui-boundary.js';
 
 describe('screen lifecycle (issue #22, slice B)', () => {
   it('boots the layout root and stops with restore', () => {
@@ -62,28 +20,41 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     const screen = bootScreen(terminal, root);
     expect(terminal.started).toBe(1);
     // Boot enters the alt screen exactly once.
-    expect(count(terminal.writes.join(''), '?1049h')).toBe(1);
+    expect(count(terminal.output(), '?1049h')).toBe(1);
     screen.render();
-    const firstFrame = terminal.writes.join('').length;
+    const firstFrame = terminal.output().length;
     screen.render();
-    // A full re-render draws the whole frame again (partial skips it).
-    expect(terminal.writes.join('').length - firstFrame).toBeGreaterThan(500);
-    const output = terminal.writes.join('');
+    // A forced render is synchronous, so no sleep is needed to read the frame
+    // back off the alt screen (issue #403): assert it structurally instead of
+    // with a byte threshold — the buffer between the CSI 2026 markers carries
+    // every content row getScreenLines() reports, one line per terminal row.
+    const redraw = terminal.output().slice(firstFrame);
+    const frameStart = redraw.lastIndexOf('?2026h');
+    const frameEnd = redraw.indexOf('?2026l', frameStart);
+    expect(frameStart).toBeGreaterThanOrEqual(0);
+    expect(frameEnd).toBeGreaterThan(frameStart);
+    const drawn = redraw.slice(frameStart, frameEnd);
+    const lines = screen.tui.getScreenLines();
+    expect(lines).toHaveLength(30);
+    const contentRows = lines.filter((line) => visibleWidth(line) > 0);
+    expect(contentRows.length).toBeGreaterThanOrEqual(4);
+    for (const line of contentRows) expect(drawn).toContain(line);
+    const output = terminal.output();
     expect(output).toContain('body');
     // CSI 2026 atomic frame per render (§16.1).
     expect(output).toContain('?2026h');
     expect(output).toContain('?2026l');
     const printed: string[] = [];
-    const beforeStop = terminal.writes.join('');
+    const beforeStop = terminal.output();
     screen.stop((line: string) => printed.push(line));
     expect(printed.join('\n')).toContain('body');
     // Stop leaves the alt screen (restore to main) exactly once.
-    expect(count(terminal.writes.join(''), '?1049l')).toBe(1);
+    expect(count(terminal.output(), '?1049l')).toBe(1);
     expect(count(beforeStop, '?1049l')).toBe(0);
     // C3: stop must unset the layout root before restoring the main
     // screen — otherwise TuiAltScreen.afterTerminalStop repaints the
     // full layout frame onto the main screen (mutant: +1.4KB writes).
-    const tail = terminal.writes.join('').slice(beforeStop.length);
+    const tail = terminal.output().slice(beforeStop.length);
     expect(tail).toContain('?1049l');
     expect(tail).not.toContain('body');
     expect(terminal.stopped).toBe(1);
@@ -103,9 +74,9 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     });
     const screen = bootScreen(terminal, root);
     screen.render();
-    const beforeRestore = terminal.writes.join('').length;
+    const beforeRestore = terminal.output().length;
     screen.restore();
-    const tail = terminal.writes.join('').slice(beforeRestore);
+    const tail = terminal.output().slice(beforeRestore);
     expect(tail).toContain('?1049l');
     expect(tail).toContain('?7h');
     expect(tail).not.toContain('body');
@@ -114,7 +85,7 @@ describe('screen lifecycle (issue #22, slice B)', () => {
     screen.restore();
     expect(printed).toEqual([]);
     expect(terminal.stopped).toBe(1);
-    expect(terminal.writes.join('').split('?1049l').length - 1).toBe(1);
+    expect(terminal.output().split('?1049l').length - 1).toBe(1);
   });
 
   // Issue #314 (§16.1): the final document lands on the MAIN screen. The

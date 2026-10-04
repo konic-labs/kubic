@@ -33,9 +33,12 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 
 - **Unknown command / subcommand**: the root usage line on stdout,
   `error: unknown command '<name>'` on stderr for a registered group's
-  bad subcommand, exit 2 (issue #372). The one exception is the bare
-  `kubic` (no command) off a TTY: the identical usage line, exit 1 —
-  POSIX usage-on-no-args, the deliberate scripted posture.
+  bad subcommand, exit 2 (issue #372). A word-shaped unknown token also
+  prints `hint: to run it as a prompt: kubic run -p '<word>'` (issue #268,
+  L-D7 — a multi-word token is the bare prompt and runs like `kubic run
+  -p`). The one exception is the bare `kubic` (no command) off a TTY: the
+  identical usage line, exit 1 — POSIX usage-on-no-args, the deliberate
+  scripted posture.
 - **Diagnostics vs `--json`**: receipts, warnings and refusals — the
   `loaded models.json: …` note, the config refusal, colour/TTY notices — go
   to stderr, so a `--json` stdout is exactly one document (issue #244).

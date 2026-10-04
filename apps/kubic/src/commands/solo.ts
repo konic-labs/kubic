@@ -18,7 +18,6 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-  shellQuote,
 } from '../../../../packages/host/src/run-cli.js';
 import { parseModelFlag } from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
@@ -77,7 +76,14 @@ function registerRun(program: Command, ctx: CommandContext): void {
     .description(
       'run one headless prompt in this repo (solo: no isolation — approvals and the journal are the controls)',
     )
-    .option('-p, --prompt <text>', 'the prompt to run (required)')
+    .option(
+      '-p, --prompt <text>',
+      'the prompt to run (or pass it positionally)',
+    )
+    .argument(
+      '[prompt]',
+      'the prompt to run (alternative to -p/--prompt; use -- before one starting with -)',
+    )
     .option(
       '--session <id>',
       'resume into an existing session ([A-Za-z0-9_-])',
@@ -118,35 +124,37 @@ function registerRun(program: Command, ctx: CommandContext): void {
         'KUBIC_PROVIDER=faux kubic run -p hello   # testing provider, no model',
       ]),
     )
-    .action(async (opts, command) => {
+    .action(async (positional, opts, command) => {
       const operands = command.args;
-      if (opts.prompt === undefined) {
-        if (operands.length > 0) {
-          // `kubic run "fix tests"` is the natural first try: name the
-          // operand and the exact flag form (single-quoted, so nothing
-          // expands when pasted).
-          throw new CliUsageError(
-            `unexpected argument ${JSON.stringify(operands[0])} — the prompt is a flag: kubic run -p ${shellQuote(operands.join(' '))}`,
-          );
-        }
+      if (opts.prompt !== undefined && positional !== undefined) {
         throw new CliUsageError(
-          "required option '-p, --prompt <text>' not specified",
+          'both -p/--prompt and a positional prompt were given — pass exactly one (kubic run -p <text>, or kubic run <text>)',
         );
       }
-      if (operands.length > 0) {
+      if (operands.length > 1) {
         throw new CliUsageError(
-          `unexpected argument ${JSON.stringify(operands[0])}`,
+          `unexpected argument ${JSON.stringify(operands[1])} — pass exactly one prompt`,
         );
       }
+      const text = opts.prompt ?? positional;
+      if (text === undefined) {
+        throw new CliUsageError(
+          "required option '-p, --prompt <text>' not specified (or pass the prompt as a positional argument)",
+        );
+      }
+      // The typo guard is `-p`-only: a separate-token value that starts with
+      // `--` is a mistyped flag. A positional prompt that starts with `-`
+      // reaches us only after `--`, which is the explicit opt-in.
+      const fromFlag = opts.prompt !== undefined;
       let prompt: string;
       try {
         prompt = checkPromptValue(
-          opts.prompt,
-          promptWasAttached(ctx.rest, opts.prompt),
+          text,
+          !fromFlag || promptWasAttached(ctx.rest, text),
         );
       } catch (error) {
         throw new CliUsageError(
-          `invalid -p/--prompt: ${(error as Error).message}`,
+          `${fromFlag ? 'invalid -p/--prompt' : 'invalid prompt'}: ${(error as Error).message}`,
         );
       }
       ctx.setExitCode(
@@ -345,12 +353,38 @@ function registerTrust(program: Command, ctx: CommandContext): void {
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
-    .description('create, list, attach to or prune sessions');
+    .description('create, list, attach to or prune sessions')
+    .option(
+      '--json',
+      'with no subcommand: list the sessions as one JSON array (same as `sessions list --json`)',
+    )
+    // The group action owns the operands so an unknown subcommand is the
+    // documented `error: unknown command '<name>'` (exit 2), not commander's
+    // excess-arguments line.
+    .allowExcessArguments();
   const run = async (
     invocation: Parameters<CommandContext['runners']['sessions']>[0],
   ): Promise<void> => {
     ctx.setExitCode(await ctx.runners.sessions(invocation, ctx.config));
   };
+  // Issue #268: `kubic sessions --json` is the documented list form. The
+  // group action also keeps the two usage errors named (#372: exit 2): no
+  // subcommand, or an unknown one.
+  sessions.action(async (opts, command) => {
+    const name = command.args[0];
+    if (name === undefined) {
+      if (opts.json !== true) {
+        throw new CliUsageError(
+          'sessions needs a subcommand (create | list | attach | prune)',
+        );
+      }
+      await run({ command: 'list', json: true });
+      return;
+    }
+    throw new CliUsageError(
+      `unknown command '${name}' (create | list | attach | prune)`,
+    );
+  });
   sessions
     .command('create')
     .description('create a new session and print its id')
@@ -438,9 +472,44 @@ function registerSessions(program: Command, ctx: CommandContext): void {
 export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
   registerRun(program, ctx);
   registerTui(program, ctx);
+  registerReattach(program, ctx);
   registerDoctor(program, ctx);
   registerModels(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);
   registerSessions(program, ctx);
 };
+
+// Issue #268 (§17): the reattach aliases. `attach <id>` boots the
+// interactive TUI on an existing session — a missing or live-locked session
+// is the TUI boot's own workspace refusal (exit 5) — and `resume <id>` is
+// the same boot, named the way §17 lists it. The full flag surface stays on
+// `kubic tui`; these are the documented shorthands.
+function registerReattach(program: Command, ctx: CommandContext): void {
+  const reattach = (name: 'attach' | 'resume'): void => {
+    program
+      .command(name)
+      .description(
+        name === 'attach'
+          ? 'attach the interactive TUI to an existing session'
+          : 'resume a session in the interactive TUI (same as `kubic tui --session <id>`)',
+      )
+      .argument(
+        '<id>',
+        'the session id ([A-Za-z0-9_-])',
+        rule(parseSessionIdArg),
+      )
+      .addHelpText(
+        'after',
+        examples([
+          `kubic ${name} my-session`,
+          'kubic tui --session my-session --role reviewer   # the full flag surface',
+        ]),
+      )
+      .action(async (id: string) => {
+        ctx.setExitCode(await ctx.runners.tui({ session: id }, ctx.config));
+      });
+  };
+  reattach('attach');
+  reattach('resume');
+}

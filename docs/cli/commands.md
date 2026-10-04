@@ -49,19 +49,30 @@ broken install whose extension bundle would fail the boot.
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
 prints
-`usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
-and exits **2** (a usage error, issue #372), while the bare invocation keeps
-the POSIX usage-on-no-args posture: the identical line, exit 1. Solo mode runs in-process with your user authority: no
+`usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
+and exits **2** (a usage error, issue #372); a word-shaped unknown token
+also prints `hint: to run it as a prompt: kubic run -p '<word>'`, while the
+bare invocation keeps the POSIX usage-on-no-args posture: the identical
+line, exit 1.
+
+**The headline prompt form** (issue #268, §17): a single argv token that
+contains whitespace is a prompt — `kubic "fix the authentication bug"` is
+exactly `kubic run -p "fix the authentication bug"`, headless in both modes
+(no alt-screen; the spec's TUI-first-turn variant is deliberately not
+shipped, see [design drift](../design-drift.md)). Trailing flags pass
+through (`kubic "do x" --json`). A **single-word** token has no whitespace
+to tell it from a typo'd command, so it stays an unknown command (exit 2)
+with the hint above (L-D7). Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
-## `kubic run -p <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--debug] [--json] [--dangerously-skip-approvals]`
+## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--debug] [--json] [--dangerously-skip-approvals]`
 
 Non-interactive solo run: no alt-screen, no prompt, consumable output.
 
 | Flag | Meaning |
 | --- | --- |
-| `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
+| `-p`, `--prompt <text>` | The prompt to run. **Or pass it positionally** (`kubic run "fix the tests"`, issue #268); exactly one of the two — `-p` together with a positional exits 2 naming both. The `-p` typo guard stays: a separate-token value that starts with `--` is a mistyped flag, so a prompt that really starts with `--` goes in the attached form (`--prompt=--text`), and a positional one after `--` (`kubic run -- --weird`). |
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
 | `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `timeout` (exit 1, issue #280) with the ref triple intact — §71 budgets exist only when configured, so a default bound never claims `budget_exhausted`. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
 | `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
@@ -727,6 +738,16 @@ non-repo refusal — outside a git repo it prints `error: … needs a git
 repository … nothing was removed` and exits 5 without touching anything
 (§78, issue #372). See [exit codes](exit-codes.md).
 
+## `kubic attach <id>` / `kubic resume <id>`
+
+The §17 reattach aliases (issue #268): both boot the interactive TUI on an
+existing session — `kubic attach my-session` and `kubic resume my-session`
+are `kubic tui --session my-session` with the same boot, model rule and
+exit codes (a missing session or one another process holds live exits **5**
+before the alt-screen). The id follows the `[A-Za-z0-9_-]` rule (anything
+else exits 2). The full flag surface (`--role`, `--model`, `--orchestrator`,
+`--dangerously-skip-approvals`, …) stays on `kubic tui`.
+
 ## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--orchestrator] [--dangerously-skip-approvals]`
 
 Interactive solo TUI: the alt-screen over the solo lane. Tree,
@@ -1158,7 +1179,7 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array** (issue #268); `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. |
 
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
@@ -1314,6 +1335,15 @@ value, `--max` that is not a positive integer, `stage` with no path,
 On a colour terminal (TTY, no `NO_COLOR`, not `TERM=dumb`) the status
 labels are coloured and `log` is a box-drawn table; piped or under
 `--json` the output is plain text.
+
+## `kubic commit -m <message> [--json]`
+
+The §17 alias for `kubic git commit` (issue #268): same runner, same
+message rule (`-m`/`--message` takes the next token verbatim, even one
+starting with `-`; a message that really starts with `--` goes in the
+attached form `--message=--amend`), same output and same exit codes —
+`committed <sha8> (<n> file(s))` on stdout, `{sha, files}` under `--json`,
+exit 2 for a missing or empty message, exit 1 outside a git repository.
 
 ## `kubic diff | undo | log | status`
 

@@ -161,6 +161,49 @@ describe('solo commands: unknown flags exit 2', () => {
     expect(result.calls).toEqual([]);
     expect(result.err.join('\n')).toContain("unknown command 'bogus'");
   });
+
+  it('`sessions --json` lists as one JSON array (issue #268)', async () => {
+    const result = await kubic(['sessions', '--json']);
+    expect(result.code).toBe(0);
+    expect(result.calls).toEqual([
+      { key: 'sessions', input: { command: 'list', json: true } },
+    ]);
+  });
+
+  it('`sessions --json` never swallows a named subcommand', async () => {
+    const result = await kubic(['sessions', '--json', 'bogus']);
+    expect(result.code).toBe(2);
+    expect(result.calls).toEqual([]);
+    expect(result.err.join('\n')).toContain("unknown command 'bogus'");
+  });
+});
+
+describe('kubic attach / resume (issue #268)', () => {
+  for (const name of ['attach', 'resume'] as const) {
+    it(`kubic ${name} <id> boots the TUI on that session`, async () => {
+      const result = await kubic([name, 'my-session']);
+      expect(result.code).toBe(0);
+      expect(result.calls).toEqual([
+        { key: 'tui', input: { session: 'my-session' } },
+      ]);
+    });
+
+    it(`kubic ${name} --help prints its usage without booting`, async () => {
+      const result = await kubic([name, '--help']);
+      expect(result.code).toBe(0);
+      expect(result.calls).toEqual([]);
+      expect(result.out.join('\n')).toContain(`Usage: kubic ${name}`);
+    });
+
+    it(`kubic ${name} refuses a bad id and a missing one`, async () => {
+      expect(await usageError([name, '../evil'])).toContain(
+        'use [A-Za-z0-9_-]',
+      );
+      expect(await usageError([name])).toContain(
+        "missing required argument 'id'",
+      );
+    });
+  }
 });
 
 describe('kubic run', () => {
@@ -283,20 +326,38 @@ describe('kubic run', () => {
     );
   });
 
-  it('points a positional prompt at -p, single-quoted for pasting', async () => {
-    const text = await usageError(['run', 'fix tests']);
-    expect(text).toContain('unexpected argument "fix tests"');
-    expect(text).toContain("kubic run -p 'fix tests'");
-    expect(await usageError(['run', "echo $HOME `id` it's"])).toContain(
-      "kubic run -p 'echo $HOME `id` it'\\''s'",
+  it('accepts a positional prompt as the -p alternative (issue #268)', async () => {
+    const result = await kubic(['run', 'fix tests']);
+    expect(result.code).toBe(0);
+    expect(result.calls).toEqual([
+      { key: 'run', input: { prompt: 'fix tests' } },
+    ]);
+  });
+
+  it('accepts a positional prompt beside the other flags, --json included', async () => {
+    const result = await kubic(['run', '--json', 'do x']);
+    expect(result.calls[0]?.input).toEqual({ prompt: 'do x', json: true });
+  });
+
+  it('accepts a positional prompt that starts with - after the -- terminator', async () => {
+    const result = await kubic(['run', '--', '--weird prompt']);
+    expect(result.calls[0]?.input).toEqual({ prompt: '--weird prompt' });
+  });
+
+  it('refuses -p together with a positional prompt, naming both', async () => {
+    const text = await usageError(['run', '-p', 'a', 'b']);
+    expect(text).toContain('both -p/--prompt and a positional prompt');
+    expect(text).toContain('kubic run -p <text>, or kubic run <text>');
+    expect(await usageError(['run', '-p', 'a', '--', 'b'])).toContain(
+      'both -p/--prompt and a positional prompt',
     );
   });
 
-  it('refuses a stray operand next to a prompt, even after --', async () => {
-    expect(await usageError(['run', '-p', 'a', 'b'])).toContain(
+  it('refuses two positional prompts', async () => {
+    expect(await usageError(['run', 'a', 'b'])).toContain(
       'unexpected argument "b"',
     );
-    expect(await usageError(['run', '-p', 'a', '--', 'b'])).toContain(
+    expect(await usageError(['run', 'a', '--', 'b'])).toContain(
       'unexpected argument "b"',
     );
   });

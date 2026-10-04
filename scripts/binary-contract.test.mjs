@@ -27,6 +27,7 @@ import {
   MODELS_RECEIPT_PREFIX,
   nodeGuardLine,
   ROOT_USAGE_LINE,
+  unknownPromptHint,
 } from './binary-contract.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -65,10 +66,30 @@ function bareOut(line = ROOT_USAGE_LINE) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
 }
 
-// An unknown command (issue #372): the root usage line on stdout, exit 2 —
-// a usage error, not commander's own stderr message.
+// An unknown command (issue #372, hint per issue #268/L-D7): the root usage
+// line plus the prompt hint on stdout, exit 2 — a usage error, not
+// commander's own stderr message.
 function unknownOut() {
+  return {
+    code: 2,
+    stdout: `${ROOT_USAGE_LINE}\n${unknownPromptHint('nosuch-command')}\n`,
+    stderr: '',
+    error: null,
+  };
+}
+
+// The internal crash probe without its env gate (issue #128): an unknown
+// command with NO prompt hint — the seam is not a user surface (issue #268).
+function usageOnlyOut() {
   return { code: 2, stdout: `${ROOT_USAGE_LINE}\n`, stderr: '', error: null };
+}
+
+// The headline bare prompt (issue #268/L-D7): a multi-word argv token runs
+// like `kubic run -p`, so the faux provider answers with a completed run.
+function barePromptOut() {
+  return ok(
+    `${JSON.stringify({ ok: true, exitCode: 0, status: 'completed', result: { summary: 'echo: hello there' } })}\n`,
+  );
 }
 
 // `kubic orchestrate -p x` / `kubic clean` outside a git repository (issue
@@ -223,6 +244,9 @@ function fakeRun(overrides = {}) {
     if (args[0] === 'nosuch-command') {
       return overrides.unknown ?? unknownOut();
     }
+    if (opts.env?.KUBIC_PROVIDER === 'faux' && args[0] === 'hello there') {
+      return overrides.barePrompt ?? barePromptOut();
+    }
     if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
       return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
     }
@@ -270,7 +294,7 @@ function fakeRun(overrides = {}) {
       // #128): the command falls through to the unknown-command path —
       // the same shape as any other unknown command (exit 2, issue #372).
       if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
-        return overrides.ungatedCrash ?? unknownOut();
+        return overrides.ungatedCrash ?? usageOnlyOut();
       }
       return opts.env?.KUBIC_DEBUG === '1'
         ? (overrides.debugCrash ?? debugCrashOut())
@@ -554,6 +578,44 @@ describe('binary contract unknown-command probe (issue #372)', () => {
     const result = contractWith({ unknown: { ...unknownOut(), stdout: '' } });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /expected the root usage line/);
+  });
+
+  it('fails when the unknown-command path drops the prompt hint', () => {
+    const result = contractWith({
+      unknown: { ...unknownOut(), stdout: `${ROOT_USAGE_LINE}\n` },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /prompt hint/);
+  });
+});
+
+describe('binary contract bare-prompt probe (issue #268)', () => {
+  it('fails when the bare prompt does not run like `kubic run -p`', () => {
+    const result = contractWith({
+      barePrompt: { ...barePromptOut(), code: 2 },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exited 2 \(expected 0/);
+  });
+
+  it('fails when the bare prompt does not settle completed', () => {
+    const result = contractWith({
+      barePrompt: ok(
+        `${JSON.stringify({ ok: false, exitCode: 1, status: 'failed' })}\n`,
+      ),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected ok:true, status:"completed"/);
+  });
+
+  it('fails when the bare prompt prints more than one document', () => {
+    const result = contractWith({
+      barePrompt: ok(
+        `${JSON.stringify({ ok: true, exitCode: 0, status: 'completed' })}\nnoise\n`,
+      ),
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exactly one --json envelope/);
   });
 });
 

@@ -189,7 +189,7 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(23);
+    expect(COMMAND_NAMES.size).toBe(26);
     expect(ROOT_USAGE).toContain('sessions | git');
   });
 
@@ -207,9 +207,11 @@ describe('command registry', () => {
       return p.commands.map((command) => command.name()).sort();
     };
     expect(owned(registerSoloCommands)).toEqual([
+      'attach',
       'config',
       'doctor',
       'models',
+      'resume',
       'run',
       'sessions',
       'trust',
@@ -221,6 +223,7 @@ describe('command registry', () => {
       'workers',
     ]);
     expect(owned(registerJournalCommands)).toEqual([
+      'commit',
       'diff',
       'git',
       'log',

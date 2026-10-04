@@ -197,4 +197,28 @@ function registerGit(program: KubicProgram, ctx: CommandContext): void {
       }
       await git({ command: 'commit', ...opts });
     });
+
+  // Issue #268 (§17): the top-level alias — `kubic commit -m <message>` is
+  // `kubic git commit`, same runner, message rule and exit codes.
+  program
+    .command('commit')
+    .description('commit the staged changes (same as `kubic git commit`)')
+    .requiredOption(
+      '-m, --message <message>',
+      'the commit message (taken verbatim, even when it starts with -)',
+    )
+    .addOption(jsonOption())
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ kubic commit -m "fix: handle empty input"
+  $ kubic commit -m "wip" --json`,
+    )
+    .action(async (opts) => {
+      if (opts.message === '') {
+        throw new CliUsageError('commit needs a non-empty message (-m)');
+      }
+      await git({ command: 'commit', ...opts });
+    });
 }

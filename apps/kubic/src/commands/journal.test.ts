@@ -96,6 +96,7 @@ describe('journal commands: generated help (exit 0, no runner)', () => {
       ['git', 'commit'],
       ['-m, --message <message>', '--json'],
     ],
+    [['commit'], ['-m, --message <message>', '--json']],
   ];
   for (const [command, mentions] of cases) {
     for (const flag of ['--help', '-h']) {
@@ -143,6 +144,8 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     [['git', 'stage'], /missing required argument 'paths'/],
     [['git', 'commit'], /required option '-m, --message <message>'/],
     [['git', 'commit', '-m', ''], /^error: commit needs a non-empty message/],
+    [['commit'], /required option '-m, --message <message>'/],
+    [['commit', '-m', ''], /^error: commit needs a non-empty message/],
   ];
   for (const [argv, message] of cases) {
     it(`kubic ${argv.join(' ')}`, async () => {
@@ -188,6 +191,23 @@ describe('journal commands: parsed requests reach the runner', () => {
       const r = await kubic([command]);
       expect(r.journal, command).toEqual([{ command }]);
     }
+  });
+
+  it('kubic commit -m <message> is kubic git commit (issue #268)', async () => {
+    const plain = await kubic(['commit', '-m', 'fix: handle empty input']);
+    expect(plain.code).toBe(0);
+    expect(plain.git).toEqual([
+      { command: 'commit', message: 'fix: handle empty input' },
+    ]);
+    expect(plain.journal).toEqual([]);
+    const json = await kubic(['commit', '-m', 'wip', '--json']);
+    expect(json.git).toEqual([
+      { command: 'commit', message: 'wip', json: true },
+    ]);
+    // The verbatim message rule is the same as `git commit`'s: a message
+    // that starts with `--` goes in the attached form.
+    const flagLike = await kubic(['commit', '--message=--amend']);
+    expect(flagLike.git).toEqual([{ command: 'commit', message: '--amend' }]);
   });
 
   it('undo takes the path operand (after -- too) and its flags', async () => {

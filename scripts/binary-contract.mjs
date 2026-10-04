@@ -66,7 +66,7 @@ export const CONFIG_REFUSAL_KEY = 'bogus_key';
 // `kubic` on an interactive terminal opens the TUI instead, §78/§80). Pinned literally so
 // a command-list drift fails here instead of shipping stale help.
 export const ROOT_USAGE_LINE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The launcher's named Node-requirement line (issue #128), printed to
 // stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
@@ -102,6 +102,13 @@ const CONTRACT_VIOLATION = Symbol('contract-violation');
 
 export function expectedVersionLine(version) {
   return `kubic ${version}${VERSION_SUFFIX}`;
+}
+
+// Issue #268 (L-D7): a single-word unknown token stays an unknown command
+// (#372) and names the prompt form for exactly that word. A multi-word argv
+// token is the bare prompt itself.
+export function unknownPromptHint(word) {
+  return `hint: to run it as a prompt: kubic run -p '${word}'`;
 }
 
 function lines(stdout) {
@@ -375,6 +382,7 @@ export function binaryContract({
 
   // Issue #372: an unknown command is a usage error, not a task failure —
   // exit 2 with the root usage line on stdout and nothing on stderr.
+  // Issue #268 (L-D7): a word-shaped token also names the prompt form.
   const unknown = run(['nosuch-command']);
   const unknownFailed = probeProblems('kubic nosuch-command', unknown);
   if (unknownFailed.length > 0) {
@@ -385,15 +393,52 @@ export function binaryContract({
         `\`kubic nosuch-command\` exited ${unknown.code} (expected ${USAGE_EXIT} — unknown command is a usage error, §78)`,
       );
     }
-    if (unknown.stdout.trimEnd() !== ROOT_USAGE_LINE) {
+    const expectedUnknown = `${ROOT_USAGE_LINE}\n${unknownPromptHint('nosuch-command')}`;
+    if (unknown.stdout.trimEnd() !== expectedUnknown) {
       problems.push(
-        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout.trimEnd())} — expected the root usage line`,
+        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout.trimEnd())} — expected the root usage line and the prompt hint`,
       );
     }
     if (unknown.stderr !== '') {
       problems.push(
         `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected silence (the usage line is stdout-only)`,
       );
+    }
+  }
+
+  // Issue #268 (§17, L-D7): the headline bare prompt. A single argv token
+  // with whitespace is `kubic run -p "<prompt>"` — the faux provider proves
+  // it runs end to end (the receipt/refusal probes above stay provider-less).
+  const barePrompt = run(['hello there', '--json'], {
+    env: { KUBIC_PROVIDER: 'faux' },
+  });
+  const barePromptFailed = probeProblems('kubic "hello there"', barePrompt);
+  if (barePromptFailed.length > 0) {
+    problems.push(...barePromptFailed);
+  } else {
+    if (barePrompt.code !== 0) {
+      problems.push(
+        `\`kubic "hello there"\` exited ${barePrompt.code} (expected 0 — the bare prompt runs like \`kubic run -p\`, §17)`,
+      );
+    }
+    const documents = lines(barePrompt.stdout);
+    if (documents.length !== 1) {
+      problems.push(
+        `\`kubic "hello there"\` printed ${documents.length} stdout line(s) — expected exactly one --json envelope`,
+      );
+    } else {
+      try {
+        const envelope = JSON.parse(documents[0]);
+        if (envelope.ok !== true || envelope.status !== 'completed') {
+          problems.push(
+            `\`kubic "hello there"\` envelope is ${JSON.stringify({ ok: envelope.ok, status: envelope.status })} — expected ok:true, status:"completed"`,
+          );
+        }
+      } catch (error) {
+        problems.push(
+          `\`kubic "hello there"\` stdout is not one JSON envelope: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 

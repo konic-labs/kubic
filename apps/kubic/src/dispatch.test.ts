@@ -76,6 +76,7 @@ const RUNNER_KEYS: readonly RunnerKey[] = [
 const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['sessions', ['list'], 'sessions'],
   ['git', ['status'], 'git'],
+  ['commit', ['-m', 'msg'], 'git'],
   ['diff', ['--json'], 'journal'],
   ['undo', ['--step'], 'journal'],
   ['log', [], 'journal'],
@@ -83,6 +84,8 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['models', ['--json'], 'models'],
   ['run', ['-p', 'hi'], 'run'],
   ['tui', [], 'tui'],
+  ['attach', ['abc'], 'tui'],
+  ['resume', ['abc'], 'tui'],
   ['doctor', [], 'doctor'],
   ['orchestrate', [], 'orchestrate'],
   ['clean', ['--dry-run'], 'clean'],
@@ -110,6 +113,9 @@ const PARSED: Readonly<Record<string, unknown>> = {
   models: { json: true },
   run: { prompt: 'hi' },
   tui: {},
+  attach: { session: 'abc' },
+  resume: { session: 'abc' },
+  commit: { command: 'commit', message: 'msg' },
   doctor: { skip: [] },
   config: { json: true },
   trust: {},
@@ -260,7 +266,7 @@ function loadedConfig(): CliConfigResult {
 
 describe('dispatch routing (issue #135)', () => {
   it('pins the roster: 23 commands, 20 runners, every runner exercised', () => {
-    expect(ROUTES).toHaveLength(23);
+    expect(ROUTES).toHaveLength(26);
     expect(RUNNER_KEYS).toHaveLength(20);
     const routed = new Set(ROUTES.map(([, , key]) => key));
     expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
@@ -297,7 +303,41 @@ describe('dispatch routing (issue #135)', () => {
     expect(await dispatchCommand('definitely-not-a-command', [], h.deps)).toBe(
       2,
     );
-    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'definitely-not-a-command'",
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a bare multi-word prompt is `kubic run -p <prompt>` (issue #268, L-D7)', async () => {
+    const h = harness();
+    expect(
+      await dispatchCommand('fix the authentication bug', [], h.deps),
+    ).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'fix the authentication bug' }],
+    ]);
+    // The prompt form is a state-creating mode: the exclude rules ship.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('a bare prompt carries trailing flags through', async () => {
+    const h = harness();
+    expect(await dispatchCommand('do x', ['--json'], h.deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'do x', json: true }],
+    ]);
+  });
+
+  it('a single-word unknown token stays an unknown command with the prompt hint (L-D7)', async () => {
+    const h = harness();
+    expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'nosuch'",
+    ]);
     expect(h.calls).toEqual([]);
   });
 });
@@ -440,13 +480,20 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('an unknown root option or `help` is a usage error (usage, exit 2)', async () => {
-    for (const command of ['--bogus', '-x', 'help']) {
+  it('an unknown root option is a usage error; `help` names the prompt form (usage, exit 2)', async () => {
+    for (const command of ['--bogus', '-x']) {
       const h = harness();
       expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
       expect(h.lines, command).toEqual([ROOT_USAGE]);
       expect(h.calls, command).toEqual([]);
     }
+    // A word-shaped token gets the L-D7 hint; a flag-shaped one does not.
+    const help = harness();
+    expect(await dispatchCommand('help', [], help.deps)).toBe(2);
+    expect(help.lines).toEqual([
+      ROOT_USAGE,
+      "hint: to run it as a prompt: kubic run -p 'help'",
+    ]);
   });
 
   it('root options after the command reach the command (positional options)', async () => {
@@ -496,7 +543,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
       ([command]) =>
         !CONSUMING.includes(command) && !REPORTING.includes(command),
     );
-    expect(others).toHaveLength(16);
+    expect(others).toHaveLength(19);
     // Each with its ROUTES argv: a bare `kubic git` is a usage error.
     for (const [command, rest] of others) {
       const h = harness({ config: refusedConfig() });

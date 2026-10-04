@@ -22,6 +22,7 @@ import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.
 import {
   buildRunEnvelope,
   refusedRunResult,
+  shellQuote,
 } from '../../../packages/host/src/run-cli.js';
 import {
   type ModelSelection,
@@ -50,7 +51,7 @@ import {
 // (exit 2 — a usage error, issue #372). Every path is pinned by
 // scripts/binary-contract.mjs; they must never drift apart.
 export const ROOT_USAGE =
-  'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
+  'usage: kubic <sessions | git | commit | models | diff | undo | log | status | run | orchestrate | clean | tui | attach | resume | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
 // The supported command names, read off the usage line so the routing
 // table and the listing can never drift apart (dispatch.test.ts also pins
@@ -228,6 +229,18 @@ export async function dispatchCommand(
   // `kubic tui --dangerously-skip-approvals`; off a TTY it keeps the bare
   // usage + exit 1 posture.
   const interactive = deps.isInteractive?.() === true;
+  // Issue #268 (§17, L-D7): `kubic "<prompt>"` is the headline entry point.
+  // A single argv token that contains whitespace is a prompt; an unknown
+  // command word has no whitespace, so `kubic nosuch` stays the documented
+  // usage error (exit 2, #372) with a hint naming the prompt form. The
+  // prompt form behaves exactly like `kubic run -p "<prompt>"` — headless
+  // in both modes; the spec's TUI-first-turn variant is deliberately not
+  // shipped (docs/design-drift.md).
+  const barePrompt =
+    requested !== undefined &&
+    /\s/.test(requested) &&
+    !ROOT_OPTIONS.has(requested) &&
+    !COMMAND_NAMES.has(requested);
   const bareModel =
     requested !== undefined &&
     (requested === BARE_MODEL_FLAG ||
@@ -238,9 +251,16 @@ export async function dispatchCommand(
   // One bare-flag form of the TUI: every bare flag is `kubic tui <flag>` on
   // a terminal (and keeps the usage + exit 1 posture off one).
   const bareFlag = bareSkip || bareModel || bareOrchestrator;
-  const command =
-    (requested === undefined && interactive) || bareFlag ? 'tui' : requested;
-  const args = bareFlag ? [String(requested), ...rest] : rest;
+  const command = barePrompt
+    ? 'run'
+    : (requested === undefined && interactive) || bareFlag
+      ? 'tui'
+      : requested;
+  const args = barePrompt
+    ? ['-p', requested, ...rest]
+    : bareFlag
+      ? [String(requested), ...rest]
+      : rest;
   // A help request is side-effect free (issue #245): commander answers
   // `--help`/`-h` before any action, so the trust question and the
   // runtime-exclude write must not happen for it either.
@@ -329,6 +349,19 @@ export async function dispatchCommand(
       command === BARE_MODEL_FLAG ||
       command.startsWith(`${BARE_MODEL_FLAG}=`);
     deps.out(ROOT_USAGE);
+    // Issue #268 (L-D7): a single-word token stays an unknown command
+    // (#372) — the hint names the prompt form for exactly that word. The
+    // internal crash probe stays hint-free (it is not a user surface).
+    if (
+      !bareOffTty &&
+      command !== undefined &&
+      command !== CRASH_PROBE &&
+      !command.startsWith('-')
+    ) {
+      deps.out(
+        `hint: to run it as a prompt: kubic run -p ${shellQuote(command)}`,
+      );
+    }
     return bareOffTty ? EXIT_FAILED : EXIT_USAGE;
   }
   const io = { out: deps.out, err: deps.err ?? deps.out };

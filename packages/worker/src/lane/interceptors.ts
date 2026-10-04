@@ -33,6 +33,7 @@
 // detection is still literal-pattern: python/node/npm exfiltration, quoted
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in host/approvals.ts.
+import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import {
   effectiveNetworkLevel,
@@ -296,6 +297,28 @@ function failClosed<T>(
   }
 }
 
+// The canonical form of a call's arguments for the stand-down key (issue
+// #194): JSON key order is not stable across providers, so every object is
+// sorted before hashing, and the hash keeps the map small whatever a tool's
+// arguments carry (a write's content can be megabytes).
+function canonicalArgsHash(args: Record<string, unknown>): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (typeof value === 'object' && value !== null) {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).sort()) {
+        out[key] = sort((value as Record<string, unknown>)[key]);
+      }
+      return out;
+    }
+    return value;
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(sort(args)))
+    .digest('hex')
+    .slice(0, 16);
+}
+
 // Tools whose path-like args are confined. read/write/edit/ls take `path`,
 // find/grep take `root`.
 const CONFINED_TOOLS: Record<string, string[]> = {
@@ -351,21 +374,50 @@ export function policyInterceptorHooks(
 ): HookRegistration[] {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
   const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
-  // Tool calls a real challenge cleared. Guards below stand down for
-  // exactly these ids — never by tool name or pattern. Unchallenged
-  // fast-path calls never enter this set, so #15 guards stay up for them.
-  // Capped FIFO: durable call ids are unique per call, but an unbounded set
-  // across a long lane lifetime is a leak; eviction only drops stale ids
-  // whose calls already ran. It is deliberately in-memory: a resumed
-  // process re-asks, never inherits a stand-down it did not grant.
-  const approvedCalls = new Map<string, number>();
+  // Tool calls a real challenge cleared, keyed by the call id AND the exact
+  // arguments it was cleared for (issue #194). The id alone is not an
+  // identity: it comes from the provider (an OpenAI-compatible server can
+  // repeat `call_0` or send `""`), so an approved `rm -rf x` must not stand
+  // the guards down for a later, different call that reuses the id. Each
+  // entry is SPENT when that call's beforeTool chain finishes, so a repeated
+  // call asks again instead of inheriting the stand-down. Capped FIFO over
+  // call ids: a call whose chain never finished (a thrown guard) is evicted
+  // eventually, and an entry can only ever stand down the exact id+args pair
+  // it was granted for. Deliberately in-memory: a resumed process re-asks,
+  // never inherits a stand-down it did not grant.
+  const approvedCalls = new Map<string, Set<string>>();
   const APPROVED_CALLS_CAP = 512;
-  const markApproved = (toolCallId: string): void => {
-    approvedCalls.set(toolCallId, Date.now());
-    if (approvedCalls.size > APPROVED_CALLS_CAP) {
+  const markApproved = (
+    callId: string,
+    args: Record<string, unknown>,
+  ): void => {
+    // An empty id is never a stand-down key (defence in depth: the harness
+    // always assigns one, but a broken provider must not win).
+    if (callId === '') return;
+    const keys = approvedCalls.get(callId) ?? new Set<string>();
+    keys.add(canonicalArgsHash(args));
+    // Re-insert so the FIFO evicts the least recently marked call id.
+    approvedCalls.delete(callId);
+    approvedCalls.set(callId, keys);
+    while (approvedCalls.size > APPROVED_CALLS_CAP) {
       const oldest = approvedCalls.keys().next();
-      if (!oldest.done) approvedCalls.delete(oldest.value);
+      if (oldest.done) break;
+      approvedCalls.delete(oldest.value);
     }
+  };
+  const isApproved = (
+    callId: string,
+    args: Record<string, unknown>,
+  ): boolean => {
+    // No hash for the common case: a call id with no entry is the fast path.
+    const keys = callId === '' ? undefined : approvedCalls.get(callId);
+    return keys !== undefined && keys.has(canonicalArgsHash(args));
+  };
+  // Every entry of one call id. Deletion is by id, not by the args hash:
+  // the confine guard rewrites `call.arguments`, so the arguments a later
+  // hook receives are not the ones the stand-down was stored for.
+  const consumeApproved = (callId: string): void => {
+    approvedCalls.delete(callId);
   };
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
@@ -412,7 +464,7 @@ export function policyInterceptorHooks(
             toolCallId: call.id,
           });
           if (verdict.approved) {
-            if (verdict.challenged) markApproved(call.id);
+            if (verdict.challenged) markApproved(call.id, call.arguments);
             return undefined;
           }
           return block(`not approved: ${verdict.reason}`);
@@ -424,7 +476,7 @@ export function policyInterceptorHooks(
     hook(ToolTask, {
       beforeTool: (call) =>
         failClosed(() => {
-          if (approvedCalls.has(call.id)) return undefined;
+          if (isApproved(call.id, call.arguments)) return undefined;
           if (call.name !== 'bash') return undefined;
           const command =
             typeof call.arguments.command === 'string'
@@ -457,7 +509,7 @@ export function policyInterceptorHooks(
     hook(ToolTask, {
       beforeTool: (call) =>
         failClosed(() => {
-          if (approvedCalls.has(call.id)) return undefined;
+          if (isApproved(call.id, call.arguments)) return undefined;
           if (
             call.name === 'read' &&
             typeof call.arguments.path === 'string' &&
@@ -476,6 +528,20 @@ export function policyInterceptorHooks(
           // under two copies of the alias; the rewrite replaced only
           // strings, and the harness re-validates it against the schema.
           return { arguments: confined as Record<string, JsonValue> };
+        }),
+    }),
+  );
+
+  registrations.push(
+    hook(ToolTask, {
+      // Last in the chain (issue #194): a stand-down is SPENT once the call
+      // it was granted for has run its guards. Registered after every guard
+      // so all of them saw it, and deleting by call id because the confine
+      // guard may have rewritten the arguments a later hook receives.
+      beforeTool: (call) =>
+        failClosed(() => {
+          consumeApproved(call.id);
+          return undefined;
         }),
     }),
   );

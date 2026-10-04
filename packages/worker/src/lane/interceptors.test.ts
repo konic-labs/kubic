@@ -150,7 +150,13 @@ function probeTools(world: World) {
 }
 
 interface BootOptions {
-  calls: Array<{ name: string; args: Record<string, JsonValue> }>;
+  calls?: Array<{ name: string; args: Record<string, JsonValue> }>;
+  // Issue #194: a scripted multi-turn sequence (each inner array is one
+  // assistant tool-use message) whose entries may pin a provider call id,
+  // for the duplicate-id and empty-id stand-down cases.
+  turns?: Array<
+    Array<{ name: string; args: Record<string, JsonValue>; id?: string }>
+  >;
   policy?: PolicyInterceptorOptions;
   // A hook in the `kubic.budget` extension, installed BEFORE kubic.policy.
   budgetHooks?: HookRegistration[];
@@ -168,10 +174,21 @@ async function boot(options: BootOptions): Promise<Booted> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
+  const turns = options.turns ?? [
+    (options.calls ?? []).map((call) => ({ ...call, id: undefined })),
+  ];
   faux.setResponses([
-    fauxAssistantMessage(
-      options.calls.map((call) => fauxToolCall(call.name, call.args)),
-      { stopReason: 'toolUse' },
+    ...turns.map((calls) =>
+      fauxAssistantMessage(
+        calls.map((call) =>
+          fauxToolCall(
+            call.name,
+            call.args,
+            call.id === undefined ? {} : { id: call.id },
+          ),
+        ),
+        { stopReason: 'toolUse' },
+      ),
     ),
     fauxAssistantMessage('done'),
   ]);
@@ -409,6 +426,78 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     const results = await toolResults(booted.root);
     expect(results[0]?.isError).toBe(false);
     expect(results[1]?.text).toContain('destructive command blocked');
+  });
+
+  it('keys the stand-down on the exact call, not the provider id (issue #194)', async () => {
+    let asks = 0;
+    const booted = await boot({
+      turns: [
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+        [{ name: 'read', args: { path: '/etc/passwd' }, id: 'call_0' }],
+      ],
+      policy: {
+        workspace: '/work',
+        approve: async () => {
+          asks += 1;
+          return asks === 1
+            ? { approved: true, challenged: true }
+            : { approved: true, challenged: false };
+        },
+      },
+    });
+    await drive(booted);
+    expect(asks).toBe(2);
+    // The approved bash call ran; the later read reused `call_0` and is
+    // still confined — the stand-down was for the bash call's arguments.
+    expect(booted.world.calls.map((call) => call.name)).toEqual([
+      'bash',
+      'read',
+    ]);
+    expect(booted.world.calls[1]?.args.path).toBe('/work/etc/passwd');
+  });
+
+  it('spends the stand-down after the approved call (issue #194)', async () => {
+    let asks = 0;
+    const booted = await boot({
+      turns: [
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+        [{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: 'call_0' }],
+      ],
+      policy: {
+        workspace: '/work',
+        approve: async () => {
+          asks += 1;
+          // Only the first call is challenged and granted; the identical
+          // repeat is approved on the fast path, so only a stale stand-down
+          // could let it skip the guard.
+          return asks === 1
+            ? { approved: true, challenged: true }
+            : { approved: true, challenged: false };
+        },
+      },
+    });
+    await drive(booted);
+    expect(asks).toBe(2);
+    expect(booted.world.calls).toHaveLength(1);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('destructive command blocked');
+  });
+
+  it('never honours a stand-down for an empty call id (issue #194)', async () => {
+    const booted = await boot({
+      turns: [[{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: '' }]],
+      policy: {
+        workspace: '/work',
+        approve: async () => ({ approved: true, challenged: true }),
+      },
+    });
+    await drive(booted);
+    // The approval granted, but an empty id is not an identity: the guard
+    // stays up rather than standing down for whatever comes next.
+    expect(booted.world.calls).toHaveLength(0);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.text).toContain('destructive command blocked');
   });
 });
 

@@ -63,6 +63,11 @@ default) or to deny. The rules are fail-closed:
   session decision is reused instead of asked again.
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
+- An approval's guard stand-down is scoped to exactly the approved call —
+  its tool-call id AND its arguments — and is spent once that call has run.
+  The id comes from the provider, so a server that repeats `call_0` or
+  sends an empty id cannot widen one approval into a standing bypass of the
+  destructive/network guards or of path confinement (issue #194).
 - The session's state files are corrupt-tolerant: an `approvals.json` or
   `posture.json` that is unreadable or parses to the wrong shape (`null`,
   an array, a string) falls back to the safe default — no decisions,

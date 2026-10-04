@@ -19,6 +19,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { nodeVersionSupported } from '../bin/node-guard.mjs';
 import {
+  BUILTIN_ROLE_NAMES,
   binaryContract,
   CONFIG_REFUSAL_KEY,
   CRASH_PROBE_ENV,
@@ -137,9 +138,18 @@ function debugCrashOut() {
   };
 }
 
+// The embedded §12 role presets (issue #203) are part of the doctor baseline:
+// a runner with no `.kubic/roles/` reports all five as `builtin role`.
+function rolePresetLines() {
+  return BUILTIN_ROLE_NAMES.map(
+    (name) => `PASS role:${name} (ok): builtin role — 5 tool(s): bash, read`,
+  );
+}
+
 function doctorOut(code = 6, fails = [PROVIDER_FAIL]) {
   const lines = [
     'PASS dep:node (ok): node 24.13.0 (need >=22.19)',
+    ...rolePresetLines(),
     ...fails,
     `doctor: 6 pass, 6 warn, ${fails.length} fail, 0 skip`,
   ];

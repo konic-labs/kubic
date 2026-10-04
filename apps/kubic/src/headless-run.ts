@@ -1261,11 +1261,9 @@ async function runHeadlessPromptImpl(
       }
       let promptText: string;
       try {
-        const path = roleDocPath(rolesCwd, selected.doc.name);
-        promptText = rolePromptFor(
-          selected.doc,
-          rolesBridge.readTextFile(path),
-        );
+        // The prompt comes from the winning document (issue #203): a repo
+        // override's text, or the preset embedded in the binary.
+        promptText = rolePromptFor(selected.doc, selected.markdown);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return finished(id, 'failed', message, message);

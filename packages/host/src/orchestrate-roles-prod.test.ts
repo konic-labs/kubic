@@ -474,6 +474,15 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     await gitOrThrow(plain, ['config', 'user.name', 'kubic roles']);
     await gitOrThrow(plain, ['config', 'commit.gpgsign', 'false']);
     writeFileSync(join(plain, 'base.txt'), 'base\n');
+    // A role document that exists ONLY in the scratch repo, with a prompt no
+    // other layer could produce: if the run read the process cwd's own
+    // `.kubic/roles/` (or fell back to the embedded preset) this text could
+    // not reach the child.
+    mkdirSync(join(plain, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(plain, '.kubic', 'roles', 'implementer.md'),
+      '---\nrole: implementer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# implementer\n\n## Prompt\n\nYou are the scratch implementer.\n',
+    );
     await gitOrThrow(plain, ['add', '-A']);
     await gitOrThrow(plain, ['commit', '-m', 'base']);
     const sessionsRoot = scratchRoot('kubic-orch-noroles-sessions-');
@@ -499,13 +508,17 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
       deps,
     );
     expect(code).toBe(0);
-    // No role documents in that repo: the plan prompt stands and no role
-    // reaches the child.
+    // The role comes from the SCRATCH repo's document — the default
+    // implementer preset overridden there — not from the process cwd's own
+    // `.kubic/roles/` nor from the preset embedded in the binary.
     expect(readDump(dumpDir, 'alpha', 'prompt')).toContain('Plan step 1 of 1');
-    expect(readDump(dumpDir, 'alpha', 'prompt')).not.toContain(
-      'You are the planner.',
+    expect(readDump(dumpDir, 'alpha', 'prompt')).toContain(
+      'You are the scratch implementer.',
     );
-    expect(readDump(dumpDir, 'alpha', 'role')).toBe('(none)');
+    expect(readDump(dumpDir, 'alpha', 'prompt')).not.toContain(
+      'You are the implementer.',
+    );
+    expect(readDump(dumpDir, 'alpha', 'role')).toBe('implementer');
     expect(readDump(dumpDir, 'alpha', 'model')).toBe('(none)');
   });
 });

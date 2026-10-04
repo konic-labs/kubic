@@ -76,7 +76,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
 | `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `timeout` (exit 1, issue #280) with the ref triple intact — §71 budgets exist only when configured, so a default bound never claims `budget_exhausted`. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
 | `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
-| `--role <name>` | Boot as the role document `.kubic/roles/<name>.md` (prompt text, tool set, model pin). |
+| `--role <name>` | Boot as a §12 role: the `.kubic/roles/<name>.md` document when the workspace has one, else the preset of that name embedded in the binary (issue #203). The document's prompt text, tool set and model pin apply either way. |
 | `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
@@ -923,9 +923,12 @@ same context the headless one does:
   interactive system prompt. `--skill <path>` adds an explicit skill
   (repeatable), `--no-skills` turns layered discovery off — and explicit
   `--skill` paths still apply under `--no-skills`, exactly as `run`.
-- **Roles (§12.1):** `--role <name>` loads `.kubic/roles/<name>.md` — the
-  document's prompt text replaces the solo constant and its tool set
-  narrows the lane (absence, not approval). Every refusal is fail-closed
+- **Roles (§12.1):** `--role <name>` loads `.kubic/roles/<name>.md` — or the
+  matching preset embedded in the binary when the workspace has no such
+  document (issue [#203](https://github.com/konic-labs/kubic/issues/203); the
+  five §12 presets ship with `kubic`, and a repo document of the same name
+  replaces its preset) — the document's prompt text replaces the solo
+  constant and its tool set narrows the lane (absence, not approval). Every refusal is fail-closed
   with the named reason (unknown role, contradictory document, missing
   `## Prompt`, parse failure); the boot exits before the alt-screen.
 - **Journal retention (§42.4):** the session journal takes the same

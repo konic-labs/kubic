@@ -1,4 +1,5 @@
-// An absent `.kubic/roles/` is the NORMAL case (issue #99 wiring follow-up).
+// An absent `.kubic/roles/` is the NORMAL case (issue #99 wiring follow-up;
+// since issue #203 it resolves to the presets embedded in the binary).
 //
 // `rolesDoctorProbe` was wired into `kubic doctor`, and in a workspace with no
 // roles directory it reported `FAIL role:documents (policy-mismatch): ENOENT
@@ -57,29 +58,46 @@ Decompose the objective.
 `;
 
 describe('an absent roles directory is not an error (#99 wiring follow-up)', () => {
-  it('loadRoles returns empty for a cwd with no .kubic/roles', () => {
+  it('loadRoles falls back to the embedded presets for a cwd with no .kubic/roles (issue #203)', () => {
     const root = cwd();
     const loaded = loadRoles({
       cwd: root,
       bridge: createNodeFileBridge(root),
     });
-    expect(loaded.docs).toEqual([]);
-    expect(loaded.resolved).toEqual([]);
+    expect(loaded.resolved.map((role) => role.name)).toEqual([
+      'debugger',
+      'implementer',
+      'planner',
+      'reviewer',
+      'tester',
+    ]);
     expect(loaded.refused).toEqual([]);
+    // Every one of them is reported as coming from the binary, and its
+    // markdown is the embedded text (no repo file exists to read).
+    for (const name of loaded.resolved.map((role) => role.name)) {
+      expect(loaded.sources[name]).toBe('builtin');
+      expect(loaded.texts[name]).toContain(`role: ${name}`);
+    }
   });
 
-  it('the doctor probe passes (or stays silent) with no roles directory', () => {
+  it('the doctor probe reports the presets, not silence, with no roles directory (issue #203)', () => {
     const root = cwd();
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
     });
-    const failing = checks.filter((check) => check.status === 'fail');
-    expect(failing).toEqual([]);
-    // And it says WHY nothing was reported, rather than leaving the operator
-    // to guess whether the role layer ran at all.
+    expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
+    expect(checks.map((check) => check.id)).toEqual([
+      'role:debugger',
+      'role:implementer',
+      'role:planner',
+      'role:reviewer',
+      'role:tester',
+    ]);
+    // The detail names the layer the role came from, so an operator can tell
+    // a shipped preset from a repo override.
     expect(
-      checks.some((check) => /no role documents/i.test(check.detail ?? '')),
+      checks.every((check) => /builtin role/.test(check.detail ?? '')),
     ).toBe(true);
   });
 
@@ -114,11 +132,24 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
       cwd: root,
       bridge: createNodeFileBridge(root),
     });
-    expect(loaded.resolved.map((r) => r.name)).toEqual(['planner']);
+    // The repo document REPLACES its embedded preset; the other four presets
+    // are still there, and the overridden one is reported as `repo`.
+    expect(loaded.resolved.map((r) => r.name)).toEqual([
+      'debugger',
+      'implementer',
+      'planner',
+      'reviewer',
+      'tester',
+    ]);
+    expect(loaded.sources.planner).toBe('repo');
+    expect(loaded.texts.planner).toContain('Decompose the objective.');
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),
     });
     expect(checks.filter((check) => check.status === 'fail')).toEqual([]);
+    expect(checks.find((check) => check.id === 'role:planner')?.detail).toMatch(
+      /^repo role/,
+    );
   });
 });

@@ -426,7 +426,13 @@ export function emitRoleDebug(
 // `role:<name>` check. Contradictory roles report fail/policy-mismatch
 // with the refusal reason — the same shape runDoctorCommand renders,
 // without touching the doctor module.
-export function roleDoctorChecks(resolvedRoles: ResolvedRole[]): DoctorCheck[] {
+export function roleDoctorChecks(
+  resolvedRoles: ResolvedRole[],
+  // Where each role's winning document came from (issue #203): the preset
+  // bundled with the binary, or a `.kubic/roles/<name>.md` that overrode it.
+  // Absent means the caller does not know — the detail then omits the layer.
+  sources: Record<string, string> = {},
+): DoctorCheck[] {
   return resolvedRoles.map((resolved) => {
     const base = {
       id: `role:${resolved.name}`,
@@ -446,7 +452,7 @@ export function roleDoctorChecks(resolvedRoles: ResolvedRole[]): DoctorCheck[] {
       ...base,
       status: 'pass' as const,
       reason: 'ok' as const,
-      detail: `${resolved.tools.length} tool(s): ${resolved.tools.join(', ')}`,
+      detail: `${sources[resolved.name] ?? 'builtin'} role — ${resolved.tools.length} tool(s): ${resolved.tools.join(', ')}`,
     };
   });
 }

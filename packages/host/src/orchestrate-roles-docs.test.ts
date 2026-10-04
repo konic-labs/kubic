@@ -228,6 +228,12 @@ describe('kubic doctor prints the role refusal the run fails closed with (#104)'
       agents: ['alpha', 'beta'],
     });
     expect(plan.refused[0]?.reason).toBe(detail);
-    expect(plan.assignments).toEqual([]);
+    // The contradictory repo document loses to nothing: its role is refused
+    // while the other workers fall back to the built-in implementer preset
+    // (issue #203).
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'implementer',
+      'implementer',
+    ]);
   });
 });

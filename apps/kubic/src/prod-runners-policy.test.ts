@@ -676,8 +676,17 @@ describe('role documents under the enterprise tool policy on the doctor and orch
       checks: { id: string; status: string; detail: string }[];
     };
     const roles = report.checks.filter((c) => /(^|:)role:/.test(c.id));
-    expect(roles.filter((c) => c.status === 'fail').map((c) => c.id)).toEqual([
-      expect.stringMatching(/role:implementer$/),
+    // Every role declaring `bash` is refused by name — the repo's implementer
+    // override and the four embedded presets that run a shell (issue #203).
+    // The repo's own planner declares no bash, so it stays green.
+    const failed = roles
+      .filter((c) => c.status === 'fail')
+      .map((c) => c.id.replace(/^.*role:/, 'role:'));
+    expect(failed).toEqual([
+      'role:debugger',
+      'role:implementer',
+      'role:reviewer',
+      'role:tester',
     ]);
     expect(
       roles.find((c) => c.id.endsWith('role:implementer'))?.detail,
@@ -753,10 +762,16 @@ describe('role documents under the enterprise tool policy on the doctor and orch
       checks: { id: string; status: string }[];
     };
     const roles = report.checks.filter((c) => /role:/.test(c.id));
-    expect(roles.filter((c) => c.status === 'fail')).toEqual([]);
+    // The layer narrows the implementer below the deny, so that role is green
+    // — while the roles the layer does NOT cover still declare bash and are
+    // still refused (the presets, issue #203).
     expect(roles.find((c) => c.id.endsWith('role:implementer'))?.status).toBe(
       'pass',
     );
+    const failed = roles
+      .filter((c) => c.status === 'fail')
+      .map((c) => c.id.replace(/^.*role:/, 'role:'));
+    expect(failed).toEqual(['role:debugger', 'role:reviewer', 'role:tester']);
   });
 
   it('kubic orchestrate does not refuse a role a config layer narrowed below the deny', async () => {

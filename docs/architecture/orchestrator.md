@@ -129,9 +129,15 @@ solo) — and `run` never delegates.
   roles (issue [#104](https://github.com/konic-labs/kubic/issues/104)): the
   role document's `## Prompt` body and the worker's plan step compose that
   worker's prompt, and the role's resolved tool set is what the worker lane
-  registers. `.kubic/roles/*.md` therefore decide what a worker is asked to
-  do and which tools exist on its lane; a contradictory document refuses the
-  run before anything spawns, and `kubic doctor` prints the same refusal.
+  registers. The five presets ship WITH the binary as data (issue
+  [#203](https://github.com/konic-labs/kubic/issues/203)): a workspace with
+  no `.kubic/roles/` still assigns roles, and a `.kubic/roles/<name>.md`
+  document REPLACES the embedded preset of the same name — one document per
+  role, never a fork. So `.kubic/roles/*.md` decide what a worker is asked
+  to do and which tools exist on its lane, while an untouched role keeps the
+  shipped defaults; a contradictory document refuses the run before anything
+  spawns, and `kubic doctor` prints the same refusal with the layer each role
+  came from (`builtin role — …` / `repo role — …`).
 - **A worker's assignment travels as its §67 task (issue
   [#191](https://github.com/konic-labs/kubic/issues/191); §67, §11.1).** The
   manager composes a worker's role from its OWN working tree, so the manager

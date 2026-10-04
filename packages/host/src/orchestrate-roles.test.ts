@@ -260,7 +260,10 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     expect(second.spawnInfo[0]?.info?.role).toBe('implementer');
   });
 
-  it('keeps the plan step working when no role documents exist (solo default unaffected)', async () => {
+  it('runs the built-in implementer preset when no role documents exist (issue #203)', async () => {
+    // The five §12 presets ship with the binary, so an absent
+    // `.kubic/roles/` no longer means "no role": every worker gets the
+    // default implementer preset, prompt and tool set included.
     const world = makeWorld({ loadWorkerRoles: roleLoaderFor({}) });
     const code = await runOrchestrateCommand(
       {
@@ -273,8 +276,9 @@ describe('orchestrate assigns roles per worker (issue #104, criterion 1)', () =>
     );
     expect(code).toBe(0);
     expect(world.prompts[0]?.prompt).toContain('Plan step 1 of 2');
-    expect(world.prompts[0]?.prompt).not.toContain('You are the planner.');
-    expect(world.spawnInfo[0]?.info?.role).toBeUndefined();
+    expect(world.spawnInfo[0]?.info?.role).toBe('implementer');
+    // The composed child prompt carries the embedded preset's instructions.
+    expect(world.prompts[0]?.prompt).toContain('You are the implementer.');
   });
 });
 

@@ -324,36 +324,86 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     expect(plan.assignments).toEqual([]);
   });
 
-  it('refuses when a worker maps to a role with no document, while zero documents stay a no-op', () => {
-    // Two documents, three workers: the third is bound to a role whose file
-    // is absent. That is a configuration the operator half-made, so it
-    // refuses by name — composing a prompt with no role would silently
-    // ignore the documents that DO exist. Zero documents is the untouched
-    // default (pinned above), so the two cases must not be conflated.
+  it('refuses when a worker maps to a role with no document, while an absent directory falls back to the presets', () => {
+    // Two documents, three workers: the third is bound to a role name that is
+    // neither a repo document nor a built-in. That is a configuration the
+    // operator half-made, so it refuses by name — composing a prompt with no
+    // role would silently ignore the documents that DO exist. A workspace
+    // with no documents at all is a different case: the embedded presets
+    // apply (pinned below), so the two must not be conflated.
     const plan = planWorkerRoles({
       bridge: memBridge(twoRoleCwd()),
       cwd: CWD,
       agents: ['alpha', 'beta', 'gamma'],
-      roles: { alpha: 'planner', beta: 'implementer', gamma: 'tester' },
+      roles: { alpha: 'planner', beta: 'implementer', gamma: 'archaeologist' },
     });
     expect(plan.assignments.map((entry) => entry.role)).toEqual([
       'planner',
       'implementer',
     ]);
     expect(plan.refused).toHaveLength(1);
-    expect(plan.refused[0]?.name).toBe('tester');
-    expect(plan.refused[0]?.reason).toMatch(/no role document for 'tester'/);
+    expect(plan.refused[0]?.name).toBe('archaeologist');
+    expect(plan.refused[0]?.reason).toMatch(/unknown role 'archaeologist'/);
   });
 
-  it('assigns no role at all when the workspace has no role documents', () => {
-    // An absent `.kubic/roles/` is the normal case (the solo default is
-    // unaffected) — the delegation path then keeps the plan prompt.
+  it('assigns the built-in presets when the workspace has no role documents (issue #203)', () => {
+    // The five §12 roles ship WITH the binary: an absent `.kubic/roles/` no
+    // longer means "no role". An unbound worker gets the default implementer
+    // preset (issue #178), whose prompt and tool set come from the embedded
+    // document — never from a repo-relative path.
     const plan = planWorkerRoles({
       bridge: memBridge({}),
       cwd: CWD,
       agents: ['alpha'],
     });
-    expect(plan).toEqual({ assignments: [], refused: [] });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments).toHaveLength(1);
+    const assignment = plan.assignments[0];
+    expect(assignment?.role).toBe('implementer');
+    expect(assignment?.promptText).toContain('You are the implementer.');
+    expect(assignment?.tools).toContain('write');
+    expect(assignment?.tools).toContain('bash');
+  });
+
+  it('lets a repo document override its built-in preset, and only that one (issue #203)', () => {
+    const plan = planWorkerRoles({
+      bridge: memBridge({
+        [`${CWD}/.kubic/roles/implementer.md`]: [
+          '---',
+          'role: implementer',
+          'tools: [read, ls, find, grep]',
+          'filesystem: read',
+          'shell: false',
+          'network: none',
+          'git: false',
+          'credentials: none',
+          '---',
+          '',
+          '## Prompt',
+          '',
+          'You are the repo implementer.',
+          '',
+        ].join('\n'),
+      }),
+      cwd: CWD,
+      agents: ['alpha', 'beta'],
+      roles: { alpha: 'implementer', beta: 'planner' },
+    });
+    expect(plan.refused).toEqual([]);
+    expect(plan.assignments.map((entry) => entry.role)).toEqual([
+      'implementer',
+      'planner',
+    ]);
+    // The override wins for its own name…
+    expect(plan.assignments[0]?.promptText).toContain('repo implementer');
+    expect([...(plan.assignments[0]?.tools ?? [])].sort()).toEqual([
+      'find',
+      'grep',
+      'ls',
+      'read',
+    ]);
+    // …and the untouched presets still come from the binary.
+    expect(plan.assignments[1]?.promptText).toContain('You are the planner.');
   });
 
   it('withholds write/edit/bash for a read-only role by absence, never approval', () => {

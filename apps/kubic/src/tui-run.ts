@@ -1218,10 +1218,7 @@ export async function bootTuiLane(
           ? {}
           : { toolPolicy: enterprisePolicy }),
       });
-      const promptText = rolePromptFor(
-        selected.doc,
-        rolesBridge.readTextFile(roleDocPath(rolesCwd, selected.doc.name)),
-      );
+      const promptText = rolePromptFor(selected.doc, selected.markdown);
       return { resolved: selected.resolved, prompt: promptText };
     })();
     const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =

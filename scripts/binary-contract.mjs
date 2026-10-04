@@ -30,6 +30,18 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The five §12 role presets the binary must carry as data (issue #203):
+// `kubic doctor` on a runner with no `.kubic/roles/` reports each one as
+// `builtin role — …`, which is only possible if the embedded documents
+// reached dist/.
+export const BUILTIN_ROLE_NAMES = [
+  'debugger',
+  'implementer',
+  'planner',
+  'reviewer',
+  'tester',
+];
+
 // The exact `kubic --version` line: 'kubic <version> (license: MIT)' —
 // the same shape core's formatVersionLine emits, pinned here so a drift
 // in either half fails the build contract, not a human's eyeball.
@@ -630,6 +642,21 @@ export function binaryContract({
         `\`kubic doctor\` printed ${fails.length} FAIL line(s) — expected exactly one, starting with ${JSON.stringify(PROVIDER_DOWN_LINE)}; saw ${JSON.stringify(fails)}`,
       );
     }
+    // The embedded role presets (issue #203) must be in the built artifact:
+    // this cwd has no `.kubic/roles/`, so a missing preset is a missing
+    // bundle, not a configuration choice.
+    const missingRoles = BUILTIN_ROLE_NAMES.filter(
+      (name) =>
+        !lines(doctor.stdout).some(
+          (line) =>
+            line.includes(`role:${name}`) && line.includes('builtin role'),
+        ),
+    );
+    if (missingRoles.length > 0) {
+      problems.push(
+        `\`kubic doctor\` did not report the embedded role preset(s) ${JSON.stringify(missingRoles)} as \`builtin role\` — the built artifact is missing them (issue #203)`,
+      );
+    }
   }
 
   const headless = run(['run', '-p', 'hi']);
@@ -796,7 +823,7 @@ if (import.meta.main) {
       throw CONTRACT_VIOLATION;
     }
     console.log(
-      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)}; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root usage line; bare kubic exit 1 (same line); an unknown command exits ${USAGE_EXIT} with the prompt hint; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); orchestrate/clean outside a git repo exit ${WORKSPACE_EXIT}; models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin (issue #203); provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs`,
     );
   } catch (error) {
     // The violation marker carries no information the user has not already

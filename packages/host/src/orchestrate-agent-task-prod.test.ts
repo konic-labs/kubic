@@ -341,16 +341,20 @@ describe('prod orchestrate path: --skill reaches every worker (issue #170)', () 
 });
 
 describe('prod orchestrate path: an inherited task never leaks (issue #191 review)', () => {
-  it('clears KUBIC_TASK_FILE when the run hands no task', async () => {
+  it('replaces an inherited KUBIC_TASK_FILE with the run’s own task', async () => {
     // An outer worker's env carries its own KUBIC_TASK_FILE (the allowlist
-    // passes it); a repo with no role documents means the inner plan has no
-    // assignment, so no task is written — the child must be told "none",
-    // never the outer file (whose worktree check would fail the inner run).
+    // passes it); the inner run hands its own task (the built-in implementer
+    // preset, issue #203), so the child must read THAT file — never the outer
+    // one, whose worktree check would fail the inner run.
     const root = await initRepo(null);
-    vi.stubEnv('KUBIC_TASK_FILE', join(root, 'outer-task.json'));
+    const outer = join(root, 'outer-task.json');
+    vi.stubEnv('KUBIC_TASK_FILE', outer);
     const { dump, code, lines } = await runOne(root);
     expect(code, lines.join('\n')).toBe(0);
-    expect(dump.taskFile).toBe('');
+    const taskFile = dump.taskFile ?? '';
+    expect(taskFile).not.toBe('');
+    expect(taskFile).not.toBe(outer);
+    expect(taskFile.endsWith('agent-task.json')).toBe(true);
   });
 });
 

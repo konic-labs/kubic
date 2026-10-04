@@ -213,10 +213,7 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
           ? {}
           : { toolPolicy: input.toolPolicy }),
       });
-      const promptText = rolePromptFor(
-        selected.doc,
-        input.bridge.readTextFile(roleDocPath(input.cwd, role)),
-      );
+      const promptText = rolePromptFor(selected.doc, selected.markdown);
       const fallbackThinking = ROLE_THINKING_DEFAULTS[role];
       assignments.push({
         agentId,

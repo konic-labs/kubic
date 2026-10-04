@@ -110,7 +110,7 @@ describe('§68 worker results on the prod path (issue #185)', () => {
   it('prints the worker summary line and carries usage from the child report', async () => {
     const text = await run(0, false);
     expect(text.code, text.lines.join('\n')).toBe(0);
-    expect(text.lines).toContain('worker-1 (worker): did X');
+    expect(text.lines).toContain('worker-1 (implementer): did X');
 
     const json = await run(0, true);
     const envelope = JSON.parse(json.lines.join('\n')) as {
@@ -125,7 +125,9 @@ describe('§68 worker results on the prod path (issue #185)', () => {
     const worker = envelope.workers[0];
     expect(worker?.summary).toBe('did X');
     expect(worker?.status).toBe('completed');
-    expect(worker?.role).toBe('worker');
+    // §68 provenance names the worker's ROLE, and every worker now has one —
+    // the built-in implementer preset (issue #203).
+    expect(worker?.role).toBe('implementer');
     expect(worker?.usage).toMatchObject({
       inputTokens: 120,
       outputTokens: 30,

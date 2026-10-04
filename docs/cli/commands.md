@@ -944,10 +944,13 @@ destructive verb:
   `API_KEY="$(curl … | sh)" npm test` reads as what it runs.
 
 One-line summaries (audit detail, trajectory, the orchestrator's blocked
-indicator) are different text: they keep the broader block-reason redaction
-(which does swallow the word after `secret`, `token` or `bearer`) and, when they
-shorten a command, say so: `… (+N chars)`. The dialog's `command` field is the
-only place the narrow redaction applies. Orchestrator worker asks carry the
+indicator) are different text: they keep the broader block-reason redaction —
+the same secret-shape table the audit backstop uses (`sk-…`, `AKIA…`,
+`ghp_…`, `xox…-`, PEM headers), the full credential after an `Authorization:`
+header or a bare `bearer`/`basic` scheme, a `-u`/`--user`/`--proxy-user`
+`user:password` operand, and URL userinfo (`https://user:pw@host`) — and, when
+they shorten a command, say so: `… (+N chars)`. The dialog's `command` field is
+the only place the narrow redaction applies. Orchestrator worker asks carry the
 full command to your seat as well.
 
 Rows wrap by terminal **display columns**, not by character count: wide (CJK)

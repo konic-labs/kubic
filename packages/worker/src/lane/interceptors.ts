@@ -40,6 +40,7 @@ import {
   type NetworkLevel,
   type ShellLevel,
 } from '../../../agents/src/policy.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { HookRegistration, JsonValue } from '../pi-boundary.js';
 import { hook, ToolTask } from '../pi-boundary.js';
@@ -265,12 +266,59 @@ export function redactReason(value: string): string {
   return redactSecrets(short);
 }
 
+// §36.1 rule 2 (issue #192): approval summaries, block reasons, the
+// trajectory, the §60 ledger and the orchestrator's mailbox ask JSON all
+// pass through this redactor, so it composes the shared @kubic/core shape
+// table on top of the inline rules. It is deliberately at least as strong as
+// the host's display redactor (approval-display.ts): the display one keeps
+// prose readable because the operator must see what will run, this one may
+// over-redact because what it writes is persisted.
+const REDACTED = '[REDACTED]';
+
+// A credential-shaped word: 10+ token characters, the same threshold the
+// shared table's bearer rule uses, so a scheme word before prose (`bearer of
+// bad news`) stays readable while a short token still hits the keyword pass.
+const CREDENTIAL_WORD = '[A-Za-z0-9][A-Za-z0-9\\-._~+=]{9,}';
+
+// The FULL credential after an authorization scheme (issue #192). The scheme
+// word is kept so the reader sees what was hidden; `Authorization: Bearer
+// sk-live-123` used to redact only `Bearer` and leave the token in the clear.
+const AUTH_CREDENTIAL = new RegExp(
+  [
+    // Header form: `Authorization: [scheme] <credential>` — the scheme is
+    // optional, so `Authorization: <credential>` is covered too.
+    String.raw`(\bauthorization\s*[:=]\s*(?:(?:bearer|basic|token|digest)\s+)?)\S+`,
+    // Bare scheme form: `Bearer <credential>` / `Basic <credential>`.
+    `((?:^|[\\s"'=(])(?:bearer|basic|token|digest)\\s+)(${CREDENTIAL_WORD})`,
+  ].join('|'),
+  'gi',
+);
+
+// URL userinfo that carries a password (`https://user:pw@host`). User-only
+// userinfo (`ssh://git@host`) is not a secret and stays readable.
+const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
+
+// A user flag whose operand has the `user:password` shape: curl's `-u` /
+// `--user` and its proxy twin `-U` / `--proxy-user`. The colon is required,
+// so an unrelated `-u` (`cp -u a b`, `sort -u names`) is left alone.
+const USER_FLAG_CREDENTIAL =
+  /((?:^|[\s"'])(?:-u|--user|--proxy-user|-U)[=\s]\s*"?)[^\s"']*:[^\s"']*/gi;
+
+// Secret-named values: `--token abc`, `SECRET_KEY=x`, `password: y`, and a
+// short bare `bearer abc` (the authorization header and the long bare
+// schemes are handled above).
+const KEYWORD_SECRET =
+  /((?:token|password|passwd|secret|api[-_]?key|bearer|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi;
+
 // The redaction half alone, never truncating (issue #316): an approval
 // dialog must show the whole command, so it redacts without cutting.
 export function redactSecrets(value: string): string {
-  return value.replace(
-    /((?:token|password|passwd|secret|api[-_]?key|bearer|authorization|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi,
-    '$1[REDACTED]',
+  return redactSecretShapes(
+    value
+      .replace(AUTH_CREDENTIAL, '$1$2[REDACTED]')
+      .replace(URL_USERINFO, `$1${REDACTED}@`)
+      .replace(USER_FLAG_CREDENTIAL, `$1${REDACTED}`)
+      .replace(KEYWORD_SECRET, `$1${REDACTED}`),
   );
 }
 

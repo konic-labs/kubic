@@ -17,6 +17,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  approvalCommandText,
+  summarizeCommand,
+} from '../../approval-display.js';
+import { summarizeRequest } from '../../approvals.js';
 import { OrchestratorBudgetError } from './budgets.js';
 import { buildOrchestratorRequest } from './request.js';
 import type { OrchestratorVerdict } from './routing.js';
@@ -382,6 +387,60 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
     const reason = verdict?.approved === false ? verdict.reason : '';
     expect(reason).toContain(TIMEOUT_REASON_MARKER);
     expect(reason).toContain('after 30ms');
+  });
+
+  it('writes no credential material into the ask JSON (issue #192)', async () => {
+    const dir = tmpDir();
+    const seat = createWorkerMailboxSeat({ dir, maxPendingMs: 30, pollMs: 5 });
+    // A non-command call: the seat forwards the lane's SUMMARY (the broad
+    // redactor path) as the ask's args, so a secret-shaped path lands in
+    // the mailbox JSON under <repo>/.kubic unless the redactor knows the
+    // shape. The command path is separately pinned below.
+    const verdict = seat({
+      key: 'lane-key',
+      capability: 'outside-write',
+      toolName: 'write',
+      summary: summarizeRequest('write', 'outside-write', {
+        path: '/tmp/ghp_abcdef123456',
+      }),
+    });
+    // The seat publishes synchronously before it waits for an answer.
+    const [pending] = readPendingWorkerAsks(dir);
+    expect(pending).toBeDefined();
+    const raw = readFileSync(
+      join(dir, ASKS_DIR, `${pending?.request.key ?? ''}.json`),
+      'utf8',
+    );
+    expect(raw).not.toContain('ghp_abcdef123456');
+    expect(pending?.request.summary).not.toContain('ghp_abcdef123456');
+    await expect(verdict).resolves.toMatchObject({ approved: false });
+
+    // A command-bearing ask forwards the display-redacted command; the
+    // summary is derived from it, so no token reaches the file either.
+    const command = 'curl -H "Authorization: Bearer sk-live-123" https://x';
+    const second = createWorkerMailboxSeat({
+      dir,
+      maxPendingMs: 30,
+      pollMs: 5,
+    });
+    const pendingCommand = second({
+      key: 'lane-key-2',
+      capability: 'network',
+      toolName: 'bash',
+      summary: summarizeCommand('network', command),
+      command: approvalCommandText(command),
+    });
+    const asks = readPendingWorkerAsks(dir);
+    const commandAsk = asks.find(
+      (entry) => entry.request.key !== pending?.request.key,
+    );
+    expect(commandAsk).toBeDefined();
+    const rawCommand = readFileSync(
+      join(dir, ASKS_DIR, `${commandAsk?.request.key ?? ''}.json`),
+      'utf8',
+    );
+    expect(rawCommand).not.toContain('sk-live-123');
+    await expect(pendingCommand).resolves.toMatchObject({ approved: false });
   });
 });
 

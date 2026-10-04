@@ -18,6 +18,7 @@ imports nothing internal — `scripts/dep-lint.mjs` rejects any
 | `license.ts` | Implemented | `KUBIC_LICENSE`, `KUBIC_LICENSE_FILE`, `formatVersionLine`, `formatLicenseDetail` |
 | `protocol.ts` | Pointer | Owner module open — reserves the contract location (no wire protocol yet) |
 | `secret-keys.ts` | Implemented | `isSecretEnvKey`, `redactSecretEnv`, `REDACTED_ENV_VALUE` — the one secret env-key classifier shared by the worker spawn env and the trajectory exporter (#359) |
+| `secret-shapes.ts` | Implemented | `containsSecretShape`, `findSecretShapes`, `redactSecretShapes`, `REDACTED_SECRET` — the shared secret-shape table (sk-/AKIA/ghp_/xox-/PEM/bearer) composed by the host audit backstop and the worker's `redactSecrets` (#57, #192) |
 | `policy.ts` | Pointer | Permission-policy model lives in `@kubic/agents` `policy.ts` (#15) |
 | `session.ts` | Pointer | Session shapes live in `@kubic/worker` `lane/session-store.ts` (#14) |
 | `index.ts` | Pointer | No barrel — import `presentation.js` / `license.js` directly |

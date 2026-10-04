@@ -29,6 +29,7 @@ import {
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
   redactReason,
+  redactSecrets,
 } from './interceptors.js';
 
 const openHarnesses: Harness[] = [];
@@ -601,6 +602,52 @@ describe('policy interceptor state lifetime (issue #397)', () => {
     expect(
       (await toolResults(second.root)).every((result) => !result.isError),
     ).toBe(true);
+  });
+});
+
+describe('secret redaction (issue #192)', () => {
+  // §36.1 rule 2: these strings reach the trajectory, the §60 ledger, the
+  // TUI and the orchestrator's mailbox ask JSON, so every probe must come
+  // back with no secret material. Probes are faux material only.
+  const PROBES: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ['Authorization: Bearer sk-live-123', ['sk-live-123']],
+    ['authorization: basic dXNlcjpwYXNzd29yZA==', ['dXNlcjpwYXNzd29yZA==']],
+    ['curl -H "Authorization: Bearer sk-live-123" https://x', ['sk-live-123']],
+    ['curl -u admin:hunter2 https://x', ['admin:hunter2', 'hunter2']],
+    ['curl --user admin:hunter2 https://x', ['admin:hunter2']],
+    ['curl --user=admin:hunter2 https://x', ['admin:hunter2']],
+    ['curl --proxy-user admin:hunter2 https://x', ['admin:hunter2']],
+    [
+      'git clone https://user:pw123456@github.com/x',
+      ['user:pw123456', 'pw123456'],
+    ],
+    ['echo ghp_abcdef123456', ['ghp_abcdef123456']],
+    ['echo AKIAFAUXTESTKEY00012', ['AKIAFAUXTESTKEY00012']],
+    ['rm --token abc123 /x', ['abc123']],
+  ];
+
+  it.each(PROBES)('redacts every secret in %s', (probe, secrets) => {
+    const out = redactSecrets(probe);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  it('keeps ordinary flags, prose and user-only URLs readable', () => {
+    for (const text of [
+      'cp -u a b',
+      'sort -u names.txt',
+      'ssh://git@github.com/x',
+      'echo user@example.com',
+    ]) {
+      expect(redactSecrets(text), text).toBe(text);
+    }
+  });
+
+  it('redacts block reasons and approval summaries through the same path', () => {
+    const reason = redactReason(
+      'network command blocked: curl -H "Authorization: Bearer sk-live-123" https://x',
+    );
+    expect(reason).not.toContain('sk-live-123');
+    expect(reason).toContain('[REDACTED]');
   });
 });
 

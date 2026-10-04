@@ -2146,6 +2146,25 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     bootPosture.fullAccess = next.fullAccess;
     bootPosture.enabledAt = next.enabledAt;
     bootPosture.enabledBy = next.enabledBy;
+    // The §60 row for the operator's own change, through the same row shapes
+    // the CLI paths write (one row per flip, in order).
+    appendToLedger(
+      ledgerDir,
+      enabled
+        ? fullAccessEnabledAudit({
+            sessionId: auditSessionId,
+            command: by,
+            workspace: input.workspace,
+            mode: 'solo',
+          })
+        : fullAccessDisabledAudit({
+            sessionId: auditSessionId,
+            command: by,
+            workspace: input.workspace,
+            mode: 'solo',
+          }),
+      input.onAuditError,
+    );
     return next;
   };
   // A posture.json change made DURING the session (issue #325) is refused:

@@ -163,9 +163,15 @@ describe('the in-session full-access toggle (issue #309)', () => {
     expect((await installed.ask(DESTRUCTIVE)).approved).toBe(true);
     expect(asks).toBe(1);
 
-    // Enable: the live posture, the predicate and the file all move.
+    // Enable: the live posture, the predicate, the file and the §60 row all
+    // move (the row names the action, in order).
     installed.setFullAccess?.(true, 'kubic tui /approvals on');
     expect(installed.posture.fullAccess).toBe(true);
+    expect(
+      readAuditLedger(auditLedgerDir(workspace))
+        .filter((record) => record.what === 'posture:full-access')
+        .map((record) => record.posture),
+    ).toEqual(['full-access']);
     expect(installed.approvalsSkipped()).toBe(true);
     expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
       fullAccess: true,
@@ -188,6 +194,11 @@ describe('the in-session full-access toggle (issue #309)', () => {
     // DIFFERENT command, because an answered call latches for the session.
     installed.setFullAccess?.(false, 'kubic tui /approvals off');
     expect(installed.approvalsSkipped()).toBe(false);
+    expect(
+      readAuditLedger(auditLedgerDir(workspace))
+        .filter((record) => record.what.startsWith('posture:'))
+        .map((record) => record.what),
+    ).toEqual(['posture:full-access', 'posture:approvals']);
     expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
       fullAccess: false,
     });

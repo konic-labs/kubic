@@ -46,6 +46,7 @@ import {
   fullAccessInForceWarning,
   type InstalledSoloPolicy,
   installSoloPolicy,
+  type SessionFullAccessGrant,
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
@@ -656,6 +657,12 @@ export interface TuiLaneBoot {
   // Issue #308: warnings to print on stderr before the alt-screen opens
   // (the full-access grant/in-force warning).
   notices?: string[];
+  // Issue #309 (§41.4): the in-session full-access toggle. Writes
+  // posture.json and one §60 row through the same host helpers the CLI
+  // paths use and flips the INSTALLED policy's live posture, so the very
+  // next challenged call follows and the indicator moves in one frame.
+  // Absent (viewer boots) means the toggle refuses by name.
+  setFullAccess?: (enabled: boolean) => SessionFullAccessGrant;
   // Issue #305: `/resume`'s rows — the sessions store this boot belongs to,
   // newest first. Absent (injected boots) means `/resume` refuses by name.
   listSessions?: () => Promise<readonly TuiSessionChoice[]>;
@@ -1438,6 +1445,22 @@ export async function bootTuiLane(
         }));
       },
       cwd: env.cwd,
+      // Issue #309: the toggle's host path. `installed.setFullAccess` flips
+      // the live posture the ask reads and writes posture.json + the §60
+      // row; the returned grant carries the warning the caller reports.
+      setFullAccess: (enabled: boolean): SessionFullAccessGrant => {
+        const command = `tui /approvals ${enabled ? 'on' : 'off'}`;
+        installed.setFullAccess?.(enabled, `kubic ${command}`);
+        return enabled
+          ? {
+              posture: installed.posture,
+              warning: `full access enabled for session ${id} — every challenged call runs without asking`,
+            }
+          : {
+              posture: installed.posture,
+              warning: `full-access revoked for session ${id} — every challenged call asks again`,
+            };
+      },
       reconcile: () => {
         reconciliation?.sweep();
       },
@@ -2936,6 +2959,8 @@ export async function runTuiCommand(
   let cycleThinkingForLoop: (() => void) | undefined;
   // Issue #305: Ctrl-P's palette, defined with the submit path below.
   let paletteForLoop: (() => void) | undefined;
+  // Issue #309: Alt+A's full-access toggle, defined with the submit path.
+  let fullAccessForLoop: (() => void) | undefined;
   // The working indicator animates while a turn runs.
   let spinner: ReturnType<typeof setInterval> | undefined;
   const stopSpinner = (): void => {
@@ -3203,6 +3228,10 @@ export async function runTuiCommand(
       }
       if (routed.palette === true) {
         paletteForLoop?.();
+        return { consume: true };
+      }
+      if (routed.fullAccess === true) {
+        fullAccessForLoop?.();
         return { consume: true };
       }
       if (routed.steer !== undefined) {
@@ -3497,6 +3526,26 @@ export async function runTuiCommand(
             if (!stopped) screen?.render();
             return 'accepted';
           }
+          case 'approvals': {
+            const argument = command.argument.trim().toLowerCase();
+            if (argument === '') {
+              const on = boot.approvalsSkipped?.() ?? boot.fullAccess === true;
+              app.setEditorFooter(
+                on
+                  ? 'approvals: full access ON for this session'
+                  : 'approvals: enforced — challenged calls ask',
+              );
+              if (!stopped) screen?.render();
+              return 'accepted';
+            }
+            if (argument === 'on') return requestFullAccess();
+            if (argument === 'off') return applyFullAccess(false);
+            app.setEditorFooter(
+              `approvals: expected 'on' or 'off' (got '${command.argument}')`,
+            );
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
           case 'diff': {
             app.openPanel('diff');
             app.setEditorFooter('diff: panel open (Ctrl-O closes)');
@@ -3745,6 +3794,73 @@ export async function runTuiCommand(
         if (!stopped) screen?.render();
       };
       paletteForLoop = openPalette;
+
+      // Issue #309 (§41.4, §80): the in-session full-access toggle. The host
+      // path writes posture.json + one §60 row and flips the INSTALLED
+      // policy's live posture, so the next challenged call follows; the
+      // indicator is re-read from the same predicate in this frame.
+      const applyFullAccess = (enabled: boolean): TuiSubmitOutcome => {
+        const setFullAccess = boot.setFullAccess;
+        if (setFullAccess === undefined) {
+          app.setEditorFooter(
+            'approvals: this session cannot change its posture',
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        try {
+          const grant = setFullAccess(enabled);
+          syncPosture();
+          app.appendNotice([grant.warning]);
+          app.setEditorFooter(
+            enabled
+              ? 'approvals: full access ON for this session — every challenged call runs without asking'
+              : 'approvals: enforced again — the next challenged call asks',
+          );
+        } catch (error) {
+          app.setEditorFooter(
+            `approvals: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (!stopped) screen?.render();
+        return 'accepted';
+      };
+      // Enabling asks first (the dialog names the consequence); disabling is
+      // immediate. The dialog accepts only its deliberate key.
+      const requestFullAccess = (): TuiSubmitOutcome => {
+        if (stopped) return 'refused';
+        const on = boot.approvalsSkipped?.() ?? boot.fullAccess === true;
+        if (on) return applyFullAccess(false);
+        const opened = app.openConfirm({
+          title: 'enable full access for this session?',
+          body: [
+            'every challenged call in this session will run without asking',
+            'the change is written to posture.json and one audit row',
+          ],
+          confirmKey: 'ctrl+s',
+          confirmLabel: 'Ctrl-S',
+          onConfirm: () => {
+            applyFullAccess(true);
+          },
+          onCancel: () => {
+            if (stopped) return;
+            app.setEditorFooter('approvals: unchanged');
+            screen?.render();
+          },
+        });
+        if (!opened) {
+          app.setEditorFooter(
+            'approvals: the confirmation needs the overlay — this terminal is too narrow',
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        if (!stopped) screen?.render();
+        return 'accepted';
+      };
+      fullAccessForLoop = () => {
+        requestFullAccess();
+      };
 
       // Issue #334: one accepted prompt → one turn on its driver. A busy
       // Enter starts a SECOND run while the first is still in flight (the

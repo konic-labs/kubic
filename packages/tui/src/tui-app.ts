@@ -56,6 +56,7 @@ import {
   APPROVAL_PAGE_KEY,
   ApprovalView,
   approvalFitsOverlay,
+  approvalOverlayOptions,
   approvalOverlayRows,
   approvalOverlayWidth,
   showApprovalOverlay,
@@ -191,6 +192,9 @@ export interface TuiInputResult {
   // Issue #305: Ctrl-P opens the command palette (the loop supplies the
   // registry rows and dispatches the chosen command).
   readonly palette?: boolean;
+  // Issue #309: Alt+A toggles full access for this session (the loop owns
+  // the confirmation, the posture write and the indicator).
+  readonly fullAccess?: boolean;
 }
 
 // Issue #334: what the loop did with a submitted prompt. `queued` means the
@@ -242,6 +246,9 @@ const GLOBAL_KEYS: ReadonlySet<string> = new Set([
   // Issue #305: the command palette. Ctrl-P is free (the editor claims
   // ctrl+b/f/a/e/]/d/w/u/k/y/- and the alt-screen the ctrl+arrow pair).
   'ctrl+p',
+  // Issue #309: the full-access toggle. Alt+A is free (the editor claims
+  // alt+b/f/d/y; the alt-screen the alt+arrow pair).
+  'alt+a',
 ]);
 
 function isGlobalKey(keyId: string | undefined): boolean {
@@ -273,6 +280,21 @@ export interface TuiPickerRow {
 export interface TuiPickerOptions {
   readonly rows: readonly TuiPickerRow[];
   readonly onSelect: (value: string) => void;
+  readonly onCancel?: () => void;
+}
+
+// Issue #309: the confirmation dialog (the full-access toggle's "are you
+// sure?"). The accept key is explicit and deliberate — never a bare
+// printable letter — and every other key is swallowed while it shows, so
+// text typed ahead in the editor can never accept it.
+export interface TuiConfirmOptions {
+  readonly title: string;
+  readonly body: readonly string[];
+  /** The key id that accepts (`'ctrl+s'`); everything else is ignored. */
+  readonly confirmKey: string;
+  /** Its label for the hint row (`'Ctrl-S'`). */
+  readonly confirmLabel: string;
+  readonly onConfirm: () => void;
   readonly onCancel?: () => void;
 }
 
@@ -386,6 +408,11 @@ export interface TuiApp {
   }): void;
   // Issue #305: the editor's autocomplete (the registry's `/` commands).
   setAutocomplete(provider: AutocompleteProvider): void;
+  // Issue #309: the confirmation dialog (the full-access toggle). Returns
+  // false when this boot has no overlay seat.
+  openConfirm(options: TuiConfirmOptions): boolean;
+  /** Whether a confirmation is showing (a public accessor for embedders). */
+  isConfirmOpen(): boolean;
   // Issue #334 (review): put a refused draft back in the editor, so a busy
   // orchestrator run (or a `/model` typed mid-turn) never eats the text the
   // operator typed.
@@ -838,6 +865,41 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     const columns = overlayHost?.terminal?.columns;
     return columns === undefined || columns >= MODEL_PICKER_MIN_WIDTH;
   };
+  // Issue #309: the confirmation dialog's body. Presentation only — the app
+  // owns the keys, the loop owns what the verdict does.
+  const renderConfirm = (
+    options: TuiConfirmOptions,
+    width: number,
+  ): string[] => {
+    const theme = tuiTheme();
+    const w = Math.max(1, width);
+    const lines = [
+      theme.accentBold(truncateToWidth(options.title, w, '…')),
+      ...options.body.map((line) => truncateToWidth(theme.muted(line), w, '…')),
+      '',
+      theme.dim(`[${options.confirmLabel}] confirm · [Esc] cancel`),
+    ];
+    return lines;
+  };
+  let confirmOverlay:
+    | {
+        readonly handle: ApprovalOverlayHandle;
+        readonly options: TuiConfirmOptions;
+      }
+    | undefined;
+  const closeConfirm = (verdict: 'confirm' | 'cancel'): void => {
+    const open = confirmOverlay;
+    confirmOverlay = undefined;
+    if (open === undefined) return;
+    try {
+      open.handle.unfocus({ target: editor });
+      open.handle.hide();
+    } catch {
+      // A torn-down overlay is already gone; the state above is the truth.
+    }
+    if (verdict === 'confirm') open.options.onConfirm();
+    else open.options.onCancel?.();
+  };
   const openPickerOverlay = (options: TuiPickerOptions): boolean => {
     if (overlayHost === undefined || !pickerFits()) return false;
     closeModelPicker();
@@ -999,6 +1061,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         panelStep(keyId === 'alt+down' ? 1 : -1);
         return { quit: false, consumed: true, cancel: false };
       }
+      // Issue #309: a shown confirmation owns every key. Only its explicit
+      // accept key confirms; Esc/Ctrl-C cancel; anything else — a bare
+      // printable letter typed ahead, a global toggle — is swallowed.
+      if (confirmOverlay !== undefined) {
+        if (keyId === confirmOverlay.options.confirmKey) {
+          closeConfirm('confirm');
+        } else if (keyId === 'escape' || keyId === 'ctrl+c') {
+          closeConfirm('cancel');
+        }
+        return { quit: false, consumed: true, cancel: false };
+      }
       // Issue #328: the picker is modal while it shows — arrows move, typing
       // filters, Enter selects, Esc/Ctrl-C cancel (Pi's own list bindings).
       // Global keys other than the cancel pair stay swallowed so a stray
@@ -1087,6 +1160,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // the loop owns the list and the dispatch.
       if (keyId === 'ctrl+p') {
         return { quit: false, consumed: true, cancel: false, palette: true };
+      }
+      // Issue #309: Alt+A asks the loop to toggle full access (the loop
+      // confirms before enabling and writes the posture).
+      if (keyId === 'alt+a') {
+        return {
+          quit: false,
+          consumed: true,
+          cancel: false,
+          fullAccess: true,
+        };
       }
       // Issue #328: Alt+M opens the model picker; Alt+T cycles the thinking
       // level. Both are classified here and acted on by the loop.
@@ -1234,6 +1317,21 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     },
     openPicker: (options: TuiPickerOptions): boolean =>
       openPickerOverlay(options),
+    openConfirm: (options: TuiConfirmOptions): boolean => {
+      if (overlayHost === undefined) return false;
+      closeConfirm('cancel');
+      const view: Component = {
+        render: (width: number): string[] => renderConfirm(options, width),
+        invalidate: (): void => {},
+      };
+      confirmOverlay = {
+        handle: overlayHost.showOverlay(view, approvalOverlayOptions()),
+        options,
+      };
+      overlayHost.requestRender?.();
+      return true;
+    },
+    isConfirmOpen: (): boolean => confirmOverlay !== undefined,
     isModelPickerOpen: (): boolean => modelPicker !== undefined,
     setAutocomplete: (provider: AutocompleteProvider): void => {
       editor.setAutocomplete(provider);

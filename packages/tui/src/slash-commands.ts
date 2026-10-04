@@ -68,6 +68,16 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'session.attach',
   },
   {
+    // No §66 command: the posture toggle is a session decision, not a
+    // response to an approval request (the vocabulary's `approval.respond`
+    // needs a request id this has none of).
+    name: 'approvals',
+    summary: 'toggle full access for this session',
+    usage: '/approvals [on|off]',
+    keys: 'Alt+A',
+    argumentHint: 'on|off',
+  },
+  {
     name: 'diff',
     summary: 'the current run’s changes',
     usage: '/diff',

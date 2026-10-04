@@ -73,6 +73,7 @@ describe.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
       // (the shipped table writes them with the modifier first), and
       // Ctrl-X for the rest.
       const ALT_NAMES: Readonly<Record<string, string>> = {
+        'alt+a': 'Alt+A',
         'alt+enter': 'Alt+Enter',
         'alt+m': 'Alt+M',
         'alt+t': 'Alt+T',

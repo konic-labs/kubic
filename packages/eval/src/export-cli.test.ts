@@ -484,3 +484,161 @@ describe('export command (issue #78)', () => {
     expect(malformed.errs[0]).toMatch(/^error: \[/);
   });
 });
+
+describe('export --dataset (issue #270)', () => {
+  // The batch mode's filesystem seam over an in-memory store: listing
+  // resolves the operand, the JSONL is appended line by line.
+  function datasetDeps(store: Record<string, string>) {
+    const written: Record<string, string> = {};
+    return {
+      written,
+      deps: {
+        readFile: (path: string): string => {
+          const content = store[path];
+          if (content === undefined) throw new Error(`ENOENT: ${path}`);
+          return content;
+        },
+        listDir: (path: string) =>
+          path === 'traj'
+            ? Object.keys(store)
+                .filter((key) => key.startsWith('traj/'))
+                .map((key) => ({
+                  name: key.slice('traj/'.length),
+                  isDirectory: false,
+                }))
+            : (() => {
+                throw new Error(`ENOENT: ${path}`);
+              })(),
+        writeFile: (path: string, content: string): void => {
+          written[path] = content;
+        },
+        appendFile: (path: string, content: string): void => {
+          written[path] = (written[path] ?? '') + content;
+        },
+      },
+    };
+  }
+
+  it('refuses --dataset without --type/--out, or combined with --trajectory/--against', async () => {
+    const cases: Array<[ExportCommandOptions, string]> = [
+      [
+        { dataset: 'traj', out: 'out.jsonl' },
+        '--dataset needs --type (sft|dpo|grpo|preference|tooluse|coding)',
+      ],
+      [{ dataset: 'traj', type: 'sft' }, '--dataset needs --out <file.jsonl>'],
+      [
+        {
+          dataset: 'traj',
+          type: 'sft',
+          out: 'out.jsonl',
+          trajectory: 't.json',
+        },
+        '--dataset takes a directory or glob — --trajectory belongs to single-file mode',
+      ],
+      [
+        { dataset: 'traj', type: 'sft', out: 'out.jsonl', against: 'b.json' },
+        '--dataset takes a directory or glob — --against belongs to single-file mode',
+      ],
+    ];
+    for (const [options, message] of cases) {
+      const o = out();
+      const exit = await runExportCommand(options, {
+        readFile: () => {
+          throw new Error('a refused invocation must not read files');
+        },
+        out: o.write,
+        err: o.err,
+      });
+      const label = JSON.stringify(options);
+      expect(exit, label).toBe(2);
+      expect(o.lines, label).toEqual([]);
+      expect(o.errs, label).toEqual([`error: ${message}`]);
+    }
+  });
+
+  it('refuses dataset mode without the filesystem deps by name', async () => {
+    const o = out();
+    const exit = await runExportCommand(
+      { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
+      { readFile: () => '', out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(2);
+    expect(envelope.error.code).toBe('dataset-unsupported');
+  });
+
+  it('streams the dataset into the JSONL and prints the manifest path', async () => {
+    const { deps, written } = datasetDeps({
+      'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
+      'traj/b.json': JSON.stringify(failing({ taskId: 'task-1' })),
+    });
+    const o = out();
+    const exit = await runExportCommand(
+      { dataset: 'traj', type: 'dpo', out: 'out.jsonl' },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(0);
+    expect(o.errs).toEqual([]);
+    expect(o.lines).toEqual([
+      'dataset: 1 record(s) from 2 file(s), 0 excluded, manifest: out.jsonl.manifest.json',
+    ]);
+    expect((written['out.jsonl'] ?? '').trimEnd().split('\n')).toHaveLength(1);
+    const manifest = JSON.parse(
+      written['out.jsonl.manifest.json'] as string,
+    ) as {
+      schema: string;
+      records: number;
+      files: number;
+      excluded: Record<string, number>;
+    };
+    expect(manifest.schema).toBe('dataset/1');
+    expect(manifest.records).toBe(1);
+    expect(manifest.files).toBe(2);
+    expect(manifest.excluded).toEqual({});
+  });
+
+  it('emits the manifest in the --json envelope', async () => {
+    const { deps } = datasetDeps({
+      'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
+      'traj/b.json': JSON.stringify(envFailureFixture()),
+    });
+    const o = out();
+    const exit = await runExportCommand(
+      { dataset: 'traj', type: 'preference', out: 'out.jsonl', json: true },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(0);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      type: string;
+      out: string;
+      manifest: {
+        records: number;
+        excluded: Record<string, number>;
+        provenance: { sessions: string[] };
+      };
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.exitCode).toBe(0);
+    expect(envelope.type).toBe('preference');
+    expect(envelope.out).toBe('out.jsonl');
+    expect(envelope.manifest.records).toBe(0);
+    expect(envelope.manifest.excluded).toEqual({ 'env-failure-excluded': 1 });
+    expect(envelope.manifest.provenance.sessions).toEqual(['sess-1']);
+  });
+});
+
+function envFailureFixture(): TrajectoryExport {
+  return makeExport({
+    status: 'failed',
+    failureCategory: 'tool_failed',
+    summary: 'tool exploded',
+  });
+}

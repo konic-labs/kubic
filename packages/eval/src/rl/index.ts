@@ -8,6 +8,22 @@ export {
   CODING_SCHEMA,
   validateCodingRecord,
 } from './coding.js';
+export type {
+  DatasetDirEntry,
+  DatasetErrorCode,
+  DatasetExclusion,
+  DatasetExportOptions,
+  DatasetFs,
+  DatasetManifest,
+  ExportDatasetType,
+} from './dataset.js';
+export {
+  DATASET_SCHEMA,
+  DATASET_TYPES,
+  DatasetError,
+  exportDataset,
+  resolveDatasetFiles,
+} from './dataset.js';
 export type { DpoBuild, DpoRecord, DpoValidation } from './dpo.js';
 export { buildDpoRecord, DPO_SCHEMA, validateDpoRecord } from './dpo.js';
 export type { GrpoCandidate, GrpoGroup, GrpoValidation } from './grpo.js';

@@ -1784,7 +1784,7 @@ A refused config also blocks the log-only tiers (`recorded` and
 `compare`): the command exits 1 before any tier runs, so the config has
 to be fixed first.
 
-## `kubic export (--trajectory <file> | --session <id>) [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--json]`
+## `kubic export (--trajectory <file> | --session <id> | --dataset <dir|glob>) [--type sft|dpo|grpo|preference|tooluse|coding] [--against <other.json>] [--out <file.jsonl>] [--json]`
 
 Inspects trajectory export files and exports RL dataset records from
 them. `--session <id>` stands for `--trajectory
@@ -1831,6 +1831,41 @@ otherwise. The exit code is:
 - 0 when the record was exported or the file described
 - 1 when the record failed to build or validate
 - 2 on a usage error or refusal
+
+### Batch mode: `--dataset <dir|glob> --type <t> --out <file.jsonl>`
+
+One directory (every `.json` it holds) or a basename glob (`traj/*.json`)
+of trajectory exports in, one JSONL of dataset records out, plus a
+manifest beside it (`<out>.manifest.json`). `--dataset` needs both
+`--type` and `--out`, and refuses `--trajectory`/`--against` (those
+belong to single-file mode).
+
+Pairing and grouping are automatic, and the same eligibility policy the
+single-file builders enforce applies:
+
+- `dpo` and `preference`: every pass×fail combination within one task id
+  *and* prompt — env failures, cross-boundary runs, missing preference
+  signals and prompt/task mismatches are excluded, never emitted.
+- `grpo`: one group per task id + prompt holding **every** candidate
+  (not capped at two).
+- `sft`, `tooluse`, `coding`: one record per trajectory.
+
+Files are read one at a time and each record is appended as it is built,
+so memory is bounded by one task group, not the dataset size. The output
+order is deterministic (sorted files, sorted groups).
+
+The manifest carries the schema version (`dataset/1`), the input count,
+the record count, exclusions **by tag** (`env-failure-excluded`,
+`cross-boundary-excluded`, `no-preference-signal-excluded`,
+`prompt-mismatch-excluded`, `no-counterpart-excluded`,
+`singleton-excluded`) with a file/tag/reason row each, and a provenance
+summary (distinct sessions, agents, worktrees and models). Text mode
+prints one `dataset: …` summary line; `--json` wraps the manifest in
+`{ok, exitCode, type, dataset, out, manifest}`.
+
+Exit codes: 0 exported; 1 a matched trajectory failed to parse or build
+(`dataset-invalid`, the file is named); 2 a usage error or an empty match
+(`dataset-empty`).
 
 ## `kubic cost [--session <id>] [--json]`
 

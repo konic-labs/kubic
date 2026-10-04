@@ -234,11 +234,20 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
       'kubic export --trajectory t.json',
       'kubic export --session 3f2a --type sft',
       'kubic export --trajectory a.json --type dpo --against b.json --json',
+      'kubic export --dataset traj/ --type dpo --out pairs.jsonl',
     ],
   )
     .option('--trajectory <file>', 'trajectory export file')
     .option('--session <id>', SESSION_TRAJECTORY_HELP)
     .option('--type <type>', `dataset record: ${DATASET_TYPES.join('|')}`)
+    .option(
+      '--dataset <dir|glob>',
+      'batch mode: every trajectory in a directory or glob',
+    )
+    .option(
+      '--out <file.jsonl>',
+      'batch mode: stream the dataset records into this JSONL file',
+    )
     .option(
       '--against <other.json>',
       'second trajectory for dpo|preference|grpo',

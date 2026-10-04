@@ -266,6 +266,8 @@ describe('analysis commands: generated help', () => {
         '--trajectory <file>',
         '--type <type>',
         '--against <other.json>',
+        '--dataset <dir|glob>',
+        '--out <file.jsonl>',
         '--json',
       ],
     };

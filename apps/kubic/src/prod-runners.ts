@@ -838,6 +838,20 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
         // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
+        // Issue #270: the batch mode's filesystem seam — listing resolves
+        // the --dataset directory/glob, the JSONL streams one line at a
+        // time, and the manifest lands beside it.
+        listDir: (path: string) =>
+          createNodeFileBridge(process.cwd())
+            .listDir(path)
+            .map((entry) => ({
+              name: entry.name,
+              isDirectory: entry.isDirectory,
+            })),
+        writeFile: (path: string, content: string) =>
+          createNodeFileBridge(process.cwd()).writeFile(path, content),
+        appendFile: (path: string, content: string) =>
+          createNodeFileBridge(process.cwd()).appendFile(path, content),
         ...report(),
       });
     },

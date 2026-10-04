@@ -2040,9 +2040,13 @@ export async function orchestrateDepsWithDefaults(
               ? {}
               : { KUBIC_MODEL_THINKING: info.thinking }),
             // §67 (issue #191): the worker's task — the capability grant the
-            // child's lane registers. Non-secret (tool names, worktree, the
+            // child's lane registers. ALWAYS written, cleared when this
+            // spawn has none (the KUBIC_BUDGET rule below): an ambient value
+            // inherited from an outer worker would otherwise be read by a
+            // child the manager handed no task, and its worktree check would
+            // fail the inner run. Non-secret (tool names, worktree, the
             // objective it already runs), the same class as the pins above.
-            ...(taskFile === undefined ? {} : { KUBIC_TASK_FILE: taskFile }),
+            KUBIC_TASK_FILE: taskFile ?? '',
             ...approvalsChildEnv(
               workerSession,
               info?.sessionId ?? orchestratorSessionId ?? 'orch',
@@ -2559,6 +2563,11 @@ export async function orchestrateDepsWithDefaults(
             // §67 (issue #191): the resolver's task — explicit toolNames, so
             // it never falls back to the child's default writer set.
             KUBIC_TASK_FILE: resolverTaskFile,
+            // No per-spawn budget is resolved for a resolver: cleared rather
+            // than inherited from an outer worker (the KUBIC_BUDGET rule,
+            // issue #208), so it cannot enforce a limit nobody configured
+            // for it.
+            KUBIC_BUDGET: '',
           },
           cmd:
             options.resolverEntry?.cmd ??

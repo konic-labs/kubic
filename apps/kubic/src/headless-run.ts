@@ -1404,9 +1404,16 @@ async function runHeadlessPromptImpl(
     // physical path is compared (the env's own realpath), so a symlinked
     // worktree root is the same worktree.
     if (task !== undefined) {
+      // The compare needs an UNCONFINED physical path: the env's own
+      // `realpath` confines to `env.cwd` first, so a same-tree path spelled
+      // differently (a logical root against a physical cwd) would throw and
+      // read as a mismatch — a false refusal, not a normalized compare. The
+      // bridge resolves absolute paths without confinement; a path that
+      // cannot be resolved compares as null and is reported.
+      const unconfined = createNodeFileBridge(env.cwd);
       const physical = (path: string): string | null => {
         try {
-          return env.fs.realpath?.(path) ?? path;
+          return unconfined.realPath?.(path) ?? path;
         } catch {
           return null;
         }

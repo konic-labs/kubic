@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
+import { buildAgentTask } from '../../agents/src/task.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
@@ -100,7 +101,7 @@ function roleText(name: string, tools: string[], prompt: string): string {
 // A repo whose COMMITTED implementer document grants [read, ls]; the caller
 // may then edit the working tree to a different set (uncommitted) — exactly
 // the parent-composes-from-the-working-tree case #191 describes.
-async function initRepo(committedTools: string[]): Promise<string> {
+async function initRepo(committedTools: string[] | null): Promise<string> {
   const root = scratchRoot('kubic-orch-191-');
   execFileSync('git', ['init', '-b', 'main'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'task@kubic.dev'], {
@@ -109,11 +110,13 @@ async function initRepo(committedTools: string[]): Promise<string> {
   execFileSync('git', ['config', 'user.name', 'kubic task'], { cwd: root });
   execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
   writeFileSync(join(root, 'base.txt'), 'base\n');
-  mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
-  writeFileSync(
-    join(root, '.kubic', 'roles', 'implementer.md'),
-    roleText('implementer', committedTools, 'You are the implementer.'),
-  );
+  if (committedTools !== null) {
+    mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'roles', 'implementer.md'),
+      roleText('implementer', committedTools, 'You are the implementer.'),
+    );
+  }
   execFileSync('git', ['add', '-A'], { cwd: root });
   execFileSync('git', ['commit', '-m', 'base + implementer'], { cwd: root });
   return root;
@@ -300,5 +303,97 @@ describe('prod orchestrate path: the worker gets its §67 task (issue #191)', ()
     expect(code).toBe(1);
     expect(lines.join('\n')).toMatch(/code=task_refused/);
     expect(lines.join('\n')).toMatch(/toolNames must be a non-empty/);
+  });
+});
+
+describe('prod orchestrate path: an inherited task never leaks (issue #191 review)', () => {
+  it('clears KUBIC_TASK_FILE when the run hands no task', async () => {
+    // An outer worker's env carries its own KUBIC_TASK_FILE (the allowlist
+    // passes it); a repo with no role documents means the inner plan has no
+    // assignment, so no task is written — the child must be told "none",
+    // never the outer file (whose worktree check would fail the inner run).
+    const root = await initRepo(null);
+    vi.stubEnv('KUBIC_TASK_FILE', join(root, 'outer-task.json'));
+    const { dump, code, lines } = await runOne(root);
+    expect(code, lines.join('\n')).toBe(0);
+    expect(dump.taskFile).toBe('');
+  });
+});
+
+describe('prod orchestrate path: the child refuses a bad task (issue #191)', () => {
+  async function childWithTask(
+    taskFile: string | undefined,
+    cwd: string,
+  ): Promise<{ terminus: string; summary: string }> {
+    const sessionsRoot = scratchRoot('kubic-orch-191-bad-');
+    if (taskFile === undefined) delete process.env.KUBIC_TASK_FILE;
+    else vi.stubEnv('KUBIC_TASK_FILE', taskFile);
+    const result = await runHeadlessPrompt(
+      'do the thing',
+      {},
+      {
+        sessionsRoot,
+        models: fauxModels(),
+        env: new NodeExecutionEnv(cwd),
+      },
+    );
+    return { terminus: result.terminus, summary: result.summary };
+  }
+
+  it('fails closed on an unreadable, malformed or invalid task file', async () => {
+    const cwd = scratchRoot('kubic-orch-191-cwd-');
+    const missing = join(cwd, 'nope.json');
+    const malformed = join(cwd, 'malformed.json');
+    writeFileSync(malformed, '{');
+    const invalid = join(cwd, 'invalid.json');
+    writeFileSync(
+      invalid,
+      JSON.stringify({
+        taskId: 't1',
+        parentSessionId: 'sess',
+        role: 'implementer',
+        objective: 'ship it',
+        worktree: 'relative/path',
+        workspaceMode: 'worktree',
+        toolNames: ['read'],
+        budget: {},
+      }),
+    );
+    const cases: Array<{ path: string; match: RegExp }> = [
+      { path: missing, match: /is unreadable/ },
+      { path: malformed, match: /is not valid JSON/ },
+      { path: invalid, match: /refused: .*worktree must be an absolute path/ },
+    ];
+    for (const entry of cases) {
+      const result = await childWithTask(entry.path, cwd);
+      expect(result.terminus, entry.path).toBe('failed');
+      expect(result.summary, entry.path).toMatch(entry.match);
+    }
+  });
+
+  it('fails closed when the task names a different worktree', async () => {
+    const cwd = scratchRoot('kubic-orch-191-cwd-');
+    const other = scratchRoot('kubic-orch-191-other-');
+    const built = buildAgentTask({
+      taskId: 'sess:alpha',
+      parentSessionId: 'sess',
+      role: 'implementer',
+      objective: 'ship it',
+      worktree: other,
+      toolNames: ['read'],
+    });
+    expect(built.valid).toBe(true);
+    const file = join(cwd, 'task.json');
+    writeFileSync(file, JSON.stringify(built.valid ? built.task : {}));
+    const result = await childWithTask(file, cwd);
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toMatch(/names worktree/);
+    expect(result.summary).toMatch(/but this run is in/);
+  });
+
+  it('treats an empty KUBIC_TASK_FILE as no task (an inner run inherits none)', async () => {
+    const cwd = scratchRoot('kubic-orch-191-cwd-');
+    const result = await childWithTask('', cwd);
+    expect(result.terminus).toBe('completed');
   });
 });

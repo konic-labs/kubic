@@ -8,17 +8,18 @@
 
 `@kubic/worker` is the agent runtime: solo lane, tool adaptation, Pi
 harness wiring, budgets, compaction, and the worker → host result
-payload. All Pi imports flow through the single choke point
+payload. All Pi imports flow through the worker Pi seam
 `src/pi-boundary.ts` (§65) — `scripts/dep-lint.mjs` rejects
-`@earendil-works/*` imports everywhere else, and CODEOWNERS flags every
-diff touching the boundary for maintainer review.
+`@earendil-works/*` imports everywhere else in the worker (the TUI owns
+the other seam, `packages/tui/src/tui-boundary.ts`), and CODEOWNERS flags
+every diff touching the boundary for maintainer review.
 
 ## Public API (`packages/worker/src`)
 
 | Module | Exports |
 | --- | --- |
 | `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
-| `pi-boundary.ts` | Sole Pi seam: harness types (`AgentLane`, `AgentHarnessTool`, `Context`, `DriveOutcome`, `Events`, `HarnessEvent`, `Session`, `SessionRepo`, `UsageRow`, …) + values (`AgentHarness`, `BACKGROUND_CONTEXT`, `MemorySessionRepo`, `JsonlSessionRepo`, `ok`, `err`, `FileError`); model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review |
+| `pi-boundary.ts` | Worker Pi seam (§65, [#197](https://github.com/konic-labs/kubic/issues/197); #391 moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
 | `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions` (`modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`model`: the model the lane actually runs), `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `EventSource`, `toKubicLaneEvent`, `attachLaneEvents`, `watchLane` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
@@ -388,7 +389,7 @@ unfinished launch never claims a budget pass it did not measure.
 ```text
 core + exec + agents ──→ @kubic/worker ──→ host
                               ↑
-                    pi-boundary.ts (sole Pi choke point)
+                    pi-boundary.ts (worker Pi seam, §65)
 ```
 
 Back to the [docs index](../README.md).

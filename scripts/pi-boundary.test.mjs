@@ -60,6 +60,26 @@ function fixturePackageJson(deps) {
   return dir;
 }
 
+// Issue #197: every `export` statement in either Pi boundary file must be
+// preceded by the JUSTIFICATION block the file's own template requires.
+// Returns the 1-based line numbers of unjustified exports.
+function unjustifiedExports(source) {
+  const bad = [];
+  const lines = source.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^export\b/.test(lines[i])) continue;
+    let j = i - 1;
+    while (j >= 0 && lines[j].trim() === '') j--;
+    const block = [];
+    while (j >= 0 && lines[j].startsWith('//')) {
+      block.unshift(lines[j]);
+      j--;
+    }
+    if (!block.some((line) => line.includes('JUSTIFICATION'))) bad.push(i + 1);
+  }
+  return bad;
+}
+
 describe('pi pinning + boundary (issue #4)', () => {
   it('worker pins all four Pi deps exactly and drops the removed three', () => {
     const pkg = JSON.parse(
@@ -134,9 +154,42 @@ describe('pi pinning + boundary (issue #4)', () => {
     const file = join(ROOT, 'packages', 'worker', 'src', 'pi-boundary.ts');
     assert.ok(existsSync(file), 'missing packages/worker/src/pi-boundary.ts');
     const src = readFileSync(file, 'utf8');
-    for (const needle of ['ExecutionEnv', 'before_tool', 'JUSTIFICATION']) {
+    for (const needle of ['ExecutionEnv', 'beforeTool', 'JUSTIFICATION']) {
       assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
     }
+  });
+
+  it('both Pi boundary files justify every export (issue #197)', () => {
+    for (const rel of [
+      join('packages', 'worker', 'src', 'pi-boundary.ts'),
+      join('packages', 'tui', 'src', 'tui-boundary.ts'),
+    ]) {
+      const src = readFileSync(join(ROOT, rel), 'utf8');
+      assert.deepEqual(
+        unjustifiedExports(src),
+        [],
+        `${rel}: export statements need a JUSTIFICATION block`,
+      );
+    }
+  });
+
+  it('the justification gate fails a fixture export without one (#197)', () => {
+    assert.deepEqual(unjustifiedExports('export const x = 1;\n'), [1]);
+    assert.deepEqual(unjustifiedExports('// note\nexport const x = 1;\n'), [2]);
+    assert.deepEqual(
+      unjustifiedExports(
+        '// JUSTIFICATION:\n//   seam: x\nexport const x = 1;\n',
+      ),
+      [],
+    );
+    // Blank lines between the block and the export are fine; a second
+    // export after another statement needs its own block.
+    assert.deepEqual(
+      unjustifiedExports(
+        '// JUSTIFICATION:\n\nexport const x = 1;\nexport const y = 2;\n',
+      ),
+      [4],
+    );
   });
 
   it('pi-boundary.ts itself may import Pi', () => {

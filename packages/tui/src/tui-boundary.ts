@@ -19,6 +19,15 @@ export type {
   Terminal,
   TUI,
 } from '@earendil-works/pi-tui';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui values (Editor, Markdown, ScrollView, Text,
+//     VStack, TuiAltScreen, ProcessTerminal, key helpers, width helpers)
+//   used by: packages/tui/src/* (the rendered views and the headless
+//     snapshot tests; issue #403 re-verifies them on pi-tui 1.0.2)
+//   why Pi has no alternative: these are the upstream implementations of the
+//     layout and render primitives above; Kubic re-implementing them would
+//     fork terminal handling, wrapping and key parsing (§16)
+//   review: issue #197 (folded into #391)
 export {
   CURSOR_MARKER,
   Editor,

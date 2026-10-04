@@ -222,6 +222,11 @@ An agent-authored create (`op: 'create'`, no before-hash, not
 removes the file when its content still matches the recorded after-hash,
 reports `already undone` when it is already absent, and journals a
 `kubic-undo` delete carrying the removed content so `--step` redoes it.
+Both guards confine the PATH: `resolve` + relative containment, plus a refusal
+when any parent component is a symlink (`entry path crosses a symlink`). The
+target's own link-ness is not a refusal — the restore's rename replaces the
+link itself instead of writing through it, and `probeFileState` (a verdict
+input, not a guard) hashes what the path resolves to.
 
 Baseline walk ignores (issue #116): `captureBaseline` honors every
 `.gitignore` on the way down, not just the root's. Rules accumulate per

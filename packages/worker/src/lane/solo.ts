@@ -162,11 +162,9 @@ export interface SoloPolicyOptions {
   modelAllowed?: (provider: string, modelId: string) => boolean;
 }
 
-// Harness compaction budget overrides. keepRecentTokens mirrors Pi's
-// DEFAULT_COMPACTION_SETTINGS (20000): Kubic owns the trigger reserve,
-// Pi owns the mechanism (checkpoints, summarization, spill files).
-export const SOLO_KEEP_RECENT_TOKENS = 20000;
-
+// Harness compaction budget overrides. keepRecentTokens defaults inside
+// compaction.ts (#399's soloCompactionSettings), so Kubic keeps ONE home for
+// the 20000 figure.
 export interface SoloCompactionOptions {
   enabled?: boolean;
   reserveTokens?: number;

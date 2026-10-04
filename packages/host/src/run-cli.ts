@@ -18,8 +18,10 @@ import {
   EXIT_WORKSPACE,
 } from '../../core/src/cli/exit-codes.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
-import { settleTerminalStatus } from '../../worker/src/lane/settle.js';
-import type { TerminalStatus } from '../../worker/src/pi-boundary.js';
+import {
+  type LaneTerminalStatus,
+  settleTerminalStatus,
+} from '../../worker/src/lane/settle.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
 export const RUN_EXIT_OK = EXIT_OK;
@@ -69,7 +71,7 @@ export function mapTerminusToExitCode(terminus: RunTerminusKind): number {
 // when the lane itself yields a classified error — until then they are
 // covered by the contract tests, not by live runs.
 export function mapLaneOutcomeToTerminus(
-  status: TerminalStatus,
+  status: LaneTerminalStatus,
   error?: OperationErrorLike,
 ): RunTerminusKind {
   if (status === 'completed') return 'completed';

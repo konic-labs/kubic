@@ -19,7 +19,7 @@ import {
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { bootTuiLane } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
-import { driveToSettled } from '../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -86,7 +86,7 @@ function modelsWith(
 
 function destructiveThenDone(): MutableModels {
   return modelsWith([
-    fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf build' })]),
+    fauxToolUse([fauxToolCall('bash', { command: 'rm -rf build' })]),
     fauxAssistantMessage('done'),
   ]);
 }
@@ -149,22 +149,18 @@ describe('config route=deny reaches kubic tui (issue #230)', () => {
     try {
       const loop = boot.loop;
       if (loop === undefined) throw new Error('the boot carries no loop');
-      const admission = await loop.accept(
-        'clean the build dir',
-        BACKGROUND_CONTEXT,
-      );
-      if (!admission.ok) throw new Error('admission refused');
-      await driveToSettled(
-        loop.lane,
-        admission.value.operationId,
-        BACKGROUND_CONTEXT,
-        { sleep: async () => new Promise((r) => setTimeout(r, 5)) },
-      );
-      const entries = JSON.stringify(
-        await loop.findEntries(undefined, BACKGROUND_CONTEXT),
+      const turn = await loop.runTurn('clean the build dir', {
+        requestId: 'approvals-deny',
+        context: BACKGROUND_CONTEXT,
+        whenBusy: 'reject',
+      });
+      expect(turn.kind).toBe('completed');
+      // The route decided: the denial is in the transcript and the seat was
+      // never consulted.
+      expect(JSON.stringify(await loop.entries(BACKGROUND_CONTEXT))).toContain(
+        'denied by policy route',
       );
       expect(asks).toBe(0);
-      expect(entries).toContain('denied by policy route');
     } finally {
       await boot.close?.();
     }

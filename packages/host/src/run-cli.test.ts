@@ -13,7 +13,13 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  Harness,
+  UserEntry,
+} from '../../worker/src/pi-boundary.js';
 import {
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
@@ -190,7 +196,6 @@ describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
       }),
     ).toBe('failed');
     expect(mapLaneOutcomeToTerminus('aborted')).toBe('failed');
-    expect(mapLaneOutcomeToTerminus('declined')).toBe('failed');
   });
 
   it('keeps classified budget/approval/workspace/provider errors as 3/4/5/6-bound termini', () => {
@@ -564,32 +569,33 @@ describe('run -p headless behavior (§17, §80)', () => {
         run: async (prompt: string) => {
           const session = await createSession(
             store,
-            '/work',
+            { cwd: '/work' },
             BACKGROUND_CONTEXT,
           );
-          const id = session.metadata.id;
+          const id = session.id;
           createdId = id;
-          await session.mutate(async (mutator) => {
-            await mutator.commit(
-              [
-                {
-                  kind: 'entry',
-                  entry: {
-                    id: 'e-headless',
-                    parentId: null,
-                    type: 'message',
-                    message: {
-                      role: 'user',
-                      content: [{ type: 'text', text: prompt }],
-                      timestamp: Date.now(),
-                    },
+          const harness = await Harness.open(
+            session.adopt(),
+            { models: createModels(), registry: createRegistry() },
+            BACKGROUND_CONTEXT,
+          );
+          try {
+            const conversation = await harness.root(BACKGROUND_CONTEXT);
+            await conversation.commit(async (tx) => {
+              await tx.appendEntry(UserEntry, conversation.id, {
+                model: [
+                  {
+                    role: 'user',
+                    content: prompt,
+                    timestamp: Date.now(),
                   },
-                },
-              ],
-              BACKGROUND_CONTEXT,
-            );
-          }, BACKGROUND_CONTEXT);
-          await session.close(BACKGROUND_CONTEXT);
+                ],
+              });
+            }, BACKGROUND_CONTEXT);
+          } finally {
+            await harness.close(BACKGROUND_CONTEXT);
+            await session.release(BACKGROUND_CONTEXT);
+          }
           return completedResult({
             summary: 'ok',
             sessionId: id,
@@ -612,12 +618,23 @@ describe('run -p headless behavior (§17, §80)', () => {
       sessionId as string,
       BACKGROUND_CONTEXT,
     );
+    const attached = await Harness.open(
+      reopened.adopt(),
+      { models: createModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
     try {
-      const entries = await reopened.findEntries(undefined, BACKGROUND_CONTEXT);
-      const text = JSON.stringify(entries);
-      expect(text).toMatch(/headless hello/);
+      const conversation = await attached.root(BACKGROUND_CONTEXT);
+      const page = await conversation.entries(
+        {},
+        200,
+        undefined,
+        BACKGROUND_CONTEXT,
+      );
+      expect(JSON.stringify(page.items)).toMatch(/headless hello/);
     } finally {
-      await reopened.close(BACKGROUND_CONTEXT);
+      await attached.close(BACKGROUND_CONTEXT);
+      await reopened.release(BACKGROUND_CONTEXT);
     }
   });
 });

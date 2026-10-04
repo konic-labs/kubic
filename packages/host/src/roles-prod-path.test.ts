@@ -15,11 +15,18 @@ import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
-  AgentHarness,
+  attachSession,
+  openSessionStore,
+} from '../../worker/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../worker/src/lane/solo.js';
+import { readSessionEntries } from '../../worker/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
+  SystemEntry,
 } from '../../worker/src/pi-boundary.js';
 import { runDoctorCommand } from './doctor.js';
 import { rolesDoctorProbe } from './roles/roles-boot.js';
@@ -57,12 +64,32 @@ function writeRole(
   );
 }
 
-function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
-  const call = (spy as unknown as { mock: { calls: unknown[][] } }).mock
-    .calls[0];
-  const options = call?.[0] as { systemPrompt?: string } | undefined;
-  expect(options?.systemPrompt).toBeTypeOf('string');
-  return options?.systemPrompt as string;
+// The solo prompt the lane committed for this session (#400's reader): the
+// run's own durable record of the bytes the model saw — the harness-spy
+// equivalent on the durable lane.
+async function committedPrompt(
+  root: string,
+  sessionId: string,
+): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
+  try {
+    const entries = await readSessionEntries(
+      session.storage,
+      BACKGROUND_CONTEXT,
+    );
+    for (const entry of [...entries].reverse()) {
+      if (!SystemEntry.is(entry)) continue;
+      const messages = entry.model as unknown as
+        | Array<{ sections?: Record<string, string | null> }>
+        | undefined;
+      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      if (typeof prompt === 'string' && prompt !== '') return prompt;
+    }
+    return '';
+  } finally {
+    await session.release(BACKGROUND_CONTEXT);
+  }
 }
 
 // The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
@@ -88,7 +115,6 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
       'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'You are the planner. Decompose objectives into ordered steps.',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     const root = tmpRoot('roles-sessions-');
     const result = await runHeadlessPrompt(
       'plan the work',
@@ -101,7 +127,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
-    const prompt = promptOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
     // The document's own prompt text reached the harness, quoted section
     // and all.
     expect(prompt).toContain(
@@ -121,9 +147,8 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
       'tools: [read, ls, find, grep, git_status, git_diff, git_log, git_show]\nfilesystem: read\nshell: false\nnetwork: none\ngit: workspace\ncredentials: none\n',
       'You are the reviewer. Report findings.',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
     const root = tmpRoot('roles-sessions-');
-    await runHeadlessPrompt(
+    const result = await runHeadlessPrompt(
       'review it',
       { role: 'reviewer' },
       {
@@ -133,7 +158,7 @@ describe('role documents drive a live solo lane (issue #99, §12.1)', () => {
         roles: { cwd },
       },
     );
-    const prompt = promptOf(createSpy);
+    const prompt = await committedPrompt(root, result.sessionId);
     // The `tools:` line carries the resolved allowlist, so the model is
     // told exactly what the lane registered: every role tool is named and
     // no write/edit/bash tool appears.

@@ -6,6 +6,7 @@
 // #133 run tests (runtime-run-path.test.ts).
 //
 // Faux provider only: zero network, zero paid tokens.
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,9 +23,8 @@ import {
 } from '../../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
-import { driveToSettled } from '../../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
 import {
-  AgentHarness,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -91,6 +91,31 @@ function laneFor(workspace: string, toml: string) {
   });
 }
 
+// The model-visible system prompt of one request: the durable lane
+// materializes the assembled prompt at REQUEST time, so the faux provider's
+// own request context is where it can be observed.
+function systemTextOf(context: unknown): string {
+  const messages = (
+    context as {
+      messages?: readonly {
+        role?: unknown;
+        content?: unknown;
+        sections?: Record<string, unknown>;
+      }[];
+    }
+  ).messages;
+  const system = messages?.find((message) => message.role === 'system');
+  if (system === undefined) return '';
+  const parts: string[] = [];
+  if (typeof system.content === 'string' && system.content !== '') {
+    parts.push(system.content);
+  }
+  for (const section of Object.values(system.sections ?? {})) {
+    if (typeof section === 'string' && section !== '') parts.push(section);
+  }
+  return parts.join('\n\n');
+}
+
 // The prod boot, re-rooted onto temp state: whatever the deps builder
 // forwards reaches the real bootTuiLane unchanged.
 function rerooted(
@@ -141,7 +166,7 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      fauxToolUse([
         fauxToolCall('bash', { command: 'printf "v2\\n" > note.txt' }),
       ]),
       fauxAssistantMessage('mutated'),
@@ -153,9 +178,12 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     const boot = await deps.bootLane();
     const loop = boot.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const admitted = await loop.accept('mutate note.txt', loop.context);
-    if (!admitted.ok) throw new Error('prompt refused');
-    await driveToSettled(loop.lane, admitted.value.operationId, loop.context);
+    const turn = await loop.runTurn('mutate note.txt', {
+      requestId: 'journal-agent',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
+    expect(turn.kind).toBe('completed');
     await boot.close?.();
     const entries = new FileJournalStore(
       join(sessionsRoot, boot.sessionId, 'journal'),
@@ -183,11 +211,16 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
       '---\nrole: implementer\ntools: [read, ls, write, bash]\n---\n## Prompt\n\nImplement the step.\n',
     );
     const lane = laneFor(workspace, '[roles.implementer]\ntools = ["read"]\n');
+    const captured: string[] = [];
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('done')]);
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    faux.setResponses([
+      (context: unknown) => {
+        captured.push(systemTextOf(context));
+        return fauxAssistantMessage('done');
+      },
+    ]);
     const deps = tuiDepsWithDefaults(
       { out: () => {}, ...lane },
       rerooted(workspace, sessionsRoot, models),
@@ -195,13 +228,15 @@ describe('tuiDepsWithDefaults forwards the lane projection (issue #294)', () => 
     const boot = await deps.bootLane(undefined, undefined, {
       role: 'implementer',
     });
+    const loop = boot.loop;
+    if (loop === undefined) throw new Error('the prod boot returned no loop');
+    await loop.runTurn('hi', {
+      requestId: 'role-tools',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
     await boot.close?.();
-    const calls = (createSpy as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls;
-    const prompt =
-      (calls.at(-1)?.[0] as { systemPrompt?: string } | undefined)
-        ?.systemPrompt ?? '';
-    const toolsLine = /^tools: (.*)$/m.exec(prompt)?.[1] ?? '';
+    const toolsLine = /^tools: (.*)$/m.exec(captured.at(-1) ?? '')?.[1] ?? '';
     expect(toolsLine).toContain('read');
     expect(toolsLine).not.toContain('write');
     expect(toolsLine).not.toContain('bash');
@@ -445,7 +480,7 @@ describe('the TUI selects the pinned model (issue #295)', () => {
       models: [{ id: 'a' }, { id: 'b' }],
     });
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf gone' })]),
+      fauxToolUse([fauxToolCall('bash', { command: 'rm -rf gone' })]),
       fauxAssistantMessage('removed'),
     ]);
     const models = createModels();
@@ -460,9 +495,12 @@ describe('the TUI selects the pinned model (issue #295)', () => {
     }));
     const loop = boot.loop;
     if (loop === undefined) throw new Error('the prod boot returned no loop');
-    const admitted = await loop.accept('clean up', loop.context);
-    if (!admitted.ok) throw new Error('prompt refused');
-    await driveToSettled(loop.lane, admitted.value.operationId, loop.context);
+    const turn = await loop.runTurn('clean up', {
+      requestId: 'audit-model',
+      context: loop.context,
+      whenBusy: 'reject',
+    });
+    expect(turn.kind).toBe('completed');
     await boot.close?.();
     const records = readAuditLedger(auditLedgerDir(workspace));
     expect(records.length).toBeGreaterThan(0);

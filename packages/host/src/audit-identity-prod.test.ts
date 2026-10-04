@@ -23,6 +23,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -60,7 +61,7 @@ afterEach(() => {
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
 const DESTRUCTIVE = (): FauxMessage =>
-  fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]);
+  fauxToolUse([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]);
 
 // Two faux models on one provider; the default (unpinned) pick is `big`.
 function catalog(steps: FauxMessage[]): MutableModels {
@@ -103,9 +104,13 @@ function hermeticBoot(workspace: string) {
 // A session whose lane was created on faux/small (the stored model).
 async function sessionOnSmall(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-  const id = session.metadata.id;
-  await session.close(BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const id = session.id;
+  await session.release(BACKGROUND_CONTEXT);
   const first = await runHeadlessPrompt(
     'first',
     { sessionId: id },

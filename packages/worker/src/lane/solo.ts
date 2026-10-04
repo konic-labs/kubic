@@ -25,7 +25,6 @@ import {
   type Context,
   type Conversation,
   createRegistry,
-  type DeferredHandle,
   defineExtension,
   Harness,
   type HarnessSettings,
@@ -513,7 +512,10 @@ export async function bootSoloLane(
   }
 
   const harness = await Harness.open(
-    options.session.storage,
+    // Adopt, never take `storage` directly (D8.1): the handle must know a
+    // harness owns the storage, or its `release()` would close the storage
+    // under the live harness.
+    options.session.adopt(),
     { models: options.models, registry, settings },
     context,
   );
@@ -711,93 +713,4 @@ export async function bootSoloLane(
   };
   soloRef = solo;
   return solo;
-}
-
-// Minimal drive surface: real AgentLanes satisfy this, and so do unit
-// stubs — drive failures are Error instances in tests, Error subclasses
-// (Closed, OperationMismatch) on the real path. Outcomes are routed on a
-// narrow shape (kind/reason/notBefore/deferred) so tests fabricate
-// harness-shaped outcomes without importing Pi error classes.
-// Kept for #395 to delete with the turn glue it replaces (lane/turn.ts):
-// nothing in this module uses it any more.
-export type RoutableOutcome =
-  | { kind: 'settled'; outcome: unknown }
-  | { kind: 'waiting'; operationId: string; reason: 'retry'; notBefore: number }
-  | {
-      kind: 'waiting';
-      operationId: string;
-      reason: 'deferred';
-      deferred: DeferredHandle;
-    };
-
-export interface LaneDriver {
-  drive(
-    options: { operationId: string },
-    context: Context,
-  ): Promise<
-    { ok: true; value: RoutableOutcome } | { ok: false; error: unknown }
-  >;
-}
-
-export type SettledDrive =
-  | { kind: 'settled'; outcome: unknown }
-  | { kind: 'waiting-deferred'; operationId: string; deferred: DeferredHandle };
-
-export class LaneDriveError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'LaneDriveError';
-  }
-}
-
-export interface DriveLoopOptions {
-  sleep?: (ms: number) => Promise<void>;
-  maxRetries?: number;
-  context?: Context;
-}
-
-const DEFAULT_MAX_RETRIES = 100;
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function driveToSettled(
-  lane: LaneDriver,
-  operationId: string,
-  context: Context,
-  options: DriveLoopOptions = {},
-): Promise<SettledDrive> {
-  const sleep = options.sleep ?? defaultSleep;
-  const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
-  let retries = 0;
-  for (;;) {
-    const driven = await lane.drive({ operationId }, context);
-    if (!driven.ok) {
-      const detail =
-        driven.error instanceof Error
-          ? driven.error.message
-          : JSON.stringify(driven.error);
-      throw new LaneDriveError(
-        `lane drive failed for ${operationId}: ${detail}`,
-      );
-    }
-    const outcome = driven.value;
-    if (outcome.kind === 'settled')
-      return { kind: 'settled', outcome: outcome.outcome };
-    if (outcome.reason === 'deferred') {
-      return {
-        kind: 'waiting-deferred',
-        operationId: outcome.operationId,
-        deferred: outcome.deferred,
-      };
-    }
-    retries += 1;
-    if (retries > maxRetries) {
-      throw new LaneDriveError(
-        `retry budget exhausted for ${operationId} after ${maxRetries} waits`,
-      );
-    }
-    await sleep(Math.max(0, outcome.notBefore - Date.now()));
-  }
 }

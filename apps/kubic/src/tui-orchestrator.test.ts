@@ -123,24 +123,20 @@ function deps(
   };
 }
 
-// A minimal solo loop: accepts prompts, settles completed. No events, no
+// A minimal solo loop: takes prompts, settles completed. No events, no
 // tools — the routing decision is what these tests observe.
 function fakeLoop(admitted: string[]): TuiLaneLoop {
   return {
-    accept: async (prompt: string) => {
+    runTurn: async (prompt: string) => {
       admitted.push(prompt);
-      return { ok: true, value: { operationId: `op-${admitted.length}` } };
+      return { kind: 'completed', submissionId: `sub-${admitted.length}` };
     },
-    lane: {
-      drive: async () => ({
-        ok: true,
-        value: { kind: 'settled', outcome: { status: 'completed' } },
-      }),
-    },
-    requestAbort: async () => {},
-    findEntries: async () => [],
-    events: { on: () => () => {}, off: () => {} },
-    kills: { register: () => () => {} },
+    subscribe: async () => async () => {},
+    entries: async () => [],
+    abort: async () => {},
+    forgetKills: () => {},
+    killsKey: 'conversation',
+    kills: { track: () => {}, drain: () => [] },
     context: BACKGROUND_CONTEXT,
   } as unknown as TuiLaneLoop;
 }

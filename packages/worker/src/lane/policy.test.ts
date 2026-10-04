@@ -72,14 +72,18 @@ type TestSession = {
   dir: string;
   storage: Storage;
   meta: { cwd: string; createdAt: string };
+  adopt(): Storage;
   release(context: Context): Promise<void>;
 };
 function handle(id = 'sess-1'): TestSession {
+  const storage = new MemoryStorage();
   return {
     id,
     dir: `/tmp/kubic-solo-policy/${id}`,
-    storage: new MemoryStorage(),
+    storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
 }

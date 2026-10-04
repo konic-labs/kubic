@@ -37,9 +37,12 @@ describe('parseModelCommand (issue #227)', () => {
 
 describe('TuiTurnRunner model switch (issue #227)', () => {
   it('refuses a switch when the boot has no live lane', async () => {
+    const loop = {
+      context: BACKGROUND_CONTEXT,
+    } as unknown as TuiLaneLoop;
     const runner = new TuiTurnRunner(
       { setModel: () => {} } as unknown as TuiApp,
-      { context: BACKGROUND_CONTEXT } as unknown as TuiLaneLoop,
+      loop,
       'faux/big',
     );
     expect(runner.modelRef).toBe('faux/big');

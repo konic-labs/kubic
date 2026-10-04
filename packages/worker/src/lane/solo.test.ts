@@ -148,6 +148,7 @@ type TestSession = {
   dir: string;
   storage: Storage;
   meta: { cwd: string; createdAt: string };
+  adopt(): Storage;
   release(context: Context): Promise<void>;
 };
 function handle(storage: Storage, id = 'sess-1'): TestSession {
@@ -156,6 +157,8 @@ function handle(storage: Storage, id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-test/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
 }

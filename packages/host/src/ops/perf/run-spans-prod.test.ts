@@ -49,7 +49,9 @@ function fauxModelsWithTool(): MutableModels {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })]),
+    fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+      stopReason: 'toolUse',
+    }),
     fauxAssistantMessage('read it'),
   ]);
   return models;

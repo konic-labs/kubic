@@ -91,7 +91,10 @@ import {
 } from '../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
-import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
+import {
+  planWorkerRoles,
+  thinkingOverrideFromEnv,
+} from '../../../packages/host/src/roles/worker-roles.js';
 import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import {
   defaultSessionsRoot,
@@ -487,6 +490,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
       const workerCredentialProbe = (): DepProbe => {
         const cwd = process.cwd();
         const pin = runtimeModelPin(cliConfig);
+        const thinkingOverride = thinkingOverrideFromEnv();
         const plan = planWorkerRoles({
           bridge: createNodeFileBridge(cwd),
           cwd,
@@ -498,10 +502,7 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(pin === undefined
             ? {}
             : { parentModel: `${pin.provider}/${pin.id}` }),
-          ...(process.env.KUBIC_MODEL_THINKING === undefined ||
-          process.env.KUBIC_MODEL_THINKING === ''
-            ? {}
-            : { thinkingOverride: process.env.KUBIC_MODEL_THINKING }),
+          ...(thinkingOverride === undefined ? {} : { thinkingOverride }),
           // The same enterprise role gate the orchestrate run applies, so the
           // posture describes the assignments that run would actually make.
           ...(enterprisePolicy === undefined

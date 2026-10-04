@@ -113,6 +113,17 @@ export interface WorkerRolesInput {
   toolPolicy?: EffectivePolicy;
 }
 
+// §38.1 (issue #202): the run's explicit thinking level — the documented
+// `KUBIC_MODEL_THINKING` runtime override, when the operator set one. ONE
+// derivation for the orchestrate run and doctor's credential posture, so the
+// two can never disagree about which level is in force.
+export function thinkingOverrideFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+  const raw = env.KUBIC_MODEL_THINKING;
+  return raw === undefined || raw === '' ? undefined : raw;
+}
+
 // The §12 role a worker runs (issue #178): the caller's explicit binding for
 // that agent when it gave one, else the implementer default. Deterministic —
 // the same binding plus the same agent list always resolves the same role, so

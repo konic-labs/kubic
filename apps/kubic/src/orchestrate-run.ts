@@ -98,7 +98,10 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import type { EffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
-import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
+import {
+  planWorkerRoles,
+  thinkingOverrideFromEnv,
+} from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import {
   errorKindForFailureCode,
@@ -925,14 +928,10 @@ export async function orchestrateDepsWithDefaults(
 ): Promise<OrchestrateCommandDeps> {
   const cwd = options.cwd ?? process.cwd();
   const debug = options.debug ?? (() => undefined);
-  // Issue #202 (§38.1): the run's explicit thinking level — the documented
-  // `KUBIC_MODEL_THINKING` runtime override, when the operator set one. It
-  // outranks each role's own thinking default for that role's worker.
-  const thinkingOverrideRaw = process.env.KUBIC_MODEL_THINKING;
-  const thinkingOverride =
-    thinkingOverrideRaw === undefined || thinkingOverrideRaw === ''
-      ? undefined
-      : thinkingOverrideRaw;
+  // Issue #202 (§38.1): the run's explicit thinking level — one derivation
+  // shared with doctor's posture, outranking each role's own thinking default
+  // for that role's worker.
+  const thinkingOverride = thinkingOverrideFromEnv();
   // Issue #133: the runtime `[orchestrator]` projection — the worktree
   // parent and the worker cap, both already validated at config load. The
   // shipped defaults apply when the config sets neither: `.kubic/wt` for
@@ -1782,15 +1781,19 @@ export async function orchestrateDepsWithDefaults(
           credentials: credentialGrant.grant,
           owner: `orchestrate:${info?.sessionId ?? 'orch'}`,
           // The child's base env is the parent's, filtered by the §3.8
-          // allowlist inside the layer — never inherited wholesale. Two
-          // additions ride on top: the role's model default (issue #104,
-          // §12.1) travels through the EXISTING `KUBIC_MODEL` pin — the
-          // child's own selectModel honours it, so no new model plumbing is
-          // introduced, and a default is the LOWEST-precedence choice, so it
-          // is only sent when the operator has not pinned a model of their
-          // own — and the approvals mailbox (issue #105) is added here, not
-          // inherited: the child learns where to publish an ask it cannot
-          // answer, and which orchestrator session it belongs to.
+          // allowlist inside the layer — never inherited wholesale. What
+          // rides on top: the worker's resolved model and thinking level
+          // (§38.1, issues #202/#178) and the approvals mailbox (issue #105).
+          // The model is the role's `[roles.<r>].model` pin, the explicit
+          // per-agent pin, or the manager's effective model — a real §38.1
+          // level, not a default: it travels through the EXISTING
+          // `KUBIC_MODEL` pin (the child's own selectModel honours it, so no
+          // new model plumbing is introduced) and OVERWRITES an ambient
+          // value, so the manager's env pin never outranks the role's pin.
+          // Only a frozen enterprise pin drops it, because the child's own
+          // load drops it too. The mailbox is added here, not inherited: the
+          // child learns where to publish an ask it cannot answer, and which
+          // orchestrator session it belongs to.
           baseEnv: {
             ...Object.fromEntries(
               Object.entries(process.env).filter(

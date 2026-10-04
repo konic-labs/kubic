@@ -244,12 +244,16 @@ describe("the manager's §60 row carries that ancestry (issue #159)", () => {
     let published = readPendingWorkerAsks(mailbox, {
       verifyKey: signer.verifyKey,
     })[0];
+    // A generous waiter (review finding 4): the lane has to reach the
+    // challenged call before the seat's own bound (2s) elapses, and a loaded
+    // machine must not turn that race into a red test. The bound only decides
+    // when the wait ENDS; the waiter's patience is separate.
     for (
       let attempt = 0;
-      published === undefined && attempt < 400;
+      published === undefined && attempt < 3_000;
       attempt += 1
     ) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 10));
       published = readPendingWorkerAsks(mailbox, {
         verifyKey: signer.verifyKey,
       })[0];

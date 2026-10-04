@@ -604,9 +604,32 @@ export function createWorkerAskRouter(
     pendingKeys: () => router.pendingRequests().map((request) => request.key),
     audit: () => auditLog.events(),
     verifyKey: () => signer.verifyKey,
-    answer: (published, verdict) =>
-      answerWorkerAsk(mailboxDir, published, verdict, signer),
+    answer: (published, verdict) => {
+      // Issue #232 (review): the asker may have WITHDRAWN the ask while the
+      // user was deciding (its own bound expired and its seat removed the ask
+      // files). The decision still stands and is memoized — but writing an
+      // answer for a question nobody is waiting on would leave an orphan file
+      // behind, so it is skipped and named on the debug channel instead.
+      if (!askStillPublished(mailboxDir, published.request.key)) {
+        options.debug?.(
+          `approvals: answer for ${published.request.key} not written — the asker withdrew the ask`,
+        );
+        return;
+      }
+      answerWorkerAsk(mailboxDir, published, verdict, signer);
+    },
   };
+}
+
+// Whether the ask is still on disk: the withdrawal of issue #232 removes both
+// the ask and its answer, so a missing ask file means the question is gone.
+function askStillPublished(dir: string, key: string): boolean {
+  try {
+    return createNodeFileBridge(dir).exists(askFilePath(key));
+  } catch {
+    // An unreadable mailbox is not an answer surface: fail closed, no write.
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -104,10 +104,12 @@ solo) — and `run` never delegates.
   manager answers it or the child's bound denies closed — a planted file can
   neither approve nor deny. A worker child's own approval bound is the SEAT's
   bound (one number, issue #232): when it elapses the child stops polling and
-  withdraws the ask it published, so the manager never presents a question
-  whose asker has given up, and the surface that was asking the human is told
-  to close that dialog rather than leave an obsolete modal blocking the next
-  one. A planted `decisions.json` or full-access record
+  withdraws the ask it published — the manager's next pump no longer routes it,
+  and a prompt already on screen is answered into a §60 row rather than into a
+  mailbox the child has left (a manager-side cancel for that window is a named
+  follow-up) — and the surface that was asking the human is told to close that
+  dialog rather than leave an obsolete modal blocking the next one. A planted
+  `decisions.json` or full-access record
   is dropped at router construction, audited (one §60 `state:dropped` row per
   drop) and scrubbed rather than honoured. The mailbox is also scoped to the
   run: a worker that settles has its ask and answer files swept, asks left by

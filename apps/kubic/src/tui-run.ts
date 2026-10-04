@@ -671,7 +671,12 @@ export interface TuiRunDeps {
   // installSoloPolicy; a boot may ignore it (the viewer shell does).
   bootLane: (
     sessionId?: string,
-    answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>,
+    answer?: (
+      request: ApprovalRequest,
+      // Issue #232: the installed service's bound reaches the seat as an
+      // AbortSignal, so the seat can withdraw the ask it is showing.
+      signal?: AbortSignal,
+    ) => Promise<ApprovalVerdict | undefined>,
     // Issue #113: the parsed parity flags travel with the boot call —
     // the command shell owns parsing, the boot owner owns the defaults.
     options?: TuiBootFlags,
@@ -812,7 +817,10 @@ export interface TuiRunOptions {
   // The answer seat (issue #96): the interactive path's approval surface.
   // Attached by runTuiCommand; absent means the no-surface refusal, which is
   // what `kubic tui` had before the overlay landed.
-  answer?: (request: ApprovalRequest) => Promise<ApprovalVerdict | undefined>;
+  answer?: (
+    request: ApprovalRequest,
+    signal?: AbortSignal,
+  ) => Promise<ApprovalVerdict | undefined>;
   // Issue #113 (TUI parity with `kubic run`): skills discovery, `--role`
   // documents, and journal retention reach the interactive lane exactly
   // as they reach the headless one — same options, same semantics.

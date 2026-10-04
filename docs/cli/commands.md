@@ -470,8 +470,10 @@ process are retired when the next run of that session starts), so a killed
 session's unanswered ask cannot be routed — let alone fail — during a later
 run (issue #152). In a worker child the mailbox seat's bound and the lane's
 own approval bound are the same number, and when it elapses the child stops
-polling and withdraws the ask it published (issue #232), so the manager never
-presents a question whose asker has given up. A challenged call — network, destructive shell,
+polling and withdraws the ask it published (issue #232): the manager's next
+pump no longer routes it, and an answer the user gives to a prompt that is
+still on screen is recorded (its §60 row) but not written to a mailbox the
+child has left. A challenged call — network, destructive shell,
 outside-write, install, push — publishes its ask, the manager presents it to
 you, and your verdict travels back to the worker (sealed, so only the manager
 can produce one):

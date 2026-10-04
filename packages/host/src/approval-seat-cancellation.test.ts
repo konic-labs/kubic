@@ -28,9 +28,11 @@ import { createApprovalSigner } from './orchestrator/approvals/seal.js';
 import {
   ASKS_DIR,
   awaitWorkerAskAnswer,
+  createOrchestratorApprovalsRun,
   createWorkerMailboxSeat,
   publishWorkerAsk,
   readPendingWorkerAsks,
+  removeAskFiles,
 } from './orchestrator/approvals/worker-asks.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -171,6 +173,85 @@ describe('an aborted mailbox seat stops polling and withdraws its ask (issue #23
       (record) => record.what === 'tool:bash',
     );
     expect(row?.reason).toContain('after 150ms');
+  });
+
+  it('a withdrawn ask is decided but never answered into an abandoned mailbox (review)', async () => {
+    // The child's withdrawal (issue #232) removes the ask files while the user
+    // may still be looking at the prompt. The manager's decision then stands —
+    // memoized and in the §60 ledger — but writing an answer for a question
+    // nobody waits on would leave an orphan file behind, so it is skipped and
+    // named on the debug channel.
+    const repo = tmpDir();
+    const home = tmpDir();
+    const debugLines: string[] = [];
+    let answerSeat: (() => void) | undefined;
+    const seatReached = new Promise<void>((resolve) => {
+      answerSeat = resolve;
+    });
+    const run = createOrchestratorApprovalsRun({
+      dir: join(repo, '.kubic', 'orchestrator'),
+      sessionId: 'orch-9',
+      maxPendingMs: 1_000,
+      pollMs: 5,
+      home,
+      debug: (line) => debugLines.push(line),
+      seat: async () => {
+        // The user is looking at the prompt: the withdrawal happens NOW.
+        await seatReached;
+        return { approved: true, by: 'user' };
+      },
+    });
+    const published = publishWorkerAsk(run.mailboxDir(), {
+      trigger: 'outside-write',
+      toolName: 'bash',
+      args: { command: 'echo x > /etc/y' },
+      justification: 'configure the service for the release',
+      sessionId: 'orch-9-worker-1',
+      agentId: 'worker-1',
+      role: 'worker',
+      worktree: '/wt/worker-1',
+      provenance: { parentSessionId: 'orch-9' },
+    });
+    const scope = {
+      sessionId: 'orch-9',
+      agentId: 'worker-1',
+      worktree: '/wt/worker-1',
+    };
+    const pumping = run.pump(scope);
+    // The manager read the ask and is waiting for the user…
+    for (
+      let attempt = 0;
+      attempt < 200 && run.blockedIndicators().length === 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(run.blockedIndicators()).toHaveLength(1);
+    // …and the asker withdraws it while the prompt is on screen.
+    removeAskFiles(run.mailboxDir(), published.request.key);
+    expect(
+      readPendingWorkerAsks(run.mailboxDir(), { verifyKey: run.verifyKey() }),
+    ).toEqual([]);
+    answerSeat?.();
+    await expect(pumping).resolves.toBeUndefined();
+    // Nothing was written back into the mailbox…
+    expect(
+      existsSync(
+        join(
+          run.mailboxDir(),
+          ASKS_DIR,
+          `${published.request.key}.answer.json`,
+        ),
+      ),
+    ).toBe(false);
+    // …the skip is named…
+    expect(debugLines.join('\n')).toMatch(/asker withdrew the ask/);
+    // …and the user's decision is still durable: the §60 row exists.
+    expect(
+      readAuditLedger(join(repo, '.kubic', 'orchestrator', 'approvals')).some(
+        (record) => record.permission.permission === 'trigger:outside-write',
+      ),
+    ).toBe(true);
   });
 
   it('awaitWorkerAskAnswer resolves at once for an already-aborted signal', async () => {

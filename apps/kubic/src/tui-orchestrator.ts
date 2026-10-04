@@ -45,6 +45,9 @@ import type { TuiOrchestratorRun, TuiTurnOutcome } from './tui-run.js';
 // host verdict shape. Named so both the composition root and tests agree.
 export type TuiAskSeat = (
   request: ApprovalRequest,
+  // Issue #232: the seat the router consults gets the asker's AbortSignal and
+  // withdraws the ask when it aborts.
+  signal?: AbortSignal,
 ) => Promise<ApprovalVerdict | undefined>;
 
 // The worker's ask, rendered by the TUI's approval overlay. The trigger IS

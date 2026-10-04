@@ -1,26 +1,18 @@
-// Headless hardening (issue #28, review cycle 2): defense-in-depth
-// --session validation inside runHeadlessPrompt, close-guard in the
-// finally, and explicit malformed-outcome mapping. The lane and session
-// store are mocked at the seam (file-local: vitest isolates modules per
-// test file); persistence still hits a real tmp sessions root. Faux
+// Headless hardening (issue #28, review cycle 2; ported to the durable lane
+// in #395): defense-in-depth --session validation inside runHeadlessPrompt,
+// the ref triple on store failures, honest summaries when the model left no
+// text, and the guard drain running BEFORE the reconciliation sweep. Faux
 // models only: zero network.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
-import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
-import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
+import { abortLane } from '../../worker/src/lane/abort.js';
 import { createSession } from '../../worker/src/lane/session-store.js';
 import {
-  bootSoloLane,
-  driveToSettled,
-  type SoloLane,
-} from '../../worker/src/lane/solo.js';
-import {
-  type AgentLane,
   createModels,
-  type DeferredHandle,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
@@ -48,6 +40,18 @@ vi.mock('../../exec/src/journal-reconcile.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../../worker/src/lane/abort.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../worker/src/lane/abort.js')>();
+  const wrapped = async (
+    ...args: Parameters<typeof actual.abortLane>
+  ): ReturnType<typeof actual.abortLane> => {
+    guardEvents.events.push('abort');
+    return actual.abortLane(...args);
+  };
+  return { ...actual, abortLane: vi.fn(wrapped) };
+});
+
 vi.mock('../../worker/src/lane/session-store.js', async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -67,22 +71,12 @@ vi.mock('../../worker/src/lane/session-store.js', async (importOriginal) => {
     session: Awaited<ReturnType<typeof actual.createSession>>,
   ) {
     if (mockState.closeShouldReject) {
-      session.close = async () => {
-        throw new Error('close blew up');
+      session.release = async () => {
+        throw new Error('release blew up');
       };
     }
     return session;
   }
-});
-
-vi.mock('../../worker/src/lane/solo.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../worker/src/lane/solo.js')>();
-  return {
-    ...actual,
-    bootSoloLane: vi.fn(),
-    driveToSettled: vi.fn(),
-  };
 });
 
 const made: string[] = [];
@@ -101,17 +95,16 @@ function fauxModels(texts: string[]): MutableModels {
   return models;
 }
 
-function fakeLane(): AgentLane {
-  return {
-    accept: async () => ({
-      ok: true as const,
-      value: { operationId: 'op-1', kind: 'run' as const, startedAt: 0 },
-    }),
-    findEntries: async () => [],
-  } as unknown as AgentLane;
+// A provider that never answers: the run's guard is the only way out.
+function hangingModels(): MutableModels {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([() => new Promise<never>(() => undefined)]);
+  return models;
 }
 
-function deps() {
+function deps(): Parameters<typeof runHeadlessPrompt>[2] {
   return {
     sessionsRoot: tmpRoot(),
     models: fauxModels(['unused']),
@@ -124,13 +117,8 @@ beforeEach(() => {
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   mockState.closeShouldReject = false;
-  vi.mocked(bootSoloLane).mockResolvedValue({
-    lane: fakeLane(),
-  } as unknown as SoloLane);
-  vi.mocked(driveToSettled).mockResolvedValue({
-    kind: 'settled' as const,
-    outcome: { status: 'completed' },
-  });
+  guardEvents.events.length = 0;
+  vi.mocked(abortLane).mockClear();
 });
 
 afterEach(() => {
@@ -150,189 +138,17 @@ describe('headless hardening (issue #28, review cycle 2)', () => {
     expect(mapTerminusToExitCode(result.terminus)).toBe(2);
     expect(result.sessionId).toBe('unassigned');
     expect(vi.mocked(createSession)).not.toHaveBeenCalled();
-    expect(vi.mocked(bootSoloLane)).not.toHaveBeenCalled();
-    expect(vi.mocked(driveToSettled)).not.toHaveBeenCalled();
   });
 
-  it('keeps the mapped result when session close rejects', async () => {
+  it('keeps the mapped result when the session release rejects', async () => {
     mockState.closeShouldReject = true;
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('completed');
-    // The mocked lane yields no assistant text: the summary is the named
-    // non-answer (issue #129), never an echo of the prompt.
-    expect(result.summary).toBe(
-      '(no assistant text — the run settled without output)',
-    );
-  });
-
-  it('maps malformed lane outcomes to failed explicitly instead of throwing', async () => {
-    const malformed: unknown[] = [
-      null,
-      { status: 'bogus' },
-      { status: 'failed', error: { code: 42, message: 'x' } },
-    ];
-    for (const outcome of malformed) {
-      vi.mocked(driveToSettled).mockResolvedValue({
-        kind: 'settled' as const,
-        outcome,
-      });
-      const result = await runHeadlessPrompt('do it', {}, deps());
-      expect(result.terminus).toBe('failed');
-      expect(result.error?.message).toMatch(/malformed outcome/);
-    }
-  });
-
-  it('still maps a well-formed lane failure without the malformed message', async () => {
-    vi.mocked(driveToSettled).mockResolvedValue({
-      kind: 'settled' as const,
-      outcome: {
-        status: 'failed',
-        error: { code: 'tool_failed', message: 'exit 1' },
-      },
-    });
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('failed');
-    expect(result.error?.message).not.toMatch(/malformed outcome/);
-  });
-});
-
-describe('headless composition root (issue #68; mutation hardening)', () => {
-  it('fails a refused admission explicitly instead of driving', async () => {
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane: {
-        accept: async () => ({ ok: false as const, error: { message: 'no' } }),
-        findEntries: async () => [],
-      },
-    } as unknown as SoloLane);
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('failed');
-    expect(result.summary).toMatch(/lane refused the prompt/);
-    expect(result.error?.message).toMatch(/lane refused the prompt/);
-    expect(vi.mocked(driveToSettled)).not.toHaveBeenCalled();
-  });
-
-  it('maps a deferred wait to approval_timed_out without a TTY', async () => {
-    vi.mocked(driveToSettled).mockResolvedValue({
-      kind: 'waiting-deferred',
-      operationId: 'op-1',
-      deferred: {},
-    } as Awaited<ReturnType<typeof driveToSettled>>);
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('approval_timed_out');
-    expect(result.summary).toMatch(/cannot arrive without a TTY/);
-    expect(mapTerminusToExitCode(result.terminus)).toBe(4);
-  });
-
-  it('names a detail-free lane failure instead of printing undefined', async () => {
-    vi.mocked(driveToSettled).mockResolvedValue({
-      kind: 'settled' as const,
-      outcome: { status: 'failed' },
-    });
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('failed');
-    expect(result.summary).toBe('lane failed without detail');
-    expect(result.error).toEqual({
-      kind: 'failed',
-      message: 'lane failed without detail',
-    });
-  });
-
-  function textEntry(
-    id: string,
-    seq: number,
-    role: string,
-    text: string,
-  ): Record<string, unknown> {
-    return {
-      id,
-      seq,
-      type: 'message',
-      message: {
-        role,
-        content: [{ type: 'text', text }],
-      },
-    };
-  }
-
-  it('summarizes the latest assistant text trimmed to 500 columns', async () => {
-    const long = `  ${'y'.repeat(600)}  `;
-    const longer = { type: 'text', text: `  ${'z'.repeat(600)}  ` };
-    const numeric = { type: 'text', text: 42 };
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane: {
-        accept: fakeLane().accept,
-        findEntries: async () => [
-          textEntry('e-user', 5, 'user', 'ignore me'),
-          textEntry('e-ws', 3, 'assistant', '   '),
-          textEntry('e-long', 2, 'assistant', long),
-          {
-            id: 'e-long2',
-            seq: 2,
-            type: 'message',
-            message: { role: 'assistant', content: [numeric, longer] },
-          },
-          {
-            id: 'e-bad',
-            seq: 4,
-            type: 'message',
-            message: { role: 'assistant', content: 'nope' },
-          },
-          {
-            id: 'e-sys',
-            seq: 6,
-            type: 'system',
-            message: {
-              role: 'assistant',
-              content: [{ type: 'text', text: 'q'.repeat(600) }],
-            },
-          },
-        ],
-      },
-    } as unknown as SoloLane);
-    const result = await runHeadlessPrompt('do it', {}, deps());
-    expect(result.terminus).toBe('completed');
-    expect(result.summary).toBe('z'.repeat(500));
-  });
-
-  it('reports the named non-answer for whitespace-only assistant text (issue #129)', async () => {
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane: {
-        accept: fakeLane().accept,
-        findEntries: async () => [textEntry('e-ws', 0, 'assistant', '   ')],
-      },
-    } as unknown as SoloLane);
     const result = await runHeadlessPrompt(
-      'prompt-never-echoed-fixture',
+      'do it',
       {},
-      deps(),
+      { ...deps(), models: fauxModels(['all done']) },
     );
     expect(result.terminus).toBe('completed');
-    expect(result.summary).toBe(
-      '(no assistant text — the run settled without output)',
-    );
-    expect(result.summary).not.toContain('prompt-never-echoed-fixture');
-  });
-
-  it('runs without an injected env by defaulting to the node env', async () => {
-    const root = tmpRoot();
-    const result = await runHeadlessPrompt(
-      'hi env',
-      {},
-      { sessionsRoot: root, models: fauxModels(['env ok']) },
-    );
-    expect(result.terminus).toBe('completed');
-    // The default-env branch: the lane booted over a real NodeExecutionEnv
-    // rooted at the process cwd.
-    const booted = vi.mocked(bootSoloLane).mock.calls[0]?.[0] as {
-      env?: unknown;
-    };
-    expect(booted.env).toBeInstanceOf(NodeExecutionEnv);
-    expect((booted.env as NodeExecutionEnv).cwd).toBe(process.cwd());
-    // The mocked lane yields no assistant text: the summary is the named
-    // non-answer (issue #129), not the prompt.
-    expect(result.summary).toBe(
-      '(no assistant text — the run settled without output)',
-    );
+    expect(result.summary).toBe('all done');
   });
 
   it('maps a store-creation failure to unassigned refs', async () => {
@@ -359,120 +175,79 @@ describe('headless composition root (issue #68; mutation hardening)', () => {
   });
 });
 
+describe('summary honesty (issue #129) on the durable lane', () => {
+  it('reports the named non-answer when the model left no text', async () => {
+    const result = await runHeadlessPrompt(
+      'prompt-never-echoed-fixture',
+      {},
+      { ...deps(), models: fauxModels(['']) },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe(
+      '(no assistant text — the run settled without output)',
+    );
+    expect(result.summary).not.toContain('prompt-never-echoed-fixture');
+  });
+
+  it('reports the named non-answer for whitespace-only assistant text', async () => {
+    const result = await runHeadlessPrompt(
+      'prompt-never-echoed-fixture',
+      {},
+      { ...deps(), models: fauxModels(['   ']) },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe(
+      '(no assistant text — the run settled without output)',
+    );
+  });
+
+  it('trims and truncates the assistant text to 500 columns', async () => {
+    const result = await runHeadlessPrompt(
+      'do it',
+      {},
+      { ...deps(), models: fauxModels([`  ${'z'.repeat(600)}  `]) },
+    );
+    expect(result.terminus).toBe('completed');
+    expect(result.summary).toBe('z'.repeat(500));
+  });
+
+  it('maps a failed turn to its §52-derived terminus and message', async () => {
+    const result = await runHeadlessPrompt(
+      'break it',
+      {},
+      { ...deps(), models: createModels() },
+    );
+    expect(result.terminus).toBe('provider_probe_failed');
+    expect(result.error?.message).toMatch(/no models?|provider/i);
+  });
+});
+
 // Issue #109: guard exhaustion must not abandon in-flight tools. On every
-// exit path where a drive is (or was) in flight, the headless runner first
-// requests a durable abort, then drains the kill registry — and only then
+// exit path where a turn is (or was) in flight, the headless runner first
+// states the durable abort and drains the kill registry — and only then
 // sweeps: the reconciliation must observe the tree AFTER the orphaned work
 // is dead, or late writes escape both the journal and the sweep.
 describe('guard drain on exit paths (issue #109)', () => {
-  function drainLane(
-    events: string[],
-    abortThrows = false,
-  ): {
-    lane: AgentLane;
-    kills: OperationKillRegistry;
-  } {
-    const kills = new OperationKillRegistry();
-    kills.track('op-1', () => {
-      events.push('kill');
-    });
-    const lane = {
-      ...fakeLane(),
-      requestAbort: async (operationId: string) => {
-        events.push(`abort:${operationId}`);
-        if (abortThrows) throw new Error('lane refuses');
-        return {
-          ok: true as const,
-          value: { operationId, newlyRequested: true },
-        };
-      },
-    };
-    return { lane: lane as unknown as AgentLane, kills };
-  }
-
-  beforeEach(() => {
-    guardEvents.events.length = 0;
-  });
-
   it('aborts and drains before the sweep on wall-clock exhaustion', async () => {
-    // One shared log for the drain AND the sweep, so the order is observed.
-    const events = guardEvents.events;
-    const { lane, kills } = drainLane(events);
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane,
-      kills,
-    } as unknown as SoloLane);
-    vi.mocked(driveToSettled).mockImplementation(
-      () => new Promise<never>(() => {}),
+    const result = await runHeadlessPrompt(
+      'hang',
+      { timeoutMs: 40 },
+      { ...deps(), models: hangingModels() },
     );
-    const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
     expect(result.terminus).toBe('budget_exhausted');
+    expect(vi.mocked(abortLane)).toHaveBeenCalled();
     // The drain ran before the sweep started.
-    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
+    expect(guardEvents.events).toEqual(['abort', 'sweep']);
   });
 
-  it('still drains the kill registry when the lane refuses the abort', async () => {
-    const events = guardEvents.events;
-    const { lane, kills } = drainLane(events, true);
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane,
-      kills,
-    } as unknown as SoloLane);
-    vi.mocked(driveToSettled).mockImplementation(
-      () => new Promise<never>(() => {}),
+  it('does not abort a settled run: the sweep follows its own path', async () => {
+    const result = await runHeadlessPrompt(
+      'do it',
+      {},
+      { ...deps(), models: fauxModels(['all done']) },
     );
-    const result = await runHeadlessPrompt('hang', { timeoutMs: 40 }, deps());
-    expect(result.terminus).toBe('budget_exhausted');
-    // abort attempt (threw) → kill drained anyway → then sweep.
-    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
-  });
-
-  it('drains on the outer catch-all when the drive throws', async () => {
-    const events = guardEvents.events;
-    const { lane, kills } = drainLane(events);
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane,
-      kills,
-    } as unknown as SoloLane);
-    vi.mocked(driveToSettled).mockRejectedValue(new Error('drive blew up'));
-    const result = await runHeadlessPrompt('boom', {}, deps());
-    expect(result.terminus).toBe('failed');
-    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
-  });
-
-  it('drains on the waiting-deferred approval path', async () => {
-    const events = guardEvents.events;
-    const { lane, kills } = drainLane(events);
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane,
-      kills,
-    } as unknown as SoloLane);
-    vi.mocked(driveToSettled).mockResolvedValue({
-      kind: 'waiting-deferred' as const,
-      operationId: 'op-1',
-      deferred: {} as unknown as DeferredHandle,
-    });
-    const result = await runHeadlessPrompt('wait', {}, deps());
-    expect(result.terminus).toBe('approval_timed_out');
-    expect(events).toEqual(['abort:op-1', 'kill', 'sweep']);
-  });
-
-  it('does not touch a lane when admission was refused', async () => {
-    const events = guardEvents.events;
-    const { lane, kills } = drainLane(events);
-    vi.mocked(bootSoloLane).mockResolvedValue({
-      lane: {
-        ...lane,
-        accept: async () => ({
-          ok: false as const,
-          error: { message: 'no' },
-        }),
-      },
-      kills,
-    } as unknown as SoloLane);
-    const result = await runHeadlessPrompt('refused', {}, deps());
-    expect(result.terminus).toBe('failed');
-    // No operation was admitted: no abort, no kill — but the sweep ran.
-    expect(events).toEqual(['sweep']);
+    expect(result.terminus).toBe('completed');
+    expect(vi.mocked(abortLane)).not.toHaveBeenCalled();
+    expect(guardEvents.events).toEqual(['sweep']);
   });
 });

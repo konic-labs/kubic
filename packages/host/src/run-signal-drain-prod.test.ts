@@ -60,9 +60,10 @@ function hangingBashModels(pidName: string): MutableModels {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
-    fauxAssistantMessage([
-      fauxToolCall('bash', { command: `echo $$ > ${pidName}; sleep 60` }),
-    ]),
+    fauxAssistantMessage(
+      [fauxToolCall('bash', { command: `echo $$ > ${pidName}; sleep 60` })],
+      { stopReason: 'toolUse' },
+    ),
   ]);
   return models;
 }
@@ -177,8 +178,12 @@ describe('headless run signal handling (solo lane)', () => {
     // A sibling session makes the boot emit its overlap line on the debug
     // channel — a hook that fires strictly before the lane admits the prompt.
     const store = openSessionStore(root, createNodeFileBridge(root));
-    const sibling = await createSession(store, workspace, BACKGROUND_CONTEXT);
-    await sibling.close(BACKGROUND_CONTEXT);
+    const sibling = await createSession(
+      store,
+      { cwd: workspace },
+      BACKGROUND_CONTEXT,
+    );
+    await sibling.release(BACKGROUND_CONTEXT);
     const signals = new EventEmitter();
     let drove = false;
     const faux = fauxProvider();

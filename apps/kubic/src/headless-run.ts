@@ -402,7 +402,7 @@ export function assistantSummary(
   return undefined;
 }
 
-// §78 terminus for a failed turn: the §52 code and its message go through
+// §78 terminus for a settled turn: the §52 code and its message go through
 // the same settlement kernel the lane record does, so budget/approval/
 // workspace/provider failures keep their 3/4/5/6-bound termini.
 function failedTurnTerminus(outcome: TurnOutcome): RunTerminusKind {
@@ -411,6 +411,21 @@ function failedTurnTerminus(outcome: TurnOutcome): RunTerminusKind {
     code: outcome.reason,
     message: outcome.error ?? outcome.reason,
   });
+}
+
+// §78 terminus for a guard that stopped the run before or instead of a
+// settlement: an interrupt is a failed run (no separate §78 code), every
+// guard exhaustion is budget_exhausted with the ref triple intact.
+function stoppedResult(
+  id: string,
+  error: Error,
+  capture: { interrupted: boolean },
+): HeadlessRunResult {
+  if (error instanceof InterruptedError) {
+    capture.interrupted = true;
+    return finished(id, 'failed', error.message, error.message);
+  }
+  return finished(id, 'budget_exhausted', error.message, error.message);
 }
 
 // §46 capture of the run's transcript (#400's readers): the live conversation
@@ -824,9 +839,14 @@ async function runHeadlessPromptImpl(
   // write is not narrowed away by the reads below.
   let guardError: Error | undefined;
   const guardFailure = (): Error | undefined => guardError;
-  const tripGuard = (error: Error): void => {
+  // The abort reason travels on the context (lane/turn.ts reads it), while
+  // `guardError` keeps the original error for the run's own message.
+  const tripGuard = (
+    error: Error,
+    reason: 'guard' | 'signal' = 'guard',
+  ): void => {
     guardError ??= error;
-    guard.cancel(error);
+    guard.cancel(turnAbort(reason, error.message));
   };
   // Counted from the committed usage events (#398): one per assistant
   // response, the turn unit `--max-turns` bounds.
@@ -863,7 +883,7 @@ async function runHeadlessPromptImpl(
         }
       }
     }
-    tripGuard(new InterruptedError(signal));
+    tripGuard(new InterruptedError(signal), 'signal');
   }
   const attachSignals = (): void => {
     signalsAttached = true;
@@ -1469,8 +1489,7 @@ async function runHeadlessPromptImpl(
       const stopped = guardFailure();
       if (stopped !== undefined) {
         abandoned = true;
-        const message = stopped.message;
-        return finished(id, 'budget_exhausted', message, message);
+        return stoppedResult(id, stopped, capture);
       }
       // One stable request id per invocation (README "Persist and Resume"): a
       // re-submit inside this run finds the same submission instead of
@@ -1510,18 +1529,13 @@ async function runHeadlessPromptImpl(
         // The durable run is still live: the finally states the abort and
         // drains the kill registry before the sweep.
         abandoned = true;
-        if (outcome.reason === 'signal') {
-          capture.interrupted = true;
-          const message =
-            guardFailure()?.message ??
-            new InterruptedError(interruptedBy ?? 'signal').message;
-          return finished(id, 'failed', message, message);
-        }
+        const stopped = guardFailure();
+        if (stopped !== undefined) return stoppedResult(id, stopped, capture);
         if (outcome.reason === 'user') {
           const message = 'lane aborted before it settled';
           return finished(id, 'failed', message, message);
         }
-        const message = guardFailure()?.message ?? 'run guard exhausted';
+        const message = 'run guard exhausted';
         return finished(id, 'budget_exhausted', message, message);
       }
       // The installed policy refused an approval (issue #86). The block reaches

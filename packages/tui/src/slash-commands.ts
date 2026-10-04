@@ -119,6 +119,17 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'instructions',
     command: 'lane.compact',
   },
+  {
+    // Issue #338: attaching an image is local — it reads one file and arms
+    // the next prompt — so it issues no §66 command; the composition root
+    // owns the read (§9). Registered here so `/help`, the palette and the
+    // autocomplete know it, and so the unknown-command refusal lets it
+    // through to the local dispatcher instead of refusing it as a typo.
+    name: 'image',
+    summary: 'attach an image to the next prompt',
+    usage: '/image <path>',
+    argumentHint: 'path',
+  },
 ];
 
 export const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(

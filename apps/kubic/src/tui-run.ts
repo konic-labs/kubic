@@ -3994,6 +3994,24 @@ export async function runTuiCommand(
             shutdown();
             return 'accepted';
           }
+          case 'image': {
+            // Issue #338 (§16.8): `/image <path>` attaches one image to the
+            // next prompt. The registry owns discovery (palette,
+            // autocomplete, `/help`); the read and the validation are the
+            // composition root's, and a bare `/image` is the usage error.
+            const parsed = parseImageCommand(
+              command.argument === '' ? '/image' : `/image ${command.argument}`,
+            );
+            if (parsed === undefined || parsed.kind === 'invalid') {
+              app.setEditorFooter(
+                parsed === undefined ? IMAGE_COMMAND_USAGE : parsed.message,
+              );
+              if (!stopped) screen?.render();
+              return 'refused';
+            }
+            void attachFromPath(parsed.path);
+            return 'command';
+          }
           default: {
             app.setEditorFooter(
               `'/${command.name}': not implemented in this session`,
@@ -4418,16 +4436,6 @@ export async function runTuiCommand(
         // the next prompt. Nothing is echoed and nothing is restored on
         // success — the draft was a command, and the footer names the
         // attachment; a usage error hands the draft back.
-        const imageCommand = parseImageCommand(prompt);
-        if (imageCommand !== undefined) {
-          if (imageCommand.kind === 'invalid') {
-            app.setEditorFooter(imageCommand.message);
-            if (!stopped) screen?.render();
-            return 'refused';
-          }
-          void attachFromPath(imageCommand.path);
-          return 'command';
-        }
         // Issue #330: `/compact [instructions]` is a lane operation, never a
         // prompt. It runs through the same busy/cancel wrapper as a turn, so
         // the spinner shows and Ctrl-C aborts it; the command text itself

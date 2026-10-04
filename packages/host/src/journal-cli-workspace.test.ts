@@ -46,8 +46,8 @@ async function recordSession(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  const session = await createSession(store, cwd, BACKGROUND_CONTEXT, id);
-  await session.close(BACKGROUND_CONTEXT);
+  const session = await createSession(store, { id, cwd }, BACKGROUND_CONTEXT);
+  await session.release(BACKGROUND_CONTEXT);
 }
 
 function journalOf(sessionsRoot: string, id: string): FileJournalStore {

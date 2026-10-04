@@ -88,15 +88,21 @@ describe('RunSpans lane/tool trace (issue #98)', () => {
     ).toHaveLength(1);
   });
 
-  it('leaves a tool span open (endMs null) when its call never settles', () => {
-    const spans = new RunSpans(ticks([0, 0]));
+  it('closes a tool span its call never settled when the run ends', () => {
+    const spans = new RunSpans(ticks([0, 0, 3]));
     const run = spans.startRun();
     spans.startTool('call-4', 'read');
     spans.endRun(run);
     const tool = spans
       .trace()
       .find((span) => span.name === RUN_SPAN_NAMES.tool);
-    expect(tool?.endMs).toBeNull();
+    // No dangling span: endRun closes it and names why it never settled.
+    expect(tool?.endMs).not.toBeNull();
+    expect(tool?.error).toBe('run ended before the call settled');
+    expect(spans.debugLines()).toContain(
+      '[tool] out read call=call-4 ms=3 status=error ' +
+        'error=run ended before the call settled',
+    );
   });
 });
 

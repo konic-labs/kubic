@@ -293,6 +293,21 @@ describe('child run budget enforcement (issue #208)', () => {
     expect(breaches).toHaveLength(1);
   });
 
+  it('hooks() is stable: calling it twice hands back one gate, never a second counter', () => {
+    const enforcer = createRunBudgetEnforcer({ maxToolCalls: 2 }, () => {});
+    const first = enforcer.hooks();
+    const second = enforcer.hooks();
+    expect(second).toBe(first);
+    expect(second[0]).toBe(first[0]);
+    // The one gate counts each attempt once: two admitted, the third
+    // blocked. A fresh registration per call would let a wiring that reads
+    // hooks() more than once advance the meter twice per attempt.
+    const attempt = beforeToolAttempt(enforcer);
+    expect(attempt({ id: 'c1', name: 'bash', arguments: {} })).toBeUndefined();
+    expect(attempt({ id: 'c2', name: 'bash', arguments: {} })).toBeUndefined();
+    expect(attempt({ id: 'c3', name: 'bash', arguments: {} })).toBeDefined();
+  });
+
   it('createRunBudgetEnforcer breaches on a fixture usage row', () => {
     const breaches: BudgetTermination[] = [];
     const enforcer = createRunBudgetEnforcer({ maxCostUsd: 1 }, (t) =>

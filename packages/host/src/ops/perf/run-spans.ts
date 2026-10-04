@@ -65,6 +65,10 @@ export class RunSpans {
   }
 
   endRun(id: string, error?: string): void {
+    // A call still open here never reached afterTool (a blocked/orphaned
+    // path); close it before the run span so no span is serialized with
+    // endMs null. The call never settled, so the close names that.
+    this.closeOpenCalls();
     const elapsed = this.close(id, error);
     this.debug.agent(`run end ms=${String(elapsed)}${this.suffix(error)}`);
   }
@@ -143,6 +147,12 @@ export class RunSpans {
   private suffix(error: string | undefined): string {
     return error === undefined ? '' : ` error=${error}`;
   }
+
+  private closeOpenCalls(): void {
+    for (const callId of [...this.openCalls.keys()]) {
+      this.endTool(callId, 'run ended before the call settled');
+    }
+  }
 }
 
 export function serializeSpanArtifact(
@@ -170,9 +180,14 @@ export function serializeSpanArtifact(
 // Harness hook attachment for the `kubic.spans` extension (issue #397):
 // opens a pi.tool.execute span on beforeTool and closes it on afterTool.
 // Handlers never block a call; afterTool returns the result unchanged.
-// Blocked calls never reach the tool task's afterTool (a block settles
-// before execution), so a span only exists for a call that ran — the same
-// shape the removed pi-agent-core attachToolSpans had.
+//
+// ORDERING: install this extension AFTER the blocking policy extension
+// (`kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic`). The harness
+// skips later hooks once a block is returned, so a blocked call then never
+// opens a span — the same shape the removed pi-agent-core attachToolSpans
+// had. Installed before a blocking hook, a blocked call would open a span
+// and never close it; `RunSpans.endRun` closes any such still-open call as
+// a backstop rather than serializing it with `endMs: null`.
 export function runSpanHooks(spans: RunSpans): HookRegistration[] {
   return [
     hook(ToolTask, {

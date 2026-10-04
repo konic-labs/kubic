@@ -46,11 +46,11 @@ sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
 maps what the lane and the harness actually do onto it and
 `apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
 `kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
-`pi.tool.execute`, with parent linkage and per-span ms. Tool spans attach
-as the `kubic.spans` extension's `ToolTask` hooks (`runSpanHooks`, #397:
-`beforeTool` opens the span, `afterTool` closes it and returns the result
-unchanged), so a blocked call never reaches `afterTool` and no span fails
-a call.
+`pi.tool.execute`, with parent linkage and per-span ms. The tool-span half
+is `runSpanHooks` (#397): the run wiring (#395) installs it as the
+`kubic.spans` extension's `ToolTask` hooks, after `kubic.policy` so a
+blocked call opens no span — `beforeTool` opens the span, `afterTool`
+closes it and returns the result unchanged (the hook never fails a call).
 
 Two destinations, both documented on the
 [commands page](../cli/commands.md#where-the-spans-go):
@@ -65,9 +65,10 @@ Two destinations, both documented on the
    one JSON object per closed span. Evidence only: nothing reads it back
    yet (aggregation is #95/#96).
 
-A span that never settles stays open (`endMs: null`) rather than being
-dropped, and a run with no spans behaves exactly as before — the wiring
-is additive by construction.
+A tool span whose call never settled before the run ended is closed by
+`endRun` (`error=run ended before the call settled`) instead of being
+serialized with `endMs: null`, and a run with no spans behaves exactly as
+before — the wiring is additive by construction.
 
 ### Approvals (`approvals.ts`, #48)
 

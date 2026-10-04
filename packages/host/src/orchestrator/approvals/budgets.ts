@@ -404,8 +404,14 @@ export function createRunBudgetEnforcer(
     const hit = meter.nextToolCall();
     return hit === undefined ? undefined : stop(hit);
   };
+  // Built once: `hooks()` hands the same registrations to every caller, so a
+  // read-twice wiring cannot manufacture a second beforeTool handler over
+  // the same meter (which would count every attempt twice).
+  const registrations: HookRegistration[] = [
+    hook(ToolTask, { beforeTool: () => onToolAttempt() }),
+  ];
   return {
-    hooks: () => [hook(ToolTask, { beforeTool: () => onToolAttempt() })],
+    hooks: () => registrations,
     onUsage: (row) => {
       const hit = meter.recordUsage(usageSpendOf(row));
       if (hit !== undefined) stop(hit);

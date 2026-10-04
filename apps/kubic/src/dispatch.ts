@@ -355,6 +355,7 @@ export async function dispatchCommand(
     if (
       !bareOffTty &&
       command !== undefined &&
+      command !== '' &&
       command !== CRASH_PROBE &&
       !command.startsWith('-')
     ) {

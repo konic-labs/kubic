@@ -340,6 +340,15 @@ describe('dispatch routing (issue #135)', () => {
     ]);
     expect(h.calls).toEqual([]);
   });
+
+  it('an empty token gets no dead-end hint (review finding)', async () => {
+    // `kubic ""` cannot be run as a prompt (the prompt is empty), so the
+    // hint would name a command that exits 2 again.
+    const h = harness();
+    expect(await dispatchCommand('', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([ROOT_USAGE]);
+    expect(h.calls).toEqual([]);
+  });
 });
 
 describe('front door (issue #128 behavior, moved)', () => {

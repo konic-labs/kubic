@@ -162,27 +162,27 @@ stdout stays empty. The same split holds for `kubic orchestrate` and
 `kubic replay` (their own envelope shapes) and for the `loaded models.json:
 …` receipt, which is a stderr diagnostic under both modes.
 
-**Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>` and
-`-p<text>` all work. The typo guard stays: a separate-token value that
+**Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>`,
+`-p<text>` and the positional form `kubic run "<prompt>"` all work; pass
+exactly one — `-p` together with a positional exits 2 naming both, and two
+positionals exit 2. The `-p` typo guard stays: a separate-token value that
 starts with `--` is a mistyped flag, not a prompt — `kubic run -p --json`
 exits 2 with `argument missing ("--json" looks like a flag …)` and the
 exact attached form to use.
-A prompt that really begins with `--` is written in the attached form:
+A prompt that really begins with `--` is written in the attached form or
+after the `--` terminator:
 
 ```console
 $ kubic run --prompt='--help'            # the value is everything after '='
 $ kubic run --prompt='--json-experiment'
+$ kubic run -- --weird prompt            # a positional after '--' is taken verbatim
 ```
 
 A single-dash value (`-p '- fix the tests'`, a markdown bullet) is a
-normal prompt. The old `-p -- <prompt>` escape is gone: after `--` every
-token is an operand, and `run` takes none. A positional prompt without
-`-p` (`kubic run "fix tests"`) is refused with the exact form to use:
-`error: unexpected argument "fix tests" — the prompt is a flag: kubic run -p 'fix tests'`
-(single-quoted, so nothing in the suggestion expands when pasted). An
-empty prompt (`--prompt=`, `-p ''`) is refused (`the prompt is empty`).
+normal prompt. An empty prompt (`--prompt=`, `-p ''`, `kubic run ''`) is
+refused (`the prompt is empty`).
 `--help` anywhere after `run` is commander's help (exit 0); a literal
-`--help` prompt needs the attached form.
+`--help` prompt needs the attached form (or `--`).
 
 **Installed policy** (issue #86). A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
@@ -1184,8 +1184,9 @@ its own generated help (`kubic sessions prune --help`).
 
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
-Usage errors exit 2 on stderr: a missing subcommand (commander prints the
-subcommand list), an unknown option, a missing value, `attach` without an
+Usage errors exit 2 on stderr: a missing subcommand (the group action prints
+`error: sessions needs a subcommand (create | list | attach | prune)`;
+`--json` alone lists), an unknown option, a missing value, `attach` without an
 id or with an id outside `[A-Za-z0-9_-]`, a malformed `--tail`,
 `--keep-days` or `--keep-session`, and `--yes` with `--dry-run`. An
 unknown subcommand exits 2 (`error: unknown command '<name>'`), like an

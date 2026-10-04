@@ -347,6 +347,77 @@ export function createNodeFileBridge(cwd: string): FileBridge {
   };
 }
 
+// Run `run` while holding an O_EXCL lockfile (issue #337): the seam for a
+// mutation that must not interleave with another process's — the journal's
+// append, retention rewrite and blob sweep all run under it. The lock file
+// carries this process's pid, so a read-only observer can tell a live holder
+// from stale residue (`liveLockHolder`). Same stale/wait rules as
+// `updateFileLocked`: a crashed holder is stolen after `staleMs`, and a live
+// one is waited for up to `waitMs` before the caller gets a named timeout.
+// LOCAL FILESYSTEM ONLY, like every lock here.
+export function withFileLocked<T>(
+  lockPath: string,
+  run: () => T,
+  options: { staleMs?: number; waitMs?: number } = {},
+): T {
+  const staleMs = options.staleMs ?? 10_000;
+  const deadline = Date.now() + (options.waitMs ?? 5_000);
+  mkdirSync(dirname(lockPath), { recursive: true });
+  let fd: number | undefined;
+  while (fd === undefined) {
+    try {
+      fd = openSync(lockPath, 'wx');
+      // The pid is for observers, not for the lock itself: the O_EXCL create
+      // is the mutex. Written after the create so a torn payload can only
+      // ever read as stale, never as held.
+      writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue; // the holder released between open and stat
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for lock ${lockPath}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try {
+    return run();
+  } finally {
+    closeSync(fd);
+    rmSync(lockPath, { force: true });
+  }
+}
+
+// The pid recorded in a lockfile when that process is still alive (issue
+// #337): the read-only view a destructive command uses to skip work instead
+// of racing a live writer. undefined for a missing, unreadable, torn or
+// stale file — and for a pid that is gone, which is exactly what makes a
+// crashed holder's residue harmless.
+export function liveLockHolder(lockPath: string): number | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, 'utf8').trim();
+  } catch {
+    return undefined;
+  }
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    // Signal 0: the permission and existence probe, no signal delivered.
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return undefined;
+  }
+}
+
 // Atomic, serialized update of one small state file (orchestrator
 // workers.json): an O_EXCL lockfile (stale after `staleMs`, so a crashed
 // holder never wedges the next run) guards a read → update → tmp+rename
@@ -357,48 +428,26 @@ export function updateFileLocked(
   update: (current: string | undefined) => string,
   options: { staleMs?: number; waitMs?: number } = {},
 ): void {
-  const lock = `${absPath}.lock`;
-  const staleMs = options.staleMs ?? 10_000;
-  const deadline = Date.now() + (options.waitMs ?? 5_000);
   mkdirSync(dirname(absPath), { recursive: true });
-  let fd: number | undefined;
-  while (fd === undefined) {
-    try {
-      fd = openSync(lock, 'wx');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  withFileLocked(
+    `${absPath}.lock`,
+    () => {
+      let current: string | undefined;
       try {
-        if (Date.now() - statSync(lock).mtimeMs > staleMs) {
-          unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue; // the holder released between open and stat
+        current = readFileSync(absPath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for lock ${lock}`);
+      const next = update(current);
+      const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        writeFileSync(tmp, next);
+        renameSync(tmp, absPath);
+      } catch (error) {
+        rmSync(tmp, { force: true });
+        throw error;
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  try {
-    let current: string | undefined;
-    try {
-      current = readFileSync(absPath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const next = update(current);
-    const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
-    try {
-      writeFileSync(tmp, next);
-      renameSync(tmp, absPath);
-    } catch (error) {
-      rmSync(tmp, { force: true });
-      throw error;
-    }
-  } finally {
-    closeSync(fd);
-    rmSync(lock, { force: true });
-  }
+    },
+    options,
+  );
 }

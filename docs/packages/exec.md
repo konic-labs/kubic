@@ -18,7 +18,7 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
@@ -154,6 +154,18 @@ The bound is on the entry's own blob bytes (before pre-image plus after
 content, or the delta stored for a large after-side; a no-op write counts
 its single blob once), measured before dedupe — an entry that could never
 fit is refused whether or not its bytes happen to be in the store already.
+
+Cross-process coordination (issue #337): every mutation — `append`,
+`enforceRetention` (rewrite + blob sweep) — runs under an O_EXCL lock beside
+the index (`journalMutationLockPath`, pid recorded, stale after ten seconds,
+waited for up to five); a nested call is re-entrant, a second process waits,
+and a crashed holder is stolen. The rewrite abandons itself when the index's
+size changed between its read and its rename (a writer that does not hold the
+lock), leaving the interleaved line in place and dropping its caches so the
+next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer
+than the pass started. `liveLockHolder(lockPath)` is the read-only view: the
+pid when that process is alive, undefined for missing/torn/stale residue —
+what `kubic clean --journal` and the read-time self-heal use to step aside.
 
 Retention fast path (issues #124, #349, #350): both bounds are proven from
 cache on every append — the tracked byte total (index + blobs) must be at or

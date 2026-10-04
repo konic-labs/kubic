@@ -64,7 +64,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   restoring would destroy unjournaled changes (issue #108; `--force`
   overrides per-invocation); and `already undone (skipped)` — a previous
   undo already unwound the step, nothing is rewritten. In every skipped
-  class the exit is 1 and nothing is written for that step.
+  class the exit is 1 and nothing is written for that step. A live session
+  lock (issue #337) refuses the whole invocation with exit 1 and one `error:`
+  line naming the holder pid — `--force` overrides it, and nothing is
+  planned, restored or journaled otherwise.
 - **`kubic git`**: 0 success (including `log` on a repo with no commits
   yet); 1 an op failure or outside a git repository (one `error:` line on
   stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,

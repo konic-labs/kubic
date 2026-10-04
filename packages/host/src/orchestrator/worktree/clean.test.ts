@@ -3,14 +3,35 @@
 // branches + journal retention, output supports --json, and the refusal
 // posture holds on the faux seam before the scratch-repo suite
 // (clean-repo.test.ts) proves it against real git.
-import { describe, expect, it } from 'vitest';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../../exec/src/env.js';
+import { FileJournalStore } from '../../../../exec/src/journal.js';
 import {
   type CleanOptions,
+  cleanDepsWithDefaults,
   planClean,
   planSessionClean,
   runCleanCommand,
 } from './clean.js';
+
+// Issue #337: temp workspaces for the real (non-injected) prune path.
+const scratch: string[] = [];
+
+afterEach(() => {
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true });
+});
+
 import type { WorktreeEntry } from './list.js';
 import { parseWorktreePorcelain } from './list.js';
 
@@ -653,5 +674,92 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
 
     const own = await run('sa-worker-1');
     expect(own.killed).toEqual([4242]);
+  });
+});
+
+// Issue #337: `kubic clean --journal` is a destructive pass over the whole
+// journal — under a live writer it can drop entries the run just appended and
+// delete blobs it just wrote. It steps aside, and says so.
+describe('kubic clean steps aside for a live journal writer (issue #337)', () => {
+  function repoWithJournal(): { repoRoot: string; journalDir: string } {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'clean337-'));
+    scratch.push(repoRoot);
+    const journalDir = join(repoRoot, '.kubic', 'journal');
+    mkdirSync(join(journalDir, 'blobs'), { recursive: true });
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: null,
+      after: 'a\n',
+      bytesDelta: 2,
+      sessionId: 's1',
+      agentId: 'root',
+      toolCallId: null,
+      timestamp: 100,
+    });
+    return { repoRoot, journalDir };
+  }
+
+  function envFor(repoRoot: string): FakeExecutionEnv {
+    return new FakeExecutionEnv({
+      'git rev-parse --show-toplevel': {
+        exitCode: 0,
+        stdout: `${repoRoot}\n`,
+        stderr: '',
+      },
+      'git worktree list --porcelain': {
+        exitCode: 0,
+        stdout: `worktree ${repoRoot}\nHEAD abc\nbranch refs/heads/main\n`,
+        stderr: '',
+      },
+      'git branch --list kubic/* --format=%(refname:short)': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'git worktree prune': { exitCode: 0, stdout: '', stderr: '' },
+    });
+  }
+
+  it('skips the prune and names the holder', async () => {
+    const { repoRoot, journalDir } = repoWithJournal();
+    const indexPath = join(journalDir, 'index.jsonl');
+    const before = readFileSync(indexPath, 'utf8');
+    // A live writer's lock: the pid `withFileLocked` writes.
+    writeFileSync(`${indexPath}.lock`, String(process.pid));
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: envFor(repoRoot),
+        out: (l) => lines.push(l),
+        err: (l) => errs.push(l),
+      }),
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      `journal: prune skipped — the journal is in use (pid ${process.pid})`,
+    );
+    expect(readFileSync(indexPath, 'utf8')).toBe(before);
+    expect(readdirSync(join(journalDir, 'blobs'))).toHaveLength(1);
+
+    // Control: with the holder gone the same invocation prunes (the aged
+    // entry is dropped and its blob swept).
+    rmSync(`${indexPath}.lock`);
+    const after: string[] = [];
+    const code2 = await runCleanCommand(
+      { journal: true, maxAgeMs: 1 },
+      cleanDepsWithDefaults({
+        env: envFor(repoRoot),
+        out: (l) => after.push(l),
+        err: () => undefined,
+      }),
+    );
+    expect(code2).toBe(0);
+    expect(after.join('\n')).toMatch(/journal: pruned 1 entr\(ies\)/);
+    expect(readFileSync(indexPath, 'utf8')).not.toBe(before);
+    expect(readdirSync(join(journalDir, 'blobs'))).toHaveLength(0);
   });
 });

@@ -325,12 +325,15 @@ describe('prune stats bound (issue #124, slice 2)', () => {
     expect(seed.blobCount()).toBe(30);
     const cold = new FileJournalStore(dir); // fresh instance, no cache warmth
     counts.fileInfo = 0;
+    counts.blobInfo = 0;
     // The whole-store bound (index lines + blobs, issue #350) with 150 bytes
     // leaves only the newest entry.
     const pruned = cold.enforceRetention({ maxBytes: 150 });
-    // 49 drops over 30 unique blobs: at most one stat per unique blob
-    // total, never drops × M.
-    expect(counts.fileInfo).toBeLessThanOrEqual(30);
+    // 49 drops over 30 unique blobs: at most one BLOB stat per unique blob
+    // total, never drops × M. (The pass's own index stats — the read-time
+    // size and the unchanged-check before the rename, issue #337 — are not
+    // blob stats and are counted separately.)
+    expect(counts.blobInfo).toBeLessThanOrEqual(30);
     expect(pruned.entries).toBe(49);
     expect(pruned.bytes).toBe(290);
     expect(cold.entries().map((e) => e.path)).toEqual(['f49.txt']);

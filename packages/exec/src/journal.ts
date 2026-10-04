@@ -15,7 +15,11 @@ import {
   resolve,
   sep,
 } from 'node:path';
-import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
+import {
+  createNodeFileBridge,
+  type FileBridge,
+  withFileLocked,
+} from './file-bridge.js';
 import { type IgnoreRule, isIgnored, parseIgnoreFile } from './ignore.js';
 
 export type JournalOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
@@ -255,6 +259,26 @@ const FLUSH_UNSUPPORTED = new Set([
   'EPERM',
 ]);
 
+// Issue #337: how long a mutation lock may sit before it is stale (a crashed
+// holder must never wedge the journal) and how long a writer waits for a live
+// holder before failing by name. The holder only ever holds it for one
+// mutation, so the wait is generous.
+const MUTATION_LOCK_STALE_MS = 10_000;
+const MUTATION_LOCK_WAIT_MS = 5_000;
+
+/**
+ * Issue #337: the mutation lock beside a store's index (`index.jsonl.lock`).
+ * Every journal mutation — append, retention rewrite, blob sweep — runs under
+ * it, so two processes cannot interleave: a line appended between a reader's
+ * `entries()` and its rename is otherwise silently dropped by the rename, and
+ * a blob sweep otherwise deletes the `${hash}.${pid}.tmp` another process is
+ * about to rename into place. Exported so a destructive command can observe
+ * the lock read-only (`liveLockHolder`) and skip instead of racing.
+ */
+export function journalMutationLockPath(indexPath: string): string {
+  return `${indexPath}.lock`;
+}
+
 // The index's tail, as `readIndexTail` reports it (issue #343): `size` is the
 // byte length a failed append truncates back to, null when it could not be
 // read; `fragment` means the last byte is not a newline, so the next append
@@ -452,7 +476,41 @@ export class FileJournalStore {
     return createNodeFileBridge('/');
   }
 
+  // Issue #337: true while THIS store holds the mutation lock, so its own
+  // nested calls (append → enforceRetention) do not try to take it twice —
+  // the file lock is not re-entrant, and the O_EXCL create would deadlock
+  // against itself.
+  private mutationLockHeld = false;
+
+  /**
+   * Issue #337: run a mutation under the cross-process lock beside the index.
+   * A second process waits (up to the lock's wait budget) instead of
+   * interleaving; a crashed holder is stolen after the stale window, so the
+   * journal is never wedged by residue.
+   */
+  private withMutationLock<T>(run: () => T): T {
+    if (this.mutationLockHeld) return run();
+    return withFileLocked(
+      journalMutationLockPath(this.indexPath),
+      () => {
+        this.mutationLockHeld = true;
+        try {
+          return run();
+        } finally {
+          this.mutationLockHeld = false;
+        }
+      },
+      { staleMs: MUTATION_LOCK_STALE_MS, waitMs: MUTATION_LOCK_WAIT_MS },
+    );
+  }
+
   append(input: JournalEntryInput): JournalEntry {
+    // Issue #337: the whole append — blob writes, the index line and the
+    // retention pass it triggers — is one mutation.
+    return this.withMutationLock(() => this.appendLocked(input));
+  }
+
+  private appendLocked(input: JournalEntryInput): JournalEntry {
     const bridge = this.bridge();
     // Issue #348: an entry the store could never keep is refused before a
     // single blob is written, so the caller's file write is aborted with
@@ -748,6 +806,23 @@ export class FileJournalStore {
     // when the newest entry alone cannot fit. 0 means the bound holds.
     overBound: number;
   } {
+    // Issue #119: a store with no index has nothing to prune, and reading one
+    // must not create it — so the pass is skipped (lock included) before any
+    // write. A fresh store's first append creates the directory through the
+    // lock's own mkdir.
+    if (!this.bridge().exists(this.indexPath)) {
+      return { entries: 0, bytes: 0, overBound: 0 };
+    }
+    // Issue #337: the pass reads the index, rewrites it and sweeps blobs —
+    // one mutation, serialized against every other process's.
+    return this.withMutationLock(() => this.enforceRetentionLocked(policy));
+  }
+
+  private enforceRetentionLocked(policy: RetentionPolicy): {
+    entries: number;
+    bytes: number;
+    overBound: number;
+  } {
     const bridge = this.bridge();
     const now = policy.now ?? Date.now();
     // Fast path (issues #124, #349): the pass can be skipped outright —
@@ -773,6 +848,11 @@ export class FileJournalStore {
       return { entries: 0, bytes: 0, overBound: 0 };
     }
     const all = this.entries();
+    // Issue #337: the size of the index the pass just read. The rewrite below
+    // is only safe while the file is still that file — a writer that does not
+    // hold the mutation lock (an older build, a hand edit) can append between
+    // the read and the rename, and the rename would drop that line silently.
+    const sizeAtRead = this.indexFileSize(bridge);
     // `kept` must not alias `all`: the drop loop shifts entries out of
     // `kept` while `all` stays the pre-drop index for `removed`/`before`.
     let kept = [...all];
@@ -878,6 +958,16 @@ export class FileJournalStore {
       (kept.length > 0 ? '\n' : '');
     bridge.writeFile(tmp, serialized);
     try {
+      // Issue #337: abandon the rewrite when the index changed under it. The
+      // pass keeps nothing it cannot prove is still current: the next pass
+      // sees the new state, and the line that landed is never lost. (The
+      // mutation lock makes this window impossible for a cooperating writer;
+      // this is the guard for one that is not.)
+      const sizeNow = this.indexFileSize(bridge);
+      if (sizeAtRead !== null && sizeNow !== sizeAtRead) {
+        bridge.remove(tmp, false, true);
+        return { entries: 0, bytes: 0, overBound: 0 };
+      }
       // Issue #344: the rewrite replaces the journal's whole history, so
       // with `durable` on its bytes are fsynced before the rename and the
       // directory after it. Without that, a crash right after the rename
@@ -894,18 +984,25 @@ export class FileJournalStore {
       }
       return { entries: 0, bytes: 0, overBound: 0 };
     }
+    // Issue #337: the sweep only removes blobs that are unambiguously dead.
+    // `${hash}.${pid}.tmp` is another process's in-flight write (the mutation
+    // lock makes this impossible for a cooperating writer, and this guard is
+    // what keeps a non-cooperating one — an older build, a hand copy — from
+    // having its blob deleted between its write and its rename). A blob whose
+    // mtime is newer than this pass started is the same story; an orphaned
+    // blob is a leak, never corruption, so leaving one is always the safe
+    // direction.
+    const sweepStartedAt = Date.now();
     if (bridge.exists(this.blobsDir)) {
       for (const info of bridge.listDir(this.blobsDir)) {
-        if (
-          !info.isDirectory &&
-          !info.isSymbolicLink &&
-          !referenced.has(info.name)
-        ) {
-          try {
-            bridge.remove(join(this.blobsDir, info.name), false, true);
-          } catch {
-            // Best-effort: an orphaned blob is a leak, not corruption.
-          }
+        if (info.isDirectory || info.isSymbolicLink) continue;
+        if (info.name.endsWith('.tmp')) continue;
+        if (info.mtimeMs > sweepStartedAt) continue;
+        if (referenced.has(info.name)) continue;
+        try {
+          bridge.remove(join(this.blobsDir, info.name), false, true);
+        } catch {
+          // Best-effort: an orphaned blob is a leak, not corruption.
         }
       }
     }

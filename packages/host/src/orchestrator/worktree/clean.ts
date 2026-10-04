@@ -28,10 +28,14 @@ import {
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv, Provenance } from '../../../../exec/src/env.js';
-import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import {
+  createNodeFileBridge,
+  liveLockHolder,
+} from '../../../../exec/src/file-bridge.js';
 import {
   DEFAULT_JOURNAL_MAX_BYTES,
   FileJournalStore,
+  journalMutationLockPath,
 } from '../../../../exec/src/journal.js';
 import {
   commandOwnsSession,
@@ -104,6 +108,11 @@ export interface JournalPruneResult {
   // when the newest entry alone cannot fit — it is never dropped, so the
   // excess is reported instead of deleted. 0 means the bound holds.
   overBound: number;
+  // Issue #337: the pid holding the journal's mutation lock, when the prune
+  // was skipped because a writer is live. Pruning under a live run can drop
+  // entries it just appended and delete blobs it just wrote, so the pass
+  // steps aside and says who it stepped aside for.
+  lockedBy?: number;
 }
 
 export interface CleanDeps {
@@ -319,7 +328,18 @@ function defaultPruneJournal(
   policy: { maxAgeMs?: number; maxBytes?: number },
   repoRoot: string,
 ): JournalPruneResult {
-  const store = new FileJournalStore(join(repoRoot, '.kubic', 'journal'));
+  const dir = join(repoRoot, '.kubic', 'journal');
+  // Issue #337: a live writer holds the journal's mutation lock for the
+  // length of one mutation, but `kubic clean --journal` is a destructive
+  // pass over the whole store — under a live run it can drop entries the run
+  // just appended and delete blobs it just wrote. It steps aside instead.
+  const holder = liveLockHolder(
+    journalMutationLockPath(join(dir, 'index.jsonl')),
+  );
+  if (holder !== undefined) {
+    return { entries: 0, bytes: 0, overBound: 0, lockedBy: holder };
+  }
+  const store = new FileJournalStore(dir);
   return store.enforceRetention(policy);
 }
 
@@ -764,13 +784,21 @@ export async function runCleanCommand(
     deps.out(theme.muted('clean: nothing to prune'));
   }
   if (bounded) {
-    const over =
-      journal.overBound > 0
-        ? `, over bound by ${journal.overBound} byte(s) (newest entry kept)`
-        : '';
-    deps.out(
-      `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)${over}`,
-    );
+    if (journal.lockedBy !== undefined) {
+      // Issue #337: a skipped prune is never silent — it is a different
+      // outcome from "nothing to prune".
+      deps.out(
+        `journal: prune skipped — the journal is in use (pid ${journal.lockedBy})`,
+      );
+    } else {
+      const over =
+        journal.overBound > 0
+          ? `, over bound by ${journal.overBound} byte(s) (newest entry kept)`
+          : '';
+      deps.out(
+        `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)${over}`,
+      );
+    }
   }
   return exitCode;
 }

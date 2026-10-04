@@ -27,7 +27,16 @@ gets one before the new entry — so the entry lands on a line of its own
 and is never glued to the fragment and dropped with it — and a failed
 append truncates the partial write back to the pre-append length. Dropped
 fragments are named as `corrupt index lines` in `kubic status` and removed
-by the next retention rewrite. A blob found under the wrong bytes (the
+by the next retention rewrite. Cross-process coordination (issue #337): every
+journal mutation — append, retention rewrite, blob sweep — runs under an
+O_EXCL lock beside the index (stale after ten seconds, so a crashed holder
+never wedges the journal), the rewrite abandons itself when the index changed
+under it, and the sweep only removes blobs that are unambiguously dead (never
+a `${hash}.${pid}.tmp` another process is renaming into place, never one newer
+than the pass). Commands that only read step aside for a live run instead of
+racing it: `kubic log`'s read-time self-heal skips the pass, with a notice,
+while the session lock is live, `kubic clean --journal` skips the prune and
+names the holder, and `kubic undo` refuses by name (exit 1) unless `--force`. A blob found under the wrong bytes (the
 zero-length crash shape) is rewritten from the content in hand instead of
 being reused, and the retention compaction rewrite is flushed the same
 way — a crash right after it could otherwise replace the whole history

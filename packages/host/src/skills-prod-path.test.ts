@@ -5,8 +5,8 @@
 // and hands the model-visible blocks to the lane boot.
 //
 // Faux provider only (zero network, zero paid tokens): the assertions are
-// about the system-prompt bytes handed to AgentHarness.create, observed
-// through the same spy seam solo-wiring.test.ts uses.
+// about the committed solo prompt bytes, read back from the session
+// transcript (#400's reader) after a real `kubic run`.
 import {
   mkdirSync,
   mkdtempSync,

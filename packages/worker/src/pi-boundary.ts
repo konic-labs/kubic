@@ -308,7 +308,6 @@ export {
   ConversationBusy,
   configure,
   createRegistry,
-  createSession,
   defineDoc,
   defineExtension,
   defineTool,
@@ -398,17 +397,6 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 // --- #394 additions ---
 
 // JUSTIFICATION:
-//   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
-//   used by: packages/worker/src/lane/session-store.ts (minting a new
-//     session id)
-//   why Pi has no alternative: the session id is part of the store's public
-//     contract (`kubic run --session`, `kubic sessions list`, the session
-//     directory name) and 0.87 minted it with this generator; another source
-//     would change every printed id's shape and lose the time-ordered
-//     property operators rely on. node:crypto only mints v4.
-//   review: issue #391 (K2 #392)
-export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
-// JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Registry
 //   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
 //     per-process registry the boot installs the Kubic extensions into)
@@ -433,21 +421,6 @@ export type { Registry } from '@earendil-works/pi-durable';
 //     Session kernel, not the store's own createSession.
 //   review: issue #391 (K2 #392)
 export { createSession } from '@earendil-works/pi-durable';
-// --- #392 additions ---
-// JUSTIFICATION:
-//   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
-//     JSONL storage core, opened over a supplied FileSystem)
-//   used by: packages/worker/src/lane/session-store.ts (one storage per
-//     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
-//     conformance suite runs over the exec bridge)
-//   why Pi has no alternative: JSONL durability, commit markers and crash
-//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo is
-//     gone in 1.0 and Kubic owns no storage format of its own. The portable
-//     core — not the `/node` entry point — is what takes the exec bridge, so
-//     every session byte crosses the I/O seam (confinement §9, #359 secret
-//     scrubbing, #361 file modes).
-//   review: issue #391 (K2 #392)
-export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/testing#registerStorageConformance
 //   used by: packages/worker/src/lane/session-fs.test.ts (issue #392: the

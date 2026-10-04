@@ -463,6 +463,48 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     }
   });
 
+  it('assigns the embedded presets in a repo with no role documents (issue #203)', async () => {
+    // The same scratch shape as the cwd test, minus the role document: the
+    // built-in presets ship with the binary, so the child is still launched
+    // as a role — `--role planner`, with the embedded planner prompt — instead
+    // of running as a role-less worker.
+    const plain = scratchRoot('kubic-orch-presets-');
+    await gitOrThrow(plain, ['init', '-b', 'main']);
+    await gitOrThrow(plain, ['config', 'user.email', 'roles@kubic.dev']);
+    await gitOrThrow(plain, ['config', 'user.name', 'kubic roles']);
+    await gitOrThrow(plain, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(plain, 'base.txt'), 'base\n');
+    await gitOrThrow(plain, ['add', '-A']);
+    await gitOrThrow(plain, ['commit', '-m', 'base']);
+    const sessionsRoot = scratchRoot('kubic-orch-presets-sessions-');
+    const scratch = scratchRoot('kubic-orch-presets-child-');
+    const fixture = join(scratch, 'worker-child.mjs');
+    writeFileSync(fixture, FIXTURE);
+    const dumpDir = scratchRoot('kubic-orch-presets-prompts-');
+    const deps = await orchestrateDepsWithDefaults({
+      out: () => undefined,
+      err: () => undefined,
+      cwd: plain,
+      sessionsRoot,
+      registry: new WorkerRegistry(),
+      workerEntry: { cmd: process.execPath, args: [fixture] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${dumpDir}`,
+        agents: ['alpha:planner'],
+        yes: true,
+        session: 'presetsession',
+      },
+      deps,
+    );
+    expect(code).toBe(0);
+    expect(readDump(dumpDir, 'alpha', 'role')).toBe('planner');
+    expect(readDump(dumpDir, 'alpha', 'prompt')).toContain(
+      'You are the planner.',
+    );
+  });
+
   it('resolves role documents from the run cwd, not the process cwd', async () => {
     // The composition root is given an explicit cwd (a caller embedding the
     // run); the role documents must come from THAT repo. A process-cwd read

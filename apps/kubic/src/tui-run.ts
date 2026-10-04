@@ -1566,8 +1566,8 @@ export class TuiTurnRunner {
   }
 
   // Issue #227: `/model provider/id`. The loop owns the lane-side switch
-  // (catalog resolution, setModel, read-back); this runner keeps the model
-  // every later usage row and the app's status bar name on the live one.
+  // (catalog resolution, conversation.configure, read-back); this runner
+  // keeps the model the app's status bar and every later header names.
   async switchModel(selection: ModelSelection): Promise<string> {
     const switchModel = this.loop.switchModel;
     if (switchModel === undefined) {
@@ -1685,7 +1685,7 @@ export class TuiTurnRunner {
   // Issue #312 (§18, #109): quitting mid-turn aborts and drains the
   // conversation — the durable abort, then every registered kill — and waits
   // for the run to settle, at most until `bound` resolves. A quit that lands
-  // before the submit is latched: `drive` replays it on the in-flight turn.
+  // before the submit waits for the placement and aborts then (see below).
   // When the bound wins, the registered kills still run: the registry drain
   // is the backstop and must not queue behind an abort that may never answer
   // (`abortLane` drains them again — a no-op).

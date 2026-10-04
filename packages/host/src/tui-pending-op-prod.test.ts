@@ -56,31 +56,36 @@ function fauxModels(texts: string[]): MutableModels {
 
 async function crashAfterAccept(
   root: string,
-): Promise<{ id: string; operationId: string }> {
+): Promise<{ id: string; submissionId: string }> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses([fauxAssistantMessage('never')]);
+  // The dead process's generation never answers: the durable work stays
+  // unfinished, exactly what a crash leaves behind.
+  faux.setResponses([() => new Promise(() => {})]);
   const solo = await bootSoloLane({
     session,
     models,
     model: faux.getModel(),
     env: new FakeExecutionEnv({}),
-    sessionId: session.metadata.id,
+    sessionId: session.id,
     agentId: 'root',
   });
-  const admission = await solo.lane.accept(
-    { kind: 'prompt', prompt: 'crashed turn' },
+  const submission = await solo.conversation.submit(
+    { type: 'input', content: 'crashed turn', requestId: 'crashed-turn' },
     BACKGROUND_CONTEXT,
   );
-  if (!admission.ok) throw new Error('accept failed');
   writeFileSync(
-    join(root, session.metadata.id, 'lock.json'),
+    join(root, session.id, 'lock.json'),
     JSON.stringify({ pid: 424242, startedAt: Date.now() }),
   );
-  return { id: session.metadata.id, operationId: admission.value.operationId };
+  return { id: session.id, submissionId: String(submission.id) };
 }
 
 function fakeTerminal(): {
@@ -133,9 +138,9 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 describe('kubic tui --session after a crash (issue #147)', () => {
-  it('boot aborts the pending op, names it, and the loop accepts a prompt', async () => {
+  it('boot aborts the pending work, names it, and the loop takes a prompt', async () => {
     const root = tmpRoot();
-    const { id, operationId } = await crashAfterAccept(root);
+    const { id, submissionId } = await crashAfterAccept(root);
     vi.spyOn(process, 'kill').mockImplementation((() => {
       throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
     }) as never);
@@ -145,16 +150,17 @@ describe('kubic tui --session after a crash (issue #147)', () => {
       env: new FakeExecutionEnv({}),
     });
     try {
-      expect(boot.pendingNotice).toMatch(
-        new RegExp(
-          `^pending operation ${operationId} \\(run, started .+\\) aborted after an interrupted run$`,
-        ),
-      );
-      const admission = await boot.loop?.accept(
-        'next prompt',
-        BACKGROUND_CONTEXT,
-      );
-      expect(admission?.ok).toBe(true);
+      // #396's notice: the durable work, the settlement and — for #147's
+      // "this very prompt" rule — the interrupted prompt itself.
+      expect(boot.pendingNotice).toContain(`submission ${submissionId}`);
+      expect(boot.pendingNotice).toContain('aborted after an interrupted run');
+      expect(boot.pendingNotice).toContain('interrupted prompt: crashed turn');
+      const turn = await boot.loop?.runTurn('next prompt', {
+        requestId: 'next-prompt',
+        context: BACKGROUND_CONTEXT,
+        whenBusy: 'reject',
+      });
+      expect(turn?.kind).toBe('completed');
     } finally {
       await boot.close?.();
     }

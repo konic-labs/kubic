@@ -8,38 +8,42 @@
 
 `@kubic/worker` is the agent runtime: solo lane, tool adaptation, Pi
 harness wiring, budgets, compaction, and the worker → host result
-payload. All Pi imports flow through the single choke point
+payload. All Pi imports flow through the worker Pi seam
 `src/pi-boundary.ts` (§65) — `scripts/dep-lint.mjs` rejects
-`@earendil-works/*` imports everywhere else, and CODEOWNERS flags every
-diff touching the boundary for maintainer review.
+`@earendil-works/*` imports everywhere else in the worker (the TUI owns
+the other seam, `packages/tui/src/tui-boundary.ts`), and CODEOWNERS flags
+every diff touching the boundary for maintainer review.
 
 ## Public API (`packages/worker/src`)
 
 | Module | Exports |
 | --- | --- |
 | `result.ts` | `AgentResult`, `RESULT_FIELDS`, `ResultStatus`, `RESULT_STATUSES`, `ResultError`, `ResultErrorKind`, `ERROR_KINDS`, `TestResult`, `ArtifactRef`, `WorkspaceDiffRef`, `WorkerProvenance`, `ApprovalRecord`, `EscalationRecord`, `ResultMetrics`, `ResultValidation`, `validateAgentResult`, `JsonValue` |
-| `pi-boundary.ts` | Sole Pi seam: harness types (`AgentLane`, `AgentHarnessTool`, `Context`, `DriveOutcome`, `Events`, `HarnessEvent`, `Session`, `SessionRepo`, `UsageRow`, …) + values (`AgentHarness`, `BACKGROUND_CONTEXT`, `MemorySessionRepo`, `JsonlSessionRepo`, `ok`, `err`, `FileError`); model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions`, `SOLO_KEEP_RECENT_TOKENS`, `SoloCompactionOptions`, `SoloBootOptions` (`modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`model`: the model the lane actually runs), `splitSoloModelId`, `escalateSoloModel`, `SoloCompactionCheck`, `SoloCompactionDecision`, `maybeCompactSoloLane`, `LaneDriver`, `DriveLoopOptions`, `RoutableOutcome`, `SettledDrive`, `LaneDriveError` |
-| `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `EventSource`, `toKubicLaneEvent`, `attachLaneEvents`, `watchLane` |
+| `pi-boundary.ts` | Worker Pi seam (§65, [#197](https://github.com/konic-labs/kubic/issues/197); #391 moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `defaultSoloPrompt`, `SoloPolicyOptions` (`beforePolicyHooks`/`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.budget` → `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order, #397/#394), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
+| `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
-| `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `registerPolicyInterceptors` |
+| `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and approved-call set live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
-| `lane/session-fs.ts` | `bridgeToPiFileSystem` |
-| `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
-| `lane/pending.ts` | `PendingPolicy`, `PendingSettlement`, `PendingLane`, `PendingDriver`, `settlePendingOperation`, `pendingHead`, `describePendingOperation`, `describeSettlement`, `inspectOpenOperations`, `lastUserPromptText` — settle a turn a crashed process left open (#147: resume or durable abort) |
-| `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
+| `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
+| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395) |
+| `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
+| `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (#147; #396: `harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
+| `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated, #395 D6.2) |
+| `lane/transcript.ts` | `TranscriptItem`, `entriesToTranscript`, `readConversationEntries`, `readSessionEntries` — the one pi-durable → Kubic transcript adapter (#400) |
+| `lane/test-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux SoloLane factory (#401) |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `lifecycle/registry.ts` | `WorkerRegistration`, `WorkerRow`, `WorkerRegistry` |
 | `lifecycle/env.ts` | `ENV_ALLOWLIST`, `filterSpawnEnv`, `roleCredentialEnv`, `roleGrantEnv`, `withRoleGrant`, `buildSpawnEnv`, `redactEnvForLog` |
 | `lifecycle/reap.ts` | `RawExit`, `ExitReport`, `reportExit`, `ReapTarget`, `ReapDeps`, `DetachedReap`, `TEARDOWN_BUDGET_MS`, `reapDetached` |
 | `lifecycle/budgets.ts` | `LIFECYCLE_BUDGETS_MS`, `PerfSample`, `PerfGateResult`, `checkPerfGate` |
-| `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `formatUsageLine` |
+| `usage.ts` | `KubicUsageRow`, `ModelUsageSummary`, `UsageSummary`, `summarizeUsage`, `formatCost`, `formatUsageLine`, `usageRowFromEntry` |
 | `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `createLadder`, `escalateModel`, `supportedThinking`, `clampThinking`, `saveThinkingLevel`, `loadThinkingLevel` |
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
 | `prompts.ts` | `PromptCacheError`, `PROMPT_CACHE_RULES`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `appendTurnContent`, `LaneBinding`, `LaneRegistry`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
-| `compaction.ts` | `CompactionThreshold`, `compactionThreshold`, `shouldCompact`, `DEFAULT_RESERVE_TOKENS`, `CompactionCheckpoint`, `COMPACTION_CHECKPOINTS`, `CheckpointContext`, `shouldCheckAt`, `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `BranchSummaryEntry`, `BranchSummaryStore`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState`, `buildCompactedState` |
+| `compaction.ts` | `DEFAULT_RESERVE_TOKENS`, `MAX_RESERVE_FRACTION`, `effectiveReserveTokens`, `SOLO_KEEP_RECENT_TOKENS` (20000), `SOLO_BACKGROUND_TOKENS` (0: Kubic's reserve threshold is the only trigger — no speculative background summary, #399), `SoloCompactionSettingsOptions`, `soloCompactionSettings` (the harness `settings.compaction`; `reserveTokens` is a live getter clamped to the current model's window, so a model switch re-clamps with no explicit step), `SoloCompactionLane`, `compactSoloLane` (§27.2 manual `/compact [focus]`; admits Pi's compaction task with Kubic's prompt as its instructions — #330; **automatic** threshold/overflow compaction uses Pi's own summarization prompt, because pi-durable only accepts instructions through `compact()`, so Kubic's `buildCompactPrompt` reaches the manual path only — #399/D3), `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `BranchSummaryEntry`, `BranchSummaryStore`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState`, `buildCompactedState` |
 | `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` (#16) + `lane/interceptors.ts`; sessions in `lane/session-store.ts` (#14); tools in `lane/tools-adapter.ts` (#11) |
 | `ops/` | Implemented | Operation implementations (read/write/edit/bash/git/…) + registry |
 
@@ -205,17 +209,104 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
+### Session storage (issue #392)
+
+One pi-durable `Storage` per session, at `<sessions-root>/<id>/` — the same
+directory that already held the journal, spans, approvals posture and lock.
+The storage is opened over the exec file bridge (`bridgeToPiFileSystem`), not
+through pi-durable's Node entry point: session bytes keep crossing the I/O
+seam, so the #359 secret scrubbing and the #361 file modes apply to the
+session JSONL exactly as they did before, and Kubic stays the only package
+that touches `node:fs`.
+
+| Path under `<root>/<id>/` | What it is |
+| --- | --- |
+| `main.jsonl` + `doc-<n>.jsonl` | the pi-durable JSONL storage: the session's transcript, documents and durable tasks — the session's truth |
+| `session.json` | Kubic's **listing header**: the metadata projection `listSessions` reads |
+| `lock.json` | the session lock ([below](#session-locking-issue-118)) |
+| `journal/`, `spans.jsonl`, `posture.json`, `trajectory.json` | the rest of the session's state, unchanged |
+
+The metadata itself is the session-scoped `kubic.session` document
+(`KubicSessionDoc`, `{ cwd, createdAt, workspace? }`), written in the
+creating commit by a plain pi-durable Session kernel — the harness belongs to
+the caller. `readSessionMetadata(storage, context)` reads it back from the
+storage a caller already has open.
+
+The listing header exists because **listing must never open a session
+storage**: pi-durable owns one storage per process and does no cross-process
+locking, and opening a live session's storage would let recovery truncate a
+file the live writer is appending to. `listSessions` and
+`sessionsTouchingWorkspace` run on every `kubic run` boot (the overlap probe)
+and in `kubic doctor`, so they read one small header file per session
+instead. The header is written once from the same value as the document and
+re-synced from the document on attach, so the two cannot drift.
+
+**fsync is off** — pi-durable's default, and what 0.87's JSONL session
+storage did, so this is parity rather than a downgrade. A process crash loses
+nothing (the page cache outlives it); a power loss costs at most the newest
+commit, which recovery drops whole instead of leaving a torn session. The
+change journal stays Kubic's fsync'd store (§42.4): that is where "this
+change can be undone" is guaranteed.
+
+File modes are unchanged by this migration: the storage writes through the
+same bridge calls as before, so session JSONL is still created with the
+umask default. [#361](https://github.com/konic-labs/kubic/issues/361)
+(restrictive 0600/0700 modes for session and journal state) is independent of
+this port and stays open.
+
+**Legacy sessions (Pi 0.87).** A transcript written by the removed
+`JsonlSessionRepo` lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
+format-4 header. There is no converter (the repo is unreleased, §21):
+`listSessions` reports it as `{ format: 'legacy' }` (and
+`sessionsTouchingWorkspace` skips it — a 0.87 transcript can never be the
+live sibling that probe warns about), and `attachSession` refuses it with
+`SessionFormatError`:
+
+```
+session <id> was written by Kubic on Pi 0.87; start a new session
+```
+
+
+A session id must be a plain path segment (`[A-Za-z0-9_-]`) **and** must not
+be shaped like one of pi's transcript directories (`--…--`): `listSessions`
+classifies that shape as the 0.87 layout, so a session with such an id would
+be attachable but invisible to `sessions list`, the overlap probe and
+`kubic doctor`. Both paths refuse it (`SessionIdError` on create,
+
+`SessionAttachError` on attach) before any path join — containment by
+construction. `createSession` also refuses an id that already has a session
+(`Session already exists: <id>`, 0.87's message) and an id that belongs to a
+0.87 transcript (`SessionFormatError`): a durable session is never written
+
+over an existing session's journal, spans and posture. A legacy transcript's
+header id is validated against the same rule before it enters a listing: a
+foreign or hand-edited header is skipped, never rendered.
+
+`SessionHandle.release(context)` always releases the lock and closes the
+storage only while no harness adopted it. A caller that boots a harness does
+`Harness.open(handle.adopt(), …)`: adoption hands ownership over, so a
+`release()` racing a live harness never closes the storage under it (the
+harness closes it), and `release()` stays idempotent either way.
+`handle.storage` is for reads — `readSessionMetadata` and the other readers —
+and does not transfer ownership.
+
+
 ### Session locking (issue #118)
 
-One live attachment per session, fail-closed. `createSession` (after the
-session dir exists) and `attachSession` (before the transcript is read)
+One live attachment per session, fail-closed. `createSession` (before the
+storage is created) and `attachSession` (before the storage is opened)
 acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
 record of the attaching process — through the exec-owned lock-file
 primitive (`exec/lock-file.ts`; I/O confinement, §9): an O_EXCL
 (`writeFileSync(…, {flag: 'wx'})`) create is the atomic test-and-set, and
 the primitive makes the session dir eagerly as the lock's parent.
-`session.close(…)` releases the lock (best-effort remove), so the file
+`handle.release(…)` releases the lock (best-effort remove), so the file
 exists only while a session is actually attached.
+
+The lock is the ONLY guard around a storage open (issue #392): pi-durable
+states that one process owns a storage at a time and provides no
+cross-process locking, so every open in this module happens with the lock
+already held.
 
 - **Refusal** is `SessionLockError`; its message names the session and
   the holder's pid + start time. Host maps it to `workspace_unavailable`
@@ -245,13 +336,45 @@ exists only while a session is actually attached.
   probe feeds two warning surfaces: the run path emits one
   `reconcile: another run may be live in this workspace …` line on its
   debug channel, and `kubic doctor` reports `session:overlap` (warn when
-  two or more sessions are recorded). The reason it warns: each run's
+  two or more sessions are recorded). It matches the session's recorded
+  `workspace` when it declared one, its `cwd` otherwise, and it skips
+  `format: 'legacy'` transcripts (a 0.87 session cannot be attached, so it
+  cannot be a live sibling). The reason it warns: each run's
   end-of-run sweep compares against its own boot baseline, so a sibling
   session's in-flight changes land in this run's journal as unattributed,
   non-reversible entries. Never a block.
 
 The lock covers the session's journal too (it lives under the session
-dir) — the journal store is not locked separately.
+dir) — the journal is not locked separately.
+
+### Session transcript (`lane/transcript.ts`, issue #400)
+
+One adapter turns a session's durable entries into Kubic's
+`TranscriptItem` vocabulary. Pi 0.87 stored a tree of
+`{id, parentId, type: 'message', message}` entries; pi-durable stores
+typed records (`pi.user`, `pi.assistant` with `model: [AssistantMessage]`,
+`pi.tool-result`, `pi.system`, `pi.compaction`, `pi.reset`), so every
+reader — `kubic sessions attach`, the run-envelope usage, the §46
+trajectory, replay/export/eval — goes through this module instead of
+matching entry-kind strings itself.
+
+- `entriesToTranscript(entries)` is pure: it maps each known kind (user
+text, assistant text + tool calls + usage + `provider/model` +
+`thinkingLevel`, tool result with its `isError`, system instruction,
+compaction summary, reset handoff), skips unknown kinds and payload-less
+message entries, and returns the transcript in entry-id order whatever
+order it was handed.
+- `readConversationEntries(conversation, context)` reads a live harness
+conversation's active context (the newest head marker and the entries it
+keeps) — the trajectory capture path.
+- `readSessionEntries(storage, context)` reads the same active transcript
+straight from a session's pi-durable Storage: no harness, no model layer,
+no writes. A session whose root conversation does not exist yet (a fresh
+`sessions create`) reads as an empty transcript, never a throw. This is
+the path CLI readers take, so a reader never opens what it may not run.
+
+Pi seam: all pi-durable symbols come from `pi-boundary.ts` (§65); the
+adapter adds only `ResetEntry` and `ROOT_CONVERSATION_ID` there.
 
 ## Contracts
 
@@ -300,13 +423,18 @@ Stub types refined by their owners: `TestResult`/`ArtifactRef`/
 
 ### Lane events + failures (`lane/events.ts`, `lane/failures.ts`)
 
-Exactly one consumer subscribes to the harness, only to the §15 groups
-Kubic routes (run status, tool status, usage, faults). `KubicLaneEvent`
-variants: `run-start` (`lane`, `runId`, `startedAt`), `run-end` (`lane`,
-`runId`, `status: completed|aborted|failed`, `endedAt`, `error?`),
-`tool-start`/`tool-end` (`lane`, `runId`, `turnId`, `toolCallId`,
-`toolName`, + `args` / `isError` + `terminate`), `usage` (`lane`, `row`,
-`totals`), `fault` (`code`, `message`).
+Exactly one `subscribeLaneEvents` per conversation relays pi-durable's
+committed watch (`watchEvents`, isolated here because upstream marks it
+experimental), only to the §15 groups Kubic routes: run status, tool
+status, usage, faults, plus retry and compaction. `KubicLaneEvent`
+variants: `run-start`/`run-end` (`inputs: SubmissionId[]`),
+`tool-start`/`tool-end` (`toolCallId`, `toolName`, + `args` / `isError` +
+`entry?`), `usage` (`row: KubicUsageRow`, real provider/model from the
+assistant entry, + `entry`), `fault` (`code`, `message`),
+`retry` (`phase`, `attempt?`, `error?`), `compaction` (`phase`,
+`reason?`), and `snapshot` — the attach / late-join / overflow path,
+carrying the committed `entries`, live tools, retry, compactions and
+`pi.usage`; a snapshot REPLACES the consumer's state, it never appends.
 
 `FAILURE_CODES` (§52, 16 codes): `model_failed`, `model_refused`,
 `provider_transient`, `provider_auth`, `tool_failed`,
@@ -326,7 +454,10 @@ retry spend lands on `RetryBudget`, never the task budget.
 ttftMs?, latencyMs?, toolCallId?, entryId? }`. `summarizeUsage` folds
 rows into `UsageSummary` (`requests`, `input`, `output`, `cacheRead`,
 `cacheWrite`, `costTotal`, plus `byModel` per model) — pure, so cost
-tests use fixture rows, never network or paid tokens.
+tests use fixture rows, never network or paid tokens. Since #398 the rows
+are built by `usageRowFromEntry` from the committed assistant entry, so
+`provider`/`model` are the ones that really answered (not the lane name or
+the boot model — #287).
 
 ### Worker lifecycle (`lifecycle/`)
 
@@ -388,7 +519,7 @@ unfinished launch never claims a budget pass it did not measure.
 ```text
 core + exec + agents ──→ @kubic/worker ──→ host
                               ↑
-                    pi-boundary.ts (sole Pi choke point)
+                    pi-boundary.ts (worker Pi seam, §65)
 ```
 
 Back to the [docs index](../README.md).

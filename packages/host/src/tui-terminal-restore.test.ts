@@ -211,10 +211,15 @@ describe('terminal restore on every exit path (issue #313)', () => {
         ...boot,
         loop: {
           ...loop,
-          accept: async (prompt, context) => {
-            const result = await loop.accept(prompt, context);
-            if (result.ok) admitted = result.value.operationId;
-            return result;
+          // The placement signal: `run-start` is the durable equivalent of
+          // the old admission's operation id, and D1 keys the kill registry
+          // by the conversation id.
+          subscribe: async (sink, context) => {
+            const stop = await loop.subscribe((event) => {
+              if (event.type === 'run-start') admitted = loop.killsKey;
+              sink(event);
+            }, context);
+            return stop;
           },
         },
         close: async () => {
@@ -252,15 +257,16 @@ describe('terminal restore on every exit path (issue #313)', () => {
         events.push('close');
       },
       loop: {
-        accept: () => {
+        runTurn: () => {
           accepted = true;
           return new Promise(() => {});
         },
-        lane: {} as never,
-        requestAbort: async () => ({ ok: true }) as never,
-        findEntries: async () => [],
-        events: (() => () => {}) as never,
-        kills: { track: () => () => {}, drain: () => [] } as never,
+        subscribe: async () => async () => {},
+        entries: async () => [],
+        abort: async () => {},
+        forgetKills: () => {},
+        killsKey: 'conversation',
+        kills: { track: () => {}, drain: () => [] } as never,
         context: {} as never,
       },
     });
@@ -364,8 +370,8 @@ describe('the final document reaches the main screen (issue #314)', () => {
         ...boot,
         loop: {
           ...loop,
-          findEntries: async (query, context) => {
-            const entries = await loop.findEntries(query, context);
+          entries: async (context) => {
+            const entries = await loop.entries(context);
             if (JSON.stringify(entries).includes('the final answer is 42'))
               settled = true;
             return entries;

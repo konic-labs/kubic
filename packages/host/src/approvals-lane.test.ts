@@ -1,26 +1,28 @@
 // Slice D end to end: the host approval service gating a real solo lane
-// through the worker approve hook (issues #15/#16).
+// through the worker approve hook (issues #15/#16). The lane boots through
+// the shared faux harness factory (#401); its tool-end events come from the
+// durable watch (#398) exactly as `kubic run`/`tui` consume them.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
+import type {
+  KubicLaneEvent,
+  LaneEventSink,
+} from '../../worker/src/lane/events.js';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
 } from '../../worker/src/lane/interceptors.js';
-import { bootSoloLane, driveToSettled } from '../../worker/src/lane/solo.js';
 import {
-  BACKGROUND_CONTEXT,
-  createModels,
+  bootFauxLane,
+  fauxToolUse,
+} from '../../worker/src/lane/test-harness.js';
+import {
   fauxAssistantMessage,
-  fauxProvider,
   fauxToolCall,
-  type HarnessEvent,
-  MemorySessionRepo,
-  type Session,
 } from '../../worker/src/pi-boundary.js';
 import {
   ApprovalService,
@@ -64,50 +66,28 @@ describe('approvals gate the lane (issue #16, slice D)', () => {
     });
     let ask = createApprovalAsk(service, triggerContext(), store);
 
-    const runOnce = async (): Promise<HarnessEvent[]> => {
-      const env = new FakeExecutionEnv({});
-      const repo = new MemorySessionRepo();
-      const session: Session = await repo.create({}, BACKGROUND_CONTEXT);
-      const faux = fauxProvider();
-      const models = createModels();
-      models.setProvider(faux.provider);
-      faux.setResponses([
-        fauxAssistantMessage([
-          fauxToolCall('bash', { command: 'rm -rf /tmp/x' }),
-        ]),
-        fauxAssistantMessage('done'),
-      ]);
-      const booted = await bootSoloLane({
-        session,
-        models,
-        model: faux.getModel(),
-        env,
-        sessionId: session.metadata.id,
-        agentId: 'root',
+    const runOnce = async (): Promise<KubicLaneEvent[]> => {
+      const lane = await bootFauxLane({
         policy: { interceptors: { workspace: '/fake', approve: ask } },
+        responses: [
+          fauxToolUse([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
+          fauxAssistantMessage('done'),
+        ],
       });
       try {
-        const ends: HarnessEvent[] = [];
-        const off = booted.harness.events.on('tool_end', (event) => {
-          ends.push(event);
-        });
+        const ends: KubicLaneEvent[] = [];
+        const sink: LaneEventSink = (event) => {
+          if (event.type === 'tool-end') ends.push(event);
+        };
+        const stop = await lane.subscribe(sink);
         try {
-          const admission = await booted.lane.accept(
-            { kind: 'prompt', prompt: 'clean tmp' },
-            BACKGROUND_CONTEXT,
-          );
-          if (!admission.ok) throw new Error('accept failed');
-          await driveToSettled(
-            booted.lane,
-            admission.value.operationId,
-            BACKGROUND_CONTEXT,
-          );
+          await lane.run('clean tmp');
         } finally {
-          off();
+          await stop();
         }
         return ends;
       } finally {
-        await session.close(BACKGROUND_CONTEXT);
+        await lane.cleanup();
       }
     };
 

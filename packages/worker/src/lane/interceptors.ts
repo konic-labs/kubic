@@ -1,7 +1,10 @@
 // Policy interceptors on the solo lane (issue #15, slice C; §40.1 mechanism 3).
-// Registered as separate harness hooks so chaining, first-block-wins, and
-// throw-becomes-block are the harness's real semantics, not ours. Every
-// handler is fail-closed: a policy exception blocks with its message.
+// Registered as ordered pi-durable `ToolTask.beforeTool` hooks (issue #397),
+// so chaining, first-block-wins, and throw-becomes-block are the harness's
+// real semantics, not ours. Every handler is fail-closed: a policy exception
+// blocks with its redacted message. `beforeTool` runs before the tool's
+// intent is committed, so a crash while a handler awaits (the approval seat)
+// re-runs the hook on resume instead of resuming an unapproved execution.
 //
 // Enforcement map (what each class means at this layer):
 //   filesystem — tool allowlist (slice B) + path confine below. Symlinks
@@ -37,7 +40,8 @@ import {
   type ShellLevel,
 } from '../../../agents/src/policy.js';
 import { readRootFor } from '../../../exec/src/read-roots.js';
-import type { Hooks, JsonValue } from '../pi-boundary.js';
+import type { HookRegistration, JsonValue } from '../pi-boundary.js';
+import { hook, ToolTask } from '../pi-boundary.js';
 
 export interface PolicyTrigger {
   kind: 'max_tool_calls';
@@ -69,7 +73,11 @@ export interface PolicyInterceptorOptions {
 
 export interface ApprovalCall {
   toolName: string;
-  args: Record<string, JsonValue>;
+  // The harness-validated arguments, untyped at this seam: the host's
+  // detectors own the per-capability shape (same contract as before Pi 1.0).
+  args: Record<string, unknown>;
+  // The durable call id, which is the provider's toolCallId: the seat's
+  // stand-down set is keyed on exactly this value (issue #194).
   toolCallId: string;
 }
 
@@ -265,26 +273,26 @@ export function redactSecrets(value: string): string {
   );
 }
 
-function block(reason: string): {
-  block: { reason: string; terminate: false };
-} {
-  return { block: { reason: redactReason(reason), terminate: false as const } };
+// A pi-durable block verdict: the harness turns the string into the error
+// result the model sees (`Tool call blocked: …`).
+function block(reason: string): { block: string } {
+  return { block: redactReason(reason) };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function failClosed<T>(
   fn: () => T | Promise<T>,
-): Promise<T | { block: { reason: string; terminate: false } }> {
+): Promise<T | { block: string }> {
   try {
     const value = fn();
     return value instanceof Promise
-      ? value.catch((error: unknown) =>
-          block(error instanceof Error ? error.message : String(error)),
-        )
+      ? value.catch((error: unknown) => block(errorText(error)))
       : Promise.resolve(value);
   } catch (error: unknown) {
-    return Promise.resolve(
-      block(error instanceof Error ? error.message : String(error)),
-    );
+    return Promise.resolve(block(errorText(error)));
   }
 }
 
@@ -299,11 +307,15 @@ const CONFINED_TOOLS: Record<string, string[]> = {
   grep: ['root'],
 };
 
+// Rewrites the confined path/root arguments of a call. The input is Pi's
+// `JsonObject` (the harness hands the hook its own `ToolCall`), read here
+// through the plain `Record<string, unknown>` every argument bag satisfies;
+// every rewrite replaces one string with another, so the shape is preserved.
 function confineArgs(
   toolName: string,
-  args: Record<string, JsonValue>,
+  args: Record<string, unknown>,
   workspace: string,
-): Record<string, JsonValue> | undefined {
+): Record<string, unknown> | undefined {
   const keys = CONFINED_TOOLS[toolName];
   if (keys === undefined) return undefined;
   let rewritten = false;
@@ -320,18 +332,32 @@ function confineArgs(
   return rewritten ? next : undefined;
 }
 
-export function registerPolicyInterceptors(
-  hooks: Hooks,
+// The lane's policy interception as ordered `ToolTask` hooks (issue #397).
+// Order is correctness (issue #208): the maxToolCalls meter reports first,
+// then the approval seat, then the destructive/network guard, then the
+// confine rewrite last — and the harness skips every later hook once a
+// block is returned, so a blocked attempt is still counted by the meters
+// before the guard that blocks it. Each registration is one handler, so the
+// order of this array IS the chain order.
+//
+// State lifetime: the attempt counter, the trigger latch and the approved
+// call ids live in THIS invocation's closure — call the factory once per
+// lane boot (solo.ts builds its `kubic.policy` extension fresh on every
+// boot). Installing one returned array into two boots would share them, so
+// the factory deliberately never keeps state across calls: two invocations,
+// even with the same options object, start clean.
+export function policyInterceptorHooks(
   options: PolicyInterceptorOptions,
-): () => void {
+): HookRegistration[] {
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
   const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
   // Tool calls a real challenge cleared. Guards below stand down for
   // exactly these ids — never by tool name or pattern. Unchallenged
   // fast-path calls never enter this set, so #15 guards stay up for them.
-  // Capped FIFO: harness toolCallIds are unique per call, but an
-  // unbounded set across a long lane lifetime is a leak; eviction only
-  // drops stale ids whose calls already ran.
+  // Capped FIFO: durable call ids are unique per call, but an unbounded set
+  // across a long lane lifetime is a leak; eviction only drops stale ids
+  // whose calls already ran. It is deliberately in-memory: a resumed
+  // process re-asks, never inherits a stand-down it did not grant.
   const approvedCalls = new Map<string, number>();
   const APPROVED_CALLS_CAP = 512;
   const markApproved = (toolCallId: string): void => {
@@ -344,104 +370,115 @@ export function registerPolicyInterceptors(
   // Budget first: every attempt counts, even one a later handler blocks.
   let calls = 0;
   let triggered = false;
-  const off: Array<() => void> = [];
+  const registrations: HookRegistration[] = [];
 
   if (options.maxToolCalls !== undefined) {
     const max = options.maxToolCalls;
-    off.push(
-      hooks.on('before_tool', (event) =>
-        failClosed(() => {
-          calls += 1;
-          if (calls <= max) return undefined;
-          if (!triggered) {
-            triggered = true;
-            try {
-              options.onTrigger?.({
-                kind: 'max_tool_calls',
-                toolName: event.toolName,
-                count: calls,
-              });
-            } catch {
-              // A throwing trigger callback must not mask the block.
+    registrations.push(
+      hook(ToolTask, {
+        beforeTool: (call) =>
+          failClosed(() => {
+            calls += 1;
+            if (calls <= max) return undefined;
+            if (!triggered) {
+              triggered = true;
+              try {
+                options.onTrigger?.({
+                  kind: 'max_tool_calls',
+                  toolName: call.name,
+                  count: calls,
+                });
+              } catch {
+                // A throwing trigger callback must not mask the block.
+              }
             }
-          }
-          return block(`maxToolCalls (${max}) exceeded`);
-        }),
-      ),
+            return block(`maxToolCalls (${max}) exceeded`);
+          }),
+      }),
     );
   }
 
-  off.push(
-    hooks.on('before_tool', (event) =>
-      failClosed(async () => {
-        if (options.approve === undefined) return undefined;
-        const verdict = await options.approve({
-          toolName: event.toolName,
-          args: event.args,
-          toolCallId: event.toolCallId,
-        });
-        if (verdict.approved) {
-          if (verdict.challenged) markApproved(event.toolCallId);
-          return undefined;
-        }
-        return block(`not approved: ${verdict.reason}`);
-      }),
-    ),
+  registrations.push(
+    hook(ToolTask, {
+      // The ask is awaited here, BEFORE the harness commits the tool's
+      // intent: a crash while the user decides re-asks on resume instead of
+      // resuming an unapproved execution.
+      beforeTool: (call) =>
+        failClosed(async () => {
+          if (options.approve === undefined) return undefined;
+          const verdict = await options.approve({
+            toolName: call.name,
+            args: call.arguments,
+            toolCallId: call.id,
+          });
+          if (verdict.approved) {
+            if (verdict.challenged) markApproved(call.id);
+            return undefined;
+          }
+          return block(`not approved: ${verdict.reason}`);
+        }),
+    }),
   );
 
-  off.push(
-    hooks.on('before_tool', (event) =>
-      failClosed(() => {
-        if (approvedCalls.has(event.toolCallId)) return undefined;
-        if (event.toolName !== 'bash') return undefined;
-        const command =
-          typeof event.args.command === 'string' ? event.args.command : '';
-        if (isDestructive(command, options.workspace)) {
-          return block(`destructive command blocked: ${command}`);
-        }
-        // A domain-less `allowlist` allows nothing (issue #166): it is
-        // enforced as `none`, never as the unrestricted `full`.
-        const network =
-          options.network === undefined
-            ? undefined
-            : effectiveNetworkLevel(options.network);
-        if (
-          (network === 'none' || options.shell === 'read-only-allowlist') &&
-          isNetworkCommand(command)
-        ) {
-          const declared = options.network ?? 'none';
-          return block(
-            `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
+  registrations.push(
+    hook(ToolTask, {
+      beforeTool: (call) =>
+        failClosed(() => {
+          if (approvedCalls.has(call.id)) return undefined;
+          if (call.name !== 'bash') return undefined;
+          const command =
+            typeof call.arguments.command === 'string'
+              ? call.arguments.command
+              : '';
+          if (isDestructive(command, options.workspace)) {
+            return block(`destructive command blocked: ${command}`);
+          }
+          // A domain-less `allowlist` allows nothing (issue #166): it is
+          // enforced as `none`, never as the unrestricted `full`.
+          const network =
+            options.network === undefined
+              ? undefined
+              : effectiveNetworkLevel(options.network);
+          if (
+            (network === 'none' || options.shell === 'read-only-allowlist') &&
+            isNetworkCommand(command)
+          ) {
+            const declared = options.network ?? 'none';
+            return block(
+              `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
+            );
+          }
+          return undefined;
+        }),
+    }),
+  );
+
+  registrations.push(
+    hook(ToolTask, {
+      beforeTool: (call) =>
+        failClosed(() => {
+          if (approvedCalls.has(call.id)) return undefined;
+          if (
+            call.name === 'read' &&
+            typeof call.arguments.path === 'string' &&
+            readRootFor(readRoots, call.arguments.path) !== undefined
+          ) {
+            return undefined;
+          }
+          const confined = confineArgs(
+            call.name,
+            call.arguments,
+            options.workspace,
           );
-        }
-        return undefined;
-      }),
-    ),
+          if (confined === undefined) return undefined;
+          // Pi's `JsonObject` (the hook's input) and the harness's own
+          // document `JsonObject` (the hook's result) are one JSON value
+          // under two copies of the alias; the rewrite replaced only
+          // strings, and the harness re-validates it against the schema.
+          return { arguments: confined as Record<string, JsonValue> };
+        }),
+    }),
   );
 
-  off.push(
-    hooks.on('before_tool', (event) =>
-      failClosed(() => {
-        if (approvedCalls.has(event.toolCallId)) return undefined;
-        if (
-          event.toolName === 'read' &&
-          typeof event.args.path === 'string' &&
-          readRootFor(readRoots, event.args.path) !== undefined
-        ) {
-          return undefined;
-        }
-        const confined = confineArgs(
-          event.toolName,
-          event.args,
-          options.workspace,
-        );
-        if (confined === undefined) return undefined;
-        return { args: confined };
-      }),
-    ),
-  );
-
-  return () => {
-    for (const remove of off) remove();
-  };
+  return registrations;
 }

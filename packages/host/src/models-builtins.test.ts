@@ -8,10 +8,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  buildSpawnEnv,
+  withRoleGrant,
+} from '../../worker/src/lifecycle/env.js';
+import {
   ModelSelectError,
   selectModel,
 } from '../../worker/src/model-select.js';
-import { assembleModels, runModelsCommand } from './models-cli.js';
+import { resolveProviderGrant } from './config/role-credentials.js';
+import {
+  assembleModels,
+  providerProbesOf,
+  runModelsCommand,
+} from './models-cli.js';
 
 const made: string[] = [];
 
@@ -466,5 +475,200 @@ describe('provider key env index for multi-variable built-ins (issue #200)', () 
     );
     expect(entry).toEqual({ envVars: ['OPENAI_API_KEY'], noKeyNeeded: false });
     expect(entry).not.toHaveProperty('undeliverable');
+  });
+});
+
+// Issue #402 (pi-ai 0.99.0): a catalogue entry now carries
+// `type: 'chat' | 'image' | 'classifier'`, and ONLY the unqualified reads
+// (`getModels`/`getModel`) stay chat-only. `kubic models` and model selection
+// must never list or pick an image/classifier entry.
+describe('chat-only model lists (issue #402)', () => {
+  it('`kubic models --json` lists only chat models of a mixed catalogue', async () => {
+    const assembled = await assemble({});
+    // The chat-only read the CLI uses never yields a non-chat entry …
+    for (const model of assembled.models.getModels()) {
+      expect(model.type ?? 'chat').toBe('chat');
+    }
+    // … while the catalogue really is mixed: provider/getAllModels() holds
+    // image and classifier entries (OpenRouter images, Cloudflare
+    // classifiers). One upstream model may be BOTH chat and image under the
+    // same id, so only the ids that exist as non-chat entries and are missing
+    // from the chat read prove a filter.
+    const nonChatOnly = new Set<string>();
+    for (const provider of assembled.models.getProviders()) {
+      const chatIds = new Set(
+        assembled.models.getModels(provider.id).map((model) => model.id),
+      );
+      for (const model of assembled.models.getAllModels(provider.id)) {
+        if ((model.type ?? 'chat') !== 'chat' && !chatIds.has(model.id)) {
+          nonChatOnly.add(`${provider.id}/${model.id}`);
+        }
+      }
+    }
+    expect(nonChatOnly.size).toBeGreaterThan(0);
+    const lines: string[] = [];
+    expect(
+      await runModelsCommand(
+        { json: true },
+        {
+          models: assembled.models,
+          providers: assembled.providers,
+          out: (line: string) => lines.push(line),
+        },
+      ),
+    ).toBe(0);
+    const catalog = JSON.parse(lines.join('\n')) as Array<{
+      id: string;
+      models: Array<{ id: string }>;
+    }>;
+    const listed = catalog.flatMap((provider) =>
+      provider.models.map((model) => `${provider.id}/${model.id}`),
+    );
+    expect(listed.length).toBeGreaterThan(0);
+    for (const ref of listed) expect(nonChatOnly.has(ref)).toBe(false);
+    // And the listing is exactly the chat read, provider by provider.
+    for (const provider of catalog) {
+      expect(provider.models.map((model) => model.id)).toEqual(
+        assembled.models.getModels(provider.id).map((model) => model.id),
+      );
+    }
+  });
+
+  it('model selection resolves and picks only chat models', async () => {
+    const assembled = await assemble({ OPENROUTER_API_KEY: 'k' });
+    const chatIds = new Set(
+      assembled.models.getModels('openrouter').map((model) => model.id),
+    );
+    const nonChatOnly = assembled.models
+      .getAllModels('openrouter')
+      .find(
+        (model) => (model.type ?? 'chat') !== 'chat' && !chatIds.has(model.id),
+      );
+    expect(nonChatOnly).toBeDefined();
+    // An unqualified lookup never finds a non-chat-only model …
+    expect(
+      assembled.models.getModel('openrouter', nonChatOnly?.id as string),
+    ).toBe(undefined);
+    // … and the implicit pick is a chat model.
+    const picked = selectModel(assembled.models, undefined, undefined, [
+      'openrouter',
+    ]);
+    expect(picked.type ?? 'chat').toBe('chat');
+    expect(chatIds.has(picked.id)).toBe(true);
+  });
+});
+
+// Issue #402 (pi-ai 0.99.2): Anthropic workload identity federation. Pi's
+// provider resolves it only when no stored credential or key is configured,
+// from three required ANTHROPIC_* variables (plus two optional ids) read
+// through the auth context — the same context a worker's role grant feeds, so
+// the whole block IS deliverable.
+describe('Anthropic workload identity federation (issue #402)', () => {
+  const FEDERATION_ENV = {
+    ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
+    ANTHROPIC_ORGANIZATION_ID: 'org_123',
+    ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/anthropic-identity-token',
+  };
+
+  it('reports Anthropic configured from federation env alone, in models and doctor', async () => {
+    const assembled = await assemble(FEDERATION_ENV);
+    const info = assembled.providers.get('anthropic');
+    expect(info?.usable).toBe(true);
+    expect(info?.authSource).toBe('workload identity federation');
+    expect(assembled.providers.get('openai')?.usable).toBe(false);
+    expect(assembled.fallbackProviders).toContain('anthropic');
+    expect(providerProbesOf(assembled).map((probe) => probe.id)).toContain(
+      'anthropic',
+    );
+    const lines: string[] = [];
+    await runModelsCommand(
+      { json: true },
+      {
+        models: assembled.models,
+        providers: assembled.providers,
+        out: (line: string) => lines.push(line),
+      },
+    );
+    const catalog = JSON.parse(lines.join('\n')) as Array<{
+      id: string;
+      usable: boolean;
+      auth?: string;
+    }>;
+    const anthropic = catalog.find((provider) => provider.id === 'anthropic');
+    expect(anthropic?.usable).toBe(true);
+    expect(anthropic?.auth).toBe('workload identity federation');
+  });
+
+  it('needs the whole required trio: a partial block is not Anthropic auth', async () => {
+    const partial = [
+      {
+        ANTHROPIC_ORGANIZATION_ID: 'org_123',
+        ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/token',
+      },
+      {
+        ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
+        ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/token',
+      },
+      {
+        ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
+        ANTHROPIC_ORGANIZATION_ID: 'org_123',
+      },
+    ];
+    for (const env of partial) {
+      expect((await assemble(env)).providers.get('anthropic')?.usable).toBe(
+        false,
+      );
+    }
+  });
+
+  it('forwards the federation block as the worker grant: the required trio, plus the optional ids when set', async () => {
+    expect((await assemble(FEDERATION_ENV)).keyEnv.get('anthropic')).toEqual({
+      envVars: [
+        'ANTHROPIC_FEDERATION_RULE_ID',
+        'ANTHROPIC_ORGANIZATION_ID',
+        'ANTHROPIC_IDENTITY_TOKEN_FILE',
+      ],
+      noKeyNeeded: false,
+    });
+    expect(
+      (
+        await assemble({
+          ...FEDERATION_ENV,
+          ANTHROPIC_SERVICE_ACCOUNT_ID: 'svac_123',
+          ANTHROPIC_WORKSPACE_ID: 'wrkspc_123',
+        })
+      ).keyEnv.get('anthropic'),
+    ).toEqual({
+      envVars: [
+        'ANTHROPIC_FEDERATION_RULE_ID',
+        'ANTHROPIC_ORGANIZATION_ID',
+        'ANTHROPIC_IDENTITY_TOKEN_FILE',
+        'ANTHROPIC_SERVICE_ACCOUNT_ID',
+        'ANTHROPIC_WORKSPACE_ID',
+      ],
+      noKeyNeeded: false,
+    });
+  });
+
+  it('a worker that receives the federation grant resolves Anthropic as configured', async () => {
+    const assembled = await assemble(FEDERATION_ENV);
+    const resolved = resolveProviderGrant('anthropic', {
+      keyEnv: assembled.keyEnv,
+      env: FEDERATION_ENV,
+    });
+    expect(resolved.kind).toBe('grant');
+    if (resolved.kind !== 'grant') return;
+    const spawned = buildSpawnEnv({ PATH: '/bin' }, 'worker', resolved.grant);
+    expect(Object.keys(spawned).sort()).toEqual([
+      'KUBIC_ROLE_WORKER_ANTHROPIC_FEDERATION_RULE_ID',
+      'KUBIC_ROLE_WORKER_ANTHROPIC_IDENTITY_TOKEN_FILE',
+      'KUBIC_ROLE_WORKER_ANTHROPIC_ORGANIZATION_ID',
+      'PATH',
+    ]);
+    const child = await assemble(withRoleGrant(spawned, 'worker'));
+    expect(child.providers.get('anthropic')?.usable).toBe(true);
+    expect(child.providers.get('anthropic')?.authSource).toBe(
+      'workload identity federation',
+    );
   });
 });

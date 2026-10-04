@@ -18,6 +18,10 @@ import {
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
 import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
+import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
@@ -62,9 +66,13 @@ function catalog(texts: string[], provider = 'faux'): MutableModels {
 
 async function newSession(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-  const id = session.metadata.id;
-  await session.close(BACKGROUND_CONTEXT);
+  const session = await createSession(
+    store,
+    { cwd: '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const id = session.id;
+  await session.release(BACKGROUND_CONTEXT);
   return id;
 }
 
@@ -92,21 +100,16 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await attachSession(store, id, BACKGROUND_CONTEXT);
   try {
-    const entries = (await session.findEntries(
-      undefined,
-      BACKGROUND_CONTEXT,
-    )) as Array<{
-      seq?: number;
-      type?: string;
-      message?: { role?: string; provider?: string; model?: string };
-    }>;
-    const assistant = [...entries]
-      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
-      .filter((e) => e.type === 'message' && e.message?.role === 'assistant')
-      .map((e) => `${e.message?.provider}/${e.message?.model}`);
+    // The durable reader (#400): the session storage directly, no harness.
+    const items = entriesToTranscript(
+      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+    );
+    const assistant = items
+      .filter((item) => item.kind === 'assistant')
+      .map((item) => `${item.provider ?? ''}/${item.model ?? ''}`);
     return assistant.at(-1) ?? '';
   } finally {
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
   }
 }
 

@@ -5,18 +5,16 @@
 // when one is attached — and keep the immediate refusal (no 60s stall) when
 // one is not.
 //
-// Faux provider only: zero network, zero paid tokens. The lane is real.
+// Faux provider only: zero network, zero paid tokens. The lane is real and
+// boots through the shared faux harness factory (#401).
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
-import { bootSoloLane, driveToSettled } from '../../worker/src/lane/solo.js';
 import {
-  BACKGROUND_CONTEXT,
-  createModels,
+  bootFauxLane,
+  fauxToolUse,
+} from '../../worker/src/lane/test-harness.js';
+import {
   fauxAssistantMessage,
-  fauxProvider,
   fauxToolCall,
-  MemorySessionRepo,
-  type Session,
 } from '../../worker/src/pi-boundary.js';
 import {
   type ApprovalVerdict,
@@ -36,16 +34,6 @@ async function runDestructive(
   seat: Seat | undefined,
   command = 'rm -rf /tmp/x',
 ): Promise<{ terminus: string; toolResults: string[]; asks: number }> {
-  const env = new FakeExecutionEnv({});
-  const repo = new MemorySessionRepo();
-  const session: Session = await repo.create({}, BACKGROUND_CONTEXT);
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('bash', { command })]),
-    fauxAssistantMessage('done'),
-  ]);
   let asks = 0;
   const installed = installSoloPolicy({
     workspace: '/fake',
@@ -62,43 +50,28 @@ async function runDestructive(
           },
         }),
   });
-  const solo = await bootSoloLane({
-    session,
-    models,
-    model: faux.getModel(),
-    env,
-    sessionId: session.metadata.id,
-    agentId: 'root',
+  const lane = await bootFauxLane({
     policy: {
       classes: installed.classes,
       interceptors: installed.interceptors,
       contributions: installed.contributions,
     },
+    responses: [
+      fauxToolUse([fauxToolCall('bash', { command })]),
+      fauxAssistantMessage('done'),
+    ],
   });
-  const admission = await solo.lane.accept(
-    { kind: 'prompt', prompt: 'clean up' },
-    BACKGROUND_CONTEXT,
-  );
-  if (!admission.ok) throw new Error('admission refused');
-  const driven = await driveToSettled(
-    solo.lane,
-    admission.value.operationId,
-    BACKGROUND_CONTEXT,
-    { sleep: async () => new Promise((r) => setTimeout(r, 5)) },
-  );
-  const entries = (await session.findEntries(
-    undefined,
-    BACKGROUND_CONTEXT,
-  )) as Array<{ message?: { role?: string; content?: unknown } }>;
-  const toolResults = entries
-    .filter((entry) => entry.message?.role === 'toolResult')
-    .map((entry) => JSON.stringify(entry.message?.content));
-  const outcome = driven.kind === 'settled' ? driven.outcome : driven;
-  const status =
-    typeof outcome === 'object' && outcome !== null && 'status' in outcome
-      ? String((outcome as { status: unknown }).status)
-      : driven.kind;
-  return { terminus: status, toolResults, asks };
+  try {
+    const outcome = await lane.run('clean up');
+    const results = await lane.toolResults();
+    return {
+      terminus: outcome.status,
+      toolResults: results.map((result) => result.text),
+      asks,
+    };
+  } finally {
+    await lane.cleanup();
+  }
 }
 
 describe('installed policy answer seat (issue #96, criterion 1)', () => {

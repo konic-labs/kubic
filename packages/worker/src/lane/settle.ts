@@ -1,17 +1,19 @@
-// Settlement mapping: Pi terminal records → Kubic result contract
-// (issue #11, slice C). Pure functions: the lane reports HOW the run
-// ended, and this module translates that into the #7 ResultStatus +
-// ResultError vocabulary. Full AgentResult/Task/Handoff transitions belong
-// to the lifecycle owners (#42 worker lifecycle, #52–#53 replay); this is
-// the status/error kernel they build on.
+// Settlement mapping: a settled pi-durable submission → Kubic's result
+// contract (issue #11, slice C; ported to the durable harness in #395).
+// Pure functions: the lane reports HOW the run ended, and this module
+// translates that into the #7 ResultStatus + ResultError vocabulary and the
+// §52 failure codes (lane/failures.ts). Full AgentResult/Task/Handoff
+// transitions belong to the lifecycle owners (#42 worker lifecycle, #52–#53
+// replay); this is the status/error kernel they build on.
 
-import type { TerminalStatus } from '../pi-boundary.js';
+import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import type {
   JsonValue,
   ResultError,
   ResultErrorKind,
   ResultStatus,
 } from '../result.js';
+import { classifyFailure, type FailureCode } from './failures.js';
 
 export interface OperationErrorLike {
   code: string;
@@ -22,6 +24,20 @@ export interface OperationErrorLike {
 export interface SettledResult {
   status: ResultStatus;
   error?: ResultError;
+}
+
+// Kubic's terminal vocabulary for a settled turn (was Pi 0.87's
+// `TerminalStatus`, removed in Pi 1.0; D6.1). 'completed' is a durable `done`
+// answer, 'failed' an `unanswered` settlement with a reason, and 'aborted' the
+// durable `unanswered`/'aborted' settlement or the conversation abort.
+export type LaneTerminalStatus = 'completed' | 'failed' | 'aborted';
+
+// One failed settlement in both vocabularies: the §52 code the lifecycle
+// retries on, the #7 ResultError a result carries, and the human message.
+export interface SubmissionFailure {
+  code: FailureCode;
+  error: ResultError;
+  message: string;
 }
 
 const KIND_BY_KEYWORD: Array<{ pattern: RegExp; kind: ResultErrorKind }> = [
@@ -45,17 +61,106 @@ export function classifyHarnessError(
   message: string,
   details?: JsonValue,
 ): ResultError {
+  const kind = errorKindOf(code, message);
+  // Solo lane, unrecognized terminal code: the failure came from the
+  // execution substrate, not from a classified domain, and the code stays in
+  // the message so a diagnosis never loses it. Pinned by test.
+  const text = kind === 'process' ? `${code}: ${message}` : message;
+  return details === undefined
+    ? { kind, message: text }
+    : { kind, message: text, details };
+}
+
+function errorKindOf(code: string, message: string): ResultErrorKind {
   const haystack = `${code} ${message}`;
   for (const { pattern, kind } of KIND_BY_KEYWORD) {
-    if (pattern.test(haystack)) return { kind, message, details };
+    if (pattern.test(haystack)) return kind;
   }
-  // Solo lane, unrecognized terminal code: the failure came from the
-  // execution substrate, not from a classified domain. Pinned by test.
-  return { kind: 'process', message: `${code}: ${message}`, details };
+  return 'process';
+}
+
+// The durable `unanswered` reasons pi-durable settles with (harness/
+// generation.ts, harness/inbox.ts, harness/submissions.ts) and the Kubic
+// error domain each belongs to. An unknown reason is a substrate failure.
+const KIND_BY_SUBMISSION_REASON: Record<string, ResultErrorKind> = {
+  model_error: 'model',
+  no_model: 'provider',
+  faulted: 'process',
+  stale: 'process',
+  reset: 'process',
+  aborted: 'process',
+};
+
+// Reasons whose §52 code the keyword classifier cannot derive: a missing
+// model is a setup failure, and retrying it unchanged can never succeed
+// (§52 provider_auth carries that remedy).
+const CODE_BY_SUBMISSION_REASON: Record<string, FailureCode> = {
+  no_model: 'provider_auth',
+};
+
+function detailText(detail: JsonValue | undefined): string | undefined {
+  if (detail === undefined || detail === null) return undefined;
+  if (typeof detail === 'string') return detail === '' ? undefined : detail;
+  return JSON.stringify(detail);
+}
+
+// One `unanswered` settlement (a durable reason, plus the harness's own
+// detail when it carried one) as Kubic's §52 vocabulary. The human message
+// is the harness detail when present — never a bare reason code.
+export function classifySubmissionFailure(
+  reason: string,
+  detail?: JsonValue,
+): SubmissionFailure {
+  const message = detailText(detail) ?? `lane settled ${reason}`;
+  const kind = KIND_BY_SUBMISSION_REASON[reason] ?? 'process';
+  const classified = classifyFailure(kind, reason, message);
+  return {
+    code: CODE_BY_SUBMISSION_REASON[reason] ?? classified.code,
+    message,
+    error: {
+      kind,
+      message,
+      ...(detail === undefined ? {} : { details: detail }),
+    },
+  };
+}
+
+// A throw from submit/wait (a provider failure the harness surfaced as an
+// error, a closed harness, a programming error) as the same vocabulary: the
+// message is the Error's own, so the report never invents a detail.
+export function classifyThrownError(error: unknown): SubmissionFailure {
+  const code = error instanceof Error ? error.name : 'Error';
+  const message = error instanceof Error ? error.message : String(error);
+  const kind = errorKindOf(code, message);
+  const classified = classifyFailure(kind, code, message);
+  return { code: classified.code, message, error: { kind, message } };
+}
+
+// The trajectory/lane record for one settled submission: `done` is
+// 'completed'; `unanswered`/aborted is 'aborted' (no error, D6.1) and every
+// other reason is 'failed' with the raw reason as `code` (the §52 code lives
+// on the TurnOutcome).
+export function laneStatusOf(
+  settled: SettledSubmissionRecord,
+): LaneTerminalStatus {
+  if (settled.status === 'done') return 'completed';
+  return settled.reason === 'aborted' ? 'aborted' : 'failed';
+}
+
+export function laneErrorOf(
+  settled: SettledSubmissionRecord,
+): OperationErrorLike | undefined {
+  if (settled.status === 'done') return undefined;
+  if (settled.reason === 'aborted') return undefined;
+  return {
+    code: settled.reason,
+    message: detailText(settled.detail) ?? settled.reason,
+    ...(settled.detail === undefined ? {} : { details: settled.detail }),
+  };
 }
 
 export function settleTerminalStatus(
-  status: TerminalStatus,
+  status: LaneTerminalStatus,
   error?: OperationErrorLike,
 ): SettledResult {
   switch (status) {
@@ -69,8 +174,7 @@ export function settleTerminalStatus(
         error: classifyHarnessError(error.code, error.message, error.details),
       };
     }
-    case 'aborted':
-    case 'declined': {
+    case 'aborted': {
       if (error === undefined) return { status: 'cancelled' };
       return {
         status: 'cancelled',
@@ -78,4 +182,10 @@ export function settleTerminalStatus(
       };
     }
   }
+}
+
+export function settleSubmission(
+  settled: SettledSubmissionRecord,
+): SettledResult {
+  return settleTerminalStatus(laneStatusOf(settled), laneErrorOf(settled));
 }

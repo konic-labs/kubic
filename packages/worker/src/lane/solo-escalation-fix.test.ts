@@ -1,31 +1,94 @@
-// RED-first regression tests for issue #82 review fix cycle 1:
-// (a) escalate ordering, (b) same-model no-op, (c) registry reuse.
-import { afterAll, describe, expect, it, vi } from 'vitest';
+// RED-first regression tests for issue #82 review fix cycle 1, ported to
+// the durable harness in #394: (a) escalate ordering, (b) same-model no-op,
+// (c) registry reuse. The escalation now applies through
+// `conversation.configure({ model })`; the reserved re-clamp moved to the
+// live CompactionPolicy getter (#399).
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
+  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-  type Session,
+  MemoryStorage,
+  type Storage,
 } from '../pi-boundary.js';
-import { bootSoloLane, escalateSoloModel } from './solo.js';
+import { bootSoloLane, escalateSoloModel, type SoloLane } from './solo.js';
 
-const openSessions: Session[] = [];
+vi.mock('./interceptors.js', () => ({
+  policyInterceptorHooks: () => [],
+}));
 
-afterAll(async () => {
-  for (const session of openSessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT);
+vi.mock('../compaction.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../compaction.js')>();
+  return {
+    ...original,
+    soloCompactionSettings: (options: {
+      configuredReserveTokens?: number;
+      currentWindow?: () => number | undefined;
+    }) => ({
+      enabled: true,
+      keepRecentTokens: 20_000,
+      get reserveTokens() {
+        return (
+          options.configuredReserveTokens ?? original.DEFAULT_RESERVE_TOKENS
+        );
+      },
+    }),
+  };
+});
+
+vi.mock('./tools-adapter.js', async () => {
+  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { OPERATIONS } = await import('../ops/registry.js');
+  return {
+    kubicToolsToPiTools: () =>
+      Object.keys(OPERATIONS).map((name) =>
+        defineTool({
+          name,
+          description: `${name} (faux)`,
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [{ type: 'text' as const, text: name }],
+          }),
+        }),
+      ),
+  };
+});
+
+const SOLOS: SoloLane[] = [];
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  for (const solo of SOLOS.splice(0)) {
+    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
+type TestSession = {
+  id: string;
+  dir: string;
+  storage: Storage;
+  meta: { cwd: string; createdAt: string };
+  adopt(): Storage;
+  release(context: Context): Promise<void>;
+};
+function handle(id = 'sess-1'): TestSession {
+  const storage = new MemoryStorage();
+  return {
+    id,
+    dir: `/tmp/kubic-solo-escalation/${id}`,
+    storage,
+    meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    adopt: () => storage,
+    release: vi.fn(async () => undefined),
+  };
+}
+
 async function bootPinned(taskId = 'task-1') {
-  const { MemorySessionRepo } = await import('../pi-boundary.js');
   const { createLadder } = await import('../model-select.js');
-  const env = new FakeExecutionEnv({});
-  const repo = new MemorySessionRepo();
-  const session = await repo.create({}, BACKGROUND_CONTEXT);
-  openSessions.push(session);
   const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
   const models = createModels();
   models.setProvider(faux.provider);
@@ -33,24 +96,35 @@ async function bootPinned(taskId = 'task-1') {
   const modelA = faux.getModel('a');
   if (modelA === undefined) throw new Error("faux model 'a' missing");
   const booted = await bootSoloLane({
-    session,
+    session: handle() as never,
     models,
     model: modelA,
-    env,
-    sessionId: session.metadata.id,
+    env: new FakeExecutionEnv({}),
+    sessionId: 'sess-1',
     agentId: 'root',
     taskId,
   });
+  SOLOS.push(booted);
   const ladder = createLadder(['faux/a', 'faux/b'], { maxEscalations: 1 });
   return { booted, ladder };
 }
 
+function liveModelId(solo: SoloLane): Promise<string | undefined> {
+  return solo.conversation
+    .agent(BACKGROUND_CONTEXT)
+    .then((agent) =>
+      agent.model === undefined
+        ? undefined
+        : `${agent.model.provider}/${agent.model.modelId}`,
+    );
+}
+
 describe('escalateSoloModel validates before recording (issue #82 fix a)', () => {
-  it('failing setModel leaves ladder budget, affinity, and sink untouched', async () => {
+  it('failing configure leaves ladder budget, affinity, and sink untouched', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
-    vi.spyOn(booted.lane, 'setModel').mockRejectedValueOnce(
-      new Error('setModel rejected'),
+    vi.spyOn(booted.conversation, 'configure').mockRejectedValueOnce(
+      new Error('configure rejected'),
     );
     await expect(
       escalateSoloModel(
@@ -61,7 +135,7 @@ describe('escalateSoloModel validates before recording (issue #82 fix a)', () =>
         BACKGROUND_CONTEXT,
         sink,
       ),
-    ).rejects.toThrow(/setModel rejected/);
+    ).rejects.toThrow(/configure rejected/);
     expect(ladder.record).toHaveLength(0);
     expect(booted.affinity?.modelId).toBe('faux/a');
     expect(booted.affinity?.escalations).toHaveLength(0);
@@ -109,11 +183,6 @@ describe('escalateSoloModel rejects same-model no-ops (issue #82 fix b)', () => 
 
 describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)', () => {
   it('non-absence continuation errors propagate instead of spawning', async () => {
-    const { MemorySessionRepo } = await import('../pi-boundary.js');
-    const env = new FakeExecutionEnv({});
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    openSessions.push(session);
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -126,11 +195,11 @@ describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)',
     };
     await expect(
       bootSoloLane({
-        session,
+        session: handle() as never,
         models,
         model: faux.getModel(),
-        env,
-        sessionId: session.metadata.id,
+        env: new FakeExecutionEnv({}),
+        sessionId: 'sess-1',
         agentId: 'root',
         registry: brokenRegistry as never,
       }),
@@ -140,41 +209,39 @@ describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)',
 
   it('re-boot with a different model is refused instead of returning a stale binding', async () => {
     const { LaneRegistry } = await import('../prompts.js');
-    const { MemorySessionRepo } = await import('../pi-boundary.js');
     const registry = new LaneRegistry();
-    const env = new FakeExecutionEnv({});
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    openSessions.push(session);
     const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([fauxAssistantMessage('hi')]);
     const modelA = faux.getModel('a');
-    if (modelA === undefined) throw new Error("faux model 'a' missing");
+    const modelB = faux.getModel('b');
+    if (modelA === undefined || modelB === undefined) {
+      throw new Error('faux models missing');
+    }
+    const session = handle();
     const first = await bootSoloLane({
-      session,
+      session: session as never,
       models,
       model: modelA,
-      env,
-      sessionId: session.metadata.id,
+      env: new FakeExecutionEnv({}),
+      sessionId: 'sess-1',
       agentId: 'root',
       registry,
     });
+    await first.close(BACKGROUND_CONTEXT);
     expect(first.binding?.modelId).toBe('faux/a');
-    const modelB = faux.getModel('b');
-    if (modelB === undefined) throw new Error("faux model 'b' missing");
-    // Issue #148: only an EXPLICIT selection moves a resumed lane off its
+    // Issue #148: only an EXPLICIT selection moves a resumed session off its
     // stored model — an unpinned re-boot keeps 'faux/a', which is exactly
     // the bound model. The explicit switch is the re-boot that must refuse.
     await expect(
       bootSoloLane({
-        session,
+        session: handle() as never,
         models,
         model: modelB,
         modelPolicy: 'selected',
-        env,
-        sessionId: session.metadata.id,
+        env: new FakeExecutionEnv({}),
+        sessionId: 'sess-1',
         agentId: 'root',
         registry,
       }),
@@ -182,45 +249,43 @@ describe('registry reuse is absence-scoped and model-checked (issue #82 fix c)',
   });
 });
 
-describe('escalation re-clamps the compaction reserve to the new model window', () => {
-  it('escalating onto a small-window model lowers the harness reserve', async () => {
-    const { MemorySessionRepo } = await import('../pi-boundary.js');
-    const { createLadder } = await import('../model-select.js');
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    openSessions.push(session);
-    const faux = fauxProvider({
-      models: [
-        { id: 'big', contextWindow: 200000 },
-        { id: 'small', contextWindow: 8192 },
-      ],
-    });
-    const models = createModels();
-    models.setProvider(faux.provider);
-    const big = faux.getModel('big');
-    if (big === undefined) throw new Error("faux model 'big' missing");
-    const booted = await bootSoloLane({
-      session,
-      models,
-      model: big,
-      env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
-      agentId: 'root',
-      taskId: 'task-clamp',
-    });
-    const before =
-      await booted.harness.getCompactionSettings(BACKGROUND_CONTEXT);
-    expect(before.reserveTokens).toBe(16384);
-    await escalateSoloModel(
+describe('escalateSoloModel switches the live conversation (issue #82 rule 6)', () => {
+  it('fires exactly once: event recorded, model switched, second attempt refused', async () => {
+    const { booted, ladder } = await bootPinned();
+    const sink = vi.fn();
+    const { affinity, event } = await escalateSoloModel(
       booted,
-      createLadder(['faux/big', 'faux/small'], { maxEscalations: 1 }),
-      'faux/small',
-      'cheaper',
+      ladder,
+      'faux/b',
+      'needs more',
       BACKGROUND_CONTEXT,
+      sink,
     );
-    const after =
-      await booted.harness.getCompactionSettings(BACKGROUND_CONTEXT);
-    expect(after.reserveTokens).toBe(2048);
-    expect(after.keepRecentTokens).toBe(before.keepRecentTokens);
+    expect(event).toMatchObject({
+      type: 'model-escalation',
+      taskId: 'task-1',
+      from: 'faux/a',
+      to: 'faux/b',
+    });
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(affinity.modelId).toBe('faux/b');
+    expect(affinity.escalations).toHaveLength(1);
+    expect(await liveModelId(booted)).toBe('faux/b');
+    // A second, otherwise-distinct step is refused by the ladder bound
+    // (maxEscalations: 1) — not by the same-model guard.
+    await expect(
+      escalateSoloModel(
+        booted,
+        ladder,
+        'faux/a',
+        'again',
+        BACKGROUND_CONTEXT,
+        sink,
+      ),
+    ).rejects.toThrow(/escalation bounded/);
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(ladder.record).toHaveLength(1);
+    expect(booted.affinity?.modelId).toBe('faux/b');
+    expect(await liveModelId(booted)).toBe('faux/b');
   });
 });

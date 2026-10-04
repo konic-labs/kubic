@@ -226,6 +226,24 @@ const COMPANION_AUTH_ENV: ReadonlyMap<string, readonly string[]> = new Map([
   ['cloudflare-ai-gateway', ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_GATEWAY_ID']],
 ]);
 
+// Anthropic workload identity federation (pi-ai 0.99.2; issue #402). Pi
+// resolves it only when no stored credential or key is configured, from three
+// required ANTHROPIC_* variables plus two optional ids, all read through the
+// auth context. That is exactly the context a worker's role grant feeds (the
+// child reads the grant back under the plain names), so the block IS
+// deliverable next to a key: the grant namespace carries the ids, and the
+// identity token's FILE path with them.
+const FEDERATION_AUTH_SOURCE = 'workload identity federation';
+const FEDERATION_AUTH_ENV: readonly string[] = [
+  'ANTHROPIC_FEDERATION_RULE_ID',
+  'ANTHROPIC_ORGANIZATION_ID',
+  'ANTHROPIC_IDENTITY_TOKEN_FILE',
+];
+const FEDERATION_OPTIONAL_ENV: readonly string[] = [
+  'ANTHROPIC_SERVICE_ACCOUNT_ID',
+  'ANTHROPIC_WORKSPACE_ID',
+];
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -370,22 +388,31 @@ export async function assembleModels(
     // A provider whose credential is process-level configuration the grant
     // namespace cannot carry is refused by name up front (issue #200); one
     // whose auth reads companion vars beside the key forwards all of them.
+    // Workload identity federation is such a multi-var auth: Pi checks it
+    // through the same auth context, so every var it needs rides the grant.
     const processLevel = PROCESS_LEVEL_AUTH.get(provider.id);
     const undeliverable =
       processLevel !== undefined &&
       !(processLevel.viaKey !== undefined && envSource === processLevel.viaKey)
         ? processLevel.reason
         : undefined;
+    const federation = check?.source === FEDERATION_AUTH_SOURCE;
+    const envVars = federation
+      ? [
+          ...FEDERATION_AUTH_ENV,
+          ...FEDERATION_OPTIONAL_ENV.filter((name) => (env[name] ?? '') !== ''),
+        ]
+      : envSource === undefined
+        ? []
+        : [envSource, ...(COMPANION_AUTH_ENV.get(provider.id) ?? [])];
     keyEnv.set(
       provider.id,
       undeliverable !== undefined
         ? { envVars: [], noKeyNeeded: false, undeliverable }
         : {
-            envVars:
-              envSource === undefined
-                ? []
-                : [envSource, ...(COMPANION_AUTH_ENV.get(provider.id) ?? [])],
-            noKeyNeeded: check !== undefined && envSource === undefined,
+            envVars,
+            noKeyNeeded:
+              !federation && check !== undefined && envSource === undefined,
           },
     );
     providers.set(provider.id, {

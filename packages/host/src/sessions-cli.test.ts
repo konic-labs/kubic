@@ -1,5 +1,10 @@
-// Slice F: `kubic sessions` CLI (issue #14).
-import { mkdtempSync, rmSync } from 'node:fs';
+// `kubic sessions` CLI (issue #14; #318/#400 for the attach transcript).
+// The attach transcript is read through the shared pi-durable adapter, so
+// the fixtures are REAL sessions: a session created by the store, booted
+// into a pi-durable Harness over MemoryStorage-free JSONL storage with the
+// faux provider (zero network, zero paid tokens), and released before the
+// CLI attaches to it.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +14,18 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
+import {
+  AssistantEntry,
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  GenerationTask,
+  Harness,
+  ToolResultEntry,
+} from '../../worker/src/pi-boundary.js';
 import { runSessionsCommand } from './sessions-cli.js';
 
 const made: string[] = [];
@@ -28,6 +44,52 @@ afterEach(() => {
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
   return { lines, write: (line: string) => lines.push(line) };
+}
+
+function fauxModels() {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  return models;
+}
+
+// One real session with one faux turn stored, released for the CLI to attach.
+async function seededSession(
+  root: string,
+  options: {
+    cwd?: string;
+    responses?: ReturnType<typeof fauxAssistantMessage>[];
+  } = {},
+): Promise<string> {
+  const store = openSessionStore(root, createNodeFileBridge(root));
+  const session = await createSession(
+    store,
+    { cwd: options.cwd ?? '/work' },
+    BACKGROUND_CONTEXT,
+  );
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const harness = await Harness.open(
+    session.adopt(),
+    { models, registry: createRegistry() },
+    BACKGROUND_CONTEXT,
+  );
+  const conversation = await harness.root(BACKGROUND_CONTEXT, {
+    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+  });
+  faux.setResponses(
+    options.responses ?? [fauxAssistantMessage('cli hello back')],
+  );
+  await (
+    await conversation.submit(
+      { type: 'input', content: 'cli hello' },
+      BACKGROUND_CONTEXT,
+    )
+  ).wait(BACKGROUND_CONTEXT);
+  await harness.close(BACKGROUND_CONTEXT);
+  await session.release(BACKGROUND_CONTEXT);
+  return session.id;
 }
 
 describe('sessions CLI (issue #14, slice F)', () => {
@@ -73,6 +135,33 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines).toEqual(['[]']);
   });
 
+  it('marks a Pi 0.87 session in the listing as legacy', async () => {
+    const root = tmpRoot();
+    // Exactly what 0.87's JsonlSessionRepo wrote: <root>/--<cwd>--/<ts>_<id>.jsonl
+    // whose first line is the format-4 header.
+    const dir = join(root, '--work--');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, '2026-01-01T00-00-00-000Z_legacy-1.jsonl'),
+      `${JSON.stringify({
+        v: 4,
+        kind: 'header',
+        id: 'legacy-1',
+        storageVersion: 1,
+        createdAt: 1_700_000_000_000,
+        cwd: '/work',
+      })}\n`,
+    );
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'list' },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    expect(o.lines.join('\n')).toContain('legacy-1');
+    expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
+  });
+
   it('list --json emits one {id, cwd} object per session', async () => {
     const root = tmpRoot();
     const o = out();
@@ -96,42 +185,200 @@ describe('sessions CLI (issue #14, slice F)', () => {
     ]);
   });
 
-  it('attaches and shows the transcript tail', async () => {
+  it('attaches and shows the transcript tail as readable turn lines', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.mutate(async (mutator) => {
-      await mutator.commit(
-        [
-          {
-            kind: 'entry',
-            entry: {
-              id: 'e-cli',
-              parentId: null,
-              type: 'message',
-              message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'cli hello' }],
-                timestamp: Date.now(),
-              },
-            },
-          },
-        ],
-        BACKGROUND_CONTEXT,
-      );
-    }, BACKGROUND_CONTEXT);
-    await session.close(BACKGROUND_CONTEXT);
+    const id = await seededSession(root);
     const o = out();
     const code = await runSessionsCommand(
-      { command: 'attach', id: id, tail: 5 },
+      { command: 'attach', id, tail: 5 },
       {
         sessionsRoot: root,
         out: o.write,
       },
     );
     expect(code).toBe(0);
-    expect(o.lines.some((line) => line.includes('cli hello'))).toBe(true);
+    expect(o.lines[0]).toBe(`session ${id}  cwd=/work`);
+    expect(o.lines).toContain('user: cli hello');
+    expect(o.lines).toContain('assistant: cli hello back');
+    // #318: no raw truncated JSON entry anywhere on the attach output.
+    expect(o.lines.join('\n')).not.toContain('"role"');
+  });
+
+  it('shows a tool call and its result on their own lines', async () => {
+    const root = tmpRoot();
+    const id = await seededSession(root, {
+      responses: [
+        fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('done'),
+      ],
+    });
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id, tail: 10 },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
+    expect(code).toBe(0);
+    const assistant = o.lines.find((line) =>
+      line.startsWith('assistant: (no text) [tools: read]'),
+    );
+    expect(assistant).toBeDefined();
+    expect(o.lines.some((line) => line.startsWith('tool-result read:'))).toBe(
+      true,
+    );
+  });
+
+  it('honours --tail over the transcript items', async () => {
+    const root = tmpRoot();
+    const id = await seededSession(root);
+    const o = out();
+    await runSessionsCommand(
+      { command: 'attach', id, tail: 1 },
+      {
+        sessionsRoot: root,
+        out: o.write,
+      },
+    );
+    expect(o.lines.at(-1)).toBe('assistant: cli hello back');
+  });
+
+  it('strips terminal control sequences out of stored transcript text', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const harness = await Harness.open(
+      session.adopt(),
+      { models: fauxModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    // A hostile turn: clearing the screen and recolouring the operator's
+    // terminal is the payload, in the text AND in the model-authored tool
+    // name (pi-durable persists a call the registry never offered).
+    await harness.commit(async (tx) => {
+      await tx.appendEntry(AssistantEntry, conversation.id, {
+        model: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'call-evil',
+                name: '\u001b[31mevil',
+                arguments: {},
+              },
+            ],
+            api: 'faux',
+            provider: 'faux',
+            model: 'faux-1',
+            usage: {
+              input: 1,
+              output: 1,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 2,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
+            },
+            stopReason: 'toolUse',
+            timestamp: Date.now(),
+          },
+        ],
+      });
+      await tx.appendEntry(ToolResultEntry, conversation.id, {
+        data: { diagnostics: [] },
+        model: [
+          {
+            role: 'toolResult',
+            toolCallId: 'call-evil',
+            toolName: '\u001b[2Jbash',
+            content: [{ type: 'text', text: '\u001b[2J\u001b[31mowned' }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      });
+    }, BACKGROUND_CONTEXT);
+    await harness.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id: session.id, tail: 10 },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).toContain('owned');
+    // The name survives as inert text; the control byte never does.
+    expect(text).toContain('evil');
+    expect(text).not.toContain('\u001b');
+  });
+
+  it('names the unfinished durable work a crashed run left behind', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const harness = await Harness.open(
+      session.adopt(),
+      { models: fauxModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    // A live task record a dead process would have left: created without
+    // enabling scheduling, then the storage is closed under it.
+    await harness.commit(async (tx) => {
+      await tx.createTask(
+        GenerationTask,
+        {},
+        {
+          ownership: { kind: 'conversation' },
+          conversationId: conversation.id,
+        },
+      );
+      // A queued input that never reached the transcript either.
+      await tx.createSubmission({
+        type: 'input',
+        conversationId: conversation.id,
+        status: 'queued',
+      });
+    }, BACKGROUND_CONTEXT);
+    await harness.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id: session.id, tail: 0 },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    // #396's storage-level probe owns the format, so this is the same line
+    // the run path prints when it settles the work.
+    const pending = o.lines.filter((line) => line.startsWith('pending work:'));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toContain('pi.generation');
+    expect(pending[0]).toContain('submission');
   });
 
   it('fails cleanly for unknown sessions and unsafe ids', async () => {

@@ -1,8 +1,15 @@
-// Pi FileSystem over the exec file bridge (issue #14, slice A).
-// Sync bridge calls wrapped async with node-error → FileError mapping.
-// canonicalPath does not resolve symlinks (documented limitation — the
-// session store never addresses symlinks). exists returns false for
+// Pi FileSystem over the exec file bridge (issue #14, slice A; Pi 1.0
+// surface #392). Sync bridge calls wrapped async with node-error → FileError
+// mapping. canonicalPath does not resolve symlinks (documented limitation —
+// the session store never addresses symlinks). exists returns false for
 // missing paths and maps other failures to FileError, per the contract.
+//
+// The 1.0 interface adds `id` (the file namespace), `truncateFile` (the JSONL
+// core's torn-line recovery) and `flushFile` (its fsync seam). The adapter
+// stays the only path between pi-durable's storage and the disk, so every
+// session byte crosses the exec seam — I/O confinement (§9), the #359
+// secret-scrubbing bridge and the #361 file modes all keep applying to
+// session JSONL.
 
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
@@ -52,7 +59,17 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       return err(toFileError(error, path));
     }
   };
+  // The bridge is a local Node filesystem by construction (it is built on
+  // node:fs), so it reports the one local namespace id pi-durable's own
+  // NodeExecutionEnv reports: equal ids see the same files at the same paths.
+  const notSupported = (path: string, method: string): FileError =>
+    new FileError(
+      'not_supported',
+      `the exec file bridge does not implement ${method}`,
+      path,
+    );
   return {
+    id: 'node:local',
     cwd: bridge.cwd,
     absolutePath: async (path: string, _context: Context) =>
       ok(bridge.absolutePath(path)),
@@ -60,8 +77,8 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       ok(bridge.joinPath(parts)),
     readTextFile: async (path: string, _context: Context) =>
       attempt(path, () => bridge.readTextFile(path)),
-    // Pi 0.87.1 FileSystem surface (issue #71): pull-based line reading with
-    // final-line termination preserved so JsonlSessionRepo can discard a torn
+    // Pi FileSystem surface (issue #71): pull-based line reading with
+    // final-line termination preserved so a JSONL reader can discard a torn
     // trailing record. Computed from a single readTextFile snapshot — session
     // files are small and this keeps Pi types out of the exec bridge.
     // (Upstream does not re-export TextLine/TextLineReader from the package
@@ -107,6 +124,22 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       content: string | Uint8Array,
       _context: Context,
     ) => attempt(path, () => bridge.appendFile(path, content)),
+    // Torn-line recovery (issue #392): the JSONL core truncates a partial
+    // trailing record before it parses, so a crash mid-append costs the
+    // newest commit and never the session.
+    truncateFile: async (path: string, size: number, _context: Context) => {
+      const truncate = bridge.truncateFile?.bind(bridge);
+      if (truncate === undefined)
+        return err(notSupported(path, 'truncateFile'));
+      return attempt(path, () => truncate(path, size));
+    },
+    // The fsync seam (issue #392). A bridge that cannot flush refuses by
+    // name rather than reporting a durability it did not deliver.
+    flushFile: async (path: string, _context: Context) => {
+      const flush = bridge.flushFile?.bind(bridge);
+      if (flush === undefined) return err(notSupported(path, 'flushFile'));
+      return attempt(path, () => flush(path));
+    },
     renameFile: async (
       sourcePath: string,
       destinationPath: string,

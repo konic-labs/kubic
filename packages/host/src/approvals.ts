@@ -21,6 +21,8 @@ import {
 } from '../../agents/src/policy.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import type {
+  ApprovalAskVerdict,
+  ApprovalCall,
   PolicyInterceptorOptions,
   PolicyTrigger,
 } from '../../worker/src/lane/interceptors.js';
@@ -1457,13 +1459,13 @@ export class FileApprovalStore implements ApprovalStore {
 // stands down the guards for exactly that call. Full-access approves
 // everything as challenged AND records the posture — indicated, recorded
 // beside the session for audit/doctor readers (#57, #29) — never quiet.
-export type ApprovalAsk = (call: {
-  toolName: string;
-  args: Record<string, unknown>;
-  toolCallId: string;
-}) => Promise<
-  { approved: true; challenged: boolean } | { approved: false; reason: string }
->;
+// The ask is awaited inside the pi-durable ToolTask beforeTool hook (issue
+// #397): the service's own maxPendingMs bound still denies on timeout, and
+// the hook runs before the tool's intent commit, so a crash while a seat is
+// deciding re-asks on resume rather than resuming an unapproved call.
+// Single-sourced with the worker seam: `ApprovalCall`/`ApprovalAskVerdict`
+// are the worker's types, so ask and hook cannot drift apart.
+export type ApprovalAsk = (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 
 export function createApprovalAsk(
   service: ApprovalService,

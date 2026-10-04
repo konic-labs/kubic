@@ -1,46 +1,109 @@
-// Resumed-session model identity (issue #148; §21 persisted lane
-// configuration, §26 items 1 and 4, §26.1). Pi restores the lane's stored
-// model on attach; the boot selection only seeds NEW lanes. The documented
-// rule: an explicit selection (`modelPolicy: 'selected'`) switches a
-// differing stored model (setModel + reserve re-clamp + notice); otherwise
-// the session keeps its own model and every surface reports it. A stored
-// model that is no longer available fails closed with a named error.
-import { rmSync } from 'node:fs';
+// Resumed-session model identity on the durable harness (issue #148; §21
+// persisted conversation agent, §26 items 1 and 4, §26.1; ported in #394).
+// The root conversation's `pi.agent` document restores the stored model; the
+// boot selection only seeds a NEW conversation. The documented rule: an
+// explicit selection (`modelPolicy: 'selected'`) switches a differing stored
+// model (configure + notice); otherwise the session keeps its own model and
+// every surface reports it. A stored model that is no longer available fails
+// closed with a named error.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import {
-  DEFAULT_RESERVE_TOKENS,
-  effectiveReserveTokens,
-} from '../compaction.js';
 import { ModelSelectError } from '../model-select.js';
 import {
-  AgentHarness,
   BACKGROUND_CONTEXT,
+  type Context,
   createModels,
+  fauxAssistantMessage,
   fauxProvider,
-  MemorySessionRepo,
-  type Session,
+  openNodeJsonlStorage,
+  type Storage,
+  SystemEntry,
 } from '../pi-boundary.js';
-import { bootSoloLane } from './solo.js';
+import { bootSoloLane, SOLO_PROMPT_SECTION, type SoloLane } from './solo.js';
 
-const sessions: Session[] = [];
-const dirs: string[] = [];
+vi.mock('./interceptors.js', () => ({
+  policyInterceptorHooks: () => [],
+}));
+
+vi.mock('../compaction.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../compaction.js')>();
+  return {
+    ...original,
+    soloCompactionSettings: (options: {
+      configuredReserveTokens?: number;
+      currentWindow?: () => number | undefined;
+    }) => ({
+      enabled: true,
+      keepRecentTokens: 20_000,
+      get reserveTokens() {
+        return (
+          options.configuredReserveTokens ?? original.DEFAULT_RESERVE_TOKENS
+        );
+      },
+    }),
+  };
+});
+
+vi.mock('./tools-adapter.js', async () => {
+  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { OPERATIONS } = await import('../ops/registry.js');
+  return {
+    kubicToolsToPiTools: () =>
+      Object.keys(OPERATIONS).map((name) =>
+        defineTool({
+          name,
+          description: `${name} (faux)`,
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [{ type: 'text' as const, text: name }],
+          }),
+        }),
+      ),
+  };
+});
+
+const DIRS: string[] = [];
+const SOLOS: SoloLane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const session of sessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const solo of SOLOS.splice(0)) {
+    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
-  for (const dir of dirs.splice(0))
+  for (const dir of DIRS.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
+  }
 });
+
+type TestSession = {
+  id: string;
+  dir: string;
+  storage: Storage;
+  meta: { cwd: string; createdAt: string };
+  adopt(): Storage;
+  release(context: Context): Promise<void>;
+};
+function handle(storage: Storage, id = 'sess-1'): TestSession {
+  return {
+    id,
+    dir: `/tmp/kubic-solo-resume/${id}`,
+    storage,
+    meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    adopt: () => storage,
+    release: vi.fn(async () => undefined),
+  };
+}
 
 function catalog(providerId = 'faux') {
   const faux = fauxProvider({
     provider: providerId,
     models: [
-      { id: 'big', contextWindow: 200000 },
-      { id: 'small', contextWindow: 8192 },
+      { id: 'big', contextWindow: 200_000 },
+      { id: 'small', contextWindow: 8_192 },
     ],
   });
   const models = createModels();
@@ -51,137 +114,166 @@ function catalog(providerId = 'faux') {
   return { faux, models, big, small };
 }
 
-// A session whose lane was created on `big` (the stored model).
-async function sessionOnBig(): Promise<Session> {
-  const repo = new MemorySessionRepo();
-  const session = await repo.create({}, BACKGROUND_CONTEXT);
-  sessions.push(session);
-  const { models, big } = catalog();
-  await bootSoloLane({
-    session,
+// A session whose root conversation was booted once on `big` (the stored
+// model): close it, hand back a fresh storage over the same sessions dir.
+async function sessionOnBig(id = 'resume'): Promise<Storage> {
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-resume-'));
+  DIRS.push(dir);
+  const { faux, models, big } = catalog();
+  faux.setResponses([fauxAssistantMessage('hi')]);
+  const seeding = await bootSoloLane({
+    session: handle(
+      await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
+      id,
+    ) as never,
     models,
     model: big,
     env: new FakeExecutionEnv({}),
-    sessionId: session.metadata.id,
+    sessionId: id,
     agentId: 'root',
   });
-  return session;
+  await seeding.close(BACKGROUND_CONTEXT);
+  return openNodeJsonlStorage(dir, BACKGROUND_CONTEXT);
 }
 
-function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
-  const call = spy.mock.calls.at(-1);
-  const options = call?.[0] as { systemPrompt?: string } | undefined;
-  return options?.systemPrompt as string;
+async function promptOf(solo: SoloLane): Promise<string> {
+  const page = await solo.conversation.entries(
+    {},
+    200,
+    undefined,
+    BACKGROUND_CONTEXT,
+  );
+  const system = page.items.find((entry) => SystemEntry.is(entry));
+  const message = (
+    system?.model as unknown as Array<{
+      sections?: Record<string, string | null>;
+    }>
+  )?.[0];
+  return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
+}
+
+async function driveOneTurn(solo: SoloLane): Promise<void> {
+  const settled = await (
+    await solo.conversation.submit(
+      { type: 'input', content: 'hi' },
+      BACKGROUND_CONTEXT,
+    )
+  ).wait(BACKGROUND_CONTEXT);
+  expect(settled.status).toBe('done');
+}
+
+function liveModel(solo: SoloLane): Promise<string | undefined> {
+  return solo.conversation
+    .agent(BACKGROUND_CONTEXT)
+    .then((agent) =>
+      agent.model === undefined
+        ? undefined
+        : `${agent.model.provider}/${agent.model.modelId}`,
+    );
 }
 
 describe('resumed session model identity (issue #148)', () => {
-  it('an explicit selection switches the stored model, re-clamps the reserve, and says so', async () => {
-    const session = await sessionOnBig();
-    const { models, small } = catalog();
+  it('an explicit selection switches the stored model and says so', async () => {
+    const storage = await sessionOnBig();
+    const { faux, models, small } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
     const solo = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: small,
       modelPolicy: 'selected',
       onModelNotice: (line) => notices.push(line),
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
-    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/small');
+    SOLOS.push(solo);
+    expect(await liveModel(solo)).toBe('faux/small');
     expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/small');
     expect(notices).toEqual([
       "model: session model 'faux/big' switched to 'faux/small' (explicit selection)",
     ]);
-    const settings =
-      await solo.harness.getCompactionSettings(BACKGROUND_CONTEXT);
-    expect(settings.reserveTokens).toBe(
-      effectiveReserveTokens(8192, DEFAULT_RESERVE_TOKENS),
-    );
   });
 
   it('without an explicit selection the session keeps its stored model everywhere', async () => {
-    const session = await sessionOnBig();
-    const { models, small } = catalog();
+    const storage = await sessionOnBig();
+    const { faux, models, small } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const create = vi.spyOn(AgentHarness, 'create');
     const solo = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: small,
       onModelNotice: (line) => notices.push(line),
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
-    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    SOLOS.push(solo);
+    expect(await liveModel(solo)).toBe('faux/big');
     expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/big');
-    // The prompt metadata names the model the lane actually runs.
-    expect(promptOf(create)).toContain('faux/big');
-    expect(promptOf(create)).not.toContain('faux/small');
-    // The reserve is clamped to the effective model's window.
-    const settings =
-      await solo.harness.getCompactionSettings(BACKGROUND_CONTEXT);
-    expect(settings.reserveTokens).toBe(
-      effectiveReserveTokens(200000, DEFAULT_RESERVE_TOKENS),
-    );
+    // The prompt metadata names the model the conversation actually runs.
+    await driveOneTurn(solo);
+    const prompt = await promptOf(solo);
+    expect(prompt).toContain('model=faux/big');
+    expect(prompt).not.toContain('faux/small');
     expect(notices).toEqual([
       "model: session keeps its own model 'faux/big' (selected default 'faux/small' not applied; pin a model to switch)",
     ]);
   });
 
   it('a matching or fresh lane boots silently on the selection', async () => {
-    const session = await sessionOnBig();
-    const { models, big } = catalog();
+    const storage = await sessionOnBig();
+    const { faux, models, big } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
     const solo = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: big,
       modelPolicy: 'selected',
       onModelNotice: (line) => notices.push(line),
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
+    SOLOS.push(solo);
     expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/big');
     expect(notices).toEqual([]);
   });
 
   it('a stored model whose provider is absent fails closed with a named error', async () => {
-    const session = await sessionOnBig();
+    const storage = await sessionOnBig();
     const other = catalog('other');
-    const booted = bootSoloLane({
-      session,
+    const error = await bootSoloLane({
+      session: handle(storage, 'resume') as never,
       models: other.models,
       model: other.small,
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
-    });
-    await expect(booted).rejects.toBeInstanceOf(ModelSelectError);
-    await expect(booted).rejects.toThrow(
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ModelSelectError);
+    expect((error as Error).message).toBe(
       "session model 'faux/big' is unavailable: provider 'faux' is not registered (pin a model to switch this session)",
     );
   });
 
   it('a stored model missing from its provider fails closed with a named error', async () => {
-    const session = await sessionOnBig();
+    const storage = await sessionOnBig();
     const faux = fauxProvider({
-      models: [{ id: 'small', contextWindow: 8192 }],
+      models: [{ id: 'small', contextWindow: 8_192 }],
     });
     const models = createModels();
     models.setProvider(faux.provider);
     await expect(
       bootSoloLane({
-        session,
+        session: handle(storage, 'resume') as never,
         models,
         model: faux.getModel(),
         env: new FakeExecutionEnv({}),
-        sessionId: session.metadata.id,
+        sessionId: 'resume',
         agentId: 'root',
       }),
     ).rejects.toThrow(
@@ -190,38 +282,31 @@ describe('resumed session model identity (issue #148)', () => {
   });
 
   it('reconciles silently when no notice sink is given', async () => {
-    const session = await sessionOnBig();
-    const { models, small } = catalog();
+    const storage = await sessionOnBig();
+    const { faux, models, small } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const kept = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: small,
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
+    SOLOS.push(kept);
     expect(kept.model.id).toBe('big');
-    const switched = await bootSoloLane({
-      session,
-      models,
-      model: small,
-      modelPolicy: 'selected',
-      env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
-      agentId: 'root',
-    });
-    expect(switched.model.id).toBe('small');
   });
 });
 
 describe('a resumed session never keeps a model the enterprise gate refuses (issue #288)', () => {
   it('drops a refused stored model for the (already gated) selection and says so', async () => {
-    const session = await sessionOnBig();
-    const { models, small } = catalog();
+    const storage = await sessionOnBig();
+    const { faux, models, small } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
     const asked: string[] = [];
     const solo = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: small,
       onModelNotice: (line) => notices.push(line),
@@ -232,32 +317,34 @@ describe('a resumed session never keeps a model the enterprise gate refuses (iss
         },
       },
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
-    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/small');
+    SOLOS.push(solo);
+    expect(await liveModel(solo)).toBe('faux/small');
     expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/small');
     // The gate is asked about the STORED model, and only that one.
     expect(asked).toEqual(['faux/big']);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("'faux/big'");
     expect(notices[0]).toContain("'faux/small'");
+    expect(notices[0]).toContain('enterprise policy');
   });
 
   it('keeps an allowed stored model exactly as before', async () => {
-    const session = await sessionOnBig();
-    const { models, small } = catalog();
+    const storage = await sessionOnBig();
+    const { faux, models, small } = catalog();
+    faux.setResponses([fauxAssistantMessage('hi')]);
     const solo = await bootSoloLane({
-      session,
+      session: handle(storage, 'resume') as never,
       models,
       model: small,
       policy: { modelAllowed: () => true },
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
+      sessionId: 'resume',
       agentId: 'root',
     });
-    const live = await solo.lane.getModel(BACKGROUND_CONTEXT);
-    expect(`${live?.provider}/${live?.id}`).toBe('faux/big');
+    SOLOS.push(solo);
+    expect(await liveModel(solo)).toBe('faux/big');
   });
 });

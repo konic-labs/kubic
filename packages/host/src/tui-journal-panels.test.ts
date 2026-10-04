@@ -18,6 +18,7 @@ import {
 } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import type { FileJournalStore } from '../../exec/src/journal.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -101,7 +102,20 @@ function prodBoot(
 ): TuiRunDeps['bootLane'] {
   return (sessionId, answer) => {
     const faux = fauxProvider();
-    faux.setResponses(steps.map((step) => fauxAssistantMessage(step)));
+    faux.setResponses(
+      steps.map((step) => {
+        // pi-durable dispatches the calls of a `toolUse` turn.
+        const toolUse =
+          Array.isArray(step) &&
+          step.some(
+            (part) =>
+              typeof part === 'object' &&
+              part !== null &&
+              (part as { type?: unknown }).type === 'toolCall',
+          );
+        return toolUse ? fauxToolUse(step) : fauxAssistantMessage(step);
+      }),
+    );
     const models = createModels();
     models.setProvider(faux.provider);
     return bootTuiLane(sessionId, {

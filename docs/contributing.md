@@ -20,7 +20,8 @@ Every issue, every wave, no freelancing:
 - **LC1 TDD** — one acceptance checkbox at a time: failing test → watch
   it fail → minimal code → watch it pass → refactor. Runner is vitest
   with the `faux` provider (zero network, zero paid tokens in CI); TUI
-  work adds `VirtualTerminal` headless snapshots. One behavior per
+  work adds pure-render headless snapshots (the pinned `pi-tui` has no
+  `VirtualTerminal`). One behavior per
   test, real code over mocks.
 - **LC2 Debug** — anything red goes through root-cause investigation
   first (tight repro loop, recent changes, data flow — no fix proposals
@@ -62,12 +63,36 @@ Every issue, every wave, no freelancing:
   (in/out), `## Acceptance criteria` (checkboxes), `## Dependencies`.
 - **`pi/` is read-only reference** — never build, modify, lint, or test
   anything under `pi/`; it is gitignored upstream material, not Kubic.
+  The clone to work against is upstream Pi tag **`v1.0.2`** (the version
+  every `@earendil-works/*` pin names); its own `AGENTS.md` and commands
+  do not apply here.
 - **Tests never need network or paid tokens** — `faux` provider,
-  headless `VirtualTerminal`, fixture `usage` rows.
+  pure-render headless snapshots, fixture `usage` rows.
 - **Tests never depend on the shell's colour variables** — `runTuiCommand`
   takes `colorLevel` through its deps (pass `'none'`), and the shared
   `vitest.setup.ts` fails any test that leaves a coloured TUI theme active,
   so `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
+
+## Pi boundary
+
+Kubic runs on Pi 1.0 (`@earendil-works/*` **1.0.2**, exact pins). The
+boundary is enforced, not conventional:
+
+- **Only two files may import `@earendil-works/*`** —
+  `packages/worker/src/pi-boundary.ts` (the worker seam, §65) and
+  `packages/tui/src/tui-boundary.ts` (presentation).
+  `scripts/dep-lint.mjs` rejects every other import, each re-export in a
+  seam carries a JUSTIFICATION block checked by
+  `scripts/pi-boundary.test.mjs`, and CODEOWNERS flags seam diffs for
+  maintainer review.
+- **The worker seam is append-only per issue** — additions land in a
+  `// --- #<issue> additions ---` block at the end of
+  `pi-boundary.ts`, never by reordering or deleting another issue's lines.
+- **The runtime packages are `pi-durable`** (the `Harness`, conversations,
+  submissions, durable tasks, documents and the extension registry),
+  `pi-ai` (the model layer) and `chord` (`Context`); `pi-tui` is
+  presentation only. Pi 1.0 removed the experimental `pi-agent-core`
+  harness (AgentHarness/AgentLane/operations) — nothing imports it.
 
 ## Docs rule
 
@@ -81,9 +106,10 @@ standalone `npm run docs:check` step, and again inside `npm test` via
 ## CI gates (run these locally)
 
 A push runs the `test` job (the linters, suites and the shipped-artifact
-check below) plus the per-push `mutation` job on the changed lines (see
-"The gate"). The nightly full-scope `mutation-nightly` job is postponed
-(#137). Efficiency rules of the workflow:
+check below). The per-push `mutation` job on the changed lines (see
+"The gate") is postponed (#407) and the nightly full-scope
+`mutation-nightly` job is postponed (#137); run the per-push gate locally
+until #407 restores it. Efficiency rules of the workflow:
 
 - **`test` runs on node 22** (the lowest supported) on every ref, and on
   **22 and 24 on `main`**. The Node-independent static checks (typecheck, biome,
@@ -169,7 +195,11 @@ leaves gating to the per-file check).
 
 ### CI: per push and nightly
 
-- **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>`
+- **`mutation` (every push / PR)** — *postponed (#407): the job is disabled
+  (`if: false`) until the EPIC K test-strength gaps and the scope's time
+  budget are fixed; run it locally (see "Run a scope locally" below) with
+  `--mutate "$(node scripts/mutation-scope.mjs --ref main)"`.*
+  When enabled — `scripts/mutation-scope.mjs --ref <base>`
   maps `git diff -U0` hunks to the **changed lines** of touched source files
   (`path:start-end` ranges; a core file alone can hold ~1k mutants covered by
   ~500 tests), capped at 25 files **and 2000 changed lines** (about 1500

@@ -2,7 +2,10 @@
 // Contributions compose in listed order: the first contribution wraps
 // closest to the core, the last is outermost. Rebuilds are pure — removing
 // an extension means recomposing without it, never an inverse mutation.
-import type { AgentHarnessTool } from '../pi-boundary.js';
+// Composition stays pre-registration (EPIC K #393): the Kubic extension is
+// installed with whatever `composeTools` returned, and pi-durable's own
+// `wrapTool` decorators apply on top of that.
+import type { ToolRegistration } from '../pi-boundary.js';
 
 export type ExecuteFn = (...args: unknown[]) => unknown;
 
@@ -12,15 +15,18 @@ export interface ToolContribution {
 }
 
 export function composeTools(
-  base: Array<AgentHarnessTool<never>>,
+  base: readonly ToolRegistration[],
   contributions: ToolContribution[],
-): Array<AgentHarnessTool<never>> {
+): ToolRegistration[] {
   return base.map((tool) => {
     let execute = tool.execute as unknown as ExecuteFn;
     for (const contribution of contributions) {
       execute = contribution.wrap(execute, tool.name);
     }
-    return { ...tool, execute: execute as unknown as (typeof tool)['execute'] };
+    return {
+      ...tool,
+      execute: execute as unknown as ToolRegistration['execute'],
+    };
   });
 }
 

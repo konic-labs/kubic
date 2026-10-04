@@ -1,6 +1,10 @@
 // Tool policy enforcement on the solo lane (issue #15, slice B; §40).
-// Layer-1 shaping: allowlist the lane to the class-derived set and refuse
-// contradictory configurations with named reasons, never silent.
+// Layer-1 shaping: allowlist the conversation to the class-derived set and
+// refuse contradictory configurations with named reasons, never silent.
+//
+// Pi 1.0 (issue #394): the lane is a root conversation, so the allowlist is
+// a `conversation.configure({ tools: [...] })` — pi-durable stores tool
+// NAMES from the registration objects, and an array offers exactly those.
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
   checkAgreement,
@@ -8,7 +12,12 @@ import {
   toolsForClasses,
   validateClasses,
 } from '../../../agents/src/policy.js';
-import type { AgentHarness, AgentLane, Context } from '../pi-boundary.js';
+import type {
+  Context,
+  Conversation,
+  Registry,
+  ToolRegistration,
+} from '../pi-boundary.js';
 
 export {
   PolicyValidationError,
@@ -16,9 +25,31 @@ export {
 } from '../../../agents/src/policy.js';
 export type { PermissionClasses };
 
+// Name → registration lookup over the live registry: pi-durable's
+// configure() takes ToolRegistration objects and stores their names, so
+// every name-based allowlist is mapped here. Names the registry does not
+// offer are dropped (the harness drops them anyway); the boot filters its
+// prompt `tools:` line to the same set, so the model is never told about a
+// tool it cannot call (§40.3).
+export function toolsForNames(
+  registry: Registry,
+  names: readonly string[],
+): ToolRegistration[] {
+  const byName = new Map<string, ToolRegistration>();
+  for (const { tool } of registry.snapshot().tools()) {
+    byName.set(tool.name, tool);
+  }
+  const found: ToolRegistration[] = [];
+  for (const name of names) {
+    const tool = byName.get(name);
+    if (tool !== undefined) found.push(tool);
+  }
+  return found;
+}
+
 export async function applyToolPolicy(
-  harness: AgentHarness,
-  lane: AgentLane,
+  registry: Registry,
+  conversation: Conversation,
   classes: PermissionClasses,
   context: Context,
 ): Promise<string[]> {
@@ -26,13 +57,15 @@ export async function applyToolPolicy(
   // objects reaching the lane are still rejected with named reasons, and
   // partial inputs merge over SOLO_DEFAULTS.
   const valid = validateClasses({ ...classes });
-  const registered = await harness.getTools(context);
-  const names = registered.map((tool: { name: string }) => tool.name);
+  const registered = registry
+    .snapshot()
+    .tools()
+    .map(({ tool }) => tool.name);
   // Agreement (§40.3) is a role-time check: a declared tool set must not
   // contradict the classes. The solo lane always registers the full set
-  // and narrows via allowlist, so here we enforce the grantable half —
+  // and narrows via configure(), so here we enforce the grantable half —
   // classes must never demand a tool that is not registered.
-  const grantable = checkGrantable(valid, names);
+  const grantable = checkGrantable(valid, registered);
   if (!grantable.agree) {
     throw new PolicyRefusedError(grantable.reason);
   }
@@ -44,7 +77,10 @@ export async function applyToolPolicy(
   if (!agreement.agree) {
     throw new PolicyRefusedError(agreement.reason);
   }
-  await lane.setActiveTools(allowed, context);
+  await conversation.configure(
+    { tools: toolsForNames(registry, allowed) },
+    context,
+  );
   return allowed;
 }
 

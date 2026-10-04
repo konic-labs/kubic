@@ -153,4 +153,47 @@ describe('models.json schema (issue #223)', () => {
       ),
     ).toThrow(/apiKey/);
   });
+
+  // Issue #402 (pi-ai 1.0.2): the model-level sampling defaults Pi resolves
+  // per effective thinking level. Forwarded as declared — Pi merges the
+  // level's object over the model default at request time.
+  it('carries samplingParams and samplingParamsByThinkingLevel onto the model', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson(
+        one({
+          samplingParams: { temperature: 0.2, top_p: 0.9 },
+          samplingParamsByThinkingLevel: {
+            high: { temperature: 1, top_p: 1 },
+            off: { temperature: 0 },
+          },
+        }),
+      ),
+    );
+    const model = models.getModel('p', 'm');
+    expect(model?.samplingParams).toEqual({ temperature: 0.2, top_p: 0.9 });
+    expect(model?.samplingParamsByThinkingLevel).toEqual({
+      high: { temperature: 1, top_p: 1 },
+      off: { temperature: 0 },
+    });
+  });
+
+  it('refuses malformed sampling params by field name', () => {
+    expect(() => parseModelsJson(one({ samplingParams: 0.5 }))).toThrow(
+      /'samplingParams'/,
+    );
+    expect(() => parseModelsJson(one({ samplingParams: [1] }))).toThrow(
+      /'samplingParams'/,
+    );
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: { often: {} } })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: { high: 1 } })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: [] })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+  });
 });

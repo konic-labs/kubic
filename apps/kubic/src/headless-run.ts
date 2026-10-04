@@ -56,10 +56,9 @@ import {
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
-  attachToolSpans,
   RunSpans,
+  runSpanHooks,
   serializeSpanArtifact,
-  type ToolHookRegistry,
 } from '../../../packages/host/src/ops/perf/run-spans.js';
 import {
   BUDGET_EXHAUSTED,
@@ -96,33 +95,48 @@ import {
   MAX_RUN_TIMEOUT_MS,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToTerminus,
+  type RunTerminusKind,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
-import { drainOperation } from '../../../packages/worker/src/lane/abort.js';
 import {
-  describeSettlement,
-  lastUserPromptText,
-  pendingHead,
-  settlePendingOperation,
+  abortLane,
+  forgetLaneKills,
+} from '../../../packages/worker/src/lane/abort.js';
+import { subscribeLaneEvents } from '../../../packages/worker/src/lane/events.js';
+import {
+  describePendingSettlement,
+  inspectPending,
+  pendingInputText,
+  settlePending,
 } from '../../../packages/worker/src/lane/pending.js';
-
 import {
   attachSession,
   createSession,
   openSessionStore,
+  type SessionHandle,
   sessionsTouchingWorkspace,
 } from '../../../packages/worker/src/lane/session-store.js';
 import {
   bootSoloLane,
-  driveToSettled,
-  type LaneDriver,
-  type SettledDrive,
   type SoloLane,
 } from '../../../packages/worker/src/lane/solo.js';
+import {
+  entriesToTranscript,
+  readConversationEntries,
+  readSessionEntries,
+  type TranscriptItem,
+} from '../../../packages/worker/src/lane/transcript.js';
+import {
+  awaitTurn,
+  runTurn,
+  type TurnOutcome,
+  turnAbort,
+  turnLaneRecord,
+} from '../../../packages/worker/src/lane/turn.js';
 import { withRoleGrant } from '../../../packages/worker/src/lifecycle/env.js';
 import { readyMarker } from '../../../packages/worker/src/lifecycle/spawn.js';
 import {
@@ -133,10 +147,13 @@ import {
 import {
   BACKGROUND_CONTEXT,
   type Context,
-  type Hooks,
+  createModels,
+  createRegistry,
+  type EntryRecord,
+  Harness,
   type MutableModels,
-  type OperationResultRecord,
-  type Session,
+  UserEntry,
+  withCancel,
 } from '../../../packages/worker/src/pi-boundary.js';
 import { selectModelUnderPolicy } from './config-runtime.js';
 import { loadExtensionStartup } from './extension-startup.js';
@@ -311,9 +328,9 @@ export class BudgetExceededError extends Error {
   }
 }
 
-// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the drive like a guard does: control
-// flow, mapped to `failed` (exit 1) after the drain — §78 has no separate
-// interrupt code.
+// An interrupt (SIGINT/SIGTERM/SIGHUP) ends the turn like a guard does:
+// control flow, mapped to `failed` (exit 1) after the drain — §78 has no
+// separate interrupt code.
 class InterruptedError extends Error {
   constructor(signal: string) {
     super(`run interrupted by ${signal}`);
@@ -363,165 +380,196 @@ function storeFailure(
   };
 }
 
-// Lane outcomes arrive as unknown at the composition root: the drive loop
-// hands back whatever the lane settled with. Validate the record shape
-// explicitly so a malformed outcome maps to failed with a clear message
-// instead of throwing an incidental TypeError mid-map.
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
-  'completed',
-  'declined',
-  'aborted',
-  'failed',
-]);
-
-function isRecordError(
-  value: unknown,
-): value is { code: string; message: string } {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as { code?: unknown; message?: unknown };
-  return typeof record.code === 'string' && typeof record.message === 'string';
-}
-
-function asResultRecord(outcome: unknown): OperationResultRecord | null {
-  if (typeof outcome !== 'object' || outcome === null) return null;
-  const record = outcome as { status?: unknown; error?: unknown };
-  if (
-    typeof record.status !== 'string' ||
-    !TERMINAL_STATUSES.has(record.status)
-  )
-    return null;
-  if (record.error !== undefined && !isRecordError(record.error)) return null;
-  return record as OperationResultRecord;
-}
-
-// Guarded drive (issue #84): the lane's turn loop runs under a wall-clock
-// bound and a turn bound. Exhaustion throws a guard error (caught below,
-// mapped to budget_exhausted with the ref triple intact) — never a lane
-// failure, never a hang. The pending drive promise is abandoned on
-// timeout; the session close in the caller's finally still runs.
-async function driveWithGuard(
-  lane: LaneDriver,
-  operationId: string,
-  context: Context,
-  boundMs: number,
-  maxTurns: number | undefined,
-  interrupted: Promise<never>,
-  budgetExceeded: Promise<never>,
-): Promise<SettledDrive> {
-  let turns = 0;
-  const counting: LaneDriver = {
-    drive: async (driveOptions, driveContext) => {
-      turns += 1;
-      if (maxTurns !== undefined && turns > maxTurns) {
-        throw new TurnBudgetError(turns - 1);
-      }
-      return lane.drive(driveOptions, driveContext);
-    },
-  };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      driveToSettled(counting, operationId, context),
-      interrupted,
-      // An exhausted KUBIC_BUDGET (issue #208): the drive is abandoned and
-      // the caller maps the rejection to budget_exhausted, exactly like the
-      // wall-clock guard below.
-      budgetExceeded,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new WallClockError(boundMs)), boundMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-function tipId(entries: readonly unknown[]): string | null {
-  // The store makes no order promise: take the max-seq entry's id.
-  let best: string | null = null;
-  let bestSeq = -1;
-  for (const entry of entries) {
-    const record = entry as { id?: unknown; seq?: unknown };
-    if (typeof record?.id !== 'string') continue;
-    const seq = typeof record.seq === 'number' ? record.seq : -1;
-    if (seq >= bestSeq) {
-      bestSeq = seq;
-      best = record.id;
-    }
-  }
-  return best;
-}
-
 // The named non-answer a completed run with no assistant text reports
 // (issue #129): the summary is the model's own output or this sentence —
 // never the operator's prompt echoed back as if it were a result.
 export const NO_ASSISTANT_TEXT_SUMMARY =
   '(no assistant text — the run settled without output)';
 
-// Final assistant text of the settled run for the result summary. A lane
+// Final assistant text of the settled run for the result summary. A run
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
+// Takes the shared transcript (#400): newest assistant item wins.
 export function assistantSummary(
-  entries: readonly unknown[],
+  items: readonly TranscriptItem[],
 ): string | undefined {
-  let best: string | undefined;
-  let bestSeq = -1;
-  for (const entry of entries) {
-    const record = entry as {
-      seq?: unknown;
-      type?: unknown;
-      message?: { role?: unknown; content?: unknown };
-    };
-    if (record?.type !== 'message') continue;
-    if (record.message?.role !== 'assistant') continue;
-    if (!Array.isArray(record.message.content)) continue;
-    const text = record.message.content
-      .filter(
-        (part) =>
-          (part as { type?: unknown }).type === 'text' &&
-          typeof (part as { text?: unknown }).text === 'string',
-      )
-      .map((part) => (part as { text: string }).text)
-      .join('\n')
-      .trim();
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item === undefined || item.kind !== 'assistant') continue;
+    const text = item.text.trim();
     if (text === '') continue;
-    const seq = typeof record.seq === 'number' ? record.seq : -1;
-    if (seq >= bestSeq) {
-      bestSeq = seq;
-      best = text.slice(0, 500);
-    }
+    return text.slice(0, 500);
   }
-  return best;
+  return undefined;
 }
 
-async function recordPrompt(
-  session: Session,
+// §78 terminus for a settled turn: the §52 code and its message go through
+// the same settlement kernel the lane record does, so budget/approval/
+// workspace/provider failures keep their 3/4/5/6-bound termini.
+function failedTurnTerminus(outcome: TurnOutcome): RunTerminusKind {
+  if (outcome.kind !== 'failed') return 'failed';
+  return mapLaneOutcomeToTerminus('failed', {
+    code: outcome.reason,
+    message: outcome.error ?? outcome.reason,
+  });
+}
+
+// §78 terminus for a guard that stopped the run before or instead of a
+// settlement: an interrupt is a failed run (no separate §78 code), every
+// guard exhaustion is budget_exhausted with the ref triple intact.
+function stoppedResult(
+  id: string,
+  error: Error,
+  capture: { interrupted: boolean },
+): HeadlessRunResult {
+  if (error instanceof InterruptedError) {
+    capture.interrupted = true;
+    return finished(id, 'failed', error.message, error.message);
+  }
+  return finished(id, 'budget_exhausted', error.message, error.message);
+}
+
+// §46 capture of the run's transcript (#400's readers): the live conversation
+// while the lane is open, the session storage otherwise. A read failure
+// leaves the trajectory without actions, never the run without its result.
+async function captureEntries(
+  solo: SoloLane | undefined,
+  session: SessionHandle,
+  context: Context,
+): Promise<EntryRecord[]> {
+  try {
+    return solo === undefined
+      ? await readSessionEntries(session.storage, context)
+      : await readConversationEntries(solo.conversation, context);
+  } catch {
+    return [];
+  }
+}
+
+// How long the end-of-run lane abort may take before the run gives up on it.
+// The kills have already run by then; this bounds a harness that is waiting
+// on a task that ignores cancellation.
+// How long the end-of-run lane abort may take before the run gives up on it.
+// The kills have already run by then; this bounds a harness that is waiting
+// on a task that ignores cancellation (a provider that never settles its
+// stream), so the run always reports its own result.
+const LANE_ABORT_BOUND_MS = 2_000;
+
+// Waits for `work` for at most `ms`; undefined when the bound elapses. The
+// promise is observed either way, so a late rejection is never unhandled.
+async function settledWithin<T>(
+  work: Promise<T>,
+  ms: number,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => undefined), bound]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// Best-effort conversation abort + kill drain on the divert paths (a guard
+// or an interrupt abandoned a live turn): the durable stop is stated against
+// a context that is NOT the cancelled bound, and the wait is bounded so the
+// run's own result never hangs on it.
+async function abortAbandonedLane(
+  solo: SoloLane,
+  report: (message: string) => void,
+): Promise<void> {
+  const cancel = withCancel(BACKGROUND_CONTEXT);
+  const timer = setTimeout(
+    () =>
+      cancel.cancel(new Error(`lane abort exceeded ${LANE_ABORT_BOUND_MS}ms`)),
+    LANE_ABORT_BOUND_MS,
+  );
+  try {
+    await abortLane(solo, cancel.context);
+  } catch (error) {
+    report(
+      `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The mapped result outranks telemetry: a throwing debug sink in the
+// end-of-run cleanup must not replace the run's own HeadlessRunResult.
+function guardedReport(
+  report: ((message: string) => void) | undefined,
+  message: string,
+): void {
+  try {
+    report?.(message);
+  } catch {
+    // Swallowed by design — the mapped result stands.
+  }
+}
+
+// One plain `pi.user` entry for a prompt no submission carried: a throwaway
+// Harness over the session's own storage (no model layer is needed to write
+// an entry), closed again immediately.
+async function appendPromptEntry(
+  session: SessionHandle,
   prompt: string,
   context: Context,
 ): Promise<void> {
-  const existing = await session.findEntries(undefined, context);
-  const parentId = tipId(existing);
-  const entryId = randomUUID();
-  await session.mutate(async (mutator) => {
-    await mutator.commit(
-      [
-        {
-          kind: 'entry',
-          entry: {
-            id: entryId,
-            parentId,
-            type: 'message',
-            message: {
-              role: 'user',
-              content: [{ type: 'text', text: prompt }],
-              timestamp: Date.now(),
-            },
-          },
-        },
-      ],
-      context,
+  const harness = await Harness.open(
+    session.adopt(),
+    { models: createModels(), registry: createRegistry() },
+    context,
+  );
+  try {
+    const conversation = await harness.root(context);
+    await conversation.commit(async (tx) => {
+      await tx.appendEntry(UserEntry, conversation.id, {
+        model: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+      });
+    }, context);
+  } finally {
+    await harness.close(context);
+  }
+}
+
+// #247: `submit` writes `pi.user` itself, so a run that reached its turn has
+// exactly ONE user entry. Every other exit path — no model, a refused role,
+// a signal between boot and the turn, a busy refusal — still keeps the
+// prompt durable (the pre-1.0 guarantee `kubic run -p` always had) through
+// one plain entry write. The TRANSCRIPT decides, in both directions: a
+// prompt already carried by an entry (the turn's own, a resumed run's, an
+// earlier identical prompt) is never written twice, and a lane that booted
+// but never admitted the prompt still gets its entry.
+async function ensurePromptDurable(
+  solo: SoloLane | undefined,
+  session: SessionHandle,
+  prompt: string,
+  context: Context,
+  report: (message: string) => void,
+): Promise<void> {
+  const entries = await captureEntries(solo, session, context);
+  const present = entriesToTranscript(entries).some(
+    (item) => item.kind === 'user' && item.text.trim() === prompt.trim(),
+  );
+  if (present) return;
+  try {
+    if (solo === undefined) {
+      await appendPromptEntry(session, prompt, context);
+    } else {
+      await solo.conversation.commit(async (tx) => {
+        await tx.appendEntry(UserEntry, solo.conversation.id, {
+          model: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+        });
+      }, context);
+    }
+  } catch (error) {
+    report(
+      `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
     );
-  }, context);
+  }
 }
 
 // Issue #185 (§39, §68): the finished run reports its OWN usage — the
@@ -797,16 +845,20 @@ async function runHeadlessPromptImpl(
     capture.liveSecrets(),
   );
   const store = openSessionStore(root, bridge);
-  let session: Session;
+  let session: SessionHandle;
   try {
     session =
       options.sessionId === undefined
-        ? await createSession(store, deps.env?.cwd ?? process.cwd(), context)
+        ? await createSession(
+            store,
+            { cwd: deps.env?.cwd ?? process.cwd() },
+            context,
+          )
         : await attachSession(store, options.sessionId, context);
   } catch (error) {
     return storeFailure(options.sessionId, error);
   }
-  const id = session.metadata.id;
+  const id = session.id;
   capture.sessionId = id;
   capture.sessionsRoot = root;
   // Declared outside the try so the `finally` sweep below can reach it
@@ -814,45 +866,49 @@ async function runHeadlessPromptImpl(
   let reconciliation: RunReconciliation | undefined;
   // Issue #325: the installed policy's end-of-session posture check.
   let settlePolicy: (() => void) | undefined;
-  // Issue #109: the booted lane and the admitted operation are hoisted the
-  // same way, so every exit path can drain in-flight work — a guard
-  // firing mid-drive must not abandon the tool processes it interrupted.
-  // solo stays undefined until boot succeeds; activeOperationId until an
-  // admission succeeded (a refused admission has nothing to abort).
+  // Issue #109: the booted lane is hoisted so every exit path can stop the
+  // in-flight turn — a guard firing mid-turn must not abandon the tool
+  // processes it interrupted.
   let solo: SoloLane | undefined;
-  let activeOperationId: string | undefined;
-  // Abort request first (durable: the harness records operation_abort
-  // in-session, §20.4), then the kill drain (detached process groups, so
-  // grandchildren die with them), each failure swallowed to the debug
-  // channel — the backstop is the drain, and a refusal must not skip it.
-  const drainInFlight = async (): Promise<void> => {
-    if (solo === undefined || activeOperationId === undefined) return;
-    await drainOperation(
-      solo.lane,
-      solo.kills,
-      activeOperationId,
-      context,
-      (message) => debug?.(`guard: ${message}`),
-    );
+  // Set when a guard or an interrupt abandoned a live turn: the finally then
+  // states the durable conversation abort (plus the kill drain) instead of
+  // dropping handles for work that is still running.
+  let abandoned = false;
+  // The run's guard (issue #84): every wait runs on this cancellable context,
+  // cancelled by the wall clock, the turn count (guard) or a signal. The
+  // DURABLE stop is conversation.abort() on the divert paths; this context
+  // only stops waiting.
+  const guard = withCancel(context);
+  // The error that stopped the wait. Read through a call so the closure's
+  // write is not narrowed away by the reads below.
+  let guardError: Error | undefined;
+  const guardFailure = (): Error | undefined => guardError;
+  // The abort reason travels on the context (lane/turn.ts reads it), while
+  // `guardError` keeps the original error for the run's own message.
+  const tripGuard = (
+    error: Error,
+    reason: 'guard' | 'signal' = 'guard',
+  ): void => {
+    guardError ??= error;
+    guard.cancel(turnAbort(reason, error.message));
   };
-  // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally has
-  // drained, so the default handler can no longer kill the run past its own
-  // cleanup. The first signal kills the admitted operation's children
-  // synchronously (they sit in their own process groups and never saw the
-  // signal) and ends the drive; the listeners detach at once, so a second
-  // Ctrl-C force-quits through the default handler.
+  // Counted from the committed usage events (#398): one per assistant
+  // response, the turn unit `--max-turns` bounds.
+  let turns = 0;
+  // The run's guard timer (issue #84): armed with the wall-clock bound once
+  // the session exists, cleared on every exit path.
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally
+  // has drained, so the default handler can no longer kill the run past its
+  // own cleanup. The first signal kills the running children synchronously
+  // (they sit in their own process groups and never saw the signal — D1 keys
+  // them by conversation id) and cancels the guard; the listeners detach at
+  // once, so a second Ctrl-C force-quits through the default handler.
   const signals = deps.signals ?? process;
-  let rejectInterrupt: ((error: Error) => void) | undefined;
-  const interrupted = new Promise<never>((_resolve, reject) => {
-    rejectInterrupt = reject;
-  });
-  // Observed here so a signal outside the drive race is not an unhandled
-  // rejection; the race still sees the rejected promise.
-  interrupted.catch(() => undefined);
   let signalsAttached = false;
   // Set by the first signal. Boot checks it before each expensive step (and
-  // before admission), so a pre-admission Ctrl-C cancels the boot instead
-  // of letting it run on unseen.
+  // before the turn), so a pre-turn Ctrl-C cancels the boot instead of
+  // letting it run on unseen.
   let interruptedBy: string | undefined;
   const detachSignals = (): void => {
     if (!signalsAttached) return;
@@ -862,8 +918,8 @@ async function runHeadlessPromptImpl(
   function onSignal(signal: string): void {
     detachSignals();
     interruptedBy ??= signal;
-    if (solo !== undefined && activeOperationId !== undefined) {
-      for (const kill of solo.kills.drain(activeOperationId)) {
+    if (solo !== undefined) {
+      for (const kill of solo.kills.drain(String(solo.conversation.id))) {
         try {
           kill();
         } catch {
@@ -871,7 +927,7 @@ async function runHeadlessPromptImpl(
         }
       }
     }
-    rejectInterrupt?.(new InterruptedError(signal));
+    tripGuard(new InterruptedError(signal), 'signal');
   }
   const attachSignals = (): void => {
     signalsAttached = true;
@@ -910,9 +966,17 @@ async function runHeadlessPromptImpl(
     // Attached inside the try: the finally below always detaches them.
     attachSignals();
     bridge.createDir(join(id, 'journal'));
-    await recordPrompt(session, prompt, context);
-    const afterPrompt = bootInterrupted();
-    if (afterPrompt !== undefined) return afterPrompt;
+    // The wall clock starts with the run's own work (the pending settlement
+    // and the turn), not with the boot: a slow boot is not a slow turn. The
+    // prompt entry is written by `submit` itself (#247), so there is no
+    // pre-boot prompt write to fail here.
+    const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    deadline = setTimeout(
+      () => tripGuard(new WallClockError(boundMs)),
+      boundMs,
+    );
+    const afterBound = bootInterrupted();
+    if (afterBound !== undefined) return afterBound;
     // Readiness handshake (issue #94; §13): when this process IS a worker
     // (`kubic orchestrate` launches it with KUBIC_WORKER_ID in the §3.8
     // allowlist), announce that the worker is up the moment its session is
@@ -1318,21 +1382,17 @@ async function runHeadlessPromptImpl(
       roleModel: role?.resolved.model,
     });
     // §71 child-side enforcement (issue #208): one meter for the run, built
-    // BEFORE the lane so its before_tool gate can subscribe BEFORE the
-    // policy interceptors — Pi's before_tool chain stops at the first block,
-    // so a later subscriber would never count a blocked/denied attempt. A
-    // breach rejects the drive race, so the run ends BUDGET_EXHAUSTED
-    // (exit 3) with the dimension named — never a silent overspend.
+    // BEFORE the lane so its beforeTool gate can subscribe BEFORE the policy
+    // interceptors — the hook chain stops at the first block, so a later
+    // subscriber would never count a blocked/denied attempt. A breach stops
+    // the turn, so the run ends BUDGET_EXHAUSTED (exit 3) with the dimension
+    // named — never a silent overspend.
     const budgetPlan = runBudget;
-    let rejectBudget: ((error: Error) => void) | undefined;
-    const budgetExceeded = new Promise<never>((_resolve, reject) => {
-      rejectBudget = reject;
-    });
     const budgetEnforcer =
       budgetPlan === undefined
         ? undefined
         : createRunBudgetEnforcer(budgetPlan, (termination) => {
-            rejectBudget?.(new BudgetExceededError(termination.limit));
+            tripGuard(new BudgetExceededError(termination.limit));
           });
     try {
       solo = await bootSoloLane({
@@ -1360,12 +1420,14 @@ async function runHeadlessPromptImpl(
                 ? {}
                 : { toolAllowlist: role.resolved.tools }),
             }),
-        // One policy object carrying all three mechanisms (#86 + #90 + #93):
+        // One policy object carrying every mechanism (#86 + #90 + #93, #397):
         // the classes come from the config layer when it supplies them and
         // from the documented safe default otherwise, the interceptors are
-        // always installed, and the extension facet composes as a tool-wrap
-        // contribution on the same stack. SoloPolicyOptions has three
-        // independent fields, so this is a union, not a choice.
+        // always installed, the extension facet composes as a tool-wrap
+        // contribution on the same stack, and the two hook factories register
+        // the budget gate (`kubic.budget`, first) and the tool spans
+        // (`kubic.spans`, after policy). SoloPolicyOptions' fields are
+        // independent, so this is a union, not a choice.
         policy: {
           classes: installed.classes,
           interceptors: installed.interceptors,
@@ -1375,10 +1437,10 @@ async function runHeadlessPromptImpl(
           // network-denied call still count against maxToolCalls.
           ...(budgetEnforcer === undefined
             ? {}
-            : {
-                beforePolicyHooks: (hooks: Hooks) =>
-                  hooks.on('before_tool', budgetEnforcer.onToolAttempt),
-              }),
+            : { beforePolicyHooks: () => budgetEnforcer.hooks() }),
+          // §49.3 (issue #98): the tool spans, installed after policy so a
+          // blocked call never opens one (issue #397's ordering rule).
+          spanHooks: () => runSpanHooks(spans),
           // §58 enterprise tool gate (issue #288): the same predicate drives
           // the active tool set and the prompt tools line.
           ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
@@ -1398,7 +1460,6 @@ async function runHeadlessPromptImpl(
       }
       throw error;
     }
-    const { harness, lane } = solo;
     // The boot reconciled the selection with the session's stored model
     // (issue #148): the trajectory and the audit rows name what the lane
     // reports, the same source as the envelope and the usage rows.
@@ -1408,134 +1469,117 @@ async function runHeadlessPromptImpl(
       liveModelRef = `${running.provider}/${running.id}`;
     }
     report.model = await liveModelId(solo, context);
-    // Tool spans come from the harness's own hook registry, so they cover
-    // every tool the lane actually executes (issue #98). Detached in the
-    // finally below. A lane booted without a harness (unit stubs, future
-    // lanes) yields no registry: telemetry degrades to lane/run spans and
-    // never fails the run.
-    const detachToolSpans = attachToolSpans(toolHooksOf(harness), spans);
-    // §71 child-side enforcement (issue #208): the usage half of the meter.
-    // Usage is an event, not a hook, so it has no ordering constraint; it
-    // shares the meter the before_tool gate already registered.
-    const detachBudgetUsage =
-      budgetEnforcer === undefined
-        ? undefined
-        : harness.events.on('usage', budgetEnforcer.onUsage);
-    const detachBudgetHooks = solo.detachBeforePolicyHooks;
+    // §71 (issue #208) + the turn guard: one event subscription per
+    // conversation (#398) feeds the budget meter's usage half and counts the
+    // run's turns for `--max-turns`. Durable retries are the harness's own
+    // (they commit no assistant entry), so a turn is one committed response.
+    const detachEvents = await subscribeLaneEvents(
+      solo.harness,
+      solo.conversation.id,
+      (event) => {
+        if (event.type !== 'usage') return;
+        budgetEnforcer?.onUsage(event.row);
+        turns += 1;
+        if (options.maxTurns !== undefined && turns > options.maxTurns) {
+          tripGuard(new TurnBudgetError(turns - 1));
+        }
+      },
+      context,
+    );
     try {
-      const beforeAccept = bootInterrupted();
-      if (beforeAccept !== undefined) return beforeAccept;
-      const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+      const beforeTurn = bootInterrupted();
+      if (beforeTurn !== undefined) return beforeTurn;
       // Issue #147 (§21): a turn a dead process left open would refuse this
-      // prompt with LaneBusy. The documented policy: when the pending run
-      // carries this very prompt (an orchestrator worker re-launched on its
-      // reattached session, a retried script), it is resumed AS this run —
-      // never re-prompted. Otherwise it is resumed first under the same
-      // guards and then this prompt is accepted; a resume that cannot
-      // settle (guard fired, approval with no TTY) is durably aborted. Each
-      // choice is named on stderr.
-      let resumedOperationId: string | undefined;
-      const open = solo.open ?? [];
-      if (open.length > 0) {
-        const pendingPrompt = lastUserPromptText(
-          await lane.findEntries(undefined, context),
-        );
-        for (const op of open) {
-          if (
-            resumedOperationId === undefined &&
-            op.kind === 'run' &&
-            op.aborting !== true &&
-            pendingPrompt === prompt
-          ) {
-            resumedOperationId = op.operationId;
-            notice(
-              `${pendingHead(op)} carries this prompt: resuming it instead of re-prompting`,
-            );
-            continue;
-          }
-          const settled = await settlePendingOperation(
-            solo,
-            op,
-            'resume',
-            context,
-            (operationId) =>
-              driveWithGuard(
-                lane,
-                operationId,
-                context,
-                boundMs,
-                options.maxTurns,
-                interrupted,
-                budgetExceeded,
-              ),
+      // prompt. The documented policy: when the pending run carries this very
+      // prompt (an orchestrator worker re-launched on its reattached session,
+      // a retried script), it is resumed AS this run — never re-prompted.
+      // Otherwise it is resumed first under the same guard and then this
+      // prompt is admitted; a resume that cannot settle (guard fired,
+      // approval with no TTY) is durably aborted. Each choice is named on
+      // stderr.
+      // §49.3 lane spans (§98): `accept` covers admitting this run's work —
+      // the pending turn a dead process left, settled first — and `drive`
+      // covers the durable turn itself (submit → wait → settlement). Tool
+      // spans nest under `drive` because `startLane('drive')` is the lane
+      // open when the harness runs them.
+      const pending = await inspectPending(solo, context);
+      const acceptSpan = spans.startLane('accept');
+      let resumed: Awaited<ReturnType<typeof solo.harness.submission>>;
+      try {
+        if (pending.pending) {
+          const pendingPrompt = await pendingInputText(solo, context);
+          const placed = (await solo.harness.inspect(context)).submissions.find(
+            (record) => record.type === 'input' && record.status === 'placed',
           );
-          notice(describeSettlement(settled));
+          if (
+            pendingPrompt !== undefined &&
+            pendingPrompt === prompt &&
+            placed !== undefined
+          ) {
+            resumed = await solo.harness.submission(placed.id, context);
+            notice(
+              `${pending.summary ?? 'pending work'} carries this prompt: resuming it instead of re-prompting`,
+            );
+          } else {
+            const settlement = await settlePending(solo, 'resume', {
+              context,
+              kills: solo.kills,
+              guard: guard.context,
+            });
+            notice(describePendingSettlement(pending.summary, settlement));
+          }
         }
+      } finally {
+        spans.endLane(acceptSpan, guardFailure()?.message);
       }
-      let operationId: string;
-      if (resumedOperationId !== undefined) {
-        operationId = resumedOperationId;
-      } else {
-        const acceptSpan = spans.startLane('accept');
-        const admission = await lane.accept(
-          { kind: 'prompt', prompt },
-          context,
-        );
-        if (!admission.ok) {
-          const message = `lane refused the prompt: ${JSON.stringify(admission.error)}`;
-          spans.endLane(acceptSpan, message);
-          return finished(id, 'failed', message, message);
-        }
-        spans.endLane(acceptSpan);
-        operationId = admission.value.operationId;
+      const stopped = guardFailure();
+      if (stopped !== undefined) {
+        abandoned = true;
+        return stoppedResult(id, stopped, capture);
       }
-      // Issue #109: record the admitted operation for the finally drain — a
-      // guard firing mid-drive (or any later exit path) aborts and kills
-      // exactly this operation's in-flight work before the sweep.
-      activeOperationId = operationId;
-      let driven: SettledDrive;
+      // One stable request id per invocation (README "Persist and Resume"): a
+      // re-submit inside this run finds the same submission instead of
+      // prompting twice, while a fresh invocation is a fresh prompt.
+      const requestId = `kubic-run:${randomUUID()}`;
+      let outcome: TurnOutcome;
       const driveSpan = spans.startLane('drive');
       try {
-        driven = await driveWithGuard(
-          lane,
-          operationId,
-          context,
-          boundMs,
-          options.maxTurns,
-          interrupted,
-          budgetExceeded,
-        );
-      } catch (error) {
-        // Guard exhaustion or an interrupt only: any other throw re-enters
-        // the outer storeFailure path below.
-        if (error instanceof InterruptedError) {
-          capture.interrupted = true;
-          spans.endLane(driveSpan, error.message);
-          return finished(id, 'failed', error.message, error.message);
+        if (resumed !== undefined) {
+          outcome = await awaitTurn(resumed, guard.context);
+        } else {
+          outcome = await runTurn(solo, prompt, {
+            requestId,
+            context: guard.context,
+            // Headless keeps today's refusal: a run that somehow finds the
+            // conversation busy fails by name instead of queueing behind a
+            // turn nobody is watching (#334 owns follow-up UX).
+            whenBusy: 'reject',
+          });
         }
-        if (
-          error instanceof TurnBudgetError ||
-          error instanceof WallClockError ||
-          error instanceof BudgetExceededError
-        ) {
-          const message = error.message;
-          spans.endLane(driveSpan, message);
-          return finished(id, 'budget_exhausted', message, message);
-        }
-        throw error;
+      } finally {
+        spans.endLane(driveSpan, guardFailure()?.message);
       }
-      spans.endLane(driveSpan);
-      if (driven.kind === 'waiting-deferred') {
-        const message =
-          'headless run suspended waiting on an approval that cannot arrive without a TTY';
-        return finished(id, 'approval_timed_out', message, message);
+      capture.lane = turnLaneRecord(outcome);
+      if (outcome.kind === 'aborted') {
+        // The durable run is still live: the finally states the abort and
+        // drains the kill registry before the sweep.
+        abandoned = true;
+        const stopped = guardFailure();
+        if (stopped !== undefined) return stoppedResult(id, stopped, capture);
+        if (outcome.reason === 'user') {
+          const message = 'lane aborted before it settled';
+          return finished(id, 'failed', message, message);
+        }
+        const message = 'run guard exhausted';
+        return finished(id, 'budget_exhausted', message, message);
       }
       // The installed policy refused an approval (issue #86). The block reaches
       // the model as a tool error, so the lane settles `completed` — but a
       // dangerous operation the user never approved did NOT happen, and
       // reporting exit 0 would be the dishonest half of this issue. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
-      // to the §78 approval terminus (exit 4) with the refusal named.
+      // to the §78 approval terminus (exit 4) with the refusal named. Checked
+      // BEFORE the outcome is mapped: a denial OUTRANKS a settled turn.
       //
       // Issue #129: exit 4 covers the whole approval terminus; the STATUS is
       // the honest half. A denial whose reason carries the timeout marker is
@@ -1559,36 +1603,21 @@ async function runHeadlessPromptImpl(
           : 'approval_denied';
         return finished(id, terminus, message, message);
       }
-      const record = asResultRecord(driven.outcome);
-      if (record === null) {
-        const detail =
-          JSON.stringify(driven.outcome)?.slice(0, 500) ??
-          String(driven.outcome);
-        const malformed = `lane yielded a malformed outcome: ${detail}`;
-        return finished(id, 'failed', malformed, malformed);
-      }
-      capture.lane = {
-        status: record.status,
-        ...(record.error === undefined ? {} : { error: record.error }),
-      };
-      const terminus = mapLaneOutcomeToTerminus(record.status, record.error);
-      if (terminus === 'completed') {
-        const entries = await lane.findEntries(undefined, context);
+      if (outcome.kind === 'completed') {
+        const items = entriesToTranscript(
+          await readConversationEntries(solo.conversation, context),
+        );
         return finished(
           id,
-          terminus,
-          assistantSummary(entries) ?? NO_ASSISTANT_TEXT_SUMMARY,
+          'completed',
+          assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
         );
       }
-      const summary =
-        record.error === undefined
-          ? `lane ${record.status} without detail`
-          : `${record.error.code}: ${record.error.message}`;
-      return finished(id, terminus, summary, summary);
+      const terminus = failedTurnTerminus(outcome);
+      const message = outcome.error ?? outcome.reason;
+      return finished(id, terminus, `${outcome.reason}: ${message}`, message);
     } finally {
-      detachBudgetHooks?.();
-      detachBudgetUsage?.();
-      detachToolSpans();
+      await detachEvents();
     }
   } catch (error) {
     return storeFailure(id, error);
@@ -1596,23 +1625,22 @@ async function runHeadlessPromptImpl(
     // Issue #109: drain in-flight work FIRST — the sweep must observe the
     // tree after orphaned tool processes are dead, or their late writes
     // land outside both the journal and the reconciliation. Runs on every
-    // exit path (guard exhaustion, deferred wait, malformed outcome, an
-    // unexpected throw, plain completion); no-ops when nothing was
-    // admitted. Failures only reach the debug channel: the mapped result
+    // exit path (guard exhaustion, an abandoned turn, an unexpected throw,
+    // plain completion); a completed or failed turn forgets its (dead) kill
+    // handles. Failures only reach the debug channel: the mapped result
     // and the sweep both stand.
-    try {
-      await drainInFlight();
-    } catch (error) {
-      try {
-        debug?.(
-          `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
+    if (solo !== undefined) {
+      if (abandoned) {
+        await abortAbandonedLane(solo, (message) =>
+          guardedReport(debug, message),
         );
-      } catch {
-        // A throwing debug sink must not mask the mapped result either.
+      } else {
+        forgetLaneKills(solo);
       }
     }
     // In-flight work is dead: a later signal takes the default path again.
     detachSignals();
+    if (deadline !== undefined) clearTimeout(deadline);
     // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close
@@ -1637,18 +1665,44 @@ async function runHeadlessPromptImpl(
     } catch {
       // Best-effort: the mapped result stands.
     }
-    // The §46 trajectory's entries (issue #383), read while the session is
-    // still open; a read failure leaves the trajectory without actions,
-    // never the run without its result.
+    // The prompt guarantee first (#247): a run that never admitted the
+    // prompt still gets its one durable entry, and the transcript decides —
+    // never a second copy for a prompt that is already carried. Done before
+    // the capture below so the §46 trajectory carries the fallback write.
     try {
-      capture.entries = await session.findEntries(undefined, context);
-    } catch {
-      capture.entries = [];
+      await ensurePromptDurable(solo, session, prompt, context, (message) =>
+        guardedReport(debug, message),
+      );
+    } catch (error) {
+      guardedReport(
+        debug,
+        `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    // The result is already mapped: a close failure must neither escape
-    // nor mask it.
+    // The §46 trajectory's entries (issue #383), read while the session is
+    // still open through the shared transcript adapter (#400); a read
+    // failure leaves the trajectory without actions, never the run without
+    // its result.
+    capture.entries = await captureEntries(solo, session, context);
+    // The harness owns the storage it adopted; closing it first means the
+    // handle's release only gives the lock back (and closes a storage no
+    // harness took). The result is already mapped: a close failure must
+    // neither escape nor mask it. An abandoned turn may still hold a stuck
+    // invocation, so THAT close is bounded — the run's own result wins.
     try {
-      await session.close(context);
+      if (solo !== undefined) {
+        const closing = solo.close(context);
+        if (abandoned) {
+          await settledWithin(closing, LANE_ABORT_BOUND_MS);
+        } else {
+          await closing;
+        }
+      }
+    } catch {
+      // Intentionally swallowed — the mapped result stands.
+    }
+    try {
+      await session.release(context);
     } catch {
       // Intentionally swallowed — the mapped result stands.
     }
@@ -1667,18 +1721,19 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
     ]);
 }
 
-// The `provider/id` the lane actually runs (issue #148): the live lane
-// model, else the boot's effective model. Tolerant of stub lanes (unit
-// boots without getModel/model), which report nothing rather than fail.
+// The `provider/id` the lane actually runs (issue #148): the live
+// conversation's agent model, else the boot's effective model. Tolerant of
+// liveness gaps, which report nothing rather than fail.
 async function liveModel(
   solo: SoloLane,
   context: Context,
 ): Promise<{ provider: string; id: string } | undefined> {
-  const live =
-    typeof solo.lane.getModel === 'function'
-      ? await solo.lane.getModel(context)
-      : undefined;
-  return live ?? (solo.model as SoloLane['model'] | undefined);
+  const agent = await solo.conversation.agent(context);
+  const live = agent.model;
+  if (live !== undefined) {
+    return { provider: live.provider, id: live.modelId };
+  }
+  return solo.model as SoloLane['model'] | undefined;
 }
 
 async function liveModelId(
@@ -1690,17 +1745,3 @@ async function liveModelId(
     ? undefined
     : `${running.provider}/${running.id}`;
 }
-
-// The harness hook registry for tool spans, tolerant of a harness-less lane
-// (issue #98): unit stubs and future lane boots return only `{ lane }`, and
-// telemetry must degrade rather than fail the run. The returned registry
-// swallows subscriptions, so every caller stays branch-free.
-function toolHooksOf(
-  harness: { hooks?: unknown } | undefined,
-): ToolHookRegistry {
-  const hooks = harness?.hooks;
-  if (hooks === undefined || hooks === null) return NO_HOOKS;
-  return hooks as ToolHookRegistry;
-}
-
-const NO_HOOKS: ToolHookRegistry = { on: () => () => undefined };

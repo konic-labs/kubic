@@ -28,7 +28,11 @@ solo) — and `run` never delegates.
 - **Each worker runs its own plan step, under an assigned role.** The
   manager's plan prompt for a worker cites that worker's step (`step 2 of 3`)
   and carries the run's objective; `-p` is the objective the plan is derived
-  from, never a string handed to a worker verbatim. Since issue
+  from, never a string handed to a worker verbatim. The worker lane is the
+  same pi-durable solo lane as `kubic run`, booted headless: one
+  `Harness` over its own session storage, one root conversation, the turn
+  admitted with `conversation.submit()` and settled by `submission.wait()`
+  (`lane/turn.ts`). Since issue
   [#104](https://github.com/konic-labs/kubic/issues/104) each worker is also
   assigned one of the five §12 roles and runs that role's resolved tool set:
   the worker prompt is the role document's `## Prompt` text plus the worker's

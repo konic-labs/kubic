@@ -34,6 +34,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -101,9 +102,7 @@ function fauxToolCallModels(calls: number): MutableModels {
   models.setProvider(faux.provider);
   const responses = [];
   for (let index = 0; index < calls; index += 1) {
-    responses.push(
-      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })]),
-    );
+    responses.push(fauxToolUse([fauxToolCall('read', { path: 'a.txt' })]));
   }
   responses.push(fauxAssistantMessage('done'));
   faux.setResponses(responses);
@@ -475,11 +474,10 @@ describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC
         createWorkerSession: async (input) => {
           const session = await createSession(
             store,
-            '/fake',
+            { cwd: '/fake', id: input.workerSessionId },
             BACKGROUND_CONTEXT,
-            input.workerSessionId,
           );
-          await session.close(BACKGROUND_CONTEXT);
+          await session.release(BACKGROUND_CONTEXT);
           return { sessionId: input.workerSessionId };
         },
       },
@@ -540,9 +538,9 @@ describe('child budget enforcement ends the run BUDGET_EXHAUSTED (issue #208, AC
     models.setProvider(faux.provider);
     const destructive = { command: 'rm -rf scratch' };
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
-      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
-      fauxAssistantMessage([fauxToolCall('bash', destructive)]),
+      fauxToolUse([fauxToolCall('bash', destructive)]),
+      fauxToolUse([fauxToolCall('bash', destructive)]),
+      fauxToolUse([fauxToolCall('bash', destructive)]),
       fauxAssistantMessage('done'),
     ]);
     vi.stubEnv('KUBIC_BUDGET', JSON.stringify({ maxToolCalls: 2 }));

@@ -11,14 +11,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bootTuiLane,
   runTuiCommand,
+  type TuiLaneBoot,
   type TuiRunDeps,
   TuiTurnRunner,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import { OperationKillRegistry } from '../../worker/src/lane/abort.js';
-import { driveToSettled, type SoloLane } from '../../worker/src/lane/solo.js';
 import {
-  AgentHarness,
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
@@ -34,12 +33,71 @@ function tmpRoot(prefix: string): string {
   return dir;
 }
 
-function fauxModels(texts: string[]): MutableModels {
+// The model-visible system prompt of one request. The durable lane
+// materializes the assembled prompt at REQUEST time (a positional prompt
+// section, not a boot argument), so the faux provider's own request context
+// is where it can be observed.
+function systemTextOf(context: unknown): string {
+  const messages = (
+    context as {
+      messages?: readonly {
+        role?: unknown;
+        content?: unknown;
+        sections?: Record<string, unknown>;
+      }[];
+    }
+  ).messages;
+  const system = messages?.find((message) => message.role === 'system');
+  if (system === undefined) return '';
+  const parts: string[] = [];
+  if (typeof system.content === 'string' && system.content !== '') {
+    parts.push(system.content);
+  } else if (Array.isArray(system.content)) {
+    for (const part of system.content) {
+      if (
+        typeof part === 'object' &&
+        part !== null &&
+        (part as { type?: unknown }).type === 'text' &&
+        typeof (part as { text?: unknown }).text === 'string'
+      ) {
+        parts.push((part as { text: string }).text);
+      }
+    }
+  }
+  // The durable request carries the positional prompt sections beside the
+  // base system message; the assembled solo prompt (skills, role) is one of
+  // them.
+  for (const section of Object.values(system.sections ?? {})) {
+    if (typeof section === 'string' && section !== '') parts.push(section);
+  }
+  return parts.join('\n\n');
+}
+
+function fauxModels(texts: string[], captured: string[] = []): MutableModels {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
+  faux.setResponses(
+    texts.map((text) => (context: unknown) => {
+      captured.push(systemTextOf(context));
+      return fauxAssistantMessage(text);
+    }),
+  );
   return models;
+}
+
+// One settled turn, then the prompt that request carried.
+async function promptOf(
+  boot: TuiLaneBoot,
+  captured: string[],
+): Promise<string> {
+  const outcome = await boot.loop?.runTurn('hi', {
+    requestId: `parity-${captured.length}`,
+    context: BACKGROUND_CONTEXT,
+    whenBusy: 'reject',
+  });
+  expect(outcome?.kind).toBe('completed');
+  return captured.at(-1) ?? '';
 }
 
 function writeSkill(root: string, name: string, description: string): string {
@@ -67,15 +125,6 @@ function writeRole(
   );
 }
 
-function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
-  const calls = (spy as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-  const options = (calls.at(-1)?.[0] ?? undefined) as
-    | { systemPrompt?: string }
-    | undefined;
-  expect(options?.systemPrompt).toBeTypeOf('string');
-  return options?.systemPrompt as string;
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dir of made.splice(0))
@@ -86,15 +135,15 @@ describe('skills reach the TUI lane (issue #113, §29.3)', () => {
   it("injects a discovered skill's block into the TUI system prompt", async () => {
     const home = tmpRoot('tui-skills-home-');
     writeSkill(join(home, '.agents', 'skills'), 'deploy-widget', 'Ship it');
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-skills-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
     });
+    const prompt = await promptOf(boot, captured);
     await boot.close?.();
-    const prompt = promptOf(createSpy);
     expect(prompt).toContain('<skills>');
     expect(prompt).toContain('<name>deploy-widget</name>');
     // Appended, never a replacement: the assembled base survives.
@@ -108,28 +157,31 @@ describe('skills reach the TUI lane (issue #113, §29.3)', () => {
       'deploy-widget',
       'Ship it',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const suppressedCaptured: string[] = [];
     const suppressed = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-skills-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], suppressedCaptured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
       noSkills: true,
     });
+    expect(await promptOf(suppressed, suppressedCaptured)).not.toContain(
+      '<skills>',
+    );
     await suppressed.close?.();
-    expect(promptOf(createSpy)).not.toContain('<skills>');
 
+    const explicitCaptured: string[] = [];
     const explicit = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-skills-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], explicitCaptured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
       noSkills: true,
       // Explicit intent applies even under --no-skills (same rule as run).
       skillsList: [skillFile],
     });
+    const prompt = await promptOf(explicit, explicitCaptured);
     await explicit.close?.();
-    const prompt = promptOf(createSpy);
     expect(prompt).toContain('<skills>');
     expect(prompt).toContain('<name>deploy-widget</name>');
   });
@@ -144,16 +196,16 @@ describe('role documents drive the TUI lane (issue #113, §12.1)', () => {
       'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'You are the reviewer. Report findings.',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-roles-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
       roles: { cwd },
     });
+    const prompt = await promptOf(boot, captured);
     await boot.close?.();
-    const prompt = promptOf(createSpy);
     expect(prompt).toContain('You are the reviewer. Report findings.');
     expect(prompt).not.toContain(
       'You are a coding agent working in a terminal.',
@@ -183,25 +235,25 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
   // lane must name itself and layer `--role` identically, or the shared
   // projection would have one consumer too many.
   it('names the lane from [agent].name in the assembled prompt metadata', async () => {
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-agent-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       agentId: 'kubic-tui',
     });
+    expect(await promptOf(boot, captured)).toContain('agent=kubic-tui');
     await boot.close?.();
-    expect(promptOf(createSpy)).toContain('agent=kubic-tui');
 
     // Unset: 'root' — the shipped attribution, unchanged.
-    createSpy.mockClear();
+    const bareCaptured: string[] = [];
     const bare = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-agent-bare-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], bareCaptured),
       env: new FakeExecutionEnv({}),
     });
+    expect(await promptOf(bare, bareCaptured)).toContain('agent=root');
     await bare.close?.();
-    expect(promptOf(createSpy)).toContain('agent=root');
   });
 
   // Issue #227: the role's `[roles.<name>].model` is the selection default
@@ -251,10 +303,10 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
       'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'You are the reviewer. Report findings.',
     );
-    const createSpy = vi.spyOn(AgentHarness, 'create');
+    const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('tui-layers-sessions-'),
-      models: fauxModels(['done']),
+      models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
       roles: {
@@ -264,10 +316,11 @@ describe('solo-lane projections reach the TUI lane (issue #133)', () => {
         ],
       },
     });
+    const prompt = await promptOf(boot, captured);
     await boot.close?.();
     // The config layer's list replaces the document's broader one — the
     // same first-wins merge `kubic run` resolves through.
-    const toolsLine = /^tools: (.*)$/m.exec(promptOf(createSpy))?.[1] ?? '';
+    const toolsLine = /^tools: (.*)$/m.exec(prompt)?.[1] ?? '';
     expect(toolsLine).toContain('read');
     expect(toolsLine).not.toContain('ls');
     expect(toolsLine).not.toContain('grep');
@@ -408,52 +461,105 @@ describe('kubic tui parses the parity flags (issue #113)', () => {
   });
 });
 
-describe('TUI deferred-settlement footer is honest (issue #113)', () => {
-  it('names the deferral instead of blaming a missing TTY', async () => {
-    const mockDrive = vi.mocked(driveToSettled);
-    mockDrive.mockResolvedValue({
-      kind: 'waiting-deferred',
-      operationId: 'op-1',
-      deferred: {} as never,
-    });
+describe('the TUI footer names the lane failure (issue #113)', () => {
+  it('reports the failed turn message, never a TTY excuse', async () => {
+    // The 0.87 drive loop had a 'waiting-deferred' kind the footer had to
+    // explain; the durable turn polls a deferred response inside generation
+    // (D2), so the runner's contract is simply: the lane's failure message
+    // reaches the footer verbatim.
     const app = {
       applyLaneEntries: () => {},
       applyLaneEvent: () => {},
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const loop = {
-      accept: async () => ({
-        ok: true as const,
-        value: { operationId: 'op-1', kind: 'run' as const, startedAt: 0 },
+      runTurn: async () => ({
+        kind: 'failed' as const,
+        reason: 'provider_transient' as const,
+        error: 'the provider deferred the response and it never arrived',
       }),
-      lane: {} as never,
-      requestAbort: async () => ({
-        ok: true as const,
-        value: { operationId: 'op-1', newlyRequested: true },
-      }),
-      findEntries: async () => [],
-      events: { on: () => () => {} },
+      subscribe: async () => async () => {},
+      entries: async () => [],
+      abort: async () => {},
+      forgetKills: () => {},
+      killsKey: 'conversation',
       kills: new OperationKillRegistry(),
       context: BACKGROUND_CONTEXT,
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
     const runner = new TuiTurnRunner(app, loop, 'faux/test');
     const outcome = await runner.run('hello');
     expect(outcome.status).toBe('failed');
-    expect(outcome.detail).toBeDefined();
+    expect(outcome.detail).toBe(
+      'the provider deferred the response and it never arrived',
+    );
     // The TUI HAS a TTY — the old message lied about the cause.
     expect(outcome.detail).not.toContain('TTY');
-    expect(outcome.detail).toContain('deferred');
+  });
+
+  it("forgets a settled turn's kills, never an unsettled one's", async () => {
+    // Review finding (#395): `forgetLaneKills` drains the D1 conversation
+    // key, so forgetting a failed turn would strip a still-live run's bash
+    // process groups of their handles and a later quit could not kill them.
+    let forgotten = 0;
+    const loop = {
+      runTurn: async () => ({
+        kind: 'failed' as const,
+        reason: 'provider_transient' as const,
+        error: 'boom',
+      }),
+      subscribe: async () => async () => {},
+      entries: async () => [],
+      abort: async () => {},
+      forgetKills: () => {
+        forgotten += 1;
+      },
+      killsKey: 'conversation',
+      kills: new OperationKillRegistry(),
+      context: BACKGROUND_CONTEXT,
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
+    const app = {
+      applyLaneEntries: () => {},
+      applyLaneEvent: () => {},
+      setUsage: () => {},
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
+    const runner = new TuiTurnRunner(app, loop, 'faux/test');
+    expect((await runner.run('fails')).status).toBe('failed');
+    expect(forgotten).toBe(0);
+    // Control: a settled turn does forget — a kept background job outlives
+    // Kubic and must not be signalled by the session close.
+    loop.runTurn = async () => ({
+      kind: 'completed' as const,
+      submissionId: 'sub-1',
+    });
+    expect((await runner.run('settles')).status).toBe('completed');
+    expect(forgotten).toBe(1);
+  });
+
+  it('names the busy refusal the durable turn reports (D6.1)', async () => {
+    const app = {
+      applyLaneEntries: () => {},
+      applyLaneEvent: () => {},
+      setUsage: () => {},
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
+    const loop = {
+      runTurn: async () => ({
+        kind: 'failed' as const,
+        reason: 'busy' as const,
+        error: 'conversation 1 is busy',
+      }),
+      subscribe: async () => async () => {},
+      entries: async () => [],
+      abort: async () => {},
+      forgetKills: () => {},
+      killsKey: 'conversation',
+      kills: new OperationKillRegistry(),
+      context: BACKGROUND_CONTEXT,
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
+    const runner = new TuiTurnRunner(app, loop, 'faux/test');
+    const outcome = await runner.run('hello');
+    expect(outcome.status).toBe('failed');
+    expect(outcome.detail).toBe(
+      'lane refused the prompt: conversation 1 is busy',
+    );
   });
 });
-
-// Keep the SoloLane import honest: the mock below replaces only
-// driveToSettled so the deferred-footer test stays at the runner seam.
-vi.mock('../../worker/src/lane/solo.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../worker/src/lane/solo.js')>();
-  return {
-    ...actual,
-    driveToSettled: vi.fn(),
-  };
-});
-void ({} as SoloLane | undefined);

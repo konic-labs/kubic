@@ -28,6 +28,11 @@ import {
   attachSession,
   openSessionStore,
 } from '../../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -233,7 +238,8 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     const models: MutableModels = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      // D8.2: a tool round must say `toolUse`, or the tool never runs.
+      fauxToolUse([
         fauxToolCall('bash', { command: 'curl https://example.com' }),
       ]),
       fauxAssistantMessage('did not fetch'),
@@ -263,14 +269,19 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
     try {
-      const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
-      const transcript = JSON.stringify(entries);
+      // The durable transcript through the shared adapter (issue #400): the
+      // stored tool-result text is what the assertion reads.
+      const transcript = JSON.stringify(
+        entriesToTranscript(
+          await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+        ),
+      );
       // The config class did the blocking (the read-only-allowlist guard),
       // and the default-path approval challenge must NOT be what fired.
       expect(transcript).toContain('network command blocked');
       expect(transcript).not.toContain('approval refused');
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await session.release(BACKGROUND_CONTEXT);
     }
   });
 });

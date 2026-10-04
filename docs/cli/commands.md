@@ -56,8 +56,8 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required.** The prompt to run headless. |
 | `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule** (issue #148): a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is no longer registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
-| `--timeout <ms>` | Wall-clock bound for the drive loop (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight operation is **aborted and killed, not abandoned**: the run requests a durable operation abort, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. |
-| `--max-turns <n>` | Optional turn bound (positive integer). Exceeding it ends the run `budget_exhausted` (exit 3). Unset means the turn bound is the drive loop's own retry budget. |
+| `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes). A model that never settles is cut off and the run ends `budget_exhausted` (exit 3) with the ref triple intact. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
+| `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `budget_exhausted` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means no turn bound — the wall clock is the only limit. |
 | `--role <name>` | Boot as the role document `.kubic/roles/<name>.md` (prompt text, tool set, model pin). |
 | `--model <provider/id>` | Session model override (§38.1): the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`); the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
@@ -84,7 +84,8 @@ workers (child `kubic run` processes) apply the same rule.
 stopping a worker) and `SIGHUP` during a run are handled like the
 wall-clock guard (a signal during boot, before the prompt is admitted,
 cancels the boot — the lane never drives): the in-flight tool process groups are killed at once, the
-operation is aborted durably, the reconciliation sweep runs, the session is
+turn is aborted durably (`conversation.abort()` plus the conversation-keyed
+kill drain), the reconciliation sweep runs, the session is
 closed, and the run prints its normal result with `status: failed`,
 `run interrupted by <SIGNAL>` (exit 1). A second signal while that cleanup
 runs takes the default path and ends the process immediately.
@@ -104,6 +105,8 @@ absolute path. The file holds the session's latest settled run; a resumed
 
 - the prompt, its tool calls (actions) and their results (observations)
 - per-request token and cost usage
+- the thinking level the responses ran at (`model.thinking`, from the
+  stored assistant responses when the caller named none)
 - the journal diff of this run
 - this session's approvals from the audit ledger
 - provenance: session, agent, pid, worker generation (0 for a solo run),
@@ -177,24 +180,27 @@ access for the session this run creates or resumes), or record it first
 with `kubic sessions create --dangerously-skip-approvals` — it is never
 implied.
 
-**Attaching a session with a pending operation** (issue #147). A run
+**Attaching a session with unfinished durable work** (issue #147). A run
 that died mid-turn (SIGKILL, OOM, power loss, orphan reaping) leaves its
-operation open in the session, and an open operation refuses every new
+turn placed but unsettled in the session, and an unsettled turn refuses every new
 prompt. `kubic run --session X` therefore settles it first and names the
 choice on stderr: when the pending run carries **this same prompt** (an
 orchestrator worker re-launched on its reattached session, a retried
 script) it is resumed *as* this run — never re-prompted
-(`pending operation <id> (run, started <iso>) carries this prompt:
-resuming it instead of re-prompting`); otherwise it is resumed to
-settlement under this run's `--timeout`/`--max-turns` guards and the new
-prompt is accepted afterwards (`… resumed after an interrupted run:
-<status>`). A resume that cannot settle — a guard fires, or it waits on an
-approval that cannot arrive without a TTY — is durably aborted instead
-(`… aborted after an interrupted run (resume could not settle: <why>)`).
+(`pending work: <kind> <id> (<status>) carries this prompt: resuming it
+instead of re-prompting`); otherwise it is resumed to settlement under this
+run's `--timeout`/`--max-turns` guards and the new prompt is accepted
+afterwards (`… resumed after an interrupted run: <status>`). A resume that
+cannot settle — a guard fires, or it waits on an approval that cannot
+arrive without a TTY — is durably aborted instead (`… aborted after an
+interrupted run (resume could not settle: <why>)`).
 A never-replay tool (bash, write, edit, VCS mutations) the dead process
 was running is never executed again: the resumed turn sees it as
-interrupted. `kubic sessions attach X` prints `pending operation: <id>
-(<kind>, started <iso>)` for such a session.
+interrupted. `kubic sessions attach X` prints the same `pending work:
+<kind> <id> (<status>)` summary (one line naming every live task and
+unsettled submission) — the storage-level probe in
+`packages/worker/src/lane/pending.ts` owns the format, so both surfaces
+name the same work.
 
 **Concurrent runs in one workspace** (issue #118). A run drives one
 session, and a session takes one live attachment. `kubic run --session X`
@@ -653,12 +659,14 @@ session override as `--model`): a switch to any other model is refused with
 /model cannot change it`, and naming the pin itself passes. `--model`
 is the `cli` layer of the one config load (never patched over the projected
 pin), so a frozen enterprise `[model]` beats it — announced by one stderr
-note at boot — exactly as it does for `kubic run`. A session left with a pending operation
+note at boot — exactly as it does for `kubic run`. A session left with pending work
 by a crashed run (issue #147) has it durably aborted at boot — its
 approvals would need the overlay, which is not on screen yet, and the
 operator is present to re-send — and the editor footer names the outcome
-(`pending operation <id> (run, started <iso>) aborted after an
-interrupted run`) from the first render.
+(`pending work: <kind> <id> (<status>) aborted after an
+interrupted run`) from the first render, together with the prompt the dead
+process had already admitted (`— interrupted prompt: <text>`) when there
+was one.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,
@@ -778,7 +786,7 @@ The loop is real: type a prompt, press `Enter` to submit, and the solo
 lane drives it with events streaming into the views — tool calls appear in
 the tree, the transcript grows with the committed conversation, and the
 status bar fills with usage rows. While a turn runs the editor disables
-submit; `Ctrl-C` cancels the in-flight solo operation and keeps the session
+submit; `Ctrl-C` cancels the in-flight solo turn and keeps the session
 alive, and a second `Ctrl-C` (or `Ctrl-C` while idle) quits. An orchestrator
 run cannot be cancelled from the TUI (there is no abort seam into the
 manager): `Ctrl-C` during one quits, and the manager's own signal guard
@@ -950,9 +958,9 @@ assistant answer, status bar, editor and footer — on stdout, without the
 editor's cursor artifacts (the hardware-cursor marker and the inverse-video
 cursor cell are stripped, as Pi's own stop path strips the marker). A crash
 restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Esc`, a second
-`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the operation
-is aborted (recorded in the session, so a resumed session shows no
-unfinished operation), every tool process group it started is killed, and
+`Ctrl-C`, `Ctrl-D`, `SIGINT` or stdin EOF while a solo turn runs: the turn
+is aborted (durably recorded in the session, so a resumed session shows no
+unfinished work), every tool process group it started is killed, and
 the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
 the end-of-run reconciliation sweep and the session close — so a killed
 tool's last write is still journaled and no child keeps running after the
@@ -1001,8 +1009,10 @@ its own generated help (`kubic sessions prune --help`).
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. |
-| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then a `pending operation: <id> (<kind>, started <iso>)` line for each operation a crashed run left open (settled by the next `run`/`tui --session`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
+
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
+| `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. |
+
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
 Usage errors exit 2 on stderr: a missing subcommand (commander prints the
@@ -1013,7 +1023,47 @@ unknown subcommand exits 1 (`error: unknown command '<name>'`), like an
 unknown top-level command. Attaching a missing session exits 1; attaching
 a session another process holds live prints the lock refusal (issue #118 —
 the holder's pid and start time are named) and exits 1 without reading
-the transcript.
+the transcript. Attaching a session written by Kubic on Pi 0.87 exits 1
+with `session <id> was written by Kubic on Pi 0.87; start a new session`
+
+([below](#session-storage-and-legacy-pi-087-sessions)).
+
+The transcript `attach` prints is the durable one, read through the shared
+pi-durable adapter (`packages/worker/src/lane/transcript.ts`, issue #400)
+and never by booting a lane: a reader must be able to inspect a session it
+may not run.
+
+
+### Session storage and legacy Pi 0.87 sessions
+
+A session is one directory, `<sessions-root>/<id>/`, holding the
+pi-durable JSONL storage (`main.jsonl` and its `doc-*.jsonl` sidecars —
+the transcript, documents and durable tasks), Kubic's `session.json`
+listing header, the lock, the journal, spans, approvals posture and
+trajectory. The session's metadata is the session-scoped `kubic.session`
+document, written in the creating commit, so anything holding the session
+open reads it from the same durable state as the transcript. Session JSONL
+is not fsynced (matching the previous storage); the change journal is the
+fsync'd store.
+
+Sessions written by **Kubic on Pi 0.87** used a different format: one
+transcript file per session at `<sessions-root>/--<cwd>--/<ts>_<id>.jsonl`,
+beside the session's state directory. Kubic does not convert them — the
+project is unreleased, so there is nothing to migrate:
+
+- `kubic sessions list` reports them as `legacy` (the store returns
+  `format: 'legacy'`, rendered `(legacy pi 0.87 — cannot attach)`) and
+  never crashes on one.
+- `kubic sessions attach <id>` refuses by name, exit 1:
+  `session <id> was written by Kubic on Pi 0.87; start a new session`.
+  Nothing is read, moved or rewritten.
+- A 0.87 transcript is never counted by the session-overlap warning
+  (`kubic doctor`): it cannot be attached, so it cannot be a live sibling.
+- `kubic sessions prune` still never touches `--<cwd>--` transcript
+  directories — only `<root>/<id>/` state dirs ([below](#session-retention-prune)).
+
+Start a new session (`kubic sessions create`, or just `kubic run`) and the
+state directory's own format is the durable one.
 
 ### Session retention (`prune`)
 
@@ -1069,9 +1119,10 @@ journal entries at read time (see the read-time self-heal note under
   recent session is never a candidate anyway, and a live-locked one is
   reported `locked:` instead.
 - **Only session-shaped entries are touched.** Plain files, a stray
-  `lock.json`, names outside `[A-Za-z0-9_-]`, and pi's `--<cwd>--`
-  transcript directories (which hold the `.jsonl` transcripts of every
-  session recorded against that cwd) are never touched. A session that
+  `lock.json`, names outside `[A-Za-z0-9_-]`, and the `--<cwd>--`
+  transcript directories of 0.87 sessions (which hold the `.jsonl`
+  transcripts of every session recorded against that cwd) are never
+  touched. A session that
   cannot be inspected is skipped and reported
   (`unreadable: <id> — skipped`), never guessed at. A missing sessions
   root is a fresh machine: `nothing to prune`, exit 0. A root that exists
@@ -1079,9 +1130,11 @@ journal entries at read time (see the read-time self-heal note under
 - **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
   never the workspace journal (`.kubic/journal`), never orchestrator
   worktrees (`kubic clean` owns those), never anything outside the
-  sessions root. pi's transcript files live beside the state dirs
-  (`<root>/--<cwd>--/<ts>_<id>.jsonl`) and are not part of this command
-  today.
+  sessions root. A durable session's transcript lives INSIDE its state dir
+  (`main.jsonl`), so pruning a session deletes its transcript with it. The
+  `--<cwd>--` transcript directories of sessions written by Kubic on Pi
+  0.87 stay beside the state dirs and are not part of this command today
+  ([legacy sessions](#session-storage-and-legacy-pi-087-sessions)).
 
 ## `kubic git`
 
@@ -1361,8 +1414,13 @@ or colliding files are named, never fatal (see
 [configuration](configuration.md#modelsjson)). A built-in is
 **usable** when its auth is configured: its documented env key
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`OPENROUTER_API_KEY`, …) or, for Bedrock/Vertex, the ambient AWS/Google
-credentials Pi recognises. A custom provider may not reuse a built-in id
+`OPENROUTER_API_KEY`, …), Anthropic's workload identity federation variables
+(`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_IDENTITY_TOKEN_FILE`), or, for Bedrock/Vertex, the ambient
+AWS/Google credentials Pi recognises. Only **chat** models are ever listed or
+resolved: the catalogue also carries image and classifier entries, and the
+unqualified reads `kubic models` and model selection use return chat models
+only. A custom provider may not reuse a built-in id
 (the file is ignored with a note naming the collision). Under
 `KUBIC_PROVIDER=faux` the catalog also lists the `faux` testing provider
 and a `warn:` line names it.
@@ -1631,10 +1689,22 @@ otherwise. The exit code is:
 
 ## `kubic cost [--session <id>] [--json]`
 
-Reads per-agent cost from real session stats. It prints one aggregate
-row per session in an `AGENT / MODEL / TOKENS / COST` table, followed by
-`task total $<sum> (<n> agents)`. The total is exactly the sum of the
-rows.
+Reads real usage out of the durable session store: one `AGENT / MODEL /
+TOKENS / COST` row per usage bucket a session recorded — each
+`provider/model`, and each tool that reported its own spend (labelled
+`tool:<name>`) — followed by `task total $<sum> (<n> agents)`. The total is
+exactly the sum of the rows.
+
+The numbers are the session's `pi.usage` documents, summed per bucket, so
+they match what `Harness.usage()` reports for the same run. Reading is
+read-only and never boots a lane. A session whose storage a live run owns
+is skipped, never opened (pi-durable: one process per storage), and
+reported as a zero row with `MODEL` `(locked)`; a session that cannot be
+read at all (a Pi 0.87 transcript, a half-written directory) is
+`(unreadable)` the same way. A session the operator NAMED with `--session`
+is never skipped that way: an unknown id, a live lock and a 0.87 transcript
+each print their refusal and exit 1. Skip reporting, the lock-free read and the
+session-dir mtime question are [#251](https://github.com/konic-labs/kubic/issues/251)'s.
 
 When the sessions carry prefix-cache counters, the readout adds the
 cache line and the transparent-caching note. With no sessions stored it

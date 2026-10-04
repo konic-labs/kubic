@@ -244,7 +244,11 @@ describe("the manager's §60 row carries that ancestry (issue #159)", () => {
     let published = readPendingWorkerAsks(mailbox, {
       verifyKey: signer.verifyKey,
     })[0];
-    for (let attempt = 0; published === undefined && attempt < 400; attempt += 1) {
+    for (
+      let attempt = 0;
+      published === undefined && attempt < 400;
+      attempt += 1
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 5));
       published = readPendingWorkerAsks(mailbox, {
         verifyKey: signer.verifyKey,

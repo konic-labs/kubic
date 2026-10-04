@@ -34,7 +34,10 @@ import {
 
 // Make one path vanish between readdirSync and lstatSync: exactly the race
 // the node bridge's own listing used to lose the whole directory to.
-const hooks = vi.hoisted(() => ({ vanishOnce: null as null | string }));
+const hooks = vi.hoisted(() => ({
+  vanishOnce: null as null | string,
+  vanishDirOnce: null as null | string,
+}));
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -47,6 +50,15 @@ vi.mock('node:fs', async (importOriginal) => {
       }
       return actual.lstatSync(path, ...(rest as []));
     },
+    // The other half of the same race: a directory listed by its parent and
+    // gone by the time the recursion lists it.
+    readdirSync: (path: string, ...rest: unknown[]) => {
+      if (hooks.vanishDirOnce !== null && path.endsWith(hooks.vanishDirOnce)) {
+        hooks.vanishDirOnce = null;
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+      }
+      return actual.readdirSync(path, ...(rest as []));
+    },
   };
 });
 
@@ -54,6 +66,7 @@ const roots: string[] = [];
 
 afterEach(() => {
   hooks.vanishOnce = null;
+  hooks.vanishDirOnce = null;
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -82,6 +95,26 @@ describe('baseline walk races (issue #351)', () => {
     // The vanished entry is simply absent; its sibling is hashed as usual.
     expect(Object.keys(baseline)).toEqual(['a.txt']);
     expect(baseline['a.txt']).toBe(sha256Hex('a\n'));
+  });
+
+  it('records a delete for a subtree that vanished before its listing', () => {
+    const root = tmpRoot('ws-');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'a.ts'), 'a\n');
+    writeFileSync(join(root, 'top.txt'), 'top\n');
+    const baseline = captureBaseline(root);
+    expect(Object.keys(baseline).sort()).toEqual(['src/a.ts', 'top.txt']);
+    // The directory is listed by its parent and gone by the time the walk
+    // recurses into it: ENOENT, not EACCES. That is a real disappearance —
+    // carrying the subtree forward would lose the deletes silently, and the
+    // next baseline would not know those paths either.
+    hooks.vanishDirOnce = 'src';
+    const store = new FileJournalStore(tmpRoot('j-'));
+    const added = reconcile(store, baseline, root, ctx());
+    expect(added).toBe(1);
+    expect(store.entries().map((e) => [e.path, e.op])).toEqual([
+      ['src/a.ts', 'delete'],
+    ]);
   });
 
   it('does not record a delete for a baseline file that became unreadable', () => {

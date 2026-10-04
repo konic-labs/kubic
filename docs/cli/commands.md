@@ -1525,6 +1525,13 @@ Kubic's own `write`/`edit` operations, so nothing journals it. The run and TUI
 composition paths therefore capture a **baseline** when the lane boots and
 **sweep** the workspace when it ends:
 
+- A path the walk could SEE but not READ is stored as the sentinel `unreadable`
+  instead of a hash (issue #351): reconcile records neither a change nor a
+  delete for it — nothing was observed to change and nothing was observed to
+  vanish — and no before-hash is invented. A subtree whose listing fails with
+  EACCES/EPERM/EIO is carried forward from the previous baseline the same way;
+  one whose listing fails with ENOENT really went away, so its files are
+  recorded as deletes like any other disappearance.
 - The baseline is a metadata walk — sha256 per file, **no content copied** — of
   the lane's workspace root (`§42.5`), persisted as
   `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.

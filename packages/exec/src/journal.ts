@@ -1362,12 +1362,21 @@ export function captureBaseline(
     let infos: ReturnType<typeof bridge.listDir> = [];
     try {
       infos = bridge.listDir(dir);
-    } catch {
+    } catch (error) {
       // Issue #351: the subtree's CURRENT state is unknown, so its previous
       // hashes stand in for it — reconcile then sees "unchanged" instead of
       // "every file under it was deleted". Without a previous baseline
       // there is nothing to carry, and an unreadable directory simply
       // contributes no entries (never invented ones).
+      //
+      // Review fix: only "could not look" (EACCES/EPERM/EIO) carries
+      // forward. ENOENT means the directory really went away between the
+      // parent's listing and this recursion, and the walk's own race window
+      // must record that subtree's files as deletes like any other
+      // disappearance — carrying them forward would silently lose them, and
+      // the next run's baseline would not contain them either.
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code === 'ENOENT') return;
       const prefix = rel === '' ? '' : `${rel}/`;
       for (const [path, hash] of Object.entries(options.previous ?? {})) {
         if (prefix === '' || path.startsWith(prefix)) baseline[path] = hash;

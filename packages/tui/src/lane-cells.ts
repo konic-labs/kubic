@@ -232,14 +232,17 @@ function truncate(text: string): string {
 // CSI (7-bit and the 8-bit C1 form), then the general ESC form, then
 // whatever control bytes are left. The renderer's own styling is untouched
 // because only CONTENT is sanitized here.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
 const OSC_SEQUENCE = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
 const CSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const C1_CSI_SEQUENCE = /\u009b[0-?]*[ -/]*[@-~]/g;
-const ESC_SEQUENCE = /\u001b[ -/]*[0-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+const ESC_SEQUENCE = /\u001b[ -/]*[0-~]/g;
 // \t, \n and \r are excluded: tabs expand, newlines split, and \r is
 // collapsed (not deleted) by the pass below.
 const CONTROL_SEQUENCES =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 export function sanitizeLaneText(text: string): string {
@@ -284,14 +287,25 @@ function expandTabs(text: string): string {
     .split('\n')
     .map((line) => {
       let out = '';
+      // Review #299: measure only the run since the LAST tab. A grapheme
+      // cannot span a tab, so the running column stays exact while the pass
+      // is O(line) — calling `visibleWidth` on the whole accumulated line
+      // per tab made a tab-heavy line (a generated table, a `printf` run)
+      // quadratic on the untrusted ingress path.
+      let column = 0;
+      let pending = '';
       for (const ch of line) {
         if (ch === '\t') {
-          out += ' '.repeat(TAB_STOP - (visibleWidth(out) % TAB_STOP));
+          const run = visibleWidth(pending);
+          const pad = TAB_STOP - ((column + run) % TAB_STOP);
+          out += `${pending}${' '.repeat(pad)}`;
+          column += run + pad;
+          pending = '';
         } else {
-          out += ch;
+          pending += ch;
         }
       }
-      return out;
+      return out + pending;
     })
     .join('\n');
 }

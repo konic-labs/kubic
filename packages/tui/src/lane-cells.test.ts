@@ -10,6 +10,7 @@ import {
   sanitizeLaneText,
   summarizeToolArguments,
   summarizeToolOutcome,
+  TAB_STOP,
   TOOL_DETAIL_MAX_CHARS,
   TOOL_OUTCOME_MAX_CHARS,
   TOOL_RESULT_MAX_CHARS,
@@ -284,6 +285,19 @@ describe('lane text sanitisation (issue #299)', () => {
     // 'c' really sits at column 8: the two wide glyphs count as 4 columns,
     // so the tab pads 4, not 6 (which UTF-16 length would have done).
     expect(visibleWidth(expanded.slice(0, expanded.indexOf('c')))).toBe(8);
+  });
+
+  it('expands a long tab run in one pass, not per tab (review #299)', () => {
+    // 20 000 tabs: the quadratic version rescanned the whole prefix per tab
+    // (~3e9 code units) and blew the test timeout; the running-column pass
+    // is linear and every tab still lands on an 8-column stop.
+    const expanded = sanitizeLaneText('\t'.repeat(20_000));
+    expect(expanded.length).toBe(20_000 * TAB_STOP);
+    expect(visibleWidth(expanded) % TAB_STOP).toBe(0);
+    // A tab run after wide glyphs stays column-correct.
+    const mixed = sanitizeLaneText(`日本${'\t'.repeat(1000)}`);
+    expect(mixed.startsWith('日本    ')).toBe(true);
+    expect(visibleWidth(mixed) % TAB_STOP).toBe(0);
   });
 
   it('still drops C0 controls and keeps tab/newline', () => {

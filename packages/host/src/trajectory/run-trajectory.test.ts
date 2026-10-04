@@ -677,6 +677,19 @@ describe('trajectoryResultFor (issue #383): §78 terminus → §46 status + §52
     ],
     [
       {
+        terminus: 'provider_transient',
+        summary: 'provider capacity exhausted',
+      },
+      'failed',
+      'provider_transient',
+    ],
+    [
+      { terminus: 'provider_auth', summary: 'invalid api key' },
+      'failed',
+      'provider_auth',
+    ],
+    [
+      {
         terminus: 'failed',
         summary: 'run interrupted by SIGINT',
         interrupted: true,

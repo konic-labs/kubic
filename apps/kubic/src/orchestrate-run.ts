@@ -100,6 +100,10 @@ import type { EffectivePolicy } from '../../../packages/host/src/policy/enterpri
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import { planWorkerRoles } from '../../../packages/host/src/roles/worker-roles.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
+import {
+  errorKindForFailureCode,
+  isFailureCode,
+} from '../../../packages/worker/src/lane/failures.js';
 import { inspectStoredWork } from '../../../packages/worker/src/lane/pending.js';
 import {
   attachSession,
@@ -135,6 +139,7 @@ import type {
 } from '../../../packages/worker/src/result.js';
 import {
   buildAgentResult,
+  ERROR_KINDS,
   UNRESOLVED_MODEL,
 } from '../../../packages/worker/src/result.js';
 import { runtimeExcludeEntriesFor } from './config-runtime.js';
@@ -517,6 +522,10 @@ interface ChildReport {
   sessionId?: unknown;
   result?: { summary?: unknown };
   model?: unknown;
+  // Issue #155: the child's own §52 classification and error domain, when
+  // it printed one — the precise half the exit code cannot carry.
+  failure?: { code?: unknown };
+  error?: { kind?: unknown; message?: unknown };
   usage?: {
     input?: unknown;
     output?: unknown;
@@ -654,6 +663,18 @@ export function workerFailureResult(
 ): AgentResult {
   const report = done === undefined ? undefined : childReportOf(done.stdout);
   const approval = failure.approval?.code;
+  // Issue #155: the manager reads the child's own §52 code (and the domain
+  // it belongs to) instead of guessing from the exit code. The exit-code
+  // mapping stays the fallback for a child that printed no report.
+  const childCode =
+    report?.failure !== undefined && isFailureCode(report.failure.code)
+      ? report.failure.code
+      : undefined;
+  const childKind =
+    typeof report?.error?.kind === 'string' &&
+    (ERROR_KINDS as readonly string[]).includes(report.error.kind)
+      ? (report.error.kind as ResultErrorKind)
+      : undefined;
   // Issue #280: a wall-clock timeout and a cancellation keep their own §68
   // status, read from the child's own report — only a configured budget
   // (exit 3 / approval terminus) is `budget_exhausted`.
@@ -675,7 +696,12 @@ export function workerFailureResult(
       : approval !== undefined
         ? 'approval'
         : failure.code === 'worker_failed'
-          ? (launchFailure?.kind ?? 'process')
+          ? (childKind ??
+            (childCode === undefined
+              ? undefined
+              : errorKindForFailureCode(childCode)) ??
+            launchFailure?.kind ??
+            'process')
           : 'process';
   return buildAgentResult({
     status,
@@ -686,7 +712,7 @@ export function workerFailureResult(
       kind,
       message: failure.message,
       details: {
-        code: approval ?? launchFailure?.code ?? failure.code,
+        code: childCode ?? approval ?? launchFailure?.code ?? failure.code,
       },
     },
   });

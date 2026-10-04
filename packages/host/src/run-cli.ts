@@ -17,6 +17,10 @@ import {
   EXIT_USAGE,
   EXIT_WORKSPACE,
 } from '../../core/src/cli/exit-codes.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+} from '../../worker/src/lane/failures.js';
 import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
 import {
   type LaneTerminalStatus,
@@ -42,7 +46,9 @@ export type RunTerminusKind =
   | 'approval_denied'
   | 'approval_timed_out'
   | 'workspace_unavailable'
-  | 'provider_probe_failed';
+  | 'provider_probe_failed'
+  | 'provider_transient'
+  | 'provider_auth';
 
 // POSIX 128+signo for the interrupts a headless run handles (issue #280),
 // the same convention `kubic tui` pins for a signalled quit (#313).
@@ -86,6 +92,50 @@ export function mapTerminusToExitCode(
       return RUN_EXIT_WORKSPACE_UNAVAILABLE;
     case 'provider_probe_failed':
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    // Issue #155: a provider error during the run is a failed task, not the
+    // pre-run probe — §78's 6 is reserved for the boot probe (no provider
+    // configured, an unknown stored model). The §52 code is the honest half.
+    case 'provider_transient':
+    case 'provider_auth':
+      return RUN_EXIT_FAILED;
+  }
+}
+
+// Lane outcome → §78 terminus + §52 failure (issue #155). The §52 code is
+// the precise half — what a retry chooser or an RL pairing reads — and the
+// terminus is the §78 class the exit code follows. A provider-classified
+// lane error is `provider_auth`/`provider_transient`, never the pre-run
+// probe terminus: `provider_probe_failed` is reserved for the boot probe.
+export interface LaneOutcomeTerminus {
+  terminus: RunTerminusKind;
+  failure?: ClassifiedFailure;
+}
+
+export function mapLaneOutcomeToFailure(
+  status: LaneTerminalStatus,
+  error?: OperationErrorLike,
+): LaneOutcomeTerminus {
+  if (status === 'completed') return { terminus: 'completed' };
+  const settled = settleTerminalStatus(status, error).error;
+  const kind = settled?.kind ?? 'process';
+  const failure = classifyFailure(
+    kind,
+    error?.code ?? '',
+    settled?.message ?? '',
+  );
+  switch (failure.code) {
+    case 'budget_exhausted':
+      return { terminus: 'budget_exhausted', failure };
+    case 'approval_denied':
+    case 'approval_timed_out':
+      return { terminus: failure.code, failure };
+    case 'workspace_failed':
+      return { terminus: 'workspace_unavailable', failure };
+    case 'provider_auth':
+    case 'provider_transient':
+      return { terminus: failure.code, failure };
+    default:
+      return { terminus: 'failed', failure };
   }
 }
 
@@ -101,13 +151,35 @@ export function mapLaneOutcomeToTerminus(
   status: LaneTerminalStatus,
   error?: OperationErrorLike,
 ): RunTerminusKind {
-  if (status === 'completed') return 'completed';
-  const kind = settleTerminalStatus(status, error).error?.kind;
-  if (kind === 'budget') return 'budget_exhausted';
-  if (kind === 'approval') return 'approval_denied';
-  if (kind === 'workspace') return 'workspace_unavailable';
-  if (kind === 'provider') return 'provider_probe_failed';
-  return 'failed';
+  return mapLaneOutcomeToFailure(status, error).terminus;
+}
+
+// §52 classification of a terminus whose code is implied (issue #155): the
+// guard and gate termini each have exactly one §52 code, and the boot probe
+// is the provider setup failure. `failed` reads its code from the result's
+// own `failure`; `timeout`/`cancelled` have no §52 code.
+export function failureForTerminus(
+  terminus: RunTerminusKind,
+  summary: string,
+): ClassifiedFailure | undefined {
+  switch (terminus) {
+    case 'budget_exhausted':
+      return classifyFailure('budget', 'budget_exhausted', summary);
+    case 'approval_denied':
+      return classifyFailure('approval', 'approval_denied', summary);
+    case 'approval_timed_out':
+      return classifyFailure('approval', 'approval_timed_out', summary);
+    case 'workspace_unavailable':
+      return classifyFailure('workspace', 'workspace_failed', summary);
+    case 'provider_probe_failed':
+      return classifyFailure('provider', summary, summary);
+    case 'provider_transient':
+      return classifyFailure('provider', 'provider_transient', summary);
+    case 'provider_auth':
+      return classifyFailure('provider', 'provider_auth', summary);
+    default:
+      return undefined;
+  }
 }
 
 export interface HeadlessRunResult {
@@ -118,6 +190,10 @@ export interface HeadlessRunResult {
   usageRef: string;
   trajectoryRef: string;
   error?: { kind: string; message: string };
+  // Issue #155: the §52 classification of a lane failure (code, remedy,
+  // strategy) — the precise half the terminus cannot carry. Absent on
+  // termini with no §52 code (`timeout`, `cancelled`, `usage`).
+  failure?: ClassifiedFailure;
   // Issue #280: the interrupt that ended the run, present exactly when the
   // terminus is `cancelled`; the exit code is 128+signo from it.
   signal?: string;
@@ -153,12 +229,18 @@ export interface RunEnvelope {
   // Issue #308: scripted callers detect a full-access session here.
   approvals?: { posture: 'approvals' | 'full-access' };
   error?: { kind: string; message: string };
+  // Issue #155: the §52 failure code, remedy and retry strategy, additive.
+  failure?: ClassifiedFailure;
 }
 
 export function buildRunEnvelope(
   result: HeadlessRunResult,
   exitCode: number,
 ): RunEnvelope {
+  // Issue #155: the lane path carries its own classification; every other
+  // failure terminus has exactly one implied §52 code.
+  const failure =
+    result.failure ?? failureForTerminus(result.terminus, result.summary);
   return {
     ok: exitCode === RUN_EXIT_OK,
     exitCode,
@@ -173,6 +255,7 @@ export function buildRunEnvelope(
       ? {}
       : { approvals: { posture: result.posture } }),
     ...(result.error === undefined ? {} : { error: result.error }),
+    ...(failure === undefined ? {} : { failure }),
   };
 }
 
@@ -337,6 +420,10 @@ function runFailure(
 ): HeadlessRunResult {
   const message = error instanceof Error ? error.message : String(error);
   const terminus = mapCaughtErrorToTerminus(error);
+  const failure =
+    terminus === 'workspace_unavailable'
+      ? classifyFailure('workspace', 'workspace_failed', message)
+      : classifyFailure('process', '', message);
   const ref = sessionId ?? 'unassigned';
   return {
     terminus,
@@ -345,6 +432,7 @@ function runFailure(
     journalRef: `journal:${ref}`,
     usageRef: `usage:${ref}`,
     trajectoryRef: `trajectory:${ref}`,
+    failure,
     error: { kind: terminus, message },
   };
 }

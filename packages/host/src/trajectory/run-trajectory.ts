@@ -316,6 +316,12 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
     case 'provider_probe_failed':
       category = classifyFailure('provider', '', summary).code;
       break;
+    // Issue #155: a mid-run provider error keeps its own terminus — §78's 6
+    // is the pre-run probe, never a transient/auth failure during the run.
+    case 'provider_transient':
+    case 'provider_auth':
+      category = classifyFailure('provider', terminus, summary).code;
+      break;
     default: {
       const lane = outcome.lane;
       if (lane !== undefined) {

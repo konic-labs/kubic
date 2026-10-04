@@ -65,7 +65,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
 | `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged (issue #234). A later `kubic run --session <id>` on that session warns again on stderr. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, and optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
+| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the §52 code with its retry remedy and strategy, issue #155) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
@@ -557,7 +557,11 @@ worker session's own usage rollup, the numbers `kubic cost` reads),
 `provenance` (`workerId`, `sessionId`, `pid` — `null` only when no process
 ever existed —, `generation`, `worktree`, `model` as `provider/id` or
 `unresolved`, `role`, optional `thinking`) and, for a failure, `error`
-(`kind` from the §68 vocabulary, `message`, `details.code`). A completed
+(`kind` from the §68 vocabulary, `message`, `details.code` — read from the
+child's own `failure.code`/`error.kind` when its report carries them, so a
+model error is `model_failed` with `kind: model` instead of the exit-code
+guess `process_crashed`; the exit-code mapping is only the fallback for a
+child that printed no report, issue #155). A completed
 worker's result also names its change set as a reference
 (`diff.diffId` = `<base>...<branch>`), never the diff text; no result ever
 carries a transcript or messages (§69). The result is persisted with the run

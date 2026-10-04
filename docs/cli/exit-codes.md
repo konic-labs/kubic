@@ -25,7 +25,7 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its turn guard (`--max-turns`) or a configured §71 budget (`KUBIC_BUDGET`). The wall-clock `--timeout` is **not** here: it is `timeout`, exit 1 (issue #280). |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Orchestrator mode outside a git repository (`kubic orchestrate`, `kubic clean`, `kubic tui --orchestrator` and the bare `kubic --orchestrator` — issue #372), and session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
-| 6 | `provider_probe_failed` / provider-down | No reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). Doctor exits 6 when any failing check has reason `provider-down`. |
+| 6 | `provider_probe_failed` / provider-down | The **pre-run probe**: no reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). A provider error **during** the run is not this code: it is exit 1 with `status: provider_transient` or `provider_auth` and the matching `failure.code` (issue #155). Doctor exits 6 when any failing check has reason `provider-down`. |
 ## Per-command notes
 
 - **Unknown command / subcommand**: the root usage line on stdout,
@@ -97,6 +97,15 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   (6). `--json`: the envelope's `ok` field is `exitCode === 0`.
   A wall-clock `--timeout` elapse is `status: timeout`, exit 1 (issue #280);
   a `SIGINT`/`SIGTERM`/`SIGHUP` is `status: cancelled`, exit 128+signo.
+- **`kubic run` §52 failure codes (issue #155)**: every classified failure
+  carries an additive `failure: {code, remedy, strategy}` in the `--json`
+  envelope (a §52 code such as `tool_failed`, `model_failed`,
+  `provider_transient`, `budget_exhausted`, plus the retry remedy and
+  strategy). The lane's own detail decides the code — the durable
+  `model_error` reason is generic, so a rate-limit or tool-fault detail
+  keeps its own code instead of collapsing into `model_failed`. A mid-run
+  provider error is `provider_transient`/`provider_auth` (exit 1), never
+  the pre-run probe code 6.
 - **`kubic run` approvals (exit 4)**: the code is 4 for the whole approval
   terminus; the `status` string is the honest half — `approval_denied` for a
   recorded refusal (no installed approval surface, a policy route, a

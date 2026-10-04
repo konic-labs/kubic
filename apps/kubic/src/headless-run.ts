@@ -92,10 +92,10 @@ import {
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
+  type LaneOutcomeTerminus,
   MAX_RUN_TIMEOUT_MS,
   mapCaughtErrorToTerminus,
-  mapLaneOutcomeToTerminus,
-  type RunTerminusKind,
+  mapLaneOutcomeToFailure,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
@@ -107,6 +107,10 @@ import {
   forgetLaneKills,
 } from '../../../packages/worker/src/lane/abort.js';
 import { subscribeLaneEvents } from '../../../packages/worker/src/lane/events.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+} from '../../../packages/worker/src/lane/failures.js';
 import {
   describePendingSettlement,
   inspectPending,
@@ -356,6 +360,7 @@ function finished(
   summary: string,
   errorMessage?: string,
   signal?: string,
+  failure?: ClassifiedFailure,
 ): HeadlessRunResult {
   return {
     terminus,
@@ -363,6 +368,7 @@ function finished(
     sessionId: id,
     ...refs(id),
     ...(signal === undefined ? {} : { signal }),
+    ...(failure === undefined ? {} : { failure }),
     ...(errorMessage === undefined
       ? {}
       : { error: { kind: terminus, message: errorMessage } }),
@@ -375,12 +381,19 @@ function storeFailure(
 ): HeadlessRunResult {
   const message = error instanceof Error ? error.message : String(error);
   const terminus = mapCaughtErrorToTerminus(error);
+  // Issue #155: a caught failure carries its §52 classification too, so the
+  // envelope never has to guess the domain from the exit code.
+  const failure =
+    terminus === 'workspace_unavailable'
+      ? classifyFailure('workspace', 'workspace_failed', message)
+      : classifyFailure('process', '', message);
   const ref = sessionId ?? 'unassigned';
   return {
     terminus,
     summary: message,
     sessionId: ref,
     ...refs(ref),
+    failure,
     error: { kind: terminus, message },
   };
 }
@@ -408,12 +421,13 @@ export function assistantSummary(
   return undefined;
 }
 
-// §78 terminus for a settled turn: the §52 code and its message go through
-// the same settlement kernel the lane record does, so budget/approval/
-// workspace/provider failures keep their 3/4/5/6-bound termini.
-function failedTurnTerminus(outcome: TurnOutcome): RunTerminusKind {
-  if (outcome.kind !== 'failed') return 'failed';
-  return mapLaneOutcomeToTerminus('failed', {
+// §78 terminus + §52 failure for a settled turn (issue #155): the §52 code
+// and its message go through the same settlement kernel the lane record
+// does, so budget/approval/workspace/provider failures keep their 3/4/5/6
+// classes and the precise code rides beside the terminus.
+function failedTurnTerminus(outcome: TurnOutcome): LaneOutcomeTerminus {
+  if (outcome.kind !== 'failed') return { terminus: 'failed' };
+  return mapLaneOutcomeToFailure('failed', {
     code: outcome.reason,
     message: outcome.error ?? outcome.reason,
   });
@@ -1641,9 +1655,16 @@ async function runHeadlessPromptImpl(
           assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
         );
       }
-      const terminus = failedTurnTerminus(outcome);
+      const { terminus, failure } = failedTurnTerminus(outcome);
       const message = outcome.error ?? outcome.reason;
-      return finished(id, terminus, `${outcome.reason}: ${message}`, message);
+      return finished(
+        id,
+        terminus,
+        `${outcome.reason}: ${message}`,
+        message,
+        undefined,
+        failure,
+      );
     } finally {
       await detachEvents();
     }

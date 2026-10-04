@@ -112,3 +112,39 @@ describe('a missing provider response stays transient', () => {
     expect(out.code).toBe('provider_transient');
   });
 });
+
+// Issue #155: the durable `model_error` reason names the generation task,
+// not the failure's domain. A detail that names a provider rate-limit
+// refusal or a tool fault keeps its own §52 code instead of collapsing
+// into model_failed.
+describe('generic model errors keep the detail domain (issue #155)', () => {
+  it('classifies a provider rate-limit detail as provider_transient', () => {
+    const out = classifyFailure(
+      'model',
+      'model_error',
+      'api rate limit exceeded (429)',
+    );
+    expect(out.code).toBe('provider_transient');
+    expect(out.strategy).toBe('retry_same');
+    expect(out.remedy).toMatch(/retry/i);
+  });
+
+  it('classifies a tool fault detail as tool_failed', () => {
+    const out = classifyFailure(
+      'model',
+      'model_error',
+      "tool 'read' failed: ENOENT",
+    );
+    expect(out.code).toBe('tool_failed');
+  });
+
+  it('keeps a plain model detail model_failed (the #395 pin)', () => {
+    expect(
+      classifyFailure('model', 'model_error', 'provider returned 500').code,
+    ).toBe('model_failed');
+    expect(
+      classifyFailure('model', 'model_error', 'the model produced nothing')
+        .code,
+    ).toBe('model_failed');
+  });
+});

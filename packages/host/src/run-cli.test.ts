@@ -23,6 +23,7 @@ import {
 import {
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
+  mapLaneOutcomeToFailure,
   mapLaneOutcomeToTerminus,
   mapTerminusToExitCode,
   runRunCommand,
@@ -86,6 +87,14 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('provider_probe_failed')).toBe(6);
   });
 
+  it('a mid-run provider error is a task failure, not the probe code (issue #155)', () => {
+    // §78's 6 is the pre-run probe (no provider / unknown model). A
+    // provider error during the run is a failed task whose §52 code is
+    // provider_transient/provider_auth.
+    expect(mapTerminusToExitCode('provider_transient')).toBe(1);
+    expect(mapTerminusToExitCode('provider_auth')).toBe(1);
+  });
+
   it('a timeout is a task failure, never budget_exhausted (issue #280)', () => {
     // §78 has no timeout code; the --json status is the honest half, and a
     // bound the user did not configure as a budget must not claim one.
@@ -117,6 +126,8 @@ describe('run -p exit-code contract (§78)', () => {
       { terminus: 'approval_timed_out', code: 4 },
       { terminus: 'workspace_unavailable', code: 5 },
       { terminus: 'provider_probe_failed', code: 6 },
+      { terminus: 'provider_transient', code: 1 },
+      { terminus: 'provider_auth', code: 1 },
     ];
     for (const { terminus, code, signal } of cases) {
       const o = out();
@@ -242,7 +253,50 @@ describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
         code: 'provider_transient',
         message: 'api unavailable',
       }),
-    ).toBe('provider_probe_failed');
+    ).toBe('provider_transient');
+    expect(
+      mapLaneOutcomeToTerminus('failed', {
+        code: 'provider_auth',
+        message: 'invalid api key',
+      }),
+    ).toBe('provider_auth');
+  });
+});
+
+describe('mapLaneOutcomeToFailure (issue #155)', () => {
+  it('carries the §52 code beside the terminus', () => {
+    const tool = mapLaneOutcomeToFailure('failed', {
+      code: 'tool_failed',
+      message: 'exit 1',
+    });
+    expect(tool.terminus).toBe('failed');
+    expect(tool.failure?.code).toBe('tool_failed');
+    expect(tool.failure?.strategy).toBe('retry_same');
+  });
+
+  it('refines a generic model_error detail into its own domain', () => {
+    // The durable reason names the generation task, not the failure's
+    // domain: a rate limit is provider_transient, a tool fault tool_failed.
+    const rate = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: 'api rate limit exceeded (429)',
+    });
+    expect(rate.terminus).toBe('provider_transient');
+    expect(rate.failure?.code).toBe('provider_transient');
+
+    const tool = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: "tool 'read' failed: ENOENT",
+    });
+    expect(tool.terminus).toBe('failed');
+    expect(tool.failure?.code).toBe('tool_failed');
+
+    const model = mapLaneOutcomeToFailure('failed', {
+      code: 'model_error',
+      message: 'the model produced nothing',
+    });
+    expect(model.terminus).toBe('failed');
+    expect(model.failure?.code).toBe('model_failed');
   });
 });
 
@@ -791,6 +845,61 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     >;
     expect(envelope.ok).toBe(false);
     expect(envelope.error).toEqual({ kind: 'failed', message: 'm' });
+  });
+
+  it('carries the §52 failure (code/remedy/strategy) in the failure envelope (issue #155)', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'failed',
+            summary: 'tool_failed: exit 1',
+            failure: {
+              code: 'tool_failed',
+              remedy: 'inspect stderr',
+              strategy: 'retry_same',
+            },
+            error: { kind: 'failed', message: 'exit 1' },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(1);
+    const envelope = JSON.parse(o.lines[0] as string) as Record<
+      string,
+      unknown
+    >;
+    expect(envelope.failure).toEqual({
+      code: 'tool_failed',
+      remedy: 'inspect stderr',
+      strategy: 'retry_same',
+    });
+  });
+
+  it('synthesizes the failure for a terminus whose §52 code is implied', async () => {
+    const o = out();
+    const exit = await runRunCommand(
+      { prompt: 'hello', json: true },
+      {
+        out: o.write,
+        run: stubRun(
+          completedResult({
+            terminus: 'budget_exhausted',
+            summary: 'turn budget exhausted after 3 turns',
+            error: { kind: 'budget_exhausted', message: 'turn budget' },
+          }),
+        ),
+      },
+    );
+    expect(exit).toBe(3);
+    const envelope = JSON.parse(o.lines[0] as string) as {
+      failure?: { code: string; strategy: string };
+    };
+    expect(envelope.failure?.code).toBe('budget_exhausted');
+    expect(envelope.failure?.strategy).toBe('abandon');
   });
 
   it('maps a non-Error run rejection to unassigned refs in text', async () => {

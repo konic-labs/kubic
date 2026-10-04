@@ -292,9 +292,12 @@ function terminusOfFailure(reason: string): RunTerminusKind {
       return 'approval_timed_out';
     case 'workspace_failed':
       return 'workspace_unavailable';
-    case 'provider_auth':
+    // Issue #155: a mid-run provider error is a task failure with its own
+    // terminus, never the pre-run probe (`provider_probe_failed`, exit 6).
     case 'provider_transient':
-      return 'provider_probe_failed';
+      return 'provider_transient';
+    case 'provider_auth':
+      return 'provider_auth';
     default:
       return 'failed';
   }

@@ -38,6 +38,18 @@ process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.ind
 process.exit(1);
 `;
 
+// Issue #155: the exact envelope a `kubic run` whose lane failed with a
+// model error prints — the §52 failure code and the error domain travel
+// with the child's own report.
+const modelFailureFixture = `
+import { writeFileSync } from 'node:fs';
+writeFileSync('work.txt', 'work\\n');
+process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const a = process.argv;
+process.stdout.write(JSON.stringify({ ok: false, exitCode: 1, sessionId: a[a.indexOf('--session') + 1], status: 'failed', result: { summary: 'the model produced nothing' }, error: { kind: 'model', message: 'the model produced nothing' }, failure: { code: 'model_failed', remedy: 'inspect the model error', strategy: 'retry_same' }, model: 'faux/faux-1' }) + String.fromCharCode(10));
+process.exit(1);
+`;
+
 const scratchDirs: string[] = [];
 
 function scratch(prefix: string): string {
@@ -175,6 +187,47 @@ describe('§68 worker results on the prod path (issue #185)', () => {
     // not a configured budget (§71, issue #280).
     expect(envelope.workers[0]?.status).toBe('timeout');
     expect(savedState(root, 'r280').records[0]?.result?.status).toBe('timeout');
+  });
+
+  it('a worker child model error yields model_failed, not process_crashed (issue #155)', async () => {
+    const root = initRepo185();
+    const child = join(
+      scratch('kubic-orch-155-child-'),
+      'worker-model-failed.mjs',
+    );
+    writeFileSync(child, modelFailureFixture);
+    const lines: string[] = [];
+    const deps = await orchestrateDepsWithDefaults({
+      out: (line) => lines.push(line),
+      err: () => undefined,
+      cwd: root,
+      sessionsRoot: scratch('kubic-orch-155-sessions-'),
+      workerEntry: { cmd: process.execPath, args: [child] },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'work',
+        agents: ['worker-1'],
+        session: 'r155',
+        yes: true,
+        json: true,
+      },
+      deps,
+    );
+    expect(code).toBe(1);
+    const envelope = JSON.parse(lines.join('\n')) as {
+      workers: {
+        status?: string;
+        error?: { kind?: string; details?: { code?: string } };
+      }[];
+    };
+    // The manager reads the child's own §52 code and domain; the exit-code
+    // mapping (exit 1 → process) is only the fallback.
+    expect(envelope.workers[0]?.error?.kind).toBe('model');
+    expect(envelope.workers[0]?.error?.details?.code).toBe('model_failed');
+    expect(
+      savedState(root, 'r155').records[0]?.result?.error?.details?.code,
+    ).toBe('model_failed');
   });
 });
 

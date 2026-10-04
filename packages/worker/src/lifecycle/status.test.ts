@@ -1,128 +1,180 @@
-// Worker lifecycle status kernel (issue #42; §13, §81): legal
-// transitions, terminal set, and exit classification (crash vs tool vs
-// budget vs cancel) feeding result + trajectory.
+// Worker lifecycle status kernel (issue #42; §13, §81): legal transitions,
+// terminal sets, and exit classification (crash vs tool vs budget vs cancel)
+// feeding result + trajectory. Issue #151 splits the two vocabularies: the
+// PROCESS phase (spawning → ready → exiting) and the AGENT state
+// (starting → running → waiting/settling → terminal).
 import { describe, expect, it } from 'vitest';
 import {
-  assertTransition,
+  AGENT_STATUSES,
+  AGENT_TERMINAL_STATUSES,
+  assertAgentTransition,
+  assertProcessTransition,
   classifyExit,
-  isTerminalStatus,
-  WORKER_STATUSES,
+  isTerminalAgentStatus,
+  PROCESS_STATUSES,
 } from './status.js';
 
-describe('worker lifecycle §13 (issue #42)', () => {
-  it('pins the closed status vocabulary', () => {
-    expect([...WORKER_STATUSES]).toEqual([
-      'created',
-      'spawning',
-      'ready',
-      'running',
-      'completed',
-      'spawn_failed',
-      'crashed',
-      'timeout',
-      'budget_exhausted',
-      'cancelled',
-    ]);
+describe('worker lifecycle §13 process status (issue #151)', () => {
+  it('pins the closed process vocabulary', () => {
+    expect([...PROCESS_STATUSES]).toEqual(['spawning', 'ready', 'exiting']);
   });
 
-  it('walks the happy path created→spawning→ready→running→completed', () => {
-    expect(assertTransition('created', 'spawning')).toBe('spawning');
-    expect(assertTransition('spawning', 'ready')).toBe('ready');
-    expect(assertTransition('ready', 'running')).toBe('running');
-    expect(assertTransition('running', 'completed')).toBe('completed');
+  it('walks spawning → ready → exiting', () => {
+    expect(assertProcessTransition('spawning', 'ready')).toBe('ready');
+    expect(assertProcessTransition('ready', 'exiting')).toBe('exiting');
   });
 
-  it('refuses to skip readiness (spawning→running is illegal)', () => {
-    expect(() => assertTransition('spawning', 'running')).toThrow(/readiness/i);
+  it('lets a launch that never becomes ready exit directly', () => {
+    expect(assertProcessTransition('spawning', 'exiting')).toBe('exiting');
   });
 
-  it('marks exactly the five §13 terminal outcomes plus cancelled as terminal', () => {
-    expect(
-      WORKER_STATUSES.filter((status) => isTerminalStatus(status)),
-    ).toEqual([
-      'completed',
-      'spawn_failed',
-      'crashed',
-      'timeout',
-      'budget_exhausted',
-      'cancelled',
-    ]);
-  });
-
-  it('lets cancel land from any live state but never resurrects a terminal', () => {
-    expect(assertTransition('running', 'cancelled')).toBe('cancelled');
-    expect(assertTransition('spawning', 'cancelled')).toBe('cancelled');
-    expect(() => assertTransition('completed', 'running')).toThrow(/terminal/i);
+  it('refuses to go back, and refuses anything after exiting', () => {
+    expect(() => assertProcessTransition('ready', 'spawning')).toThrow(
+      /illegal worker process transition/i,
+    );
+    expect(() => assertProcessTransition('exiting', 'ready')).toThrow(
+      /already exited/i,
+    );
   });
 });
 
-describe('exit classification (crash vs tool vs budget vs cancel)', () => {
-  it('classifies a clean exit as completed', () => {
-    expect(classifyExit({ code: 0, signal: null, cancelled: false }).kind).toBe(
+describe('worker lifecycle §13 agent status (issue #151)', () => {
+  it('pins the closed agent vocabulary', () => {
+    expect([...AGENT_STATUSES]).toEqual([
+      'starting',
+      'running',
+      'waiting',
+      'settling',
       'completed',
+      'failed',
+      'cancelled',
+      'timeout',
+      'budget_exhausted',
+      'spawn_failed',
+    ]);
+  });
+
+  it('walks the happy path starting → running → settling → completed', () => {
+    expect(assertAgentTransition('starting', 'running')).toBe('running');
+    expect(assertAgentTransition('running', 'settling')).toBe('settling');
+    expect(assertAgentTransition('settling', 'completed')).toBe('completed');
+  });
+
+  it('models a held ask: running → waiting → running', () => {
+    expect(assertAgentTransition('running', 'waiting')).toBe('waiting');
+    expect(assertAgentTransition('waiting', 'running')).toBe('running');
+    // An ask that is never answered still terminates.
+    expect(assertAgentTransition('waiting', 'timeout')).toBe('timeout');
+  });
+
+  it('refuses to skip readiness (starting → settling is illegal)', () => {
+    expect(() => assertAgentTransition('starting', 'settling')).toThrow(
+      /readiness handshake required/i,
     );
   });
 
-  it('classifies a signaled death as a crash, never a tool failure', () => {
-    expect(
-      classifyExit({ code: 1, signal: 'SIGKILL', cancelled: false }).kind,
-    ).toBe('crash');
+  it('refuses to reuse a settled agent (completed → running is illegal)', () => {
+    expect(() => assertAgentTransition('completed', 'running')).toThrow(
+      /terminal \(completed\)/i,
+    );
   });
 
-  it('classifies a non-zero code without a signal as a tool failure', () => {
+  it('marks exactly the six §13 terminal outcomes as terminal', () => {
+    expect(
+      AGENT_STATUSES.filter((status) => isTerminalAgentStatus(status)),
+    ).toEqual([...AGENT_TERMINAL_STATUSES]);
+    expect(AGENT_TERMINAL_STATUSES).toEqual([
+      'completed',
+      'failed',
+      'cancelled',
+      'timeout',
+      'budget_exhausted',
+      'spawn_failed',
+    ]);
+  });
+});
+
+describe('worker exit classification (§13, §78; issue #151)', () => {
+  it('maps a clean exit to SETTLING, never straight to COMPLETED', () => {
+    const exit = classifyExit({ code: 0, signal: null, cancelled: false });
+    expect(exit.kind).toBe('completed');
+    expect(exit.status).toBe('completed');
+    // The §68 report check is what completes the agent (a child that exits 0
+    // with an invalid report is FAILED, not completed).
+    expect(exit.agent).toBe('settling');
+    expect(exit.process).toBe('exiting');
+  });
+
+  it('maps a signal death to a crash', () => {
+    const exit = classifyExit({ code: 1, signal: 'SIGKILL', cancelled: false });
+    expect(exit.kind).toBe('crash');
+    expect(exit.agent).toBe('failed');
+  });
+
+  it('maps a plain non-zero exit to a failure', () => {
     expect(classifyExit({ code: 1, signal: null, cancelled: false }).kind).toBe(
       'tool',
     );
-  });
-
-  it('prefers cancel over code/signal when the worker was cancelled', () => {
     expect(
-      classifyExit({ code: 1, signal: 'SIGTERM', cancelled: true }).kind,
-    ).toBe('cancel');
-  });
-
-  it('classifies budget and timeout distinctly from crashes', () => {
-    expect(
-      classifyExit({
-        code: 1,
-        signal: null,
-        cancelled: false,
-        budgetExhausted: true,
-      }).kind,
-    ).toBe('budget');
-    expect(
-      classifyExit({ code: 1, signal: null, cancelled: false, timedOut: true })
-        .kind,
-    ).toBe('timeout');
-  });
-
-  it('maps each classification to a distinct result status', () => {
-    expect(
-      classifyExit({ code: 0, signal: null, cancelled: false }).status,
-    ).toBe('completed');
-    expect(
-      classifyExit({ code: 1, signal: 'SIGSEGV', cancelled: false }).status,
+      classifyExit({ code: 1, signal: null, cancelled: false }).agent,
     ).toBe('failed');
-    expect(
-      classifyExit({ code: 1, signal: null, cancelled: false }).status,
-    ).toBe('failed');
-    expect(
-      classifyExit({
-        code: 1,
-        signal: null,
-        cancelled: false,
-        budgetExhausted: true,
-      }).status,
-    ).toBe('budget_exhausted');
-    expect(
-      classifyExit({ code: 1, signal: null, cancelled: true }).status,
-    ).toBe('cancelled');
-    expect(
-      classifyExit({ code: 1, signal: null, cancelled: false, timedOut: true })
-        .status,
-    ).toBe('timeout');
-    expect(
-      classifyExit({ code: null, signal: null, cancelled: false }).status,
-    ).toBe('spawn_failed');
+  });
+
+  it('maps exit 3 to BUDGET_EXHAUSTED even without a reported flag', () => {
+    const exit = classifyExit({
+      code: 3,
+      signal: null,
+      cancelled: false,
+      declaredExit: 3,
+    });
+    expect(exit.kind).toBe('budget');
+    expect(exit.agent).toBe('budget_exhausted');
+  });
+
+  it('maps exit 4 to a FAILED agent (an approval terminus, never a crash)', () => {
+    const exit = classifyExit({
+      code: 4,
+      signal: null,
+      cancelled: false,
+      declaredExit: 4,
+    });
+    expect(exit.status).toBe('failed');
+    expect(exit.agent).toBe('failed');
+    expect(exit.kind).not.toBe('crash');
+  });
+
+  it('maps a manager cancel to CANCELLED', () => {
+    const exit = classifyExit({ code: 1, signal: null, cancelled: true });
+    expect(exit.kind).toBe('cancel');
+    expect(exit.agent).toBe('cancelled');
+    expect(exit.status).toBe('cancelled');
+  });
+
+  it('maps a timeout to TIMEOUT', () => {
+    const exit = classifyExit({
+      code: 1,
+      signal: null,
+      cancelled: false,
+      timedOut: true,
+    });
+    expect(exit.agent).toBe('timeout');
+    expect(exit.status).toBe('timeout');
+  });
+
+  it('maps a launch that never started to SPAWN_FAILED', () => {
+    const exit = classifyExit({ code: null, signal: null, cancelled: false });
+    expect(exit.agent).toBe('spawn_failed');
+    expect(exit.status).toBe('spawn_failed');
+  });
+
+  it('keeps a declared budget flag authoritative over the signal', () => {
+    const exit = classifyExit({
+      code: 1,
+      signal: null,
+      cancelled: false,
+      budgetExhausted: true,
+    });
+    expect(exit.kind).toBe('budget');
+    expect(exit.agent).toBe('budget_exhausted');
   });
 });

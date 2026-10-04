@@ -91,6 +91,9 @@ describe('legacy rows without managerPid', () => {
       alive: () => false,
       killGroup: () => undefined,
     });
-    expect(out.rows[0]?.status).toBe('crashed');
+    expect(out.rows[0]).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
   });
 });

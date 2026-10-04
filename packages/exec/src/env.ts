@@ -108,6 +108,12 @@ export interface FileSystem {
 
 export interface ShellResult {
   exitCode: number;
+  /**
+   * The signal the leader died from, when it was signalled (issue #151):
+   * `exitCode` already carries 128+signal, but the NAME is what a worker row
+   * records so `kubic workers` can say SIGKILL rather than 137.
+   */
+  signal?: string | null;
   stdout: string;
   stderr: string;
   provenance: Provenance;
@@ -707,6 +713,7 @@ class NodeShell implements Shell {
       // process group is reaped (unless keepBackground), so the tool never
       // returns with an orphan still running in the detached group.
       let leaderExit: number | undefined;
+      let leaderSignal: NodeJS.Signals | null = null;
       let streamsClosed = false;
       let finishing = false;
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -746,6 +753,7 @@ class NodeShell implements Shell {
         }
         const result: ShellResult = {
           exitCode: leaderExit ?? 1,
+          ...(leaderSignal === null ? {} : { signal: leaderSignal }),
           stdout: stdoutAcc.final(),
           stderr: stderrAcc.final(),
           provenance: options.provenance,
@@ -763,6 +771,7 @@ class NodeShell implements Shell {
       child.on('exit', (code, signal) => {
         if (settled || finishing) return;
         leaderExit = exitCodeFor(code, signal);
+        leaderSignal = signal;
         if (streamsClosed) {
           void finish();
           return;

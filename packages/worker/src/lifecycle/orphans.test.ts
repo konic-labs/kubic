@@ -17,7 +17,8 @@ function row(over: Partial<WorkerRow>): WorkerRow {
     workerId: 'w1',
     sessionId: 'orch-1-w1',
     generation: 1,
-    status: 'running',
+    status: 'ready',
+    agentStatus: 'running',
     startedAtMs: 0,
     ageMs: 0,
     owner: 'orchestrate:orch-1',
@@ -46,7 +47,10 @@ describe('reconcileWorkerRows', () => {
   it('marks a live-status row with a dead pid and a dead manager crashed', async () => {
     const p = probe([]);
     const out = await reconcileWorkerRows([row({})], p);
-    expect(out.rows[0]?.status).toBe('crashed');
+    expect(out.rows[0]).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
     expect(out.marked).toEqual(['w1']);
     expect(p.killed).toEqual([]);
   });
@@ -57,7 +61,10 @@ describe('reconcileWorkerRows', () => {
     });
     const out = await reconcileWorkerRows([row({})], p);
     expect(p.killed).toEqual([100]);
-    expect(out.rows[0]?.status).toBe('cancelled');
+    expect(out.rows[0]).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'cancelled',
+    });
     expect(out.reaped).toEqual(['w1']);
   });
 
@@ -65,20 +72,27 @@ describe('reconcileWorkerRows', () => {
     const p = probe([100], { 100: '/usr/bin/vim notes.txt' });
     const out = await reconcileWorkerRows([row({})], p);
     expect(p.killed).toEqual([]);
-    expect(out.rows[0]?.status).toBe('crashed');
+    expect(out.rows[0]).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
   });
 
   it('leaves rows whose manager is still alive untouched', async () => {
     const p = probe([100, 50], { 100: 'run --session orch-1-w1' });
     const out = await reconcileWorkerRows([row({})], p);
     expect(p.killed).toEqual([]);
-    expect(out.rows[0]?.status).toBe('running');
+    expect(out.rows[0]?.status).toBe('ready');
+    expect(out.rows[0]?.agentStatus).toBe('running');
   });
 
   it('leaves terminal rows untouched', async () => {
     const p = probe([]);
-    const out = await reconcileWorkerRows([row({ status: 'completed' })], p);
-    expect(out.rows[0]?.status).toBe('completed');
+    const out = await reconcileWorkerRows(
+      [row({ status: 'exiting', agentStatus: 'completed' })],
+      p,
+    );
+    expect(out.rows[0]?.agentStatus).toBe('completed');
     expect(out.marked).toEqual([]);
   });
 });
@@ -86,9 +100,12 @@ describe('reconcileWorkerRows', () => {
 describe('viewWorkerRows (sync, read-only)', () => {
   it('shows a dead orphan as crashed without killing anything', () => {
     expect(viewWorkerRows([row({})], (pid) => pid === 50)[0]?.status).toBe(
-      'running',
+      'ready',
     );
-    expect(viewWorkerRows([row({})], () => false)[0]?.status).toBe('crashed');
+    expect(viewWorkerRows([row({})], () => false)[0]).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+    });
   });
 });
 
@@ -97,7 +114,10 @@ describe('isLiveWorkerRow', () => {
     expect(isLiveWorkerRow(row({}), (pid) => pid === 100)).toBe(true);
     expect(isLiveWorkerRow(row({}), () => false)).toBe(false);
     expect(
-      isLiveWorkerRow(row({ status: 'completed' }), (pid) => pid === 100),
+      isLiveWorkerRow(
+        row({ status: 'exiting', agentStatus: 'completed' }),
+        (pid) => pid === 100,
+      ),
     ).toBe(false);
   });
 });

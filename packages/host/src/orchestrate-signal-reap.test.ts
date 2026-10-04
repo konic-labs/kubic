@@ -156,7 +156,9 @@ async function startLiveWorker(signals: OrchestrateSignals): Promise<{
     }),
   ).catch((error: unknown) => error);
   await vi.waitFor(
-    () => expect(registry.get('worker-1')?.status).toBe('running'),
+    // §13 (issue #151): the AGENT is running once the marker landed; the
+    // PROCESS phase is `ready`.
+    () => expect(registry.get('worker-1')?.agentStatus).toBe('running'),
     { timeout: 10_000 },
   );
   const pid = registry.get('worker-1')?.pid;
@@ -210,10 +212,9 @@ async function startTwoLiveWorkers(signals: OrchestrateSignals): Promise<{
   }
   await vi.waitFor(
     () =>
-      expect(agents.map((agentId) => registry.get(agentId)?.status)).toEqual([
-        'running',
-        'running',
-      ]),
+      expect(
+        agents.map((agentId) => registry.get(agentId)?.agentStatus),
+      ).toEqual(['running', 'running']),
     { timeout: 10_000 },
   );
   const livePids = agents.map((agentId) => registry.get(agentId)?.pid);
@@ -303,6 +304,15 @@ describe('prod orchestrate path: fail-fast cancellation (issue #206)', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe('cancelled');
     expect(error.message).toMatch(/cancelled by the run/);
+    // §13 (issue #151): the row says the AGENT was cancelled — the old
+    // single status called a manager kill `crashed`. The reap's row update
+    // lands asynchronously, so wait for it.
+    await vi.waitFor(() =>
+      expect(deps.launches?.rows()[0]).toMatchObject({
+        status: 'exiting',
+        agentStatus: 'cancelled',
+      }),
+    );
     expect(signals.reraised).toEqual([]);
   }, 30_000);
 });
@@ -328,7 +338,9 @@ describe('prod orchestrate path: orphans left by a hard-killed manager', () => {
       workerId: 'w1',
       sessionId: 'orch-dead-w1',
       generation: 1,
-      status: 'running',
+      // §13 (issue #151): a live row is a live PROCESS whose AGENT is running.
+      status: 'ready',
+      agentStatus: 'running',
       startedAtMs: 0,
       ageMs: 0,
       owner: 'orchestrate:orch-dead',
@@ -352,8 +364,9 @@ describe('prod orchestrate path: orphans left by a hard-killed manager', () => {
     });
     const rows = JSON.parse(
       readFileSync(join(dir, 'workers.json'), 'utf8'),
-    ) as { rows: { status: string }[] };
-    expect(rows.rows[0]?.status).toBe('cancelled');
+    ) as { rows: { status: string; agentStatus: string }[] };
+    expect(rows.rows[0]?.status).toBe('exiting');
+    expect(rows.rows[0]?.agentStatus).toBe('cancelled');
     await orphan.wait();
   }, 30_000);
 });

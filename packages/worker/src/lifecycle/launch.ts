@@ -2,13 +2,19 @@
 // §13, §42, §50, §52, §61, §3.8).
 //
 // One call does what the live path used to skip: refuse a stale
-// generation, register the worker and walk the §13 handshake
-// (created → spawning → ready → running — through assertTransition, so an
-// illegal jump throws instead of happening), spawn through the §3.8
-// allowlist, wait for the readiness marker under a timeout, record the
-// §61 startup latency, classify a failed child through the §52 failure
-// codes, and reap through the teardown budget. `kubic workers` reads the
-// rows this writes.
+// generation, register the worker and walk the §13 handshake (the PROCESS
+// goes spawning → ready → exiting; the AGENT goes starting → running →
+// waiting/settling → a §13 terminal — each transition guarded, so an illegal
+// jump throws instead of happening), spawn through the §3.8 allowlist, wait
+// for the readiness marker under a timeout, record the §61 startup latency,
+// classify a failed child through the §52 failure codes, and reap through the
+// teardown budget. `kubic workers` reads the rows this writes.
+
+// §13 (issue #151): the launcher owns BOTH vocabularies. The process phase is
+// the child's own state (spawning → ready → exiting); the agent state is what
+// the delegated work did. An exit settles the agent only as far as the exit
+// itself proves: a clean exit is SETTLING, and the run path settles it as
+// COMPLETED or FAILED once the §68 report has been checked.
 //
 // The exec Shell seam has no env field, so the caller hands in a shell
 // that can carry one (shell.ts `allowlistedShell` is the Node binding;
@@ -29,8 +35,13 @@ import type { WorkerRegistry } from './registry.js';
 import { StaleGenerationError } from './replace.js';
 import type { SpawnWorkerRequest, WorkerShell } from './spawn.js';
 import { spawnWorker } from './spawn.js';
-import type { WorkerStatus } from './status.js';
-import { assertTransition } from './status.js';
+import type { AgentStatus, ProcessStatus } from './status.js';
+import {
+  AgentTransitionError,
+  assertAgentTransition,
+  assertProcessTransition,
+  classifyExit,
+} from './status.js';
 
 export interface LaunchWorkerRequest {
   workerId: string;
@@ -107,8 +118,28 @@ export interface LaunchedWorker {
   /** Resolves when the readiness marker is seen; rejects with
    *  SpawnFailedError when it never arrives inside the timeout. */
   ready: Promise<void>;
-  wait: () => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-  status: () => WorkerStatus;
+  wait: () => Promise<{
+    exitCode: number;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+  }>;
+  /** §13 process phase (issue #151): spawning | ready | exiting. */
+  processStatus: () => ProcessStatus;
+  /** §13 agent state (issue #151): what the delegated work did. */
+  agentStatus: () => AgentStatus;
+  /** §68 settling (issue #151): the run path decides COMPLETED or FAILED
+   *  once the worker's report has been validated. Only a SETTLING agent can
+   *  be settled; anything else throws. */
+  settleAgent: (status: 'completed' | 'failed') => AgentStatus;
+  /** §13 terminus correction (issue #151): the child's own report can name a
+   *  terminus the exit code cannot — a `--timeout` run exits 1 with report
+   *  status `timeout` (issue #280). Only the run path, which read the report,
+   *  calls this, and only a named terminus may replace the unclassified
+   *  FAILED an exit 1 produced; anything else throws. */
+  settleFromReport: (
+    status: 'timeout' | 'cancelled' | 'budget_exhausted',
+  ) => AgentStatus;
   /** §52 failure view of a launch/run that did not complete cleanly. */
   failure: () => WorkerFailure | undefined;
   /** The §68 worker result for this launch, built from what the child did:
@@ -183,8 +214,14 @@ export function launchWorker(
   }
   const generation = (registry.get(request.workerId) as { generation: number })
     .generation;
-  let phase = assertTransition('created', 'spawning');
-  registry.updateStatus(request.workerId, phase);
+  let process: ProcessStatus = 'spawning';
+  let agent: AgentStatus = 'starting';
+  let signal: string | undefined;
+  // A reap in flight (issue #151): the child's exit is the manager's
+  // cancellation, not a crash, however the signal arrives.
+  let cancelRequested = false;
+  registry.updateStatus(request.workerId, process);
+  registry.updateAgentStatus(request.workerId, agent);
 
   const spawnStartedAt = clock();
   let spawnMs = 0;
@@ -223,20 +260,20 @@ export function launchWorker(
     getLiveGeneration: () => registry.get(request.workerId)?.generation,
     onDebug: deps.debug,
     onStartup: (startupMs) => {
-      // The marker landed: the §13 handshake is complete (ready → running
-      // is asserted, never skipped) and the §49.3 startup latency is
+      // The marker landed: the §13 handshake is complete (starting →
+      // running is asserted, never skipped) and the §49.3 startup latency is
       // recorded on the row `kubic workers` reads.
       spawnMs = clock() - spawnStartedAt;
-      phase = assertTransition('ready', 'running');
-      registry.updateStatus(request.workerId, phase);
+      agent = assertAgentTransition(agent, 'running');
+      registry.updateAgentStatus(request.workerId, agent);
       registry.recordSpawn(request.workerId, pid, startupMs);
     },
   });
   pid = worker.pid;
   // The child process exists and is observable: spawning → ready. The
   // registry row now carries the real pid.
-  phase = assertTransition(phase, 'ready');
-  registry.updateStatus(request.workerId, phase);
+  process = assertProcessTransition(process, 'ready');
+  registry.updateStatus(request.workerId, process);
   registry.recordSpawn(request.workerId, pid);
 
   let detail = '';
@@ -244,35 +281,85 @@ export function launchWorker(
   let runFailure: WorkerFailure | undefined;
 
   const markSpawnFailed = (reason: string): void => {
-    if (phase === 'spawn_failed') return;
+    if (agent === 'spawn_failed') return;
     spawnFailureReason = reason;
-    phase = 'spawn_failed';
-    registry.updateStatus(request.workerId, phase);
+    if (process !== 'exiting') {
+      process = assertProcessTransition(process, 'exiting');
+      registry.updateStatus(request.workerId, process);
+    }
+    agent = assertAgentTransition(agent, 'spawn_failed');
+    registry.updateAgentStatus(request.workerId, agent);
   };
 
   const wait = async (): Promise<{
     exitCode: number;
+    signal: string | null;
     stdout: string;
     stderr: string;
   }> => {
     const done = await worker.wait();
     detail = done.stderr.trim() || done.stdout.trim();
-    if (worker.status === 'spawn_failed') {
+    if (worker.unready) {
       markSpawnFailed('readiness marker not seen before the timeout');
       return done;
     }
-    if (phase === 'ready' || phase === 'running') {
-      const from = phase;
-      phase = assertTransition(
-        from,
-        done.exitCode === 0 ? 'completed' : 'crashed',
-      );
-      registry.updateStatus(request.workerId, phase);
-      if (phase === 'crashed') {
-        runFailure = exitFailure(done.exitCode, detail);
-      }
+    if (process === 'ready') {
+      settleFromExit(done.exitCode, done.signal, cancelRequested);
     }
     return done;
+  };
+
+  // The exit's own verdict (issue #151): the process is gone and the agent
+  // takes the §13 state the exit proves. A clean exit is SETTLING — never
+  // COMPLETED, which only the §68 report check can decide (the run path calls
+  // `settleAgent`). `cancelled` is the manager's own kill.
+  const settleFromExit = (
+    exitCode: number,
+    exitSignal: string | null,
+    cancelled: boolean,
+  ): void => {
+    if (process !== 'exiting') {
+      process = assertProcessTransition(process, 'exiting');
+      registry.updateStatus(request.workerId, process);
+    }
+    const classified = classifyExit({
+      code: exitCode,
+      signal: exitSignal,
+      cancelled,
+      declaredExit: exitCode,
+    });
+    signal = exitSignal ?? undefined;
+    if (agent !== classified.agent) {
+      agent = assertAgentTransition(agent, classified.agent);
+      registry.updateAgentStatus(request.workerId, agent);
+      registry.recordSignal(request.workerId, signal);
+    }
+    if (classified.kind !== 'completed' && runFailure === undefined) {
+      runFailure = exitFailure(exitCode, detail);
+    }
+  };
+
+  // §13 settling (issue #151): the run path settles the agent once the §68
+  // report has been validated — COMPLETED when it parses, FAILED when it does
+  // not. Only a SETTLING agent can be settled, so a second call is refused
+  // (an illegal transition throws, never silently re-settles).
+  const settleAgent = (status: 'completed' | 'failed'): AgentStatus => {
+    agent = assertAgentTransition(agent, status);
+    registry.updateAgentStatus(request.workerId, agent);
+    return agent;
+  };
+
+  const settleFromReport = (
+    status: 'timeout' | 'cancelled' | 'budget_exhausted',
+  ): AgentStatus => {
+    if (agent === status) return agent;
+    if (agent === 'settling' || agent === 'failed') {
+      agent = status;
+    } else {
+      throw new AgentTransitionError(agent, status);
+    }
+    registry.updateAgentStatus(request.workerId, agent);
+    return agent;
   };
 
   let teardownInitiateMs = 0;
@@ -280,26 +367,37 @@ export function launchWorker(
   let report: ExitReport | undefined;
   const reap = async (): Promise<ExitReport> => {
     if (report !== undefined) return report;
+    // §51 (issue #151): a reap of a STILL-LIVE worker is the manager's
+    // cancellation; a reap of one that already exited on its own keeps the
+    // exit's own verdict (a settling agent is settled by the run path).
+    const cancelling =
+      agent === 'starting' || agent === 'running' || agent === 'waiting';
+    if (cancelling) cancelRequested = true;
     const reapStartedAt = clock();
     const detached = reapDetached({
       workerId: request.workerId,
       kill: () => worker.kill(),
       wait: async () => {
         const done = await worker.wait();
-        return { code: done.exitCode, signal: null };
+        return { code: done.exitCode, signal: done.signal };
       },
+      // The manager's own kill (issue #151): §51 cancel terminates its
+      // worker, so the agent settles CANCELLED, never CRASHED.
+      cancelled: cancelling,
     });
     teardownInitiateMs = detached.teardownInitiateMs;
     report = await detached.reaped;
     teardownSettledMs = clock() - reapStartedAt;
-    if (phase !== 'spawn_failed' && phase !== 'completed') {
-      phase = assertTransition(
-        phase,
-        report.kind === 'completed' ? 'completed' : 'crashed',
-      );
-      registry.updateStatus(request.workerId, phase);
-      if (phase === 'crashed' && runFailure === undefined) {
-        runFailure = exitFailure(report.code ?? 1, detail);
+    // A launch that never became ready and a worker the run already settled
+    // keep their verdict; anything else is the cancellation this call made.
+    if (cancelling && agent !== 'spawn_failed') {
+      if (agent === 'failed' || agent === 'settling') {
+        // The wait already settled the exit (a signal death is an
+        // unclassified FAILED); the manager's kill is the terminus that wins
+        // — §51 cancel terminates its worker, so the agent is CANCELLED.
+        settleFromReport('cancelled');
+      } else {
+        settleFromExit(report.code ?? 1, report.signal, true);
       }
     }
     return report;
@@ -337,11 +435,17 @@ export function launchWorker(
     // between them is total (spawn_failed and completed map directly; a
     // crashed/never-ready worker is a failure).
     const status: ResultStatus =
-      phase === 'spawn_failed'
+      agent === 'spawn_failed'
         ? 'spawn_failed'
-        : phase === 'completed'
+        : agent === 'completed'
           ? 'completed'
-          : 'failed';
+          : agent === 'cancelled'
+            ? 'cancelled'
+            : agent === 'timeout'
+              ? 'timeout'
+              : agent === 'budget_exhausted'
+                ? 'budget_exhausted'
+                : 'failed';
     // The one §68 builder (issue #185) zero-fills the token metrics the
     // lifecycle cannot see and self-checks against the closed-world
     // contract: a result that fails its own validator is a bug here.
@@ -349,7 +453,7 @@ export function launchWorker(
       status,
       summary:
         failure === undefined
-          ? `worker ${request.workerId} ${phase}`
+          ? `worker ${request.workerId} ${agent}`
           : failure.message,
       provenance: {
         workerId: request.workerId,
@@ -384,7 +488,7 @@ export function launchWorker(
   // registry even for a caller that only watches `failure()`; the marker
   // rejection is observed here so it is never an unhandled rejection.
   void worker.ready.catch(() => {
-    if (phase !== 'spawn_failed') {
+    if (agent !== 'spawn_failed') {
       markSpawnFailed('readiness marker not seen before the timeout');
     }
   });
@@ -397,7 +501,10 @@ export function launchWorker(
     env: worker.env,
     ready: worker.ready,
     wait,
-    status: () => phase,
+    processStatus: () => process,
+    agentStatus: () => agent,
+    settleAgent,
+    settleFromReport,
     failure: () =>
       spawnFailureReason === undefined
         ? runFailure

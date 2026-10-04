@@ -1693,17 +1693,28 @@ grey). Unknown options exit 2. Full exit-code contract is on the
 
 Worker list read from the repo's persisted record
 (`<repo>/.kubic/orchestrator/workers.json` — one shared record, never a
-fresh empty registry): one line per worker with
-the §13 status verbatim, age, owner, pid, startup span ms, and
-resources (`skills=… templates=…`, `-` when none). A row that claims a live status
-whose worker and manager processes are both gone is shown as `crashed`. A repo that never ran
+fresh empty registry): one line per worker with the two §13 states, age,
+owner, pid, startup span ms, and resources (`skills=… templates=…`, `-` when
+none).
+
+The two states are separate (issue #151). The **AGENT** column is what the
+delegated work did: `starting`, `running`, `waiting` (blocked on an approval
+ask, back to `running` once the router answers), `settling` (the child is gone
+and the manager is validating/committing its work), then one terminal —
+`completed`, `failed`, `cancelled` (a manager kill, §51), `timeout`,
+`budget_exhausted`, `spawn_failed`. The **PROCESS** column is the child
+process's own phase — `spawning` → `ready` → `exiting` — and a signal death is
+named next to it (`exiting(SIGKILL)`). An exited process is therefore never
+reported as an outcome: `exiting / settling` means the manager has not settled
+the agent yet. A row whose process is gone while both the worker's pid and its
+manager are dead is reconciled to `exiting / failed`. A repo that never ran
 an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 `info: no orchestrator workers recorded in this repo` note on stderr, exit 0.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | A table with one row per worker: `WORKER  STATUS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with the status coloured, on an interactive colour terminal. |
-| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view. |
+| (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. |
+| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). |
 | `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
 `kubic workers --help` prints the generated help and exits 0. An unknown

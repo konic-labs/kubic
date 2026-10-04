@@ -21,7 +21,8 @@ describe('worker registry (issue #42)', () => {
     });
     advance(5_000);
     const row = reg.get('w-1');
-    expect(row?.status).toBe('created');
+    expect(row?.status).toBe('spawning');
+    expect(row?.agentStatus).toBe('starting');
     expect(row?.ageMs).toBe(5_000);
   });
 
@@ -50,7 +51,7 @@ describe('worker registry (issue #42)', () => {
     expect(() => reg.replace('w-1', 99)).toThrow(/generation/i);
     // CAS refusal leaves the live row untouched: no bump, no reset.
     expect(reg.get('w-1')?.generation).toBe(1);
-    expect(reg.get('w-1')?.status).toBe('created');
+    expect(reg.get('w-1')?.status).toBe('spawning');
     // Matching expectation still bumps.
     expect(reg.replace('w-1', 1).generation).toBe(2);
   });

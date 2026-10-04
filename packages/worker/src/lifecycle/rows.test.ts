@@ -43,7 +43,8 @@ function seededRegistry(now = 1_000): WorkerRegistry {
     generation: 2,
     owner: 'orchestrator',
   });
-  registry.updateStatus('worker-1', 'running');
+  registry.updateStatus('worker-1', 'ready');
+  registry.updateAgentStatus('worker-1', 'running');
   registry.recordSpawn('worker-1', 4242, 37);
   return registry;
 }
@@ -61,12 +62,14 @@ describe('worker lifecycle rows on disk (issue #94)', () => {
         workerId: 'worker-1',
         sessionId: 'orch-1-worker-1',
         generation: 2,
-        status: 'running',
+        status: 'ready',
+        agentStatus: 'running',
         startedAtMs: 1_000,
         ageMs: 0,
         owner: 'orchestrator',
         pid: 4242,
         startupMs: 37,
+        signal: undefined,
       },
     ]);
   });
@@ -76,11 +79,13 @@ describe('worker lifecycle rows on disk (issue #94)', () => {
     const bridge = createNodeFileBridge(root);
     const registry = seededRegistry();
     writeWorkerRows(bridge, 'workers.json', registry.list());
-    registry.updateStatus('worker-1', 'completed');
+    registry.updateStatus('worker-1', 'exiting');
+    registry.updateAgentStatus('worker-1', 'completed');
     writeWorkerRows(bridge, 'workers.json', registry.list());
     const rows = readWorkerRows(bridge, 'workers.json');
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.status).toBe('exiting');
+    expect(rows[0]?.agentStatus).toBe('completed');
   });
 
   it('reads an absent file as no rows — never an error', () => {

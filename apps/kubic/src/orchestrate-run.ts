@@ -136,7 +136,7 @@ import {
 } from '../../../packages/worker/src/lifecycle/rows.js';
 import { allowlistedShell } from '../../../packages/worker/src/lifecycle/shell.js';
 import type { WorkerShell } from '../../../packages/worker/src/lifecycle/spawn.js';
-import { TERMINAL_STATUSES } from '../../../packages/worker/src/lifecycle/status.js';
+import { isTerminalAgentStatus } from '../../../packages/worker/src/lifecycle/status.js';
 import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import type {
   AgentResult,
@@ -970,6 +970,8 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  // The handle the runWorker catch settles (§13, issue #151).
+  let launchedForSettle: ReturnType<typeof launchWorker> | undefined;
   // Workers the run cancelled (issue #206 fail-fast): remembered separately
   // from the signal guard, because the cancellation is per AGENT and may
   // arrive before that agent's child exists.
@@ -1142,8 +1144,11 @@ export async function orchestrateDepsWithDefaults(
               const next = judged.get(
                 `${row.workerId}:${row.generation}:${row.pid ?? '-'}`,
               );
+              // §13 (issue #151): the AGENT state decides whether the row
+              // still claims live work — the process phase alone cannot (a
+              // settling agent's process is already gone).
               return next !== undefined &&
-                !TERMINAL_STATUSES.includes(row.status)
+                !isTerminalAgentStatus(row.agentStatus)
                 ? next
                 : row;
             }),
@@ -1631,6 +1636,20 @@ export async function orchestrateDepsWithDefaults(
           : { budgetForAgent: approvalOptions.budgetForAgent }),
         ...(approvalOptions.fullAccess ? { fullAccess: true } : {}),
         ...(approvalOptions.fresh ? { fresh: true } : {}),
+        // §13 WAITING (issue #151): while the router holds an unanswered ask
+        // for a worker, its row says WAITING; the answer (or the bound's
+        // denial) flips it back to RUNNING. Only a live agent flips — a
+        // worker that settled keeps its own terminus.
+        onAskState: (agentId, pending) => {
+          const row = workerRegistry.get(agentId);
+          const next = pending ? 'waiting' : 'running';
+          if (row === undefined || row.agentStatus === next) return;
+          if (row.agentStatus !== 'running' && row.agentStatus !== 'waiting') {
+            return;
+          }
+          workerRegistry.updateAgentStatus(agentId, next);
+          persistWorkerRowsNow();
+        },
         // The TTY seat when this run has a user attached; without one a
         // worker ask denies closed on the router's own bound (never a silent
         // hang). `--yes` never replaces it (issue #323): the standing answer
@@ -1764,6 +1783,11 @@ export async function orchestrateDepsWithDefaults(
           `worker '${agentId}': ${credentialGrant.refusal.message}`,
         );
       }
+      // §13 settling (issue #151): the outer catch needs the handle to settle
+      // an agent whose clean exit was followed by a failed settle (a stage,
+      // commit, diff or §68-report failure) — block-scoped `launched` is not
+      // visible there.
+      launchedForSettle = undefined;
       const launched = launchWorker(
         {
           workerId: agentId,
@@ -1871,6 +1895,7 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
+      launchedForSettle = launched;
       // A cancel that arrived between the readiness check above and this
       // launch (issue #206): the handle exists now, so the kill lands instead
       // of waiting out the child's own bound. `throwIfCancelled` still turns
@@ -1977,8 +2002,20 @@ export async function orchestrateDepsWithDefaults(
         }
         finished = done;
         throwIfCancelled(agentId);
-        if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+        if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
           persistWorkerRowsNow();
+          // §13 (issue #151): the child's report names a terminus the exit
+          // code cannot — a `--timeout` run exits 1 with status `timeout`
+          // (issue #280), and a cancelled one says so. Correct the row before
+          // the failure travels.
+          const reportStatus = childReportOf(done.stdout)?.status;
+          if (
+            reportStatus === 'timeout' ||
+            reportStatus === 'cancelled' ||
+            reportStatus === 'budget_exhausted'
+          ) {
+            launched.settleFromReport(reportStatus);
+          }
           throw workerRunError(agentId, done, launched.failure());
         }
         await launched.reap().catch(() => undefined);
@@ -2061,14 +2098,33 @@ export async function orchestrateDepsWithDefaults(
           diff: { diffId: `${base}...${worktree.branch}` },
         });
         if (!contract.ok) {
+          // A clean exit whose §68 report does not parse is a FAILED agent
+          // (issue #151): the process exited, the work did not settle.
+          launched.settleAgent('failed');
           debug(contract.error.message);
           throw new WorkerRunFailure(
             contract.error.code,
             contract.error.message,
           );
         }
+        // The report validated: the agent is COMPLETED, not merely exited.
+        launched.settleAgent('completed');
         return { hunks, result: contract.result };
       } catch (error) {
+        // A worker whose clean exit was followed by a failed settle (stage,
+        // commit, diff or report) is a FAILED agent, never a settling one
+        // (issue #151). A launch that never became ready keeps its own
+        // SPAWN_FAILED terminus, and an already-settled agent is left alone.
+        if (
+          launchedForSettle !== undefined &&
+          launchedForSettle.agentStatus() === 'settling'
+        ) {
+          try {
+            launchedForSettle.settleAgent('failed');
+          } catch {
+            // The agent settled concurrently — its own verdict stands.
+          }
+        }
         throw withResult(error);
       }
     },
@@ -2275,7 +2331,7 @@ export async function orchestrateDepsWithDefaults(
         persistWorkerRowsNow();
       }
       throwIfCancelled(request.agentId);
-      if (done.exitCode !== 0 || launched.status() === 'spawn_failed') {
+      if (done.exitCode !== 0 || launched.agentStatus() === 'spawn_failed') {
         const failure = launched.failure();
         return {
           resolved: false,
@@ -2397,11 +2453,11 @@ export async function orchestrateDepsWithDefaults(
       const crashed = launchedByAgent.get(agentId);
       if (crashed === undefined) return undefined;
       if (
-        crashed.status() !== 'crashed' ||
+        crashed.agentStatus() !== 'failed' ||
         crashed.failure()?.kind !== 'process'
       ) {
         debug(
-          `replace: worker '${agentId}' is not replaceable (status ${crashed.status()})`,
+          `replace: worker '${agentId}' is not replaceable (agent ${crashed.agentStatus()}, ${crashed.failure()?.kind ?? 'no failure'})`,
         );
         return undefined;
       }

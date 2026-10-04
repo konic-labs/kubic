@@ -1142,6 +1142,14 @@ export interface WorkerApprovalsRunOptions {
    * to know the flag grammar. Absent means the shared `budget` applies.
    */
   budgetForAgent?: (agentId: string) => unknown;
+  /**
+   * §13 WAITING (issue #151): notified when a worker's ask state CHANGES —
+   * true while the router holds at least one unanswered ask for that agent,
+   * false once it has none. The composition root turns it into the worker
+   * row's `waiting`/`running` agent state; an observer that throws never
+   * breaks routing.
+   */
+  onAskState?: (agentId: string, pending: boolean) => void;
   /** User opt-in full-access posture for THIS session (§41.4). */
   fullAccess?: boolean;
   /**
@@ -1542,24 +1550,46 @@ export function createOrchestratorApprovalsRun(
   // bookkeeping around it.
   const routing = new Set<string>();
   const noteRefused = refusalNote(audit, debug);
+  // §13 WAITING (issue #151): the observer sees CHANGES only, so a pump that
+  // finds the same pending set repeatedly does not spam the row.
+  const observedAskState = new Map<string, boolean>();
+  const noteAskState = (agentId: string, pending: boolean): void => {
+    if (observedAskState.get(agentId) === pending) return;
+    observedAskState.set(agentId, pending);
+    try {
+      options.onAskState?.(agentId, pending);
+    } catch (error) {
+      debug(
+        `approvals: ask-state observer failed for '${agentId}': ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+  const pendingFor = (agentId: string) =>
+    readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+      agentId,
+      onRefused: noteRefused,
+    });
   const pump = async (
     scope: WorkerApprovalScope,
   ): Promise<WorkerApprovalTermination | undefined> => {
-    for (const published of readPendingWorkerAsks(dir, {
-      verifyKey: signer.verifyKey,
-      agentId: scope.agentId,
-      onRefused: noteRefused,
-    })) {
+    noteAskState(scope.agentId, pendingFor(scope.agentId).length > 0);
+    for (const published of pendingFor(scope.agentId)) {
       const key = published.request.key;
       if (routing.has(key)) continue;
       routing.add(key);
       try {
         const termination = await answerOne(published, scope);
-        if (termination !== undefined) return termination;
+        if (termination !== undefined) {
+          noteAskState(scope.agentId, pendingFor(scope.agentId).length > 0);
+          return termination;
+        }
       } finally {
         routing.delete(key);
       }
     }
+    // The answered asks are no longer pending: back to RUNNING (§13).
+    noteAskState(scope.agentId, pendingFor(scope.agentId).length > 0);
     return undefined;
   };
 

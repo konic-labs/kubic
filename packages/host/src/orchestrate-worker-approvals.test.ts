@@ -86,6 +86,8 @@ interface Harness {
   merges: MergeDecisionRecord[];
   /** How often the merge gate's decider was consulted. */
   mergeAsks: () => number;
+  /** §13 WAITING → RUNNING transitions the router reported (issue #151). */
+  askStates: { agentId: string; pending: boolean }[];
   /** The layer the CLI constructed through `deps.approvals`. */
   readonly approvals: WorkerApprovalsRun;
   dir: string;
@@ -126,6 +128,8 @@ function harness(
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
   const merges: MergeDecisionRecord[] = [];
+  // §13 WAITING (issue #151): the ask-state changes the router observed.
+  const askStates: { agentId: string; pending: boolean }[] = [];
   // How many times each worker has been launched (issue #175): the fake
   // child's own attempt counter, the replacement's `from` generation.
   const attempts = new Map<string, number>();
@@ -245,6 +249,9 @@ function harness(
           ? {}
           : { budgetForAgent: cliOptions.budgetForAgent }),
         ...(cliOptions.fullAccess === true ? { fullAccess: true } : {}),
+        onAskState: (agentId, pending) => {
+          askStates.push({ agentId, pending });
+        },
         ...(options.noSeat === true
           ? {}
           : {
@@ -269,6 +276,7 @@ function harness(
     debugLines,
     raised,
     published,
+    askStates,
     merges,
     mergeAsks: () => mergeAskCount,
     get approvals(): WorkerApprovalsRun {
@@ -342,6 +350,18 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     ).toHaveLength(2);
     expect(audit).toContain('orchestrator-approval-denied');
     expect(h.approvals.decisions.pendingKeys()).toEqual([]);
+  });
+
+  it('AC (issue #151): a pending ask shows WAITING, then RUNNING after the answer', async () => {
+    const h = harness(() => ({ approved: true }));
+    expect(await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps)).toBe(0);
+    // The router observed the ask as pending, then answered it: the row's
+    // agent state goes WAITING → RUNNING, and only on a CHANGE (a second
+    // pump that finds nothing pending reports nothing).
+    expect(h.askStates).toEqual([
+      { agentId: 'worker-1', pending: true },
+      { agentId: 'worker-1', pending: false },
+    ]);
   });
 
   it('AC6 (issue #206): two workers’ asks in flight at once are routed and answered independently', async () => {

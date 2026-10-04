@@ -68,6 +68,39 @@ describe('terminal control sequences from lane content (issue #88)', () => {
     expect(frame).not.toContain(`${ESC}[2J`);
   });
 
+  it('renders coloured tool output as clean text, not parameter noise (#299)', () => {
+    // FORCE_COLOR test runners, `git color.ui=always` and npm progress bars
+    // emit real SGR sequences even without a TTY. Stripping only the ESC
+    // byte left `[31m` visible in every output block; the whole sequence
+    // must go, and the words must stay.
+    const app = createTuiApp({
+      sessionId: 's',
+      model: 'm',
+      mode: 'solo',
+      approvalsSkipped: false,
+    });
+    app.applyLaneEntries([
+      {
+        id: 'e9',
+        seq: 9,
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          content: [
+            { type: 'text', text: `${ESC}[31mFAIL${ESC}[0m src/x.ts\n` },
+          ],
+        },
+      },
+    ]);
+    const frame = app.render(60).join('\n');
+    // The renderer's OWN SGR (glyph colours, resets) is not content: strip it
+    // and assert what the operator reads.
+    const plain = frame.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+    expect(plain).toContain('FAIL src/x.ts');
+    expect(plain).not.toContain('[31m');
+    expect(plain).not.toContain('[0m');
+  });
+
   it('does not let a tool NAME emit raw escapes (second-pass finding)', () => {
     // The first pass sanitized text content but not the tool-call name, so a
     // model emitting a call named `evil\x1b[2Jname` still rendered the

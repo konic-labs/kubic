@@ -1009,7 +1009,10 @@ Both panels read the session's own journal through the same projection
 — so `kubic tui --session <id>` shows earlier turns the first time `Ctrl-R`
 opens — after each tool call (throttled to one read per 100 ms burst) and
 when a turn settles. Paths and file content are stripped of terminal
-control sequences before they are drawn.
+control sequences before they are drawn: whole SGR/OSC sequences (so
+`FORCE_COLOR` output reads as plain text, not `[31m` noise), carriage-return
+overwrites collapsed to what the terminal would show, and tabs expanded by
+column.
 
 Both panel rows scroll: the mouse wheel over the panel moves it (it does not
 chain to the transcript while the panel can still scroll), and

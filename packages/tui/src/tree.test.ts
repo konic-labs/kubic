@@ -599,14 +599,26 @@ describe('tree tool detail (issue #345; §18, §49.1)', () => {
       type: 'tool-start',
       toolCallId: 'c1',
       toolName: 'bash',
-      args: { command: `echo${ESC}[2J\r${ESC}[31mboom` },
+      args: { command: `echo ${ESC}[2J${ESC}[31mboom` },
     });
     const rendered = renderTreeLines(state, 100).join('\n');
-    expect(rendered).toContain('echo');
-    expect(rendered).toContain('boom');
+    expect(rendered).toContain('echo boom');
     expect(rendered).not.toContain(`${ESC}[2J`);
     expect(rendered).not.toContain(`${ESC}[31m`);
-    expect(rendered).not.toContain('\r');
+    expect(rendered).not.toContain('[2J');
+    expect(rendered).not.toContain('[31m');
+    // A carriage return is an OVERWRITE, not a separator (issue #299): the
+    // terminal shows what came after it, and so does the tree.
+    applyLaneEvent(state, {
+      type: 'tool-start',
+      toolCallId: 'c2',
+      toolName: 'bash',
+      args: { command: 'progress 10%\rprogress 100%' },
+    });
+    const withReturn = renderTreeLines(state, 100).join('\n');
+    expect(withReturn).toContain('progress 100%');
+    expect(withReturn).not.toContain('10%');
+    expect(withReturn).not.toContain('\r');
   });
 });
 

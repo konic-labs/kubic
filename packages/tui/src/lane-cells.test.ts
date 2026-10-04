@@ -7,12 +7,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   entriesToCells,
+  sanitizeLaneText,
   summarizeToolArguments,
   summarizeToolOutcome,
   TOOL_DETAIL_MAX_CHARS,
   TOOL_OUTCOME_MAX_CHARS,
   TOOL_RESULT_MAX_CHARS,
 } from './lane-cells.js';
+import { visibleWidth } from './tui-boundary.js';
 
 function userEntry(id: string, seq: number, text: string) {
   return {
@@ -240,5 +242,52 @@ describe('tool outcome summary (issue #345)', () => {
         'bash',
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('lane text sanitisation (issue #299)', () => {
+  it('strips a complete SGR sequence, not just the ESC byte', () => {
+    expect(sanitizeLaneText('\u001b[31mred\u001b[0m')).toBe('red');
+    expect(sanitizeLaneText('plain \u001b[1;32mok\u001b[m done')).toBe(
+      'plain ok done',
+    );
+  });
+
+  it('strips OSC hyperlinks and titles whole', () => {
+    expect(
+      sanitizeLaneText(
+        '\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007',
+      ),
+    ).toBe('link');
+    expect(sanitizeLaneText('\u001b]0;my title\u0007body')).toBe('body');
+    // The ST-terminated form (`ESC \`) too.
+    expect(sanitizeLaneText('\u001b]0;title\u001b\\body')).toBe('body');
+  });
+
+  it('strips the 8-bit C1 CSI form and 2-byte ESC forms', () => {
+    expect(sanitizeLaneText('\u009b31mred')).toBe('red');
+    expect(sanitizeLaneText('\u001b(Bascii')).toBe('ascii');
+    expect(sanitizeLaneText('\u001b=keypad')).toBe('keypad');
+  });
+
+  it('collapses carriage-return overwrites to the final text', () => {
+    expect(sanitizeLaneText('a 10%\ra 100%')).toBe('a 100%');
+    // A progress line that ends in CR loses the dangling return.
+    expect(sanitizeLaneText('progress\r')).toBe('progress');
+    // Only the LAST overwrite survives, per line.
+    expect(sanitizeLaneText('one\rtwo\rthree\nkeep')).toBe('three\nkeep');
+  });
+
+  it('expands tabs by visible column width, not UTF-16 length', () => {
+    const expanded = sanitizeLaneText('日本\tc');
+    expect(expanded).toBe('日本    c');
+    // 'c' really sits at column 8: the two wide glyphs count as 4 columns,
+    // so the tab pads 4, not 6 (which UTF-16 length would have done).
+    expect(visibleWidth(expanded.slice(0, expanded.indexOf('c')))).toBe(8);
+  });
+
+  it('still drops C0 controls and keeps tab/newline', () => {
+    expect(sanitizeLaneText('a\u0007b')).toBe('ab');
+    expect(sanitizeLaneText('a\tb\nc')).toBe('a       b\nc');
   });
 });

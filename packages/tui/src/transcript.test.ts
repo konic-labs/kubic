@@ -247,10 +247,9 @@ describe('queued follow-ups (issue #334)', () => {
     // pending echo.
     view.setQueuedPrompts(['\u001b[2Jclear\u0007\tend']);
     const row = view.render(80).find((line) => line.includes('queued:')) ?? '';
-    // The ESC and BEL bytes are gone; the sequence's printable parameters
-    // stay as literal text (the shipped sanitizer strips controls, it does
-    // not interpret them).
-    expect(row).toContain('queued: [2Jclear');
+    // Issue #299: the WHOLE sequence is gone (stripping only the ESC byte
+    // left `[2J` as visible parameter noise), and the BEL with it.
+    expect(row).toContain('queued: clear');
     expect(row).not.toContain('\u001b');
     expect(row).not.toContain('\u0007');
     // The tab is expanded to a column stop, not passed through.

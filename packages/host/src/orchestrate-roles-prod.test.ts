@@ -28,6 +28,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   loadCliConfig,
   roleLayersFromConfig,
+  runtimeModelPin,
 } from '../../../apps/kubic/src/config-runtime.js';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import type { Provenance } from '../../exec/src/env.js';
@@ -163,11 +164,13 @@ async function harness(options: HarnessOptions = {}): Promise<{
   const scratch = scratchRoot('kubic-orch-roles-child-');
   const fixture = join(scratch, 'worker-child.mjs');
   writeFileSync(fixture, FIXTURE);
-  // The config `[roles.<name>]` layers exactly as the composition root
-  // projects them (prod-runners' `roleLayersFromConfig(cliConfig)`): the run
-  // must plan over the same layers the worker's own `kubic run --role`
-  // resolves.
+  // The committed config is loaded and projected exactly as the composition
+  // root does it: `roleLayersFromConfig(cliConfig)` for the `[roles.<name>]`
+  // layers and `runtimeModelPin(cliConfig)` for the manager's effective
+  // model. The run must plan over the same layers the worker's own
+  // `kubic run --role` resolves.
   let roleLayers: RoleLayerInput[] | undefined;
+  let model = options.model;
   if (options.projectConfig !== undefined) {
     const loaded = loadCliConfig({
       cwd: root,
@@ -176,6 +179,11 @@ async function harness(options: HarnessOptions = {}): Promise<{
     });
     expect(loaded.error).toBeUndefined();
     roleLayers = roleLayersFromConfig(loaded.runtime as never);
+    if (model === undefined) {
+      const pin = runtimeModelPin(loaded);
+      model =
+        pin === undefined ? undefined : { provider: pin.provider, id: pin.id };
+    }
   }
   const lines: string[] = [];
   const deps = await orchestrateDepsWithDefaults({
@@ -185,7 +193,7 @@ async function harness(options: HarnessOptions = {}): Promise<{
     sessionsRoot,
     registry: new WorkerRegistry(),
     workerEntry: { cmd: process.execPath, args: [fixture] },
-    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(model === undefined ? {} : { model }),
     ...(roleLayers === undefined ? {} : { roleLayers }),
   });
   const dumpDir = scratchRoot('kubic-orch-roles-prompts-');
@@ -239,12 +247,14 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     expect(readDump(h.dumpDir, 'beta', 'thinking')).toBe('medium');
   });
 
-  it("hands the manager's effective model to every worker with no role pin (issue #202)", async () => {
-    // Acceptance: parent `[model]` acme/x, no KUBIC_MODEL env, role docs
-    // present — the child selects acme/x, never local/llama3. (`acme` is a
-    // provider the manager's catalog does not know, so the credential
+  it('hands the committed [model] to every worker with no role pin (issue #202)', async () => {
+    // Acceptance: parent config `[model]` acme/x, no KUBIC_MODEL env, role
+    // docs present — the child is told acme/x, never local/llama3. (`acme` is
+    // a provider the manager's catalog does not know, so the credential
     // preflight has nothing to deliver and the claim stays about the model.)
-    const h = await harness({ model: { provider: 'acme', id: 'x' } });
+    const h = await harness({
+      projectConfig: '[model]\nprovider = "acme"\nid = "x"\n',
+    });
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing EXIT=0 PROMPTDUMPDIR=${h.dumpDir}`,
@@ -264,8 +274,8 @@ describe('prod orchestrate path: role-driven worker prompts (issue #104)', () =>
     // implementer worker run acme/m2 — through the real config load and the
     // same projection the composition root passes the run.
     const h = await harness({
-      model: { provider: 'acme', id: 'x' },
-      projectConfig: '[roles.implementer]\nmodel = "acme/m2"\n',
+      projectConfig:
+        '[model]\nprovider = "acme"\nid = "x"\n\n[roles.implementer]\nmodel = "acme/m2"\n',
     });
     const code = await runOrchestrateCommand(
       {

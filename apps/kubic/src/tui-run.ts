@@ -1750,7 +1750,30 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
         : entry.kind === 'pi.tool-result'
           ? 'toolResult'
           : undefined;
-  if (role === undefined) return undefined;
+  if (role === undefined) {
+    // Issue #317: a compaction summary (or a reset handoff) is part of the
+    // session's story — the transcript shows it instead of dropping it. No
+    // `branch_summary` entry exists in pi-durable 1.0: branching forks into a
+    // new conversation (#265/#332).
+    if (entry.kind !== 'pi.compaction' && entry.kind !== 'pi.reset') {
+      return undefined;
+    }
+    const carried = entry.model?.[0] as { content?: unknown } | undefined;
+    const content = normalizeMessageContent(carried?.content);
+    if (content === undefined) return undefined;
+    const data = entry.data as { reason?: unknown } | undefined;
+    const reason =
+      typeof data?.reason === 'string' && data.reason !== ''
+        ? data.reason
+        : undefined;
+    return {
+      id: String(entry.id),
+      seq: entry.id,
+      type: entry.kind === 'pi.compaction' ? 'compaction' : 'reset',
+      message: { role: 'user', content },
+      ...(reason === undefined ? {} : { reason }),
+    };
+  }
   const message = entry.model?.[0] as
     | {
         content?: unknown;

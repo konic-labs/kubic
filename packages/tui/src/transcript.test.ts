@@ -512,3 +512,54 @@ describe('transcript op log and snapshot reuse (issue #297)', () => {
     expect(changed[1]).toBe(before[1]);
   });
 });
+
+describe('compaction cells (issue #317)', () => {
+  const SUMMARY_LINES = Array.from(
+    { length: 12 },
+    (_, i) => `summary line ${i}`,
+  ).join('\n');
+
+  function view(): ReturnType<typeof createTranscriptView> {
+    const created = createTranscriptView();
+    created.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        {
+          id: 'c1:compaction',
+          kind: 'compaction',
+          markdown: SUMMARY_LINES,
+          detail: 'auto',
+        },
+      ],
+      1,
+    );
+    return created;
+  }
+
+  it('shows a compaction marker cell and its summary, collapsed', () => {
+    const doc = view().render(100).join('\n');
+    expect(doc).toContain('context compacted (auto)');
+    expect(doc).toContain('summary line 0');
+    // Collapsed: the first rows plus the Ctrl-X hint, like tool output.
+    expect(doc).not.toContain('summary line 11');
+    expect(doc).toContain('(ctrl+x to expand)');
+  });
+
+  it('expands the whole summary with Ctrl-X', () => {
+    const created = view();
+    created.toggleExpanded();
+    const doc = created.render(100).join('\n');
+    expect(doc).toContain('summary line 0');
+    expect(doc).toContain('summary line 11');
+    expect(doc).not.toContain('(ctrl+x to expand)');
+  });
+
+  it('keeps every row inside the width', () => {
+    const created = view();
+    for (const width of [40, 20]) {
+      for (const line of created.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+});

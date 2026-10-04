@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   entriesToCells,
+  type LaneEntryLike,
   sanitizeLaneText,
   summarizeToolArguments,
   summarizeToolOutcome,
@@ -303,5 +304,63 @@ describe('lane text sanitisation (issue #299)', () => {
   it('still drops C0 controls and keeps tab/newline', () => {
     expect(sanitizeLaneText('a\u0007b')).toBe('ab');
     expect(sanitizeLaneText('a\tb\nc')).toBe('a       b\nc');
+  });
+});
+
+describe('compaction cells (issue #317)', () => {
+  const SUMMARY = `The conversation history before this point was compacted into the following summary:\n\n<summary>\nOlder turns were summarized here.\n</summary>`;
+
+  function compactionEntry(text: string): LaneEntryLike {
+    return {
+      id: 'c9',
+      seq: 9,
+      type: 'compaction',
+      reason: 'auto',
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    };
+  }
+
+  it('renders a compaction summary as its own cell, wrapper stripped', () => {
+    const cells = entriesToCells([compactionEntry(SUMMARY)]);
+    expect(cells).toEqual([
+      {
+        id: 'c9:compaction',
+        kind: 'compaction',
+        markdown: 'Older turns were summarized here.',
+        detail: 'auto',
+      },
+    ]);
+  });
+
+  it('sanitizes the summary like any other lane text', () => {
+    const ESC = String.fromCharCode(27);
+    const cells = entriesToCells([
+      compactionEntry(`${SUMMARY.replace('here.', `here${ESC}[31m.`)}`),
+    ]);
+    expect(cells[0]?.markdown).toBe('Older turns were summarized here.');
+    expect(cells[0]?.markdown).not.toContain('[31m');
+    expect(cells[0]?.markdown).not.toContain(ESC);
+  });
+
+  it('renders a reset handoff as text and drops an empty entry', () => {
+    const cells = entriesToCells([
+      {
+        id: 'r1',
+        seq: 1,
+        type: 'reset',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'handoff text' }],
+        },
+      },
+      {
+        id: 'r2',
+        seq: 2,
+        type: 'compaction',
+        message: { role: 'user', content: [] },
+      },
+    ]);
+    expect(cells.map((cell) => cell.markdown)).toEqual(['handoff text']);
+    expect(cells[0]?.kind).toBe('text');
   });
 });

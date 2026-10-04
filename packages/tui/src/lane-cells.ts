@@ -21,6 +21,9 @@ export interface LaneEntryLike {
   readonly seq?: unknown;
   readonly type?: unknown;
   readonly message?: unknown;
+  // Issue #317: a `compaction` cell carries why it happened (auto / manual /
+  // overflow), rendered beside the marker.
+  readonly reason?: unknown;
 }
 
 // Upper bound on the output a cell carries (the view collapses it further
@@ -310,9 +313,51 @@ function expandTabs(text: string): string {
     .join('\n');
 }
 
+// pi-durable wraps a compaction summary in a fixed preamble and <summary>
+// tags (`harness/compaction.js`'s SUMMARY_PREFIX/SUFFIX). The operator wants
+// the summary itself, so the wrapper is dropped when it is present.
+function compactionSummaryOf(text: string): string {
+  return text
+    .replace(
+      /^The conversation history before this point was compacted into the following summary:\s*\n*/u,
+      '',
+    )
+    .replace(/^<summary>\s*\n?/u, '')
+    .replace(/\n?<\/summary>\s*$/u, '')
+    .trim();
+}
+
 function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
   const id = typeof entry.id === 'string' ? entry.id : '';
   if (id === '') return [];
+  if (entry.type === 'compaction' || entry.type === 'reset') {
+    // Issue #317: a compaction summary (and a reset handoff) is part of the
+    // session's story — the transcript shows it instead of dropping it. The
+    // text is untrusted like any other lane text, so it is sanitized here.
+    if (!isRecord(entry.message)) return [];
+    if (!Array.isArray(entry.message.content)) return [];
+    const text = (entry.message.content as unknown[])
+      .map(textOf)
+      .filter((part): part is string => part !== undefined)
+      .map(sanitizeLaneText)
+      .join('\n')
+      .trim();
+    if (text === '') return [];
+    const summary =
+      entry.type === 'compaction' ? compactionSummaryOf(text) : text;
+    const reason =
+      typeof entry.reason === 'string' && entry.reason !== ''
+        ? sanitizeLaneText(entry.reason)
+        : undefined;
+    return [
+      {
+        id: `${id}:${entry.type}`,
+        kind: entry.type === 'compaction' ? 'compaction' : 'text',
+        markdown: summary === '' ? text : summary,
+        ...(reason === undefined ? {} : { detail: reason }),
+      },
+    ];
+  }
   if (entry.type !== 'message') return [];
   if (!isRecord(entry.message)) return [];
   const role = entry.message.role;

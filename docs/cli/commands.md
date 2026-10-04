@@ -994,7 +994,10 @@ turns fold into one `… N earlier calls in M turns` line above the live
 turn (calls beyond the row cap fold into `… N earlier calls`). The
 transcript follows the end as the turn streams (your prompt is echoed as
 `› …` the moment you submit, assistant prose renders as markdown, and each
-tool call renders as `● name args` with its output folded underneath `⎿`);
+tool call renders as `● name args` with its output folded underneath `⎿`,
+and a context compaction shows a `⟳ context compacted (reason)` marker with
+the summary underneath — collapsed to the same five rows, `Ctrl-X` expands
+it);
 the status bar, whose first row shows model, thinking level, tokens, cache
 and session cost, plus a `ctx NN%` context gauge once the lane has reported
 a committed request and the model's window is known — it turns to the

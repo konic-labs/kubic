@@ -22,7 +22,13 @@ import {
 
 // 'prompt' is the operator's own line; 'text' is assistant prose (rendered
 // as markdown); 'tool' is a call; 'output' is a call's result.
-export type TranscriptEntryKind = 'prompt' | 'text' | 'tool' | 'output';
+export type TranscriptEntryKind =
+  | 'prompt'
+  | 'text'
+  | 'tool'
+  | 'output'
+  // Issue #317: a compaction summary the lane placed in the branch.
+  | 'compaction';
 
 export interface TranscriptEntry {
   readonly id: string;
@@ -51,6 +57,8 @@ const PROMPT_MARK = '›';
 const ASSISTANT_MARK = '▪';
 const TOOL_MARK = '●';
 const OUTPUT_ELBOW = '⎿';
+// Issue #317: the compaction marker row's glyph.
+const COMPACTION_MARK = '\u27f3';
 // Issue #334: the label in front of a queued follow-up's first line. Plain
 // ASCII, because it prefixes untrusted prompt text and must never be
 // confused with a committed prompt row (`›`).
@@ -262,6 +270,27 @@ class TranscriptDocument implements Component {
           if (result !== undefined) this.renderOutput(out, result, w, theme);
           break;
         }
+        case 'compaction': {
+          // Issue #317: the marker names what happened; the summary follows,
+          // collapsed like tool output (Ctrl-X expands it).
+          gap();
+          const reason = cell.detail === undefined ? '' : ` (${cell.detail})`;
+          out.push(
+            fit(
+              theme.accentBold(`${COMPACTION_MARK} context compacted${reason}`),
+              w,
+            ),
+          );
+          this.renderBlock(
+            out,
+            cell.markdown.split('\n'),
+            w,
+            theme.muted,
+            '  ',
+            '  ',
+          );
+          break;
+        }
         case 'output': {
           // Paired outputs render under their call; an orphan (no call in
           // view) renders on its own.
@@ -334,19 +363,37 @@ class TranscriptDocument implements Component {
     width: number,
     theme: TuiTheme,
   ): void {
-    const lines = cell.markdown.split('\n');
-    const shown = this.expanded
-      ? lines
-      : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
-    const style = cell.isError === true ? theme.error : theme.muted;
     // Issue #300: expanded, every line WRAPS (the operator expands to read a
     // whole diagnostic, so no character may be cut); collapsed, the preview
     // stays compact and its hint says that the shown rows are clipped.
     const plainLead = `  ${OUTPUT_ELBOW}  `;
-    const indent = ' '.repeat(plainLead.length);
+    this.renderBlock(
+      out,
+      cell.markdown.split('\n'),
+      width,
+      cell.isError === true ? theme.error : theme.muted,
+      `  ${theme.muted(OUTPUT_ELBOW)}  `,
+      ' '.repeat(plainLead.length),
+    );
+  }
+
+  // One collapsed/expanded text block: tool output (#300) and compaction
+  // summaries (#317) share the rule — collapsed shows the first rows and
+  // says what it hides, expanded wraps everything.
+  private renderBlock(
+    out: string[],
+    lines: string[],
+    width: number,
+    style: (text: string) => string,
+    lead: string,
+    indent: string,
+  ): void {
+    const shown = this.expanded
+      ? lines
+      : lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES);
     let clipped = false;
     shown.forEach((line, index) => {
-      const lead = index === 0 ? `  ${theme.muted(OUTPUT_ELBOW)}  ` : indent;
+      const rowLead = index === 0 ? lead : indent;
       if (this.expanded) {
         const wrapped = wrapTextWithAnsi(
           line,
@@ -354,12 +401,12 @@ class TranscriptDocument implements Component {
         );
         wrapped.forEach((row, rowIndex) => {
           out.push(
-            fit(`${rowIndex === 0 ? lead : indent}${style(row)}`, width),
+            fit(`${rowIndex === 0 ? rowLead : indent}${style(row)}`, width),
           );
         });
         return;
       }
-      const rendered = `${lead}${style(line)}`;
+      const rendered = `${rowLead}${style(line)}`;
       if (visibleWidth(rendered) > width) clipped = true;
       out.push(fit(rendered, width));
     });
@@ -370,7 +417,7 @@ class TranscriptDocument implements Component {
       if (clipped) parts.push('lines clipped');
       out.push(
         fit(
-          `${indent}${theme.dim(`… ${parts.join(' · ')} (ctrl+x to expand)`)}`,
+          `${indent}${tuiTheme().dim(`… ${parts.join(' · ')} (ctrl+x to expand)`)}`,
           width,
         ),
       );

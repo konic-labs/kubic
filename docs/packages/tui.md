@@ -70,7 +70,7 @@ module owns arrangement only.
   `StatusBarState.compactionThreshold` — and drops before the model when
   the terminal narrows.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
-  `text|tool|output`; `TranscriptView` applies snapshot/delta ops
+  `prompt|text|tool|output|compaction`; `TranscriptView` applies snapshot/delta ops
   (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
   assistant message streams live (issue #296): `setStream(text)` renders a
   plain draft after the committed cells while `message-delta` events arrive,
@@ -79,7 +79,12 @@ module owns arrangement only.
   collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
   hint naming hidden or clipped rows); Ctrl-X expands it, and then every
   output line and the tool call's args summary wrap with a hanging indent
-  instead of being cut (issue #300). Caching (issue #298): each cell's
+  instead of being cut (issue #300). A `pi.compaction` entry renders as its
+  own `compaction` cell — a `⟳ context compacted (reason)` marker plus the
+  summary (pi-durable's preamble/`<summary>` wrapper stripped, collapsed to
+  the same preview budget and expanded by Ctrl-X); a `pi.reset` handoff
+  renders as text, and no `branch_summary` kind exists in 1.0 (branching
+  forks into a new conversation). Caching (issue #298): each cell's
   markdown and finished rows are reused while its text, width and theme
   level are unchanged — a steady frame (the 100 ms spinner repaint) parses
   nothing — and a snapshot that drops cells prunes their cache entries;

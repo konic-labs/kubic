@@ -35,7 +35,7 @@ workspace.
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`. |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
 | `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | |
 | `git_diff` | `staged?`, `range?`, `path?` | |
@@ -147,6 +147,28 @@ link itself.
 - **Caps:** at most **10,000** entries and **100** directory levels, plus the
   op's own `maxResults` / `maxMatches` (default 100). A result a cap cut is
   marked `truncated` and names the cap and where it hit, as shown above.
+
+## Line endings and BOM
+
+`edit` normalizes what it matches against, then restores what the file had
+(issue [#195](https://github.com/konic-labs/kubic/issues/195)):
+
+- **Line endings:** the file's dominant ending is detected, the file body,
+  `oldText` and `newText` are normalized to LF for matching and replacement,
+  and the dominant ending is restored on write. A CRLF file with an LF
+  multi-line `oldText` edits where it used to be `no_match`, the result never
+  mixes endings, and an LF file is byte-for-byte unchanged apart from the
+  replacement. A tie between CRLF and bare LF goes to LF, and a mixed file
+  comes out uniform.
+- **BOM:** a leading UTF-8 BOM is stripped from the file body and from both
+  model texts before matching, and re-added on write only when the file had
+  one — so a first-line edit in a BOM file succeeds, the BOM survives, and a
+  replacement can never introduce a second one. An `oldText` that is nothing
+  but a BOM (empty after normalization) is refused with `invalid_args`.
+
+`expectCount` counts on the normalized text, and the journal records the
+real pre- and post-images (BOM and endings included), so `kubic undo`
+restores the CRLF/BOM file exactly as it was.
 
 ## Grep bounds
 

@@ -88,10 +88,38 @@ function countOccurrences(text: string, needle: string): number {
 // can trigger with one tool call. 8 MiB matches the read bound.
 export const EDIT_MAX_BYTES = 8 * 1024 * 1024;
 
+const BOM = '\uFEFF';
+
+// Line-ending and BOM normalization (issue #195; §9.1, Pi's edit-diff.ts).
+// A Windows-authored file must edit where Pi succeeds: matching happens on
+// LF-normalized text with any leading BOM stripped, and the file's own
+// ending and BOM are restored on write. Without this a CRLF file with an LF
+// multi-line oldText is `no_match`, a first-line edit can mix endings, and a
+// model whose reader stripped the BOM cannot match the first line at all.
+
+/** The dominant ending of `content`; a tie goes to LF. */
+function detectLineEnding(content: string): '\r\n' | '\n' {
+  const lf = (content.match(/\n/g) ?? []).length;
+  const crlf = (content.match(/\r\n/g) ?? []).length;
+  return crlf > lf - crlf ? '\r\n' : '\n';
+}
+
+function normalizeToLF(content: string): string {
+  return content.replace(/\r\n/g, '\n');
+}
+
+function restoreLineEndings(content: string, ending: '\r\n' | '\n'): string {
+  return ending === '\r\n' ? content.replace(/\n/g, '\r\n') : content;
+}
+
+function stripBom(content: string): string {
+  return content.startsWith(BOM) ? content.slice(1) : content;
+}
+
 export const editOperation: Operation<EditArgs, EditResult> = {
   name: 'edit',
   description:
-    'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Files over 8 MiB are refused.',
+    'Replace exact text in a file atomically (tmp + rename). oldText must match byte for byte, whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {
@@ -125,9 +153,27 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: ${args.path} is not valid utf-8 text (binary content) — refusing to rewrite it`,
       );
     }
-    const current = pre.text;
+    // Issue #195: normalize the file, the needle and the replacement into
+    // the same LF/BOM-free space, then restore the file's own ending and BOM
+    // on write. Both sides are stripped, so an oldText that carries the BOM
+    // still matches and a replacement can never introduce a second one.
+    const raw = pre.text;
+    const bom = raw.startsWith(BOM);
+    const ending = detectLineEnding(stripBom(raw));
+    const current = normalizeToLF(stripBom(raw));
+    const oldText = normalizeToLF(stripBom(args.oldText));
+    const newText = normalizeToLF(stripBom(args.newText));
+    if (oldText.length === 0) {
+      // `\uFEFF` alone (or a lone BOM plus CRLF) normalizes to nothing: an
+      // empty needle would match everywhere, so refuse it like the empty
+      // oldText the validator already rejects.
+      throw new OpError(
+        'invalid_args',
+        `edit: oldText is empty after line-ending/BOM normalization`,
+      );
+    }
     const expected = args.expectCount ?? 1;
-    const found = countOccurrences(current, args.oldText);
+    const found = countOccurrences(current, oldText);
     if (found === 0) {
       throw new OpError('no_match', `edit: oldText not found in ${args.path}`);
     }
@@ -137,19 +183,24 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: found ${found} matches in ${args.path}, expected ${expected}`,
       );
     }
-    const updated = current.split(args.oldText).join(args.newText);
-    const beforeHash = sha256Hex(current);
+    const updated =
+      (bom ? BOM : '') +
+      restoreLineEndings(current.split(oldText).join(newText), ending);
+    const beforeHash = sha256Hex(raw);
     const result = {
       path: args.path,
       replacements: found,
       beforeHash,
       afterHash: sha256Hex(updated),
       bytesDelta:
-        Buffer.byteLength(updated, 'utf8') - Buffer.byteLength(current, 'utf8'),
+        Buffer.byteLength(updated, 'utf8') - Buffer.byteLength(raw, 'utf8'),
     };
+    // The journal carries the real pre- and post-images (BOM and endings
+    // included), so its hashes describe the file on disk and undo restores
+    // the CRLF/BOM file exactly.
     replaceFile(ctx, 'edit', args.path, updated, pre, {
       op: 'edit',
-      before: current,
+      before: raw,
       after: updated,
       bytesDelta: result.bytesDelta,
     });

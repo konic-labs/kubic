@@ -234,6 +234,33 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
+### Edit line endings and BOM (issue #195)
+
+`edit` (`ops/edit.ts`) normalizes before matching and restores on write, the
+way Pi's `edit-diff.ts` does:
+
+- `detectLineEnding` counts CRLF against bare LF and takes the dominant one
+  (a tie goes to LF); `normalizeToLF` puts the file body, `oldText` and
+  `newText` into LF space for `countOccurrences`/split/join; `restoreLineEndings`
+  puts the file's own ending back on the written content. Without it a CRLF
+  file with an LF multi-line `oldText` was `no_match` and a partial match
+  could mix endings. `newText` is normalized too, so a replacement that
+  carries CRLF can never come out as `\r\r\n`.
+- `stripBom` removes a leading U+FEFF from the file body and from both model
+  texts, and the write re-adds one only when the file had it — a first-line
+  edit in a BOM file succeeds, the BOM is preserved, and a replacement can
+  never introduce a second one. A needle that normalizes to nothing is
+  refused (`invalid_args`), since an empty match would match everywhere.
+- `expectCount` counts on the normalized text. The journal keeps the real
+  pre-image and the real written content (BOM and endings included), so
+  `edit`'s `afterHash` describes the file on disk and `kubic undo` restores
+  a CRLF/BOM file exactly.
+
+The regression suite is `packages/worker/src/ops/edit.test.ts` (CRLF
+multi-line replace, CRLF needle and replacement, BOM first line, BOM in the
+needle, no second BOM, empty-after-normalization refusal, `expectCount` on
+normalized text, LF unchanged, undo round-trip).
+
 ### Write pre-image bound (issue #139)
 
 `readPreImage` (`ops/atomic-file.ts`) never holds a file it cannot bound.

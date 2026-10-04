@@ -32,7 +32,7 @@ export const GREP_MAX_FILE_BYTES = 8 * 1024 * 1024;
 // the last whole line that fits and names the cap.
 export const GREP_RESULT_MAX_BYTES = 51200;
 
-/** read.ts's binary rule, as grep applies it: a NUL byte means binary. */
+/** A NUL byte in the decoded content is grep's binary rule (issue #180). */
 const NUL = '\u0000';
 
 export interface GrepArgs {
@@ -158,7 +158,10 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
       // Size first (issue #180): an oversized file costs one stat and is
       // never opened, so grep's memory is bounded by the text bound, not by
       // the largest file in the tree. A file that vanished since the walk
-      // (or cannot be stat'ed) is skipped silently, as before.
+      // (or cannot be stat'ed) is skipped silently, as before; an entry that
+      // is not a regular file (a FIFO, socket or device — the walk lists
+      // them) is skipped too: reading a FIFO could block the whole run, and
+      // it is not a text-search candidate.
       let size: number;
       try {
         const info = ctx.env.fs.stat(entry.path);
@@ -177,11 +180,13 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
       } catch {
         continue;
       }
-      // A NUL byte means binary content (read's own rule, #176): a regex
-      // over it is meaningless and one "line" can be the whole file. The
-      // tool's contract is that binaries are never matched — documented, and
-      // counted in the result — so this alone does not call the search
-      // truncated.
+      // A NUL byte anywhere in the decoded content means binary (issue
+      // #180's rule). read's sniff is deliberately BROADER — it also refuses
+      // a first chunk that is not valid UTF-8 — and grep does not pay a
+      // second read for that: a NUL-free invalid-UTF-8 file is still
+      // searched, which the tools page states. The tool's contract is that
+      // binaries are never matched — documented, and counted in the result —
+      // so this alone does not call the search truncated.
       if (text.includes(NUL)) {
         skippedBinary += 1;
         continue;

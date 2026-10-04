@@ -143,9 +143,15 @@ cleanup `afterEach`).
   `DEFAULT_MAX_BYTES`):** matches are appended while the rendered
   `path:line: text` line fits; the search stops at the last whole line and
   the header names `output cap 51200B reached`.
-- **Binary files (a NUL byte) are skipped and counted** in `skippedBinary`,
-  using read's own rule. This is the documented contract (binaries are never
-  text-matched), so it counts without flipping `truncated`.
+- **Binary files (a NUL byte anywhere in the decoded content) are skipped
+  and counted** in `skippedBinary`. That is narrower than read's sniff
+  (which also refuses a first chunk that is not valid UTF-8): grep does not
+  pay a second read for the validity check, so a NUL-free invalid-UTF-8
+  file is still searched. This is the documented contract (binaries are
+  never text-matched), so it counts without flipping `truncated`. Entries
+  that are not regular files (FIFO, socket, device) are skipped too —
+  reading a FIFO could block the run — without a count, since they are not
+  text candidates at all.
 
 `include` stays a path substring test — pinned in the tool schema and the
 operation description (`ops/grep.test.ts`), not turned into a glob.

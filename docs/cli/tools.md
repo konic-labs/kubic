@@ -181,9 +181,16 @@ restores the CRLF/BOM file exactly as it was.
   *number* stays exact; only the text is partial, and the header says
   `lines clipped at 500 chars`.
 - **Binary files are skipped and counted** (`skippedBinary`): a file whose
-  content contains a NUL byte is never matched — the same rule `read` uses —
-  and the header says `N binary file(s) skipped`. Skipping binaries is the
-  tool's contract, so it does not mark the search `truncated`.
+  content contains a NUL byte is never matched, and the header says
+  `N binary file(s) skipped`. This is a NUL test over the whole content —
+  narrower than `read`'s sniff, which also refuses a first chunk that is not
+  valid UTF-8 — so a NUL-free invalid-UTF-8 file is still searched. Skipping
+  binaries is the tool's contract, so it does not mark the search
+  `truncated`.
+- **Entries that are not regular files** (a FIFO, socket or device — the walk
+  lists them) are skipped without a count: reading a FIFO could block the
+  run, and such an entry is not a text-search candidate. A file that
+  vanished between the walk and the read is skipped the same way.
 - **Files over 8 MiB are skipped and counted** (`skippedOversized`): the
   file costs one `stat` and is never opened, so memory is bounded by the
   text bound rather than by the largest file in the tree. Because an

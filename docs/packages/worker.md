@@ -26,8 +26,8 @@ every diff touching the boundary for maintainer review.
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)) |
 | `lane/interceptors.ts` | `PolicyTrigger`, `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and approved-call set live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `createSession`, `attachSession`, `SessionAttachError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace`, `listSessions` |
-| `lane/session-fs.ts` | `bridgeToPiFileSystem` |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
+| `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
 | `lane/settle.ts` | `OperationErrorLike`, `SettledResult`, `classifyHarnessError`, `settleTerminalStatus` |
 | `lane/pending.ts` | `PendingPolicy`, `PendingSettlement`, `PendingLane`, `PendingDriver`, `settlePendingOperation`, `pendingHead`, `describePendingOperation`, `describeSettlement`, `inspectOpenOperations`, `lastUserPromptText` — settle a turn a crashed process left open (#147: resume or durable abort) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `LaneAborter`, `LaneAbortResult` |
@@ -206,17 +206,100 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
+### Session storage (issue #392)
+
+One pi-durable `Storage` per session, at `<sessions-root>/<id>/` — the same
+directory that already held the journal, spans, approvals posture and lock.
+The storage is opened over the exec file bridge (`bridgeToPiFileSystem`), not
+through pi-durable's Node entry point: session bytes keep crossing the I/O
+seam, so the #359 secret scrubbing and the #361 file modes apply to the
+session JSONL exactly as they did before, and Kubic stays the only package
+that touches `node:fs`.
+
+| Path under `<root>/<id>/` | What it is |
+| --- | --- |
+| `main.jsonl` + `doc-<n>.jsonl` | the pi-durable JSONL storage: the session's transcript, documents and durable tasks — the session's truth |
+| `session.json` | Kubic's **listing header**: the metadata projection `listSessions` reads |
+| `lock.json` | the session lock ([below](#session-locking-issue-118)) |
+| `journal/`, `spans.jsonl`, `posture.json`, `trajectory.json` | the rest of the session's state, unchanged |
+
+The metadata itself is the session-scoped `kubic.session` document
+(`KubicSessionDoc`, `{ cwd, createdAt, workspace? }`), written in the
+creating commit by a plain pi-durable Session kernel — the harness belongs to
+the caller. `readSessionMetadata(storage, context)` reads it back from the
+storage a caller already has open.
+
+The listing header exists because **listing must never open a session
+storage**: pi-durable owns one storage per process and does no cross-process
+locking, and opening a live session's storage would let recovery truncate a
+file the live writer is appending to. `listSessions` and
+`sessionsTouchingWorkspace` run on every `kubic run` boot (the overlap probe)
+and in `kubic doctor`, so they read one small header file per session
+instead. The header is written once from the same value as the document and
+re-synced from the document on attach, so the two cannot drift.
+
+**fsync is off** — pi-durable's default, and what 0.87's JSONL session
+storage did, so this is parity rather than a downgrade. A process crash loses
+nothing (the page cache outlives it); a power loss costs at most the newest
+commit, which recovery drops whole instead of leaving a torn session. The
+change journal stays Kubic's fsync'd store (§42.4): that is where "this
+change can be undone" is guaranteed.
+
+File modes are unchanged by this migration: the storage writes through the
+same bridge calls as before, so session JSONL is still created with the
+umask default. [#361](https://github.com/konic-labs/kubic/issues/361)
+(restrictive 0600/0700 modes for session and journal state) is independent of
+this port and stays open.
+
+**Legacy sessions (Pi 0.87).** A transcript written by the removed
+`JsonlSessionRepo` lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
+format-4 header. There is no converter (the repo is unreleased, §21):
+`listSessions` reports it as `{ format: 'legacy' }` (and
+`sessionsTouchingWorkspace` skips it — a 0.87 transcript can never be the
+live sibling that probe warns about), and `attachSession` refuses it with
+`SessionFormatError`:
+
+```
+session <id> was written by Kubic on Pi 0.87; start a new session
+```
+
+A session id must be a plain path segment (`[A-Za-z0-9_-]`) **and** must not
+be shaped like one of pi's transcript directories (`--…--`): `listSessions`
+classifies that shape as the 0.87 layout, so a session with such an id would
+be attachable but invisible to `sessions list`, the overlap probe and
+`kubic doctor`. Both paths refuse it (`SessionIdError` on create,
+`SessionAttachError` on attach) before any path join — containment by
+construction. `createSession` also refuses an id that already has a session
+(`Session already exists: <id>`, 0.87's message) and an id that belongs to a
+0.87 transcript (`SessionFormatError`): a durable session is never written
+over an existing session's journal, spans and posture. A legacy transcript's
+header id is validated against the same rule before it enters a listing: a
+foreign or hand-edited header is skipped, never rendered.
+
+`SessionHandle.release(context)` always releases the lock and closes the
+storage only while no harness adopted it. A caller that boots a harness does
+`Harness.open(handle.adopt(), …)`: adoption hands ownership over, so a
+`release()` racing a live harness never closes the storage under it (the
+harness closes it), and `release()` stays idempotent either way.
+`handle.storage` is for reads — `readSessionMetadata` and the other readers —
+and does not transfer ownership.
+
 ### Session locking (issue #118)
 
-One live attachment per session, fail-closed. `createSession` (after the
-session dir exists) and `attachSession` (before the transcript is read)
+One live attachment per session, fail-closed. `createSession` (before the
+storage is created) and `attachSession` (before the storage is opened)
 acquire `<sessions-root>/<session-id>/lock.json` — a `{pid, startedAt}`
 record of the attaching process — through the exec-owned lock-file
 primitive (`exec/lock-file.ts`; I/O confinement, §9): an O_EXCL
 (`writeFileSync(…, {flag: 'wx'})`) create is the atomic test-and-set, and
 the primitive makes the session dir eagerly as the lock's parent.
-`session.close(…)` releases the lock (best-effort remove), so the file
+`handle.release(…)` releases the lock (best-effort remove), so the file
 exists only while a session is actually attached.
+
+The lock is the ONLY guard around a storage open (issue #392): pi-durable
+states that one process owns a storage at a time and provides no
+cross-process locking, so every open in this module happens with the lock
+already held.
 
 - **Refusal** is `SessionLockError`; its message names the session and
   the holder's pid + start time. Host maps it to `workspace_unavailable`
@@ -246,7 +329,10 @@ exists only while a session is actually attached.
   probe feeds two warning surfaces: the run path emits one
   `reconcile: another run may be live in this workspace …` line on its
   debug channel, and `kubic doctor` reports `session:overlap` (warn when
-  two or more sessions are recorded). The reason it warns: each run's
+  two or more sessions are recorded). It matches the session's recorded
+  `workspace` when it declared one, its `cwd` otherwise, and it skips
+  `format: 'legacy'` transcripts (a 0.87 session cannot be attached, so it
+  cannot be a live sibling). The reason it warns: each run's
   end-of-run sweep compares against its own boot baseline, so a sibling
   session's in-flight changes land in this run's journal as unattributed,
   non-reversible entries. Never a block.

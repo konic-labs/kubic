@@ -1001,7 +1001,7 @@ its own generated help (`kubic sessions prune --help`).
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. Sessions written by Kubic on Pi 0.87 are reported by the store as `format: 'legacy'` ([below](#session-storage-and-legacy-pi-087-sessions)); the row that renders that flag lands with the session readers (#400). |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), then a `pending operation: <id> (<kind>, started <iso>)` line for each operation a crashed run left open (settled by the next `run`/`tui --session`), then the last `--tail` transcript entries (default 10) truncated to 300 chars each. `--tail` needs a non-negative integer. |
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
@@ -1013,7 +1013,39 @@ unknown subcommand exits 1 (`error: unknown command '<name>'`), like an
 unknown top-level command. Attaching a missing session exits 1; attaching
 a session another process holds live prints the lock refusal (issue #118 —
 the holder's pid and start time are named) and exits 1 without reading
-the transcript.
+the transcript. Attaching a session written by Kubic on Pi 0.87 exits 1
+with `session <id> was written by Kubic on Pi 0.87; start a new session`
+([below](#session-storage-and-legacy-pi-087-sessions)).
+
+### Session storage and legacy Pi 0.87 sessions
+
+A session is one directory, `<sessions-root>/<id>/`, holding the
+pi-durable JSONL storage (`main.jsonl` and its `doc-*.jsonl` sidecars —
+the transcript, documents and durable tasks), Kubic's `session.json`
+listing header, the lock, the journal, spans, approvals posture and
+trajectory. The session's metadata is the session-scoped `kubic.session`
+document, written in the creating commit, so anything holding the session
+open reads it from the same durable state as the transcript. Session JSONL
+is not fsynced (matching the previous storage); the change journal is the
+fsync'd store.
+
+Sessions written by **Kubic on Pi 0.87** used a different format: one
+transcript file per session at `<sessions-root>/--<cwd>--/<ts>_<id>.jsonl`,
+beside the session's state directory. Kubic does not convert them — the
+project is unreleased, so there is nothing to migrate:
+
+- `kubic sessions list` reports them as `legacy` (the store returns
+  `format: 'legacy'`; the CLI row lands with #400) and never crashes on one.
+- `kubic sessions attach <id>` refuses by name, exit 1:
+  `session <id> was written by Kubic on Pi 0.87; start a new session`.
+  Nothing is read, moved or rewritten.
+- A 0.87 transcript is never counted by the session-overlap warning
+  (`kubic doctor`): it cannot be attached, so it cannot be a live sibling.
+- `kubic sessions prune` still never touches `--<cwd>--` transcript
+  directories — only `<root>/<id>/` state dirs ([below](#session-retention-prune)).
+
+Start a new session (`kubic sessions create`, or just `kubic run`) and the
+state directory's own format is the durable one.
 
 ### Session retention (`prune`)
 
@@ -1069,9 +1101,10 @@ journal entries at read time (see the read-time self-heal note under
   recent session is never a candidate anyway, and a live-locked one is
   reported `locked:` instead.
 - **Only session-shaped entries are touched.** Plain files, a stray
-  `lock.json`, names outside `[A-Za-z0-9_-]`, and pi's `--<cwd>--`
-  transcript directories (which hold the `.jsonl` transcripts of every
-  session recorded against that cwd) are never touched. A session that
+  `lock.json`, names outside `[A-Za-z0-9_-]`, and the `--<cwd>--`
+  transcript directories of 0.87 sessions (which hold the `.jsonl`
+  transcripts of every session recorded against that cwd) are never
+  touched. A session that
   cannot be inspected is skipped and reported
   (`unreadable: <id> — skipped`), never guessed at. A missing sessions
   root is a fresh machine: `nothing to prune`, exit 0. A root that exists
@@ -1079,9 +1112,11 @@ journal entries at read time (see the read-time self-heal note under
 - **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
   never the workspace journal (`.kubic/journal`), never orchestrator
   worktrees (`kubic clean` owns those), never anything outside the
-  sessions root. pi's transcript files live beside the state dirs
-  (`<root>/--<cwd>--/<ts>_<id>.jsonl`) and are not part of this command
-  today.
+  sessions root. A durable session's transcript lives INSIDE its state dir
+  (`main.jsonl`), so pruning a session deletes its transcript with it. The
+  `--<cwd>--` transcript directories of sessions written by Kubic on Pi
+  0.87 stay beside the state dirs and are not part of this command today
+  ([legacy sessions](#session-storage-and-legacy-pi-087-sessions)).
 
 ## `kubic git`
 

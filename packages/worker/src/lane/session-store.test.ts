@@ -1,4 +1,9 @@
-// Slice A: JSONL session store — create, attach restores, jq-inspectable.
+// Session storage on pi-durable JSONL (issue #392; §21–§22).
+//
+// One pi-durable Storage per <sessions-root>/<id>/, one durable Session per
+// storage, one Kubic `kubic.session` document written in the creating commit,
+// and the Kubic lock wrapping every storage open. Legacy 0.87 transcripts
+// (`<root>/--<cwd>--/<ts>_<id>.jsonl`) are detected and refused, never read.
 import {
   existsSync,
   mkdirSync,
@@ -11,22 +16,39 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import { BACKGROUND_CONTEXT, type Session } from '../pi-boundary.js';
+import {
+  createNodeFileBridge,
+  type FileBridge,
+} from '../../../exec/src/file-bridge.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  Harness,
+  UserEntry,
+} from '../pi-boundary.js';
 import {
   acquireSessionLock,
   attachSession,
   createSession,
+  KubicSessionDoc,
+  listSessions,
   openSessionStore,
+  readSessionMetadata,
+  SessionAttachError,
+  SessionFormatError,
+  type SessionHandle,
+  SessionIdError,
   SessionLockError,
+  sessionsTouchingWorkspace,
 } from './session-store.js';
 
-const openSessions: Session[] = [];
+const openSessions: SessionHandle[] = [];
 const scratchDirs: string[] = [];
 
 afterAll(async () => {
   for (const session of openSessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
   }
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -43,56 +65,302 @@ function tmpRoot(): string {
   return scratch('sessions-');
 }
 
-describe('JSONL session store (issue #14, slice A)', () => {
-  it('creates a session with cwd metadata', async () => {
+function storeFor(root: string): ReturnType<typeof openSessionStore> {
+  return openSessionStore(root, createNodeFileBridge(root));
+}
+
+function track(handle: SessionHandle): SessionHandle {
+  openSessions.push(handle);
+  return handle;
+}
+
+// A bridge that counts the storage's file reads, so "the second attach never
+// opened the storage" is an observation, not an assumption.
+function countingBridge(root: string): {
+  bridge: FileBridge;
+  reads: () => number;
+} {
+  const inner = createNodeFileBridge(root);
+  let reads = 0;
+  return {
+    bridge: {
+      ...inner,
+      readBinaryFile: (path: string): Uint8Array => {
+        reads += 1;
+        return inner.readBinaryFile(path);
+      },
+    },
+    reads: () => reads,
+  };
+}
+
+function readHeader(root: string, id: string): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(join(root, id, 'session.json'), 'utf8'),
+  ) as Record<string, unknown>;
+}
+
+// A 0.87 session: `<root>/--<cwd with /, \ and : mapped to -->--/` holding
+// `<iso-timestamp>_<encoded id>.jsonl` whose first line is the format-4
+// header. Exactly what `JsonlSessionRepo` wrote.
+function writeLegacySession(
+  root: string,
+  cwd: string,
+  id: string,
+  createdAt: number,
+): string {
+  const dir = join(
+    root,
+    `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`,
+  );
+  mkdirSync(dir, { recursive: true });
+  const path = join(
+    dir,
+    `${new Date(createdAt).toISOString().replace(/[:.]/g, '-')}_${encodeURIComponent(id)}.jsonl`,
+  );
+  writeFileSync(
+    path,
+    `${JSON.stringify({
+      v: 4,
+      kind: 'header',
+      id,
+      storageVersion: 1,
+      createdAt,
+      cwd,
+    })}\n${JSON.stringify({
+      v: 4,
+      kind: 'record',
+      seq: 1,
+      type: 'message',
+      message: { role: 'user', content: 'hello' },
+    })}\n`,
+  );
+  return path;
+}
+
+// The harness a Kubic caller boots over a session's storage (K5 #394 boots
+// the real lane; here the same Harness.open + root() shape, no model call).
+async function openHarness(
+  session: SessionHandle,
+): Promise<Awaited<ReturnType<typeof Harness.open>>> {
+  return await Harness.open(
+    session.storage,
+    { models: createModels(), registry: createRegistry() },
+    BACKGROUND_CONTEXT,
+  );
+}
+
+describe('pi-durable session storage (issue #392)', () => {
+  it('creates a session: JSONL storage, the kubic.session document, and the listing header', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    openSessions.push(session);
-    expect(session.metadata.cwd).toBe('/work');
-    expect(session.metadata.id.length).toBeGreaterThan(0);
+    const store = storeFor(root);
+    const before = Date.now();
+    const session = track(
+      await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
+    );
+    expect(session.meta.cwd).toBe('/work');
+    expect(session.id.length).toBeGreaterThan(0);
+    expect(Date.parse(session.meta.createdAt)).toBeGreaterThanOrEqual(before);
+    expect(session.dir).toBe(join(root, session.id));
+    // The durable storage is on disk under <root>/<id>/ — and the Kubic lock
+    // lives in the same directory, which the JSONL backend tolerates.
+    expect(existsSync(join(session.dir, 'main.jsonl'))).toBe(true);
+    expect(existsSync(join(session.dir, 'lock.json'))).toBe(true);
+    // The listing header: the projection listSessions reads without opening
+    // a live session's storage.
+    expect(readHeader(root, session.id)).toEqual({
+      v: 1,
+      kind: 'kubic.session',
+      id: session.id,
+      ...session.meta,
+    });
+    // The document itself, read back through the storage it was committed to.
+    expect(
+      await readSessionMetadata(session.storage, BACKGROUND_CONTEXT),
+    ).toEqual(session.meta);
   });
 
-  it('attach restores transcript after close', async () => {
+  it('records a declared workspace beside the cwd', async () => {
     const root = tmpRoot();
-    const bridge = createNodeFileBridge(root);
-    const store = openSessionStore(root, bridge);
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.mutate(async (mutator) => {
-      await mutator.commit(
-        [
-          {
-            kind: 'entry',
-            entry: {
-              id: 'e-hello',
-              parentId: null,
-              type: 'message',
-              message: {
-                role: 'user',
-                content: [{ type: 'text', text: 'hello' }],
-                timestamp: Date.now(),
-              },
-            },
-          },
-        ],
+    const store = storeFor(root);
+    const session = track(
+      await createSession(
+        store,
+        { cwd: '/work/pkg', workspace: '/work' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    expect(session.meta).toEqual({
+      cwd: '/work/pkg',
+      createdAt: session.meta.createdAt,
+      workspace: '/work',
+    });
+    await session.release(BACKGROUND_CONTEXT);
+    // The probe matches the declared workspace, not the cwd.
+    expect(
+      await sessionsTouchingWorkspace(store, '/work', BACKGROUND_CONTEXT),
+    ).toEqual([session.id]);
+    expect(
+      await sessionsTouchingWorkspace(store, '/work/pkg', BACKGROUND_CONTEXT),
+    ).toEqual([]);
+  });
+
+  it('attach restores the root conversation, its entries and the kubic.session doc', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    const harness = await openHarness(session);
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { cwd: '/work' },
+    });
+    await conversation.commit(
+      (tx) =>
+        tx.appendEntry(UserEntry, conversation.id, {
+          model: [{ role: 'user', content: 'hello', timestamp: Date.now() }],
+        }),
+      BACKGROUND_CONTEXT,
+    );
+    await harness.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const attached = track(await attachSession(store, id, BACKGROUND_CONTEXT));
+    expect(attached.meta).toEqual(session.meta);
+    const reopened = await openHarness(attached);
+    try {
+      expect(
+        await reopened.snapshot(KubicSessionDoc, BACKGROUND_CONTEXT),
+      ).toMatchObject(session.meta);
+      const page = await (await reopened.root(BACKGROUND_CONTEXT)).entries(
+        {},
+        50,
+        undefined,
         BACKGROUND_CONTEXT,
       );
-    }, BACKGROUND_CONTEXT);
-    await session.close(BACKGROUND_CONTEXT);
-
-    const store2 = openSessionStore(root, createNodeFileBridge(root));
-    const attached = await attachSession(store2, id, BACKGROUND_CONTEXT);
-    openSessions.push(attached);
-    const entries = await attached.findEntries(undefined, BACKGROUND_CONTEXT);
-    expect(JSON.stringify(entries)).toContain('hello');
+      expect(JSON.stringify(page.items)).toContain('hello');
+    } finally {
+      await reopened.close(BACKGROUND_CONTEXT);
+    }
   });
 
-  it('writes jq-inspectable JSONL under the sessions root', async () => {
+  it('refuses a second attach through the Kubic lock without opening the storage', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    openSessions.push(session);
+    const first = track(
+      await createSession(storeFor(root), { cwd: '/work' }, BACKGROUND_CONTEXT),
+    );
+    const { bridge, reads } = countingBridge(root);
+    const store = openSessionStore(root, bridge);
+    let caught: unknown;
+    try {
+      await attachSession(store, first.id, BACKGROUND_CONTEXT);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SessionLockError);
+    expect((caught as Error).message).toContain(String(process.pid));
+    // The refusal happens BEFORE any storage open: nothing read main.jsonl.
+    expect(reads()).toBe(0);
+    // A dead holder's lock is stolen, so attach still works after a crash.
+    await first.release(BACKGROUND_CONTEXT);
+    const attached = track(
+      await attachSession(store, first.id, BACKGROUND_CONTEXT),
+    );
+    expect(attached.id).toBe(first.id);
+  });
+
+  it('rejects an id that would escape the sessions root', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    await expect(
+      createSession(
+        store,
+        { cwd: '/work', id: '../escape' },
+        BACKGROUND_CONTEXT,
+      ),
+    ).rejects.toBeInstanceOf(SessionIdError);
+    await expect(
+      attachSession(store, '../escape', BACKGROUND_CONTEXT),
+    ).rejects.toBeInstanceOf(SessionAttachError);
+  });
+
+  it('refuses to create over an existing session and never rewrites its metadata', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const first = track(
+      await createSession(
+        store,
+        { cwd: '/work', id: 'kept' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    await first.release(BACKGROUND_CONTEXT);
+    await expect(
+      createSession(store, { cwd: '/other', id: 'kept' }, BACKGROUND_CONTEXT),
+    ).rejects.toThrow(/already exists/);
+    // The original session is untouched: same metadata, same header.
+    const attached = track(
+      await attachSession(store, 'kept', BACKGROUND_CONTEXT),
+    );
+    expect(attached.meta).toEqual(first.meta);
+    expect(readHeader(root, 'kept').cwd).toBe('/work');
+  });
+
+  it('refuses to create a durable session over a 0.87 session id', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    writeLegacySession(root, '/work', 'legacy-3', Date.now() - 60_000);
+    // The id belongs to a 0.87 session: reusing it would mix a new durable
+    // session into the old session's journal and spans.
+    await expect(
+      createSession(
+        store,
+        { cwd: '/work', id: 'legacy-3' },
+        BACKGROUND_CONTEXT,
+      ),
+    ).rejects.toBeInstanceOf(SessionFormatError);
+    expect(existsSync(join(root, 'legacy-3', 'main.jsonl'))).toBe(false);
+  });
+
+  it('leaves no half-made session behind when create fails', async () => {
+    const root = tmpRoot();
+    const inner = createNodeFileBridge(root);
+    // A bridge that fails writing the listing header — the last step of a
+    // create, after the creating commit landed.
+    const failing: FileBridge = {
+      ...inner,
+      writeFile: (path, content, options) => {
+        if (path.endsWith('session.json')) throw new Error('disk full');
+        inner.writeFile(path, content, options);
+      },
+    };
+    const store = openSessionStore(root, failing);
+    await expect(
+      createSession(store, { cwd: '/work', id: 'failed' }, BACKGROUND_CONTEXT),
+    ).rejects.toThrow('disk full');
+    // No lock, no storage: the id is free again and a retry works.
+    expect(existsSync(join(root, 'failed', 'lock.json'))).toBe(false);
+    expect(existsSync(join(root, 'failed', 'main.jsonl'))).toBe(false);
+    expect(await listSessions(storeFor(root), BACKGROUND_CONTEXT)).toEqual([]);
+    const retry = track(
+      await createSession(
+        storeFor(root),
+        { cwd: '/work', id: 'failed' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    expect(retry.meta.cwd).toBe('/work');
+  });
+
+  it('writes jq-inspectable JSONL under the session directory', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = track(
+      await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
+    );
     const jsonlFiles: string[] = [];
     const walk = (dir: string): void => {
       for (const name of readdirSync(dir, { withFileTypes: true })) {
@@ -101,7 +369,7 @@ describe('JSONL session store (issue #14, slice A)', () => {
         else if (name.name.endsWith('.jsonl')) jsonlFiles.push(full);
       }
     };
-    walk(root);
+    walk(session.dir);
     expect(jsonlFiles.length).toBeGreaterThan(0);
     let lines = 0;
     for (const file of jsonlFiles) {
@@ -113,44 +381,151 @@ describe('JSONL session store (issue #14, slice A)', () => {
     }
     expect(lines).toBeGreaterThan(0);
   });
+
+  it('commits without an fsync seam on the bridge (upstream default)', async () => {
+    const root = tmpRoot();
+    const inner = createNodeFileBridge(root);
+    const { flushFile: _flush, ...withoutFlush } = inner;
+    const store = openSessionStore(root, withoutFlush as FileBridge);
+    const session = track(
+      await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
+    const attached = track(await attachSession(store, id, BACKGROUND_CONTEXT));
+    expect(attached.meta).toEqual(session.meta);
+  });
 });
 
-describe('mutation serialization (issue #14, slice D)', () => {
-  it('loses no writes under concurrent mutates', async () => {
+describe('session listing (issue #392)', () => {
+  it('lists sessions with their recorded metadata, newest first', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    openSessions.push(session);
-    const writers = Array.from({ length: 10 }, (_, i) =>
-      session.mutate(async (mutator) => {
-        await mutator.commit(
-          [
-            {
-              kind: 'entry',
-              entry: {
-                id: `e-concurrent-${i}`,
-                parentId: null,
-                type: 'message',
-                message: {
-                  role: 'user',
-                  content: [{ type: 'text', text: `writer ${i}` }],
-                  timestamp: Date.now(),
-                },
-              },
-            },
-          ],
-          BACKGROUND_CONTEXT,
-        );
-      }, BACKGROUND_CONTEXT),
+    const store = storeFor(root);
+    const current = track(
+      await createSession(store, { cwd: '/one' }, BACKGROUND_CONTEXT),
     );
-    await Promise.all(writers);
-    const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
-    const texts = entries.map((entry) => JSON.stringify(entry));
-    for (let i = 0; i < 10; i += 1) {
-      expect(texts.some((text) => text.includes(`writer ${i}`))).toBe(true);
+    await current.release(BACKGROUND_CONTEXT);
+    // A 0.87 transcript recorded a minute earlier, so the order assertion
+    // never depends on two sessions landing in the same millisecond.
+    const earlier = Date.parse(current.meta.createdAt) - 60_000;
+    writeLegacySession(root, '/two', 'legacy-older', earlier);
+
+    const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    expect(listed.map((entry) => entry.id)).toEqual([
+      current.id,
+      'legacy-older',
+    ]);
+    expect(listed[0]).toEqual({
+      id: current.id,
+      meta: { cwd: '/one', createdAt: current.meta.createdAt },
+      format: 'durable',
+    });
+    expect(listed[1]).toEqual({
+      id: 'legacy-older',
+      meta: {
+        cwd: '/two',
+        createdAt: new Date(earlier).toISOString(),
+      },
+      format: 'legacy',
+    });
+  });
+
+  it('lists nothing when the sessions root does not exist', async () => {
+    const root = join(tmpRoot(), 'missing');
+    expect(await listSessions(storeFor(root), BACKGROUND_CONTEXT)).toEqual([]);
+    expect(
+      await sessionsTouchingWorkspace(
+        storeFor(root),
+        '/work',
+        BACKGROUND_CONTEXT,
+      ),
+    ).toEqual([]);
+  });
+
+  it('names only the sessions recorded for one workspace', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const mine = track(
+      await createSession(store, { cwd: '/work' }, BACKGROUND_CONTEXT),
+    );
+    const other = track(
+      await createSession(store, { cwd: '/else' }, BACKGROUND_CONTEXT),
+    );
+    await mine.release(BACKGROUND_CONTEXT);
+    await other.release(BACKGROUND_CONTEXT);
+    expect(
+      await sessionsTouchingWorkspace(store, '/work', BACKGROUND_CONTEXT),
+    ).toEqual([mine.id]);
+  });
+
+  it('reports a 0.87 session directory as legacy and refuses to attach it', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const createdAt = Date.now() - 60_000;
+    const path = writeLegacySession(root, '/work', 'legacy-1', createdAt);
+
+    const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    expect(listed).toEqual([
+      {
+        id: 'legacy-1',
+        meta: { cwd: '/work', createdAt: new Date(createdAt).toISOString() },
+        format: 'legacy',
+      },
+    ]);
+    // A legacy transcript is never a live sibling: it cannot be attached.
+    expect(
+      await sessionsTouchingWorkspace(store, '/work', BACKGROUND_CONTEXT),
+    ).toEqual([]);
+
+    let caught: unknown;
+    try {
+      await attachSession(store, 'legacy-1', BACKGROUND_CONTEXT);
+    } catch (error) {
+      caught = error;
     }
-    const seqs = entries.map((entry) => entry.seq);
-    expect(new Set(seqs).size).toBe(seqs.length);
+    expect(caught).toBeInstanceOf(SessionFormatError);
+    expect((caught as Error).message).toBe(
+      'session legacy-1 was written by Kubic on Pi 0.87; start a new session',
+    );
+    // Nothing was converted or moved: the transcript is exactly as written.
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('lists a 1.0 session beside a legacy one and keeps the 1.0 entry', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const current = track(
+      await createSession(
+        store,
+        { cwd: '/work', id: 'legacy-2' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    await current.release(BACKGROUND_CONTEXT);
+    // A 0.87 transcript that claims the same id (a hand-copied leftover):
+    // the current format wins, and attach opens the storage, not the file.
+    writeLegacySession(root, '/work', 'legacy-2', Date.now() - 60_000);
+    const listed = await listSessions(store, BACKGROUND_CONTEXT);
+    expect(listed).toEqual([
+      {
+        id: 'legacy-2',
+        meta: { cwd: '/work', createdAt: current.meta.createdAt },
+        format: 'durable',
+      },
+    ]);
+    const attached = track(
+      await attachSession(store, 'legacy-2', BACKGROUND_CONTEXT),
+    );
+    expect(attached.meta.cwd).toBe('/work');
+  });
+
+  it('skips a session directory with no storage and no legacy transcript', async () => {
+    const root = tmpRoot();
+    mkdirSync(join(root, 'half-created', 'journal'), { recursive: true });
+    expect(await listSessions(storeFor(root), BACKGROUND_CONTEXT)).toEqual([]);
+    await expect(
+      attachSession(storeFor(root), 'half-created', BACKGROUND_CONTEXT),
+    ).rejects.toBeInstanceOf(SessionAttachError);
   });
 });
 
@@ -273,7 +648,7 @@ describe('session lock primitive (issue #118)', () => {
   });
 });
 
-// Lock wiring (issue #118): create/attach acquire, close releases.
+// Lock wiring (issue #118): create/attach acquire, release gives the lock back.
 describe('session locking wiring (issue #118)', () => {
   const FAKE_PID = 424242;
 
@@ -286,35 +661,49 @@ describe('session locking wiring (issue #118)', () => {
     }) as never);
   }
 
-  it('acquires the lock on create and releases it on close', async () => {
+  it('acquires the lock on create and releases it on release', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const lockPath = join(root, session.metadata.id, 'lock.json');
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const lockPath = join(root, session.id, 'lock.json');
     expect(existsSync(lockPath)).toBe(true);
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
     expect(existsSync(lockPath)).toBe(false);
+    // Release is idempotent: a second call is a no-op, not a crash.
+    await session.release(BACKGROUND_CONTEXT);
   });
 
-  it('acquires the lock on attach and releases it on close', async () => {
+  it('acquires the lock on attach and releases it on release', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
     const lockPath = join(root, id, 'lock.json');
     expect(existsSync(lockPath)).toBe(true);
-    await attached.close(BACKGROUND_CONTEXT);
+    await attached.release(BACKGROUND_CONTEXT);
     expect(existsSync(lockPath)).toBe(false);
   });
 
   it('refuses a second attach while a live holder exists, naming the pid', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     // A live-looking lock fixture: fake pid, stubbed liveness — no real
     // process is ever signalled.
     writeFileSync(
@@ -338,10 +727,14 @@ describe('session locking wiring (issue #118)', () => {
 
   it('steals a crashed holder lock on attach (same-day dead pid)', async () => {
     const root = tmpRoot();
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
-    await session.close(BACKGROUND_CONTEXT);
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const id = session.id;
+    await session.release(BACKGROUND_CONTEXT);
     writeFileSync(
       join(root, id, 'lock.json'),
       JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() }),
@@ -354,7 +747,7 @@ describe('session locking wiring (issue #118)', () => {
         readFileSync(join(root, id, 'lock.json'), 'utf8'),
       ) as { pid?: unknown };
       expect(lock.pid).toBe(process.pid);
-      await attached.close(BACKGROUND_CONTEXT);
+      await attached.release(BACKGROUND_CONTEXT);
     } finally {
       kill.mockRestore();
     }

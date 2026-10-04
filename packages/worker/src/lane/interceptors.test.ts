@@ -131,6 +131,16 @@ function probeTools(world: World) {
       execute: async (args) => record('write', args),
     }),
     defineTool({
+      name: 'edit',
+      description: 'edit a file',
+      parameters: Type.Object({
+        path: Type.String(),
+        oldText: Type.String(),
+        newText: Type.String(),
+      }),
+      execute: async (args) => record('edit', args),
+    }),
+    defineTool({
       name: 'ls',
       description: 'list a directory',
       parameters: Type.Object({ path: Type.Optional(Type.String()) }),
@@ -295,8 +305,9 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
       calls: [
         { name: 'read', args: { path: skill } },
         { name: 'write', args: { path: skill, content: 'pwned' } },
-        { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
+        { name: 'edit', args: { path: skill, oldText: 'a', newText: 'b' } },
         { name: 'read', args: { path: '/etc/passwd' } },
+        { name: 'ls', args: { path: '/home/u/.agents/skills/a' } },
       ],
       policy: {
         workspace: '/work',
@@ -307,8 +318,9 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(booted.world.calls.map((call) => call.args.path)).toEqual([
       skill,
       '/work/home/u/.agents/skills/a/SKILL.md',
-      '/work/home/u/.agents/skills/a',
+      '/work/home/u/.agents/skills/a/SKILL.md',
       '/work/etc/passwd',
+      '/work/home/u/.agents/skills/a',
     ]);
   });
 
@@ -468,6 +480,38 @@ describe('hook ordering (issue #208)', () => {
       { kind: 'max_tool_calls', toolName: 'ls', count: 2 },
     ]);
     expect(booted.world.calls).toHaveLength(0);
+  });
+});
+
+describe('policy interceptor state lifetime (issue #397)', () => {
+  it('gives every factory call its own counters and stand-down set', async () => {
+    // The same options object is reusable: the state lives in the factory
+    // invocation, never in the options or in module scope. One invocation =
+    // one boot's chain (solo.ts builds its kubic.policy extension per boot).
+    const policy: PolicyInterceptorOptions = {
+      workspace: '/work',
+      maxToolCalls: 2,
+    };
+    expect(policyInterceptorHooks(policy)[0]).not.toBe(
+      policyInterceptorHooks(policy)[0],
+    );
+    const calls = [
+      { name: 'ls', args: { path: '.' } },
+      { name: 'ls', args: { path: '.' } },
+    ];
+
+    const first = await boot({ calls, policy });
+    await drive(first);
+    expect(first.world.calls).toHaveLength(2);
+
+    // A second boot starts at attempt one again. Shared counters would make
+    // this boot's first call attempt three and block it before it ran.
+    const second = await boot({ calls, policy });
+    await drive(second);
+    expect(second.world.calls).toHaveLength(2);
+    expect(
+      (await toolResults(second.root)).every((result) => !result.isError),
+    ).toBe(true);
   });
 });
 

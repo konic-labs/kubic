@@ -339,6 +339,13 @@ function confineArgs(
 // block is returned, so a blocked attempt is still counted by the meters
 // before the guard that blocks it. Each registration is one handler, so the
 // order of this array IS the chain order.
+//
+// State lifetime: the attempt counter, the trigger latch and the approved
+// call ids live in THIS invocation's closure — call the factory once per
+// lane boot (solo.ts builds its `kubic.policy` extension fresh on every
+// boot). Installing one returned array into two boots would share them, so
+// the factory deliberately never keeps state across calls: two invocations,
+// even with the same options object, start clean.
 export function policyInterceptorHooks(
   options: PolicyInterceptorOptions,
 ): HookRegistration[] {

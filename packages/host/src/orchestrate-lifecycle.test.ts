@@ -559,4 +559,22 @@ describe('prod orchestrate path: §81 worker replacement (issue #175)', () => {
     // One launch only: the silent child was never replaced.
     expect(h.registry.get('worker-1')?.generation).toBe(1);
   }, 60_000);
+
+  it('does not replace a provider-kind death (a setup failure a retry cannot fix)', async () => {
+    const h = await harness();
+    // The child becomes ready, then exits 6 (provider-less boundary): the
+    // lifecycle classifies it as a `provider` failure, not a crash, so the
+    // replacement seam refuses and the generation stays 1.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'say hi EXIT=6',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
+  }, 60_000);
 });

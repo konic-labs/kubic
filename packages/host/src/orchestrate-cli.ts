@@ -2220,9 +2220,11 @@ export async function runOrchestrateCommand(
   // agent, in agent order, each with the named terminus the envelope and the
   // partial-failure exit report.
   const partialFailures = new Map<string, WorkerFailureOutcome>();
-  // §81 replacement generations (issue #175): per agent, the generations the
-  // run has seen, in order. A failure that exhausted the replacement limit
-  // names them.
+  // §81 replacement bookkeeping (issue #175): per agent, how many times the
+  // run has replaced it (compared against WORKER_REPLACEMENT_LIMIT) and the
+  // generations it has seen, in order (for the failure message only — the
+  // count is the bound, not a list length).
+  const replacementCount = new Map<string, number>();
   const replacementGenerations = new Map<string, number[]>();
   let denied: WorkerFailureOutcome | undefined;
 
@@ -2465,13 +2467,15 @@ export async function runOrchestrateCommand(
         // replaceable at all (it knows the lifecycle status); the run owns
         // the count and the retry.
         const generations = replacementGenerations.get(agentId) ?? [];
+        const replacements = replacementCount.get(agentId) ?? 0;
         if (
           deps.replaceWorker !== undefined &&
           outcome.exitCode === RUN_EXIT_FAILED &&
-          generations.length <= WORKER_REPLACEMENT_LIMIT
+          replacements < WORKER_REPLACEMENT_LIMIT
         ) {
           const replaced = await deps.replaceWorker(agentId);
           if (replaced !== undefined) {
+            replacementCount.set(agentId, replacements + 1);
             replacementGenerations.set(agentId, [
               ...(generations.length === 0 ? [replaced.from] : generations),
               replaced.to,

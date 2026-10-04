@@ -999,3 +999,41 @@ describe('config serialization hardening (issue #69)', () => {
     expect(isCommittedConfigPath('.kubic/roles/reviewer.md')).toBe(true);
   });
 });
+
+describe('[verify] section (issue #267)', () => {
+  it('parses the four gate commands and the timeout, and round-trips', () => {
+    const text =
+      '[verify]\ntests = "npm test"\nbuild = "npm run build"\nlint = "npm run lint"\ntypecheck = "npm run typecheck"\ntimeoutMs = 60000\n';
+    const parsed = parseTomlConfig(text);
+    expect(parsed.verify).toEqual({
+      tests: 'npm test',
+      build: 'npm run build',
+      lint: 'npm run lint',
+      typecheck: 'npm run typecheck',
+      timeoutMs: 60000,
+    });
+    expect(parseTomlConfig(serializeTomlConfig(parsed)).verify).toEqual(
+      parsed.verify,
+    );
+  });
+
+  it('refuses an unknown key, a non-string or blank command and a bad timeout by name', () => {
+    expect(() => parseTomlConfig('[verify]\nformat = "x"\n')).toThrow(
+      "'verify': unknown key 'format'",
+    );
+    expect(() => parseTomlConfig('[verify]\ntests = 1\n')).toThrow(
+      /'verify': 'tests' must be a non-empty command string/,
+    );
+    expect(() => parseTomlConfig('[verify]\nlint = "  "\n')).toThrow(
+      /'verify': 'lint' must be a non-empty command string/,
+    );
+    for (const bad of ['0', '-5', '1.5', '"10"']) {
+      expect(() => parseTomlConfig(`[verify]\ntimeoutMs = ${bad}\n`)).toThrow(
+        /'verify': 'timeoutMs' must be a positive integer/,
+      );
+    }
+    expect(() => parseTomlConfig('verify = 1\n')).toThrow(
+      "'[verify]' must be a table",
+    );
+  });
+});

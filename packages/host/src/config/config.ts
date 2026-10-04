@@ -125,6 +125,25 @@ export interface SessionConfig {
   retentionDays?: number;
 }
 
+// §48 gate commands (issue #267): each runs as `sh -c <command>` in the
+// run's worktree after the run settles, and its exit status becomes the
+// trajectory's `signal:<gate>` label (0 = pass). An absent gate stays
+// `unknown`. timeoutMs bounds each command (a timeout is a fail).
+export interface VerifyConfig {
+  tests?: string;
+  build?: string;
+  lint?: string;
+  typecheck?: string;
+  timeoutMs?: number;
+}
+
+export const VERIFY_COMMAND_KEYS = [
+  'tests',
+  'build',
+  'lint',
+  'typecheck',
+] as const;
+
 // §58 Enterprise Policy (issue #288): the documented flat `[policy]` surface.
 // The parser accepts exactly these keys and normalizes them for the policy
 // engine's own vocabulary (`layerPolicyFromConfig` in host/policy). Unknown
@@ -173,6 +192,7 @@ export interface KubicConfig {
   orchestrator?: OrchestratorConfig;
   ui?: UiConfig;
   session?: SessionConfig;
+  verify?: VerifyConfig;
   policy?: PolicyConfig;
   audit?: AuditTableConfig[];
 }
@@ -198,6 +218,7 @@ const KNOWN_SECTIONS = new Set([
   'orchestrator',
   'ui',
   'session',
+  'verify',
   'policy',
   'audit',
 ]);
@@ -262,6 +283,11 @@ statusBar = true
 store = "jsonl"
 dir = ".kubic/sessions"
 retentionDays = 30
+
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
 
 [policy]
 allowed_models = ["local/*"]
@@ -869,6 +895,45 @@ export function checkRoleModelRef(
   return value;
 }
 
+// Shared by the TOML parser and the programmatic session/agent layers
+// (runtime.ts), which never pass through the parser: a blank or non-string
+// command and a non-positive or fractional timeout are refused by name.
+export function checkVerifyConfig(
+  verify: Record<string, unknown>,
+  keyPath: string,
+): VerifyConfig {
+  checkNoUnknown(
+    verify,
+    new Set([...VERIFY_COMMAND_KEYS, 'timeoutMs']),
+    keyPath,
+  );
+  const parsed: VerifyConfig = {};
+  for (const key of VERIFY_COMMAND_KEYS) {
+    const value = verify[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ConfigError(
+        `'${keyPath}': '${key}' must be a non-empty command string`,
+      );
+    }
+    parsed[key] = value;
+  }
+  const timeoutMs = verify.timeoutMs;
+  if (timeoutMs !== undefined) {
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      throw new ConfigError(
+        `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
+      );
+    }
+    parsed.timeoutMs = timeoutMs;
+  }
+  return parsed;
+}
+
 function checkNoUnknown(
   record: Record<string, unknown>,
   known: Set<string>,
@@ -1236,6 +1301,13 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       ...(retentionDays === undefined ? {} : { retentionDays }),
     };
   }
+  const verify = raw.verify;
+  if (verify !== undefined) {
+    if (!isRecord(verify)) {
+      throw new ConfigError("'[verify]' must be a table");
+    }
+    config.verify = checkVerifyConfig(verify, 'verify');
+  }
   const policy = raw.policy;
   if (policy !== undefined) {
     config.policy = parsePolicySection(policy);
@@ -1340,6 +1412,9 @@ export function serializeTomlConfig(config: KubicConfig): string {
   }
   if (config.session !== undefined) {
     emitTable(lines, 'session', config.session as Record<string, unknown>);
+  }
+  if (config.verify !== undefined) {
+    emitTable(lines, 'verify', config.verify as Record<string, unknown>);
   }
   if (config.policy !== undefined) {
     const { agentPolicy, ...rest } = config.policy;

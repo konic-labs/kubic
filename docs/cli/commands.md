@@ -123,6 +123,9 @@ absolute path. The file holds the session's latest settled run; a resumed
 - the git base revision (`no-vcs` outside a git checkout) and branch
 - the used tool environment (`toolSpawnEnv`, so no secrets)
 - a result with a §52 `failureCategory` on every non-completed status
+- with `[verify]` configured, the §48 gate labels (`signal:tests|build|
+  lint|typecheck`, plus `signal:regression` against the base revision):
+  see [gate verification](configuration.md#gate-verification-verify)
 
 The file is readable by `kubic replay <file>` (or `--session <id>`),
 `kubic export --trajectory <file>` (or `--session <id>`) and

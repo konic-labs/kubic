@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
-import { computeSignals, gatesPass } from './signals.js';
+import { computeSignals, gatesPass, patchQuality } from './signals.js';
 
 function trajectory(
   overrides: Partial<TrajectoryExport> = {},
@@ -51,6 +51,107 @@ function trajectory(
     ...overrides,
   };
 }
+
+function labelled(
+  labels: Record<string, string>,
+  status: TrajectoryExport['result']['status'] = 'completed',
+): TrajectoryExport {
+  return trajectory({
+    eval: { suite: null, caseId: null, labels },
+    ...(status === 'completed'
+      ? {}
+      : {
+          result: {
+            status,
+            summary: 'x',
+            failureCategory: 'model_failed',
+            error: { kind: 'model', message: 'x' },
+          },
+        }),
+  });
+}
+
+describe('regression and graded patch quality (issue #267)', () => {
+  it('regressionFree is false when a gate that passed at base fails now', () => {
+    const signals = computeSignals(
+      labelled({ 'signal:tests': 'fail', 'signal:regression': 'fail' }),
+    );
+    expect(signals.regressionFree).toBe(false);
+  });
+
+  it('a gate already red at base is not a regression', () => {
+    const signals = computeSignals(
+      labelled({ 'signal:tests': 'fail', 'signal:regression': 'pass' }),
+    );
+    expect(signals.regressionFree).toBe(true);
+    // Still not a success: the red gate vetoes it.
+    expect(gatesPass(signals)).toBe(false);
+  });
+
+  it('a detected regression is never excused by a green current run', () => {
+    const signals = computeSignals(
+      labelled({ 'signal:tests': 'pass', 'signal:regression': 'fail' }),
+    );
+    expect(signals.regressionFree).toBe(false);
+  });
+
+  it('without a regression label, regression-freedom falls back to completion and no red gate', () => {
+    expect(computeSignals(labelled({})).regressionFree).toBe(true);
+    expect(
+      computeSignals(labelled({ 'signal:regression': 'maybe' })).regressionFree,
+    ).toBe(true);
+    expect(
+      computeSignals(labelled({ 'signal:lint': 'fail' })).regressionFree,
+    ).toBe(false);
+    expect(computeSignals(labelled({}, 'failed')).regressionFree).toBe(false);
+  });
+
+  it('grades quality as the fraction of known gates passing, 0 when not completed', () => {
+    expect(computeSignals(labelled({})).quality).toBe(1);
+    expect(
+      computeSignals(
+        labelled({
+          'signal:tests': 'pass',
+          'signal:build': 'pass',
+          'signal:lint': 'fail',
+          'signal:typecheck': 'pass',
+        }),
+      ).quality,
+    ).toBe(0.75);
+    expect(
+      computeSignals(
+        labelled({ 'signal:tests': 'pass', 'signal:lint': 'fail' }),
+      ).quality,
+    ).toBe(0.5);
+    expect(
+      computeSignals(labelled({ 'signal:tests': 'pass' }, 'failed')).quality,
+    ).toBe(0);
+  });
+
+  it('halves quality when a regression was detected', () => {
+    expect(
+      computeSignals(
+        labelled({
+          'signal:tests': 'pass',
+          'signal:lint': 'fail',
+          'signal:regression': 'fail',
+        }),
+      ).quality,
+    ).toBe(0.25);
+    expect(
+      computeSignals(labelled({ 'signal:regression': 'fail' })).quality,
+    ).toBe(0.5);
+  });
+
+  it('patchQuality grades directly: unknown gates abstain, no gates is 1', () => {
+    expect(patchQuality(false, ['pass', 'pass'], 'unknown')).toBe(0);
+    expect(patchQuality(true, ['unknown', 'unknown'], 'unknown')).toBe(1);
+    expect(patchQuality(true, ['pass', 'fail', 'unknown'], 'unknown')).toBe(
+      0.5,
+    );
+    expect(patchQuality(true, ['pass', 'pass'], 'fail')).toBe(0.5);
+  });
+});
 
 describe('computeSignals (issue #53)', () => {
   it('derives tokens/cost/latency/tool/escalation counts from the trajectory', () => {

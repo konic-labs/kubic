@@ -40,12 +40,14 @@ import {
   checkOrchestratorRoot,
   checkOutOfScopeEntries,
   checkRoleModelRef,
+  checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
   type LayerInput,
   mergeLayered,
   ProjectUntrustedError,
   parseLayerConfig,
+  VERIFY_COMMAND_KEYS,
 } from './config.js';
 import { parseSecretRef } from './secrets.js';
 
@@ -209,6 +211,25 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect:
       'default keep-window for `kubic sessions prune` (deletion stays explicit)',
   },
+  'verify.tests': {
+    effect:
+      'tests gate command run in the worktree after each run settles; exit status → signal:tests (§48)',
+  },
+  'verify.build': {
+    effect:
+      'build gate command run in the worktree after each run settles; exit status → signal:build (§48)',
+  },
+  'verify.lint': {
+    effect:
+      'lint gate command run in the worktree after each run settles; exit status → signal:lint (§48)',
+  },
+  'verify.typecheck': {
+    effect:
+      'typecheck gate command run in the worktree after each run settles; exit status → signal:typecheck (§48)',
+  },
+  'verify.timeoutMs': {
+    effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
+  },
   // §58 enterprise [policy] (issue #288). The allow/deny and model keys reach
   // the live path (lane tool intersection, model selection gate, `kubic
   // policy`). The rest are resolved into the effective policy and only listed
@@ -359,6 +380,14 @@ export interface RuntimeConfigInputs {
   agent?: KubicConfig;
 }
 
+// §48 gate commands (issue #267): what `kubic run` verifies after each
+// settled run. Empty `commands` means nothing is verified — every gate
+// stays unknown, never a guessed pass.
+export interface RuntimeVerify {
+  commands: Partial<Record<(typeof VERIFY_COMMAND_KEYS)[number], string>>;
+  timeoutMs?: number;
+}
+
 export interface RuntimeConfig {
   config: KubicConfig;
   /**
@@ -375,6 +404,7 @@ export interface RuntimeConfig {
   journal: RuntimeJournal;
   modes: RuntimeModes;
   orchestrator: RuntimeOrchestrator;
+  verify: RuntimeVerify;
   budgets: RuntimeBudgets;
   projectTrusted: boolean;
   overriddenAttempts: string[];
@@ -853,6 +883,26 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   for (const [name, role] of Object.entries(config.roles ?? {})) {
     checkRoleModelRef(role.model, name);
   }
+  // §48 gate commands (issue #267): re-validated for the programmatic
+  // layers, which never pass through the TOML parser.
+  const verifyConfig =
+    config.verify === undefined
+      ? {}
+      : checkVerifyConfig(
+          config.verify as unknown as Record<string, unknown>,
+          'verify',
+        );
+  const verify: RuntimeVerify = {
+    commands: Object.fromEntries(
+      VERIFY_COMMAND_KEYS.flatMap((key) => {
+        const command = verifyConfig[key];
+        return command === undefined ? [] : [[key, command]];
+      }),
+    ),
+    ...(verifyConfig.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: verifyConfig.timeoutMs }),
+  };
 
   // Effective provenance: an applied override owns the leaf it replaced, so
   // the view never reports a file layer for a value an override won.
@@ -897,6 +947,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
         ? {}
         : { maxWorkers: orchestratorMaxWorkers }),
     },
+    verify,
     budgets: {
       configured: false,
       detail:

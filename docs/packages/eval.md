@@ -35,7 +35,7 @@ ci` clean, usage reconciliation, RL export fields untouched (#54).
 | `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalTier`, `EVAL_TIERS`, `isEvalTier`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
 | `suites.ts` | `EvalSuite`, `EVAL_SUITES`, `findSuite` |
 | `categories.ts` | `EvalCategory`, `EVAL_CATEGORIES`, `isEvalCategory` |
-| `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass` |
+| `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass`, `patchQuality` |
 | `runner.ts` | `EvalRunnerErrorCode`, `EvalRunnerError`, `EvalTaskDeps`, `EvalTaskOptions`, `EvalTrajectoryOptions`, `EvalWorkspace`, `SuiteRunOutcome`, `runEvalTask`, `runEvalTrajectory` |
 | `cli.ts` | `BenchmarkResult`, `EvalCliDeps`, `EvalOptions`, `EVAL_DEFAULT_MODEL`, `EVAL_EXIT_OK/FAILED/USAGE`, `runEvalCommand`, `runBenchmarkCommand`. The handlers take the options commander parses in `apps/kubic/src/commands/analysis.ts`; the benchmark matrix is assembled here over `EVAL_SUITES` |
 | `suites.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` — eight categories in order, one suite each, stubs marked. There is no `matrix.ts`: matrix assembly is a function of `runBenchmarkCommand` |
@@ -99,9 +99,35 @@ number`, `regressionFree: boolean`, `tokens`, `costUsd`, `latencyMs`,
 [trajectory](trajectory.md) export (this package never redefines the
 trajectory shape): counts come straight from it; gate signals are
 `unknown` unless the trajectory eval labels carry an explicit
-`signal:<name>` = pass|fail override — never guessed. `gatesPass`
-vetoes on any red gate: a completed run with red tests/build/lint/
-typecheck has `quality: 0` and is not a success.
+`signal:<name>` = pass|fail — never guessed. `gatesPass` vetoes on any
+red gate: a completed run with red tests/build/lint/typecheck is not a
+success.
+
+### Signals and patch quality
+
+The shipped producer of the gate labels is the run verifier (issue #267,
+`packages/host/src/verify/verifier.ts`). The `[verify]` commands (see
+[configuration](../cli/configuration.md#gate-verification-verify)) run in
+the worktree after `kubic run` settles, and their exit statuses become
+`signal:tests|build|lint|typecheck`. A baseline run at the base revision
+adds `signal:regression`.
+
+- **`regressionFree`**: with a `signal:regression` label, it is true
+  exactly when the run completed and no gate that passed at the base
+  revision fails now. A gate that was already red at base is not a
+  regression. Without the label it falls back to "completed with no red
+  gate".
+- **`quality`** (`patchQuality`), graded in [0, 1]:
+  - 0 when the run did not complete;
+  - otherwise the fraction of known gates that pass (1 when no gate is
+    known, since unknown gates abstain);
+  - halved when a regression was detected.
+
+  For example, tests/build/typecheck pass and lint fails gives 0.75; the
+  same with a regression gives 0.375.
+- **Reference verifier** (`rl/verifier.ts`): `pass` needs
+  `signal:tests = pass` and no red gate. Verified runs therefore feed
+  GRPO rewards and §74 preference pairs without hand-set labels.
 
 ## Dep-direction neighbours
 

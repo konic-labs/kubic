@@ -269,6 +269,8 @@ quietly stop configuring anything.
 | `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
 | `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. |
+| `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The §48 gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
+| `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds (default 600000). A command still running at the bound is killed and its gate is `fail`. |
 | `policy.allowed_models` | The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`. |
 | `policy.allowed_providers` | The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model. |
 | `policy.allowed_tools`, `policy.denied_tools` | The lane tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused. |
@@ -278,6 +280,44 @@ quietly stop configuring anything.
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
 | `policy.agent_policy` | `{ max_agents, max_cost_usd }`, parsed into the effective policy's `agent` bounds; the orchestrator does not consume them yet, so they are **not enforced**; `kubic config` lists them (`kept`), `kubic doctor` does not report them (issue #289). |
 | `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); sink construction is a named follow-up, so the CLI cannot write to them yet. |
+
+### Gate verification (`[verify]`)
+
+```toml
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
+```
+
+With at least one command configured, every `kubic run` (and every
+`kubic orchestrate` worker, which is a `kubic run` in its worktree)
+verifies its work after it settles, before it writes its §46 trajectory:
+
+1. Each configured gate runs in the run's worktree, in the order tests,
+   build, lint, typecheck. The command runs as `sh -c <command>` with the
+   allowlisted tool environment (no secrets) and is killed at `timeoutMs`.
+   Exit 0 is `pass`; any other exit, a spawn failure or a timeout is
+   `fail`.
+2. When the run started from a git revision, the same commands run again
+   in a temporary detached checkout of that revision (`git worktree add
+   --detach`, removed afterwards whatever happens). A gate that passed there
+   and fails after the run is a regression.
+3. The trajectory's eval labels record `signal:<gate>` for each verified
+   gate and, when a baseline was comparable, `signal:regression` (`pass` =
+   no gate regressed, `fail` = at least one did). Outside a git checkout no
+   regression is claimed.
+
+`kubic eval --trajectory`, the reference verifier and the RL exporters read
+these labels; see the signal and quality rules in
+[the eval package](../packages/eval.md#signals-and-patch-quality). With no
+`[verify]` section nothing runs and every gate stays `unknown`. `kubic tui`
+turns are not verified.
+
+The commands are ordinary shell commands run with your permissions, so
+they come only from layers you trust: a project `.kubic/config.toml` is
+refused until the project is trusted (see the trust gate above).
+Verification adds the commands' run time to every `kubic run`.
 
 ### `autoApprove` capabilities
 

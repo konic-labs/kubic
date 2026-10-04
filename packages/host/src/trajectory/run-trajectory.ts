@@ -87,6 +87,9 @@ export interface RunTrajectoryInput {
   startedAt: number;
   endedAt: number;
   outcome: RunOutcome;
+  // The run verifier's `signal:*` labels (issue #267); absent means none —
+  // every gate stays unknown.
+  evalLabels?: Record<string, string>;
 }
 
 // Two runs of one prompt answer the same task, so they can form a §74
@@ -406,6 +409,11 @@ export function assembleRunTrajectory(
     },
     usage: usageOf(items),
     result,
+    eval: {
+      suite: null,
+      caseId: null,
+      labels: { ...(input.evalLabels ?? {}) },
+    },
   });
 }
 

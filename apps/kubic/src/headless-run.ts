@@ -15,6 +15,10 @@ import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
+  gitHeadOf,
+  withDetachedCheckout,
+} from '../../../packages/exec/src/git-clean.js';
+import {
   FileJournalStore,
   type JournalRetention,
 } from '../../../packages/exec/src/journal.js';
@@ -36,6 +40,7 @@ import {
   type SoloApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+import type { RuntimeVerify } from '../../../packages/host/src/config/runtime.js';
 import {
   matchableSecrets,
   redactBridgeWrites,
@@ -102,6 +107,11 @@ import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js'
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
 import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
+import {
+  hasVerifyCommands,
+  runVerifier,
+  verifierLabels,
+} from '../../../packages/host/src/verify/verifier.js';
 import {
   abortLane,
   forgetLaneKills,
@@ -227,6 +237,10 @@ export interface HeadlessRunDeps {
   // anything.
   modelPolicy?: EffectivePolicy;
   journalRetention?: JournalRetention;
+  // §48 gate commands (issue #267), from `[verify]` via runtimeRunDeps. Run
+  // in the worktree after the run settles; their verdicts become the
+  // trajectory's `signal:*` labels. Absent means nothing is verified.
+  verify?: RuntimeVerify;
   // The installed-policy seat (issue #86). Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
@@ -654,6 +668,9 @@ export async function runHeadlessPrompt(
     model?: string;
     posture?: 'approvals' | 'full-access';
   } = {};
+  // The base the run starts from (issue #267): captured before any turn, so
+  // an agent that commits mid-run cannot move the baseline it is judged by.
+  const base = gitHeadOf(deps.env?.cwd ?? process.cwd());
   const result = await runHeadlessPromptOnce(
     prompt,
     options,
@@ -705,6 +722,27 @@ export async function runHeadlessPrompt(
   if (capture.sessionId === undefined || capture.sessionsRoot === undefined) {
     return settled;
   }
+  // §48 gates after settlement (issue #267): the configured `[verify]`
+  // commands run in the run's worktree — the same workspace the lane ran
+  // in — and their verdicts become the trajectory's `signal:*` labels. A
+  // run that never reached a workspace (a refused boot) has nothing to
+  // verify, so its gates stay unknown. A verifier failure never changes
+  // the run's own result; it is reported on the warning channel.
+  const warn =
+    deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const cwd = capture.cwd ?? deps.env?.cwd;
+  let evalLabels: Record<string, string> = {};
+  if (cwd !== undefined) {
+    try {
+      if (hasVerifyCommands(deps.verify?.commands)) {
+        evalLabels = await verifyRun(cwd, base, deps);
+      }
+    } catch (error) {
+      warn(
+        `verify: gates not recorded for session ${capture.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   try {
     const path = persistRunTrajectory({
       sessionsRoot: capture.sessionsRoot,
@@ -714,10 +752,12 @@ export async function runHeadlessPrompt(
       prompt: scrub(prompt),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
-      cwd: capture.cwd ?? deps.env?.cwd ?? process.cwd(),
+      cwd: cwd ?? process.cwd(),
       skills: capture.skills,
       startedAt: capture.startedAt,
       endedAt: Date.now(),
+      base,
+      evalLabels,
       outcome: {
         terminus: settled.terminus,
         summary: settled.summary,
@@ -727,11 +767,41 @@ export async function runHeadlessPrompt(
     });
     return { ...settled, trajectoryRef: path };
   } catch (error) {
-    (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+    warn(
       `trajectory not written for session ${capture.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return settled;
   }
+}
+
+// §48 gates after settlement (issue #267): the `[verify]` commands run in
+// the run's worktree, then — when the run started from a git revision — in
+// a throwaway detached checkout of that revision, so a gate that passed
+// before the run and fails after it is recorded as a regression. The
+// checkout is removed whatever happens; outside git no regression is
+// claimed.
+async function verifyRun(
+  cwd: string,
+  base: { revision: string; branch: string | null } | null,
+  deps: HeadlessRunDeps,
+): Promise<Record<string, string>> {
+  const commands = deps.verify?.commands ?? {};
+  const timeout =
+    deps.verify?.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: deps.verify.timeoutMs };
+  const current = await runVerifier(
+    deps.env ?? new NodeExecutionEnv(cwd),
+    commands,
+    timeout,
+  );
+  const baseline =
+    base === null
+      ? null
+      : await withDetachedCheckout(cwd, base.revision, (checkout) =>
+          runVerifier(new NodeExecutionEnv(checkout), commands, timeout),
+        );
+  return verifierLabels(current, baseline ?? undefined);
 }
 
 async function runHeadlessPromptOnce(

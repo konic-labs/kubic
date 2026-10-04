@@ -192,14 +192,18 @@ describe('replay acceptance (issue #13)', () => {
     expect(c.env.fs.readFile('w.txt')).toBe('first\n');
   });
 
-  it('never-replay memo keys are Pi-legal (no colons)', async () => {
-    // Pi 0.85.1 validateMemoName rejects ':' — a colon key fails every
-    // never-replay op on a real lane (caught by the journal lane test).
+  it('never-replay memo keys are pi-durable-legal (no colons)', async () => {
+    // pi-agent-core's validateMemoName rejected ':' (and the key became a
+    // pi-durable memo name too) — a colon key would fail every never-replay
+    // op on a real lane, where the faux ids already proved that.
     const seen: string[] = [];
     const strict: ToolInvocation = {
       invocationId: 'inv-s',
       operationId: 'op-s',
       turnId: 't-s',
+      // This literal drives the registry's own memo gate, so it keeps the
+      // memo (a lane call sets keepEffectMemo: false and never reads one).
+      keepEffectMemo: true,
       getMemo: (name: string): Promise<JsonValue | undefined> => {
         seen.push(name);
         if (name.includes(':')) throw new Error('illegal memo name');

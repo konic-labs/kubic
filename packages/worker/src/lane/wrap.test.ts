@@ -191,12 +191,14 @@ describe('wrap composition (issue #15, slice D)', () => {
       agent: { model: { provider: model.provider, modelId: model.id } },
     });
 
-    await (
-      await root.submit(
-        { type: 'input', content: 'read it' },
-        BACKGROUND_CONTEXT,
-      )
-    ).wait(BACKGROUND_CONTEXT);
+    // A blocked call is an error RESULT, not a failed turn: the model gets
+    // its answer and the submission settles done (the wrap must not cost
+    // the turn).
+    const submission = await root.submit(
+      { type: 'input', content: 'read it' },
+      BACKGROUND_CONTEXT,
+    );
+    expect((await submission.wait(BACKGROUND_CONTEXT)).status).toBe('done');
 
     const page = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT);
     const results = [...page.items]

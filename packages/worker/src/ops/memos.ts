@@ -1,11 +1,15 @@
 // Memo accessors for Kubic invocations (issue #13, slice A; §20.3).
-// The LANE no longer uses MemoryMemoStore (EPIC K #393): a pi-durable tool
-// memoizes through `api.memo`, which is durable in the call's task record and
-// first-writer-wins — that is what `lane/tools-adapter.ts` now builds its
-// ToolInvocation on, resolving issue #153's "memos are dead" finding.
-// MemoryMemoStore stays for callers that drive an op WITHOUT a durable
-// harness — `kubic git` (host/src/git-cli.ts) and the op test suites — where
-// one in-process scope per invocation is exactly right.
+// A LANE call reads and writes memos through pi-durable's `api.memo` — the
+// durable, first-writer-wins store of the call's own task — which is what
+// `lane/tools-adapter.ts` wires its ToolInvocation to (EPIC K #393). What the
+// lane does NOT do is copy a never-replay result into a memo: pi-durable's
+// `replay: 'unsafe'` already settles an interrupted effect without
+// re-entering execute, so that copy could never be read (issue #153's
+// finding, resolved by dropping the write rather than by making it durable).
+// MemoryMemoStore therefore stays for callers that drive an op WITHOUT a
+// durable engine — `kubic git` (host/src/git-cli.ts) and the op test suites —
+// where one in-process scope per invocation is the only gate there is. Those
+// invocations set `keepEffectMemo: true`; the lane sets it false.
 // getMemo/setMemo are scoped per invocationId. memoOnce is an atomic
 // read-or-write: single-threaded check-then-set with no await in between,
 // so the same operation/turn/invocation keeps owning the effect —
@@ -55,6 +59,10 @@ export function createInvocation(
     invocationId: ref.invocationId,
     operationId: ref.operationId,
     turnId: ref.turnId,
+    // These callers (host/src/git-cli.ts, the op suites) drive an op with no
+    // durable engine behind it, so the in-process store is the only
+    // never-replay gate there is; the registry keeps its guard.
+    keepEffectMemo: true,
     getMemo: (name: string) => store.get(ref.invocationId, name),
     setMemo: (name: string, value: JsonValue | undefined) =>
       store.set(ref.invocationId, name, value),

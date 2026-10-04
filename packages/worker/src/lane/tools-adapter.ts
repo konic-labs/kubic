@@ -30,19 +30,23 @@
 //   as a timeout (bash's own abort listener). The kill registry stays as the
 //   TUI's best-effort backstop and is keyed by the conversation id — the
 //   durable scope of the one live run — so a lane abort can drain it.
-// - memos: `ToolInvocation.getMemo`/`setMemo`/`memoOnce` are `api.memo`
-//   (issue #153: durable per invocation, first-writer-wins, and they outlive
-//   a crash of the call they belong to).
+// - memos: `ToolInvocation.getMemo`/`setMemo`/`memoOnce` are `api.memo`, so
+//   an op that memoizes something gets the durable, first-writer-wins store
+//   of its own task. `keepEffectMemo: false` tells `callOperation` not to
+//   copy a never-replay RESULT into a memo: pi-durable's `replay: 'unsafe'`
+//   never re-enters `execute`, so that copy could never be read and would
+//   cost one extra durable write (and a second copy) per effect.
 // - running output: `api.output(chunk)` feeds the live view. Kubic's own
 //   caps stay authoritative for the model-visible result (see
-//   OUTPUT_BACKSTOP), so #121/#182 semantics do not move into the harness.
+//   OUTPUT_BACKSTOP and BASH_OUTPUT_LIMITS), so #121/#182 semantics do not
+//   move into the harness.
 import type {
   CheckpointStore,
   ExecutionEnv,
   ProcessSnapshot,
 } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
-import type { BashResult } from '../ops/bash.js';
+import { BASH_RESULT_MAX_CHARS, type BashResult } from '../ops/bash.js';
 import type { GrepResult } from '../ops/grep.js';
 import type { ReadResult } from '../ops/read.js';
 import {
@@ -100,12 +104,31 @@ const OUTPUT_BACKSTOP = {
   retain: 'head',
 } as const;
 
+// bash is the one op that STREAMS (api.output), and on the interrupted path
+// pi-durable hands the model the retained live output as the result content —
+// `renderBashText` never runs, so its #121 cap cannot apply there. Retaining
+// the tail within four times the per-stream cap keeps that content the same
+// order of magnitude as a normal bash result (two capped streams plus their
+// markers stay well inside the window, so the head/tail choice never edits a
+// completed call), while a command that streams megabytes before a crash can
+// no longer put the 8 MiB backstop into the model's context. `retain: 'tail'`
+// matches `clip()`: endings carry the error.
+const BASH_OUTPUT_LIMITS = {
+  maxBytes: 4 * BASH_RESULT_MAX_CHARS,
+  maxLines: 100_000,
+  retain: 'tail',
+} as const;
+
 /** The deferred-answer channel an op reads and writes through its invocation. */
 function toInvocation(api: ToolExecutionApi, context: Context): ToolInvocation {
   return {
     invocationId: api.callId,
     operationId: String(api.taskId),
     turnId: String(api.taskId),
+    // pi-durable settles an interrupted `unsafe` call without re-entering
+    // execute, so the registry's never-replay memo would be an unreadable
+    // second durable copy of the result.
+    keepEffectMemo: false,
     getMemo: (name: string) => api.memo<JsonValue>(name, context),
     setMemo: async (name, value) => {
       // pi-durable memos hold JSON and have no delete; nothing in Kubic
@@ -253,7 +276,7 @@ export function kubicToolsToPiTools(
       parameters: OPERATION_PARAMETERS[op.name as OperationName],
       constrainedSampling: { type: 'json_schema', strict: 'prefer' },
       replay: op.replay === 'never' ? 'unsafe' : 'safe',
-      outputLimits: OUTPUT_BACKSTOP,
+      outputLimits: op.name === 'bash' ? BASH_OUTPUT_LIMITS : OUTPUT_BACKSTOP,
       execute: async (args, api, callContext) => {
         const inv = toInvocation(api, callContext);
         const opContext: OpContext = {

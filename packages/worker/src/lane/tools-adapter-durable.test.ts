@@ -164,10 +164,12 @@ function toolContext(options: {
 // A shell whose first spawn hangs (the effect started, the intent is
 // committed, the process never finishes — what a crash leaves behind) and
 // whose later spawns settle: the resume cases need exactly that state.
-function crashableEnv(options: { spawned: () => void }): {
+// `firstOutput` is what the hanging child reports before it blocks.
+function crashableEnv(options: { spawned: () => void; firstOutput?: string }): {
   env: FakeExecutionEnv;
   spawns: () => number;
 } {
+  const firstOutput = options.firstOutput ?? 'partial build output\n';
   const base = new FakeExecutionEnv({});
   let spawns = 0;
   let settle: ((result: ShellResult) => void) | undefined;
@@ -193,7 +195,7 @@ function crashableEnv(options: { spawned: () => void }): {
           return { pid: 2, wait: async () => result, kill: () => undefined };
         }
         opts.onUpdate?.(
-          { stdout: 'partial build output\n', stderr: '', exitCode: null },
+          { stdout: firstOutput, stderr: '', exitCode: null },
           undefined,
         );
         options.spawned();
@@ -203,7 +205,7 @@ function crashableEnv(options: { spawned: () => void }): {
           kill: () =>
             settle?.({
               exitCode: 143,
-              stdout: 'partial build output\n',
+              stdout: firstOutput,
               stderr: '',
               provenance: base.provenance,
             }),
@@ -353,6 +355,70 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
     await opened.harness.close(BACKGROUND_CONTEXT);
   });
 
+  it('bounds an interrupted call to the op cap and keeps the stream tail (issue #121)', async () => {
+    const dir = scratch('kubic-durable-bounded-');
+    const spawned = deferred();
+    // ~360 KB of output — well past the 4×64 KiB window bash retains — with
+    // a marker line at each end.
+    const lines = Array.from(
+      { length: 4000 },
+      (_, i) => `0000line ${String(i).padStart(5, '0')} ${'x'.repeat(80)}`,
+    );
+    lines[0] = 'HEAD'.padEnd(88, 'x');
+    lines[lines.length - 1] = 'TAIL'.padEnd(88, 'x');
+    const shell = crashableEnv({
+      spawned: spawned.resolve,
+      firstOutput: `${lines.join('\n')}\n`,
+    });
+    const setup = chat();
+    setup.registry.install(
+      defineExtension({
+        name: 'kubic',
+        tools: kubicToolsToPiTools(toolContext({ env: shell.env })),
+      }),
+    );
+    setup.faux.setResponses([
+      toolUse([
+        fauxToolCall('bash', { command: 'chatty' }, { id: 'call-bash-1' }),
+      ]),
+      fauxAssistantMessage('after the failure'),
+    ]);
+    let opened = await openChat(dir, setup);
+    const submission = await opened.root.submit(
+      { type: 'input', content: 'run it' },
+      BACKGROUND_CONTEXT,
+    );
+    await spawned.promise;
+    await vi.waitFor(async () => {
+      const live = await opened.harness.snapshot(
+        LiveDoc,
+        opened.root.id,
+        BACKGROUND_CONTEXT,
+      );
+      expect(live?.tools?.[0]?.output).toContain('TAIL');
+    });
+    await opened.harness.close(BACKGROUND_CONTEXT);
+
+    opened = await openChat(dir, setup);
+    await (
+      await opened.harness.submission(submission.id, BACKGROUND_CONTEXT)
+    )?.wait(BACKGROUND_CONTEXT);
+
+    const [result] = await results(opened.root);
+    expect(result?.isError).toBe(true);
+    // Without the bash window this content would be the 8 MiB backstop: the
+    // retained tail must stay the same order of magnitude as a capped bash
+    // result instead.
+    expect((result?.text ?? '').length).toBeLessThan(4 * 64 * 1024 + 4096);
+    // Tail, not head — what bash's own clip() keeps ("endings carry the
+    // error"), so the model is not left with the beginning of a chatty call.
+    expect(result?.text).toContain('TAIL');
+    expect(result?.text).not.toContain('HEAD');
+    expect(result?.text).toContain('Output truncated');
+    expect(shell.spawns()).toBe(1);
+    await opened.harness.close(BACKGROUND_CONTEXT);
+  });
+
   it('reruns a safe call interrupted the same way', async () => {
     const dir = scratch('kubic-durable-safe-');
     const spawned = deferred();
@@ -402,6 +468,12 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
     const stored = deferred();
     const setup = chat();
     let runs = 0;
+    // A probe, not a Kubic op: no shipped op memoizes today, and none of the
+    // ops that RERUN touch a memo (every never-replay op is `unsafe`, which
+    // pi-durable never re-enters). This pins the store the adapter routes
+    // `ToolInvocation.getMemo`/`setMemo`/`memoOnce` to: durable per task,
+    // first-writer-wins, and answered across a crash — so the first op that
+    // needs a durable deferred answer gets one for free.
     const probe = defineTool({
       name: 'memo_probe',
       description: 'records a durable memo before it is interrupted',
@@ -409,9 +481,6 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
       replay: 'safe',
       execute: async (_args, api, callContext) => {
         runs += 1;
-        // First-writer-wins in the task record: the crashed attempt's value
-        // is the answer to the rerun, exactly what Kubic's never-replay
-        // memoization reads through ToolInvocation.memoOnce.
         const won = await api.memo('probe', `attempt ${runs}`, callContext);
         stored.resolve();
         const signal = callContext.abortSignal;

@@ -522,19 +522,36 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     }
   });
 
-  // #121/#176: Kubic's own caps bind the model-visible text; the harness
-  // bound is a memory backstop order of magnitude above them (and above
-  // today's deliberately unbounded git_diff/git_show results, #190). Lowering
-  // these would silently edit results Kubic already bounded.
   it('sets an output backstop far above every Kubic cap', () => {
     const tools = kubicToolsToPiTools(toolContext());
     for (const t of tools) {
-      expect(t.outputLimits, t.name).toEqual({
-        maxBytes: 8 * 1024 * 1024,
-        maxLines: 100_000,
-        retain: 'head',
-      });
+      // bash streams, so its retained window is the interrupted path's
+      // content and is bounded like the #121 cap instead (see the next
+      // test); every other tool only reports its bounded result.
+      expect(t.outputLimits, t.name).toEqual(
+        t.name === 'bash'
+          ? { maxBytes: 4 * 64 * 1024, maxLines: 100_000, retain: 'tail' }
+          : { maxBytes: 8 * 1024 * 1024, maxLines: 100_000, retain: 'head' },
+      );
     }
+  });
+
+  // #121 on the interrupted path: pi-durable hands the model the retained
+  // live output (renderBashText never runs), so the window must be the same
+  // order of magnitude as a capped bash result, and the tail is what
+  // `clip()` keeps.
+  it('bounds the streamed window of a bash call to the op cap, tail retained', () => {
+    const bash = tool('bash');
+    const limits = bash.outputLimits as {
+      maxBytes: number;
+      maxLines: number;
+      retain: string;
+    };
+    expect(limits.retain).toBe('tail');
+    // Two capped streams plus their markers stay well inside the window, so
+    // the retention can never trim a completed call's content.
+    expect(limits.maxBytes).toBeGreaterThanOrEqual(2 * 64 * 1024 + 4096);
+    expect(limits.maxBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
   });
 
   it('journal interception is attributed to the pi-durable call id (issue #17)', async () => {
@@ -613,7 +630,7 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     expect(api.output).toEqual(['--- stdout ---\nhead-tail', 'tail']);
   });
 
-  it('never-replay memoization goes through the durable memo, not a re-run', async () => {
+  it('does not copy a never-replay result into a memo on the lane (issue #153)', async () => {
     const shell = shellEnv({
       result: {
         exitCode: 0,
@@ -626,12 +643,14 @@ describe('kubicToolsToPiTools on the pi-durable surface (issue #393)', () => {
     const api = drive({ callId: 'call-bash-1' });
     const first = await run('bash', { command: 'echo hi' }, context, api);
     expect(shell.spawns).toHaveLength(1);
-    expect(api.memos.get('op-result-bash')).toMatchObject({ exitCode: 0 });
-
-    // The same invocation replayed: the memo answers, the effect does not
-    // run again — now durable in the pi-durable task record (issue #153).
+    // pi-durable's `unsafe` replay policy already refuses to re-enter
+    // execute, so the registry's effect memo could never be read: the lane
+    // writes no second durable copy of a result that can be a fully capped
+    // bash transcript. A replayed invocation therefore executes again and
+    // gets the same answer from the op itself.
+    expect([...api.memos.keys()]).toEqual([]);
     const second = await run('bash', { command: 'echo hi' }, context, api);
-    expect(shell.spawns).toHaveLength(1);
+    expect(shell.spawns).toHaveLength(2);
     expect(second.text).toBe(first.text);
   });
 

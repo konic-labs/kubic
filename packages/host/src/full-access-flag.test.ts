@@ -29,6 +29,7 @@ import {
 } from '../../../apps/kubic/src/tui-run.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -76,7 +77,7 @@ function modelsWith(
 
 function destructiveThenDone(): MutableModels {
   return modelsWith([
-    fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf build' })]),
+    fauxToolUse([fauxToolCall('bash', { command: 'rm -rf build' })]),
     fauxAssistantMessage('done'),
   ]);
 }

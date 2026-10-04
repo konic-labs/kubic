@@ -25,6 +25,11 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -93,10 +98,10 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   const reopened = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
   try {
     return JSON.stringify(
-      await reopened.findEntries(undefined, BACKGROUND_CONTEXT),
+      await readSessionEntries(reopened.storage, BACKGROUND_CONTEXT),
     );
   } finally {
-    await reopened.close(BACKGROUND_CONTEXT);
+    await reopened.release(BACKGROUND_CONTEXT);
   }
 }
 
@@ -389,7 +394,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('write', {
               path: '.kubic/config.toml',
               content: '[approvals]\nautoApprove = ["network"]\n',
@@ -419,7 +424,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('edit', {
               path: '.kubic/orchestrator/approvals/audit.jsonl',
               oldText: '"result":"deny"',
@@ -455,7 +460,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('edit', {
               path: '../../orchestrator/approvals/audit.jsonl',
               oldText: '"result":"deny"',
@@ -484,9 +489,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
-            fauxToolCall('write', { path: target, content: '{}' }),
-          ]),
+          fauxToolUse([fauxToolCall('write', { path: target, content: '{}' })]),
           fauxAssistantMessage('done'),
         ]),
         env: new NodeExecutionEnv(workspace),
@@ -506,7 +509,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('bash', {
               command: "bash -c 'echo x > .kubic/journal/index.jsonl'",
             }),
@@ -531,7 +534,7 @@ describe('prod run path: control-plane writes (issue #324)', () => {
       {
         sessionsRoot,
         models: modelsWith([
-          fauxAssistantMessage([
+          fauxToolUse([
             fauxToolCall('write', { path: 'notes.txt', content: 'hi\n' }),
           ]),
           fauxAssistantMessage('done'),

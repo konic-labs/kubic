@@ -20,6 +20,7 @@ import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { bootTuiLane } from '../../../apps/kubic/src/tui-run.js';
 import { NodeExecutionEnv } from '../../exec/src/env.js';
 import { driveToSettled } from '../../worker/src/lane/solo.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -86,7 +87,7 @@ function modelsWith(
 
 function destructiveThenDone(): MutableModels {
   return modelsWith([
-    fauxAssistantMessage([fauxToolCall('bash', { command: 'rm -rf build' })]),
+    fauxToolUse([fauxToolCall('bash', { command: 'rm -rf build' })]),
     fauxAssistantMessage('done'),
   ]);
 }

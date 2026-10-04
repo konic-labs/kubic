@@ -20,6 +20,7 @@ import {
   defaultIsDestructive,
   isNetworkCommand,
 } from '../../worker/src/lane/interceptors.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
@@ -1022,7 +1023,7 @@ async function runBash(command: string, workspace: string) {
     {
       sessionsRoot: mkTmp('kubic-bypass-sessions-'),
       models: modelsWith([
-        fauxAssistantMessage([fauxToolCall('bash', { command })]),
+        fauxToolUse([fauxToolCall('bash', { command })]),
         fauxAssistantMessage('done'),
       ]),
       env: new NodeExecutionEnv(workspace),

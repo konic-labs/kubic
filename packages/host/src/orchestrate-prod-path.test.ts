@@ -127,17 +127,15 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     try {
       // AC5: the session's cwd is the WORKER's worktree — worker journals
       // and session state land with the worker, not the parent repo.
-      expect(attached.metadata.cwd).toBe(added.path);
-      expect(attached.metadata.cwd).not.toBe(root);
+      expect(attached.meta.cwd).toBe(added.path);
+      expect(attached.meta.cwd).not.toBe(root);
     } finally {
-      await attached.close(BACKGROUND_CONTEXT);
+      await attached.release(BACKGROUND_CONTEXT);
     }
-    // The session lives under the sessions root, nowhere near the repo.
+    // The session lives under the sessions root, nowhere near the repo:
+    // #392's layout is <sessions-root>/<id>/ (no cwd slug).
     const dirs = createNodeFileBridge(sessionsRoot).listDir('.');
-    const names = dirs.map((entry) => entry.name).join('\n');
-    expect(names).toContain(
-      added.path.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-'),
-    );
+    expect(dirs.map((entry) => entry.name)).toContain('prodsess-worker-1');
   });
 
   it('is idempotent on resume: an existing worker session is reused, not recreated', async () => {
@@ -166,12 +164,12 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     // "Session already exists".
     const second = await deps.createWorkerSession?.(request);
     expect(second?.sessionId).toBe('prodsess-worker-1');
-    // Reused, not recreated: still exactly one session file on disk.
+    // Reused, not recreated: still exactly one main.jsonl on disk.
     const sessionFiles = createNodeFileBridge(
-      sessionDirName(sessionsRoot, added.path),
+      join(sessionsRoot, 'prodsess-worker-1'),
     )
       .listDir('.')
-      .filter((entry) => entry.name.endsWith('.jsonl'));
+      .filter((entry) => entry.name === 'main.jsonl');
     expect(sessionFiles).toHaveLength(1);
     const store = openSessionStore(
       sessionsRoot,
@@ -183,9 +181,9 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
       BACKGROUND_CONTEXT,
     );
     try {
-      expect(attached.metadata.cwd).toBe(added.path);
+      expect(attached.meta.cwd).toBe(added.path);
     } finally {
-      await attached.close(BACKGROUND_CONTEXT);
+      await attached.release(BACKGROUND_CONTEXT);
     }
   });
   it('refuses a surviving worker session pinned to a different cwd', async () => {
@@ -211,11 +209,10 @@ describe('prod orchestrate path: worker session creation (issue #85)', () => {
     );
     const stray = await createSession(
       store,
-      other,
+      { cwd: other, id: 'prodsess-worker-1' },
       BACKGROUND_CONTEXT,
-      'prodsess-worker-1',
     );
-    await stray.close(BACKGROUND_CONTEXT);
+    await stray.release(BACKGROUND_CONTEXT);
     const error = await Promise.resolve(
       deps.createWorkerSession?.({
         sessionId: 'prodsess',
@@ -486,11 +483,10 @@ describe('prod orchestrate path: the child that cannot attach (issue #85)', () =
     // beyond the orchestrator state file the CLI owns.
     const repoKubic = join(root, '.kubic');
     expect(existsSync(join(repoKubic, 'sessions'))).toBe(false);
+    // #392's header carries the same facts the reader uses: the session id
+    // and the cwd it was created against.
     const header = readFileSync(
-      join(
-        sessionDirName(sessionsRoot, added.path),
-        findJsonl(sessionsRoot, added.path),
-      ),
+      join(sessionsRoot, 'prodsess-worker-1', 'session.json'),
       'utf8',
     )
       .split('\n')[0]
@@ -501,22 +497,6 @@ describe('prod orchestrate path: the child that cannot attach (issue #85)', () =
     });
   });
 });
-
-// Pi's JsonlSessionRepo encodes the session cwd into the directory name
-// (`--<cwd with / and : replaced>--`); tests must reach the same store the
-// composition root wrote to, so they derive it the same way.
-function sessionDirName(sessionsRoot: string, worktreePath: string): string {
-  const encoded = worktreePath.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
-  return join(sessionsRoot, `--${encoded}--`);
-}
-
-function findJsonl(sessionsRoot: string, worktreePath: string): string {
-  const dir = sessionDirName(sessionsRoot, worktreePath);
-  const entries = createNodeFileBridge(dir).listDir('.');
-  const file = entries.find((entry) => entry.name.endsWith('.jsonl'));
-  if (file === undefined) throw new Error(`no session file under ${dir}`);
-  return file.name;
-}
 
 describe('prod orchestrate path: the configured worktree root (issue #133)', () => {
   it('creates worktrees under [orchestrator].root, keeps them out of git status, and clean finds them', async () => {

@@ -26,6 +26,11 @@ import {
   attachSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../worker/src/lane/test-harness.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -70,8 +75,8 @@ function twoCallModels(): MutableModels {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('ls', { path: '.' })]),
-    fauxAssistantMessage([fauxToolCall('ls', { path: '.' })]),
+    fauxToolUse([fauxToolCall('ls', { path: '.' })]),
+    fauxToolUse([fauxToolCall('ls', { path: '.' })]),
     fauxAssistantMessage('done'),
   ]);
   return models;
@@ -86,20 +91,17 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
   try {
-    const entries = await session.findEntries(undefined, BACKGROUND_CONTEXT);
-    const parts: string[] = [];
-    for (const entry of entries) {
-      const content = (entry as { message?: { content?: unknown } }).message
-        ?.content;
-      if (!Array.isArray(content)) continue;
-      for (const part of content) {
-        const text = (part as { text?: unknown }).text;
-        if (typeof text === 'string') parts.push(text);
-      }
-    }
-    return parts.join('\n');
+    // The shared adapter (#400) renders the 1.0 entries as text: user and
+    // assistant text, plus every tool result's own output.
+    const parts = entriesToTranscript(
+      await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+    ).map((item) => {
+      if (item.kind === 'tool-result') return item.text;
+      return 'text' in item && typeof item.text === 'string' ? item.text : '';
+    });
+    return parts.filter((part) => part !== '').join('\n');
   } finally {
-    await session.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
   }
 }
 

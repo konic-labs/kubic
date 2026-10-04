@@ -1515,16 +1515,6 @@ async function runHeadlessPromptImpl(
         spans.endLane(driveSpan, guardFailure()?.message);
       }
       capture.lane = turnLaneRecord(outcome);
-      if (outcome.kind === 'completed') {
-        const items = entriesToTranscript(
-          await readConversationEntries(solo.conversation, context),
-        );
-        return finished(
-          id,
-          'completed',
-          assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
-        );
-      }
       if (outcome.kind === 'aborted') {
         // The durable run is still live: the finally states the abort and
         // drains the kill registry before the sweep.
@@ -1543,7 +1533,8 @@ async function runHeadlessPromptImpl(
       // dangerous operation the user never approved did NOT happen, and
       // reporting exit 0 would be the dishonest half of this issue. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
-      // to the §78 approval terminus (exit 4) with the refusal named.
+      // to the §78 approval terminus (exit 4) with the refusal named. Checked
+      // BEFORE the outcome is mapped: a denial OUTRANKS a settled turn.
       //
       // Issue #129: exit 4 covers the whole approval terminus; the STATUS is
       // the honest half. A denial whose reason carries the timeout marker is
@@ -1566,6 +1557,16 @@ async function runHeadlessPromptImpl(
           ? 'approval_timed_out'
           : 'approval_denied';
         return finished(id, terminus, message, message);
+      }
+      if (outcome.kind === 'completed') {
+        const items = entriesToTranscript(
+          await readConversationEntries(solo.conversation, context),
+        );
+        return finished(
+          id,
+          'completed',
+          assistantSummary(items) ?? NO_ASSISTANT_TEXT_SUMMARY,
+        );
       }
       const terminus = failedTurnTerminus(outcome);
       const message = outcome.error ?? outcome.reason;

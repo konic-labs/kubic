@@ -27,6 +27,7 @@ import { FileJournalStore } from '../../exec/src/journal.js';
 import {
   createSession,
   openSessionStore,
+  type SessionHandle,
 } from '../../worker/src/lane/session-store.js';
 import { bootSoloLane } from '../../worker/src/lane/solo.js';
 import {
@@ -35,7 +36,6 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-  type Session,
 } from '../../worker/src/pi-boundary.js';
 import { FAUX_FOOTER, FAUX_MODEL_REF } from './faux-provider.js';
 import {
@@ -272,8 +272,12 @@ function fauxLaneBoot(
     const bridge = createNodeFileBridge(root);
     const store = openSessionStore(root, bridge);
     const context = BACKGROUND_CONTEXT;
-    const session: Session = await createSession(store, root, context);
-    const id = sessionId ?? session.metadata.id;
+    const session: SessionHandle = await createSession(
+      store,
+      { cwd: root },
+      context,
+    );
+    const id = sessionId ?? session.id;
     bridge.createDir(join(id, 'journal'));
     const provider = models.getProviders()[0];
     if (provider === undefined) throw new Error('no provider registered');
@@ -291,19 +295,21 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
+      // The notice is emitted before any turn, so this stub only has to be
+      // constructible: the TUI's durable loop seam is k6-tui's #395 port.
+      // The cast keeps this file compiling while that lands.
       loop: {
-        accept: (prompt, ctx) =>
-          solo.lane.accept({ kind: 'prompt', prompt }, ctx),
-        lane: solo.lane,
-        requestAbort: (operationId, ctx) =>
-          solo.lane.requestAbort(operationId, ctx),
-        findEntries: (query, ctx) => solo.lane.findEntries(query, ctx),
-        events: solo.harness.events,
+        accept: (prompt: string, ctx: typeof context) =>
+          solo.conversation.submit({ type: 'input', content: prompt }, ctx),
+        conversation: solo.conversation,
+        harness: solo.harness,
         kills: solo.kills,
+        findEntries: () =>
+          solo.conversation.entries({}, 500, undefined, context),
         context,
-      },
+      } as never,
       close: async () => {
-        await session.close(context);
+        await session.release(context);
       },
     };
   };

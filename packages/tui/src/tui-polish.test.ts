@@ -353,9 +353,17 @@ describe('review fixes', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
+    // The durable entry the runner's read returns (pi.user carries the
+    // message the app renders).
+    const userRecord = (id: number, text: string) => ({
+      id,
+      conversationId: 1,
+      kind: 'pi.user',
+      model: [{ role: 'user', content: text }],
+    });
     const resolvers: Array<(entries: unknown[]) => void> = [];
     const loop = {
-      findEntries: () =>
+      entries: () =>
         new Promise<unknown[]>((resolve) => {
           resolvers.push(resolve);
         }),
@@ -364,9 +372,9 @@ describe('review fixes', () => {
     const runner = new TuiTurnRunner(app, loop, 'faux/m');
     const older = runner.refreshTranscript();
     const newer = runner.refreshTranscript();
-    resolvers[1]?.([userEntry('u2', 2, 'fresh')]);
+    resolvers[1]?.([userRecord(2, 'fresh')]);
     await newer;
-    resolvers[0]?.([userEntry('u1', 1, 'stale')]);
+    resolvers[0]?.([userRecord(1, 'stale')]);
     await older;
     const doc = app.transcript.render(80).join('\n');
     expect(doc).toContain('› fresh');

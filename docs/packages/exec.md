@@ -99,10 +99,11 @@ clips — it renders hunks, not whole files.
 
 Journal durability (issue #117): index appends go through the bridge's
 `appendDurably` (open/write/fsync/close) so the entry is on platter
-before `append` returns — one fsync per tool write is the price of
-"reversible", and it is the default (`JournalRetention.durable`; `false`
-trades it for a crash window of one truncated last line, and a bridge
-without `appendDurably` always falls back to a plain append). Index
+before `append` returns — a few fsyncs per tool write are the price of
+"reversible" (see the durable-writes paragraph below), and it is the
+default (`JournalRetention.durable`; `false` trades it for a crash window
+of one truncated last line, and a bridge without `appendDurably` always
+falls back to a plain append). Index
 appends repair a torn tail first (issue #343): one stat plus one pread of
 the last byte, and a fragment left by a crash or a full disk gets its own
 newline before the new entry, so the entry lands on a line of its own

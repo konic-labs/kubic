@@ -268,9 +268,11 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       }
     },
     // Directory fsync (issue #344): the rename's own durability. macOS and
-    // Linux both allow opening a directory read-only and flushing it; a
-    // platform that refuses the open surfaces the error, and the caller's
-    // `durable` knob is the documented way to trade this for throughput.
+    // Linux both allow opening a directory read-only and flushing it. A
+    // platform that refuses either step surfaces the error, and the journal
+    // treats an unsupported flush as a degraded write (rename atomicity
+    // still holds) rather than blocking every append — see FLUSH_UNSUPPORTED
+    // in journal.ts.
     flushDir: (path: string): void => {
       const fd = openSync(absolutePath(path), 'r');
       try {

@@ -745,14 +745,18 @@ not. The split, exactly as shipped:
   and manual: `kubic sessions prune` lists candidates by default and
   deletes only with `--yes`, and `[session] retentionDays` (above) supplies
   the default keep-window — a live-locked session is never pruned.
-- **Journal**: `<root>/.kubic/journal` by default. Every index append is
-  fsynced before it returns — one fsync per tool write is the price of
-  "reversible" (store-level `JournalRetention.durable`, default `true`,
-  trades it for a crash window of one truncated last line). That fsync
-  covers the appended index line only: blob payloads and the retention
-  compaction rewrite are renamed without one, so a crash right after a
-  compaction can lose more than the last line (stated in
-  [the journal and safety page](../architecture/journal-and-safety.md)).
+- **Journal**: `<root>/.kubic/journal` by default. With the store's default
+  `durable` on, the content an entry references is flushed before the entry
+  is: a blob's bytes are fsynced before its rename and its directory after
+  it, and the index line is fsynced before the append returns — a few
+  fsyncs per tool write are the price of "reversible", and a crash can
+  neither take back a change the journal promised to undo nor leave a
+  durable entry pointing at bytes that were never written. The retention
+  compaction rewrite is flushed the same way, so a crash right after it
+  cannot leave an empty index where the whole history was (stated in
+  [the journal and safety page](../architecture/journal-and-safety.md);
+  `JournalRetention.durable` is the programmatic opt-out, which trades all
+  of it for a crash window of one truncated last line).
   Growth is bounded by `[journal] retentionDays` and the 100 MiB default
   size cap.
 

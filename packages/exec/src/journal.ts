@@ -216,6 +216,20 @@ export function sha256HexOfFile(
 
 type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
 
+// Error codes that mean "this filesystem will not flush this", not "the
+// write failed": the journal degrades to rename atomicity instead of
+// refusing to record work (issue #344 review). ENOSPC/EIO are deliberately
+// absent — those are real failures and must stay fatal.
+const FLUSH_UNSUPPORTED = new Set([
+  'EACCES',
+  'EBADF',
+  'EINVAL',
+  'EISDIR',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'EPERM',
+]);
+
 // The index's tail, as `readIndexTail` reports it (issue #343): `size` is the
 // byte length a failed append truncates back to, null when it could not be
 // read; `fragment` means the last byte is not a newline, so the next append
@@ -309,6 +323,11 @@ export class FileJournalStore {
   // slow pass (which re-derives truth from live stats) or at the next
   // session's seeding pass (a fresh cache stats everything it needs).
   private readonly blobSizes = new Map<string, number>();
+  // Issue #344: the hashes THIS store instance wrote (and flushed). A blob
+  // in here is trusted by size on reuse; a blob that is not (crash residue
+  // from an earlier session, a file another process wrote) is read and
+  // hashed before it is reused.
+  private readonly writtenHere = new Set<string>();
   // The hashes included in `trackedBytes`. Reset to the live referenced set
   // by every full retention pass, so a blob freed by a prune is re-accounted
   // if it is ever written again.
@@ -693,9 +712,9 @@ export class FileJournalStore {
       // directory after it. Without that, a crash right after the rename
       // can leave an empty or truncated index where the old one was —
       // losing everything the compaction was supposed to keep.
-      if (this.durable) bridge.flushFile?.(tmp);
+      this.flushDurably(() => bridge.flushFile?.(tmp));
       bridge.renameFile(tmp, this.indexPath);
-      if (this.durable) bridge.flushDir?.(dirname(this.indexPath));
+      this.flushDurably(() => bridge.flushDir?.(dirname(this.indexPath)));
     } catch {
       try {
         bridge.remove(tmp, false, true);
@@ -760,9 +779,9 @@ export class FileJournalStore {
     const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
     try {
       bridge.writeFile(tmp, content);
-      if (this.durable) bridge.flushFile?.(tmp);
+      this.flushDurably(() => bridge.flushFile?.(tmp));
       bridge.renameFile(tmp, path);
-      if (this.durable) bridge.flushDir?.(this.blobsDir);
+      this.flushDurably(() => bridge.flushDir?.(this.blobsDir));
     } catch (error) {
       try {
         bridge.remove(tmp, false, true);
@@ -771,6 +790,12 @@ export class FileJournalStore {
       }
       throw error;
     }
+    // This store wrote and flushed the blob: a later reuse of the same
+    // content is trusted by size alone (issue #344 review) instead of being
+    // read and hashed again — the healing below is for files this store did
+    // not write (crash residue, another process), and `readBlob` still fails
+    // closed on its own hash check if one is corrupted afterwards.
+    this.writtenHere.add(hash);
     // Write-time size: the content is in hand, so no stat is needed —
     // this is what makes retention stat-free for what this store writes.
     const size = Buffer.byteLength(content, 'utf8');
@@ -836,11 +861,14 @@ export class FileJournalStore {
   }
 
   // Issue #344: is the blob already at `path` the content it claims to be?
-  // The size gate is one stat; only a same-size file is read and hashed (a
-  // torn blob of the wrong length never costs a read, and one that is
-  // unreadable or unstattable is treated as corrupt so the caller rewrites
-  // it). The caller holds the bytes, so a corrupt blob costs one rewrite
-  // and is healed instead of poisoning every later entry that reuses it.
+  // The size gate is one stat and catches the truncated crash shape without
+  // reading; a file this store wrote itself is then trusted (it was flushed
+  // on the way in, and a full read+hash per reuse would cost the previous
+  // content of every large re-edit — the #124 property this store keeps),
+  // while anything else is read and hashed before it is reused. A blob that
+  // fails either check is treated as corrupt, so the caller rewrites it from
+  // the bytes in hand and heals it instead of poisoning every later entry
+  // that reuses it.
   private blobIsIntact(
     bridge: FileBridge,
     path: string,
@@ -851,9 +879,28 @@ export class FileJournalStore {
       if (bridge.fileInfo(path).size !== Buffer.byteLength(content, 'utf8')) {
         return false;
       }
+      if (this.writtenHere.has(hash)) return true;
       return sha256Hex(bridge.readTextFile(path)) === hash;
     } catch {
       return false;
+    }
+  }
+
+  // Issue #344 review: flushing is a durability upgrade, never a reason to
+  // lose a write. A platform or filesystem that refuses to flush a directory
+  // (Windows' directory handles; FUSE and overlay mounts returning EINVAL)
+  // degrades to rename atomicity instead of blocking every tool write — the
+  // same shape as a bridge without `appendDurably`. A genuine I/O failure
+  // (ENOSPC, EIO) still propagates: a durable entry may not silently
+  // reference bytes that were never flushed. Both callers share this rule;
+  // only a failed append is fatal — a failed compaction means no prune.
+  private flushDurably(run: () => void): void {
+    if (!this.durable) return;
+    try {
+      run();
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code ?? '';
+      if (!FLUSH_UNSUPPORTED.has(code)) throw error;
     }
   }
 

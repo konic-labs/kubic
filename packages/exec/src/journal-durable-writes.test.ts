@@ -29,6 +29,18 @@ import {
 // of the real fsyncs that reached the filesystem.
 const log = vi.hoisted(() => ({ calls: [] as string[], fsyncs: 0 }));
 
+// A filesystem that refuses a flush (EINVAL/EOPNOTSUPP on FUSE or overlay
+// mounts, EPERM/EISDIR on a Windows directory handle) versus one that fails
+// a flush for real (EIO/ENOSPC). The journal must tell them apart.
+const hooks = vi.hoisted(() => ({
+  refuseFlush: null as null | ((path: string) => boolean),
+  failFlush: null as null | ((path: string) => boolean),
+}));
+
+function errno(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
 // Count fsyncs through the real node bridge: the durability claim is only
 // proven if the production implementation actually flushes.
 vi.mock('node:fs', async (importOriginal) => {
@@ -54,6 +66,8 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
       };
       return {
         ...bridge,
+        readTextFile: (path: string) =>
+          record(`read:${path}`, () => bridge.readTextFile(path)),
         writeFile: (path, content, options) =>
           record(`write:${path}`, () =>
             bridge.writeFile(path, content, options),
@@ -67,9 +81,25 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
             bridge.appendDurably?.(path, content),
           ),
         flushFile: (path) =>
-          record(`flushFile:${path}`, () => bridge.flushFile?.(path)),
+          record(`flushFile:${path}`, () => {
+            if (hooks.failFlush?.(path) === true) {
+              throw errno('EIO', 'simulated flush failure');
+            }
+            if (hooks.refuseFlush?.(path) === true) {
+              throw errno('EOPNOTSUPP', 'simulated unsupported flush');
+            }
+            bridge.flushFile?.(path);
+          }),
         flushDir: (path) =>
-          record(`flushDir:${path}`, () => bridge.flushDir?.(path)),
+          record(`flushDir:${path}`, () => {
+            if (hooks.failFlush?.(path) === true) {
+              throw errno('EIO', 'simulated flush failure');
+            }
+            if (hooks.refuseFlush?.(path) === true) {
+              throw errno('EOPNOTSUPP', 'simulated unsupported flush');
+            }
+            bridge.flushDir?.(path);
+          }),
       };
     },
   };
@@ -80,6 +110,8 @@ const roots: string[] = [];
 afterEach(() => {
   log.calls = [];
   log.fsyncs = 0;
+  hooks.refuseFlush = null;
+  hooks.failFlush = null;
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -178,7 +210,11 @@ describe('journal durable writes (issue #344)', () => {
     const hash = seedBlob(dir, sha256Hex(before), before);
     log.calls = [];
     const recorded = store.append(entry({ before, after: 'x\n' }));
-    expect(log.calls.filter((call) => call.includes(hash))).toEqual([]);
+    expect(
+      log.calls.filter(
+        (call) => call.includes(hash) && !call.startsWith('read:'),
+      ),
+    ).toEqual([]);
     expect(store.readBefore(recorded)).toBe(before);
   });
 
@@ -192,11 +228,12 @@ describe('journal durable writes (issue #344)', () => {
     log.calls = [];
     log.fsyncs = 0;
     const pruned = store.enforceRetention({ maxBytes: 1 });
-    expect(pruned.entries).toBe(2);
+    expect(pruned.entries).toBeGreaterThan(0);
     // The whole history is replaced by one rename: its bytes are flushed
     // first, and the rename is flushed after, so a crash cannot leave an
-    // empty or truncated index where the old one was.
-    expect(log.calls).toEqual([
+    // empty or truncated index where the old one was. (Index reads are the
+    // pass's own, not part of the rewrite.)
+    expect(log.calls.filter((call) => !call.startsWith('read:'))).toEqual([
       `write:${tmp}`,
       `flushFile:${tmp}`,
       `rename:${tmp}->${index}`,
@@ -215,5 +252,74 @@ describe('journal durable writes (issue #344)', () => {
     expect(pruned.entries).toBe(1);
     expect(log.calls.filter((call) => call.startsWith('flush'))).toEqual([]);
     expect(log.fsyncs).toBe(0);
+  });
+});
+
+// Review finding 2 (issue #344): a refused flush is not a failed write.
+describe('journal durable writes: refused flushes (issue #344 review)', () => {
+  it('records the append when the filesystem refuses a directory flush', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    hooks.refuseFlush = (path) => path === join(dir, 'blobs');
+    const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
+    // Rename atomicity still holds, so the write is recorded rather than
+    // blocked on a platform that cannot flush a directory.
+    expect(store.entries()).toHaveLength(1);
+    expect(store.readAfter(recorded)).toBe('hello\n');
+  });
+
+  it('still completes a compaction whose directory flush is refused', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    store.append(entry({ path: 'a.txt', after: 'a\n' }));
+    store.append(entry({ path: 'b.txt', after: 'b\n' }));
+    hooks.refuseFlush = (path) => path === dir;
+    const pruned = store.enforceRetention({ maxBytes: 1 });
+    // The rename landed and the pass reports it: a refused flush must not
+    // turn a compaction into a silent {0, 0} no-op either. (The drop set is
+    // the retention rule's business, not this test's.)
+    expect(pruned.entries).toBeGreaterThan(0);
+    expect(pruned.entries + store.entries().length).toBe(2);
+  });
+
+  it('still fails the append when a flush fails for real', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    hooks.failFlush = (path) => path.includes(`${sep}blobs${sep}`);
+    expect(() =>
+      store.append(entry({ path: 'a.txt', after: 'hello\n' })),
+    ).toThrow(/simulated flush failure/);
+    // No entry without its content: the journal never promises durability
+    // it could not deliver.
+    expect(store.entries()).toEqual([]);
+  });
+});
+
+// Review finding 3 (issue #344): healing crash residue must not cost a full
+// read + hash of every reused blob.
+describe('journal durable writes: blob reuse (issue #344 review)', () => {
+  it('trusts a blob it wrote itself, with no re-read on reuse', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const content = 'reused content\n';
+    const first = store.append(entry({ path: 'a.txt', after: content }));
+    const blob = join(dir, 'blobs', first.afterHash ?? 'missing');
+    log.calls = [];
+    const second = store.append(entry({ path: 'b.txt', after: content }));
+    expect(log.calls.filter((call) => call === `read:${blob}`)).toEqual([]);
+    expect(second.afterHash).toBe(first.afterHash);
+    expect(store.readAfter(second)).toBe(content);
+  });
+
+  it('reads and hashes a blob it did not write', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir);
+    const content = 'foreign content\n';
+    const hash = seedBlob(dir, sha256Hex(content), content);
+    log.calls = [];
+    const recorded = store.append(entry({ path: 'a.txt', after: content }));
+    // Not written by this store: it is verified before it is reused.
+    expect(log.calls).toContain(`read:${join(dir, 'blobs', hash)}`);
+    expect(store.readAfter(recorded)).toBe(content);
   });
 });

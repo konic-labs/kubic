@@ -148,10 +148,14 @@ describe('journal store (issue #17, slice A)', () => {
     expect(store.entries()[0]?.path).toBe('new.txt');
     expect(store.blobCount()).toBe(1);
 
+    // Size: the oldest is evicted, and the newest entry is never dropped
+    // (issue #348) — its excess over the bound is reported instead.
+    store.append(entry({ path: 'newest.txt', after: 'nw\n', timestamp: 3000 }));
     const small = store.enforceRetention({ maxBytes: 1, now: 2000 });
     expect(small.entries).toBe(1);
-    expect(store.entries()).toEqual([]);
-    expect(store.blobCount()).toBe(0);
+    expect(small.overBound).toBe(2);
+    expect(store.entries().map((e) => e.path)).toEqual(['newest.txt']);
+    expect(store.blobCount()).toBe(1);
   });
 });
 

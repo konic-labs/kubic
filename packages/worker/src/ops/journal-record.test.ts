@@ -118,4 +118,26 @@ describe('journal interception (issue #17, slice B)', () => {
       chmodSync(dir, 0o755);
     }
   });
+
+  // Issue #348: an entry too large for the journal is refused by the store,
+  // and the tool must surface that as journal_failed with the target file
+  // untouched — the journal-first order is what makes the refusal safe.
+  it('surfaces an over-bound entry as journal_failed, file untouched', async () => {
+    const journal = new FileJournalStore(journalDir(), { maxBytes: 1000 });
+    const c = ctx(journal);
+    const out = await callOperation(
+      'write',
+      { path: 'big.txt', content: 'x'.repeat(2000) },
+      inv(),
+      c,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error.code).toBe('journal_failed');
+      // The bound is in the message the model sees, not just a generic
+      // "journal failed".
+      expect(out.error.message).toContain('1000');
+    }
+    expect(() => c.env.fs.readFile('big.txt')).toThrow();
+  });
 });

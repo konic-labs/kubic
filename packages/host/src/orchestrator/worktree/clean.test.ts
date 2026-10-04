@@ -98,7 +98,7 @@ describe('kubic clean (issue #45, #92)', () => {
         },
         pruneJournal: () => {
           journalCalls += 1;
-          return { entries: 0, bytes: 0 };
+          return { entries: 0, bytes: 0, overBound: 0 };
         },
       },
     );
@@ -125,7 +125,7 @@ describe('kubic clean (issue #45, #92)', () => {
         err: (line: string) => errs.push(line),
         pruneJournal: (policy: unknown) => {
           policies.push(policy);
-          return { entries: 4, bytes: 1024 };
+          return { entries: 4, bytes: 1024, overBound: 0 };
         },
       },
     );
@@ -164,7 +164,7 @@ describe('kubic clean (issue #45, #92)', () => {
         err: (line: string) => errs.push(line),
         pruneJournal: (policy: { maxBytes?: number; maxAgeMs?: number }) => {
           policies.push(policy);
-          return { entries: 2, bytes: 64 };
+          return { entries: 2, bytes: 64, overBound: 0 };
         },
       },
     );
@@ -201,13 +201,34 @@ describe('kubic clean (issue #45, #92)', () => {
         env,
         out: (line: string) => lines.push(line),
         err: (line: string) => errs.push(line),
-        pruneJournal: () => ({ entries: 3, bytes: 99 }),
+        pruneJournal: () => ({ entries: 3, bytes: 99, overBound: 0 }),
       },
     );
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('journal: pruned 3 entr(ies), freed 99 byte(s)');
     expect(text).not.toContain('nothing to prune');
+  });
+
+  // Issue #348: the newest entry is never dropped, so a bound it alone
+  // exceeds is reported rather than silently ignored.
+  it('reports an over-bound journal whose newest entry was kept', async () => {
+    const env = new FakeExecutionEnv(repoScripts());
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await runCleanCommand(
+      { journal: true, maxBytes: 10 },
+      {
+        env,
+        out: (line: string) => lines.push(line),
+        err: (line: string) => errs.push(line),
+        pruneJournal: () => ({ entries: 4, bytes: 1024, overBound: 7 }),
+      },
+    );
+    expect(code).toBe(0);
+    expect(lines.join('\n')).toContain(
+      'journal: pruned 4 entr(ies), freed 1024 byte(s), over bound by 7 byte(s) (newest entry kept)',
+    );
   });
 
   it('plans only spawned worktrees, never the main checkout', () => {
@@ -429,7 +450,7 @@ describe('kubic clean (issue #45, #92)', () => {
       dryRun: false,
       worktrees: [],
       branches: [],
-      journal: { entries: 0, bytes: 0 },
+      journal: { entries: 0, bytes: 0, overBound: 0 },
     });
     expect(jsonErrs).toHaveLength(1);
     expect(jsonErrs[0]).toMatch(/needs a git repository/);
@@ -485,7 +506,7 @@ describe('kubic clean never disposes a live worker (§51 crash recovery)', () =>
         remover: async (_e: unknown, path: string) => {
           removed.push(path);
         },
-        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['agent-2', { pid: 4242, sessionId: 's-agent-2' }]]),
         workerCommand: async () => command,
@@ -547,7 +568,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           deleted.push(branch);
         },
         pruner: async () => undefined,
-        pruneJournal: () => ({ entries: 0, bytes: 0 }),
+        pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
         liveWorkers: () =>
           new Map([['worker-1', { pid: 4242, sessionId: liveSession }]]),
         workerCommand: async () => `node kubic.js run --session ${liveSession}`,
@@ -586,7 +607,7 @@ describe('kubic clean --session is scoped to its own session (issue #144)', () =
           remover: async () => undefined,
           branchDeleter: async () => undefined,
           pruner: async () => undefined,
-          pruneJournal: () => ({ entries: 0, bytes: 0 }),
+          pruneJournal: () => ({ entries: 0, bytes: 0, overBound: 0 }),
           liveWorkers: () => new Map(),
           retireSessionState: (session: string, repo: string) => {
             retired.push([session, repo]);

@@ -100,6 +100,10 @@ export interface CleanPlan {
 export interface JournalPruneResult {
   entries: number;
   bytes: number;
+  // Issue #348: bytes the kept journal is still over the retention bound by,
+  // when the newest entry alone cannot fit — it is never dropped, so the
+  // excess is reported instead of deleted. 0 means the bound holds.
+  overBound: number;
 }
 
 export interface CleanDeps {
@@ -364,7 +368,7 @@ async function defaultResolveRepoRoot(
 }
 
 function noopPrune(): JournalPruneResult {
-  return { entries: 0, bytes: 0 };
+  return { entries: 0, bytes: 0, overBound: 0 };
 }
 
 function messageOf(error: unknown): string {
@@ -760,8 +764,12 @@ export async function runCleanCommand(
     deps.out(theme.muted('clean: nothing to prune'));
   }
   if (bounded) {
+    const over =
+      journal.overBound > 0
+        ? `, over bound by ${journal.overBound} byte(s) (newest entry kept)`
+        : '';
     deps.out(
-      `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)`,
+      `journal: pruned ${journal.entries} entr(ies), freed ${journal.bytes} byte(s)${over}`,
     );
   }
   return exitCode;

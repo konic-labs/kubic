@@ -113,6 +113,25 @@ export interface JournalIndexRead {
   corruptLines: number;
 }
 
+// Issue #348: an entry whose own content cannot fit the store's bound is
+// refused before anything is written. The alternative was a record that the
+// same append's retention pass then deleted — the file change landed
+// unrecorded and undo had nothing to restore. Named so the tool layer can
+// surface it as a journal_failed op error with the bound in the message.
+export class JournalEntryTooLargeError extends Error {
+  readonly entryBytes: number;
+  readonly maxBytes: number;
+
+  constructor(entryBytes: number, maxBytes: number) {
+    super(
+      `journal entry needs ${entryBytes} bytes of content, over the store's ${maxBytes}-byte bound`,
+    );
+    this.name = 'JournalEntryTooLargeError';
+    this.entryBytes = entryBytes;
+    this.maxBytes = maxBytes;
+  }
+}
+
 export interface JournalEntry {
   path: string;
   op: JournalOp;
@@ -362,6 +381,14 @@ export class FileJournalStore {
 
   append(input: JournalEntryInput): JournalEntry {
     const bridge = this.bridge();
+    // Issue #348: an entry the store could never keep is refused before a
+    // single blob is written, so the caller's file write is aborted with
+    // the target untouched rather than landing a change whose record the
+    // retention pass below would immediately delete.
+    const ownBytes = this.entryBlobBytes(input);
+    if (ownBytes > this.limits.maxBytes) {
+      throw new JournalEntryTooLargeError(ownBytes, this.limits.maxBytes);
+    }
     const beforeHash =
       input.before === null
         ? (input.beforeHash ?? null)
@@ -623,6 +650,9 @@ export class FileJournalStore {
   enforceRetention(policy: RetentionPolicy): {
     entries: number;
     bytes: number;
+    // Issue #348: bytes the kept set is still over `policy.maxBytes` by,
+    // when the newest entry alone cannot fit. 0 means the bound holds.
+    overBound: number;
   } {
     const bridge = this.bridge();
     // Fast path (issue #124): with no age policy and the tracked byte
@@ -635,7 +665,7 @@ export class FileJournalStore {
       this.trackedBytes !== null &&
       this.trackedBytes <= policy.maxBytes * 0.9
     ) {
-      return { entries: 0, bytes: 0 };
+      return { entries: 0, bytes: 0, overBound: 0 };
     }
     const now = policy.now ?? Date.now();
     const all = this.entries();
@@ -671,11 +701,17 @@ export class FileJournalStore {
         refs.set(hash, (refs.get(hash) ?? 0) + 1);
       }
     }
+    let overBound = 0;
     if (policy.maxBytes !== undefined) {
       let total = 0;
       for (const hash of refs.keys()) total += this.sizeOf(bridge, hash);
       const maxBytes = policy.maxBytes;
-      while (kept.length > 0 && total > maxBytes) {
+      // Issue #348: stop at the newest entry. `kept` is oldest-first, so
+      // `kept.length > 1` guarantees the last one survives even when it
+      // alone is over the bound — losing the record of the change just made
+      // is the one thing a change journal may not do. Whatever excess is
+      // left is reported to the caller instead of being deleted.
+      while (kept.length > 1 && total > maxBytes) {
         const dropped = kept.shift();
         if (dropped === undefined) break;
         for (const hash of blobHashesOf(dropped)) {
@@ -688,6 +724,7 @@ export class FileJournalStore {
           }
         }
       }
+      overBound = Math.max(0, total - maxBytes);
     }
     const removed = all.length - kept.length;
     if (removed === 0) {
@@ -696,7 +733,7 @@ export class FileJournalStore {
       // proving "nothing can drop" from live truth (issue #124 review
       // fix 2).
       this.syncTracking(refs.keys(), this.blobBytes(bridge, kept));
-      return { entries: 0, bytes: 0 };
+      return { entries: 0, bytes: 0, overBound };
     }
     const before = this.blobBytes(bridge, all);
     const referenced = new Set(refs.keys());
@@ -721,7 +758,7 @@ export class FileJournalStore {
       } catch {
         // Best-effort tmp cleanup; the index rewrite is what matters.
       }
-      return { entries: 0, bytes: 0 };
+      return { entries: 0, bytes: 0, overBound: 0 };
     }
     if (bridge.exists(this.blobsDir)) {
       for (const info of bridge.listDir(this.blobsDir)) {
@@ -742,7 +779,29 @@ export class FileJournalStore {
     // The rewrite moved the index onto `kept`: re-base the tracked total on
     // its truth so the fast path resumes proving "nothing can drop".
     this.syncTracking(referenced, after);
-    return { entries: removed, bytes: before - after };
+    return { entries: removed, bytes: before - after, overBound };
+  }
+
+  // Issue #348: the bytes this entry's own blobs occupy — the before
+  // pre-image plus either the after content or, for a large after-side, the
+  // delta that is stored instead of it. Each blob counts once: a no-op
+  // write (before === after) references a single blob, so it is measured
+  // once rather than twice. The check is on the entry's own content, not on
+  // what dedupe would add — an entry that could never fit the store is
+  // refused whether or not its bytes happen to be there already.
+  private entryBlobBytes(input: JournalEntryInput): number {
+    const before = input.before;
+    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8');
+    const after = input.after;
+    if (after === null) return beforeBytes;
+    if (Buffer.byteLength(after, 'utf8') > LARGE_FILE_BYTES) {
+      return (
+        beforeBytes +
+        Buffer.byteLength(encodeDelta(before ?? '', after), 'utf8')
+      );
+    }
+    if (before !== null && before === after) return beforeBytes;
+    return beforeBytes + Buffer.byteLength(after, 'utf8');
   }
 
   private putBlob(

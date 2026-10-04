@@ -18,7 +18,7 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
@@ -133,6 +133,23 @@ bridge without `flushFile`/`flushDir` keeps rename atomicity without
 rename durability. Undo restores stay tmp+rename without an fsync —
 atomicity, not durability, as
 [the journal and safety page](../architecture/journal-and-safety.md) states.
+
+Journal entry bound (issue #348): retention is enforced on every append and
+stops at the newest entry. `kept` is oldest-first, so the drop loop ends
+when one entry is left: the record of the change just made is never the
+thing that gets dropped, even when that entry alone exceeds the bound. The
+pass reports the excess instead — `enforceRetention` returns
+`{ entries, bytes, overBound }`, and `kubic clean --journal` prints
+`over bound by N byte(s) (newest entry kept)`. An entry that could never fit
+the store is refused before a single blob is written:
+`JournalEntryTooLargeError` (a named error carrying `entryBytes` and
+`maxBytes`) is thrown from `append`, so the tool layer aborts the write as
+`journal_failed` with the target file untouched — the alternative was
+recording a change whose own record the same append's pruning then deleted.
+The bound is on the entry's own blob bytes (before pre-image plus after
+content, or the delta stored for a large after-side; a no-op write counts
+its single blob once), measured before dedupe — an entry that could never
+fit is refused whether or not its bytes happen to be in the store already.
 
 Undo records (issue #117): every successful restore appends its inverse
 entry — pre-undo content as `before`, restored content as `after`,

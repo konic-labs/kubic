@@ -246,6 +246,7 @@ describe('journal durable writes (issue #344)', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
+    store.append(entry({ path: 'b.txt', after: 'b\n' }));
     log.calls = [];
     log.fsyncs = 0;
     const pruned = store.enforceRetention({ maxBytes: 1 });

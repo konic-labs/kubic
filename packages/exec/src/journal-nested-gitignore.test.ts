@@ -30,7 +30,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge, type FileBridge } from './file-bridge.js';
-import { captureBaseline, FileJournalStore, reconcile } from './journal.js';
+import {
+  captureBaseline,
+  FileJournalStore,
+  reconcile,
+  UNREADABLE_HASH,
+} from './journal.js';
 
 const CTX = {
   sessionId: 's-nested',
@@ -159,9 +164,11 @@ describe('nested .gitignore in the baseline walk (issue #116)', () => {
     // throws, and nothing is silently un-ignored.
     expect(baseline['sub/scratch.tmp']).toBeUndefined();
     expect(baseline['sub/keep.txt']).toMatch(/^[0-9a-f]{64}$/);
-    // The unreadable file itself is skipped by the hash's own failure path —
-    // a walk condition, never a crash.
-    expect(baseline['sub/.gitignore']).toBeUndefined();
+    // The unreadable file itself is recorded as unreadable (issue #351): its
+    // content could not be observed, so reconcile never reads the EACCES as
+    // a delete of a file that is still there — and never invents a hash for
+    // it either. A walk condition, never a crash.
+    expect(baseline['sub/.gitignore']).toBe(UNREADABLE_HASH);
   });
 
   it('keeps the .git/ and .kubic/ skips hard-first, ahead of any ignore rule', () => {

@@ -1,0 +1,184 @@
+// Baseline + sweep walk races (issue #351; §42.5, §42.1 mechanism 2).
+//
+// The walk must never turn "I could not look" into "it is gone". Three ways
+// it used to:
+//   - `listDir` lstats every name readdirSync returned, so ONE entry
+//     vanishing in between threw ENOENT for the whole listing and dropped the
+//     entire subtree from the baseline/sweep (siblings included).
+//   - a hash failure was treated as "vanished" whatever its cause, so
+//     `chmod 000 secret.txt` read as a delete of a file that still exists.
+//   - a directory listing that failed at sweep time dropped its subtree from
+//     `current`, so reconcile recorded every file under it as deleted.
+//
+// RED: listDir throws for the whole listing, the per-file catch swallows
+// every error, and captureBaseline has no previous baseline to fall back on.
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  captureBaseline,
+  FileJournalStore,
+  reconcile,
+  sha256Hex,
+  UNREADABLE_HASH,
+} from './journal.js';
+
+// Make one path vanish between readdirSync and lstatSync: exactly the race
+// the node bridge's own listing used to lose the whole directory to.
+const hooks = vi.hoisted(() => ({ vanishOnce: null as null | string }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    lstatSync: (path: string, ...rest: unknown[]) => {
+      if (hooks.vanishOnce !== null && path.endsWith(hooks.vanishOnce)) {
+        hooks.vanishOnce = null;
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+      }
+      return actual.lstatSync(path, ...(rest as []));
+    },
+  };
+});
+
+const roots: string[] = [];
+
+afterEach(() => {
+  hooks.vanishOnce = null;
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+function tmpRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+function ctx(): {
+  sessionId: string;
+  agentId: string;
+  timestamp: number;
+} {
+  return { sessionId: 's1', agentId: 'root', timestamp: 100 };
+}
+
+describe('baseline walk races (issue #351)', () => {
+  it('keeps siblings in the baseline when one entry vanishes mid-listing', () => {
+    const root = tmpRoot('ws-');
+    writeFileSync(join(root, 'a.txt'), 'a\n');
+    writeFileSync(join(root, 'vanish.txt'), 'gone\n');
+    hooks.vanishOnce = 'vanish.txt';
+    const baseline = captureBaseline(root);
+    // The vanished entry is simply absent; its sibling is hashed as usual.
+    expect(Object.keys(baseline)).toEqual(['a.txt']);
+    expect(baseline['a.txt']).toBe(sha256Hex('a\n'));
+  });
+
+  it('does not record a delete for a baseline file that became unreadable', () => {
+    const root = tmpRoot('ws-');
+    writeFileSync(join(root, 'secret.txt'), 'secret\n');
+    writeFileSync(join(root, 'public.txt'), 'public\n');
+    const baseline = captureBaseline(root);
+    expect(baseline['secret.txt']).toBe(sha256Hex('secret\n'));
+    chmodSync(join(root, 'secret.txt'), 0o000);
+    try {
+      const store = new FileJournalStore(tmpRoot('j-'));
+      const added = reconcile(store, baseline, root, ctx());
+      // The file is still there; only its content could not be observed.
+      expect(added).toBe(0);
+      expect(store.entries()).toEqual([]);
+    } finally {
+      chmodSync(join(root, 'secret.txt'), 0o644);
+    }
+  });
+
+  it('carries a subtree forward when its listing fails at sweep time', () => {
+    const root = tmpRoot('ws-');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'a.ts'), 'a\n');
+    writeFileSync(join(root, 'src', 'b.ts'), 'b\n');
+    writeFileSync(join(root, 'top.txt'), 'top\n');
+    const baseline = captureBaseline(root);
+    expect(Object.keys(baseline).sort()).toEqual([
+      'src/a.ts',
+      'src/b.ts',
+      'top.txt',
+    ]);
+    chmodSync(join(root, 'src'), 0o000);
+    try {
+      const store = new FileJournalStore(tmpRoot('j-'));
+      const added = reconcile(store, baseline, root, ctx());
+      // The subtree's state is unknown, so its previous hashes stand in:
+      // no delete, no invented change.
+      expect(added).toBe(0);
+      expect(store.entries()).toEqual([]);
+    } finally {
+      chmodSync(join(root, 'src'), 0o755);
+    }
+  });
+
+  it('still records a delete for a file that really vanished', () => {
+    const root = tmpRoot('ws-');
+    writeFileSync(join(root, 'gone.txt'), 'gone\n');
+    const baseline = captureBaseline(root);
+    unlinkSync(join(root, 'gone.txt'));
+    const store = new FileJournalStore(tmpRoot('j-'));
+    const added = reconcile(store, baseline, root, ctx());
+    expect(added).toBe(1);
+    expect(store.entries().map((e) => [e.path, e.op])).toEqual([
+      ['gone.txt', 'delete'],
+    ]);
+  });
+
+  it('records an honest create when an unreadable path becomes readable', () => {
+    const root = tmpRoot('ws-');
+    writeFileSync(join(root, 'later.txt'), 'content\n');
+    chmodSync(join(root, 'later.txt'), 0o000);
+    let baseline: ReturnType<typeof captureBaseline>;
+    try {
+      baseline = captureBaseline(root);
+    } finally {
+      chmodSync(join(root, 'later.txt'), 0o644);
+    }
+    // At boot the path was seen but not read: the sentinel, never a hash.
+    expect(baseline['later.txt']).toBe(UNREADABLE_HASH);
+    const store = new FileJournalStore(tmpRoot('j-'));
+    const added = reconcile(store, baseline, root, ctx());
+    expect(added).toBe(1);
+    const entry = store.entries()[0];
+    // No invented before-hash (the sentinel never reaches the journal), and
+    // the after-side is the content that is actually there.
+    expect(entry?.op).toBe('create');
+    expect(entry?.beforeHash).toBeNull();
+    expect(entry?.afterHash).toBe(sha256Hex('content\n'));
+    expect(entry === undefined ? null : store.readAfter(entry)).toBe(
+      'content\n',
+    );
+  });
+
+  it('leaves the file content alone through every race', () => {
+    // The races are read-side only: nothing in this issue may write, move or
+    // delete a workspace file.
+    const root = tmpRoot('ws-');
+    writeFileSync(join(root, 'keep.txt'), 'keep\n');
+    const baseline = captureBaseline(root);
+    chmodSync(join(root, 'keep.txt'), 0o000);
+    try {
+      const store = new FileJournalStore(tmpRoot('j-'));
+      reconcile(store, baseline, root, ctx());
+    } finally {
+      chmodSync(join(root, 'keep.txt'), 0o644);
+    }
+    expect(readFileSync(join(root, 'keep.txt'), 'utf8')).toBe('keep\n');
+  });
+});

@@ -1141,6 +1141,17 @@ export class FileJournalStore {
 
 export type Baseline = Record<string, string>;
 
+/**
+ * Issue #351: the sentinel a walk stores for a path it could SEE but not READ
+ * (EACCES/EPERM/EIO — a `chmod 000` secret, a permission-denied mount). It is
+ * not a hash, and a real hash is 64 hex characters, so it can never collide.
+ * Reconcile skips such a path entirely: it was never observed to change (no
+ * read happened) and it was never observed to vanish (lstat succeeded), so
+ * neither a delete nor a change is recorded for it. Persisted with the
+ * baseline, so a resumed run keeps the distinction.
+ */
+export const UNREADABLE_HASH = 'unreadable';
+
 export interface BaselineOptions {
   outOfScope?: string[];
   /**
@@ -1158,6 +1169,14 @@ export interface BaselineOptions {
    * implement it; the hook exists so the fallback can never be invisible.
    */
   onNotice?: (detail: string) => void;
+  /**
+   * Issue #351: the previous baseline to carry a subtree forward from when
+   * its listing fails mid-walk (a permission change, a directory that
+   * vanished). The sweep passes its boot baseline, so an unlistable subtree
+   * compares equal to its own previous state instead of reading as deleted;
+   * a boot capture has none, and an unlistable directory contributes nothing.
+   */
+  previous?: Baseline;
 }
 
 // §35 out-of-scope paths (issue #115): an entry excludes the path itself and
@@ -1194,6 +1213,15 @@ export function captureBaseline(
     try {
       infos = bridge.listDir(dir);
     } catch {
+      // Issue #351: the subtree's CURRENT state is unknown, so its previous
+      // hashes stand in for it — reconcile then sees "unchanged" instead of
+      // "every file under it was deleted". Without a previous baseline
+      // there is nothing to carry, and an unreadable directory simply
+      // contributes no entries (never invented ones).
+      const prefix = rel === '' ? '' : `${rel}/`;
+      for (const [path, hash] of Object.entries(options.previous ?? {})) {
+        if (prefix === '' || path.startsWith(prefix)) baseline[path] = hash;
+      }
       return;
     }
     // One `exists` per directory entered (issue #116 perf contract): the same
@@ -1251,8 +1279,16 @@ export function captureBaseline(
             info.size,
             options.onNotice,
           );
-        } catch {
-          // Vanished mid-walk: reconcile treats it as a delete.
+        } catch (error) {
+          // Issue #351: a real disappearance (ENOENT) leaves the path out of
+          // the walk, and reconcile records the delete it is. Anything else —
+          // EACCES/EPERM/EIO, a `chmod 000` file or a permission-denied mount
+          // — means the path is still there and its content was never
+          // observed: it is kept with the unreadable sentinel, so reconcile
+          // records neither a delete nor a change for it.
+          if ((error as { code?: string } | null)?.code !== 'ENOENT') {
+            baseline[relPath] = UNREADABLE_HASH;
+          }
         }
       }
     }
@@ -1678,7 +1714,7 @@ export function reconcile(
   // reconcile now.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
-  const current = captureBaseline(root, options);
+  const current = captureBaseline(root, { ...options, previous: baseline });
   // Issue #341: each path's EXPECTED state is the last entry journaled
   // during THIS run, else the boot baseline — never "matches the baseline
   // OR any historical after-hash", which hid same-run reverts, a resumed
@@ -1694,7 +1730,12 @@ export function reconcile(
   }
   const expectedHash = (relPath: string): string | null => {
     if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;
-    return baseline[relPath] ?? null;
+    const boot = baseline[relPath];
+    // Issue #351: an unreadable-at-boot path has no known pre-state. Treated
+    // as absent, so a path that is readable later is an honest create with no
+    // invented before-hash — never the sentinel in the journal, never a
+    // delete of a file that was only unreadable.
+    return boot === undefined || boot === UNREADABLE_HASH ? null : boot;
   };
   let added = 0;
   const record = (input: {
@@ -1731,6 +1772,10 @@ export function reconcile(
     // The walk above already prunes an excluded directory, so this states the
     // rule for a path that reaches the sweep any other way.
     if (isOutOfScope(relPath, outOfScope)) continue;
+    // Issue #351: a path the walk could see but not read has no observed
+    // state — never a change (nothing was read), and never a delete either
+    // (the candidates loop below skips it: it IS present in `current`).
+    if (hash === UNREADABLE_HASH) continue;
     const expected = expectedHash(relPath);
     if (expected === hash) continue;
     const abs = join(root, relPath);

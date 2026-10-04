@@ -285,10 +285,25 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       chmodSync(absolutePath(path), mode);
     },
     fileInfo: (path: string): BridgeFileInfo => infoOf(absolutePath(path)),
-    listDir: (path: string): BridgeFileInfo[] =>
-      readdirSync(absolutePath(path)).map((name) =>
-        infoOf(join(absolutePath(path), name)),
-      ),
+    listDir: (path: string): BridgeFileInfo[] => {
+      const abs = absolutePath(path);
+      const out: BridgeFileInfo[] = [];
+      for (const name of readdirSync(abs)) {
+        try {
+          out.push(infoOf(join(abs, name)));
+        } catch (error) {
+          // Issue #351: one entry vanishing between the listing and its lstat
+          // must not fail the whole listing — the caller would drop the
+          // entire subtree from the walk and read every file in it as
+          // deleted. Only ENOENT is tolerated (the entry is simply gone); a
+          // permission or I/O failure is the caller's to see.
+          if ((error as { code?: string } | null)?.code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+      return out;
+    },
     realPath: (path: string): string => realpathSync(absolutePath(path)),
     exists: (path: string): boolean => {
       try {

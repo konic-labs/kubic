@@ -18,7 +18,7 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (§3.8: every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
 | `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
@@ -204,7 +204,20 @@ exit, so a sibling subtree never inherits another's rules. An unreadable
 nested ignore (chmod 000, a permission-denied mount) leaves the parent rules
 in force and the walk continues: the documented widening, never a throw.
 `reconcile` re-walks through the same `captureBaseline`, so boot and sweep can
-never disagree about what is in scope. The matcher is the shared
+never disagree about what is in scope.
+
+Walk races (issue #351): a walk never turns "I could not look" into "it is
+gone". One entry vanishing between the listing and its lstat no longer fails
+the whole listing — the entry is skipped and its siblings stay in the walk.
+A file that could be seen but not read (`chmod 000`, a permission-denied
+mount) is kept in the baseline with the `UNREADABLE_HASH` sentinel instead of
+being dropped: reconcile then records neither a delete (the file is still
+there) nor a change (nothing was read) for it, and an unreadable-at-boot path
+that is readable later is an honest create with no invented before-hash. A
+directory whose listing fails at sweep time carries its previous baseline
+hashes forward, so its files are compared against their own earlier state
+instead of reading as deleted. Real disappearances (ENOENT) still record
+deletes — the distinction is the error code, not the failure. The matcher is the shared
 `ignore.ts` (#172), so this walk and the worker's find/grep walk also cannot
 disagree about what is ignored. The matcher stays the documented
 common subset (`*`, `?`, `**`, `dir/`, `!`) — character classes and rooted

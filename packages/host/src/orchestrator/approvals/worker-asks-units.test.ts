@@ -20,9 +20,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OrchestratorBudgetError } from './budgets.js';
 import { buildOrchestratorRequest } from './request.js';
 import type { OrchestratorVerdict } from './routing.js';
+import { createApprovalSigner } from './seal.js';
 import {
   ASKS_DIR,
   answerWorkerAsk,
+  approvalsSessionDir,
   budgetForSpawn,
   createInteractiveSeat,
   createOrchestratorApprovalsRun,
@@ -34,6 +36,7 @@ import {
   RouterAuditTrace,
   readPendingWorkerAsks,
   readWorkerAskAnswer,
+  SKIP_RECORDS_FILE,
   TIMEOUT_REASON_MARKER,
   type WorkerAskInput,
 } from './worker-asks.js';
@@ -133,32 +136,45 @@ describe('createInteractiveSeat parsing (issue #379)', () => {
 describe('FileDecisionStore (issue #379)', () => {
   it('round-trips saved decisions', () => {
     const dir = tmpDir();
+    const signer = createApprovalSigner();
     const decisions: Record<string, OrchestratorVerdict> = {
       a: { approved: true, by: 'user' },
       b: { approved: false, reason: 'user declined' },
     };
-    new FileDecisionStore(dir).save(decisions);
-    expect(new FileDecisionStore(dir).load()).toEqual(decisions);
-    expect(JSON.parse(readFileSync(join(dir, DECISIONS_FILE), 'utf8'))).toEqual(
+    new FileDecisionStore(dir, signer).save(decisions);
+    expect(new FileDecisionStore(dir, signer).load().decisions).toEqual(
       decisions,
     );
+    // The file on disk holds SEALED records, never the bare verdict: an
+    // entry a worker plants has no MAC and loads as a drop (issue #149).
+    const onDisk = JSON.parse(
+      readFileSync(join(dir, DECISIONS_FILE), 'utf8'),
+    ) as Record<string, { payload: unknown; mac: string }>;
+    expect(Object.keys(onDisk)).toEqual(['a', 'b']);
+    expect(onDisk.a?.payload).toEqual(decisions.a);
+    expect(typeof onDisk.a?.mac).toBe('string');
   });
 
   it('loads a missing file as no decisions', () => {
-    expect(new FileDecisionStore(tmpDir()).load()).toEqual({});
+    expect(
+      new FileDecisionStore(tmpDir(), createApprovalSigner()).load(),
+    ).toEqual({ decisions: {}, dropped: [] });
   });
 
   it('loads a torn or invalid file as no decisions (fail closed toward re-asking)', () => {
     const dir = tmpDir();
+    const signer = createApprovalSigner();
     writeFileSync(join(dir, DECISIONS_FILE), '{"a": {"approved": tr');
-    expect(new FileDecisionStore(dir).load()).toEqual({});
+    expect(new FileDecisionStore(dir, signer).load().decisions).toEqual({});
     writeFileSync(join(dir, DECISIONS_FILE), 'not json at all');
-    expect(new FileDecisionStore(dir).load()).toEqual({});
+    expect(new FileDecisionStore(dir, signer).load().decisions).toEqual({});
   });
 
   it('leaves no tmp file behind after a save', () => {
     const dir = tmpDir();
-    new FileDecisionStore(dir).save({ a: { approved: true, by: 'user' } });
+    new FileDecisionStore(dir, createApprovalSigner()).save({
+      a: { approved: true, by: 'user' },
+    });
     expect(readdirSync(dir)).toEqual([DECISIONS_FILE]);
   });
 
@@ -168,20 +184,27 @@ describe('FileDecisionStore (issue #379)', () => {
     // onto it fails, the way a read-only or busy target would.
     mkdirSync(join(dir, DECISIONS_FILE, 'occupied'), { recursive: true });
     expect(() =>
-      new FileDecisionStore(dir).save({ a: { approved: true, by: 'user' } }),
+      new FileDecisionStore(dir, createApprovalSigner()).save({
+        a: { approved: true, by: 'user' },
+      }),
     ).toThrow();
     expect(readdirSync(dir)).toEqual([DECISIONS_FILE]);
   });
 });
 
-describe('createWorkerAskRouter memoOnce across restarts (issue #379)', () => {
-  it('reuses a decision persisted by router A in a fresh router B without asking', async () => {
+describe('createWorkerAskRouter memoOnce (issue #379, #149)', () => {
+  it('reuses a decision the SAME manager persisted, in a fresh router, without asking', async () => {
     const dir = tmpDir();
+    // One authority across the two routers: this is what makes a decision
+    // this manager wrote readable again — a fresh PROCESS mints a fresh key
+    // and re-asks instead (issue #149).
+    const signer = createApprovalSigner();
     const seatA = vi.fn(async () => ({ approved: true, by: 'user' }) as const);
     const routerA = createWorkerAskRouter({
       dir,
       maxPendingMs: 1_000,
       seat: seatA,
+      signer,
     });
     await expect(routerA.ask(input())).resolves.toMatchObject({
       approved: true,
@@ -195,6 +218,7 @@ describe('createWorkerAskRouter memoOnce across restarts (issue #379)', () => {
       dir,
       maxPendingMs: 1_000,
       seat: seatB,
+      signer,
     });
     await expect(routerB.ask(input())).resolves.toEqual({
       approved: true,
@@ -211,33 +235,70 @@ describe('createWorkerAskRouter memoOnce across restarts (issue #379)', () => {
 describe('mailbox round-trip (issue #379)', () => {
   it('publishes an ask, lists it pending until answered, then reads the answer', () => {
     const dir = tmpDir();
-    expect(readPendingWorkerAsks(dir)).toEqual([]);
+    const signer = createApprovalSigner();
+    expect(readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey })).toEqual(
+      [],
+    );
     const published = publishWorkerAsk(dir, input());
     expect(published.request.key).toBe(request.key);
-    expect(readPendingWorkerAsks(dir)).toEqual([
-      { request: published.request, args: input().args },
-    ]);
-    expect(readPendingWorkerAsks(dir, 'agent-1')).toHaveLength(1);
-    expect(readPendingWorkerAsks(dir, 'someone-else')).toEqual([]);
-    expect(readWorkerAskAnswer(dir, request.key)).toBeUndefined();
+    expect(published.nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey })).toEqual(
+      [
+        {
+          request: published.request,
+          args: input().args,
+          nonce: published.nonce,
+        },
+      ],
+    );
+    expect(
+      readPendingWorkerAsks(dir, {
+        verifyKey: signer.verifyKey,
+        agentId: 'agent-1',
+      }),
+    ).toHaveLength(1);
+    expect(
+      readPendingWorkerAsks(dir, {
+        verifyKey: signer.verifyKey,
+        agentId: 'someone-else',
+      }),
+    ).toEqual([]);
+    expect(
+      readWorkerAskAnswer(dir, request.key, {
+        verifyKey: signer.verifyKey,
+        nonce: published.nonce,
+      }),
+    ).toEqual({ state: 'missing' });
 
-    answerWorkerAsk(dir, request.key, { approved: true, by: 'user' });
-    expect(readWorkerAskAnswer(dir, request.key)).toEqual({
-      approved: true,
-      by: 'user',
-    });
+    answerWorkerAsk(dir, published, { approved: true, by: 'user' }, signer);
+    expect(
+      readWorkerAskAnswer(dir, request.key, {
+        verifyKey: signer.verifyKey,
+        nonce: published.nonce,
+      }),
+    ).toEqual({ state: 'verified', verdict: { approved: true, by: 'user' } });
     // A settled ask stays on disk as evidence but is no longer pending.
-    expect(readPendingWorkerAsks(dir)).toEqual([]);
+    expect(readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey })).toEqual(
+      [],
+    );
     expect(existsSync(join(dir, ASKS_DIR, `${request.key}.json`))).toBe(true);
   });
 
-  it('skips a torn ask and reads a torn answer as none', () => {
+  it('skips a torn ask and reads a torn answer as a refusal', () => {
     const dir = tmpDir();
+    const signer = createApprovalSigner();
     mkdirSync(join(dir, ASKS_DIR), { recursive: true });
     writeFileSync(join(dir, ASKS_DIR, 'torn.json'), '{"request": {"ke');
     writeFileSync(join(dir, ASKS_DIR, 'k.answer.json'), '{"approved": tr');
-    expect(readPendingWorkerAsks(dir)).toEqual([]);
-    expect(readWorkerAskAnswer(dir, 'k')).toBeUndefined();
+    expect(readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey })).toEqual(
+      [],
+    );
+    expect(
+      readWorkerAskAnswer(dir, 'k', {
+        verifyKey: signer.verifyKey,
+        nonce: 'n',
+      }).state,
+    ).toBe('refused');
   });
 });
 
@@ -253,49 +314,54 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
     vi.stubEnv('KUBIC_WORKER_ID', 'agent-7');
     vi.stubEnv('KUBIC_ORCHESTRATOR_SESSION', 'orch-1');
     const dir = tmpDir();
+    const signer = createApprovalSigner();
     const seat = createWorkerMailboxSeat({
       dir,
       maxPendingMs: 2_000,
       pollMs: 5,
+      verifyKey: signer.verifyKey,
     });
     const verdict = seat(lane);
     const [pending] = await until(() => {
-      const asks = readPendingWorkerAsks(dir);
+      const asks = readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey });
       return asks.length > 0 ? asks : undefined;
     });
-    expect(pending?.request.agentId).toBe('agent-7');
-    expect(pending?.request.trigger).toBe('outside-write');
-    expect(pending?.request.provenance.parentSessionId).toBe('orch-1');
+    if (pending === undefined) throw new Error('no ask published');
+    expect(pending.request.agentId).toBe('agent-7');
+    expect(pending.request.trigger).toBe('outside-write');
+    expect(pending.request.provenance.parentSessionId).toBe('orch-1');
     // The seat forwards the lane's summary, never raw args.
-    expect(pending?.args).toEqual({ summary: lane.summary });
+    expect(pending.args).toEqual({ summary: lane.summary });
     // The justification defaults when the lane gave none.
-    expect(pending?.request.justification).toBe(
+    expect(pending.request.justification).toBe(
       'worker child needs outside-write to complete its plan step',
     );
-    answerWorkerAsk(dir, pending?.request.key ?? '', {
-      approved: true,
-      by: 'user',
-    });
+    answerWorkerAsk(dir, pending, { approved: true, by: 'user' }, signer);
     await expect(verdict).resolves.toEqual({ approved: true, by: 'user' });
   });
 
   it('carries a given justification and a manager refusal through', async () => {
     const dir = tmpDir();
+    const signer = createApprovalSigner();
     const seat = createWorkerMailboxSeat({
       dir,
       maxPendingMs: 2_000,
       pollMs: 5,
+      verifyKey: signer.verifyKey,
     });
     const verdict = seat({ ...lane, justification: 'write the unit file' });
     const [pending] = await until(() => {
-      const asks = readPendingWorkerAsks(dir);
+      const asks = readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey });
       return asks.length > 0 ? asks : undefined;
     });
-    expect(pending?.request.justification).toBe('write the unit file');
-    answerWorkerAsk(dir, pending?.request.key ?? '', {
-      approved: false,
-      reason: 'user declined',
-    });
+    if (pending === undefined) throw new Error('no ask published');
+    expect(pending.request.justification).toBe('write the unit file');
+    answerWorkerAsk(
+      dir,
+      pending,
+      { approved: false, reason: 'user declined' },
+      signer,
+    );
     await expect(verdict).resolves.toEqual({
       approved: false,
       reason: 'user declined',
@@ -304,7 +370,13 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
 
   it('denies with the timeout marker when no answer arrives within maxPendingMs', async () => {
     const dir = tmpDir();
-    const seat = createWorkerMailboxSeat({ dir, maxPendingMs: 30, pollMs: 5 });
+    const signer = createApprovalSigner();
+    const seat = createWorkerMailboxSeat({
+      dir,
+      maxPendingMs: 30,
+      pollMs: 5,
+      verifyKey: signer.verifyKey,
+    });
     const verdict = await seat(lane);
     expect(verdict?.approved).toBe(false);
     const reason = verdict?.approved === false ? verdict.reason : '';
@@ -372,10 +444,18 @@ describe('seat approvals and router audit trace (issue #379)', () => {
     run.beginWorker(scope);
     try {
       await expect(
-        until(() =>
-          readWorkerAskAnswer(run.mailboxDir(), published.request.key),
-        ),
-      ).resolves.toEqual({ approved: true, by: 'user' });
+        until(() => {
+          const read = readWorkerAskAnswer(
+            run.mailboxDir(),
+            published.request.key,
+            { verifyKey: run.verifyKey(), nonce: published.nonce },
+          );
+          return read.state === 'verified' ? read : undefined;
+        }),
+      ).resolves.toEqual({
+        state: 'verified',
+        verdict: { approved: true, by: 'user' },
+      });
     } finally {
       run.endWorker('agent-1');
     }
@@ -432,9 +512,14 @@ describe('takeTermination (issue #379)', () => {
     );
     run.beginWorker(scope);
     try {
-      await until(() =>
-        readWorkerAskAnswer(run.mailboxDir(), published.request.key),
-      );
+      await until(() => {
+        const read = readWorkerAskAnswer(
+          run.mailboxDir(),
+          published.request.key,
+          { verifyKey: run.verifyKey(), nonce: published.nonce },
+        );
+        return read.state === 'verified' ? read : undefined;
+      });
       const termination = await until(() => run.takeTermination('agent-1'));
       expect(termination).toMatchObject({
         agentId: 'agent-1',
@@ -492,16 +577,21 @@ describe('an approvals run answers only its own workers (issue #279)', () => {
     // Run B's pump for ITS worker-1 must not see it, let alone approve it.
     const termination = await runB.pump(scopeOf('sess-b'));
     expect(termination).toBeUndefined();
-    expect(
-      readWorkerAskAnswer(runA.mailboxDir(), published.request.key),
-    ).toBeUndefined();
-    expect(
-      readWorkerAskAnswer(runB.mailboxDir(), published.request.key),
-    ).toBeUndefined();
+    const answerOf = (run: typeof runA) =>
+      readWorkerAskAnswer(run.mailboxDir(), published.request.key, {
+        verifyKey: run.verifyKey(),
+        nonce: published.nonce,
+      });
+    expect(answerOf(runA)).toEqual({ state: 'missing' });
+    expect(answerOf(runB)).toEqual({ state: 'missing' });
     // Run A's own pump still finds and settles it: unanswered (no seat), it is
     // routed by A alone — pending asks are per run.
-    expect(readPendingWorkerAsks(runA.mailboxDir())).toHaveLength(1);
-    expect(readPendingWorkerAsks(runB.mailboxDir())).toEqual([]);
+    expect(
+      readPendingWorkerAsks(runA.mailboxDir(), { verifyKey: runA.verifyKey() }),
+    ).toHaveLength(1);
+    expect(
+      readPendingWorkerAsks(runB.mailboxDir(), { verifyKey: runB.verifyKey() }),
+    ).toEqual([]);
   });
 
   it('each run\u2019s mailbox is its own directory under the shared approvals dir, and a run answers its own worker', async () => {
@@ -520,14 +610,19 @@ describe('an approvals run answers only its own workers (issue #279)', () => {
       fullAccess: true,
     });
     expect(runA.mailboxDir()).not.toBe(runB.mailboxDir());
-    expect(runA.mailboxDir().startsWith(join(shared, 'approvals'))).toBe(true);
-    expect(runB.mailboxDir().startsWith(join(shared, 'approvals'))).toBe(true);
+    // One directory per session, keyed by the repo runtime root (issue #149):
+    // never `<shared>/approvals`, and never under the repo at all when a
+    // production run passes its own repo root.
+    expect(runA.mailboxDir()).toContain('sess-a');
+    expect(runB.mailboxDir()).toContain('sess-b');
     const own = publishWorkerAsk(runB.mailboxDir(), askFor('sess-b'));
     expect(await runB.pump(scopeOf('sess-b'))).toBeUndefined();
-    expect(readWorkerAskAnswer(runB.mailboxDir(), own.request.key)).toEqual({
-      approved: true,
-      by: 'user',
-    });
+    expect(
+      readWorkerAskAnswer(runB.mailboxDir(), own.request.key, {
+        verifyKey: runB.verifyKey(),
+        nonce: own.nonce,
+      }),
+    ).toEqual({ state: 'verified', verdict: { approved: true, by: 'user' } });
   });
 
   it('the §60 ledger stays at the shared approvals dir: one trail for every run', async () => {
@@ -543,8 +638,11 @@ describe('an approvals run answers only its own workers (issue #279)', () => {
     const published = publishWorkerAsk(runA.mailboxDir(), askFor('sess-a'));
     expect(await runA.pump(scopeOf('sess-a'))).toBeUndefined();
     expect(
-      readWorkerAskAnswer(runA.mailboxDir(), published.request.key),
-    ).toEqual({ approved: true, by: 'user' });
+      readWorkerAskAnswer(runA.mailboxDir(), published.request.key, {
+        verifyKey: runA.verifyKey(),
+        nonce: published.nonce,
+      }),
+    ).toEqual({ state: 'verified', verdict: { approved: true, by: 'user' } });
     // `kubic audit` reads `<repo>/.kubic/orchestrator/approvals/audit.jsonl`.
     const ledger = readFileSync(
       join(shared, 'approvals', 'audit.jsonl'),
@@ -555,10 +653,10 @@ describe('an approvals run answers only its own workers (issue #279)', () => {
   });
 });
 
-// A reused `--session` id must not inherit an earlier run's approvals state: the
-// full-access record and the memoized decisions live in `approvals/<session>/`,
-// so a FRESH run that finds them would auto-approve a destructive ask with no
-// warning. `--resume` is the only run that continues that state.
+// A reused `--session` id must not inherit an earlier run's approvals state: a
+// FRESH run discards it outright, and a run this process did not seal cannot
+// authenticate any of it (issue #149), so neither a fresh run nor a later
+// process can auto-approve a destructive ask off a leftover record.
 describe('a fresh run starts with an empty approvals state for a reused session id', () => {
   const scope = {
     sessionId: 'reused',
@@ -581,7 +679,7 @@ describe('a fresh run starts with an empty approvals state for a reused session 
       ...extra,
     });
 
-  it('does not inherit an old full-access grant, which a resume still continues', async () => {
+  it('does not inherit an old full-access grant, and a later process cannot honour one either', async () => {
     const shared = tmpDir();
     // An earlier run of this id opted into full access.
     const earlier = createOrchestratorApprovalsRun({
@@ -592,47 +690,67 @@ describe('a fresh run starts with an empty approvals state for a reused session 
       fullAccess: true,
     });
     expect(earlier.fullAccessGrant()).toBeDefined();
-    const recordFile = join(shared, 'approvals', 'reused', 'skip-records.json');
+    const recordFile = join(
+      approvalsSessionDir(shared, 'reused'),
+      SKIP_RECORDS_FILE,
+    );
     expect(existsSync(recordFile)).toBe(true);
 
-    // A resume (no `fresh`) continues the grant.
+    // A later run (its own signing authority, a resume or not) drops the
+    // record: the grant was the user's, but only the manager that recorded it
+    // can vouch for the file. Enforcement holds.
     const resumed = open(shared);
-    expect(resumed.fullAccessGrant()).toBeDefined();
+    expect(resumed.fullAccessGrant()).toBeUndefined();
+    expect(
+      resumed
+        .audit()
+        .some((event) => event.type === 'session-skip-record-dropped'),
+    ).toBe(true);
     const resumedAsk = publishWorkerAsk(resumed.mailboxDir(), ask());
     await resumed.pump(scope);
     expect(
-      readWorkerAskAnswer(resumed.mailboxDir(), resumedAsk.request.key),
-    ).toEqual({
-      approved: true,
-      by: 'user',
-    });
+      readWorkerAskAnswer(resumed.mailboxDir(), resumedAsk.request.key, {
+        verifyKey: resumed.verifyKey(),
+        nonce: resumedAsk.nonce,
+      }),
+    ).not.toEqual({ state: 'verified' });
 
-    // A fresh run of the same id starts empty: no grant, no memoized
-    // decision, and the destructive ask is not auto-approved.
+    // A fresh run of the same id starts empty: the record is gone from disk
+    // and nothing of the earlier run survives.
     const fresh = open(shared, { fresh: true });
     expect(fresh.fullAccessGrant()).toBeUndefined();
     expect(existsSync(recordFile)).toBe(false);
     expect(
-      new FileDecisionStore(join(shared, 'approvals', 'reused')).load(),
-    ).toEqual({});
-    expect(readPendingWorkerAsks(fresh.mailboxDir())).toEqual([]);
+      new FileDecisionStore(
+        approvalsSessionDir(shared, 'reused'),
+        createApprovalSigner(),
+      ).load(),
+    ).toEqual({ decisions: {}, dropped: [] });
+    expect(
+      readPendingWorkerAsks(fresh.mailboxDir(), {
+        verifyKey: fresh.verifyKey(),
+      }),
+    ).toEqual([]);
     const freshAsk = publishWorkerAsk(fresh.mailboxDir(), ask());
     await fresh.pump(scope);
     expect(
-      readWorkerAskAnswer(fresh.mailboxDir(), freshAsk.request.key),
-    ).not.toEqual({ approved: true, by: 'user' });
+      readWorkerAskAnswer(fresh.mailboxDir(), freshAsk.request.key, {
+        verifyKey: fresh.verifyKey(),
+        nonce: freshAsk.nonce,
+      }),
+    ).not.toEqual({ state: 'verified' });
   });
 
   it('keeps the repo-wide ledger and other sessions\u2019 state', () => {
     const shared = tmpDir();
     const ledger = join(shared, 'approvals', 'audit.jsonl');
-    mkdirSync(join(shared, 'approvals', 'other'), { recursive: true });
+    const other = approvalsSessionDir(shared, 'other');
+    mkdirSync(join(shared, 'approvals'), { recursive: true });
+    mkdirSync(other, { recursive: true });
     writeFileSync(ledger, '{"row":1}\n');
-    writeFileSync(join(shared, 'approvals', 'other', DECISIONS_FILE), '{}');
+    writeFileSync(join(other, DECISIONS_FILE), '{}');
     open(shared, { fresh: true });
     expect(readFileSync(ledger, 'utf8')).toBe('{"row":1}\n');
-    expect(existsSync(join(shared, 'approvals', 'other', DECISIONS_FILE))).toBe(
-      true,
-    );
+    expect(existsSync(join(other, DECISIONS_FILE))).toBe(true);
   });
 });

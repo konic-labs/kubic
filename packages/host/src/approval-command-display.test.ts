@@ -27,6 +27,7 @@ import {
   buildOrchestratorRequest,
   type OrchestratorApprovalRequest,
 } from './orchestrator/approvals/request.js';
+import { createApprovalSigner } from './orchestrator/approvals/seal.js';
 import {
   ASKS_DIR,
   answerWorkerAsk,
@@ -145,10 +146,14 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
   it('a worker ask delivers the full command to the manager seat', async () => {
     const dir = tmp();
     mkdirSync(join(dir, ASKS_DIR), { recursive: true });
+    // The manager's sealing authority here; the child seat verifies with its
+    // public half (issue #149).
+    const signer = createApprovalSigner();
     const childSeat = createWorkerMailboxSeat({
       dir,
       maxPendingMs: 5000,
       pollMs: 2,
+      verifyKey: signer.verifyKey,
     });
     const verdict = childSeat({
       key: 'k',
@@ -160,8 +165,14 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
       command: PADDED,
       justification: 'clean the build output before rebuilding',
     });
-    await waitFor(() => readPendingWorkerAsks(dir).length === 1);
-    const published = readPendingWorkerAsks(dir)[0];
+    await waitFor(
+      () =>
+        readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey }).length ===
+        1,
+    );
+    const published = readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+    })[0];
     if (published === undefined) throw new Error('no ask published');
     const shown: OrchestratorApprovalRequest[] = [];
     const router = createWorkerAskRouter({
@@ -184,10 +195,15 @@ describe('orchestrator worker asks forward the full command (issue #316)', () =>
       worktree: request.worktree,
       provenance: request.provenance,
     });
-    answerWorkerAsk(dir, request.key, {
-      approved: false,
-      reason: outcome.approved ? 'unexpected' : outcome.reason,
-    });
+    answerWorkerAsk(
+      dir,
+      published,
+      {
+        approved: false,
+        reason: outcome.approved ? 'unexpected' : outcome.reason,
+      },
+      signer,
+    );
     await verdict;
     expect(shown[0]?.command).toBe(PADDED);
   });

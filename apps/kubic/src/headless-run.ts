@@ -1209,6 +1209,11 @@ async function runHeadlessPromptImpl(
     // the ask mailbox is. The seat published there is what turns a challenged
     // call into a question for the USER instead of a dead end.
     const approvalMailboxDir = process.env.KUBIC_APPROVALS_DIR;
+    // Issue #149: the manager's public verification key. An answer in the
+    // mailbox is a verdict only when it carries this manager's MAC — the
+    // mailbox is a directory the worker itself can write, so without the key
+    // there is nothing to verify and no seat to attach.
+    const approvalVerifyKey = process.env.KUBIC_APPROVALS_VERIFY_KEY;
     // Issue #230: the manager hands its child a bound below its own config
     // maxPendingMs; absent or malformed keeps the shipped child default.
     const workerBoundRaw = process.env.KUBIC_APPROVALS_BOUND_MS;
@@ -1217,7 +1222,10 @@ async function runHeadlessPromptImpl(
         ? Number(workerBoundRaw)
         : DEFAULT_WORKER_APPROVAL_BOUND_MS;
     const approvalsSeat =
-      approvalMailboxDir === undefined || approvalMailboxDir.trim() === ''
+      approvalMailboxDir === undefined ||
+      approvalMailboxDir.trim() === '' ||
+      approvalVerifyKey === undefined ||
+      approvalVerifyKey.trim() === ''
         ? undefined
         : createWorkerMailboxSeat({
             dir: approvalMailboxDir,
@@ -1225,6 +1233,10 @@ async function runHeadlessPromptImpl(
             // purpose: the child denies closed with the named status rather
             // than outliving the run that would answer it.
             maxPendingMs: workerBoundMs,
+            verifyKey: approvalVerifyKey,
+            // A refused (unsigned, forged or stale) answer is named on the
+            // debug surface instead of reading as a silent denial.
+            onRefused: (detail) => debug?.(`approvals: ${detail}`),
           });
     const warnLine =
       deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));

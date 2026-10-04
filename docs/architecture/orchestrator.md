@@ -59,7 +59,7 @@ solo) — and `run` never delegates.
 - **A worker's dangerous call goes to you too (issue #105).** Network,
   destructive-shell, outside-write, install and push calls a worker child
   raises are routed to the user through one approval router per run, over a
-  mailbox under `<repo>/.kubic/orchestrator/approvals/` — the child publishes
+  mailbox outside the repository and every worktree — the child publishes
   the ask, the manager presents it, the verdict travels back. The wait is
   bounded on both ends (a question nobody can answer denies closed with
   `approval_timeout` rather than hanging), decisions are durable and memoized
@@ -75,6 +75,31 @@ solo) — and `run` never delegates.
   indicated, recorded, never global. The manager's only view of a pending ask
   is a read-only blocked indicator; a manager approval attempt is refused and
   audited.
+- **Approval state lives outside the repo, and it is sealed (issue #149).**
+  The §60 ledger stays the repository's own —
+  `<repo>/.kubic/orchestrator/approvals/audit.jsonl`, one trail per repo,
+  what `kubic audit` reads. Everything that can *decide* something is
+  elsewhere: the ask mailbox, the memoized decisions and the session's
+  full-access record live under the user's home at
+  `~/.kubic/orchestrator/<repo-key>/<session>/`, keyed by the repo runtime
+  root so one repo's runs (main checkout or linked worktree) share them and
+  two repos never do. A worker runs with bash and the user's own authority,
+  so no directory is out of its reach; keeping the decisive state out of the
+  repo removes it from every relative path a worktree offers and from
+  anything a later `git add` could ship. What actually closes the forgery is
+  that every answer, decision and posture record is **sealed**: the manager
+  signs it with a per-run Ed25519 key that never leaves the process, and the
+  child verifies answers with the public half it was launched with
+  (`KUBIC_APPROVALS_VERIFY_KEY`). An answer that is unsigned, signed by
+  another process, bound to another ask's nonce, or attributed to any decider
+  but the user is refused and audited, and the ask stays pending until the
+  manager answers it or the child's bound denies closed — a planted file can
+  neither approve nor deny. A planted `decisions.json` or full-access record
+  is dropped at router construction, audited (one §60 `state:dropped` row per
+  drop) and scrubbed rather than honoured. Honest limit (§59.1): a key held
+  only in the parent process cannot authenticate state an *earlier* process
+  wrote, so a resumed run re-asks instead of inheriting an approval, and a
+  `--full-access` grant is not continued unless the flag is given again.
 - **Roles are assigned on this path.** Each worker gets one of the five §12
   roles (issue [#104](https://github.com/konic-labs/kubic/issues/104)): the
   role document's `## Prompt` body and the worker's plan step compose that

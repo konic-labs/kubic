@@ -14,6 +14,7 @@ import {
 } from '../../approvals.js';
 import { buildOrchestratorRequest } from './request.js';
 import { createOrchestratorRouter } from './routing.js';
+import { createApprovalSigner } from './seal.js';
 import {
   APPROVAL_TIMEOUT_CODE,
   awaitWorkerAskAnswer,
@@ -45,6 +46,8 @@ describe('every approval timeout producer carries the shared marker (issue #129)
       const outcome = await awaitWorkerAskAnswer(dir, 'pin-mailbox', {
         maxPendingMs: 1,
         pollMs: 1,
+        verifyKey: createApprovalSigner().verifyKey,
+        nonce: 'pin-nonce',
       });
       expect(outcome.approved).toBe(false);
       if (!outcome.approved) {

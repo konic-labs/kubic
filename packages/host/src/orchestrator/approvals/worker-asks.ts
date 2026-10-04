@@ -24,12 +24,15 @@
 //   - the manager's only view of an ask: buildManagerBlockedIndicator
 //     (read-only). attemptManagerApprove is refused and audited.
 
-import { basename, dirname, join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { FileBridge } from '../../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import {
   appendToLedger,
+  droppedStateAudit,
   orchestratorDecisionAudit,
 } from '../../policy/audit-ledger.js';
 import {
@@ -52,12 +55,19 @@ import {
   attemptManagerApprove,
   buildManagerBlockedIndicator,
   createOrchestratorRouter,
+  type DecisionLoad,
   type DecisionStore,
   type ManagerBlockedIndicator,
   type OrchestratorRouter,
   type OrchestratorVerdict,
   type RouterAuditEvent,
 } from './routing.js';
+import {
+  type ApprovalSigner,
+  createApprovalSigner,
+  type SealedValue,
+  verifySealed,
+} from './seal.js';
 import {
   buildSessionSkipAuditEvent,
   enableSessionSkip,
@@ -135,10 +145,23 @@ export function orchestratorRequestKeyFor(
 
 // What travels through the mailbox: the validated envelope (key recomputed,
 // summary derived — never caller-supplied) plus the raw args the run needs to
-// recognize a proposed budget raise (§71).
+// recognize a proposed budget raise (§71), plus the ask's OWN nonce.
 export interface PublishedWorkerAsk {
   request: OrchestratorApprovalRequest;
   args: Record<string, unknown>;
+  /**
+   * Minted by the asker (issue #149): the manager echoes it inside the sealed
+   * answer and the asker checks it, so an answer is bound to THIS ask. A file
+   * left behind for an earlier ask of the same key names a different nonce and
+   * is refused as stale instead of settling the new ask.
+   */
+  nonce: string;
+}
+
+// The ask's own nonce: random per publication, never derived from the args
+// (two identical asks must not share one).
+function newAskNonce(): string {
+  return randomBytes(16).toString('hex');
 }
 
 // ---------------------------------------------------------------------------
@@ -159,30 +182,62 @@ export const SKIP_RECORDS_FILE = 'skip-records.json';
 // corrupt-tolerant (a torn write reads as no decisions — fail closed toward
 // re-asking); saves are atomic tmp+rename so a kill cannot leave a
 // half-written decision file a later run would misread.
+//
+// Every entry is SEALED with the run's signer (issue #149): this is the file a
+// worker would plant a `{approved:true,by:'user'}` into, so an entry the
+// current manager did not sign loads as a DROP (reported to the router, which
+// audits it) rather than as a decision.
 export class FileDecisionStore implements DecisionStore {
   private readonly bridge: FileBridge;
   private readonly file: string;
+  private readonly signer: ApprovalSigner;
 
-  constructor(dir: string) {
+  constructor(dir: string, signer: ApprovalSigner) {
     this.bridge = createNodeFileBridge(dir);
     this.file = DECISIONS_FILE;
+    this.signer = signer;
   }
 
-  load(): Record<string, OrchestratorVerdict> {
+  load(): DecisionLoad {
+    const decisions: Record<string, OrchestratorVerdict> = {};
+    const dropped: Array<{ key: string; reason: string }> = [];
+    let raw: Record<string, unknown>;
     try {
-      if (!this.bridge.exists(this.file)) return {};
-      return JSON.parse(this.bridge.readTextFile(this.file)) as Record<
+      if (!this.bridge.exists(this.file)) return { decisions, dropped };
+      raw = JSON.parse(this.bridge.readTextFile(this.file)) as Record<
         string,
-        OrchestratorVerdict
+        unknown
       >;
     } catch {
-      return {};
+      // A torn or unreadable file reads as no decisions: fail closed toward
+      // re-asking.
+      return { decisions: {}, dropped };
     }
+    for (const [key, value] of Object.entries(raw)) {
+      const sealed = verifySealed<OrchestratorVerdict>(
+        this.signer.verifyKey,
+        value,
+      );
+      if (sealed === undefined) {
+        dropped.push({
+          key,
+          reason:
+            'unauthenticated decision (no MAC from this run\u2019s manager)',
+        });
+        continue;
+      }
+      decisions[key] = sealed.payload;
+    }
+    return { decisions, dropped };
   }
 
   save(decisions: Record<string, OrchestratorVerdict>): void {
+    const sealed: Record<string, SealedValue<OrchestratorVerdict>> = {};
+    for (const [key, verdict] of Object.entries(decisions)) {
+      sealed[key] = this.signer.seal(verdict);
+    }
     const tmp = `${this.file}.${process.pid}.tmp`;
-    this.bridge.writeFile(tmp, JSON.stringify(decisions));
+    this.bridge.writeFile(tmp, JSON.stringify(sealed));
     try {
       this.bridge.renameFile(tmp, this.file);
     } catch (error) {
@@ -308,10 +363,17 @@ export function formatWorkerAskQuestion(
 // time for the manager's answer; the bound expiring denies closed. This is
 // the same contract `publishWorkerAsk` + `awaitWorkerAskAnswer` implement,
 // wrapped in the seat shape `installSoloPolicy({ answer })` consumes.
+//
+// `verifyKey` is the manager's public verification key (issue #149): without
+// the matching MAC the answer is bytes, not a verdict. `onRefused` names a
+// refused answer on the child's own surface, so a forgery attempt is
+// observable rather than a silent denial.
 export function createWorkerMailboxSeat(options: {
   dir: string;
   maxPendingMs: number;
+  verifyKey: string;
   pollMs?: number;
+  onRefused?: (detail: string) => void;
 }): (request: {
   key: string;
   capability: string;
@@ -350,7 +412,12 @@ export function createWorkerMailboxSeat(options: {
       published.request.key,
       {
         maxPendingMs: options.maxPendingMs,
+        verifyKey: options.verifyKey,
+        nonce: published.nonce,
         ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
+        ...(options.onRefused === undefined
+          ? {}
+          : { onRefused: options.onRefused }),
       },
     );
     return outcome.approved
@@ -370,6 +437,13 @@ export interface WorkerAskRouter {
   decided: (key: string) => OrchestratorVerdict | undefined;
   pendingKeys: () => string[];
   audit: () => readonly RouterAuditEvent[];
+  /**
+   * The public key this manager's sealed answers and decisions carry — what a
+   * worker child must be launched with (issue #149). Safe to hand out.
+   */
+  verifyKey: () => string;
+  /** Seal and write this manager's answer for one published ask. */
+  answer: (published: PublishedWorkerAsk, verdict: OrchestratorVerdict) => void;
 }
 
 export interface WorkerAskRouterOptions {
@@ -390,6 +464,12 @@ export interface WorkerAskRouterOptions {
   posture?: () => string;
   /** Where a failed ledger append is reported (never decides the ask). */
   debug?: (line: string) => void;
+  /**
+   * The run's signing authority (issue #149). Absent mints a fresh one for
+   * this router — which is exactly why state another process sealed is never
+   * trusted.
+   */
+  signer?: ApprovalSigner;
 }
 
 export function createWorkerAskRouter(
@@ -401,14 +481,27 @@ export function createWorkerAskRouter(
   // The router's dir IS the mailbox dir: decisions, audit and asks live
   // together, so "what is pending" needs no second path.
   const mailboxDir = options.dir;
+  // ONE signing authority per router (issue #149): it seals this manager's
+  // decisions and answers, and its public key is what the children verify with.
+  const signer = options.signer ?? createApprovalSigner();
   const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
     options.audit?.(event);
   };
+  // A refused answer or a tampered ask is reported ONCE per distinct reason:
+  // the pending read runs on every pump, and a forged file must not turn into
+  // an unbounded audit stream.
+  const noteRefused = refusalNote(audit, (line) => options.debug?.(line));
+  const mailbox = (agentId?: string): PublishedWorkerAsk[] =>
+    readPendingWorkerAsks(mailboxDir, {
+      verifyKey: signer.verifyKey,
+      onRefused: noteRefused,
+      ...(agentId === undefined ? {} : { agentId }),
+    });
   const router = createOrchestratorRouter({
     maxPendingMs: options.maxPendingMs,
-    store: new FileDecisionStore(options.dir),
+    store: new FileDecisionStore(options.dir, signer),
     ...(options.seat === undefined ? {} : { awaitAnswer: options.seat }),
     audit,
   });
@@ -464,8 +557,8 @@ export function createWorkerAskRouter(
       for (const request of router.pendingRequests()) {
         byKey.set(request.key, request);
       }
-      for (const request of pendingRequestFromMailbox(mailboxDir)) {
-        byKey.set(request.key, request);
+      for (const entry of mailbox()) {
+        byKey.set(entry.request.key, entry.request);
       }
       return [...byKey.values()].map((request) =>
         buildManagerBlockedIndicator(request, 'pending-user'),
@@ -474,9 +567,7 @@ export function createWorkerAskRouter(
     managerApprove: (key: string) => {
       const request =
         pendingAsks.get(key) ??
-        pendingRequestFromMailbox(mailboxDir).find(
-          (entry) => entry.key === key,
-        ) ??
+        mailbox().find((entry) => entry.request.key === key)?.request ??
         // An unknown key is still a manager approve attempt: it is refused
         // against a key-shaped envelope so the refusal is audited either way.
         ({ key } as OrchestratorApprovalRequest);
@@ -487,12 +578,10 @@ export function createWorkerAskRouter(
     decided: (key: string) => router.decided(key),
     pendingKeys: () => router.pendingRequests().map((request) => request.key),
     audit: () => auditLog.events(),
+    verifyKey: () => signer.verifyKey,
+    answer: (published, verdict) =>
+      answerWorkerAsk(mailboxDir, published, verdict, signer),
   };
-}
-
-// The router's own dir carries the mailbox it answers for.
-function pendingRequestFromMailbox(dir: string): OrchestratorApprovalRequest[] {
-  return readPendingWorkerAsks(dir).map((published) => published.request);
 }
 
 // ---------------------------------------------------------------------------
@@ -516,7 +605,11 @@ export function publishWorkerAsk(
   const request = buildOrchestratorRequest(
     input as unknown as OrchestratorRequestInput,
   );
-  const published: PublishedWorkerAsk = { request, args: input.args };
+  const published: PublishedWorkerAsk = {
+    request,
+    args: input.args,
+    nonce: newAskNonce(),
+  };
   const bridge = createNodeFileBridge(dir);
   const target = askFilePath(request.key);
   const tmp = `${target}.${process.pid}.tmp`;
@@ -525,15 +618,47 @@ export function publishWorkerAsk(
   return published;
 }
 
-// The manager's side: every ask published and NOT YET ANSWERED, in key order
-// (deterministic across runs). A settled ask stays on disk as evidence but is
-// no longer pending — without this filter the manager would re-route an
-// answered ask and ask the user twice for one operation. A torn ask is
-// skipped too: it is not an ask, and the child's own bound denies it rather
-// than hanging.
+// The key an ask's OWN content produces. The manager answers by the DECLARED
+// key, so an ask that declares a key its fields do not produce would hand the
+// user's verdict for one operation to another (issue #149).
+export function recomputedAskKey(published: PublishedWorkerAsk): string {
+  const { request, args } = published;
+  return orchestratorRequestKey(
+    request.toolName,
+    request.trigger,
+    args,
+    request.worktree,
+    {
+      sessionId: request.sessionId,
+      agentId: request.agentId,
+      justification: request.justification,
+    },
+  );
+}
+
+// The manager's side: every ask published and NOT YET ANSWERED BY THIS RUN,
+// in key order (deterministic across runs). A settled ask stays on disk as
+// evidence but is no longer pending — without this filter the manager would
+// re-route an answered ask and ask the user twice for one operation. Three
+// things never count as an answer (issue #149), and each is reported rather
+// than silently absorbed:
+//
+//   - an answer with no MAC from this run's signer (the forgery this issue is
+//     about), or one sealed for another ask's nonce (stale);
+//   - an ask whose declared key its own content does not produce — routing it
+//     would answer the operation the fields describe under the key the worker
+//     is actually waiting on;
+//   - a torn ask, which is not an ask at all (the child's own bound denies it
+//     rather than hanging).
+// A refused answer leaves the ask PENDING on purpose: a planted file must not
+// be able to deny a worker's call either.
 export function readPendingWorkerAsks(
   dir: string,
-  agentId?: string,
+  options: {
+    verifyKey: string;
+    agentId?: string;
+    onRefused?: (detail: string) => void;
+  },
 ): PublishedWorkerAsk[] {
   const bridge = createNodeFileBridge(dir);
   if (!bridge.exists(ASKS_DIR)) return [];
@@ -543,7 +668,6 @@ export function readPendingWorkerAsks(
       continue;
     }
     const key = entry.name.slice(0, -'.json'.length);
-    if (bridge.exists(answerFilePath(key))) continue;
     let published: PublishedWorkerAsk;
     try {
       // entry.name is relative to the bridge root (the approvals dir), so the
@@ -551,18 +675,43 @@ export function readPendingWorkerAsks(
       // silently report nothing pending.
       const raw = JSON.parse(
         bridge.readTextFile(join(ASKS_DIR, entry.name)),
-      ) as PublishedWorkerAsk;
+      ) as Partial<PublishedWorkerAsk>;
       if (
         typeof raw.request?.key !== 'string' ||
         typeof raw.request?.agentId !== 'string'
       ) {
         continue;
       }
-      published = { request: raw.request, args: raw.args ?? {} };
+      if (typeof raw.nonce !== 'string' || raw.nonce === '') {
+        options.onRefused?.(
+          `ask ${key} refused: no nonce, so no answer can be bound to it`,
+        );
+        continue;
+      }
+      published = {
+        request: raw.request,
+        args: raw.args ?? {},
+        nonce: raw.nonce,
+      };
     } catch {
       continue;
     }
-    if (agentId !== undefined && published.request.agentId !== agentId) {
+    if (recomputedAskKey(published) !== published.request.key) {
+      options.onRefused?.(
+        `ask ${published.request.key} refused: its declared key does not match its own content`,
+      );
+      continue;
+    }
+    const answer = readWorkerAskAnswer(dir, published.request.key, {
+      verifyKey: options.verifyKey,
+      nonce: published.nonce,
+    });
+    if (answer.state === 'verified') continue;
+    if (answer.state === 'refused') options.onRefused?.(answer.detail);
+    if (
+      options.agentId !== undefined &&
+      published.request.agentId !== options.agentId
+    ) {
       continue;
     }
     out.push(published);
@@ -570,47 +719,149 @@ export function readPendingWorkerAsks(
   return out.sort((a, b) => a.request.key.localeCompare(b.request.key));
 }
 
+// The manager's answer: the verdict SEALED together with the ask's key and
+// nonce, written atomically (tmp+rename) so the child never reads a torn
+// answer. `signer` is the run's authority — the only thing that can produce an
+// answer a child will accept.
 export function answerWorkerAsk(
   dir: string,
-  key: string,
+  published: { request: { key: string }; nonce: string },
   verdict: OrchestratorVerdict,
+  signer: ApprovalSigner,
 ): void {
   const bridge = createNodeFileBridge(dir);
+  const key = published.request.key;
   const target = answerFilePath(key);
+  const sealed = signer.seal<WorkerAskAnswerPayload>({
+    key,
+    nonce: published.nonce,
+    verdict,
+  });
   const tmp = `${target}.${process.pid}.tmp`;
-  bridge.writeFile(tmp, JSON.stringify(verdict));
+  bridge.writeFile(tmp, JSON.stringify(sealed));
   bridge.renameFile(tmp, target);
+}
+
+// What a sealed answer binds: WHICH ask (key) of WHICH publication (nonce) was
+// decided, and how. The manager writes it; the child checks every field.
+export interface WorkerAskAnswerPayload {
+  key: string;
+  nonce: string;
+  verdict: OrchestratorVerdict;
+}
+
+export interface WorkerAskAnswerExpectation {
+  verifyKey: string;
+  nonce: string;
+}
+
+export type WorkerAskAnswerRead =
+  | { state: 'missing' }
+  | { state: 'verified'; verdict: OrchestratorVerdict }
+  | { state: 'refused'; detail: string };
+
+// Only the user approves (§41.2), and the manager seals only what the router
+// settled — a seal naming any other decider is refused here too, so a bug in
+// one path cannot become a grant.
+function isVerdict(value: unknown): value is OrchestratorVerdict {
+  if (typeof value !== 'object' || value === null) return false;
+  const verdict = value as {
+    approved?: unknown;
+    by?: unknown;
+    reason?: unknown;
+  };
+  if (verdict.approved === true) return verdict.by === 'user';
+  if (verdict.approved === false) return typeof verdict.reason === 'string';
+  return false;
 }
 
 export function readWorkerAskAnswer(
   dir: string,
   key: string,
-): OrchestratorVerdict | undefined {
+  expected: WorkerAskAnswerExpectation,
+): WorkerAskAnswerRead {
   const bridge = createNodeFileBridge(dir);
+  let raw: unknown;
   try {
-    if (!bridge.exists(answerFilePath(key))) return undefined;
-    return JSON.parse(
-      bridge.readTextFile(answerFilePath(key)),
-    ) as OrchestratorVerdict;
+    if (!bridge.exists(answerFilePath(key))) return { state: 'missing' };
+    raw = JSON.parse(bridge.readTextFile(answerFilePath(key)));
   } catch {
-    return undefined;
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: unreadable`,
+    };
   }
+  const sealed = verifySealed<WorkerAskAnswerPayload>(expected.verifyKey, raw);
+  if (sealed === undefined) {
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: no MAC from this run's manager`,
+    };
+  }
+  const payload = sealed.payload;
+  if (typeof payload !== 'object' || payload === null) {
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: malformed payload`,
+    };
+  }
+  if (payload.key !== key) {
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: sealed for ${String(payload.key)}`,
+    };
+  }
+  if (payload.nonce !== expected.nonce) {
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: stale (nonce mismatch)`,
+    };
+  }
+  if (!isVerdict(payload.verdict)) {
+    return {
+      state: 'refused',
+      detail: `answer for ${key} refused: malformed verdict`,
+    };
+  }
+  return { state: 'verified', verdict: payload.verdict };
 }
 
 // The worker child's bounded wait: poll for the manager's answer and deny
 // closed with the named reason when the bound elapses. Never hangs — the
-// bound is the contract, headless or not.
+// bound is the contract, headless or not. An answer that does not verify is
+// NOT an answer (it is reported once per distinct reason and the wait
+// continues), so a planted file cannot settle the ask in either direction.
 export async function awaitWorkerAskAnswer(
   dir: string,
   key: string,
-  options: { maxPendingMs: number; pollMs?: number; clock?: () => number },
+  options: {
+    maxPendingMs: number;
+    verifyKey: string;
+    nonce: string;
+    pollMs?: number;
+    clock?: () => number;
+    onRefused?: (detail: string) => void;
+  },
 ): Promise<WorkerAskOutcome> {
   const clock = options.clock ?? Date.now;
   const pollMs = options.pollMs ?? 25;
   const deadline = clock() + options.maxPendingMs;
+  const refused = new Set<string>();
   for (;;) {
-    const answer = readWorkerAskAnswer(dir, key);
-    if (answer !== undefined) return classifyVerdict(key, answer);
+    const answer = readWorkerAskAnswer(dir, key, {
+      verifyKey: options.verifyKey,
+      nonce: options.nonce,
+    });
+    if (answer.state === 'verified')
+      return classifyVerdict(key, answer.verdict);
+    if (
+      answer.state === 'refused' &&
+      refused.size < 8 &&
+      !refused.has(answer.detail)
+    ) {
+      refused.add(answer.detail);
+      options.onRefused?.(answer.detail);
+    }
     if (clock() >= deadline) {
       return {
         approved: false,
@@ -719,10 +970,21 @@ export interface WorkerApprovalsRun {
   fullAccessGrant: () => SessionSkipRecord | undefined;
   audit: () => readonly RouterAuditEvent[];
   decisions: WorkerAskRouter;
+  /**
+   * The public verification key this run's answers carry (issue #149): the
+   * spawned child is told it (KUBIC_APPROVALS_VERIFY_KEY) and refuses any
+   * answer without a matching MAC.
+   */
+  verifyKey: () => string;
 }
 
 export interface WorkerApprovalsRunOptions {
-  /** Directory for approvals state — <repo>/.kubic/orchestrator. */
+  /**
+   * The repo's orchestrator directory — `<repo>/.kubic/orchestrator`. It holds
+   * the §60 ledger (`approvals/audit.jsonl`) and NOTHING a worker may write;
+   * the run's own state (mailbox, decisions, posture records) lives under the
+   * user's home, keyed by this path (issue #149).
+   */
   dir: string;
   sessionId: string;
   maxPendingMs: number;
@@ -745,37 +1007,123 @@ export interface WorkerApprovalsRunOptions {
   fullAccess?: boolean;
   /**
    * A FRESH (non-`--resume`) run of this session id: discards the approvals
-   * state an earlier run of the same id left in `approvals/<session>/` (the
-   * full-access record, memoized decisions, the ask mailbox) so the run starts
-   * enforced with no inherited grant. A resume leaves it unset and continues
-   * that state. The repo-wide ledger is never touched.
+   * state an earlier run of the same id left in the session's state directory
+   * (the full-access record, memoized decisions, the ask mailbox) so the run
+   * starts enforced with no inherited grant. A resume leaves it unset and
+   * continues that state — though state sealed by a previous PROCESS is
+   * dropped either way (issue #149: only this run's manager can authenticate
+   * an approval). The repo-wide ledger is never touched.
    */
   fresh?: boolean;
   /** Poll cadence used by beginWorker's interval. */
   pollMs?: number;
   debug?: (line: string) => void;
   audit?: (event: RouterAuditEvent) => void;
+  /**
+   * The home directory the run's own state is keyed under (issue #149);
+   * default `os.homedir()`. Injectable so tests never touch a real home, and
+   * never the repo or a worktree.
+   */
+  home?: string;
+  /**
+   * The run's signing authority; absent mints a fresh one. Injected only so
+   * tests can drive two runs that share (or deliberately do not share) one
+   * authority — production always mints per run.
+   */
+  signer?: ApprovalSigner;
 }
 
-// `<dir>/approvals/<session>/`: one session's approvals state (ask mailbox,
-// decision store, full-access record), beside the repo-wide ledger.
-export function approvalsSessionDir(dir: string, sessionId: string): string {
+// ---------------------------------------------------------------------------
+// Where a run's approval state lives (issue #149)
+// ---------------------------------------------------------------------------
+//
+// Under the USER's home, keyed by the repo runtime root — never under the repo
+// and never under a worker worktree:
+//
+//   <home>/.kubic/orchestrator/<repoKey>/<session>/   mailbox, decisions, skip
+//   <repo>/.kubic/orchestrator/approvals/audit.jsonl  the §60 ledger
+//
+// A worker runs with bash and the user's own authority, so it can reach any
+// path on the machine; what the location buys is that no relative path from a
+// worktree (a `cd` and a `../../` redirect) names control state, and that a
+// poisoned file cannot sit beside the code a later `git add` ships upstream.
+// What actually stops the forgery is the seal (seal.ts) — see
+// docs/architecture/orchestrator.md.
+
+// The one repo's state root: a hash of the repo runtime root's orchestrator
+// dir, so two repos never share decisions and the SAME repo's runs (in one
+// checkout or in linked worktrees, issue #279) do.
+export function approvalsStateKey(orchestratorDir: string): string {
+  return createHash('sha256')
+    .update(orchestratorDir)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+export function orchestratorStateRoot(
+  orchestratorDir: string,
+  home: string = approvalHome(),
+): string {
   return join(
-    dir,
-    APPROVALS_DIR,
+    requireAbsoluteHome(home),
+    '.kubic',
+    'orchestrator',
+    approvalsStateKey(orchestratorDir),
+  );
+}
+
+// The user home the approval state is keyed under. `process.env.HOME` (and
+// USERPROFILE) come FIRST on purpose: that is the view a test — or a caller's
+// stub — sets, while `os.homedir()` reads the C environment, which a worker
+// thread cannot see (a mutation-sandbox thread would otherwise read the real
+// user's home and write state there). A relative or empty value is ignored
+// rather than resolved against the process cwd: approval state must never
+// land inside the repository it gates.
+function approvalHome(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  for (const candidate of [env.HOME, env.USERPROFILE]) {
+    if (candidate !== undefined && candidate !== '' && isAbsolute(candidate)) {
+      return candidate;
+    }
+  }
+  return homedir();
+}
+
+// Fails closed rather than resolving a relative home against the process cwd,
+// which would put the state inside the very repository it must stay out of.
+function requireAbsoluteHome(home: string): string {
+  if (home === '' || !isAbsolute(home)) {
+    throw new Error(
+      `orchestrator approval state needs an absolute home directory, got ${JSON.stringify(home)} — the state cannot live inside the repository it gates`,
+    );
+  }
+  return home;
+}
+
+// `<state root>/<session>/`: one session's approvals state (ask mailbox,
+// decision store, full-access record), outside the repo-wide ledger.
+export function approvalsSessionDir(
+  orchestratorDir: string,
+  sessionId: string,
+  home: string = approvalHome(),
+): string {
+  return join(
+    orchestratorStateRoot(orchestratorDir, home),
     sessionId.replace(/[^A-Za-z0-9_-]/g, '_') || '_',
   );
 }
 
-// Removes exactly one session's approvals directory — never the ledger
-// (`<dir>/approvals/audit.jsonl`) or a sibling session. A missing directory is
-// fine. Used when a session's state is retired (`kubic clean --session`) and
-// when a fresh run reuses the id.
+// Removes exactly one session's approvals state — never the ledger
+// (`<repo>/.kubic/orchestrator/approvals/audit.jsonl`) or a sibling session. A
+// missing directory is fine. Used when a session's state is retired
+// (`kubic clean --session`) and when a fresh run reuses the id.
 export function removeSessionApprovalsState(
-  dir: string,
+  orchestratorDir: string,
   sessionId: string,
+  home: string = approvalHome(),
 ): void {
-  const target = approvalsSessionDir(dir, sessionId);
+  const target = approvalsSessionDir(orchestratorDir, sessionId, home);
   createNodeFileBridge(dirname(target)).remove(basename(target), true, true);
 }
 
@@ -788,26 +1136,61 @@ export function createOrchestratorApprovalsRun(
 ): WorkerApprovalsRun {
   // The §60 ledger is the repo's ONE trail (`<dir>/approvals/audit.jsonl`,
   // what `kubic audit` reads). The ask mailbox, the decision store and the
-  // full-access record are THIS run's own, one directory per session: two runs
-  // share a repo runtime root — in one checkout or across linked worktrees
-  // (issue #279) — and their default worker ids collide (`worker-1`), so a
-  // shared mailbox would let one run answer another's asks (a `--full-access`
-  // run would approve them). The children are told this directory, so nothing
-  // else needs to know the layout.
+  // full-access record are THIS run's own — one directory per session, under
+  // the USER's home and keyed by the repo runtime root (issue #149), so a
+  // worker's relative path never names them. Two runs share a repo runtime
+  // root — in one checkout or across linked worktrees (issue #279) — and their
+  // default worker ids collide (`worker-1`), so a shared mailbox would let one
+  // run answer another's asks (a `--full-access` run would approve them). The
+  // children are told this directory, so nothing else needs to know the
+  // layout.
   const ledgerDir = join(options.dir, APPROVALS_DIR);
-  const dir = approvalsSessionDir(options.dir, options.sessionId);
+  const dir = approvalsSessionDir(
+    options.dir,
+    options.sessionId,
+    options.home ?? approvalHome(),
+  );
   if (options.fresh === true) {
-    removeSessionApprovalsState(options.dir, options.sessionId);
+    removeSessionApprovalsState(
+      options.dir,
+      options.sessionId,
+      options.home ?? approvalHome(),
+    );
   }
+  // ONE signing authority per run (issue #149): it seals this manager's
+  // answers, decisions and posture records, and its public half travels to the
+  // children as KUBIC_APPROVALS_VERIFY_KEY. The private half never leaves this
+  // process and is never written anywhere.
+  const signer = options.signer ?? createApprovalSigner();
   const bridge = createNodeFileBridge(dir);
+  // The mailbox is THIS process's: an ask another process read can never be
+  // answered by this one (its answer would not carry this run's MAC), so asks
+  // left behind by an earlier run are retired rather than re-routed at a
+  // worker that never asked them. Decisions and posture records stay — they
+  // are dropped by their own authentication, and the §60 ledger is the durable
+  // record of what was decided.
+  bridge.remove(ASKS_DIR, true, true);
   bridge.createDir(ASKS_DIR, true);
   const debug = options.debug ?? (() => undefined);
   // ONE router trace for the whole run: the router's events, this module's
   // refusals (budget self-raise) and the skip posture all land in it. The
-  // durable §60 trail is the repo ledger the router writes each decision to.
+  // durable §60 trail is the repo ledger the router writes each decision to —
+  // a DROPPED (unauthenticated) state file is written there too, so a forgery
+  // attempt is never silent.
   const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
+    if (event.type === 'orchestrator-decision-seed-dropped') {
+      appendToLedger(
+        ledgerDir,
+        droppedStateAudit({
+          sessionId: options.sessionId,
+          what: 'decision',
+          detail: event.detail,
+        }),
+        (message) => debug(`audit: ledger append failed: ${message}`),
+      );
+    }
     options.audit?.(event);
   };
   const decisions = createWorkerAskRouter({
@@ -817,15 +1200,31 @@ export function createOrchestratorApprovalsRun(
     posture: () =>
       fullAccessLive() === undefined ? POSTURE_APPROVALS : POSTURE_FULL_ACCESS,
     debug,
+    signer,
     ...(options.seat === undefined ? {} : { seat: options.seat }),
     audit,
   });
   // Session-scoped full access (§41.4): the grant is keyed by sessionId, lives
-  // beside the run's other approvals state, is indicated on the surface, and
-  // is recorded for audit/doctor. A fresh session starts enforced; nothing
-  // here can make the posture global. Only by:'user' carries authority —
-  // enableSessionSkip refuses anything else.
-  let skipRecords = loadSkipRecords(bridge);
+  // outside the repo with the run's other approvals state, is indicated on the
+  // surface, and is recorded for audit/doctor. A fresh session starts
+  // enforced; nothing here can make the posture global. Only by:'user' carries
+  // authority — enableSessionSkip refuses anything else — and only a record
+  // THIS manager sealed is honoured, so a planted file grants nothing.
+  const loadedSkip = loadSkipRecords(bridge, signer);
+  let skipRecords = loadedSkip.records;
+  for (const reason of loadedSkip.dropped) {
+    const detail = `full-access record refused: ${reason}`;
+    audit({ type: 'session-skip-record-dropped', detail });
+    appendToLedger(
+      ledgerDir,
+      droppedStateAudit({
+        sessionId: options.sessionId,
+        what: 'full-access record',
+        detail,
+      }),
+      (message) => debug(`audit: ledger append failed: ${message}`),
+    );
+  }
   if (options.fullAccess === true) {
     const record = enableSessionSkip(
       { sessionId: options.sessionId },
@@ -835,7 +1234,7 @@ export function createOrchestratorApprovalsRun(
       ...skipRecords.filter((entry) => entry.sessionId !== options.sessionId),
       record,
     ];
-    saveSkipRecords(bridge, skipRecords);
+    saveSkipRecords(bridge, skipRecords, signer);
     debug(formatSessionSkipIndicator(record));
     const event = buildSessionSkipAuditEvent(record, 'enabled');
     audit({
@@ -910,7 +1309,7 @@ export function createOrchestratorApprovalsRun(
     const proposed = args.budgetRaise;
     if (typeof proposed === 'object' && proposed !== null) {
       const refusal = refuseRaise(scope.agentId, proposed);
-      answerWorkerAsk(dir, request.key, {
+      decisions.answer(published, {
         approved: false,
         reason: refusal.reason,
       });
@@ -928,7 +1327,7 @@ export function createOrchestratorApprovalsRun(
     if (gate !== undefined) {
       const hit = gate({ toolCallId: request.key, toolName: request.toolName });
       if (hit !== undefined) {
-        answerWorkerAsk(dir, request.key, {
+        decisions.answer(published, {
           approved: false,
           reason: hit.block.reason,
         });
@@ -955,10 +1354,10 @@ export function createOrchestratorApprovalsRun(
       outcome = await decisions.ask(inputFromRequest(published, scope));
     }
     // The answer is durable and travels back to the worker, whose own bounded
-    // wait would otherwise deny on the bound.
-    answerWorkerAsk(
-      dir,
-      request.key,
+    // wait would otherwise deny on the bound. It is SEALED (issue #149): the
+    // worker accepts it only if the MAC matches the key the run handed it.
+    decisions.answer(
+      published,
       outcome.approved
         ? { approved: true, by: 'user' }
         : { approved: false, reason: outcome.reason },
@@ -986,10 +1385,15 @@ export function createOrchestratorApprovalsRun(
   // memo already collapses the duplicate PROMPT, so this only protects the
   // bookkeeping around it.
   const routing = new Set<string>();
+  const noteRefused = refusalNote(audit, debug);
   const pump = async (
     scope: WorkerApprovalScope,
   ): Promise<WorkerApprovalTermination | undefined> => {
-    for (const published of readPendingWorkerAsks(dir, scope.agentId)) {
+    for (const published of readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+      agentId: scope.agentId,
+      onRefused: noteRefused,
+    })) {
       const key = published.request.key;
       if (routing.has(key)) continue;
       routing.add(key);
@@ -1048,6 +1452,7 @@ export function createOrchestratorApprovalsRun(
     fullAccessGrant: () => fullAccessLive(),
     audit: () => auditLog.events(),
     decisions,
+    verifyKey: () => signer.verifyKey,
   };
 }
 
@@ -1075,22 +1480,59 @@ function inputFromRequest(
   };
 }
 
-function loadSkipRecords(bridge: FileBridge): SessionSkipRecord[] {
+// A refused answer or a tampered ask leaves the ask pending (issue #149) and
+// is reported and audited ONCE per distinct reason: the pump runs this read on
+// every tick, and a forged file must not become an unbounded audit stream.
+function refusalNote(
+  audit: (event: RouterAuditEvent) => void,
+  debug: (line: string) => void,
+): (detail: string) => void {
+  const seen = new Set<string>();
+  return (detail) => {
+    if (seen.size >= 16 || seen.has(detail)) return;
+    seen.add(detail);
+    audit({ type: 'orchestrator-ask-refused', detail });
+    debug(`approvals: ${detail}`);
+  };
+}
+
+function loadSkipRecords(
+  bridge: FileBridge,
+  signer: ApprovalSigner,
+): { records: SessionSkipRecord[]; dropped: string[] } {
+  const records: SessionSkipRecord[] = [];
+  const dropped: string[] = [];
+  let raw: unknown;
   try {
-    if (!bridge.exists(SKIP_RECORDS_FILE)) return [];
-    return JSON.parse(
-      bridge.readTextFile(SKIP_RECORDS_FILE),
-    ) as SessionSkipRecord[];
+    if (!bridge.exists(SKIP_RECORDS_FILE)) return { records, dropped };
+    raw = JSON.parse(bridge.readTextFile(SKIP_RECORDS_FILE));
   } catch {
-    return [];
+    // A torn file reads as no records (fail closed toward enforcement).
+    return { records, dropped };
   }
+  if (!Array.isArray(raw)) {
+    return { records, dropped: ['unreadable file (not a record list)'] };
+  }
+  for (const entry of raw) {
+    const sealed = verifySealed<SessionSkipRecord>(signer.verifyKey, entry);
+    if (sealed === undefined || typeof sealed.payload?.sessionId !== 'string') {
+      dropped.push("no MAC from this run's manager");
+      continue;
+    }
+    records.push(sealed.payload);
+  }
+  return { records, dropped };
 }
 
 function saveSkipRecords(
   bridge: FileBridge,
   records: readonly SessionSkipRecord[],
+  signer: ApprovalSigner,
 ): void {
   const tmp = `${SKIP_RECORDS_FILE}.${process.pid}.tmp`;
-  bridge.writeFile(tmp, JSON.stringify(records));
+  bridge.writeFile(
+    tmp,
+    JSON.stringify(records.map((record) => signer.seal(record))),
+  );
   bridge.renameFile(tmp, SKIP_RECORDS_FILE);
 }

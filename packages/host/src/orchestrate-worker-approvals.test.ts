@@ -124,6 +124,9 @@ function harness(
   // per session (issue #279): read it from the run once the CLI built it.
   const mailbox = (): string =>
     built === undefined ? join(dir, 'approvals') : built.mailboxDir();
+  // The manager's public verification key, once the CLI built the run: the
+  // in-process child stand-in verifies exactly as a spawned child would.
+  const managerKey = (): string => built?.verifyKey() ?? '';
   const deps: OrchestrateCommandDeps = {
     out: (line) => lines.push(line),
     err: (line) => lines.push(line),
@@ -165,7 +168,15 @@ function harness(
         const answer = await awaitWorkerAskAnswer(
           mailbox(),
           publishedAsk.request.key,
-          { maxPendingMs: 1_000, pollMs: 5 },
+          {
+            maxPendingMs: 1_000,
+            pollMs: 5,
+            // The child verifies with the manager's PUBLIC key and the nonce
+            // it minted for this ask (issue #149): an answer it did not sign
+            // is not a verdict.
+            verifyKey: managerKey(),
+            nonce: publishedAsk.nonce,
+          },
         );
         if (!answer.approved) {
           // A denial is a DISTINCT status the worker branches on — never a
@@ -409,7 +420,12 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
         await awaitWorkerAskAnswer(
           h.approvals.mailboxDir(),
           published.request.key,
-          { maxPendingMs: 1_000, pollMs: 5 },
+          {
+            maxPendingMs: 1_000,
+            pollMs: 5,
+            verifyKey: h.approvals.verifyKey(),
+            nonce: published.nonce,
+          },
         );
         return [{ path: `${agentId}.txt`, hunk: 'x' }];
       },

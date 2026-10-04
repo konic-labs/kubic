@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
+import { approvalsSessionDir } from '../approvals/worker-asks.js';
 import { type CleanOptions, runCleanCommand } from './clean.js';
 
 const scratchDirs: string[] = [];
@@ -336,10 +337,14 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
       return join(stateDir, `${session}.json`);
     };
 
-    // Approvals state a run leaves under `approvals/<session>/` (the full-access
-    // record, memoized decisions, the ask mailbox) beside the repo-wide ledger.
+    // Approvals state a run leaves for one session (the full-access record,
+    // memoized decisions, the ask mailbox): under the user home, keyed by the
+    // repo runtime root (issue #149), while the ledger stays in the repo.
     const writeApprovals = (root: string, session: string) => {
-      const dir = join(root, '.kubic', 'orchestrator', 'approvals', session);
+      const dir = approvalsSessionDir(
+        join(root, '.kubic', 'orchestrator'),
+        session,
+      );
       mkdirSync(join(dir, 'asks'), { recursive: true });
       writeFileSync(join(dir, 'skip-records.json'), '[{"sessionId":"x"}]');
       writeFileSync(join(dir, 'decisions.json'), '{"k":{"approved":true}}');

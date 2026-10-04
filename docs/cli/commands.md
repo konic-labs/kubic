@@ -326,10 +326,10 @@ refused earlier still, with `code=session_exists`, exit 2, before anything is
 saved or spawned: the stored run is never overwritten (issue #144), so a
 later `--resume --session <id>` continues the run you started. The message
 names the ways out — `--resume`, another `--session` id, or `kubic clean
---session <id>` (which retires the state — and the session's
-`approvals/<id>/` directory — once nothing of the session is left to dispose,
-even when no worker ever got a worktree). A state file that does not parse is
-not state and is replaced.
+--session <id>` (which retires the state — and that session's approval state
+directory under `~/.kubic/orchestrator/` — once nothing of the session is left
+to dispose, even when no worker ever got a worktree). A state file that does
+not parse is not state and is replaced.
 Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
@@ -402,19 +402,27 @@ pin a provider authenticated by a single API key variable instead.
 worker child is a real `kubic run` process, so its dangerous calls are
 challenged by the installed policy — and on this path the challenge routes to
 **you**, not to the manager. The orchestration constructs one approval router
-per run (a durable decision store and the ask mailbox under
-`<repo>/.kubic/orchestrator/approvals/<session>/`, decisions memoized, never
-re-asked; the append-only audit log stays one file for the repo at
-`<repo>/.kubic/orchestrator/approvals/audit.jsonl`, in the main checkout even
-when the run starts from a linked worktree). A **fresh** run (no `--resume`)
-starts with that session's `approvals/<session>/` directory emptied, so a
-reused session id never inherits an earlier run's `--dangerously-skip-approvals`
-record or memoized decisions; only `--resume` continues them. The run hands
-each child the ask mailbox through the child env (`KUBIC_APPROVALS_DIR`). The mailbox is per
+per run: a durable decision store and the ask mailbox for that run, living
+**outside the repository and every worktree**, under the user's home at
+`~/.kubic/orchestrator/<repo-key>/<session>/` (keyed by the repo runtime root,
+issue #149 — a worker with bash can reach any path, but no relative path from
+a worktree names control state). The append-only §60 audit log stays one file
+for the repo at `<repo>/.kubic/orchestrator/approvals/audit.jsonl`, in the main
+checkout even when the run starts from a linked worktree. Decisions are
+memoized and never re-asked **within the run that made them**; every answer,
+decision and full-access record is sealed with a per-run key that lives only in
+the manager process, so a planted file — and state an earlier process wrote —
+is dropped at construction and audited rather than honoured. A **fresh** run
+(no `--resume`) starts with that session's state directory emptied, so a reused
+session id never inherits an earlier run's `--dangerously-skip-approvals`
+record or memoized decisions. The run hands each child the ask mailbox and the
+manager's public verification key through the child env
+(`KUBIC_APPROVALS_DIR`, `KUBIC_APPROVALS_VERIFY_KEY`). The mailbox is per
 session, so two runs — in one checkout or in different linked worktrees —
 never answer each other's asks even though both use `worker-1`. A challenged call — network, destructive shell,
 outside-write, install, push — publishes its ask, the manager presents it to
-you, and your verdict travels back to the worker:
+you, and your verdict travels back to the worker (sealed, so only the manager
+can produce one):
 
 - **A denial is data, not a crash.** The worker is told `approval_denied`, and
   the run ends exit **4** with the offending worker and trigger named.
@@ -613,7 +621,7 @@ never appear in `--dry-run`.
 | --- | --- |
 | (none) | Remove every retained worktree+branch for this repo. One `removed worktree <path>` line per worktree, one `deleted branch <branch>` line per branch; `clean: nothing to prune` (exit 0) when there is nothing left. |
 | `--all` | Explicit scope-all (the default scope). Mutually exclusive with `--session` — both exit 2. |
-| `--session <id>` | Scope to one `orchestrate` run: `kubic/<id>/<agent>` at `<root>/.kubic/wt/<id>/<agent>` for each agent named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too, and another session's same-named agent (its worktree, branch and live worker) is never planned or touched. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. Only what the run actually left behind is planned (a worker that never spawned has no worktree or branch, so it neither appears in `--dry-run` nor fails the disposal). A **full** disposal — no failure (a dirty or live worktree without `--force` is one) and either at least one item removed or nothing of the session left standing (its workers never got a worktree, or a plain `kubic clean` already removed them) — also retires the run's state file `<repo>/.kubic/orchestrator/<id>.json` and that session's `<repo>/.kubic/orchestrator/approvals/<id>/` directory (full-access record, memoized decisions, ask mailbox; the repo-wide `approvals/audit.jsonl` ledger is never deleted) (`retired session state <path>`; `retiredState` under `--json`), so the id can start a fresh run; `--dry-run` prints `would retire session state <path> and its approvals directory <dir>` and changes nothing, and a partial disposal and another session's state are never touched. |
+| `--session <id>` | Scope to one `orchestrate` run: `kubic/<id>/<agent>` at `<root>/.kubic/wt/<id>/<agent>` for each agent named in `<repo>/.kubic/orchestrator/<id>.json`, so a **failed** run's retained worktrees are disposable too, and another session's same-named agent (its worktree, branch and live worker) is never planned or touched. An unknown session exits 1 (`no retained set for session '<id>'`, naming the file it looked for) and removes nothing. Only what the run actually left behind is planned (a worker that never spawned has no worktree or branch, so it neither appears in `--dry-run` nor fails the disposal). A **full** disposal — no failure (a dirty or live worktree without `--force` is one) and either at least one item removed or nothing of the session left standing (its workers never got a worktree, or a plain `kubic clean` already removed them) — also retires the run's state file `<repo>/.kubic/orchestrator/<id>.json` and that session's approval state directory under `~/.kubic/orchestrator/<repo-key>/<id>/` (full-access record, memoized decisions, ask mailbox; the repo-wide `<repo>/.kubic/orchestrator/approvals/audit.jsonl` ledger is never deleted) (`retired session state <path>`; `retiredState` under `--json`), so the id can start a fresh run; `--dry-run` prints `would retire session state <path> and its approvals directory <dir>` and changes nothing, and a partial disposal and another session's state are never touched. |
 | `--dry-run` | Print `would remove worktree <path>` / `would delete branch <branch>` and exit 0 — mutates nothing (`git worktree list` is byte-identical before and after). |
 | `--force` | Pass `git worktree remove --force`, disposing a worktree with uncommitted worker changes. Without it a dirty worktree fails loudly: exit 1, an `error:` line per failure, and the branch is kept (never half-disposed). |
 | `--journal` | Also enforce the journal retention policy at `<root>/.kubic/journal`. Alone it prunes to the store's default byte bound; with `--max-age-ms`/`--max-bytes` it prunes to those bounds. Prints `journal: pruned <n> entr(ies), freed <b> byte(s)`. |

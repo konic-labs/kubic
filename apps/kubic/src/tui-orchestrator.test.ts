@@ -348,11 +348,11 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     expect(surface.decide('a')).toBe(true);
     expect(await pumped).toBeUndefined();
     expect(
-      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
-    ).toEqual({
-      approved: true,
-      by: 'user',
-    });
+      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key, {
+        verifyKey: approvals.verifyKey(),
+        nonce: published.nonce,
+      }),
+    ).toEqual({ state: 'verified', verdict: { approved: true, by: 'user' } });
   });
 
   it('a deny decision reaches the mailbox as a refusal the worker unblocks on', async () => {
@@ -375,9 +375,13 @@ describe('orchestrator worker asks reach the TUI surface and the worker (issue #
     surface.decide('d');
     const termination = await pumped;
     expect(termination?.exitCode).toBe(4);
-    expect(
-      readWorkerAskAnswer(approvals.mailboxDir(), published.request.key),
-    ).toMatchObject({ approved: false });
+    const answer = readWorkerAskAnswer(
+      approvals.mailboxDir(),
+      published.request.key,
+      { verifyKey: approvals.verifyKey(), nonce: published.nonce },
+    );
+    expect(answer.state).toBe('verified');
+    expect(answer.state === 'verified' && answer.verdict.approved).toBe(false);
   });
 });
 

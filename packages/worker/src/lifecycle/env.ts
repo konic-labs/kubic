@@ -37,6 +37,12 @@ export const ENV_ALLOWLIST: readonly string[] = [
   // locations/identifiers — the same class as KUBIC_WORKER_ID.
   'KUBIC_APPROVALS_DIR',
   'KUBIC_ORCHESTRATOR_SESSION',
+  // The manager's approval VERIFICATION key (issue #149): the child refuses
+  // any answer in the mailbox without a matching MAC, so a worker that writes
+  // its own `{"approved":true}` changes nothing. A public key grants no
+  // signing power, so allowlisting it hands the worker nothing it could use —
+  // the private half never leaves the manager process.
+  'KUBIC_APPROVALS_VERIFY_KEY',
   // models.json lookup for workers (issue #222): the manager's project root
   // (the worktree holds only tracked files, so an untracked models.json is
   // not in it) and the operator's project-trust decision, which gates that

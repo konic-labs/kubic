@@ -1717,6 +1717,11 @@ export async function orchestrateDepsWithDefaults(
               ? {}
               : {
                   KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
+                  // Issue #149: the public half of the run's sealing key. The
+                  // child accepts an answer only with a matching MAC — the
+                  // mailbox directory is one the worker can write, so its
+                  // contents are bytes until this key says otherwise.
+                  KUBIC_APPROVALS_VERIFY_KEY: approvalsActive.verifyKey(),
                   KUBIC_ORCHESTRATOR_SESSION: workerSession,
                   // Issue #230: the child's bound, below the manager's.
                   KUBIC_APPROVALS_BOUND_MS: String(

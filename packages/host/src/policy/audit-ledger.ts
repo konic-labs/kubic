@@ -244,6 +244,37 @@ export function orchestratorDecisionAudit(
   };
 }
 
+// §60 record for approval state that failed authentication and was ignored
+// (issue #149; §41.2): a worker — or anything else on the machine — planted an
+// answer, a memoized decision or a full-access record this run's manager never
+// sealed. Recorded so the drop is never silent; the state itself is never
+// honoured, so the record is a `deny` with the reason it was refused.
+export interface DroppedStateInput {
+  sessionId: string;
+  /** What was refused, e.g. `decision`, `full-access record`, `answer`. */
+  what: string;
+  /** Why, e.g. `no MAC from this run's manager`. */
+  detail: string;
+}
+
+export function droppedStateAudit(input: DroppedStateInput): AuditInput {
+  return {
+    who: 'agent:unknown',
+    what: 'state:dropped',
+    agent: { session: input.sessionId || UNKNOWN, role: UNKNOWN },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: UNKNOWN },
+    workspace: { path: UNKNOWN, base: UNKNOWN },
+    permission: { permission: `state:${input.what}`, approval: 'denied' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: 'orchestrator',
+    posture: 'approvals',
+    result: 'deny',
+    reason: `${input.what} refused: ${input.detail}`,
+  };
+}
+
 // §60 record for a solo approval decision (the in-process lane's ask).
 export interface SoloDecisionInput {
   sessionId: string;

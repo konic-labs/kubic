@@ -323,3 +323,17 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //     is gone in 1.0, and Kubic owns no storage format of its own.
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
+
+// --- #394 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#Registry
+//   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
+//     per-process registry the boot installs the Kubic extensions into)
+//     and lane/policy.ts (resolving a name-based allowlist back to the
+//     ToolRegistration objects configure({ tools }) takes)
+//   why Pi has no alternative: HarnessOptions takes exactly this Registry,
+//     and a Kubic-shaped copy would neither type against Harness.open nor
+//     publish the ToolRegistration objects an allowlist must reference.
+//   review: issue #389 (K4 #394)
+export type { Registry } from '@earendil-works/pi-durable';

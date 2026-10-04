@@ -1,9 +1,10 @@
-// Solo root lane: one Pi Session + one AgentLane in-process (issue #11;
-// §5.1, §20.7). Zero IPC on the path — the harness, lane, and 7 Kubic
-// tools all live in this process. Kubic adds no loop: accept → drive →
-// DriveOutcome, with retry waiting honored via notBefore.
+// Solo root lane: one pi-durable Harness + its root conversation, in-process
+// (issue #11; §5.1, §20.7; ported to the Pi 1.0 durable harness in #394).
+// Zero IPC on the path — the harness, the conversation, and the Kubic tools
+// all live in this process. Kubic adds no loop: a turn is
+// `conversation.submit(...)` → `submission.wait(...)`, and durable
+// retry/backoff belongs to the harness (K6 owns the turn glue).
 
-import { randomUUID } from 'node:crypto';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
   toolsForClasses,
@@ -13,35 +14,29 @@ import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { withReadRoots } from '../../../exec/src/read-roots.js';
 import {
-  buildCompactPrompt,
-  type CompactionCheckpoint,
-  compactionThreshold,
   DEFAULT_RESERVE_TOKENS,
-  effectiveReserveTokens,
-  shouldCheckAt,
-  shouldCompact,
+  soloCompactionSettings,
 } from '../compaction.js';
 import type { EscalationLadder } from '../model-select.js';
 import { ModelSelectError, validateEscalation } from '../model-select.js';
-import { MemoryMemoStore } from '../ops/memos.js';
-import type { MemoStore } from '../ops/types.js';
 import {
-  AgentHarness,
-  type AgentHarnessApi,
-  type AgentLane,
+  AgentDoc,
   BACKGROUND_CONTEXT,
   type Context,
+  type Conversation,
+  createRegistry,
   type DeferredHandle,
-  type Hooks,
-  laneConfig,
+  defineExtension,
+  Harness,
+  type HarnessSettings,
+  type HookRegistration,
   type Model,
-  type OpenOperation,
-  type Session,
+  type ModelThinkingLevel,
+  type Registry,
+  section,
 } from '../pi-boundary.js';
 import {
   assembleSystemPrompt,
-  buildCompactionRoute,
-  type CompactionRoute,
   escalatePinnedModel,
   type LaneBinding,
   type LaneRegistry,
@@ -54,9 +49,10 @@ import {
 import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
-  registerPolicyInterceptors,
+  policyInterceptorHooks,
 } from './interceptors.js';
-import { applyToolPolicy } from './policy.js';
+import { applyToolPolicy, toolsForNames } from './policy.js';
+import type { SessionHandle } from './session-store.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
@@ -65,6 +61,12 @@ import {
 } from './wrap.js';
 
 export const SOLO_LANE_NAME = 'main';
+
+// The stable key of the one prompt section the solo extension installs.
+// pi-durable stores sections as positional `pi.system` entries keyed by
+// name, so a resumed session replays the same section instead of
+// appending a second one.
+export const SOLO_PROMPT_SECTION = 'kubic';
 
 // Stable role seed for the assembled solo prompt (issue #82). The
 // sentences match the pre-#82 ad-hoc prompt; the wiring delta is that
@@ -87,6 +89,11 @@ export interface SoloPromptInput {
   role?: string;
 }
 
+// The one section's text. pi-durable renders `content` and each section
+// joined by "\n\n" (pi-ai `getSystemMessageText`), so per-line sections
+// would change the model-visible bytes; a single untagged section carries
+// exactly the pre-1.0 prompt, and the harness still diffs it as one
+// positional `pi.system` entry (#33/#82 prefix stability).
 export function assembleSoloPrompt(input: SoloPromptInput): string {
   const full: SystemPromptInput = {
     role: input.role ?? SOLO_ROLE,
@@ -121,13 +128,20 @@ export interface SoloPolicyOptions {
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
   /**
-   * Issue #208: a before_tool gate registered BEFORE the policy interceptors.
-   * Pi's before_tool chain stops at the first block, so a gate that must
-   * observe EVERY attempt (the run budget meter) has to subscribe before the
-   * guards that may block it. Returns a detach function, exposed on the
-   * booted lane as `detachBeforePolicyHooks`.
+   * Issue #208: a before_tool gate registered as its own extension BEFORE
+   * the policy interceptors. Pi's before_tool chain stops at the first
+   * block, so a gate that must observe EVERY attempt (the run budget meter)
+   * has to register before the guards that may block it. The hooks land in
+   * the `kubic.budget` extension, which is installed first.
    */
-  beforePolicyHooks?: (hooks: Hooks) => () => void;
+  beforePolicyHooks?: () => HookRegistration[];
+  /**
+   * Issue #98: perf spans for every executed tool, registered as the
+   * `kubic.spans` extension between policy and the Kubic extension. The
+   * caller builds them (`runSpanHooks(spans)`, #397) so the lane keeps no
+   * perf import of its own.
+   */
+  spanHooks?: () => HookRegistration[];
   /**
    * §58 enterprise tool gate (issue #288): the composition root closes this
    * over `isToolAllowedByEnterprise(effectivePolicy, tool)`, so the lane
@@ -159,8 +173,8 @@ export interface SoloCompactionOptions {
   keepRecentTokens?: number;
 }
 
-// Caller contract: classes alone deploy the allowlist (setActiveTools) and
-// the innermost permission wrapper. Destructive/network/confine guards
+// Caller contract: classes alone deploy the allowlist (configure({tools}))
+// and the innermost permission wrapper. Destructive/network/confine guards
 // deploy only when interceptors options are also passed — the lane cannot
 // invent a workspace root, so confinement stays explicit.
 
@@ -178,18 +192,20 @@ function withPolicyContributions(
 }
 
 export interface SoloBootOptions {
-  session: Session;
+  // The session handle (#392): its storage is what the harness opens, and
+  // its lock stays held for the handle's lifetime. The caller releases it
+  // after `close()`.
+  session: SessionHandle;
   models: ReturnType<typeof import('../pi-boundary.js').createModels>;
   model: Model<string>;
   env: ExecutionEnv;
   sessionId: string;
   agentId: string;
-  memos?: MemoStore;
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
   // LaneRegistry binding (issue #82, rule 5): when set, boot spawns the
-  // session/lane binding; a repeat boot for the same key reuses the
+  // session/conversation binding; a repeat boot for the same key reuses the
   // continuation instead of re-spawning (which the registry rejects).
   registry?: LaneRegistry;
   // Model affinity pin (issue #82, rule 6): when set, boot pins the
@@ -200,7 +216,7 @@ export interface SoloBootOptions {
   // same threshold as shouldCompact.
   compaction?: SoloCompactionOptions;
   // Session journal for interception (issue #17): when set, every
-  // write/edit through the lane is recorded with its toolCallId.
+  // write/edit through the lane is recorded with its tool call id.
   journal?: FileJournalStore;
   // Appended prompt sections (issue #99; §29.3 skills first): the caller
   // composes context blocks (skill listings, role prompt) and the lane
@@ -220,16 +236,17 @@ export interface SoloBootOptions {
   // half only, so the prompt-cache prefix rules (#33) still hold.
   rolePrompt?: string;
   // §40 role tool allowlist (issue #99): the resolved role tool set is
-  // applied with lane.setActiveTools, so a tool the role does not declare
-  // is never registered — absence, not approval. Applied AFTER the
+  // applied with `configure({ tools })`, so a tool the role does not
+  // declare is never registered — absence, not approval. Applied AFTER the
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
-  // Resumed-session model identity (issue #148; §21, §26.1). Pi restores a
-  // resumed lane's STORED model; `model` only seeds a new lane. When they
-  // differ: 'selected' (the caller's selection was an explicit pin) switches
-  // the lane to `model` — setModel, reserve re-clamp, notice — and 'stored'
-  // (the default: the selection was only a default pick) keeps the
+  // Resumed-session model identity (issue #148; §21, §26.1). The root
+  // conversation's `pi.agent` document restores a resumed session's STORED
+  // model; `model` only seeds a new conversation. When they differ:
+  // 'selected' (the caller's selection was an explicit pin) switches the
+  // conversation to `model` — configure, reserve re-clamp, notice — and
+  // 'stored' (the default: the selection was only a default pick) keeps the
   // session's own model, which then drives the prompt metadata, the reserve
   // clamp and every report. A stored model that is no longer registered
   // fails the boot closed with a named ModelSelectError.
@@ -237,16 +254,14 @@ export interface SoloBootOptions {
   // The one-line notice for either reconciliation (stderr on `run`, the
   // debug channel elsewhere). Absent means silent.
   onModelNotice?: (line: string) => void;
-}
-
-// The stored lane model, read before the harness boots (issue #148):
-// undefined for a lane this session has never configured.
-async function storedLaneModel(
-  session: Session,
-  context: Context,
-): Promise<{ provider: string; modelId: string } | undefined> {
-  const stored = await session.getValue(laneConfig(SOLO_LANE_NAME), context);
-  return stored?.value.model;
+  // Issue #225: the thinking level is a per-conversation agent choice. Given
+  // here it is written on boot; absent, a resumed session keeps its stored
+  // level (and #225 becomes a config/flag issue only).
+  thinkingLevel?: ModelThinkingLevel;
+  // Harness-wide run policy (retry, stream, toolExecution, steering/follow
+  // up). Compaction is NOT passable: it is built from `compaction` through
+  // soloCompactionSettings so the Kubic clamp cannot be bypassed.
+  settings?: Omit<HarnessSettings, 'compaction'>;
 }
 
 function resolveStoredModel(
@@ -270,26 +285,30 @@ function resolveStoredModel(
 }
 
 export interface SoloLane {
-  harness: AgentHarnessApi<KubicToolContext>;
-  lane: AgentLane;
+  harness: Harness;
+  conversation: Conversation;
+  // The per-process registry the Kubic extensions are installed in. It is
+  // not stored: conversations store extension NAMES, so every boot
+  // re-installs them.
+  registry: Registry;
   kills: OperationKillRegistry;
-  // The model the lane actually runs after boot (issue #148): the selection
-  // for a new lane or an explicit switch, else the session's stored model.
-  // Every report (prompt metadata, status, usage, envelope) names this one.
+  // The model the conversation runs after boot (issue #148): the selection
+  // for a new conversation or an explicit switch, else the session's stored
+  // model. Every report (prompt metadata, status, usage, envelope) names
+  // this one; a later configure is read live through `conversation.agent()`.
   model: Model<string>;
-  // Issue #147: operations Pi restored open on this lane at boot (a turn a
-  // dead process left mid-flight). Absent on stub lanes.
-  open?: OpenOperation[];
   sessionId: string;
   binding?: LaneBinding;
   affinity?: TaskAffinity;
   // The configured (unclamped) compaction reserve and a window lookup, so a
-  // model switch re-clamps the harness reserve to the NEW model's window.
+  // model switch re-clamps the harness reserve to the NEW model's window
+  // (#399 reads them through the live CompactionPolicy getter).
   configuredReserveTokens?: number;
   modelWindow?: (provider: string, modelId: string) => number | undefined;
-  // Issue #208: the detach for `policy.beforePolicyHooks`, when one was
-  // registered. The caller owns the lane's lifetime and unsubscribes here.
-  detachBeforePolicyHooks?: () => void;
+  // Shuts the harness down (and with it the session's storage). Releasing
+  // the session handle — lock included — stays the caller's job: boot may
+  // have been handed a handle it does not own.
+  close(context: Context): Promise<void>;
 }
 
 export function splitSoloModelId(id: string): {
@@ -305,36 +324,12 @@ export function splitSoloModelId(id: string): {
   return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
 }
 
-// The harness took its reserve clamped to the BOOT model's window; after a
-// switch the clamp follows the live model (a missing lookup keeps it).
-async function reclampCompactionReserve(
-  solo: SoloLane,
-  model: { provider: string; modelId: string },
-  context: Context,
-): Promise<void> {
-  const window = solo.modelWindow?.(model.provider, model.modelId);
-  if (window === undefined || solo.configuredReserveTokens === undefined) {
-    return;
-  }
-  const current = await solo.harness.getCompactionSettings(context);
-  await solo.harness.setCompactionSettings(
-    {
-      ...current,
-      reserveTokens: effectiveReserveTokens(
-        window,
-        solo.configuredReserveTokens,
-      ),
-    },
-    context,
-  );
-}
-
 // The ONLY path off the pinned model through the lane: one-way,
-// ladder-bounded, recorded, and applied to the live lane. Ordering is
-// parse → validate → setModel → record: the id-format parse and the
+// ladder-bounded, recorded, and applied to the live conversation. Ordering
+// is parse → validate → configure → record: the id-format parse and the
 // ladder pre-check both run BEFORE the live switch, and the ladder record
-// plus sink event fire only AFTER setModel resolves — so a refused step,
-// a malformed id, or a setModel rejection burns no escalation budget,
+// plus sink event fire only AFTER configure resolves — so a refused step,
+// a malformed id, or a configure rejection burns no escalation budget,
 // emits no event, and leaves affinity untouched.
 export async function escalateSoloModel(
   solo: SoloLane,
@@ -360,97 +355,13 @@ export async function escalateSoloModel(
   }
   const parsed = splitSoloModelId(to);
   validateEscalation(ladder, from, to);
-  await solo.lane.setModel(parsed, context);
-  await reclampCompactionReserve(solo, parsed, context);
+  // The reserve follows the live model through soloCompactionSettings'
+  // `currentWindow` getter (which reads affinity first), so no explicit
+  // re-clamp is needed (#399).
+  await solo.conversation.configure({ model: parsed }, context);
   const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
   solo.affinity = result.affinity;
   return result;
-}
-
-export interface SoloCompactionCheck {
-  contextWindow: number;
-  contextTokens: number;
-  reserveTokens?: number;
-  checkpoint?: CompactionCheckpoint;
-  batchTerminal?: boolean;
-  focus?: string;
-  newRoutingId?: () => string;
-}
-
-export type SoloCompactionDecision =
-  | {
-      checked: false;
-      reason: 'checkpoint-skipped';
-      checkpoint: CompactionCheckpoint;
-    }
-  | {
-      checked: true;
-      compacted: false;
-      contextTokens: number;
-      threshold: number;
-    }
-  | {
-      checked: true;
-      compacted: true;
-      contextTokens: number;
-      threshold: number;
-      route: CompactionRoute;
-      prompt: string;
-    };
-
-// Turn-loop compaction checkpoint (issue #82, rule 7): Pi checkpoints
-// fire on interactive lanes only, the Kubic trigger formula decides, and
-// the compact run carries a fresh routing id with cache writes disabled
-// (rule 7) plus the verbatim caller focus. Never records usage itself.
-export async function maybeCompactSoloLane(
-  solo: SoloLane,
-  check: SoloCompactionCheck,
-  context: Context,
-): Promise<SoloCompactionDecision> {
-  const checkpoint = check.checkpoint ?? 'pre-prompt';
-  if (
-    shouldCheckAt(checkpoint, {
-      batchTerminal: check.batchTerminal ?? false,
-    }) === false
-  ) {
-    return { checked: false, reason: 'checkpoint-skipped', checkpoint };
-  }
-  const reserve = check.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
-  const threshold = compactionThreshold(check.contextWindow, reserve);
-  if (
-    shouldCompact({
-      contextTokens: check.contextTokens,
-      contextWindow: check.contextWindow,
-      reserveTokens: reserve,
-    }) === false
-  ) {
-    return {
-      checked: true,
-      compacted: false,
-      contextTokens: check.contextTokens,
-      threshold,
-    };
-  }
-  const route = buildCompactionRoute(
-    solo.sessionId,
-    (check.newRoutingId ?? randomUUID)(),
-  );
-  const prompt = buildCompactPrompt(
-    check.focus === undefined ? {} : { focus: check.focus },
-  );
-  // NOTE (review, issue #82): the route fields intentionally do NOT thread
-  // into lane.compact — compact's `{ customInstructions }` parameter shape
-  // is Pi's signature boundary, so the route stays a Kubic-side decision
-  // record (fresh id, cache writes off) rather than a harness argument.
-  await solo.lane.compact({ customInstructions: prompt }, context);
-  return {
-    checked: true,
-    compacted: true,
-    contextTokens: check.contextTokens,
-    threshold,
-    route,
-    prompt,
-  };
 }
 
 export async function bootSoloLane(
@@ -465,27 +376,27 @@ export async function bootSoloLane(
         : withReadRoots(options.env, options.skillReadRoots),
     sessionId: options.sessionId,
     agentId: options.agentId,
-    memos: options.memos ?? new MemoryMemoStore(),
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
   };
-  const baseTools = kubicToolsToPiTools();
-  // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the lane
-  // activates and the tools the prompt advertises are ONE set — base tools,
-  // narrowed by the permission classes when declared, by the role allowlist
-  // when declared, and by the enterprise tool policy when configured. A
-  // role or an enterprise deny can only narrow what the classes allow,
-  // never widen it. Computed BEFORE the harness boots so the assembled
-  // `tools:` line names exactly what the lane registers: the model must be
-  // told the truth about its own tool set (§40.3), and the value is fixed
-  // for the boot, so the prompt-cache prefix (#33) is still byte-stable
-  // across turns.
+  const baseTools = kubicToolsToPiTools(toolContext);
+  // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the
+  // conversation offers and the tools the prompt advertises are ONE set —
+  // base tools, narrowed by the permission classes when declared, by the
+  // role allowlist when declared, and by the enterprise tool policy when
+  // configured. A role or an enterprise deny can only narrow what the
+  // classes allow, never widen it. Computed before the prompt is assembled
+  // so the `tools:` line names exactly what the conversation offers: the
+  // model must be told the truth about its own tool set (§40.3), and the
+  // value is fixed for the boot, so the prompt-cache prefix (#33) is still
+  // byte-stable across turns.
   const classAllowed =
     options.policy?.classes === undefined
       ? undefined
       : toolsForClasses(validateClasses({ ...options.policy.classes }));
   const enterpriseGate = options.policy?.toolAllowed;
-  const baseNames = baseTools.map((t) => t.name);
+  const baseNames = baseTools.map((tool) => tool.name);
+  const registeredNames = new Set(baseNames);
   const roleNames = options.toolAllowlist ?? baseNames;
   let effectiveToolNames =
     classAllowed === undefined
@@ -496,17 +407,109 @@ export async function bootSoloLane(
       enterpriseGate(tool),
     );
   }
+  // A name the registry does not offer is not offered to the model either:
+  // the prompt line and the configured tool set stay one set even when a
+  // role names a tool this build does not carry.
+  effectiveToolNames = effectiveToolNames.filter((tool) =>
+    registeredNames.has(tool),
+  );
   // Without a role or enterprise gate, applyToolPolicy already installs the
   // class-derived allowlist; only the two narrowing paths need their own
   // activation (and their set can never exceed the class-derived one).
   const mustActivateTools =
     options.toolAllowlist !== undefined || enterpriseGate !== undefined;
-  // Issue #148: reconcile the stored lane model with the selection BEFORE
-  // the harness fixes the system prompt and the reserve.
+
+  // Compaction (#399): reserveTokens is a live getter over the window of the
+  // conversation's CURRENT model, so a model switch needs no re-clamp. The
+  // getter reads affinity first (escalation updates it), else the boot's
+  // effective model; a direct `configure({ model })` outside this module
+  // lands on the next boot's model.
+  let currentModelId = defaultSoloModelId(options.model);
+  const windowOf = (provider: string, modelId: string) =>
+    options.models.getModels(provider).find((model) => model.id === modelId)
+      ?.contextWindow;
+  let soloRef: SoloLane | undefined;
+  const currentWindow = (): number | undefined => {
+    const id = soloRef?.affinity?.modelId ?? currentModelId;
+    try {
+      const parsed = splitSoloModelId(id);
+      return windowOf(parsed.provider, parsed.modelId);
+    } catch {
+      return undefined;
+    }
+  };
+  const settings: HarnessSettings = {
+    ...options.settings,
+    // Kubic executes one tool at a time (the pre-1.0 lane was single-flight):
+    // parallel rounds would race the destructive/effect operations.
+    toolExecution: options.settings?.toolExecution ?? 'sequential',
+    compaction: soloCompactionSettings({
+      ...(options.compaction?.enabled === undefined
+        ? {}
+        : { enabled: options.compaction.enabled }),
+      configuredReserveTokens:
+        options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+      ...(options.compaction?.keepRecentTokens === undefined
+        ? {}
+        : { keepRecentTokens: options.compaction.keepRecentTokens }),
+      currentWindow,
+    }),
+  };
+
+  // Registry install order = hook order (§20.5, #208): budget observes every
+  // attempt before the policy guards can block it, policy before spans, and
+  // the Kubic extension (tools + prompt) last. Nothing here is stored;
+  // conversations store extension names only, so a reopen re-installs them.
+  const registry = createRegistry();
+  const budgetHooks = options.policy?.beforePolicyHooks?.();
+  if (budgetHooks !== undefined && budgetHooks.length > 0) {
+    registry.install(
+      defineExtension({ name: 'kubic.budget', hooks: [...budgetHooks] }),
+    );
+  }
+  if (options.policy?.interceptors !== undefined) {
+    registry.install(
+      defineExtension({
+        name: 'kubic.policy',
+        hooks: policyInterceptorHooks({
+          ...options.policy.interceptors,
+          ...(options.skillReadRoots === undefined
+            ? {}
+            : {
+                readRoots: [
+                  ...(options.policy.interceptors.readRoots ?? []),
+                  ...options.skillReadRoots,
+                ],
+              }),
+        }),
+      }),
+    );
+  }
+  const spanHooks = options.policy?.spanHooks?.();
+  if (spanHooks !== undefined && spanHooks.length > 0) {
+    registry.install(
+      defineExtension({ name: 'kubic.spans', hooks: [...spanHooks] }),
+    );
+  }
+
+  const harness = await Harness.open(
+    options.session.storage,
+    { models: options.models, registry, settings },
+    context,
+  );
+  const conversation = await harness.root(context);
+  // Issue #148: reconcile the stored conversation model with the selection
+  // BEFORE the extension fixes the system prompt and the reserve.
   const selectedId = defaultSoloModelId(options.model);
-  const stored = await storedLaneModel(options.session, context);
+  const stored = (await harness.snapshot(AgentDoc, conversation.id, context))
+    ?.model;
   const storedId =
-    stored === undefined ? undefined : `${stored.provider}/${stored.modelId}`;
+    stored === undefined
+      ? undefined
+      : defaultSoloModelId({
+          provider: stored.provider,
+          id: stored.modelId,
+        });
   const storedRefused =
     stored !== undefined &&
     options.policy?.modelAllowed?.(stored.provider, stored.modelId) === false;
@@ -524,58 +527,54 @@ export async function bootSoloLane(
       ? options.model
       : resolveStoredModel(options.models, keep);
   const effectiveId = defaultSoloModelId(effectiveModel);
-  const { harness, open } = await AgentHarness.create(
-    {
-      session: options.session,
-      models: options.models,
-      model: effectiveModel,
-      tools: composeTools(baseTools, withPolicyContributions(options.policy)),
-      toolContext,
-      systemPrompt:
-        options.systemPrompt ??
-        assembleSoloPrompt({
-          cwd: options.env.cwd,
-          toolNames: effectiveToolNames,
-          metadata: {
-            agent: options.agentId,
-            lane: SOLO_LANE_NAME,
-            model: effectiveId,
-          },
-          // §12.1 role prompt (issue #99): the document's own text replaces
-          // the solo constant; absent, the constant stands.
-          ...(options.rolePrompt === undefined
-            ? {}
-            : { role: options.rolePrompt }),
-          // Context blocks appended as suffix sections (issue #99): the
-          // role/cwd/tools/meta prefix stays byte-stable for the prompt
-          // cache, and a caller with no blocks assembles the same bytes
-          // it always did.
-          ...((options.promptSections ?? []).length === 0
-            ? {}
-            : { extraSections: [...(options.promptSections ?? [])] }),
-        }),
-      compaction: {
-        enabled: options.compaction?.enabled ?? true,
-        // Clamped to the model's window: a small-window model must not
-        // compact every turn (see effectiveReserveTokens).
-        reserveTokens: effectiveReserveTokens(
-          effectiveModel.contextWindow,
-          options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
-        ),
-        keepRecentTokens:
-          options.compaction?.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+  currentModelId = effectiveId;
+
+  const promptText =
+    options.systemPrompt ??
+    assembleSoloPrompt({
+      cwd: options.env.cwd,
+      toolNames: effectiveToolNames,
+      metadata: {
+        agent: options.agentId,
+        lane: SOLO_LANE_NAME,
+        model: effectiveId,
       },
+      // §12.1 role prompt (issue #99): the document's own text replaces
+      // the solo constant; absent, the constant stands.
+      ...(options.rolePrompt === undefined ? {} : { role: options.rolePrompt }),
+      // Context blocks appended as suffix sections (issue #99): the
+      // role/cwd/tools/meta prefix stays byte-stable for the prompt
+      // cache, and a caller with no blocks assembles the same bytes
+      // it always did.
+      ...((options.promptSections ?? []).length === 0
+        ? {}
+        : { extraSections: [...(options.promptSections ?? [])] }),
+    });
+  registry.install(
+    defineExtension({
+      name: 'kubic',
+      tools: composeTools(baseTools, withPolicyContributions(options.policy)),
+      sections: [
+        section(SOLO_PROMPT_SECTION, () => promptText, { tag: false }),
+      ],
+    }),
+  );
+
+  // Model and thinking level are one durable agent change; unset fields
+  // keep their stored value (a resumed session keeps its stored level).
+  // The offered tools follow below (class policy, then role narrowing).
+  await conversation.configure(
+    {
+      model: { provider: effectiveModel.provider, modelId: effectiveModel.id },
+      ...(options.thinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: options.thinkingLevel }),
     },
     context,
   );
-  const lane = await harness.lane(SOLO_LANE_NAME, context);
   if (switchToSelected) {
     // An explicit selection is an explicit model change (§26.1): applied
-    // to the restored lane (and persisted by Pi) and announced.
-    await lane.setModel(
-      { provider: options.model.provider, modelId: options.model.id },
-      context,
-    );
+    // to the restored conversation (and persisted) and announced.
     options.onModelNotice?.(
       `model: session model '${storedId}' switched to '${selectedId}' (${
         storedRefused && options.modelPolicy !== 'selected'
@@ -589,36 +588,26 @@ export async function bootSoloLane(
     );
   }
   if (options.policy?.classes !== undefined) {
-    await applyToolPolicy(harness, lane, options.policy.classes, context);
+    await applyToolPolicy(
+      registry,
+      conversation,
+      options.policy.classes,
+      context,
+    );
   }
   // §12.1 role narrowing (issue #99): the role's resolved tool set is the
   // NARROWER of the two allowlists — applied after the class-derived one,
   // so a role can never widen what the permission classes permit. An empty
-  // set is the noTools case (the lane allow-lists nothing). The absence
+  // set is the noTools case (the conversation offers nothing). The absence
   // guard (issue #43's createRoleToolGuard) stays available to callers;
-  // registration-time absence is what this pins.
+  // offer-time absence is what this pins.
   if (mustActivateTools) {
-    await lane.setActiveTools(effectiveToolNames, context);
+    await conversation.configure(
+      { tools: toolsForNames(registry, effectiveToolNames) },
+      context,
+    );
   }
-  // Issue #208: the budget meter (or any other attempt gate) subscribes
-  // BEFORE the policy interceptors: Pi's before_tool chain stops at the
-  // first block, so a later subscriber would never observe a denied call.
-  const detachBeforePolicyHooks = options.policy?.beforePolicyHooks?.(
-    harness.hooks,
-  );
-  if (options.policy?.interceptors !== undefined) {
-    registerPolicyInterceptors(harness.hooks, {
-      ...options.policy.interceptors,
-      ...(options.skillReadRoots === undefined
-        ? {}
-        : {
-            readRoots: [
-              ...(options.policy.interceptors.readRoots ?? []),
-              ...options.skillReadRoots,
-            ],
-          }),
-    });
-  }
+
   let binding: LaneBinding | undefined;
   // NIT (review, issue #82): the harness above boots BEFORE the registry
   // continuation check, so a re-boot builds a second harness even when the
@@ -652,8 +641,8 @@ export async function bootSoloLane(
       }
     }
     if (existing !== undefined) {
-      // Model agreement on reuse: the new lane runs the boot model, so a
-      // stale bound modelId must never be handed back silently.
+      // Model agreement on reuse: the new conversation runs the boot model,
+      // so a stale bound modelId must never be handed back silently.
       if (existing.modelId !== candidate.modelId) {
         throw new PromptCacheError(
           `lane model mismatch for '${options.sessionId}/${SOLO_LANE_NAME}': ` +
@@ -663,31 +652,27 @@ export async function bootSoloLane(
       binding = existing;
     }
   }
-  return {
+
+  const solo: SoloLane = {
     harness,
-    lane,
+    conversation,
+    registry,
     kills,
     model: effectiveModel,
-    // Issue #147 (§21): the operations Pi restored open on this lane — a
-    // turn a dead process left mid-flight. Callers settle them (resume or
-    // durable abort, lane/pending.ts) before admitting a new prompt.
-    open: open.filter((op) => op.lane === SOLO_LANE_NAME),
     sessionId: options.sessionId,
     configuredReserveTokens:
       options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
-    modelWindow: (provider, modelId) =>
-      options.models.getModels(provider).find((model) => model.id === modelId)
-        ?.contextWindow,
+    modelWindow: windowOf,
+    close: (closeContext) => harness.close(closeContext),
     ...(binding === undefined ? {} : { binding }),
-    ...(detachBeforePolicyHooks === undefined
-      ? {}
-      : { detachBeforePolicyHooks }),
     ...(options.taskId === undefined
       ? {}
       : {
           affinity: pinModelForTask(options.taskId, effectiveId),
         }),
   };
+  soloRef = solo;
+  return solo;
 }
 
 // Minimal drive surface: real AgentLanes satisfy this, and so do unit
@@ -695,6 +680,8 @@ export async function bootSoloLane(
 // (Closed, OperationMismatch) on the real path. Outcomes are routed on a
 // narrow shape (kind/reason/notBefore/deferred) so tests fabricate
 // harness-shaped outcomes without importing Pi error classes.
+// Kept for #395 to delete with the turn glue it replaces (lane/turn.ts):
+// nothing in this module uses it any more.
 export type RoutableOutcome =
   | { kind: 'settled'; outcome: unknown }
   | { kind: 'waiting'; operationId: string; reason: 'retry'; notBefore: number }

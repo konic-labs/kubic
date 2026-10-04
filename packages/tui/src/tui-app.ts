@@ -256,7 +256,7 @@ export interface TuiModelPickerRow {
   readonly label: string;
   /** Marked as the live model (the picker highlights it). */
   readonly current?: boolean;
-  /** A short note (provider origin / auth state), rendered dim. */
+  /** A short note (provider origin), rendered dim under the label. */
   readonly note?: string;
 }
 
@@ -829,8 +829,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     | undefined;
   // The palette and the session list reuse the picker seat; `closePicker`
   // is the one teardown (the model picker's name is kept for its callers).
+  // Issue #328 review: Pi neither composites nor focuses the overlay below
+  // its minimum width, so the picker must not become a modal that swallows
+  // keys with nothing on screen. `undefined` terminal (a fake host in the
+  // overlay tests) keeps the picker usable.
+  const pickerFits = (): boolean => {
+    const columns = overlayHost?.terminal?.columns;
+    return columns === undefined || columns >= MODEL_PICKER_MIN_WIDTH;
+  };
   const openPickerOverlay = (options: TuiPickerOptions): boolean => {
-    if (overlayHost === undefined) return false;
+    if (overlayHost === undefined || !pickerFits()) return false;
     closeModelPicker();
     const rows = options.rows;
     const items: SelectItem[] = rows.map((row) => ({
@@ -993,7 +1001,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // Issue #328: the picker is modal while it shows — arrows move, typing
       // filters, Enter selects, Esc/Ctrl-C cancel (Pi's own list bindings).
       // Global keys other than the cancel pair stay swallowed so a stray
-      // Ctrl-T cannot toggle a tree behind the overlay.
+      // Ctrl-T cannot toggle a tree behind the overlay. A terminal resized
+      // below the overlay's minimum width closes it instead (review): the
+      // modal must never outlive what the operator can see.
+      if (modelPicker !== undefined && !pickerFits()) {
+        closeModelPicker(true);
+      }
       if (modelPicker !== undefined) {
         if (keyId === 'escape' || keyId === 'ctrl+c') {
           closeModelPicker(true);

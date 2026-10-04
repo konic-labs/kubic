@@ -48,7 +48,9 @@ function twoProviders(
   const faux = fauxProvider({
     provider: 'faux',
     models: [
-      { id: 'big', contextWindow: 200000 },
+      // `big` reasons; `small` does not — the ladder the `/thinking`
+      // re-clamp test needs (#328 review).
+      { id: 'big', contextWindow: 200000, reasoning: true },
       { id: 'small', contextWindow: 120000 },
     ],
   });
@@ -348,6 +350,42 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
       provider: 'faux',
       modelId: 'small',
     });
+  });
+
+  it('re-clamps the thinking level when /model moves to a shorter ladder (#328 review)', async () => {
+    const workspace = tmpRoot('tui-328-clamp-ws-');
+    const sessionsRoot = tmpRoot('tui-328-clamp-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // `faux/big` reasons: high is on its ladder.
+    type(fake, '/thinking high');
+    await waitFor(() => fake.frame.includes('thinking: high'));
+    // `faux/small` does not: the switch must re-clamp the stored level.
+    type(fake, '/model faux/small');
+    await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
+    const mark = fake.writes.length;
+    type(fake, '/thinking');
+    await waitFor(() =>
+      fake.writes.slice(mark).join('').includes('thinking: off'),
+    );
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
   });
 
   it('cancels the picker with Esc, leaving the model alone (#328)', async () => {

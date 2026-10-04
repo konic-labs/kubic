@@ -341,6 +341,8 @@ export interface TuiModelChoice {
   readonly provider: string;
   readonly id: string;
   readonly current: boolean;
+  /** The provider's origin (built-in / custom / testing), when known. */
+  readonly note?: string;
 }
 
 // One settled turn as the runner saw it: the prompt, when it started, the
@@ -1482,8 +1484,21 @@ export async function bootTuiLane(
             undefined,
             enterprisePolicy,
           );
+          // Issue #328 review: a switch re-clamps the thinking level to the
+          // NEW model's ladder and commits both in one change, so the stored
+          // level, the `/thinking` report, the cycle key and the status bar
+          // agree with what the provider will actually be asked for.
+          const agent = await booted.conversation.agent(loopContext);
+          const effective = clampThinking(
+            models,
+            resolved,
+            agent.thinkingLevel ?? 'off',
+          );
           await booted.conversation.configure(
-            { model: { provider: resolved.provider, modelId: resolved.id } },
+            {
+              model: { provider: resolved.provider, modelId: resolved.id },
+              thinkingLevel: effective,
+            },
             loopContext,
           );
           // The agent document is the truth: read the live model back
@@ -1541,11 +1556,16 @@ export async function bootTuiLane(
               const info = assembled.providers.get(provider.id);
               if (info !== undefined && !info.usable) continue;
             }
+            const note =
+              assembled === undefined
+                ? undefined
+                : assembled.providers.get(provider.id)?.origin;
             for (const model of models.getModels(provider.id)) {
               rows.push({
                 provider: provider.id,
                 id: model.id,
                 current: provider.id === live.provider && model.id === live.id,
+                ...(note === undefined ? {} : { note }),
               });
             }
           }
@@ -2023,7 +2043,12 @@ export class TuiTurnRunner {
       this.loop.context,
     );
     this.model = label;
-    this.app.setModel(label);
+    // Issue #328 review: the switch re-clamped the level in the lane, so the
+    // cache is dropped and re-read — the status bar and `/thinking` report
+    // the effective level, not the one the previous model carried.
+    this.thinking = undefined;
+    const thinking = await this.liveThinking().catch(() => undefined);
+    this.app.setModel(label, thinking);
     // Issue #347: the gauge follows the model. A loop without the lookup
     // (injected viewer shells) leaves the seeded limits alone.
     const limits = this.loop.contextLimits?.(selection.provider, selection.id);
@@ -3555,6 +3580,7 @@ export async function runTuiCommand(
                 id: row.id,
                 label: `${row.provider}/${row.id}`,
                 current: row.current,
+                ...(row.note === undefined ? {} : { note: row.note }),
               })),
               onSelect: (row) => {
                 switchModelTo({ provider: row.provider, id: row.id });
@@ -3569,7 +3595,7 @@ export async function runTuiCommand(
             });
             if (!opened) {
               app.setEditorFooter(
-                'model picker needs a wider terminal — use /model <provider/id>',
+                'model picker unavailable on this terminal — use /model <provider/id>',
               );
             }
             if (!stopped) screen?.render();

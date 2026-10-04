@@ -688,6 +688,64 @@ describe('model picker and thinking cycle (issue #328)', () => {
     expect(seat.hidden).toBe(1);
   });
 
+  it('refuses the picker on a terminal below the overlay minimum (#328 review)', () => {
+    const ui = app();
+    const shown: unknown[] = [];
+    // A 50-column host: Pi's own visible() gate would refuse to composite
+    // the overlay, so the picker must not become an invisible modal.
+    ui.attachApprovalOverlay({
+      showOverlay: (component: unknown) => {
+        shown.push(component);
+        return { unfocus: () => {}, hide: () => {} };
+      },
+      terminal: { columns: 50, rows: 30 },
+    } as unknown as ApprovalOverlayTui);
+    expect(
+      ui.openModelPicker({
+        rows: [{ provider: 'faux', id: 'big', label: 'faux/big' }],
+        onSelect: () => {},
+      }),
+    ).toBe(false);
+    expect(ui.isModelPickerOpen()).toBe(false);
+    expect(shown).toEqual([]);
+    // Input still reaches the editor: the refused picker is not modal.
+    for (const ch of 'hi') ui.handleInput(ch);
+    expect(ui.editor.getText()).toBe('hi');
+  });
+
+  it('closes the picker when the terminal shrinks below the minimum (#328 review)', () => {
+    const ui = app();
+    let columns = 120;
+    const seat = {
+      showOverlay: () => ({ unfocus: () => {}, hide: () => {} }),
+      terminal: {
+        get columns() {
+          return columns;
+        },
+        rows: 30,
+      },
+    } as unknown as ApprovalOverlayTui;
+    ui.attachApprovalOverlay(seat);
+    let cancelled = 0;
+    expect(
+      ui.openPicker({
+        rows: [{ value: '/help', label: '/help' }],
+        onSelect: () => {},
+        onCancel: () => {
+          cancelled += 1;
+        },
+      }),
+    ).toBe(true);
+    expect(ui.isModelPickerOpen()).toBe(true);
+    // The overlay can no longer be composited: the next key closes the
+    // picker (a cancel) and goes to the editor instead of vanishing.
+    columns = 50;
+    ui.handleInput('x');
+    expect(ui.isModelPickerOpen()).toBe(false);
+    expect(cancelled).toBe(1);
+    expect(ui.editor.getText()).toBe('x');
+  });
+
   it('refuses to open the picker without an overlay seat', () => {
     const ui = app();
     expect(

@@ -4,9 +4,11 @@
 // `.kubic/roles/*.md` still assigns roles, and a repo document OVERRIDES the
 // embedded preset of the same name (the §40.3 fail-closed checks apply to the
 // winning document either way). The text below is this repo's own committed
-// presets verbatim — `builtin-presets.test.ts` pins it against
-// `.kubic/roles/*.md` so the two cannot drift — and it is bundled as data, so
-// the binary never reads a repo-relative path to find a preset.
+// presets verbatim — `presets.test.ts` pins BOTH copies: it resolves this
+// module's text through the same §12/§12.1 table as `.kubic/roles/*.md` and
+// asserts the two texts are identical, so the embedded defaults cannot drift
+// from the reviewable documents. It is bundled as data, so the binary never
+// reads a repo-relative path to find a preset.
 import type { BuiltinRoleName } from './roles-data.js';
 
 export const BUILTIN_PRESET_SOURCE = 'builtin' as const;
@@ -194,11 +196,24 @@ per step. Ask for what is missing instead of guessing. Do not write,
 edit, stage, or commit anything: if the work needs doing, say so in
 the plan and stop.
 
-## Tools (§12)
+## Tools (§12, §12.1)
 
-\`read, ls, find, grep\` — granted by absence-filtering (§40): write,
-edit, bash, and every git tool are never registered for this role, so
+\`read, ls, find, grep, bash\` — granted by absence-filtering (§40):
+write, edit, and every git tool are never registered for this role, so
 planner calls to them fail tool-absent before any approval decider runs.
+\`bash\` is the role's read-only inspection channel (§12: "read-only
+inspection commands") and it is read-only by LEVEL, not by absence: the
+lane boots on \`shell: read-only-allowlist\` (issue #161), a closed verb
+allowlist that admits reading — \`cat\`, \`grep\`, \`find\`, \`ls\`, and the
+read-only git subcommands (\`git status/diff/log/show\`) — and refuses
+redirection, in-place edits, \`-c\`/\`--exec-path\`, destructive commands and
+network clients before the shell sees them.
+
+Read scope, stated plainly: \`bash\` is not a confined tool (the
+path-confining hook covers \`read\`/\`ls\`/\`find\`/\`grep\`), so the allowlisted
+commands can read paths OUTSIDE the workspace; they cannot write, and
+\`network: none\` blocks egress. The git tools stay absent, so git state is
+reached only through the allowlisted read-only subcommands.
 
 ## Model default
 
@@ -220,15 +235,27 @@ set the manager passes. A model outside the set refuses the spawn with
 
 Planner-visible skills are read-only skills: a skill whose frontmatter
 \`roles:\` includes \`planner\` (or lists no roles) and whose
-\`requiredTools\` are all in \`{read, ls, find, grep}\`. Any skill needing
-write, edit, bash, or git tools is withheld from the planner by the
-skills gate, whatever its \`roles:\` line claims.
+\`requiredTools\` are all in the planner's resolved set \`{read, ls, find,
+grep, bash}\`. Any skill needing write, edit, or git tools is withheld
+from the planner by the skills gate, whatever its \`roles:\` line claims —
+and a skill that needs \`bash\` only for inspection is admissible, because
+the lane's shell level is the read-only allowlist.
 
 ## Read-only by tool absence
 
-Planner read-only-ness is structural, not advisory: the lane registers
-exactly the four read tools, so there is no write path to approve,
-bypass, or prompt-inject. Faux replays of planner sessions emit reads
+Planner read-only-ness is structural, not advisory — but it is enforced
+by two different mechanisms, and neither is advisory:
+
+- **Tool absence (§40):** the lane registers \`read, ls, find, grep, bash\`
+  and nothing else, so \`write\`, \`edit\` and every git tool are uncallable.
+- **A closed shell allowlist (#161):** \`bash\` exists, and every command it
+  runs is matched against the read-only verb set first — a redirect, an
+  in-place edit, a destructive command or a network client is blocked with
+  a named reason before the shell starts.
+
+So there is no write path to approve, bypass, or prompt-inject; what the
+planner CAN do through \`bash\` is read, including outside the workspace
+(see the read scope above). Faux replays of planner sessions emit reads
 only across the corpus.
 
 ## Budget (§71; example only, §63)
@@ -274,13 +301,25 @@ reasons the implementer can act on; escalate what you cannot decide.
 Never write, edit, stage, or commit: your output is the review, and a
 review that edits its subject is a failed review.
 
-## Tools (§12)
+## Tools (§12, §12.1)
 
-\`read, ls, find, grep\` plus read-only git (\`git_status, git_diff,
-git_log, git_show\`). Granted by absence-filtering (§40): write, edit,
-bash, and every effect git tool (stage, branch, checkpoint, commit)
-are never registered for this role, so reviewer calls to them fail
-tool-absent before any approval decider runs.
+\`read, ls, find, grep, bash\` — granted by absence-filtering (§40):
+write, edit, and every git tool (read-only or effect: status, diff, log,
+show, stage, branch, checkpoint, commit) are never registered for this
+role, so reviewer calls to them fail tool-absent before any approval
+decider runs. §12 gives the reviewer "bash (read-only checks)", and the
+shipped spelling of that is the \`read-only-allowlist\` shell level (issue
+#161): a closed verb allowlist that admits inspection — \`cat\`, \`grep\`,
+\`find\`, \`ls\`, and read-only git (\`git status/diff/log/show\`) — and
+refuses redirection, in-place edits, \`-c\`/\`--exec-path\`, destructive
+commands and network clients before the shell sees them. Read-only git
+therefore runs THROUGH the allowlisted shell, which is why the role holds
+no git tool of its own.
+
+Read scope, stated plainly: \`bash\` is not a confined tool (the
+path-confining hook covers \`read\`/\`ls\`/\`find\`/\`grep\`), so the allowlisted
+commands can read paths OUTSIDE the workspace; they cannot write, and
+\`network: none\` blocks egress.
 
 ## Model default
 
@@ -302,16 +341,28 @@ with \`SPAWN_FAILED\` — never a silent substitute.
 
 Reviewer-visible skills are read-only skills: a skill whose frontmatter
 \`roles:\` includes \`reviewer\` (or lists no roles) and whose
-\`requiredTools\` are all in the reviewer tool set above. Any skill
-needing write, edit, bash, or effect git tools is withheld from the
-reviewer by the skills gate, whatever its \`roles:\` line claims.
+\`requiredTools\` are all in the reviewer's resolved set above
+(\`read, ls, find, grep, bash\`). Any skill needing write, edit, or git
+tools is withheld from the reviewer by the skills gate, whatever its
+\`roles:\` line claims — and a skill that needs \`bash\` only for inspection
+is admissible, because the lane's shell level is the read-only allowlist.
 
 ## Read-only by tool absence
 
-Reviewer read-only-ness is structural, not advisory: the lane registers
-exactly the eight read tools, so there is no write path to approve,
-bypass, or prompt-inject. Faux replays of reviewer sessions emit reads
-only across the corpus — a write call cannot even be formed.
+Reviewer read-only-ness is structural, not advisory — enforced by two
+different mechanisms, neither advisory:
+
+- **Tool absence (§40):** the lane registers \`read, ls, find, grep, bash\`
+  and nothing else, so \`write\`, \`edit\` and every git tool are uncallable.
+- **A closed shell allowlist (#161):** \`bash\` exists, and every command it
+  runs is matched against the read-only verb set first — a redirect, an
+  in-place edit, a destructive command or a network client is blocked with
+  a named reason before the shell starts.
+
+So a write call cannot be formed and a write command cannot run; what the
+reviewer CAN do through \`bash\` is read, including outside the workspace
+(see the read scope above). Faux replays of reviewer sessions emit reads
+only across the corpus.
 
 ## Budget (§71; example only, §63)
 
@@ -357,13 +408,15 @@ only for test fixtures, snapshots, and regression tests. Do not
 re-plan, do not stage, do not commit — failures go back with evidence
 so the debugger can take over.
 
-## Tools (§12)
+## Tools (§12, §12.1)
 
-\`read, ls, find, grep, write, edit, bash\` plus read-only git
-(\`git_status, git_diff, git_log, git_show\`). Stage, branch,
-checkpoint, and commit tools are absent by construction, so tester
-sessions cannot rewrite history — only report on it. Risky shell uses
-still block toward approval (§40).
+\`read, ls, find, grep, write, edit, bash\` — no git tool at all (§12.1
+gives the tester \`git: false\`): read-only git runs through the shell
+(\`git status/diff/log/show\` are in the read-only allowlist), while stage,
+branch, checkpoint, and commit are absent by construction, so tester
+sessions cannot rewrite history — only report on it. The shell level is
+\`true\` (a tester must run the suite), so risky shell uses still block
+toward approval (§40).
 
 ## Model default
 

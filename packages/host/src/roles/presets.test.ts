@@ -14,9 +14,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
+import { BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
 import {
   loadRoleDocuments,
   type ParsedRoleDoc,
+  parseRoleDocument,
   resolveRole,
 } from './resolver.js';
 
@@ -187,6 +189,33 @@ describe('shipped role presets match §12/§12.1 (issue #157)', () => {
       expect(resolved.classes).toEqual(expected.classes);
     },
   );
+
+  // The SAME pin for the copy that ships inside the binary (issue #203):
+  // `.kubic/roles/*.md` is the reviewable source, but a workspace with no
+  // roles directory runs `builtin-presets.ts`, so that text must match the
+  // table too — and match the documents byte for byte, or the two copies
+  // drift with every gate green.
+  describe('the copy embedded in the binary (issue #203)', () => {
+    it('is byte-identical to .kubic/roles/*.md', () => {
+      for (const doc of docs) {
+        expect(
+          BUILTIN_ROLE_PRESETS[doc.name as keyof typeof BUILTIN_ROLE_PRESETS],
+        ).toBe(nodeBridge().readTextFile(`${ROLES_DIR}/${doc.name}.md`));
+      }
+    });
+
+    it.each(Object.keys(TABLE))(
+      "resolves the embedded '%s' to the table's tools and classes",
+      (name) => {
+        const expected = TABLE[name] as Preset;
+        const text =
+          BUILTIN_ROLE_PRESETS[name as keyof typeof BUILTIN_ROLE_PRESETS];
+        const resolved = resolveRole(parseRoleDocument(text), []);
+        expect([...resolved.tools].sort()).toEqual([...expected.tools].sort());
+        expect(resolved.classes).toEqual(expected.classes);
+      },
+    );
+  });
 
   it('keeps the read-only roles on a shell level that can actually read', () => {
     // §12's reviewer runs "targeted checks" and the planner "read-only

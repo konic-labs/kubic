@@ -1588,10 +1588,11 @@ export function createOrchestratorApprovalsRun(
         clearInterval(timer);
         intervals.delete(agentId);
       }
-      // The worker settled, so its mailbox files are consumed (issue #152):
-      // the caller has just pumped whatever raced its exit, and nothing
-      // remains for this worker to publish or await. A long run's mailbox
-      // therefore holds only live asks.
+      // The worker settled, so its mailbox files are consumed (issue #152)
+      // whether or not its last ask was routed first: the success path pumps
+      // the ask that raced the exit before calling this, the crash path does
+      // not (the worker is gone, so nobody could consume the answer anyway).
+      // A long run's mailbox therefore holds only live asks.
       const swept = sweepWorkerAsks(dir, agentId);
       if (swept > 0) {
         debug(`approvals: swept ${swept} settled ask(s) for '${agentId}'`);

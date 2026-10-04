@@ -56,6 +56,7 @@ afterEach(() => {
 function fauxModels(steps: FauxStep[]): {
   models: MutableModels;
   setResponses: (next: FauxStep[]) => void;
+  calls: () => number;
 } {
   const faux = fauxProvider();
   const models = createModels();
@@ -82,7 +83,7 @@ function fauxModels(steps: FauxStep[]): {
     );
   };
   setResponses(steps);
-  return { models, setResponses };
+  return { models, setResponses, calls: () => faux.state.callCount };
 }
 
 // A real solo boot against a temp sessions root with the faux provider —
@@ -388,6 +389,54 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(await pending).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
+  });
+
+  it('refuses a second submit while the conversation is busy, locally', async () => {
+    // Acceptance (#395): a busy TUI conversation is refused locally, as
+    // today. The input loop owns the refusal — the second prompt never
+    // reaches the durable submit — and the lane keeps its one in-flight turn.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models, calls } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+      'second answer',
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    // The turn is in flight (the model is gated): a second Enter must not
+    // start another turn.
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('› first prompt');
+    // One model request for the one turn: the busy submit never reached the
+    // lane (the editor's own echo of a refused draft is not a lane cell).
+    expect(calls()).toBe(1);
+    expect(doc).not.toContain('second answer');
   });
 
   it('quits on the Kitty-protocol form of Esc and Ctrl-D, not only legacy bytes', async () => {

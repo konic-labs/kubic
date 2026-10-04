@@ -658,12 +658,14 @@ session override as `--model`): a switch to any other model is refused with
 /model cannot change it`, and naming the pin itself passes. `--model`
 is the `cli` layer of the one config load (never patched over the projected
 pin), so a frozen enterprise `[model]` beats it — announced by one stderr
-note at boot — exactly as it does for `kubic run`. A session left with a pending operation
+note at boot — exactly as it does for `kubic run`. A session left with pending work
 by a crashed run (issue #147) has it durably aborted at boot — its
 approvals would need the overlay, which is not on screen yet, and the
 operator is present to re-send — and the editor footer names the outcome
 (`pending work: <kind> <id> (<status>) aborted after an
-interrupted run`) from the first render.
+interrupted run`) from the first render, together with the prompt the dead
+process had already admitted (`— interrupted prompt: <text>`) when there
+was one.
 
 The TUI drives the same solo lane as `kubic run`, so it installs the same
 policy (see **Installed policy** under `kubic run` above): the classes,

@@ -1673,7 +1673,11 @@ export class TuiTurnRunner {
   private running: Promise<TuiTurnOutcome> | undefined;
 
   run(prompt: string): Promise<TuiTurnOutcome> {
-    const running = this.runTurn(prompt);
+    const running = this.runTurn(prompt).finally(() => {
+      // The runner is idle again once the turn settles: a stale `running`
+      // would make every later quit look like a mid-turn cancel.
+      if (this.running === running) this.running = undefined;
+    });
     this.running = running;
     return running;
   }
@@ -1738,11 +1742,12 @@ export class TuiTurnRunner {
     this.placed = new Promise<void>((resolve) => {
       this.markPlaced = resolve;
     });
-    // The subscription is snapshot-safe (#398): the attach snapshot replaces
-    // the feed, so nothing committed between the boot read and this turn can
-    // be lost, and no event can arrive before the sink is listening.
-    this.detach = await this.loop.subscribe(this.sink, this.loop.context);
     try {
+      // The subscription is snapshot-safe (#398): the attach snapshot
+      // replaces the feed, so nothing committed between the boot read and
+      // this turn can be lost, and no event can arrive before the sink is
+      // listening.
+      this.detach = await this.loop.subscribe(this.sink, this.loop.context);
       const turn = await this.loop.runTurn(prompt, {
         // The prompt is this invocation's own intent: a fresh id per submit
         // so pi-durable's requestId dedupe never collapses two prompts the

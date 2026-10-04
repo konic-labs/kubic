@@ -495,4 +495,32 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     // The TUI HAS a TTY — the old message lied about the cause.
     expect(outcome.detail).not.toContain('TTY');
   });
+
+  it('names the busy refusal the durable turn reports (D6.1)', async () => {
+    const app = {
+      applyLaneEntries: () => {},
+      applyLaneEvent: () => {},
+      setUsage: () => {},
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
+    const loop = {
+      runTurn: async () => ({
+        kind: 'failed' as const,
+        reason: 'busy' as const,
+        error: 'conversation 1 is busy',
+      }),
+      subscribe: async () => async () => {},
+      entries: async () => [],
+      abort: async () => {},
+      forgetKills: () => {},
+      killsKey: 'conversation',
+      kills: new OperationKillRegistry(),
+      context: BACKGROUND_CONTEXT,
+    } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
+    const runner = new TuiTurnRunner(app, loop, 'faux/test');
+    const outcome = await runner.run('hello');
+    expect(outcome.status).toBe('failed');
+    expect(outcome.detail).toBe(
+      'lane refused the prompt: conversation 1 is busy',
+    );
+  });
 });

@@ -373,7 +373,6 @@ export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/n
 //   review: issue #391 (K2 #392)
 export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 
-
 // --- #400 additions ---
 
 // JUSTIFICATION:
@@ -398,4 +397,3 @@ export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 //     upstream change.
 //   review: issue #391 (K10 #400)
 export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
-

@@ -835,8 +835,9 @@ export interface OrchestrateEnvelope {
   graph: string[];
   // The §49.1/§50 admission surface of this run (issue #106): the running and
   // queued counts the scheduler actually held, plus the cap they are measured
-  // against. Reported, never a gate — the shipped loop is strictly sequential,
-  // so `queued` above zero means a slot was genuinely occupied.
+  // against. Reported AND a gate (issue #206): workers past the cap wait in
+  // the scheduler's FIFO queue, so `queued` above zero means a slot was
+  // genuinely occupied and a release woke the worker.
   parallel?: ParallelWorkersExtra;
   // §44.1 retained-worktree status (issue #106): one row per worktree the run
   // retained, with the measured dirtiness and the files that made it dirty.

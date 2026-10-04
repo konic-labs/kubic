@@ -3,10 +3,13 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +58,11 @@ function inv(): ToolInvocation {
 }
 
 const posix = process.platform !== 'win32';
+
+// Every tmp the tmp+rename writer leaves behind, under any spelling (#140).
+function tmpNames(dir: string): string[] {
+  return readdirSync(dir).filter((name) => name.includes('.kubic-tmp'));
+}
 
 describe('write/edit safety on the node seam', () => {
   it.runIf(posix)('write preserves an existing file mode', async () => {
@@ -129,7 +137,7 @@ describe('write/edit safety on the node seam', () => {
     );
     expect(out.ok).toBe(false);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('old\n');
-    expect(existsSync(join(root, 'a.txt.kubic-tmp'))).toBe(false);
+    expect(tmpNames(root)).toEqual([]);
     const edit = await callOperation(
       'edit',
       { path: 'a.txt', oldText: 'old', newText: 'new' },
@@ -139,4 +147,163 @@ describe('write/edit safety on the node seam', () => {
     expect(edit.ok).toBe(false);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('old\n');
   });
+});
+
+// Issue #140: tmp+rename must write THROUGH a symlink, not over it. The
+// rename replaces the inode at the named path, so a symlinked target turned
+// into a regular file and the link (plus the target's real content) was
+// silently lost. A resolved target outside the workspace is refused
+// instead, and a failed rename never leaves its tmp behind.
+describe('write/edit symlink safety (issue #140)', () => {
+  it.runIf(posix)(
+    'edit through a symlink updates the target and keeps the link',
+    async () => {
+      const { root, journal, c } = setup();
+      writeFileSync(join(root, 'real.md'), 'old\n');
+      symlinkSync('real.md', join(root, 'link.md'));
+      const out = await callOperation(
+        'edit',
+        { path: 'link.md', oldText: 'old', newText: 'new' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      expect(lstatSync(join(root, 'link.md')).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(root, 'real.md'), 'utf8')).toBe('new\n');
+      expect(tmpNames(root)).toEqual([]);
+      // The journal names the path the call used, not the resolved target.
+      expect(journal.entries()[0]?.path).toBe('link.md');
+    },
+  );
+
+  it.runIf(posix)(
+    'write through a symlink updates the target and keeps the link',
+    async () => {
+      const { root, c } = setup();
+      writeFileSync(join(root, 'real.md'), 'old\n');
+      symlinkSync('real.md', join(root, 'link.md'));
+      const out = await callOperation(
+        'write',
+        { path: 'link.md', content: 'new\n' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      expect(lstatSync(join(root, 'link.md')).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(root, 'real.md'), 'utf8')).toBe('new\n');
+      expect(tmpNames(root)).toEqual([]);
+    },
+  );
+
+  it.runIf(posix)(
+    'refuses a symlink whose target escapes the workspace',
+    async () => {
+      const { root, journal, c } = setup();
+      const outside = tmp('outside-');
+      writeFileSync(join(outside, 'secret.txt'), 'secret\n');
+      symlinkSync(join(outside, 'secret.txt'), join(root, 'link.txt'));
+      const out = await callOperation(
+        'write',
+        { path: 'link.txt', content: 'pwned\n' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error.code).toBe('symlink_escape');
+      expect(readFileSync(join(outside, 'secret.txt'), 'utf8')).toBe(
+        'secret\n',
+      );
+      expect(lstatSync(join(root, 'link.txt')).isSymbolicLink()).toBe(true);
+      // Refused before the journal: nothing to undo.
+      expect(journal.entries()).toEqual([]);
+      expect(tmpNames(root)).toEqual([]);
+    },
+  );
+
+  it.runIf(posix)(
+    'refuses a write through a symlinked directory that escapes the workspace',
+    async () => {
+      const { root, c } = setup();
+      const outside = tmp('outside-');
+      symlinkSync(outside, join(root, 'linkdir'));
+      const out = await callOperation(
+        'write',
+        { path: 'linkdir/new.txt', content: 'pwned\n' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error.code).toBe('symlink_escape');
+      // Nothing was created through the link, and the link is intact.
+      expect(existsSync(join(outside, 'new.txt'))).toBe(false);
+      expect(lstatSync(join(root, 'linkdir')).isSymbolicLink()).toBe(true);
+      expect(tmpNames(root)).toEqual([]);
+    },
+  );
+
+  it.runIf(posix)(
+    'clears a stale tmp at its own name before writing it (pid reuse)',
+    async () => {
+      const { root, c } = setup();
+      writeFileSync(join(root, 'a.txt'), 'old\n');
+      const events: string[] = [];
+      const fs = new Proxy(c.env.fs, {
+        get: (target, prop, receiver) => {
+          if (prop === 'unlink' || prop === 'writeFile') {
+            return (path: string, ...rest: unknown[]) => {
+              events.push(`${prop}:${path}`);
+              const fn = Reflect.get(target, prop, receiver) as (
+                p: string,
+                ...r: unknown[]
+              ) => unknown;
+              return fn.call(receiver, path, ...rest);
+            };
+          }
+          return Reflect.get(target, prop, receiver) as unknown;
+        },
+      });
+      const out = await callOperation(
+        'write',
+        { path: 'a.txt', content: 'new\n' },
+        inv(),
+        { ...c, env: { ...c.env, fs } },
+      );
+      expect(out.ok).toBe(true);
+      const [cleared, written] = events;
+      expect(cleared).toMatch(/^unlink:.*\.kubic-tmp-\d+-\d+$/);
+      const after = (event: string | undefined): string =>
+        (event ?? '').slice((event ?? '').indexOf(':') + 1);
+      expect(after(written)).toBe(after(cleared));
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n');
+      expect(tmpNames(root)).toEqual([]);
+    },
+  );
+
+  it.runIf(posix)(
+    'a failed rename removes its tmp file instead of leaking it',
+    async () => {
+      const { root, journal, c } = setup();
+      writeFileSync(join(root, 'a.txt'), 'old\n');
+      const failingFs = new Proxy(c.env.fs, {
+        get: (target, prop, receiver) => {
+          if (prop === 'rename') {
+            return () => {
+              throw new Error('EXDEV: cross-device link');
+            };
+          }
+          return Reflect.get(target, prop, receiver) as unknown;
+        },
+      });
+      const out = await callOperation(
+        'write',
+        { path: 'a.txt', content: 'new\n' },
+        inv(),
+        { ...c, env: { ...c.env, fs: failingFs } },
+      );
+      expect(out.ok).toBe(false);
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('old\n');
+      expect(tmpNames(root)).toEqual([]);
+      expect(journal.entries()).toHaveLength(1);
+    },
+  );
 });

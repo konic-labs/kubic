@@ -24,8 +24,10 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { constants as osConstants } from 'node:os';
@@ -78,6 +80,24 @@ export interface FileSystem {
    * windowing is bounded.
    */
   readFileRange?(path: string, start: number, end: number): Uint8Array;
+  /**
+   * The physical path `path` names — every symlink resolved (issue #140).
+   * `stat` follows links but only reports a target; a writer needs the
+   * location the OS would actually open, so a tmp+rename lands beside the
+   * real file instead of replacing the link with a regular file. The
+   * lexical path is confined first; the RESULT is not (a link inside the
+   * workspace may point out — the caller decides, see `symlink_escape`
+   * in the worker's write path). Throws when the path does not exist.
+   * Optional so existing seams stay valid; absent = links resolve to
+   * themselves (test doubles).
+   */
+  realpath?(path: string): string;
+  /**
+   * Remove a file (issue #140): the tmp+rename writer's cleanup of the tmp
+   * a failed write or rename left behind. Optional (test doubles have no
+   * cleanup): absent = a failed write leaves its tmp for the operator.
+   */
+  unlink?(path: string): void;
   /**
    * Set permission bits. Optional (test doubles have no modes): tmp+rename
    * writers copy the replaced file's mode onto the tmp, so an overwrite
@@ -169,10 +189,36 @@ function confine(cwd: string, path: string): string {
   // out. Acceptable: solo has no isolation (§3.7), this is an accidental-
   // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
-  if (abs !== cwd && !abs.startsWith(cwd + sep)) {
-    throw new Error(`path escapes cwd confinement: ${path}`);
+  if (abs === cwd || abs.startsWith(cwd + sep)) return abs;
+  // Issue #140: the cwd itself may be reached through a symlink (macOS
+  // resolves /tmp and /var to /private/…), so a caller holding a path the
+  // OS resolved spells the same tree with the physical prefix. Accepting
+  // both keeps the guardrail — the path is still this workspace — without
+  // refusing a legitimate write to a realpath'd target.
+  const real = physicalRoot(cwd);
+  if (
+    real !== undefined &&
+    real !== cwd &&
+    (abs === real || abs.startsWith(real + sep))
+  )
+    return abs;
+  throw new Error(`path escapes cwd confinement: ${path}`);
+}
+
+// realpath(cwd), cached: confine runs on every op's I/O and the workspace
+// root does not move. undefined = the cwd itself cannot be resolved.
+const physicalRoots = new Map<string, string | undefined>();
+
+function physicalRoot(cwd: string): string | undefined {
+  if (physicalRoots.has(cwd)) return physicalRoots.get(cwd);
+  let real: string | undefined;
+  try {
+    real = realpathSync(cwd);
+  } catch {
+    real = undefined;
   }
-  return abs;
+  physicalRoots.set(cwd, real);
+  return real;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -219,6 +265,14 @@ class NodeFileSystem implements FileSystem {
       mode: st.mode & 0o7777,
       isSymbolicLink: st.isSymbolicLink(),
     };
+  }
+
+  realpath(path: string): string {
+    return realpathSync(confine(this.cwd, path));
+  }
+
+  unlink(path: string): void {
+    unlinkSync(confine(this.cwd, path));
   }
 
   chmod(path: string, mode: number): void {

@@ -209,6 +209,28 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
+### Write/edit symlink safety (issue #140)
+
+`write` and `edit` share `replaceFile` (`ops/atomic-file.ts`), the
+journal-first tmp+rename writer. It now follows symlinks instead of
+replacing them: the target is resolved (`FileSystem.realpath`, resolving
+the nearest existing prefix and appending the components a create has yet
+to make), the tmp is written **beside the resolved file** and renamed onto
+it, and the journal still names the path the call used. A resolved target
+outside `ctx.env.cwd` is refused with a named `symlink_escape` OpError
+before the journal append — following it would write outside the
+confinement guardrail; the same check covers a symlinked directory above
+the path. The tmp carries a pid- and call-unique name
+(`<target>.kubic-tmp-<pid>-<n>`, so two writers cannot collide), any
+stale residue at that exact name is cleared before the write, and the tmp
+is removed best-effort through `FileSystem.unlink` when the write, chmod
+or rename fails — the earlier fixed-name tmp leaked into the workspace and
+the next sweep journaled it as an unattributed create. Both new seam
+members are optional (test doubles have no links and no cleanup) and
+`withReadRoots` forwards them, or a run with skill roots would leak the
+tmp. A dangling link has no target to resolve, so the write replaces the
+link itself, as before.
+
 ### Session storage (issue #392)
 
 One pi-durable `Storage` per session, at `<sessions-root>/<id>/` — the same

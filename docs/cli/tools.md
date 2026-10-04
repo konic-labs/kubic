@@ -34,8 +34,8 @@ workspace.
 | `ls` | `path?` (default `.`) | One directory, not recursive. |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`. |
-| `write` | `path`, `content` | Whole-file, atomic (tmp + rename). |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused. |
+| `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)). |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`. |
 | `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | |
 | `git_diff` | `staged?`, `range?`, `path?` | |
@@ -102,7 +102,22 @@ src/b.ts:3: // TODO remove
 - A refused call is one line: `error <code>: <message>` — the codes are
   `invalid_args`, `not_found`, `is_directory`, `permission_denied`,
   `no_match`, `ambiguous_match`, `file_too_large`, `journal_failed`,
-  `not_a_repo`, `tool_failed` (and `unknown_tool` / `internal`).
+  `not_a_repo`, `symlink_escape`, `tool_failed` (and `unknown_tool` /
+  `internal`).
+
+## Symlinked writes
+
+`write` and `edit` follow symlinks instead of replacing them (issue
+[#140](https://github.com/konic-labs/kubic/issues/140)): the atomic tmp is
+written beside the **resolved** file and renamed onto it, so writing to a
+link updates its target and the link stays a link — the workspace never
+gains a surprise regular file and the target never keeps the old content.
+A link (or a symlinked directory above the path) whose target resolves
+**outside the workspace** is refused with `error symlink_escape: …` before
+anything is journaled or written; the tool never writes through it. A
+failed write or rename removes its tmp (`<target>.kubic-tmp-<pid>-<n>`)
+instead of leaking it into the workspace. A dangling link has no target to
+resolve, so the write replaces the link itself.
 
 ## Search walk (`find` and `grep`)
 

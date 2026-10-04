@@ -48,7 +48,7 @@ Supporting shapes, field-for-field:
 | --- | --- |
 | `Provenance` | `sessionId: string`, `agentId: string`, `toolCallId: string`, `turnId: number`, `operation: string` |
 | `StatInfo` | `isFile: boolean`, `isDirectory: boolean`, `size: number` |
-| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets) |
+| `FileSystem` | `readFile(path): string`, `writeFile(path, content): void`, `rename(from, to): void`, `listDir(path): string[]`, `stat(path): StatInfo`, `lstat?(path): StatInfo & { isSymbolicLink: boolean }` (optional, #172: `stat` follows links, `lstat` lets the walk skip symlinks instead of descending loops; absent = links are indistinguishable from targets), `realpath?(path): string` (optional, #140: the physical path with every symlink resolved — the lexical path is confined first, the result is not, so the write path can refuse a target outside the workspace; throws when the path does not exist), `unlink?(path): void` (optional, #140: tmp cleanup after a failed write/rename; absent = no cleanup) |
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
@@ -60,7 +60,11 @@ Supporting shapes, field-for-field:
 turnId: 0, operation: 'init' }`. `NodeExecutionEnv` is the cwd-scoped
 live binding; `FakeExecutionEnv` (+ `FakeScript`) is the hermetic test
 double. `confine()` is lexical only (`resolve()` defeats `..`/absolute
-escapes but not symlinks) — acceptable because solo has no isolation.
+escapes but not symlinks) — acceptable because solo has no isolation. It
+also accepts a path spelled through the workspace root's own `realpath`
+(`/tmp` and `/var` resolve to `/private/...` on macOS), so the write path
+can hand back a target it resolved through a link without tripping the
+guardrail (#140).
 
 ### Journal (`journal.ts`, `journal-diff.ts`)
 

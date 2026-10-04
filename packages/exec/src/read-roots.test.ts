@@ -3,8 +3,10 @@
 // paths are readable through the env — every other outside path, and every
 // write, keeps the cwd confinement.
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -115,7 +117,29 @@ describe('read roots (issue #173)', () => {
     ).toThrow(/confinement/);
   });
 
-  it('offers lstat only when the base seam does, never inventing one', () => {
+  it('forwards realpath and unlink so the write path resolves and cleans up through the wrapper (issue #140)', () => {
+    const { workspace, skillDir, skill } = skillTree();
+    writeFileSync(join(workspace, 'real.txt'), 'x\n');
+    symlinkSync('real.txt', join(workspace, 'link.txt'));
+    const env = withReadRoots(new NodeExecutionEnv(workspace), [skillDir]);
+    // A workspace path falls through to the base seam …
+    expect(env.fs.realpath?.('link.txt')).toBe(
+      realpathSync(join(workspace, 'real.txt')),
+    );
+    // … and a path inside a read root resolves through the root's own seam.
+    expect(env.fs.realpath?.(skill)).toBe(realpathSync(skill));
+    // Cleanup reaches the base seam too: without the forward, every failed
+    // write in a run with read roots would leak its tmp.
+    env.fs.unlink?.('link.txt');
+    expect(existsSync(join(workspace, 'link.txt'))).toBe(false);
+    // Survives the per-call provenance re-derivation the tools perform.
+    const derived = env.withProvenance({ ...env.provenance, agentId: 'x' });
+    expect(derived.fs.realpath?.('real.txt')).toBe(
+      realpathSync(join(workspace, 'real.txt')),
+    );
+  });
+
+  it('offers lstat, realpath and unlink only when the base seam does, never inventing one', () => {
     const { workspace, skillDir } = skillTree();
     const bare: FileSystem = {
       readFile: () => '',
@@ -136,5 +160,7 @@ describe('read roots (issue #173)', () => {
       [skillDir],
     );
     expect(env.fs.lstat).toBeUndefined();
+    expect(env.fs.realpath).toBeUndefined();
+    expect(env.fs.unlink).toBeUndefined();
   });
 });

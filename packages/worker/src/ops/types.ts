@@ -96,7 +96,9 @@ export interface OpErrorDetails {
 // distinct, actionable refusal — never a generic catch-all. `file_too_large`
 // (issue #122) is the pre-allocation size refusal for edit; `is_directory`
 // and `permission_denied` (issue #199) keep read from calling every I/O
-// failure a missing file.
+// failure a missing file; `symlink_escape` (issue #140) is a write path that
+// resolves through a symlink to a location outside the workspace, which the
+// write tool refuses instead of following.
 export const OP_FAILURE_CODES = [
   'invalid_args',
   'not_found',
@@ -107,6 +109,7 @@ export const OP_FAILURE_CODES = [
   'file_too_large',
   'journal_failed',
   'not_a_repo',
+  'symlink_escape',
   'tool_failed',
 ] as const;
 

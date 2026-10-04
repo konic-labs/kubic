@@ -46,7 +46,11 @@ sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
 maps what the lane and the harness actually do onto it and
 `apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
 `kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
-`pi.tool.execute`, with parent linkage and per-span ms. The tool-span half
+`pi.tool.execute`, with parent linkage and per-span ms. The two lane span
+labels are kept from 0.87 but name the 1.0 work (#395): `accept` covers
+admitting this run's work (settling a pending turn first) and `drive` the
+durable turn itself (`conversation.submit()` → `submission.wait()` →
+settlement). The tool-span half
 is `runSpanHooks` (#397): the run wiring (#395) installs it as the
 `kubic.spans` extension's `ToolTask` hooks, after `kubic.policy` so a
 blocked call opens no span — `beforeTool` opens the span, `afterTool`

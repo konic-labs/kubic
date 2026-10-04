@@ -638,21 +638,33 @@ export interface TuiRunOptions {
 // bootTuiLane installs. Exported so the prod boot, embedders and the tests
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
-export function soloTuiLoop(solo: SoloLane): TuiLaneLoop {
+export function soloTuiLoop(
+  solo: SoloLane,
+  context: Context = BACKGROUND_CONTEXT,
+): TuiLaneLoop {
   return {
     runTurn: (prompt, opts) => runTurn(solo, prompt, opts),
-    subscribe: (sink, context) =>
-      subscribeLaneEvents(solo.harness, solo.conversation.id, sink, context),
-    entries: (context) => readConversationEntries(solo.conversation, context),
+    subscribe: (sink, loopContext) =>
+      subscribeLaneEvents(
+        solo.harness,
+        solo.conversation.id,
+        sink,
+        loopContext,
+      ),
+    entries: (loopContext) =>
+      readConversationEntries(solo.conversation, loopContext),
     // D6.2: the shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
-    abort: async (context) => {
-      await abortLane(solo, context);
+    abort: async (loopContext) => {
+      await abortLane(solo, loopContext);
     },
     forgetKills: () => forgetLaneKills(solo),
     killsKey: String(solo.conversation.id),
     kills: solo.kills,
-    context: BACKGROUND_CONTEXT,
+    // The lane's own context: every member is called with it, so an embedder
+    // that booted the lane on a bounded context is never silently
+    // un-cancellable.
+    context,
   };
 }
 
@@ -1090,7 +1102,7 @@ export async function bootTuiLane(
       }),
 
       loop: {
-        ...soloTuiLoop(booted),
+        ...soloTuiLoop(booted, context),
         // Issue #227: resolve against the live catalog before touching the
         // conversation, so `/model typo/nope` fails by name and the lane
         // keeps the model it had; configure then commits the change to the
@@ -1244,8 +1256,10 @@ export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
   if (content === undefined) return undefined;
   return {
     id: String(entry.id),
-    // The entry id is monotonic (uuidv7), so it is the transcript order the
-    // app sorts by; `seq` stays the numeric field it expects.
+    // The entry id is pi-durable's monotonic NUMERIC EntryId, which is the
+    // transcript order the app sorts by; `seq` stays the numeric field it
+    // expects (`String(entry.id)` here would degrade the sort to insertion
+    // order).
     seq: entry.id,
     type: 'message',
     message: {
@@ -1759,9 +1773,18 @@ export class TuiTurnRunner {
         whenBusy: 'reject',
       });
       this.settledTurn = turn;
-      // A settled turn's kills are forgotten, not run: a kept background job
-      // outlives Kubic. A quit keeps them for the session close's backstop.
-      if (!this.quitting) this.loop.forgetKills();
+      // A SETTLED turn's kills are forgotten, not run: a kept background job
+      // outlives Kubic, and a recycled pid must not receive a stale group
+      // SIGTERM. A failed outcome is not settled — the busy refusal never
+      // owned a turn and a failed wait may still have a live durable run —
+      // so its kills stay registered for the abort/quit drain. A quit keeps
+      // them for the session close's backstop either way.
+      if (
+        !this.quitting &&
+        (turn.kind === 'completed' || turn.kind === 'aborted')
+      ) {
+        this.loop.forgetKills();
+      }
       // One settling read completes the feed (the user entry the submit
       // committed is not carried by any mapped event): events drive the live
       // transcript, this single read is the turn's full one.
@@ -2215,11 +2238,11 @@ export async function runTuiCommand(
     // terminal status. The screen stays up (footer: cancelling…) until the
     // drain ends, bounded by drainTimeoutMs.
     const draining = activeTurn?.isRunning() === true;
-    // Issue #312: ONE quit budget. The bound ends the drain wait, and the
-    // close then shares what is left of it: pi-durable's `Harness.close`
-    // joins live task invocations (`beforeClose`), so a provider that ignores
-    // the abort must not hang the quit after the drain gave up on it. A quit
-    // with no turn to drain gets its own bound at the close.
+    // Issue #312: the drain has its own bound, and the close gets a FRESH one
+    // of its own: pi-durable's `Harness.close` joins live task invocations
+    // (`beforeClose`), so a provider that ignores the abort must not hang the
+    // quit — but a drain that consumed its whole budget must not leave the
+    // close (the session lock release among it) zero time either.
     let drainBound: Promise<void> | undefined;
     let endBound: () => void = () => {};
     if (draining) {
@@ -2258,17 +2281,19 @@ export async function runTuiCommand(
       }
       detachSignals();
       // The close joins the harness's live task invocations: a close that
-      // cannot finish inside the quit's budget is abandoned — the process is
+      // cannot finish inside ITS OWN fresh bound is abandoned — the process is
       // leaving anyway, and the next attach reclaims the stale lock by pid
-      // liveness. The harness's own storage may stay open until then.
-      const closeBound =
-        drainBound ??
-        new Promise<void>((resolve) => {
-          endBound = (deps.setDrainTimer ?? defaultDrainTimer)(
-            deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
-            resolve,
-          );
-        });
+      // liveness. The harness's own storage may stay open until then. A quit
+      // key that arrives while the close waits ends that wait at once
+      // (`endDrain` points at the close bound from here on).
+      endBound();
+      const closeBound = new Promise<void>((resolve) => {
+        endDrain = resolve;
+        endBound = (deps.setDrainTimer ?? defaultDrainTimer)(
+          deps.drainTimeoutMs ?? TUI_DRAIN_TIMEOUT_MS,
+          resolve,
+        );
+      });
       try {
         await Promise.race([boot.close?.(), closeBound]);
       } catch {

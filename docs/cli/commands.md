@@ -365,6 +365,17 @@ Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
+Each run also reports **§61 merge telemetry** (issue #158): per settled
+worker, the merge phases the run measured — `queueMs` (enqueue → dequeue),
+`diffMs` (the worker's own branch-diff read), `mergeMs`, `resolveMs` (the
+resolver's rework) and `applyMs` (attribution + record + persist). The run's
+`--json` document carries them under `mergeTelemetry`, the text view prints one
+`merge telemetry: <agent> … total=<sum>ms outcome=<…>` line each, and
+`totalMergeMs` is exactly the phase sum. The same runs sample the §61
+**attach** leg (session create/attach per worker) and report the **worktree
+creation** leg as measured when creation returns — both in the worker's perf
+sample, which `kubic perf --budget attach --measure` also measures live.
+
 Per-agent **resource limits** (issue #163, §82) are enforced at runtime when a
 run is started with one: a memory cap (`workerMemoryLimitMb`) is handed to the
 child as `--max-old-space-size` and the manager samples the worker's RSS
@@ -2049,9 +2060,11 @@ one sample source, `--measure` or `--samples`:
     environment
   - `worktree` runs a real `git worktree add` / `remove` cycle in a
     scratch directory
-  - `attach` and `teardown` have no live substrate in the solo path yet,
-    so `--measure` on those kinds exits 2 with an `error:` line that
-    names `--samples`
+  - `attach` creates a session in your real sessions root, attaches it
+    and releases it (the §61 attach row; issue #158), cleaning up the
+    measurement's own session afterwards
+  - `teardown` has no live substrate in the solo path yet, so `--measure`
+    on it exits 2 with an `error:` line that names `--samples`
 
   This is the default measurement source (issue #98), implemented in
   `packages/host/src/ops/perf/measure.ts`; the composition root needs no

@@ -31,6 +31,8 @@ import {
 } from './orchestrator/manager.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import type { MergeTelemetry } from './orchestrator/merge/telemetry.js';
+import { totalMergeMs } from './orchestrator/merge/telemetry.js';
 import { addWorktree } from './orchestrator/worktree/add.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 
@@ -52,7 +54,12 @@ interface FakeWorld {
   debugLines: string[];
   calls: FakeCalls;
   saved: OrchestratorRunState[];
-  runInfo: { agentId: string; workerSessionId: string }[];
+  runInfo: {
+    agentId: string;
+    workerSessionId: string;
+    /** §61 (issue #158): the worktree-creation leg the host measured. */
+    worktreeMs?: number;
+  }[];
   /** The prompt each worker actually received (issue #103). */
   prompts: { agentId: string; prompt: string }[];
 }
@@ -74,7 +81,11 @@ function makeWorld(
     order: [],
   };
   const saved: OrchestratorRunState[] = [];
-  const runInfo: { agentId: string; workerSessionId: string }[] = [];
+  const runInfo: {
+    agentId: string;
+    workerSessionId: string;
+    worktreeMs?: number;
+  }[] = [];
   const prompts: { agentId: string; prompt: string }[] = [];
   const deps: OrchestrateCommandDeps = {
     out: (line: string) => {
@@ -108,6 +119,9 @@ function makeWorld(
       runInfo.push({
         agentId,
         workerSessionId: info?.workerSessionId ?? '(none)',
+        ...(info?.worktreeMs === undefined
+          ? {}
+          : { worktreeMs: info.worktreeMs }),
       });
       prompts.push({ agentId, prompt });
       const count = hunksPerAgent?.[agentId] ?? 1;
@@ -1260,11 +1274,14 @@ describe('orchestrate worker session creation (issue #85)', () => {
       );
     }
     // The id the manager creates is exactly the id the child attaches to.
+    // worktreeMs is the §61 creation leg (issue #158): this world's clock is
+    // frozen, so a correct measurement is exactly 0 — not a launch-time
+    // subtraction that would drift with the ticks in between.
     expect(
       [...world.runInfo].sort((a, b) => a.agentId.localeCompare(b.agentId)),
     ).toEqual([
-      { agentId: 'alpha', workerSessionId: 'sess-1-alpha' },
-      { agentId: 'beta', workerSessionId: 'sess-1-beta' },
+      { agentId: 'alpha', workerSessionId: 'sess-1-alpha', worktreeMs: 0 },
+      { agentId: 'beta', workerSessionId: 'sess-1-beta', worktreeMs: 0 },
     ]);
   });
 
@@ -2545,5 +2562,134 @@ describe('the assigned approval role (issue #159)', () => {
     expect(
       assignedApprovalRole({ assignments: [], refused: [] }, 'gamma'),
     ).toBe('worker');
+  });
+});
+
+describe('merge telemetry (§61, issue #158)', () => {
+  // A fake clock the injected seams advance, so every phase is a known
+  // number: creation 7 ms, diff 13 ms, merge 11 ms, apply 5 ms.
+  function timedWorld(): {
+    world: FakeWorld;
+    tick: (ms: number) => void;
+    clock: () => number;
+    spawnInfos: (WorkerSpawnInfo | undefined)[];
+  } {
+    let clock = 1_000;
+    const spawnInfos: (WorkerSpawnInfo | undefined)[] = [];
+    const tick = (ms: number) => {
+      clock += ms;
+    };
+    const world = makeWorld({
+      now: () => clock,
+      ensureWorktree: (agentId: string) => {
+        tick(7);
+        return {
+          path: `/repo/.kubic/wt/${agentId}`,
+          branch: `kubic/${agentId}`,
+        };
+      },
+      runWorker: (agentId: string, _worktree, _prompt, info) => {
+        spawnInfos.push(info);
+        // The clock moves while the worker runs: none of it belongs to the
+        // creation leg the spawn info reports.
+        tick(100);
+        return {
+          hunks: [{ path: `${agentId}.txt`, hunk: '@@ -0,0 +1 @@ +x' }],
+          diffMs: 13,
+        };
+      },
+      mergeBranch: () => {
+        tick(11);
+      },
+      // The apply leg's own save is the one that records the merge (the
+      // write-ahead intent save happens inside the merge leg): ticking only
+      // there keeps the two phases apart.
+      saveState: (state) => {
+        if (state.merged.includes('alpha') || state.merged.includes('beta')) {
+          tick(5);
+        }
+      },
+    });
+    return { world, tick, clock: () => clock, spawnInfos };
+  }
+
+  it('reports per-agent merge telemetry whose total is the phase sum', async () => {
+    const { world } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const envelope = lastJsonLine(world.lines);
+    const telemetry = envelope.mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      agentId: 'alpha',
+      diffMs: 13,
+      mergeMs: 11,
+      resolveMs: 0,
+      applyMs: 5,
+      outcome: 'merged',
+    });
+    // The queue leg is the wait from enqueue to dequeue: no tick between the
+    // two, so 0 ms here — and the total is exactly the phase sum.
+    expect(telemetry[0]?.queueMs).toBe(0);
+    const record = telemetry[0] as MergeTelemetry;
+    expect(totalMergeMs(record)).toBe(
+      record.queueMs +
+        record.diffMs +
+        record.mergeMs +
+        record.resolveMs +
+        record.applyMs,
+    );
+    expect(totalMergeMs(record)).toBe(29);
+  });
+
+  it('prints the same numbers as a merge telemetry line in the human view', async () => {
+    const { world } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const text = world.lines.join('\n');
+    expect(text).toContain('merge telemetry: alpha');
+    expect(text).toContain('queue=0ms');
+    expect(text).toContain('diff=13ms');
+    expect(text).toContain('merge=11ms');
+    expect(text).toContain('apply=5ms');
+    expect(text).toContain('total=29ms');
+    expect(text).toContain('outcome=merged');
+  });
+
+  it('reports the worktree creation leg only, never the gap until launch', async () => {
+    const { world, clock, spawnInfos } = timedWorld();
+    const code = await runOrchestrateCommand(
+      { prompt: 'one thing', agents: ['alpha'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    // Creation took 7 ms; the clock advanced another 100 ms before the
+    // launch and the run continued after it — none of that is creation time.
+    expect(spawnInfos[0]?.worktreeMs).toBe(7);
+    expect(clock()).toBeGreaterThan(1_007 + 7);
+  });
+
+  it('counts the queue wait when the candidate waits for the merge slot', async () => {
+    const { world } = timedWorld();
+    // The first merge's apply leg (saveState) advances the clock, so the
+    // second candidate's queue wait is that tick, not zero.
+    const code = await runOrchestrateCommand(
+      { prompt: 'two things', agents: ['alpha', 'beta'], json: true },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    const telemetry = lastJsonLine(world.lines)
+      .mergeTelemetry as unknown as MergeTelemetry[];
+    expect(telemetry.map((record) => record.agentId).sort()).toEqual([
+      'alpha',
+      'beta',
+    ]);
+    expect(telemetry.some((record) => record.queueMs > 0)).toBe(true);
   });
 });

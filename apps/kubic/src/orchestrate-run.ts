@@ -1120,7 +1120,11 @@ export async function orchestrateDepsWithDefaults(
   let orchestratorSessionId: string | undefined;
   // Worktree creation time per agent, so a launch sample can assert the
   // §61 worktree budget alongside its own spawn/teardown legs.
-  const worktreeStartedAt = new Map<string, number>();
+  // §61 (issue #158): worktree creation duration and session attach duration
+  // per agent, measured where each really happens (creation here, attach in
+  // `createWorkerSession`) and handed to the launch sample as-is.
+  const worktreeMsByAgent = new Map<string, number>();
+  const attachMsByAgent = new Map<string, number>();
   // Extension startup (issue #93): the MANAGER lane loads the first-party
   // bundle set through the same trust gates before it plans any worker — a
   // missing/refused bundle refuses the whole orchestration (the named
@@ -1667,7 +1671,10 @@ export async function orchestrateDepsWithDefaults(
           ...(ownerSession === undefined ? {} : { ownerSession }),
           ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
         });
-        worktreeStartedAt.set(agentId, worktreeStarted);
+        // §61 (issue #158): the duration ends when creation RETURNS — the
+        // launch sample must report the creation leg, not the gap until the
+        // child is spawned.
+        worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         for (const warning of added.warnings) debug(`gap: ${warning.message}`);
         return { path: added.path, branch: added.branch };
       } catch (error) {
@@ -1702,7 +1709,7 @@ export async function orchestrateDepsWithDefaults(
         }
         if (!present) throw worktreeMissingError(path, branch);
         debug(`worktree: resuming '${agentId}' in its own ${path}`);
-        worktreeStartedAt.set(agentId, worktreeStarted);
+        worktreeMsByAgent.set(agentId, Date.now() - worktreeStarted);
         return { path, branch };
       }
     },
@@ -1770,6 +1777,8 @@ export async function orchestrateDepsWithDefaults(
     },
     createWorkerSession: async (input) => {
       orchestratorSessionId = input.sessionId;
+      // §61 (issue #158): time the create/attach leg — the sample's attachMs.
+      const attachStartedAt = Date.now();
       // Create the worker's session before the child spawns (issue #85):
       // `kubic run --session <id>` only ATTACHES, so without this the child
       // dies at attach (exit 5 "unknown session") before any model call.
@@ -1815,6 +1824,7 @@ export async function orchestrateDepsWithDefaults(
               : ` (${pending.join('; ')} will be resumed by the worker)`
           }`,
         );
+        attachMsByAgent.set(input.agentId, Date.now() - attachStartedAt);
         return { sessionId: input.workerSessionId };
       } catch (error) {
         if (!(error instanceof SessionAttachError)) throw error;
@@ -1836,6 +1846,7 @@ export async function orchestrateDepsWithDefaults(
       debug(
         `session: created '${id}' for worker '${input.agentId}' (cwd ${input.worktree.path})`,
       );
+      attachMsByAgent.set(input.agentId, Date.now() - attachStartedAt);
       return { sessionId: id };
     },
     runWorker: async (
@@ -2000,10 +2011,12 @@ export async function orchestrateDepsWithDefaults(
           ...(options.worktreeDiskQuotaMb === undefined
             ? {}
             : { diskQuotaMb: options.worktreeDiskQuotaMb }),
-          worktreeMs: (() => {
-            const started = worktreeStartedAt.get(agentId);
-            return started === undefined ? undefined : Date.now() - started;
-          })(),
+          // §61 (issue #158): creation duration measured at creation return —
+          // the host's own measurement (around `ensureWorktree`) when it
+          // supplied one, else this seam's. Never a launch-time subtraction.
+          worktreeMs: info?.worktreeMs ?? worktreeMsByAgent.get(agentId),
+          // §61 (issue #158): how long the session create/attach leg took.
+          attachMs: attachMsByAgent.get(agentId),
           worktree: worktree.path,
           ...(modelPin === undefined ? {} : { model: modelPin }),
           ...(thinking === undefined ? {} : { thinking }),
@@ -2193,6 +2206,9 @@ export async function orchestrateDepsWithDefaults(
               `worker commit failed: ${commit.stderr.trim().slice(0, 200)}`,
             );
         }
+        // §61 (issue #158): time the branch-diff read — the telemetry's
+        // `diffMs` leg, measured where the work really happens.
+        const diffStartedAt = Date.now();
         const base = await resolveBase(needRoot(), workerSession);
         const names = await runGit(
           worktree.path,
@@ -2240,7 +2256,11 @@ export async function orchestrateDepsWithDefaults(
         }
         // The report validated: the agent is COMPLETED, not merely exited.
         launched.settleAgent('completed');
-        return { hunks, result: contract.result };
+        return {
+          hunks,
+          result: contract.result,
+          diffMs: Date.now() - diffStartedAt,
+        };
       } catch (error) {
         // A worker whose clean exit was followed by a failed settle (stage,
         // commit, diff or report) is a FAILED agent, never a settling one

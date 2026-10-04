@@ -25,7 +25,10 @@ import {
 } from '../../../../core/src/cli/theme.js';
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
 import { NodeExecutionEnv } from '../../../../exec/src/env.js';
+import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import { openSessionStore } from '../../../../worker/src/lane/session-store.js';
 import { redactSecretShapes } from '../../policy/secret-shapes.js';
+import { defaultSessionsRoot } from '../../sessions-cli.js';
 import {
   type BudgetEvaluation,
   evaluateBudget,
@@ -67,6 +70,9 @@ export interface PerfCommandDeps {
   // anything; tests inject a stub, and a kind with no live substrate is
   // refused by name rather than evaluated as fiction.
   measure?: (request: PerfMeasureRequest) => Promise<MeasureResult>;
+  // Sessions root for the §61 attach measurement (issue #158); the default
+  // is the user's real sessions root.
+  measureSessionsRoot?: string;
   // Live measurement env. Defaults to the process cwd through the exec seam
   // (NodeExecutionEnv); tests inject FakeExecutionEnv.
   measureEnv?: ExecutionEnv;
@@ -74,10 +80,11 @@ export interface PerfCommandDeps {
   measureRepoRoot?: string;
 }
 
-// The prod default: real spawn/worktree cycles on this machine through the
-// exec seam. Imported eagerly (not dynamically) so the measured path is on
-// the same module graph as the CLI — a dead `--measure` branch would be
-// exactly the unreachable-implementation problem issue #98 exists to fix.
+// The prod default: real spawn/worktree/attach cycles on this machine through
+// the exec seam and a real sessions root. Imported eagerly (not dynamically)
+// so the measured path is on the same module graph as the CLI — a dead
+// `--measure` branch would be exactly the unreachable-implementation problem
+// issue #98 exists to fix.
 function defaultMeasure(
   request: PerfMeasureRequest,
   deps: PerfCommandDeps,
@@ -90,6 +97,12 @@ function defaultMeasure(
     ...(deps.measureRepoRoot === undefined
       ? {}
       : { repoRoot: deps.measureRepoRoot }),
+    // §61 attach (issue #158): the create/attach cycles run against a real
+    // sessions root — the default one, or the caller's (tests).
+    sessionStore: openSessionStore(
+      deps.measureSessionsRoot ?? defaultSessionsRoot(),
+      createNodeFileBridge(deps.measureSessionsRoot ?? defaultSessionsRoot()),
+    ),
   });
 }
 

@@ -79,6 +79,14 @@ import {
 import { createMergeQueue } from './orchestrator/merge/queue.js';
 import { REVIEWER_READONLY_TOOLS } from './orchestrator/merge/review.js';
 import { assertManagerZeroWrites } from './orchestrator/merge/settle.js';
+import type {
+  MergeOutcome,
+  MergeTelemetry,
+} from './orchestrator/merge/telemetry.js';
+import {
+  recordMergeTelemetry,
+  totalMergeMs,
+} from './orchestrator/merge/telemetry.js';
 import { sanitizeReasonField } from './orchestrator/parallel/limits.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type {
@@ -335,6 +343,12 @@ export interface OrchestratedWorkerRecord {
 export interface WorkerRunOutput {
   hunks: MergedHunk[];
   result?: AgentResult;
+  /**
+   * §61 (issue #158): how long the worker's own branch-diff read took. The
+   * production seam measures it; a legacy seam that omits it contributes 0 ms
+   * to the merge telemetry's diff leg.
+   */
+  diffMs?: number;
 }
 
 function runOutputOf(output: MergedHunk[] | WorkerRunOutput): WorkerRunOutput {
@@ -619,6 +633,12 @@ export interface WorkerSessionRequest {
 export interface WorkerSpawnInfo {
   sessionId: string;
   workerSessionId: string;
+  /**
+   * §61 (issue #158): how long THIS run's worktree creation took, measured by
+   * the host around the `ensureWorktree` call — the launch sample reports the
+   * creation leg only, never the time between creation and launch.
+   */
+  worktreeMs?: number;
   role?: string;
   tools?: string[];
   modelRef?: string;
@@ -1058,6 +1078,11 @@ export interface OrchestrateEnvelope {
   // Same lines as the text output, so the two surfaces cannot disagree.
   retained?: RetainedWorktreeRow[];
   error?: { kind: string; message: string; code: string };
+  // §61 per-agent merge telemetry (issue #158): the phases the run measured
+  // for each settled candidate — queue wait, the worker's own diff read, the
+  // merge, the resolver's rework and the apply/bookkeeping leg. `totalMergeMs`
+  // is their sum, and the text view prints one line per agent.
+  mergeTelemetry?: MergeTelemetry[];
   // §78 reap_failed evidence (issue #171): every reap error the run collected
   // on a FAILURE path, where the primary terminus wins. A run that exits on
   // `reap_failed` itself carries the first error in `error`, and the rest
@@ -1890,6 +1915,13 @@ export async function runOrchestrateCommand(
       queued: queuedHighWater,
       maxConcurrency: scheduler.maxConcurrency(),
     });
+  // §61 merge telemetry per agent (issue #158): the phases the merge loop
+  // measures, in settle order, reported on the envelope and the text view.
+  const mergeTelemetry: MergeTelemetry[] = [];
+  // §61 (issue #158): when each candidate was enqueued (the queue leg) and the
+  // branch-diff duration the worker's own run reported (the diff leg).
+  const enqueuedAtMs = new Map<string, number>();
+  const diffMsByAgent = new Map<string, number>();
   const worktrees = new Map<string, OrchestrateWorktree>();
   const hunksByAgent = new Map<string, MergedHunk[]>();
   // §68 results per worker (issue #185), successes and failures alike.
@@ -2293,6 +2325,8 @@ export async function runOrchestrateCommand(
     }
   }
   const prepared = new Map<string, OrchestrateWorktree>();
+  // §61 worktree creation duration per agent (issue #158).
+  const worktreeMsByAgent = new Map<string, number>();
   for (const agentId of state.pending) {
     // Issue #277: a worker beyond the cap whose ask the user REFUSED fails
     // before any worktree is created, with the denial as its result — the
@@ -2318,8 +2352,12 @@ export async function runOrchestrateCommand(
     // resolved it for the isBranchMerged probe) — never ensure twice.
     let worktree = worktrees.get(agentId);
     if (worktree === undefined) {
+      // §61 (issue #158): time the CREATION leg here, so the launch sample
+      // reports creation only — never the gap until the child is launched.
+      const creationStartedAt = now();
       try {
         worktree = await deps.ensureWorktree(agentId, worktreeRequest);
+        worktreeMsByAgent.set(agentId, Math.max(0, now() - creationStartedAt));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await recordFailure(agentId, undefined, {
@@ -2402,6 +2440,9 @@ export async function runOrchestrateCommand(
         await deps.runWorker(agentId, worktree, promptForWorker(agentId), {
           sessionId,
           workerSessionId,
+          ...(worktreeMsByAgent.get(agentId) === undefined
+            ? {}
+            : { worktreeMs: worktreeMsByAgent.get(agentId) as number }),
           // The role this worker was assigned and the tool set its lane
           // must register (§12.1/§40): the resolved set is what withholds
           // a tool — absence, never approval. Absent means no role
@@ -2412,6 +2453,8 @@ export async function runOrchestrateCommand(
       if (output.result !== undefined) {
         resultsByAgent.set(agentId, output.result);
       }
+      if (output.diffMs !== undefined)
+        diffMsByAgent.set(agentId, output.diffMs);
       const hunks = output.hunks;
       // The worker settled: route any ask that raced its exit, then read the
       // terminal outcome its run produced (a denial or a budget hit is NOT a
@@ -2911,6 +2954,7 @@ export async function runOrchestrateCommand(
     if (partialFailures.has(agentId) || deniedSpawns.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
+    enqueuedAtMs.set(agentId, now());
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
   }
 
@@ -3055,6 +3099,15 @@ export async function runOrchestrateCommand(
   while (candidate !== undefined) {
     const { agentId } = candidate;
     const worktree = worktrees.get(agentId) as OrchestrateWorktree;
+    // §61 (issue #158): the merge phases this loop owns. `diffMs` is the
+    // worker's own branch-diff read, reported through `runWorker`; the queue
+    // leg is the wait from enqueue to this dequeue.
+    const queuedAtMs = enqueuedAtMs.get(agentId) ?? now();
+    const queueMs = Math.max(0, now() - queuedAtMs);
+    const diffMs = diffMsByAgent.get(agentId) ?? 0;
+    const mergeStartedAt = now();
+    let resolveMs = 0;
+    let outcome: MergeOutcome = 'merged';
     // The gate's verdict (issue #130). A plain boolean from an older seam
     // keeps its shipped meaning (`true` approves, `false` denies — as does
     // no seam at all); the bounded seat's timeout verdict keeps its own
@@ -3136,7 +3189,10 @@ export async function runOrchestrateCommand(
     }
     let delegationNote: string | undefined;
     if (conflict !== undefined) {
+      const resolveStartedAt = now();
       const attempt = await delegateConflict(agentId, worktree, conflict);
+      resolveMs += Math.max(0, now() - resolveStartedAt);
+      if (attempt.outcome === 'delegated') outcome = 'resolved-merged';
       delegationNote =
         attempt.outcome === 'unavailable'
           ? attempt.reason
@@ -3191,6 +3247,17 @@ export async function runOrchestrateCommand(
         await reapSpawned(spawned);
         return saveFailure;
       }
+      mergeTelemetry.push(
+        recordMergeTelemetry({
+          agentId,
+          queueMs,
+          diffMs,
+          mergeMs: Math.max(0, now() - mergeStartedAt - resolveMs),
+          resolveMs,
+          applyMs: 0,
+          outcome: 'stopped-unresolvable',
+        }),
+      );
       await reapSpawned(spawned);
       // The shipped sentence is unchanged; the delegation outcome is appended
       // so an operator reads WHY no resolver settled it (issue #106) instead
@@ -3213,6 +3280,17 @@ export async function runOrchestrateCommand(
         await reapSpawned(spawned);
         return saveFailure;
       }
+      mergeTelemetry.push(
+        recordMergeTelemetry({
+          agentId,
+          queueMs,
+          diffMs,
+          mergeMs: Math.max(0, now() - mergeStartedAt - resolveMs),
+          resolveMs,
+          applyMs: 0,
+          outcome: 'discarded',
+        }),
+      );
       await reapSpawned(spawned);
       return fail(
         RUN_EXIT_FAILED,
@@ -3223,6 +3301,9 @@ export async function runOrchestrateCommand(
     }
     const hunks = hunksByAgent.get(agentId) ?? [];
     const result = resultsByAgent.get(agentId);
+    // §61 (issue #158): the apply leg starts here — attribute the hunks,
+    // record the worker and persist the state.
+    const appliedAtMs = now();
     // An upsert: a resumed retry replaces the failure record kept from the
     // attempt that failed (issue #185) instead of listing the worker twice.
     upsertRecord({
@@ -3242,6 +3323,21 @@ export async function runOrchestrateCommand(
       }
     }
     debug(`merged: ${agentId} (branch ${worktree.branch})`);
+    // §61 (issue #158): the apply/bookkeeping leg — attribute, record and
+    // persist the merge — then the per-agent record.
+    mergeTelemetry.push(
+      recordMergeTelemetry({
+        agentId,
+        queueMs,
+        diffMs,
+        // The merge leg ENDS where the apply leg begins: the bookkeeping that
+        // follows is applyMs, never merge time.
+        mergeMs: Math.max(0, appliedAtMs - mergeStartedAt - resolveMs),
+        resolveMs,
+        applyMs: Math.max(0, now() - appliedAtMs),
+        outcome,
+      }),
+    );
     candidate = queue.dequeue();
   }
 
@@ -3347,6 +3443,11 @@ export async function runOrchestrateCommand(
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    // §61 (issue #158): the measured merge phases, one line per candidate.
+    ...mergeTelemetry.map(
+      (record) =>
+        `merge telemetry: ${record.agentId} queue=${record.queueMs}ms diff=${record.diffMs}ms merge=${record.mergeMs}ms resolve=${record.resolveMs}ms apply=${record.applyMs}ms total=${totalMergeMs(record)}ms outcome=${record.outcome}`,
+    ),
     ...failedWorkers.map(
       (failure) =>
         `${theme.error('failed:')} ${failure.agentId} code=${failure.code}`,
@@ -3387,6 +3488,11 @@ export async function runOrchestrateCommand(
       workers: workerRows(),
       mergeOrder: [...state.merged],
       attribution,
+      // §61 per-agent merge telemetry (issue #158). Present only when the
+      // loop recorded at least one candidate — an empty array would claim the
+      // run measured merges it never had.
+      ...(mergeTelemetry.length === 0 ? {} : { mergeTelemetry }),
+
       graph: delegationGraphLines(sessionId, state.agents),
       parallel,
       // Only present when a status reader is wired: an empty array would

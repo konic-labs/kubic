@@ -10,23 +10,33 @@
 //               FakeExecutionEnv in tests, real with NodeExecutionEnv.
 //   - worktree — repeated `git worktree add` + `git worktree remove` cycles
 //               through an injected ExecutionEnv, in a caller-provided repo.
+//   - attach   — repeated session create + attach + release cycles against a
+//               caller-provided sessions root (issue #158): the §61 attach
+//               row the orchestrate path now also samples per worker.
 //
 // The argv-sample mode stays as the explicit fallback (`--samples`), for
-// budgets with no live substrate yet (attach/teardown, §94) and for CI
-// where a wall-clock measurement is not available. Nothing here invents a
-// number: an unmeasurable kind is refused by name, never sampled.
+// budgets with no live substrate yet (teardown, §94) and for CI where a
+// wall-clock measurement is not available. Nothing here invents a number:
+// an unmeasurable kind is refused by name, never sampled.
 //
 // Every measurement is bounded and cleaned up (each created worktree is
 // removed in a finally), and the clock is injected so tests are
 // deterministic.
 
+import { join } from 'node:path';
 import type { ExecutionEnv } from '../../../../exec/src/env.js';
+import {
+  attachSession,
+  createSession,
+  type SessionStore,
+} from '../../../../worker/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../../../worker/src/pi-boundary.js';
 import type { PerfBudgetKind } from './budgets.js';
 
-// Budget kinds this module can actually measure. attach/teardown stay
-// argv-sample-only until the worker lifecycle (issue #94) exposes the live
-// attach/teardown seams.
-export const MEASURED_BUDGET_KINDS = ['spawn', 'worktree'] as const;
+// Budget kinds this module can actually measure. teardown stays
+// argv-sample-only until the worker lifecycle (issue #94) exposes its live
+// seam; attach gained its substrate with issue #158.
+export const MEASURED_BUDGET_KINDS = ['spawn', 'worktree', 'attach'] as const;
 
 export type MeasuredBudgetKind = (typeof MEASURED_BUDGET_KINDS)[number];
 
@@ -48,6 +58,10 @@ export interface MeasureRequest {
   // Spawn source only: the argv to run per sample. Defaults to a trivial
   // node one-liner, so the measured latency is process-start latency.
   spawnCommand?: { cmd: string; args: string[] };
+  // Attach source only (issue #158): the session store the create/attach
+  // cycles run against. Each sample creates its own session and releases it,
+  // so nothing is left locked or behind.
+  sessionStore?: SessionStore;
 }
 
 export interface MeasureResult {
@@ -147,6 +161,42 @@ async function measureWorktreeOnce(
   return elapsed;
 }
 
+// One attach sample (issue #158): create a session, attach it, release — the
+// measured ms is the ATTACH leg alone (§61 budgets the attach), and the
+// session is removed afterwards so a measurement leaves nothing behind.
+async function measureAttachOnce(
+  store: SessionStore,
+  clock: () => number,
+  index: number,
+): Promise<number> {
+  const id = `perf-attach-${process.pid}-${index}`;
+  const created = await createSession(
+    store,
+    { id, cwd: store.root },
+    BACKGROUND_CONTEXT,
+  );
+  try {
+    await created.release(BACKGROUND_CONTEXT);
+    const started = clock();
+    const attached = await attachSession(store, id, BACKGROUND_CONTEXT);
+    try {
+      return clock() - started;
+    } finally {
+      await attached.release(BACKGROUND_CONTEXT);
+    }
+  } finally {
+    // Cleanup outside the measurement: the session directory is this
+    // measurement's own, never a user's session.
+    try {
+      // Recursive + forced: the measurement's own session dir, never a
+      // user's (the id carries this process's pid).
+      store.bridge.remove(join(store.root, id), true, true);
+    } catch {
+      // Best-effort: a leftover measurement session is inert (no lock held).
+    }
+  }
+}
+
 export async function measureSamples(
   request: MeasureRequest,
 ): Promise<MeasureResult> {
@@ -183,9 +233,27 @@ export async function measureSamples(
       note: `measured ${samplesMs.length} real git worktree add/remove cycle(s) in ${repoRoot}`,
     };
   }
-  // attach/teardown have no live substrate yet: refuse by name instead of
-  // returning a fabricated sample (issue #94 owns those seams).
+  if (request.kind === 'attach') {
+    const store = request.sessionStore;
+    if (store === undefined) {
+      throw new MeasureError(
+        "perf budget 'attach' needs a sessions root to measure — pass --samples (the documented fallback) or run through the CLI, which supplies the default one",
+      );
+    }
+    const samplesMs: number[] = [];
+    for (let i = 0; i < request.samples; i += 1) {
+      samplesMs.push(await measureAttachOnce(store, clock, i));
+    }
+    return {
+      kind: 'attach',
+      source: 'measured',
+      samplesMs,
+      note: `measured ${samplesMs.length} real session create/attach cycle(s) in ${store.root}`,
+    };
+  }
+  // teardown has no live substrate yet: refuse by name instead of returning a
+  // fabricated sample (issue #94 owns that seam).
   throw new MeasureError(
-    `perf budget '${request.kind}' has no live measurement source yet — pass --samples (the documented fallback); measurement for attach/teardown lands with the worker lifecycle (issue #94)`,
+    `perf budget '${request.kind}' has no live measurement source yet — pass --samples (the documented fallback); measurement for teardown lands with the worker lifecycle (issue #94)`,
   );
 }

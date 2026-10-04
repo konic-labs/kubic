@@ -91,6 +91,14 @@ export interface PermissionsConfig {
 export interface JournalConfig {
   retentionDays?: number;
   /**
+   * The journal's byte bound (issue #350): the WHOLE store — `index.jsonl`
+   * plus the blobs it references — is pruned on every append to stay under
+   * this. Content addressing dedupes blobs, so without the index in the
+   * bound a file toggling between two contents grew the journal without
+   * limit. Unset ⇒ `DEFAULT_JOURNAL_MAX_BYTES` (100 MiB).
+   */
+  maxBytes?: number;
+  /**
    * §35 out-of-scope paths (issue #115): workspace-relative paths excluded
    * from the §42.5 baseline and the end-of-run sweep. An entry excludes the
    * path itself and everything under it — `dist` ⇒ `dist`, `dist/a.js`,
@@ -857,6 +865,18 @@ export function checkCommittedConfigHalfRoot(
   }
 }
 
+// §42.4 journal byte bound (issue #350): a positive integer or nothing. 0 is
+// refused by name — it is not "retention off" (unset is), it is a bound
+// nothing can fit, so every append would be refused and every tool write
+// would fail as journal_failed. Refused here rather than clamped.
+export function checkJournalMaxBytes(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new ConfigError("'journal': 'maxBytes' must be a positive integer");
+  }
+  return value;
+}
+
 // §45 worker cap (issue #133): a positive integer or nothing. A value that
 // could never admit a worker is refused here, by name — never clamped into
 // one silently. The scheduler's own validation stays as the second layer.
@@ -1223,13 +1243,15 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
     }
     checkNoUnknown(
       journal,
-      new Set(['retentionDays', 'outOfScope']),
+      new Set(['retentionDays', 'maxBytes', 'outOfScope']),
       'journal',
     );
     const retentionDays = optNumber(journal, 'retentionDays', 'journal');
+    const maxBytes = checkJournalMaxBytes(journal.maxBytes);
     const outOfScope = checkOutOfScopeEntries(journal.outOfScope, 'journal');
     config.journal = {
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      ...(maxBytes === undefined ? {} : { maxBytes }),
       ...(outOfScope === undefined ? {} : { outOfScope }),
     };
   }

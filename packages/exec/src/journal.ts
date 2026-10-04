@@ -49,6 +49,12 @@ export const MAX_SWEEP_CONTENT_BYTES = 4 * 1024 * 1024;
 // explicit override. No default age bound — age pruning is opt-in via
 // retention config / `kubic clean` (issue #18's CLI).
 export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
+// Issue #350: the share of the kept entries a pass that prunes must drop.
+// The index counts against the bound now, so a store sitting at its cap would
+// otherwise rewrite the whole index on every append; dropping a chunk makes
+// compaction amortized (with the default 100 MiB bound, roughly one rewrite
+// per 10 MiB of appended lines) while the store never exceeds `maxBytes`.
+const RETENTION_DROP_SHARE = 10;
 
 export interface JournalRetention {
   maxBytes?: number;
@@ -323,6 +329,15 @@ export function applyDelta(before: string, delta: string): string | null {
   }
 }
 
+// The bytes one index line occupies (issue #350): the entry's JSON plus its
+// terminating newline, exactly what `appendIndexLine` writes and what a
+// retention rewrite re-emits. The size bound counts these — content
+// addressing dedupes blobs, so a file toggling between two contents grows the
+// journal through its lines alone.
+function indexLineBytes(entry: JournalEntry): number {
+  return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
+}
+
 // Issue #349: the minimum timestamp in a kept set — what an age policy's
 // fast path compares against `now`. The minimum, not the first entry: a
 // journal can carry entries appended out of timestamp order (reconciliation
@@ -372,6 +387,13 @@ export class FileJournalStore {
   // one pass, or a journal left near the bound by a previous session would
   // never be pruned again.
   private trackedBytes: number | null = null;
+  // The current index.jsonl size in bytes (issue #350), tracked
+  // incrementally: every append adds the payload it wrote, every rewrite
+  // sets it to the bytes it wrote, and a slow pass that dropped nothing
+  // re-seeds it from the file itself. null means "unknown" and forces the
+  // slow pass — the bound covers the whole store, so an unaccounted index
+  // cannot be proven under it.
+  private indexBytes: number | null = null;
   // Issue #349: the oldest timestamp in the index (the minimum, not the
   // first — entries can carry non-monotonic timestamps). Seeded by every
   // slow pass and updated on every rewrite, it is what lets an age policy
@@ -474,7 +496,11 @@ export class FileJournalStore {
     // Durable append (issue #117): the crash-safety seam. Production takes
     // `appendDurably` (fsync before this returns); a bridge double without
     // it keeps the plain append, and `durable: false` opts out explicitly.
-    this.appendIndexLine(bridge, `${JSON.stringify(entry)}\n`);
+    const written = this.appendIndexLine(bridge, `${JSON.stringify(entry)}\n`);
+    // Issue #350: the index's own growth is part of the bound, so the
+    // tracked size moves with the append (the repair byte included — it is
+    // bytes in the file like any other).
+    if (this.indexBytes !== null) this.indexBytes += written;
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.
     this.enforceRetention({ ...this.limits });
@@ -522,7 +548,7 @@ export class FileJournalStore {
   //   - a failed append truncates the partial write back to the pre-append
   //     length, so the index is exactly as it was: no half-line to repair,
   //     no unreadable entry, and the repair byte goes with it.
-  private appendIndexLine(bridge: FileBridge, line: string): void {
+  private appendIndexLine(bridge: FileBridge, line: string): number {
     // One stat per append: the pre-append length is both the truncate
     // target and the position the tail probe reads (issue #343).
     const tail = this.readIndexTail(bridge);
@@ -537,6 +563,7 @@ export class FileJournalStore {
       if (tail.size !== null) this.truncateIndexTo(bridge, tail.size);
       throw error;
     }
+    return Buffer.byteLength(payload, 'utf8');
   }
 
   // The index's tail as an append needs it (issue #343): its byte length —
@@ -679,11 +706,13 @@ export class FileJournalStore {
     const now = policy.now ?? Date.now();
     // Fast path (issues #124, #349): the pass can be skipped outright —
     // index reads included — when both bounds are provable from cache. The
-    // byte total must sit comfortably under the bound, and the oldest entry
-    // in the index must be inside the age window (`oldestTimestamp` is the
-    // minimum, so `now - oldest <= maxAgeMs` proves nothing can have aged
-    // out). A session far from either bound pays zero retention I/O per
-    // append, whether or not an age policy is configured.
+    // tracked byte total (index + blobs, issue #350) is an upper bound on
+    // what the store occupies, so being at or under the size bound proves
+    // nothing can drop; the oldest entry in the index must be inside the age
+    // window too (`oldestTimestamp` is the minimum, so
+    // `now - oldest <= maxAgeMs` proves nothing can have aged out). A session
+    // under either bound pays zero retention I/O per append, whether or not
+    // an age policy is configured.
     const ageProven =
       policy.maxAgeMs === undefined ||
       (this.oldestTimestamp !== null &&
@@ -692,7 +721,8 @@ export class FileJournalStore {
       ageProven &&
       policy.maxBytes !== undefined &&
       this.trackedBytes !== null &&
-      this.trackedBytes <= policy.maxBytes * 0.9
+      this.indexBytes !== null &&
+      this.trackedBytes + this.indexBytes <= policy.maxBytes
     ) {
       return { entries: 0, bytes: 0, overBound: 0 };
     }
@@ -731,7 +761,18 @@ export class FileJournalStore {
     }
     let overBound = 0;
     if (policy.maxBytes !== undefined) {
+      // Issue #350: the bound is the WHOLE store — the index's own bytes
+      // count too, because content addressing dedupes blobs and a file
+      // toggling between two contents grows only the lines. Each kept entry
+      // is measured once, by the same serialization the rewrite writes, and
+      // a dropped entry subtracts its own line with its blobs.
+      const lineBytes = new Map<JournalEntry, number>();
       let total = 0;
+      for (const e of kept) {
+        const bytes = indexLineBytes(e);
+        lineBytes.set(e, bytes);
+        total += bytes;
+      }
       for (const hash of refs.keys()) total += this.sizeOf(bridge, hash);
       const maxBytes = policy.maxBytes;
       // Issue #348: stop at the newest entry. `kept` is oldest-first, so
@@ -739,16 +780,29 @@ export class FileJournalStore {
       // alone is over the bound — losing the record of the change just made
       // is the one thing a change journal may not do. Whatever excess is
       // left is reported to the caller instead of being deleted.
-      while (kept.length > 1 && total > maxBytes) {
-        const dropped = kept.shift();
-        if (dropped === undefined) break;
-        for (const hash of blobHashesOf(dropped)) {
-          const count = refs.get(hash) ?? 0;
-          if (count === 1) {
-            total -= this.sizeOf(bridge, hash);
-            refs.delete(hash);
-          } else if (count > 1) {
-            refs.set(hash, count - 1);
+      //
+      // Issue #350: a pass that has to prune drops at least a chunk of the
+      // kept entries (a tenth), so a store at its cap is not rewriting its
+      // whole index on every append — the next chunk of appends fits under
+      // the bound without another pass. The drop set is unchanged whenever
+      // the bound itself forces more than a chunk, which is the common case
+      // (one big entry, or a journal left unpruned for a while).
+      if (total > maxBytes) {
+        const chunk = Math.ceil(kept.length / RETENTION_DROP_SHARE);
+        let dropped = 0;
+        while (kept.length > 1 && (total > maxBytes || dropped < chunk)) {
+          const gone = kept.shift();
+          if (gone === undefined) break;
+          dropped += 1;
+          total -= lineBytes.get(gone) ?? 0;
+          for (const hash of blobHashesOf(gone)) {
+            const count = refs.get(hash) ?? 0;
+            if (count === 1) {
+              total -= this.sizeOf(bridge, hash);
+              refs.delete(hash);
+            } else if (count > 1) {
+              refs.set(hash, count - 1);
+            }
           }
         }
       }
@@ -760,19 +814,23 @@ export class FileJournalStore {
       // slow pass — age-only ones included — so the fast path resumes
       // proving "nothing can drop" from live truth (issue #124 review
       // fix 2). The index was not rewritten, so the kept set IS what is on
-      // disk: the oldest timestamp can be re-seeded from it (issue #349).
+      // disk: the oldest timestamp can be re-seeded from it (issue #349)
+      // and the index's own size is the file's real size (issue #350) —
+      // corrupt residue included, so the bound never under-counts it.
       this.syncTracking(refs.keys(), this.blobBytes(bridge, kept));
       this.oldestTimestamp = oldestTimestampOf(kept);
+      this.indexBytes = this.indexFileSize(bridge);
       return { entries: 0, bytes: 0, overBound };
     }
     const before = this.blobBytes(bridge, all);
     const referenced = new Set(refs.keys());
     const tmp = `${this.indexPath}.${process.pid}.tmp`;
-    bridge.writeFile(
-      tmp,
+    // Issue #350: the same serialization is measured and written, so the
+    // tracked index size after the rewrite is exact.
+    const serialized =
       kept.map((e) => JSON.stringify(e)).join('\n') +
-        (kept.length > 0 ? '\n' : ''),
-    );
+      (kept.length > 0 ? '\n' : '');
+    bridge.writeFile(tmp, serialized);
     try {
       // Issue #344: the rewrite replaces the journal's whole history, so
       // with `durable` on its bytes are fsynced before the rename and the
@@ -814,7 +872,21 @@ export class FileJournalStore {
     // the next pass its fast path, never correctness.
     this.syncTracking(referenced, after);
     this.oldestTimestamp = oldestTimestampOf(kept);
+    this.indexBytes = Buffer.byteLength(serialized, 'utf8');
     return { entries: removed, bytes: before - after, overBound };
+  }
+
+  // Issue #350: the index file's real size, 0 when it does not exist yet and
+  // null when it cannot be read (which forces the slow pass rather than
+  // guessing a size the bound would then trust).
+  private indexFileSize(bridge: FileBridge): number | null {
+    try {
+      return bridge.exists(this.indexPath)
+        ? bridge.fileInfo(this.indexPath).size
+        : 0;
+    } catch {
+      return null;
+    }
   }
 
   // Issue #348: the bytes this entry's own blobs occupy — the before

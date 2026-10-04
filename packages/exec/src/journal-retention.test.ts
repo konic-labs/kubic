@@ -146,8 +146,12 @@ describe('retention reference counting (issue #124, slice 2)', () => {
     expect(store.blobCount()).toBe(3);
     const pruned = store.enforceRetention({ maxBytes: 10 });
     // The freed bytes are exactly the older entry's unique blob: the shared
-    // before-blob survives because b.txt still references it.
-    expect(pruned).toEqual({ entries: 1, bytes: 3, overBound: 0 });
+    // before-blob survives because b.txt still references it. The kept line
+    // alone is over the 10-byte bound (issue #350 counts the index), so the
+    // excess is reported rather than hidden.
+    expect(pruned.entries).toBe(1);
+    expect(pruned.bytes).toBe(3);
+    expect(pruned.overBound).toBeGreaterThan(0);
     expect(store.entries().map((e) => e.path)).toEqual(['b.txt']);
     expect(store.hasBlob(sha256Hex('shared\n'))).toBe(true);
     expect(store.hasBlob(sha256Hex('x1\n'))).toBe(false);
@@ -176,9 +180,12 @@ describe('retention reference counting (issue #124, slice 2)', () => {
     // last reference is released by dropping the two older ones.
     store.append(entry({ path: 'c.txt', after: 'c\n' }));
     const pruned = store.enforceRetention({ maxBytes: 2 });
-    // 15 unique bytes referenced, 7 of them the shared blob counted once —
-    // pins both the drop set and the refcounted byte arithmetic.
-    expect(pruned).toEqual({ entries: 2, bytes: 13, overBound: 0 });
+    // 15 unique blob bytes referenced, 7 of them the shared blob counted
+    // once — pins both the drop set and the refcounted byte arithmetic. The
+    // kept line is over the 2-byte bound (the index counts, issue #350).
+    expect(pruned.entries).toBe(2);
+    expect(pruned.bytes).toBe(13);
+    expect(pruned.overBound).toBeGreaterThan(0);
     expect(store.entries().map((e) => e.path)).toEqual(['c.txt']);
     expect(store.hasBlob(sha256Hex('shared\n'))).toBe(false);
     expect(store.blobCount()).toBe(1);
@@ -205,7 +212,7 @@ describe('retention fast path (issue #124, slice 2)', () => {
     expect(counts.indexReads).toBeLessThanOrEqual(2);
   });
 
-  it('a forced prune takes the slow path and computes the same drop set as before', () => {
+  it('a forced prune takes the slow path and drops down to the whole-store bound', () => {
     const store = new FileJournalStore(tmpRoot(), {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
@@ -214,11 +221,14 @@ describe('retention fast path (issue #124, slice 2)', () => {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
     const pruned = store.enforceRetention({ maxBytes: 20 });
-    // Drop-oldest-first until the unique blob bytes fit — the same drop set
-    // the pre-change arithmetic produced.
-    expect(pruned).toEqual({ entries: 98, bytes: 280, overBound: 0 });
-    expect(store.entries().map((e) => e.path)).toEqual(['f98.txt', 'f99.txt']);
-    expect(store.blobCount()).toBe(2);
+    // Drop-oldest-first until the store fits — the bound counts the index's
+    // own lines as well as the blobs (issue #350), so with 20 bytes only the
+    // newest entry survives. The freed bytes are its 290 blob bytes: the
+    // refcounted arithmetic is unchanged, the bound is not.
+    expect(pruned.entries).toBe(99);
+    expect(pruned.bytes).toBe(290);
+    expect(store.entries().map((e) => e.path)).toEqual(['f99.txt']);
+    expect(store.blobCount()).toBe(1);
   });
 });
 
@@ -315,15 +325,16 @@ describe('prune stats bound (issue #124, slice 2)', () => {
     expect(seed.blobCount()).toBe(30);
     const cold = new FileJournalStore(dir); // fresh instance, no cache warmth
     counts.fileInfo = 0;
+    // The whole-store bound (index lines + blobs, issue #350) with 150 bytes
+    // leaves only the newest entry.
     const pruned = cold.enforceRetention({ maxBytes: 150 });
-    // 35 drops over 30 unique blobs: at most one stat per unique blob
+    // 49 drops over 30 unique blobs: at most one stat per unique blob
     // total, never drops × M.
     expect(counts.fileInfo).toBeLessThanOrEqual(30);
-    expect(pruned).toEqual({ entries: 35, bytes: 150, overBound: 0 });
-    expect(cold.entries().map((e) => e.path)).toEqual(
-      Array.from({ length: 15 }, (_, k) => `f${k + 35}.txt`),
-    );
-    expect(cold.blobCount()).toBe(15);
+    expect(pruned.entries).toBe(49);
+    expect(pruned.bytes).toBe(290);
+    expect(cold.entries().map((e) => e.path)).toEqual(['f49.txt']);
+    expect(cold.blobCount()).toBe(1);
   });
 });
 
@@ -389,13 +400,21 @@ describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', 
     const e1 = store.append(entry({ path: 'f1.txt', after: c1 }));
     store.append(entry({ path: 'f2.txt', after: c2 }));
     // External mutation between passes: f0's blob vanishes, f1's blob is
-    // replaced with different-length content. Live truth is now
-    // 0 + 6 + 100 = 106 — exactly at the bound below, so the old live-stat
-    // code drops nothing. Cached (phantom) sizes of 100 each would inflate
-    // the derived total to 300 and corrupt the drop set.
+    // replaced with different-length content. Live truth is now 0 + 6 + 100
+    // = 106 blob bytes — set the bound to exactly the store's live size
+    // (index lines included, issue #350), so live-stat truth drops nothing.
+    // Cached (phantom) sizes of 100 each would inflate the derived total to
+    // 300 and corrupt the drop set.
     rmSync(join(dir, 'blobs', e0.afterHash ?? ''));
     writeFileSync(join(dir, 'blobs', e1.afterHash ?? ''), 'short\n');
-    const pruned = store.enforceRetention({ maxBytes: 106 });
+    const indexBytes = store
+      .entries()
+      .reduce(
+        (total, e) =>
+          total + Buffer.byteLength(`${JSON.stringify(e)}\n`, 'utf8'),
+        0,
+      );
+    const pruned = store.enforceRetention({ maxBytes: indexBytes + 106 });
     expect(pruned).toEqual({ entries: 0, bytes: 0, overBound: 0 });
     expect(store.entries().map((e) => e.path)).toEqual([
       'f0.txt',
@@ -406,7 +425,9 @@ describe('slow passes re-stat referenced blobs (issue #124, review finding 2)', 
     // (its blob is gone — dropping it frees nothing), then f1 (frees its
     // live 6 bytes), never f2. The freed bytes are live truth, not phantoms.
     const prunedMore = store.enforceRetention({ maxBytes: 100 });
-    expect(prunedMore).toEqual({ entries: 2, bytes: 6, overBound: 0 });
+    expect(prunedMore.entries).toBe(2);
+    expect(prunedMore.bytes).toBe(6);
+    expect(prunedMore.overBound).toBeGreaterThan(0);
     expect(store.entries().map((e) => e.path)).toEqual(['f2.txt']);
   });
 });

@@ -53,8 +53,9 @@ captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or
 unbounded blob. Retention
-bounds keep growth finite: a size cap is enforced on every append,
-with opt-in age pruning. An entry whose own content cannot fit the cap is
+bounds keep growth finite: a size cap — the whole store, index plus blobs,
+configurable as `[journal] maxBytes` — is enforced on every append, with
+opt-in age pruning. An entry whose own content cannot fit the cap is
 refused before anything is written — the tool call fails as `journal_failed`
 and the file is untouched, rather than landing a record the same append's
 pruning would delete — and pruning itself stops at the newest entry: the

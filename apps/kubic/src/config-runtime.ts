@@ -553,9 +553,17 @@ export function runtimeRunDeps(result: CliConfigResult): {
     policySource:
       runtime.permissions.source === 'defaults' ? 'default' : 'config',
     journalRetention:
-      runtime.journal.maxAgeMs === undefined
+      runtime.journal.maxAgeMs === undefined &&
+      runtime.journal.maxBytes === undefined
         ? {}
-        : { maxAgeMs: runtime.journal.maxAgeMs },
+        : {
+            ...(runtime.journal.maxAgeMs === undefined
+              ? {}
+              : { maxAgeMs: runtime.journal.maxAgeMs }),
+            ...(runtime.journal.maxBytes === undefined
+              ? {}
+              : { maxBytes: runtime.journal.maxBytes }),
+          },
     ...(runtime.journal.outOfScope === undefined
       ? {}
       : { reconcileOutOfScope: [...runtime.journal.outOfScope] }),

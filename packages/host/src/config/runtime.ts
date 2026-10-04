@@ -180,6 +180,10 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'journal.retentionDays': {
     effect: 'journal age bound (maxAgeMs) enforced on every append — §42.4',
   },
+  'journal.maxBytes': {
+    effect:
+      'journal byte bound — index.jsonl plus the blobs it references — enforced on every append; unset ⇒ the 100 MiB default',
+  },
   'journal.outOfScope': {
     effect:
       'paths excluded from the §42.5 baseline and the end-of-run sweep (self + children)',
@@ -316,6 +320,9 @@ export interface RuntimeJournal {
   // Undefined means "no age bound configured" — never an invented default.
   retentionDays?: number;
   maxAgeMs?: number;
+  // The configured byte bound (issue #350); undefined means the store's own
+  // default applies (100 MiB), never an invented value here.
+  maxBytes?: number;
   /**
    * §35 out-of-scope paths (issue #115): undefined means none declared — the
    * §42.5 walk still skips `.git/`, `.kubic/` and `.gitignore` hits on its
@@ -857,6 +864,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     ...(retentionDays === undefined
       ? {}
       : { maxAgeMs: retentionDays * MS_PER_DAY }),
+    ...(config.journal?.maxBytes === undefined
+      ? {}
+      : { maxBytes: config.journal.maxBytes }),
     ...(outOfScopeEntries === undefined
       ? {}
       : { outOfScope: outOfScopeEntries }),

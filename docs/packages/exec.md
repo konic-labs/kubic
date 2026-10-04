@@ -76,7 +76,7 @@ guardrail (#140).
 | --- | --- |
 | `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean` |
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `afterOmitted?: boolean`, `afterBytes?: number` |
-| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) |
+| `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) — `maxBytes` is the whole store (index + blobs) and is what `[journal] maxBytes` threads into |
 | `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
@@ -138,7 +138,10 @@ Journal entry bound (issue #348): retention is enforced on every append and
 stops at the newest entry. `kept` is oldest-first, so the drop loop ends
 when one entry is left: the record of the change just made is never the
 thing that gets dropped, even when that entry alone exceeds the bound. The
-pass reports the excess instead — `enforceRetention` returns
+bound is the whole store (issue #350): the index's own lines count alongside
+the blob bytes, because content addressing dedupes blobs and a file
+toggling between two contents grows only the lines. The pass reports the
+excess instead — `enforceRetention` returns
 `{ entries, bytes, overBound }`, and `kubic clean --journal` prints
 `over bound by N byte(s) (newest entry kept)`. An entry that could never fit
 the store is refused before a single blob is written:
@@ -151,13 +154,17 @@ content, or the delta stored for a large after-side; a no-op write counts
 its single blob once), measured before dedupe — an entry that could never
 fit is refused whether or not its bytes happen to be in the store already.
 
-Retention fast path (issues #124, #349): both bounds are proven from cache
-on every append — the tracked byte total must sit comfortably under the size
-cap, and the index's oldest timestamp (the minimum, re-seeded by every full
-pass and by every rewrite) must be inside the age window. A session far from
-either bound therefore pays no index read and no blob stat per append, with
-or without `journal.retentionDays` configured; the slow pass runs when a
-bound is unknown, unproven, or crossed.
+Retention fast path (issues #124, #349, #350): both bounds are proven from
+cache on every append — the tracked byte total (index + blobs) must be at or
+under the size cap, and the index's oldest timestamp (the minimum, re-seeded
+by every full pass and by every rewrite) must be inside the age window. A
+session under either bound therefore pays no index read and no blob stat per
+append, with or without `journal.retentionDays` configured; the slow pass
+runs when a bound is unknown, unproven, or crossed. A pass that has to prune
+drops at least a tenth of the kept entries, so a store sitting at its cap
+amortizes compaction instead of rewriting the whole index on every append.
+The size cap is `[journal] maxBytes` when configured,
+`DEFAULT_JOURNAL_MAX_BYTES` (100 MiB) otherwise.
 
 Undo records (issue #117): every successful restore appends its inverse
 entry — pre-undo content as `before`, restored content as `after`,

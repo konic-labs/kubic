@@ -566,6 +566,11 @@ describe('config validation hardening (issue #69)', () => {
     expect(() =>
       parseTomlConfig('[modes]\nsolo = true\nturbo = true\n'),
     ).toThrow(/unknown key/);
+    // `maxBytes` is a real key (issue #350); anything else under [journal]
+    // is still refused by name.
+    expect(() => parseTomlConfig('[journal]\nbogus = 1\n')).toThrow(
+      /unknown key 'bogus'/,
+    );
   });
 
   it('rejects non-table sections', () => {
@@ -609,6 +614,24 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => parseTomlConfig('[roles]\na = "nope"\n')).toThrow(
       /must be a table/,
     );
+  });
+
+  it('parses [journal] maxBytes as a positive integer, refusing anything else', () => {
+    // §42.4 byte bound (issue #350): the whole store — index + blobs — is
+    // pruned to stay under it. 0 is not "off" (unset is): it is a bound
+    // nothing fits, so it is refused by name rather than failing every write.
+    expect(parseTomlConfig('[journal]\nmaxBytes = 1048576\n').journal).toEqual({
+      maxBytes: 1_048_576,
+    });
+    expect(
+      parseTomlConfig('[journal]\nretentionDays = 7\nmaxBytes = 4096\n')
+        .journal,
+    ).toEqual({ retentionDays: 7, maxBytes: 4096 });
+    for (const bad of ['0', '-1', '1.5', '"1MB"']) {
+      expect(() => parseTomlConfig(`[journal]\nmaxBytes = ${bad}\n`)).toThrow(
+        /'journal': 'maxBytes' must be a positive integer/,
+      );
+    }
   });
 
   it('parses [journal] outOfScope as a path array, refusing empty entries by name', () => {

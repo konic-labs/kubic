@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   FileJournalStore,
+  type JournalEntry,
   type JournalEntryInput,
   JournalEntryTooLargeError,
 } from './journal.js';
@@ -101,10 +102,16 @@ describe('journal entry bound (issue #348)', () => {
     // The newest entry is never dropped, even when it alone is over the
     // bound: losing the record of the change just made is the one thing a
     // change journal may not do.
-    expect(store.entries().map((e) => e.path)).toEqual(['b.txt']);
+    const kept = store.entries();
+    expect(kept.map((e) => e.path)).toEqual(['b.txt']);
     expect(pruned.entries).toBe(1);
-    // 51 bytes kept against a 10-byte bound.
-    expect(pruned.overBound).toBe(41);
+    // The bound is the whole store (issue #350): the kept line plus its blob
+    // bytes, against a 10-byte bound.
+    const keptEntry = kept[0] as JournalEntry;
+    const keptBytes =
+      Buffer.byteLength(`${JSON.stringify(keptEntry)}\n`, 'utf8') +
+      Buffer.byteLength(`${'b'.repeat(50)}\n`, 'utf8');
+    expect(pruned.overBound).toBe(keptBytes - 10);
   });
 
   it('an overflowing sequence always keeps the newest entry', () => {

@@ -161,7 +161,8 @@ export interface SpawnOptions {
    * kept (endings usually carry the error) and the final result gains a
    * header naming the dropped leading bytes. Default: 10 MiB per stream —
    * a chatty child (`yes`, a verbose build) must not OOM the run. Measured
-   * in UTF-8 bytes and trimmed on code-point boundaries (issue #354), so a
+   * in bytes of the DECODED stream (invalid UTF-8 arrives as U+FFFD, which
+   * costs 3 bytes) and trimmed on code-point boundaries (issue #354), so a
    * CJK or emoji stream cannot admit 3-4x the cap and the kept tail never
    * starts with half a surrogate pair.
    */

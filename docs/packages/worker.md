@@ -58,7 +58,9 @@ Child output is capped at two independent layers, both keeping the **tail**
   capture independently. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
-  header. Both numbers are **bytes** (issue #354): the accumulator measures
+  header. Both numbers are **bytes of the decoded stream** (issue #354) —
+  invalid UTF-8 arrives as U+FFFD and costs 3 bytes, so a binary-producing
+  child is capped conservatively: the accumulator measures
   `Buffer.byteLength` per chunk and trims on a **code-point boundary**, so
   CJK or emoji output cannot admit 3-4x the promised memory the way a
   UTF-16 code-unit count did, and the kept tail can never start with half a

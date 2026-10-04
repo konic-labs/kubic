@@ -4,10 +4,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../exec/src/journal.js';
+import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
+import {
+  bootFauxLane,
+  promptToolsLine,
+} from '../../../worker/src/lane/test-harness.js';
+import { BACKGROUND_CONTEXT } from '../../../worker/src/pi-boundary.js';
 import {
   hasToolPolicy,
   isToolAllowed,
@@ -708,8 +715,9 @@ describe('effective config view (issue #90)', () => {
 
   // The acceptance criterion's own bar: a .kubic/config.toml value must
   // measurably change a live behaviour, not merely parse. This drives the
-  // real solo lane with the classes the config produced and asserts the
-  // lane's own allowlist — the same set applyToolPolicy installs.
+  // real solo lane (through the shared faux harness factory, #401) with the
+  // classes the config produced and asserts the lane's own allowlist — the
+  // same set applyToolPolicy installs.
   it('narrows a live lane allowlist from [permissions] in config', async () => {
     const runtime = load(
       {
@@ -718,44 +726,24 @@ describe('effective config view (issue #90)', () => {
       },
       { projectTrusted: true },
     );
-    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
-    const { applyToolPolicy } = await import(
-      '../../../worker/src/lane/policy.js'
-    );
-    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
-    const {
-      BACKGROUND_CONTEXT,
-      createModels,
-      fauxAssistantMessage,
-      fauxProvider,
-      MemorySessionRepo,
-    } = await import('../../../worker/src/pi-boundary.js');
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('hi')]);
-    const booted = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
+    const lane = await bootFauxLane({
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
-      agentId: 'root',
       policy: { classes: runtime.permissions.classes },
     });
-    const allowed = await applyToolPolicy(
-      booted.harness,
-      booted.lane,
-      runtime.permissions.classes,
-      BACKGROUND_CONTEXT,
-    );
-    expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read']);
-    const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
-    expect(active).not.toContain('bash');
-    expect(active).not.toContain('write');
-    await session.close(BACKGROUND_CONTEXT);
+    try {
+      const allowed = await applyToolPolicy(
+        lane.solo.registry,
+        lane.solo.conversation,
+        runtime.permissions.classes,
+        BACKGROUND_CONTEXT,
+      );
+      expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read']);
+      const active = await lane.activeTools();
+      expect(active).not.toContain('bash');
+      expect(active).not.toContain('write');
+    } finally {
+      await lane.cleanup();
+    }
   });
 });
 
@@ -785,15 +773,6 @@ agent_policy = { max_agents = 2, max_cost_usd = 5.0 }
 sink = "syslog"
 level = "privileged"
 `;
-
-  function promptOf(spy: ReturnType<typeof vi.spyOn>): string {
-    const call = spy.mock.calls[0] as
-      | [{ systemPrompt?: string }, ...unknown[]]
-      | undefined;
-    const options = call?.[0];
-    expect(options?.systemPrompt).toBeTypeOf('string');
-    return options?.systemPrompt as string;
-  }
 
   it('loads the §58 example as the enterprise layer and resolves it', () => {
     const runtime = load({ [ENTERPRISE]: S58_EXAMPLE });
@@ -861,30 +840,8 @@ level = "privileged"
       },
       { projectTrusted: true },
     );
-    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
-    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
-    const {
-      AgentHarness,
-      BACKGROUND_CONTEXT,
-      createModels,
-      fauxAssistantMessage,
-      fauxProvider,
-      MemorySessionRepo,
-    } = await import('../../../worker/src/pi-boundary.js');
-    const createSpy = vi.spyOn(AgentHarness, 'create');
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('hi')]);
-    const booted = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
+    const lane = await bootFauxLane({
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
-      agentId: 'root',
       policy: {
         classes: runtime.permissions.classes,
         toolAllowed: (tool) => isToolAllowedByEnterprise(runtime.policy, tool),
@@ -893,17 +850,17 @@ level = "privileged"
     try {
       // The class-derived allowlist would include bash (shell=true); the
       // enterprise deny removes it from what the lane actually activates.
-      const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
+      const active = await lane.activeTools();
       expect(active).not.toContain('bash');
       expect(active).toContain('read');
-      // The prompt tells the model the truth about its own tool set (§40.3).
-      const toolsLine = /^tools: (.*)$/m.exec(promptOf(createSpy))?.[1] ?? '';
-      const advertised = toolsLine.split(',').map((name) => name.trim());
+      // The prompt tells the model the truth about its own tool set (§40.3);
+      // the committed system entry carries the assembled solo prompt.
+      await lane.run('hi');
+      const advertised = promptToolsLine(await lane.systemPrompt());
       expect(advertised).not.toContain('bash');
       expect(advertised).toContain('read');
     } finally {
-      createSpy.mockRestore();
-      await session.close(BACKGROUND_CONTEXT);
+      await lane.cleanup();
     }
   });
 
@@ -912,28 +869,8 @@ level = "privileged"
       { [PROJECT]: '[permissions]\nshell = true\n' },
       { projectTrusted: true },
     );
-    const { bootSoloLane } = await import('../../../worker/src/lane/solo.js');
-    const { FakeExecutionEnv } = await import('../../../exec/src/env.js');
-    const {
-      BACKGROUND_CONTEXT,
-      createModels,
-      fauxAssistantMessage,
-      fauxProvider,
-      MemorySessionRepo,
-    } = await import('../../../worker/src/pi-boundary.js');
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('hi')]);
-    const booted = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
+    const lane = await bootFauxLane({
       env: new FakeExecutionEnv({}),
-      sessionId: session.metadata.id,
-      agentId: 'root',
       policy: {
         classes: runtime.permissions.classes,
         ...(hasToolPolicy(runtime.policy)
@@ -945,10 +882,10 @@ level = "privileged"
       },
     });
     try {
-      const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
+      const active = await lane.activeTools();
       expect(active).toContain('bash');
     } finally {
-      await session.close(BACKGROUND_CONTEXT);
+      await lane.cleanup();
     }
   });
 });

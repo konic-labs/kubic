@@ -46,6 +46,7 @@ import { TIMEOUT_REASON_MARKER } from './orchestrator/approvals/timeout-reason.j
 import {
   appendToLedger,
   auditLedgerDirFor,
+  fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   postureChangedAudit,
   soloDecisionAudit,
@@ -1650,6 +1651,23 @@ export function enableFullAccess(
   return posture;
 }
 
+// Issue #309 (§41.4): the symmetric half — a session switched back to
+// enforced approvals. Writes the same posture.json the enable path writes
+// (so a resume boots enforced) and returns the posture it recorded.
+export function disableFullAccess(
+  store: FileApprovalStore,
+  by: string,
+  clock: () => number = Date.now,
+): AccessPosture {
+  const posture: AccessPosture = {
+    fullAccess: false,
+    enabledAt: clock(),
+    enabledBy: by,
+  };
+  store.savePosture(posture);
+  return posture;
+}
+
 // The one flag name for session-scoped full access (issue #308, §41.4).
 export const FULL_ACCESS_FLAG = '--dangerously-skip-approvals';
 
@@ -1707,6 +1725,38 @@ export function enableSessionFullAccess(
   return {
     posture,
     warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
+  };
+}
+
+// The symmetric revocation path (issue #309): `kubic tui`'s in-session
+// toggle off writes posture.json (so a later resume boots enforced) and one
+// `posture:approvals` row, exactly as the enable path writes its own.
+export function disableSessionFullAccess(
+  options: SessionFullAccessOptions,
+): SessionFullAccessGrant {
+  const commandLine = `kubic ${options.command}`;
+  const clock = options.clock ?? Date.now;
+  const posture =
+    options.sessionDir === undefined
+      ? { fullAccess: false, enabledAt: clock(), enabledBy: commandLine }
+      : disableFullAccess(
+          new FileApprovalStore(options.sessionDir),
+          commandLine,
+          clock,
+        );
+  appendToLedger(
+    auditLedgerDirFor(options.workspace),
+    fullAccessDisabledAudit({
+      sessionId: options.sessionId,
+      command: commandLine,
+      workspace: options.workspace,
+      mode: options.mode ?? 'solo',
+    }),
+    options.onAuditError,
+  );
+  return {
+    posture,
+    warning: `full-access revoked for session ${options.sessionId} — every challenged call asks again`,
   };
 }
 
@@ -1883,6 +1933,13 @@ export interface InstalledSoloPolicy {
   // challenged call as full access — the boot posture (#325) the ask
   // itself decides on, so the indicator cannot drift from the policy.
   approvalsSkipped: () => boolean;
+  // Issue #309 (§41.4): the in-session toggle. Flips the LIVE posture the
+  // next ask reads, writes posture.json through the same helpers the CLI
+  // uses, appends the §60 row, and re-bases the #325 guard on the new
+  // posture (the operator's own change is not a foreign one). Returns the
+  // recorded posture; throws only when the posture file cannot be written
+  // (the caller reports it, the in-memory posture stays put).
+  setFullAccess?: (enabled: boolean, by: string) => AccessPosture;
 }
 
 export function installedPolicyPosture(
@@ -2065,10 +2122,32 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     return { approved: false, reason };
   };
   // Issue #307: true exactly when the ask auto-approves every challenged
-  // call as full access — the SAME boot posture the ask consults (#325), so
-  // the status bar's OFF indicator cannot drift from what the policy does.
+  // call as full access — the SAME live posture the ask consults (#325,
+  // #309), so the status bar's OFF indicator cannot drift from the policy.
   const approvalsSkipped = (): boolean =>
     posture.fullAccess && posture.route === 'ask-user';
+  // Issue #309 (§41.4): the in-session toggle. `posture.fullAccess` is the
+  // LIVE cell the ask reads on every call, so flipping it takes effect on
+  // the very next challenged call; `bootPosture` is re-based with it, so the
+  // #325 guard sees the operator's own change rather than a foreign one and
+  // does not restore the file underneath them.
+  const setFullAccess = (enabled: boolean, by: string): AccessPosture => {
+    const next: AccessPosture = enabled
+      ? { fullAccess: true, enabledAt: Date.now(), enabledBy: by }
+      : { fullAccess: false, enabledAt: Date.now(), enabledBy: by };
+    if (store !== undefined) {
+      if (enabled) {
+        enableFullAccess(store, by);
+      } else {
+        disableFullAccess(store, by);
+      }
+    }
+    posture.fullAccess = next.fullAccess;
+    bootPosture.fullAccess = next.fullAccess;
+    bootPosture.enabledAt = next.enabledAt;
+    bootPosture.enabledBy = next.enabledBy;
+    return next;
+  };
   // A posture.json change made DURING the session (issue #325) is refused:
   // the file is restored to the boot posture (so a later resume does not
   // inherit it) and the change is recorded once in the ledger. Checked on
@@ -2283,6 +2362,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
     denials: () => [...denials],
     ask,
     approvalsSkipped,
+    setFullAccess,
     settle: guardPosture,
   };
 }

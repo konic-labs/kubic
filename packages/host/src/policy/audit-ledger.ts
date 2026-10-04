@@ -461,6 +461,41 @@ export function fullAccessEnabledAudit(
   };
 }
 
+// §60 record for switching a session BACK to enforced approvals (issue
+// #309, §41.4): the TUI's in-session toggle off, the symmetric half of
+// `fullAccessEnabledAudit`. One row per disable, so the ledger carries the
+// whole posture history in order.
+export interface FullAccessDisabledInput {
+  sessionId: string;
+  /** The originating action, e.g. `kubic tui /approvals off`. */
+  command: string;
+  workspace: string;
+  mode: 'solo' | 'orchestrator';
+}
+
+export function fullAccessDisabledAudit(
+  input: FullAccessDisabledInput,
+): AuditInput {
+  return {
+    who: 'user:tui',
+    what: 'posture:approvals',
+    agent: { session: input.sessionId || UNKNOWN, role: 'user' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    worker: { pid: process.pid, generation: 0, role: 'user' },
+    workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
+    permission: {
+      permission: 'posture:approvals',
+      approval: `disabled by ${input.command}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    mode: input.mode,
+    posture: 'approvals',
+    result: 'ok',
+    reason: `full access disabled for session ${input.sessionId || UNKNOWN} by ${input.command}`,
+  };
+}
+
 // §60 record for a posture.json change made DURING a session (issue #325):
 // the change is refused — the boot posture stays in force and the file is
 // restored — and recorded once, so a model-written grant is never mistaken

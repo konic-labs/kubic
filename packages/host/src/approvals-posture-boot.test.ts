@@ -13,6 +13,7 @@ import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
   ApprovalService,
   createApprovalAsk,
+  disableSessionFullAccess,
   enableSessionFullAccess,
   FileApprovalStore,
   installSoloPolicy,
@@ -135,5 +136,124 @@ describe('posture is decided at boot (issue #325)', () => {
     );
     forgePosture(dir);
     expect((await ask(DESTRUCTIVE)).approved).toBe(false);
+  });
+});
+
+// Issue #309 (§41.4, §80): the in-session toggle. It flips the LIVE posture
+// the ask reads (so the very next challenged call follows it), writes
+// posture.json through the same host helpers the CLI uses, and re-bases the
+// #325 guard so the operator's own change is not restored underneath them.
+describe('the in-session full-access toggle (issue #309)', () => {
+  it('flips the live posture, the file and the indicator, and the next call follows', async () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    let asks = 0;
+    const installed = installSoloPolicy({
+      workspace,
+      sessionDir,
+      sessionId: 'sess-309',
+      answer: async () => {
+        asks += 1;
+        return { approved: true, by: 'user' };
+      },
+    });
+    expect(installed.posture.fullAccess).toBe(false);
+    expect(installed.approvalsSkipped()).toBe(false);
+    // A challenged call asks first.
+    expect((await installed.ask(DESTRUCTIVE)).approved).toBe(true);
+    expect(asks).toBe(1);
+
+    // Enable: the live posture, the predicate and the file all move.
+    installed.setFullAccess?.(true, 'kubic tui /approvals on');
+    expect(installed.posture.fullAccess).toBe(true);
+    expect(installed.approvalsSkipped()).toBe(true);
+    expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
+      fullAccess: true,
+    });
+    // The next challenged call is waived (no ask).
+    expect(await installed.ask(DESTRUCTIVE)).toEqual({
+      approved: true,
+      challenged: true,
+    });
+    expect(asks).toBe(1);
+    // The #325 guard accepts the operator's own change: settle() does NOT
+    // restore the boot posture underneath them.
+    installed.settle?.();
+    expect(installed.posture.fullAccess).toBe(true);
+    expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
+      fullAccess: true,
+    });
+
+    // Disable: the next destructive call raises an approval again. A
+    // DIFFERENT command, because an answered call latches for the session.
+    installed.setFullAccess?.(false, 'kubic tui /approvals off');
+    expect(installed.approvalsSkipped()).toBe(false);
+    expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
+      fullAccess: false,
+    });
+    expect(
+      (
+        await installed.ask({
+          ...DESTRUCTIVE,
+          args: { command: 'rm -rf dist' },
+        })
+      ).approved,
+    ).toBe(true);
+    expect(asks).toBe(2);
+  });
+
+  it('writes two audit rows in order — enabled then revoked (issue #309)', () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    enableSessionFullAccess({
+      sessionDir,
+      sessionId: 'sess-309',
+      command: 'tui',
+      workspace,
+      clock: () => 1_700_000_000_000,
+    });
+    const revoked = disableSessionFullAccess({
+      sessionDir,
+      sessionId: 'sess-309',
+      command: 'tui /approvals off',
+      workspace,
+      clock: () => 1_700_000_000_500,
+    });
+    expect(revoked.warning).toContain('full-access revoked');
+    expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
+      fullAccess: false,
+    });
+    const rows = readAuditLedger(auditLedgerDir(workspace)).filter(
+      (record) =>
+        record.what === 'posture:full-access' ||
+        record.what === 'posture:approvals',
+    );
+    expect(rows.map((record) => record.what)).toEqual([
+      'posture:full-access',
+      'posture:approvals',
+    ]);
+    expect(rows.map((record) => record.posture)).toEqual([
+      'full-access',
+      'approvals',
+    ]);
+    expect(JSON.stringify(rows[1])).toContain('kubic tui /approvals off');
+  });
+
+  it('a disabled posture is what a later resume boots with (issue #309)', () => {
+    const workspace = tmpRoot('ws-');
+    const sessionDir = tmpRoot('session-');
+    enableSessionFullAccess({
+      sessionDir,
+      sessionId: 'sess-309',
+      command: 'sessions create',
+      workspace,
+    });
+    const first = installSoloPolicy({ workspace, sessionDir });
+    expect(first.posture.fullAccess).toBe(true);
+    first.setFullAccess?.(false, 'kubic tui /approvals off');
+    // A fresh install (a resume) reads the revoked posture.
+    const second = installSoloPolicy({ workspace, sessionDir });
+    expect(second.posture.fullAccess).toBe(false);
+    expect(second.approvalsSkipped()).toBe(false);
   });
 });

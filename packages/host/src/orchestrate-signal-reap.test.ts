@@ -126,6 +126,7 @@ function fakeSignals(): OrchestrateSignals & {
 async function startLiveWorker(signals: OrchestrateSignals): Promise<{
   pid: number;
   settled: Promise<unknown>;
+  deps: Awaited<ReturnType<typeof orchestrateDepsWithDefaults>>;
 }> {
   const root = await initRepo();
   const sessionsRoot = scratchRoot('kubic-orch-sigreap-sessions-');
@@ -161,7 +162,67 @@ async function startLiveWorker(signals: OrchestrateSignals): Promise<{
   const pid = registry.get('worker-1')?.pid;
   if (pid === undefined) throw new Error('worker has no pid');
   pids.push(pid);
-  return { pid, settled };
+  return { pid, settled, deps };
+}
+
+// Two workers of ONE run, in flight at once (issue #206): the same composition
+// root, two worktrees, two real children. The guard must reap every live
+// process group on one signal, not only the last one it tracked.
+async function startTwoLiveWorkers(signals: OrchestrateSignals): Promise<{
+  pids: number[];
+  settled: Promise<unknown>[];
+}> {
+  const root = await initRepo();
+  const sessionsRoot = scratchRoot('kubic-orch-sigreap-sessions-');
+  const fixture = join(scratchRoot('kubic-orch-sigreap-child-'), 'w.mjs');
+  writeFileSync(fixture, FIXTURE);
+  const registry = new WorkerRegistry();
+  const deps = await orchestrateDepsWithDefaults({
+    out: () => undefined,
+    err: () => undefined,
+    cwd: root,
+    sessionsRoot,
+    registry,
+    workerEntry: { cmd: process.execPath, args: [fixture] },
+    signals,
+  });
+  const agents = ['worker-1', 'worker-2'];
+  const settled: Promise<unknown>[] = [];
+  for (const agentId of agents) {
+    const worktree = await deps.ensureWorktree(agentId);
+    const workerSessionId = `sigreap-${agentId}`;
+    await deps.createWorkerSession?.({
+      sessionId: 'sigreap',
+      agentId,
+      workerSessionId,
+      worktree,
+    });
+    // Both launches are started before either is awaited: the two children
+    // are genuinely in flight together.
+    settled.push(
+      Promise.resolve(
+        deps.runWorker(agentId, worktree, 'work', {
+          sessionId: 'sigreap',
+          workerSessionId,
+        }),
+      ).catch((error: unknown) => error),
+    );
+  }
+  await vi.waitFor(
+    () =>
+      expect(agents.map((agentId) => registry.get(agentId)?.status)).toEqual([
+        'running',
+        'running',
+      ]),
+    { timeout: 10_000 },
+  );
+  const livePids = agents.map((agentId) => registry.get(agentId)?.pid);
+  if (livePids.some((pid) => pid === undefined)) {
+    throw new Error('a worker has no pid');
+  }
+  const live = livePids as number[];
+  for (const pid of live) pids.push(pid);
+  return { pids: live, settled };
 }
 
 describe('prod orchestrate path: workers never outlive the manager', () => {
@@ -182,6 +243,25 @@ describe('prod orchestrate path: workers never outlive the manager', () => {
     }, 30_000);
   }
 
+  it('kills BOTH in-flight workers on one SIGINT (issue #206)', async () => {
+    const signals = fakeSignals();
+    const { pids: live, settled } = await startTwoLiveWorkers(signals);
+    expect(live).toHaveLength(2);
+    for (const pid of live) expect(processAlive(pid)).toBe(true);
+
+    // One signal to the manager reaches every live child: the guard holds
+    // each worker's own process-group kill, so the sibling of the worker
+    // that happened to launch last is not left orphaned.
+    signals.fire('SIGINT');
+
+    await vi.waitFor(
+      () => expect(live.every((pid) => !processAlive(pid))).toBe(true),
+      { timeout: 5_000 },
+    );
+    expect(signals.reraised).toEqual(['SIGINT']);
+    await Promise.all(settled);
+  }, 30_000);
+
   it('kills live workers synchronously when the manager exits', async () => {
     const signals = fakeSignals();
     const { pid, settled } = await startLiveWorker(signals);
@@ -200,6 +280,30 @@ describe('prod orchestrate path: workers never outlive the manager', () => {
     process.kill(-pid, 'SIGTERM');
     await settled;
     expect(signals.installed()).toBe(0);
+  }, 30_000);
+});
+
+describe('prod orchestrate path: fail-fast cancellation (issue #206)', () => {
+  it('cancelWorker kills the live child and settles its worker as cancelled', async () => {
+    const signals = fakeSignals();
+    const { pid, settled, deps } = await startLiveWorker(signals);
+    expect(processAlive(pid)).toBe(true);
+    expect(deps.cancelWorker).toBeDefined();
+
+    // What the run calls for a sibling still in flight when another worker
+    // failed: the lifecycle layer's reap takes the detached process group,
+    // and the in-flight runWorker promise settles with its named terminus —
+    // the manager never returns while a cancelled child is still running.
+    deps.cancelWorker?.('worker-1');
+
+    await vi.waitFor(() => expect(processAlive(pid)).toBe(false), {
+      timeout: 5_000,
+    });
+    const error = (await settled) as { code?: string; message?: string };
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe('cancelled');
+    expect(error.message).toMatch(/cancelled by the run/);
+    expect(signals.reraised).toEqual([]);
   }, 30_000);
 });
 

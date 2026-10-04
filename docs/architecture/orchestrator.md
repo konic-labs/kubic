@@ -214,16 +214,29 @@ the toolset gate and the plan.
 
 ## Concurrency
 
-The shipped default is **two** agents (`worker-1,worker-2`, D12) and the run
-spawns them **one after another** — the loop creates a worktree, session and
-child process per agent in turn, so two workers do not overlap in wall-clock
-time. The admission layer that gates concurrency (default cap 4) is the
-`ParallelScheduler`; it is registered and consulted per spawn, but it is **not**
-what bounds a run today — the loop is strictly sequential and releases each
-worker's slot before requesting the next, so it admits one at a time and never
-approaches the cap. §45 says four concurrent subagents and D12 is amended to
-two; see
+The shipped default is **two** agents (`worker-1,worker-2`, D12) and they run
+**concurrently**: the loop admits workers up to the resolved admission cap and
+runs them at the same time, each in its own worktree and process. Workers past
+the cap wait in the `ParallelScheduler`'s FIFO queue and start when a settled
+worker releases its slot — starvation-safe, and reported rather than hidden
+(see below).
+
+The cap resolves in one place (`resolveMaxConcurrency`): `--concurrency <n>` for
+this run, else an explicit limits cap, else the configured
+`[orchestrator].maxWorkers`, else the shipped four. §45 says four concurrent
+subagents and D12 is amended to two; see
 [design drift](../design-drift.md) for the reconciliation.
+
+Concurrency changes only *when* workers run, never the merge: candidates are
+enqueued in **agent order** after the workers settle, so the merge order (and
+the write-ahead merge intent per candidate) is deterministic regardless of which
+worker finished first. A worker that fails stops the run (fail-fast); siblings
+still in flight are cancelled through the lifecycle layer before the manager
+returns, so no child keeps spending tokens behind a failed run.
+
+There is one approvals surface for the run, not one per worker: concurrent
+workers publish their asks to the same mailbox, each under its own agent scope,
+and each is routed and answered on its own key.
 
 ## Worktrees are scheduling, not isolation
 

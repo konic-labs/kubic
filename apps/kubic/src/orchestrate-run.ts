@@ -957,6 +957,10 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
+  // Workers the run cancelled (issue #206 fail-fast): remembered separately
+  // from the signal guard, because the cancellation is per AGENT and may
+  // arrive before that agent's child exists.
+  const cancelRequested = new Set<string>();
   const guard = liveWorkerGuard(options.signals ?? processSignals);
   const throwIfCancelled = (agentId: string): void => {
     const signal = guard.cancelledBy();
@@ -964,6 +968,12 @@ export async function orchestrateDepsWithDefaults(
       throw new WorkerRunFailure(
         'cancelled',
         `worker '${agentId}' cancelled by ${signal}`,
+      );
+    }
+    if (cancelRequested.has(agentId)) {
+      throw new WorkerRunFailure(
+        'cancelled',
+        `worker '${agentId}' cancelled by the run`,
       );
     }
   };
@@ -1399,7 +1409,9 @@ export async function orchestrateDepsWithDefaults(
     // Issue #133: the configured worker cap is the run's own admission
     // surface — the same scheduler the CLI would default to, constructed
     // with the validated `[orchestrator].maxWorkers` as its default. Unset
-    // builds no scheduler and the CLI's shipped default cap of four stands.
+    // builds no scheduler and the CLI's shipped default cap of four stands;
+    // the run's `--concurrency` override (issue #206) is applied to whichever
+    // scheduler it gets.
     ...(maxWorkers === undefined
       ? {}
       : {
@@ -1811,6 +1823,13 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
+      // A cancel that arrived between the readiness check above and this
+      // launch (issue #206): the handle exists now, so the kill lands instead
+      // of waiting out the child's own bound. `throwIfCancelled` still turns
+      // the settled child into this worker's named terminus.
+      if (cancelRequested.has(agentId)) {
+        void launched.reap().catch(() => undefined);
+      }
       const launchedAt = Date.now();
       const observation = (): Omit<
         WorkerObservation,
@@ -2302,6 +2321,20 @@ export async function orchestrateDepsWithDefaults(
         }
       }
       debug(`reaped: ${agentId} (worktree + branch retained)`);
+    },
+    // Fail-fast cancellation (issue #206): a sibling still in flight when a
+    // concurrent worker failed is killed through the lifecycle layer's reap
+    // (SIGTERM, then the detached process group). The running `runWorker`
+    // sees the child exit and settles its own promise; a cancel that arrives
+    // BEFORE the child launched is remembered, and the launch path checks it
+    // as soon as the handle exists — so a cancelled worker never survives
+    // the window between the request and the spawn.
+    cancelWorker: (agentId: string): void => {
+      cancelRequested.add(agentId);
+      const launched = launchedByAgent.get(agentId);
+      if (launched !== undefined) {
+        void launched.reap().catch(() => undefined);
+      }
     },
     requestApproval: mergeApprovalSeat,
     ...(options.yesHint === false ? { yesHint: false } : {}),

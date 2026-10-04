@@ -128,10 +128,26 @@ describe('orchestrator docs do not claim what the code does not do (#95 review)'
     );
   });
 
+  it('no tracked doc claims the workers run one after another', () => {
+    // The mirror of the #206 fix: the shipped loop runs admitted workers
+    // concurrently, so the pre-#206 wording must not survive anywhere.
+    expect(
+      scan([
+        /one after another/i,
+        /strictly sequential/i,
+        /do not overlap in wall-clock time/i,
+        /never approaches? the cap/i,
+      ]),
+    ).toEqual([]);
+  });
+
   it('the docs state the real concurrency rule', () => {
     const commandsDoc = prose('docs/cli/commands.md');
-    expect(commandsDoc).toMatch(/bounds a run today/);
-    expect(commandsDoc).toMatch(/strictly sequential/);
+    // #206 replaced the F2 wording: the docs must state that workers run
+    // concurrently, that the cap resolves per run, and that the rest queue.
+    expect(commandsDoc).toMatch(/run \*\*concurrently\*\*/);
+    expect(commandsDoc).toContain('--concurrency <n>');
+    expect(commandsDoc).toMatch(/starvation-safe/);
   });
 
   it('the absence scan is not vacuous: it sees the tracked docs at all', () => {

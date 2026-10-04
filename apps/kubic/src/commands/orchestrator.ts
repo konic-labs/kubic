@@ -61,10 +61,13 @@ const ORCHESTRATE_EXAMPLES = `
 Examples:
   kubic orchestrate -p "add input validation" --agents api,ui
   kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
+  kubic orchestrate -p "refactor" --concurrency 4 --agents api,ui,docs,cli
   kubic orchestrate --resume --session orch-1790000000000
   kubic orchestrate -p "refactor" --json
 
-Needs a git repository (it never falls back to solo). Exit codes: 0 ok,
+Needs a git repository (it never falls back to solo). Workers run
+concurrently up to --concurrency (default [orchestrator].maxWorkers, else
+4); the rest queue and start as slots free. Exit codes: 0 ok,
 1 run failure, 2 usage or not a git repo, 3 budget exhausted, 4 approval
 denied or timed out.`;
 
@@ -97,6 +100,11 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       '--agents <ids>',
       'comma-separated worker ids (default: worker-1,worker-2)',
       agentList,
+    )
+    .option(
+      '--concurrency <n>',
+      'max workers running at once for this run (overrides [orchestrator].maxWorkers)',
+      positiveInt,
     )
     .option(
       '--session <id>',

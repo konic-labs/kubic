@@ -555,13 +555,12 @@ describe('orchestrate crash-resume (issue #76)', () => {
     }
   });
 
-  it('does not report a phantom queue: a settled worker releases its admission slot', async () => {
-    // Review finding F2: `scheduler.complete()` was never called and
-    // `requestSpawn` ran sequentially, so with six agents and the default cap
-    // of four the fifth and sixth were reported `queued: ... at position N` —
-    // while they spawned and merged immediately anyway. A false signal: the
-    // docs claimed the cap "starts to matter" above four, and an operator
-    // reading `queued:` believes a limit is gating the run.
+  it('drains a real admission queue: every worker runs once, in agent order', async () => {
+    // Review finding F2 (issue #106) recorded a false queue: the loop was
+    // strictly sequential and released each slot before the next request, so
+    // a `queued:` line could only come from bookkeeping that was never
+    // released. #206 makes the queue real — six agents against the default
+    // cap of four queue exactly two, and both are drained on release.
     const world = makeWorld();
     const code = await runOrchestrateCommand(
       { prompt: 'do it', agents: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] },
@@ -569,10 +568,12 @@ describe('orchestrate crash-resume (issue #76)', () => {
     );
     expect(code).toBe(0);
     expect(world.calls.merge).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
-    // Concurrency is 1 (the loop awaits each worker before the next request),
-    // so no slot is ever contended: a queued report can only come from stale
-    // bookkeeping, never from a real cap.
-    expect(world.debugLines.filter((l) => l.includes('queued'))).toEqual([]);
+    // Exactly the two past the cap were queued, and each names a slot.
+    expect(world.debugLines.filter((l) => l.includes('queued'))).toHaveLength(
+      2,
+    );
+    // Every worker ran exactly once, merges in agent order.
+    expect(world.calls.run).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6']);
     expect(world.calls.order.filter((l) => l.startsWith('run:'))).toEqual([
       'run:a1',
       'run:a2',
@@ -948,17 +949,24 @@ describe('orchestrate worker session creation (issue #85)', () => {
       world.deps,
     );
     expect(code).toBe(0);
-    // Creation strictly precedes the spawn for each worker: `kubic run`
+    // Creation strictly precedes the SPAWN for each worker: `kubic run`
     // with an explicit --session only ATTACHES, so a child spawned before
-    // its session exists dies at attach (exit 5 "unknown session").
-    expect(world.calls.order).toEqual([
-      'create:alpha',
-      'run:alpha',
-      'create:beta',
-      'run:beta',
-    ]);
+    // its session exists dies at attach (exit 5 "unknown session"). Workers
+    // run concurrently since #206, so the two workers' legs interleave — the
+    // per-worker order is the invariant, not one global sequence.
+    for (const agentId of ['alpha', 'beta']) {
+      expect(
+        world.calls.order.indexOf(`create:${agentId}`),
+        `create:${agentId} before run:${agentId}`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(world.calls.order.indexOf(`create:${agentId}`)).toBeLessThan(
+        world.calls.order.indexOf(`run:${agentId}`),
+      );
+    }
     // The id the manager creates is exactly the id the child attaches to.
-    expect(world.runInfo).toEqual([
+    expect(
+      [...world.runInfo].sort((a, b) => a.agentId.localeCompare(b.agentId)),
+    ).toEqual([
       { agentId: 'alpha', workerSessionId: 'sess-1-alpha' },
       { agentId: 'beta', workerSessionId: 'sess-1-beta' },
     ]);
@@ -1666,7 +1674,7 @@ describe('failure results persist in the saved records (issue #185)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
+      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
@@ -1695,7 +1703,7 @@ describe('failure results persist in the saved records (issue #185)', () => {
       },
       metrics: { wallMs: 0, latencyMs: 0 },
     });
-    expect(lastState(world).pending).toEqual(['alpha', 'beta']);
+    expect(lastState(world).pending).toEqual(['alpha']);
     expect(lastState(world).merged).toEqual([]);
     // The record is one entry, and nothing else was recorded.
     expect(lastState(world).records).toHaveLength(1);

@@ -1,18 +1,14 @@
 // The §49.1 trajectory event reaches DISK on the composed prod path
-// (issue #106). The unit test proves the CLI calls the sink once per queued
-// spawn; this proves the composition root's own default sink writes the
-// record to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl` — the sink
-// the shipped binary gets, and the one a defect here would leave silently
-// empty.
+// (issue #106). The unit test proves the CLI calls the sink once per
+// admission transition; this proves the composition root's own default sink
+// writes the record to `<repo>/.kubic/orchestrator/<session>.trajectory.jsonl`
+// — the sink the shipped binary gets, and the one a defect here would leave
+// silently empty.
 //
-// One honest caveat, measured and stated rather than papered over: the run
-// loop is strictly sequential, so it drains each worker before requesting the
-// next admission and can never queue against the shipped cap (the CLI
-// documents this as review finding F2). A queued spawn is therefore PRIMED
-// here by handing the run a scheduler whose only slot is already occupied —
-// the same device the CLI's own contract test uses. Everything after that is
-// the prod path: the real composition root, its real default sink, a real
-// child process, and the file it writes.
+// The queue is produced by the run itself now (issue #206): one worker at a
+// time against two agents, so the second genuinely waits and is woken when
+// the first settles. Everything is the prod path: the real composition root,
+// its real default sink, real child processes, and the file it writes.
 //
 // No network and no paid tokens: the worker entry is this test process's own
 // node running a fixture that prints its readiness marker and exits.
@@ -29,7 +25,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { orchestrateDepsWithDefaults } from '../../../apps/kubic/src/orchestrate-run.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
-import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 
 const WORKER = `
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
@@ -79,20 +74,21 @@ describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)
       sessionsRoot,
       workerEntry: { cmd: process.execPath, args: [worker] },
     });
-    // Occupy the only slot, so the run's first real spawn genuinely queues.
-    const scheduler = new ParallelScheduler(undefined, { sessionOverride: 1 });
-    const primed = scheduler.requestSpawn(
-      { agentId: 'occupant', sessionId: 'traj', worktree: root },
-      'autonomous',
-    );
-    expect(primed.outcome).toBe('admitted');
 
     const code = await runOrchestrateCommand(
-      { prompt: 'do the thing', agents: ['alpha'], session: 'traj', yes: true },
-      // The prod deps, with only the admission layer primed. `trajectoryEvent`
-      // is deliberately NOT overridden: the run uses the composition root's own
-      // default sink.
-      { ...prod, scheduler },
+      {
+        prompt: 'do the thing',
+        agents: ['alpha', 'beta'],
+        session: 'traj',
+        yes: true,
+        // The per-session override `--concurrency 1` installs: one worker at
+        // a time, so the second agent genuinely queues and is woken by the
+        // first worker's own settle.
+        concurrency: 1,
+      },
+      // The prod deps, unchanged: `trajectoryEvent` is deliberately NOT
+      // overridden, so the run uses the composition root's own default sink.
+      prod,
     );
 
     expect(code).toBe(0);
@@ -107,15 +103,21 @@ describe('prod orchestrate path: the trajectory event lands (issue #106, §49.1)
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(rows.length).toBeGreaterThan(0);
     const queued = rows.filter((row) => row.kind === 'parallel');
-    expect(queued.length).toBe(1);
+    // One record for the queued spawn (nothing was woken by the request) and
+    // one for the FIFO wakeup that admitted it when alpha settled.
+    expect(queued.length).toBe(2);
     expect(queued[0]).toMatchObject({
       sessionId: 'traj',
       running: 1,
       queued: 1,
       maxConcurrency: 1,
       wakeups: [],
+    });
+    expect(queued[1]).toMatchObject({
+      sessionId: 'traj',
+      maxConcurrency: 1,
+      wakeups: ['beta'],
     });
   }, 60_000);
 });

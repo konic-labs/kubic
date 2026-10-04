@@ -15,7 +15,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   MergeDecisionRecord,
   OrchestrateCliOptions,
@@ -109,7 +109,9 @@ interface HarnessOptions {
 // place in the dialog) — routing, decisions, budgets, skip and the mailbox are
 // the real modules.
 function harness(
-  decide: (request: OrchestratorApprovalRequest) => Decision,
+  decide: (
+    request: OrchestratorApprovalRequest,
+  ) => Decision | Promise<Decision>,
   options: HarnessOptions = {},
 ): Harness {
   const dir = scratchRoot('kubic-105-');
@@ -222,7 +224,9 @@ function harness(
           : {
               seat: async (request: OrchestratorApprovalRequest) => {
                 raised.push(request);
-                const verdict = decide(request);
+                // A decider may take its time (issue #206's concurrency test
+                // holds the first answer until the sibling's ask is routed).
+                const verdict = await decide(request);
                 return verdict.approved
                   ? { approved: true, by: 'user' as const }
                   : { approved: false, reason: verdict.reason ?? 'denied' };
@@ -314,11 +318,56 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
     expect(h.approvals.decisions.pendingKeys()).toEqual([]);
   });
 
+  it('AC6 (issue #206): two workers’ asks in flight at once are routed and answered independently', async () => {
+    let h!: Harness;
+    let asksAtFirstAnswer = 0;
+    let firstAnswer = true;
+    // The decider holds the FIRST answer until the sibling worker's ask has
+    // been routed too. On the sequential loop that ask could never arrive
+    // while worker-1 is still waiting (worker-2 starts only after worker-1
+    // finished), so the wait below would time out and the assertion would
+    // fail — the two workers would not be in flight together.
+    h = harness(async () => {
+      if (firstAnswer) {
+        firstAnswer = false;
+        try {
+          await vi.waitFor(
+            () => expect(h.raised.length).toBeGreaterThanOrEqual(2),
+            { timeout: 500, interval: 5 },
+          );
+        } catch {
+          // Recorded, not thrown: the assertion below names the defect.
+        }
+        asksAtFirstAnswer = h.raised.length;
+      }
+      return { approved: true };
+    });
+
+    const code = await runOrchestrateCommand(TWO_WORKER_ARGS, h.deps);
+
+    expect(code).toBe(0);
+    // When the first ask was answered, BOTH had already been routed — the
+    // two worker scopes live in one mailbox without one starving the other.
+    expect(asksAtFirstAnswer).toBe(2);
+    expect(h.raised.map((request) => request.agentId)).toEqual([
+      'worker-1',
+      'worker-2',
+    ]);
+    // Both answers were delivered to their own key.
+    for (const request of h.raised) {
+      expect(h.approvals.decisions.decided(request.key)).toEqual({
+        approved: true,
+        by: 'user',
+      });
+    }
+    expect(h.approvals.decisions.pendingKeys()).toEqual([]);
+    expect(h.published).toHaveLength(2);
+  });
+
   it('AC2: a bounded wait times out to a denial with the named reason and never hangs', async () => {
     const h = harness(() => ({ approved: true }), {
       noSeat: true,
       maxPendingMs: 30,
-      agents: ['worker-1'],
     });
     const started = Date.now();
     const code = await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps);

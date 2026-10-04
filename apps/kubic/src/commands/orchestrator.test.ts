@@ -87,6 +87,7 @@ describe('kubic orchestrate (commander)', () => {
       for (const option of [
         '-p, --prompt <text>',
         '--agents <ids>',
+        '--concurrency <n>',
         '--session <id>',
         '--resume',
         '--yes',
@@ -188,6 +189,31 @@ describe('kubic orchestrate (commander)', () => {
       expectUsage(
         await run(['orchestrate', '-p', 'x', '--agents', agents]),
         /--agents/,
+      );
+    }
+  });
+
+  it('carries --concurrency to the runner, and refuses a non-positive value (issue #206)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--agents',
+      'a,b,c',
+      '--concurrency',
+      '2',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toEqual({
+      prompt: 'x',
+      agents: ['a', 'b', 'c'],
+      concurrency: 2,
+    });
+    // Zero, negatives and rubbish are usage errors, never a silent default.
+    for (const value of ['0', '-1', '2.5', 'many']) {
+      expectUsage(
+        await run(['orchestrate', '-p', 'x', '--concurrency', value]),
+        /--concurrency.*positive integer/i,
       );
     }
   });

@@ -305,7 +305,7 @@ $ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
 built binary: a faux `run --json` (echo and a tool call), text mode, the
 unknown-value refusal, and an `orchestrate --yes` across worker processes.
 
-## `kubic orchestrate -p <prompt> [--agents <a,b>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
+## `kubic orchestrate -p <prompt> [--agents <a,b>] [--concurrency <n>] [--session <id>] [--resume] [--yes] [--budget <dims>] [--dangerously-skip-approvals] [--json]`
 
 `kubic orchestrate --help` prints the generated help (every flag below plus
 examples) and exits 0. Unknown flags, a missing flag value, a stray operand,
@@ -504,15 +504,22 @@ toolset and a lane carrying anything else — an exec tool above all — refuses
 start, exiting 1 with `code=manager_toolset_refused` and the offending tool
 named, before any worktree, session or child exists.
 
-The default agent set is **two** (`worker-1,worker-2`, D12) and the run
-spawns them **one after another** — the CLI's loop creates the worktree,
-session and child process for each agent in turn, so two workers do not
-overlap in wall-clock time. §45's "default concurrency is 4" describes the
-admission layer's cap (`ParallelScheduler`, default 4), which is **not** what
-bounds a run today: this loop is strictly sequential, so it admits, awaits and
-releases one worker at a time and never approaches the cap. The design
-reconciliation is recorded in
-[design drift](../design-drift.md).
+The default agent set is **two** (`worker-1,worker-2`, D12) and they run
+**concurrently**: the run admits workers up to its resolved cap (default 4,
+configured by `[orchestrator].maxWorkers`, overridden per run by
+`--concurrency <n>`) and starts them together, each in its own worktree and
+process. Workers past the cap wait in the `ParallelScheduler`'s FIFO queue —
+starvation-safe — and start when a settled worker releases its slot. §45's
+"default concurrency is 4" is that admitted cap. The design reconciliation is
+recorded in [design drift](../design-drift.md).
+
+Concurrency changes only *when* workers run, never the merge: candidates are
+enqueued in **agent order** after the workers settle, so `kubic orchestrate
+--json` reports the same `mergeOrder` whichever worker finished first, and the
+write-ahead merge intent still covers exactly one candidate at a time. A worker
+that fails stops the run (fail-fast) — siblings still in flight are cancelled
+through the lifecycle layer before the manager returns, so no child keeps
+spending tokens behind a failed run.
 
 The admission numbers the layer holds are **reported, not hidden** (issue #106):
 every run prints one `parallel: running <n> queued <n> cap <n>` line and one
@@ -524,9 +531,10 @@ means a slot really was occupied when the spawn was requested, never a number
 computed for display. A spawn the admission layer queues also emits one §49.1
 trajectory record (`{ kind: "parallel", sessionId, running, queued,
 maxConcurrency, wakeups }`, appended to
-`<root>/.kubic/orchestrator/<session>.trajectory.jsonl`). Because the shipped
-loop is sequential, `queued` stays 0 on a default run — the lines exist so the
-cap is visible when it *is* reached, not to claim it gates anything.
+`<root>/.kubic/orchestrator/<session>.trajectory.jsonl`) — one for the queued
+spawn (`wakeups` empty: nothing was woken by the request) and one per FIFO
+wakeup that admitted a queued worker when a slot freed (`wakeups` names exactly
+the agents that drain admitted).
 
 The manager creates each worker's session before spawning its child. A
 child `kubic run --session <id>` only *attaches* — it never creates — so
@@ -545,7 +553,8 @@ prompt is the pending one), never appended as a duplicate prompt, and the
 | Flag | Meaning |
 | --- | --- |
 | `-p`, `--prompt <text>` | **Required** (unless `--resume`). The objective the manager derives the plan from; each worker receives its own plan step built on this text, never the text verbatim. |
-| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, spawned one after another). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
+| `--agents <a,b>` | Worker ids (default `worker-1,worker-2` — the two-worker demo, run concurrently). Ids accept only `[A-Za-z0-9_-]`, must be unique (one worktree per writer). |
+| `--concurrency <n>` | How many workers may run at once for **this run** (positive integer). Overrides `[orchestrator].maxWorkers` (and any explicit limits cap) for the run; workers past it wait in the admission layer's FIFO queue and start as slots free. Unset ⇒ the configured cap, else the shipped 4. |
 | `--session <id>` | Session scope (default `orch-<now>`). Same `[A-Za-z0-9_-]` rule as `run`. A fresh run whose id already has stored state exits 2 (`code=session_exists`) instead of overwriting it — `--resume` or another id. State persists at `<repo>/.kubic/orchestrator/<id>.json` — including the plan, so `--resume` replays each worker's own prompt; each worker's session id is `<id>-<agent>`. |
 | `--resume` | Re-attach after a kill: merges only pending workers in the original order, never re-merges, and each retried worker runs the plan step stored for it (a state written before #103 has no plan and re-derives one from the stored objective). The budget the run started with is re-applied from the state; a `--budget` naming a different spec is refused (exit 2). Needs `--session`. No stored state exits 1 (`code=no_orchestrator_state`); a stopped queue re-reports the conflict and merges nothing (`code=merge_conflict`). |
 | `--yes` | Auto-approve merges (non-interactive). Worker asks are never auto-approved by it. Without it, a TTY is asked per merge under `approvals.maxPendingMs` (an elapse denies closed, exit 4, naming the bound and the candidate); headless without a decider denies closed with exit 4. |

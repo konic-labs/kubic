@@ -191,7 +191,8 @@ describe('orchestrator scope is honest (issue #95)', () => {
     expect(body).not.toMatch(/same prompt/i);
     expect(body).not.toMatch(/prompts may not differ/i);
     expect(body).toMatch(/plan step|per-worker prompt/i);
-    expect(body).toMatch(/one after another|sequentially|serially/i);
+    // #206: the section states how many run and that they overlap.
+    expect(body).toMatch(/concurrently|concurrent\b/i);
     // The shipped default and the remaining gaps are both named.
     expect(body).toContain('worker-1,worker-2');
     for (const issue of [ROLE_PROMPTS_ISSUE, WORKER_APPROVALS_ISSUE]) {

@@ -82,7 +82,7 @@ export class ParallelScheduler {
   private readonly limits: ParallelLimits;
   private readonly clock: () => number;
   private readonly log: (line: string) => void;
-  private readonly sessionOverride: number | undefined;
+  private sessionOverride: number | undefined;
   private readonly configured: ConfiguredConcurrency | undefined;
   private usage: UsageTally | undefined;
   private readonly running = new Map<string, RunningEntry>();
@@ -105,6 +105,19 @@ export class ParallelScheduler {
 
   runningCount(): number {
     return this.running.size;
+  }
+
+  // Install (or clear) the per-session override (issue #206, §45): the CLI's
+  // `--concurrency <n>` is a property of ONE run, so the run applies it to
+  // the scheduler that judges its admissions — the same surface every other
+  // resolution goes through, never a second cap computed at the caller.
+  // Validated eagerly: a misconfig fails the run instead of silently
+  // admitting at the shipped default.
+  setSessionOverride(value: number | undefined): void {
+    if (value !== undefined) {
+      resolveMaxConcurrency(this.limits, value, this.configured);
+    }
+    this.sessionOverride = value;
   }
 
   queuedCount(): number {

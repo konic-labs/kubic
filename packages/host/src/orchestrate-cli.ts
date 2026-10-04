@@ -144,6 +144,12 @@ export interface OrchestrateCliOptions {
   readonly budget?: ParsedBudgetSpec;
   readonly fullAccess?: boolean;
   readonly json?: boolean;
+  // The per-session admission override (issue #206, §45): `--concurrency
+  // <n>` caps how many workers run at once for THIS run, above an explicit
+  // limits cap and the configured `[orchestrator].maxWorkers` default. The
+  // composition root installs it as the scheduler's session override (the
+  // admission layer is built there, so the run never builds a second one).
+  readonly concurrency?: number;
 }
 
 export class MergeConflictError extends Error {
@@ -417,6 +423,19 @@ export function workerSessionFor(sessionId: string, agentId: string): string {
   return `${sessionId}-${agentId}`;
 }
 
+// The provider half of a worker's `provider/id` model pin (issue #206, §45):
+// the admission layer's per-provider caps are keyed by provider, and the
+// worker's own pin is what its child will call. A pin that is not
+// `provider/id` (or absent) names no provider — the request then carries
+// none, and the scheduler's `default` bucket applies rather than a guess.
+export function providerOfModelRef(
+  modelRef: string | undefined,
+): string | undefined {
+  if (modelRef === undefined) return undefined;
+  const at = modelRef.indexOf('/');
+  return at > 0 ? modelRef.slice(0, at) : undefined;
+}
+
 // What the manager must do before spawning a worker (issue #85): `kubic run
 // --session <id>` only ATTACHES, so the manager creates the session with an
 // explicit id first. The spawn then happens with the same id.
@@ -628,6 +647,14 @@ export interface OrchestrateCommandDeps {
     worktree: OrchestrateWorktree,
   ) => boolean | Promise<boolean>;
   reapWorker: (agentId: string) => void | Promise<void>;
+  // Fail-fast cancellation (issue #206): a worker still in flight when the
+  // run stops — a sibling failed, or the admission layer refused a spawn —
+  // is stopped through this seam before the run returns, so the manager
+  // never exits leaving a child spending tokens behind it. Absent means the
+  // run can only wait for the sibling to settle on its own bound; prod
+  // always wires it (the lifecycle layer's reap, which kills the detached
+  // process group first).
+  cancelWorker?: (agentId: string) => void | Promise<void>;
   // Lifecycle observations for an embedder (issue #94): the live rows, the
   // §78 code a failed worker reported, and the §61 launch samples with
   // their budget verdict. The composition root (apps/kubic) supplies these
@@ -882,6 +909,9 @@ interface ParsedArgs {
   budget?: Record<string, number>;
   budgetsByAgent: Record<string, Record<string, number>>;
   fullAccess: boolean;
+  // This run's admission override (issue #206): absent means the scheduler's
+  // own resolution (explicit limits cap > configured maxWorkers > 4) stands.
+  concurrency?: number;
 }
 
 // --budget maxToolCalls=10                                  (every worker)
@@ -1096,6 +1126,9 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
     fullAccess: options.fullAccess === true,
     ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
     ...(options.session === undefined ? {} : { sessionId: options.session }),
+    ...(options.concurrency === undefined
+      ? {}
+      : { concurrency: options.concurrency }),
   };
 }
 
@@ -1543,6 +1576,15 @@ export async function runOrchestrateCommand(
   // reached, and `queued` above zero can only come from a slot that was
   // genuinely occupied at the time of the request.
   const scheduler = deps.scheduler ?? new ParallelScheduler();
+  // §45 per-session cap (issue #206): `--concurrency <n>` is this run's own
+  // override, applied to the same scheduler every other admission judgement
+  // goes through (an explicit limits cap and the configured
+  // `[orchestrator].maxWorkers` still lose to it by resolveMaxConcurrency's
+  // precedence). Applied BEFORE any request so no worker is ever admitted
+  // under a cap the operator overrode.
+  if (parsed.concurrency !== undefined) {
+    scheduler.setSessionOverride(parsed.concurrency);
+  }
   let runningHighWater = 0;
   let queuedHighWater = 0;
   const observeAdmission = (): void => {
@@ -1854,9 +1896,23 @@ export async function runOrchestrateCommand(
     return undefined;
   };
 
-  // Spawn + run every pending worker, then enqueue in agent order. A kill
-  // here leaves pending intact in the saved state, so resume retries the
-  // workers that never reported — merged workers are never re-run.
+  // Worker admission + run (issue #206, §9.3/§45). The admission layer is a
+  // GATE: workers admitted up to the scheduler's resolved cap run
+  // concurrently, and the rest wait in its FIFO queue until a settle releases
+  // a slot. Phase 1 prepares every pending worker's worktree first (a
+  // worktree is not a worker, and the admission layer judges each request
+  // against the real path); phase 2 admits and runs them; the merge phase
+  // below is the shipped one and enqueues candidates in AGENT order, so the
+  // merge order — and the write-ahead intent per candidate — stays
+  // deterministic whatever the settle order was.
+
+  // One worker's whole spawn → run → settle leg. It never throws: every
+  // terminus is an outcome the driver turns into the run's result, so a
+  // concurrent sibling can never reject into an unhandled rejection.
+  type WorkerOutcome =
+    | { ok: true }
+    | { ok: false; exitCode: number; code: string; message: string };
+
   const spawned: string[] = [];
   {
     const reconcileFailure = await reconcileMergeIntent();
@@ -1866,6 +1922,7 @@ export async function runOrchestrateCommand(
     const saveFailure = await saveOrFail(state);
     if (saveFailure !== undefined) return saveFailure;
   }
+  const prepared = new Map<string, OrchestrateWorktree>();
   for (const agentId of state.pending) {
     // This attempt's own result: a failure record kept from an earlier run of
     // the same session is not this attempt's outcome (issue #185). Cleared
@@ -1880,8 +1937,6 @@ export async function runOrchestrateCommand(
         worktree = await deps.ensureWorktree(agentId, worktreeRequest);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const failure = await reapSpawned(spawned);
-        void failure;
         await recordFailure(agentId, undefined, {
           status: 'spawn_failed',
           kind: 'workspace',
@@ -1897,59 +1952,13 @@ export async function runOrchestrateCommand(
       }
       worktrees.set(agentId, worktree);
     }
-    spawned.push(agentId);
-    const admission = scheduler.requestSpawn(
-      { agentId, sessionId, worktree: worktree.path },
-      'autonomous',
-    );
-    // The admission layer's own numbers, sampled right after the request
-    // (issue #106, §49.1/§50) — the point at which running/queued are the
-    // truth the operator was previously never shown.
-    observeAdmission();
-    if (admission.outcome === 'denied') {
-      const failure = await reapSpawned(spawned);
-      void failure;
-      await recordFailure(agentId, worktree, {
-        status: 'spawn_failed',
-        kind: 'process',
-        code: 'spawn_denied',
-        message: `spawn denied for worker '${agentId}': ${admission.reason}`,
-      });
-      return fail(
-        RUN_EXIT_FAILED,
-        'spawn_denied',
-        `spawn denied for worker '${agentId}': ${admission.reason}`,
-        partial(),
-      );
-    }
-    if (admission.outcome === 'queued') {
-      // Review finding F2: this loop is strictly sequential — it awaits each
-      // worker before requesting the next admission — so concurrency is 1 and
-      // no slot is ever contended. A `queued` outcome can therefore only come
-      // from bookkeeping that was never released, and reporting it would tell
-      // an operator that a cap is gating the run when nothing is. The slot is
-      // released as soon as the worker settles (below), so the admission layer
-      // stays truthful if the loop ever becomes concurrent.
-      debug(
-        `admission: worker '${agentId}' queued at position ${admission.position} despite sequential spawn — releasing and proceeding`,
-      );
-      // A queued spawn is the one admission outcome that HAS a parallel
-      // event to record (issue #106, §49.1): the §49.1 tree line carries the
-      // queue depth, and the plain JSON record goes to the trajectory sink
-      // the composition root wires. `wakeups` is empty by construction here:
-      // the sequential loop releases the worker's slot only after it settles
-      // and nothing else is waiting, so the drain has nothing to admit —
-      // naming a wakeup that never happened would be a fabricated record.
-      if (deps.trajectoryEvent !== undefined) {
-        deps.trajectoryEvent(
-          buildParallelTrajectoryEvent({
-            sessionId,
-            ...parallelExtra(),
-            wakeups: [],
-          }),
-        );
-      }
-    }
+    prepared.set(agentId, worktree);
+  }
+
+  const runWorkerOnce = async (
+    agentId: string,
+    worktree: OrchestrateWorktree,
+  ): Promise<WorkerOutcome> => {
     // Create the worker session BEFORE spawning the child (issue #85):
     // `kubic run --session <id>` only attaches, so a child spawned without
     // a session dies at attach (exit 5 "unknown session"). The session is
@@ -1965,8 +1974,6 @@ export async function runOrchestrateCommand(
         worktree,
       });
       if (created === undefined) {
-        const failure = await reapSpawned(spawned);
-        void failure;
         const noHook = `spawn failed for worker '${agentId}': no session-creation hook is wired for session '${workerSessionId}' — a spawned child could only die at attach ("unknown session")`;
         await recordFailure(agentId, worktree, {
           status: 'spawn_failed',
@@ -1974,12 +1981,15 @@ export async function runOrchestrateCommand(
           code: 'spawn_failed',
           message: noHook,
         });
-        return fail(RUN_EXIT_FAILED, 'spawn_failed', noHook, partial());
+        return {
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          code: 'spawn_failed',
+          message: noHook,
+        };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failure = await reapSpawned(spawned);
-      void failure;
       const notCreated = `spawn failed for worker '${agentId}': could not create session '${workerSessionId}': ${message}`;
       await recordFailure(agentId, worktree, {
         status: 'spawn_failed',
@@ -1987,7 +1997,12 @@ export async function runOrchestrateCommand(
         code: 'spawn_failed',
         message: notCreated,
       });
-      return fail(RUN_EXIT_FAILED, 'spawn_failed', notCreated, partial());
+      return {
+        ok: false,
+        exitCode: RUN_EXIT_FAILED,
+        code: 'spawn_failed',
+        message: notCreated,
+      };
     }
     try {
       // The worker runs ITS plan step's prompt (issue #103) — never the
@@ -2022,18 +2037,17 @@ export async function runOrchestrateCommand(
         approvalsRun.endWorker(agentId);
         const termination = raced ?? approvalsRun.takeTermination(agentId);
         if (termination !== undefined) {
-          await reapSpawned(spawned);
           await recordFailure(
             agentId,
             worktree,
             terminationOutcome(termination),
           );
-          return fail(
-            termination.exitCode,
-            termination.code,
-            termination.message,
-            partial(),
-          );
+          return {
+            ok: false,
+            exitCode: termination.exitCode,
+            code: termination.code,
+            message: termination.message,
+          };
         }
       }
       hunksByAgent.set(agentId, [...hunks]);
@@ -2087,16 +2101,14 @@ export async function runOrchestrateCommand(
       // the child's own §78 terminus; that code wins over the generic
       // worker_failed so the run's exit stays 3/4-bound instead of 1-bound.
       if (termination !== undefined) {
-        await reapSpawned(spawned);
-        return fail(
-          termination.exitCode,
-          termination.code,
-          termination.message,
-          partial(),
-        );
+        return {
+          ok: false,
+          exitCode: termination.exitCode,
+          code: termination.code,
+          message: termination.message,
+        };
       }
       const message = error instanceof Error ? error.message : String(error);
-      await reapSpawned(spawned);
       // The child's own approval terminus (issue #105) wins over the generic
       // worker_failed: a worker that denied itself closed on a bounded wait
       // (or on its configured budget) ended on a named approval/budget code,
@@ -2105,12 +2117,12 @@ export async function runOrchestrateCommand(
         error as { approval?: { code: string; exitCode: number } }
       ).approval;
       if (approval !== undefined) {
-        return fail(
-          approval.exitCode,
-          approval.code,
-          `worker '${agentId}': ${message}`,
-          partial(),
-        );
+        return {
+          ok: false,
+          exitCode: approval.exitCode,
+          code: approval.code,
+          message: `worker '${agentId}': ${message}`,
+        };
       }
       // The lifecycle layer names the §78 code for the failure it saw
       // (issue #94): a worker that never became ready is `spawn_failed`,
@@ -2122,19 +2134,205 @@ export async function runOrchestrateCommand(
               | 'spawn_failed'
               | 'worker_failed')
           : 'worker_failed';
-      return fail(
-        RUN_EXIT_FAILED,
-        named,
-        `worker '${agentId}' failed: ${message}`,
-        partial(),
-      );
+      return {
+        ok: false,
+        exitCode: RUN_EXIT_FAILED,
+        code: named,
+        message: `worker '${agentId}' failed: ${message}`,
+      };
     }
+    return { ok: true };
+  };
+
+  // Phase 2: admit every pending worker, then run the admitted ones
+  // concurrently and drain the queue on release. Fail-fast: the first
+  // failed outcome stops the run — siblings still in flight are cancelled
+  // and awaited, never left spending tokens behind it.
+  const finished = new Map<string, WorkerOutcome>();
+  const inFlight = new Map<string, Promise<void>>();
+  const started = new Set<string>();
+  const handled = new Set<string>();
+  const queued = new Set<string>();
+  let denied: { exitCode: number; code: string; message: string } | undefined;
+
+  // One §49.1 trajectory record per admission transition (issue #106): the
+  // queue depth when a spawn is queued (`wakeups` empty — nothing was woken
+  // by a request), and the FIFO wakeup that admitted it (`wakeups` names
+  // exactly the agents this drain admitted, never one that did not move).
+  const recordAdmission = (wakeups: string[]): void => {
+    deps.trajectoryEvent?.(
+      buildParallelTrajectoryEvent({
+        sessionId,
+        ...parallelExtra(),
+        wakeups,
+      }),
+    );
+  };
+
+  const startWorker = (agentId: string): void => {
+    if (started.has(agentId) || finished.has(agentId)) return;
+    const worktree = prepared.get(agentId) as OrchestrateWorktree;
+    started.add(agentId);
+    spawned.push(agentId);
+    const task = (async () => {
+      // `runWorkerOnce` converts every terminus into an outcome; this outer
+      // guard is the belt for a bug in that conversion, so a concurrent
+      // sibling's promise can never reject into an unhandled one.
+      let outcome: WorkerOutcome;
+      try {
+        outcome = await runWorkerOnce(agentId, worktree);
+      } catch (error) {
+        outcome = {
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          code: 'worker_failed',
+          message: `worker '${agentId}' failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      inFlight.delete(agentId);
+      finished.set(agentId, outcome);
+    })();
+    inFlight.set(agentId, task);
+  };
+
+  for (const agentId of state.pending) {
+    const worktree = prepared.get(agentId) as OrchestrateWorktree;
+    // §45 provider caps: the worker's own model pin names the provider its
+    // child will call, so the admission layer judges the right one. A worker
+    // with no pin has no provider to attribute (the scheduler's default).
+    const provider = providerOfModelRef(
+      spawnRoleInfo(agentId, rolePlan).modelRef,
+    );
+    const admission = scheduler.requestSpawn(
+      {
+        agentId,
+        sessionId,
+        worktree: worktree.path,
+        ...(provider === undefined ? {} : { provider }),
+      },
+      'autonomous',
+    );
+    // The admission layer's own numbers, sampled right after the request
+    // (issue #106, §49.1/§50) — the point at which running/queued are the
+    // truth the operator was previously never shown.
+    observeAdmission();
+    if (admission.outcome === 'denied') {
+      const message = `spawn denied for worker '${agentId}': ${admission.reason}`;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_denied',
+        message,
+      });
+      denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+      break;
+    }
+    if (admission.outcome === 'queued') {
+      // A request refused against an EMPTY running set can never be woken by
+      // a release: the cap it exceeds belongs to the request itself (an
+      // aggregate or budget gate), so waiting would hang the run. Refused by
+      // name, before any child exists.
+      if (scheduler.runningCount() === 0) {
+        const message = `spawn denied for worker '${agentId}': queued with no worker running — the admission layer can never admit this spawn (${admission.position} in queue)`;
+        await recordFailure(agentId, worktree, {
+          status: 'spawn_failed',
+          kind: 'process',
+          code: 'spawn_denied',
+          message,
+        });
+        denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+        break;
+      }
+      queued.add(agentId);
+      debug(
+        `admission: worker '${agentId}' queued at position ${admission.position} — waiting for a slot`,
+      );
+      recordAdmission([]);
+      continue;
+    }
+    startWorker(agentId);
+  }
+
+  while (denied === undefined) {
+    let advanced = false;
+    // Settled workers are consumed in AGENT order — deterministic, and the
+    // order the merge phase expects (the enqueue below is one pass over
+    // state.pending).
+    for (const agentId of state.pending) {
+      if (!started.has(agentId) || handled.has(agentId)) continue;
+      if (inFlight.has(agentId)) continue;
+      const outcome = finished.get(agentId);
+      if (outcome === undefined) continue;
+      handled.add(agentId);
+      advanced = true;
+      if (!outcome.ok) {
+        denied = outcome;
+        break;
+      }
+      // Release the slot and start whatever the scheduler's FIFO drain woke.
+      const woken = scheduler.complete(agentId);
+      observeAdmission();
+      const wakeups = woken.filter((id) => !started.has(id));
+      for (const id of wakeups) startWorker(id);
+      if (wakeups.length > 0) recordAdmission(wakeups);
+    }
+    if (denied !== undefined) break;
+    if (inFlight.size > 0) {
+      await Promise.race([...inFlight.values()]);
+      continue;
+    }
+    if (advanced) continue;
+    // Nothing settled and nothing is in flight: every worker either ran, or
+    // the queue holds entries no release can ever wake.
+    const stuck = state.pending.find(
+      (agentId) => queued.has(agentId) && !started.has(agentId),
+    );
+    if (stuck === undefined) break;
+    const worktree = prepared.get(stuck) as OrchestrateWorktree;
+    const message = `spawn denied for worker '${stuck}': queued with no worker left running — the admission layer can never admit this spawn`;
+    await recordFailure(stuck, worktree, {
+      status: 'spawn_failed',
+      kind: 'process',
+      code: 'spawn_denied',
+      message,
+    });
+    denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+  }
+
+  if (denied !== undefined) {
+    // Stop the siblings still in flight before reporting: the run is failing,
+    // so no child may keep spending tokens behind it. `cancelWorker` kills
+    // (the lifecycle layer's reap takes the process group), and the awaited
+    // promises are the ones already in flight — never a worker that had
+    // settled.
+    if (inFlight.size > 0) {
+      for (const agentId of [...inFlight.keys()]) {
+        try {
+          await deps.cancelWorker?.(agentId);
+        } catch (error) {
+          debug(
+            `cancel: worker '${agentId}' could not be stopped — ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      await Promise.all([...inFlight.values()]);
+    }
+    const failure = await reapSpawned(spawned);
+    // A reap error must never mask the failure that stopped the run (#171
+    // owns collecting them all); the primary code still wins.
+    if (failure !== undefined) {
+      debug(`reap: worker '${failure.agentId}' failed — ${failure.message}`);
+    }
+    return fail(denied.exitCode, denied.code, denied.message, partial());
+  }
+
+  // Every pending worker settled: enqueue the candidates in AGENT order, so
+  // the merge order is deterministic whatever the settle order was (issue
+  // #206) and the write-ahead intent still travels with one candidate at a
+  // time.
+  for (const agentId of state.pending) {
+    const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
-    // Release the admission slot now that this worker has settled (review
-    // finding F2: `complete` was never called, so `running` grew unbounded and
-    // every worker past the cap was reported queued — a signal that could not
-    // be true for a loop that awaits each worker before requesting the next).
-    scheduler.complete(agentId);
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
   }
 

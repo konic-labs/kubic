@@ -28,6 +28,9 @@ export interface WorkerListRow {
   /** §51 cancel outcome (issue #249): `settled` (the worker's own shutdown
    *  finished inside its grace) or `forced` (the SIGKILL escalation beat it). */
   cancel?: string;
+  /** The named failure the worker settled on (§82, issue #163): the resource
+   *  code a limit breach carries, or the §52 code of a crash. */
+  failure?: { code: string; message: string };
   startedAtMs: number;
   owner: string;
   resources?: TaskResources;
@@ -138,6 +141,7 @@ export async function runWorkersCommand(
           agentStatus: row.agentStatus,
           ...(row.signal === undefined ? {} : { signal: row.signal }),
           ...(row.cancel === undefined ? {} : { cancel: row.cancel }),
+          ...(row.failure === undefined ? {} : { failure: row.failure }),
           ageMs: now - row.startedAtMs,
           owner: row.owner,
           resources: row.resources,
@@ -158,7 +162,9 @@ export async function runWorkersCommand(
           row.workerId,
           row.agentStatus === undefined
             ? '-'
-            : styleStatus(row.agentStatus, theme),
+            : row.failure === undefined
+              ? styleStatus(row.agentStatus, theme)
+              : `${styleStatus(row.agentStatus, theme)}(${row.failure.code})`,
           row.signal === undefined
             ? styleStatus(row.status, theme)
             : `${styleStatus(row.status, theme)}(${row.signal})`,

@@ -600,6 +600,11 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           platform: process.platform,
           memoryProbe: process.platform !== 'win32',
           diskProbe: process.platform !== 'win32',
+          // No CLI flag or config key sets either limit today: they are
+          // composition-root options for embedders and the TUI. Doctor says
+          // "available but not configured" rather than claiming a cap no
+          // stock run applies.
+          configured: {},
         }),
         // §58 enterprise policy (issue #289): the SAME effective resolution
         // `kubic policy` reports, checked for enforceability. `syslogAvailable:

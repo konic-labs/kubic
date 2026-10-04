@@ -1707,11 +1707,13 @@ terminal the status is coloured (pass green, warn amber, fail red, skip
 grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).
 
-The `limit:resources` line (issue #163, §82) states which per-agent limits
-this build can enforce on this platform — wall clock always, memory (RSS
-sampling via `ps`, POSIX only) and disk (worktree quota via `du`) when their
-probes exist — and names the ones it cannot, so the posture is never read as
-a protection claim.
+The `limit:resources` line (issue #163, §82) states which per-agent limits a
+run actually enforces: wall clock always, memory (RSS sampling via `ps` +
+`--max-old-space-size`, POSIX only) and disk (worktree quota via `du`) only
+when a limit is configured AND its probe exists. It names both sides — the
+limits a stock CLI run does not configure are reported as available but
+unconfigured (there is no flag or config key for them today), never as
+protection the run does not deliver.
 
 ## `kubic workers [--json] [--debug]`
 
@@ -1720,6 +1722,11 @@ Worker list read from the repo's persisted record
 fresh empty registry): one line per worker with the two §13 states, age,
 owner, pid, startup span ms, and resources (`skills=… templates=…`, `-` when
 none).
+
+A row that FAILED also names the code it settled on — `failed(<code>)` in the
+**AGENT** cell and a `failure: {code, message}` field in `--json` (issue
+#163), so a resource stop reads `failed(resource_disk_exceeded)` instead of a
+bare `failed`.
 
 The two states are separate (issue #151). The **AGENT** column is what the
 delegated work did: `starting`, `running`, `waiting` (blocked on an approval

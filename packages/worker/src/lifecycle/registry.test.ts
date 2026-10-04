@@ -78,6 +78,28 @@ describe('worker registry (issue #42)', () => {
     expect(rows[0]?.resources).toEqual({ skills: ['review'] });
   });
 
+  it('names the failure a worker settled on, for `kubic workers` (issue #163)', () => {
+    const { reg } = registry();
+    reg.register({
+      workerId: 'w-1',
+      sessionId: 's-1',
+      generation: 1,
+      owner: 'o',
+    });
+    expect(reg.get('w-1')?.failure).toBeUndefined();
+    reg.recordFailure('w-1', {
+      code: 'resource_disk_exceeded',
+      message: "worker 'w-1' exceeded its worktree disk quota",
+    });
+    expect(reg.get('w-1')?.failure).toEqual({
+      code: 'resource_disk_exceeded',
+      message: "worker 'w-1' exceeded its worktree disk quota",
+    });
+    expect(() =>
+      reg.recordFailure('nope', { code: 'x', message: 'y' }),
+    ).toThrow(/unknown worker/);
+  });
+
   it('drops a reaped worker exactly once', () => {
     const { reg } = registry();
     reg.register({

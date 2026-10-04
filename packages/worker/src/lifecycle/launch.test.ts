@@ -628,6 +628,9 @@ describe('launchWorker §82 resource enforcement (issue #163)', () => {
     expect(await launched.resources()?.poll()).toMatchObject({
       code: 'resource_memory_exceeded',
     });
+    // The breach KILLS the child: the manager's stop reaches the process,
+    // not just the bookkeeping (AC1's first half).
+    await vi.waitFor(() => expect(child.killed()).toBeGreaterThan(0));
     child.exit(137, 'SIGKILL');
     await launched.reap('resource');
     expect(launched.failure()).toMatchObject({

@@ -110,6 +110,48 @@ describe('kubic workers (issue #42)', () => {
     expect(lines[0]).toContain('[\n  {\n    "workerId": "w-1"');
   });
 
+  it('names the failure a FAILED row settled on (issue #163)', async () => {
+    const lines: string[] = [];
+    const failed: WorkerListRow = {
+      ...ROW,
+      agentStatus: 'failed',
+      failure: {
+        code: 'resource_disk_exceeded',
+        message: "worker 'w-1' exceeded its worktree disk quota",
+      },
+    };
+    const code = await runWorkersCommand({}, deps(lines, [failed]));
+    expect(code).toBe(0);
+    // The AGENT cell carries the code, like PROCESS carries its signal.
+    expect(lines[0]?.split('\n')[1]).toContain(
+      'failed(resource_disk_exceeded)',
+    );
+    const jsonLines: string[] = [];
+    const jsonCode = await runWorkersCommand(
+      { json: true },
+      deps(jsonLines, [failed]),
+    );
+    expect(jsonCode).toBe(0);
+    expect(JSON.parse(jsonLines[0] ?? '')).toEqual([
+      {
+        workerId: 'w-1',
+        sessionId: 's-1',
+        generation: 2,
+        status: 'ready',
+        agentStatus: 'failed',
+        failure: {
+          code: 'resource_disk_exceeded',
+          message: "worker 'w-1' exceeded its worktree disk quota",
+        },
+        ageMs: 10_000,
+        owner: 'parent-session',
+        resources: { skills: ['review'] },
+        pid: 4242,
+        startupMs: 40,
+      },
+    ]);
+  });
+
   it('an empty record prints nothing on stdout (`[]` under --json) and says so on stderr', async () => {
     const lines: string[] = [];
     const errs: string[] = [];

@@ -397,6 +397,14 @@ export function launchWorker(
     if (classified.kind !== 'completed' && runFailure === undefined) {
       runFailure = exitFailure(exitCode, detail);
     }
+    // §82 (issue #163): the row names the code the agent FAILED on, so
+    // `kubic workers` reads WHY, not just that it did.
+    if (agent === 'failed' && runFailure !== undefined) {
+      registry.recordFailure(request.workerId, {
+        code: runFailure.code,
+        message: runFailure.message,
+      });
+    }
   };
 
   // §13 settling (issue #151): the run path settles the agent once the §68
@@ -491,6 +499,12 @@ export function launchWorker(
       if (agent !== 'failed') {
         agent = 'failed';
         registry.updateAgentStatus(request.workerId, agent);
+      }
+      if (runFailure !== undefined) {
+        registry.recordFailure(request.workerId, {
+          code: runFailure.code,
+          message: runFailure.message,
+        });
       }
     } else if (cancelling && agent !== 'spawn_failed') {
       if (agent === 'failed' || agent === 'settling') {

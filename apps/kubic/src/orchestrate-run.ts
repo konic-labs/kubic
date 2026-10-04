@@ -2606,12 +2606,18 @@ export async function orchestrateDepsWithDefaults(
     ): Promise<{ from: number; to: number } | undefined> => {
       const crashed = launchedByAgent.get(agentId);
       if (crashed === undefined) return undefined;
+      // §82 (issue #163): a resource stop is the MANAGER's own decision, not
+      // a crash a fresh child can fix — a replacement would start in the same
+      // over-quota worktree and be killed by the first poll. Skip it and say
+      // so, so the retry budget is never spent on predictable churn.
+      const failure = crashed.failure();
       if (
         crashed.agentStatus() !== 'failed' ||
-        crashed.failure()?.kind !== 'process'
+        failure?.kind !== 'process' ||
+        failure.code.startsWith('resource_')
       ) {
         debug(
-          `replace: worker '${agentId}' is not replaceable (agent ${crashed.agentStatus()}, ${crashed.failure()?.kind ?? 'no failure'})`,
+          `replace: worker '${agentId}' is not replaceable (agent ${crashed.agentStatus()}, ${failure?.code ?? 'no failure'})`,
         );
         return undefined;
       }

@@ -42,6 +42,10 @@ export interface WorkerRow {
    *  shutdown finished inside the worker grace, `forced` when the group
    *  SIGKILL escalation beat it. Absent when the worker was never cancelled. */
   cancel?: 'settled' | 'forced';
+  /** The named failure the lifecycle settled this worker on (§82, issue #163):
+   *  a resource breach names the limit that was hit, a crash its §52 code —
+   *  so `kubic workers` says WHY the agent FAILED, not just that it did. */
+  failure?: { code: string; message: string };
   /** The orchestrator process that owns this worker (crash recovery: a
    *  row whose manager is dead is reconciled, see orphans.ts). */
   managerPid?: number;
@@ -60,6 +64,7 @@ interface WorkerEntry {
   startupMs?: number;
   signal?: string;
   cancel?: 'settled' | 'forced';
+  failure?: { code: string; message: string };
 }
 
 export class WorkerRegistry {
@@ -141,6 +146,20 @@ export class WorkerRegistry {
     return this.rowOf(entry);
   }
 
+  /** §82 named failure (issue #163): recorded with the row where the agent
+   *  settles FAILED on a known code. */
+  recordFailure(
+    workerId: string,
+    failure: { code: string; message: string },
+  ): WorkerRow {
+    const entry = this.entries.get(workerId);
+    if (entry === undefined) {
+      throw new Error(`unknown worker: ${workerId}`);
+    }
+    entry.failure = { code: failure.code, message: failure.message };
+    return this.rowOf(entry);
+  }
+
   /** §51 cancel outcome (issue #249): recorded with the row so an operator
    *  can tell a cooperative settle from a forced kill. */
   recordCancel(workerId: string, cancel: 'settled' | 'forced'): WorkerRow {
@@ -206,6 +225,7 @@ export class WorkerRegistry {
       startupMs: entry.startupMs,
       signal: entry.signal,
       cancel: entry.cancel,
+      failure: entry.failure,
     };
   }
 }

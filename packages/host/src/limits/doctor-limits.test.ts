@@ -274,21 +274,40 @@ describe('collectLimitChecks (issue #58)', () => {
 });
 
 describe('resource enforcement posture (§82, issue #163)', () => {
-  it('lists enforced and not-enforced limits, naming both sides', () => {
-    const enforced = resourceEnforcementCheck({
+  it('names the limits a run actually enforces, and warns about the rest', () => {
+    // Availability is not enforcement (issue #163 review): with no configured
+    // cap, a stock run enforces wall clock only — the line says so instead of
+    // claiming protection the run does not deliver.
+    const stock = resourceEnforcementCheck({
       platform: 'darwin',
       memoryProbe: true,
       diskProbe: true,
+      configured: {},
     });
-    expect(enforced).toMatchObject({
+    expect(stock).toMatchObject({
       id: 'limit:resources',
-      status: 'pass',
+      status: 'warn',
       reason: 'ok',
     });
-    expect(enforced.detail).toContain('wall clock');
-    expect(enforced.detail).toContain('memory');
-    expect(enforced.detail).toContain('disk');
-    expect(enforced.detail).not.toContain('NOT enforced');
+    expect(stock.detail).toContain('enforced: wall clock');
+    expect(stock.detail).toContain('NOT enforced: memory');
+    expect(stock.detail).toContain('disk');
+    expect(stock.detail).toContain('no CLI flag/config key sets a cap');
+  });
+
+  it('passes only when every available limit is also configured', () => {
+    const configured = resourceEnforcementCheck({
+      platform: 'darwin',
+      memoryProbe: true,
+      diskProbe: true,
+      configured: { memoryLimitMb: 512, diskQuotaMb: 64 },
+    });
+    expect(configured.status).toBe('pass');
+    expect(configured.detail).toContain(
+      'memory (RSS sampling + --max-old-space-size 512MB)',
+    );
+    expect(configured.detail).toContain('disk (per-worktree quota 64MB)');
+    expect(configured.detail).not.toContain('NOT enforced');
   });
 
   it('warns when a limit cannot be enforced on this platform', () => {
@@ -296,11 +315,15 @@ describe('resource enforcement posture (§82, issue #163)', () => {
       platform: 'win32',
       memoryProbe: false,
       diskProbe: false,
+      configured: { memoryLimitMb: 512, diskQuotaMb: 64 },
     });
     expect(degraded.status).toBe('warn');
+    // A configured cap with no probe is still NOT enforced: the platform
+    // cannot observe it.
     expect(degraded.detail).toContain(
-      'NOT enforced: memory (no RSS probe on win32), disk (no worktree probe on win32)',
+      'NOT enforced: memory (no RSS probe on win32)',
     );
+    expect(degraded.detail).toContain('disk (no worktree probe on win32)');
     expect(degraded.detail).toContain('enforced: wall clock');
   });
 });

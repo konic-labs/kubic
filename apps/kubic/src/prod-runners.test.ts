@@ -204,6 +204,42 @@ describe('kubic doctor: enterprise policy and detection-only (issue #289)', () =
     expect(code).toBe(0);
   });
 
+  it('reports the per-agent resource posture honestly (issue #163)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-163-'));
+    roots.push(root);
+    providerFixture(root, 9104);
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-163-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'gw/m1');
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const config = loadCliConfig({
+      cwd: root,
+      home: root,
+      env: {
+        ...process.env,
+        GW_API_KEY: 'sk-doctor-163-not-a-real-key',
+        KUBIC_MODEL: 'gw/m1',
+        KUBIC_TRUST_PROJECT: '1',
+      },
+    });
+    const { lines, r } = runners();
+    const code = await r.doctor({ json: true }, config);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const resources = report.checks.find(
+      (entry) => entry.id === 'limit:resources',
+    );
+    // The prod builder wires the probe (this test fails if the spread is
+    // dropped) — and the line never claims a cap a stock CLI run does not
+    // apply.
+    expect(resources).toBeDefined();
+    expect(resources?.detail).toContain('enforced: wall clock');
+    expect(resources?.detail).toContain('NOT enforced: memory');
+    expect(resources?.detail).toContain('no CLI flag/config key');
+    expect(code).toBe(0);
+  });
+
   it('a configured [policy] runs the enterprise checks in --json', async () => {
     const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-policy-'));
     roots.push(root);

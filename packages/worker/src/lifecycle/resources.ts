@@ -158,7 +158,10 @@ export function createResourceWatchdog(
     return found;
   };
   const timer = setIntervalFn(() => {
-    void poll();
+    // A probe (or the breach callback) that throws must never become an
+    // unhandled rejection: under Node's default policy that kills the
+    // manager, the one process that must survive the whole run.
+    void poll().catch(() => undefined);
   }, deps.pollMs ?? DEFAULT_RESOURCE_POLL_MS);
   timer.unref?.();
   return {

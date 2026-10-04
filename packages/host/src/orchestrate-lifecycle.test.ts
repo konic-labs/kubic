@@ -333,6 +333,10 @@ describe('prod orchestrate path: workers start through the lifecycle layer (issu
     // regression, so the gate is asserted for the legs it owns and the
     // sample is reported in full).
     expect(perf[0]?.sample.spawnMs).toBeGreaterThanOrEqual(0);
+    // §61 (issue #158): the sample also carries the attach leg as a number —
+    // it was never measured before, so the field is present and real.
+    expect(typeof perf[0]?.sample.attachMs).toBe('number');
+    expect(perf[0]?.sample.attachMs).toBeGreaterThanOrEqual(0);
   });
 
   it('fails a silent child as spawn_failed inside the readiness timeout', async () => {
@@ -761,6 +765,35 @@ describe('prod orchestrate path: §82 resource enforcement (issue #163)', () => 
     expect(h.registry.get('worker-1')).toMatchObject({
       status: 'exiting',
       agentStatus: 'failed',
+      // The row names WHY the agent failed (issue #163 review): `kubic
+      // workers` reads the code, not just the status.
+      failure: { code: 'resource_disk_exceeded' },
     });
+    // The breach really KILLED the child: the pid is gone, not merely
+    // reported as stopped while the fixture sleeps on (AC1's first half).
+    const pid = h.registry.get('worker-1')?.pid;
+    expect(typeof pid).toBe('number');
+    await vi.waitFor(() => expect(processAlive(pid as number)).toBe(false), {
+      timeout: 10_000,
+    });
+  }, 60_000);
+
+  it('does not spend the replacement budget on a resource stop', async () => {
+    // A resource stop is the manager's own decision (issue #163 review): a
+    // replacement would start in the same over-quota worktree and be killed
+    // by the first poll. The generation must stay 1 — the retry budget is
+    // not spent on predictable churn.
+    const h = await harness({ worktreeDiskQuotaMb: 0 });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do the thing EXIT=0 SLEEP=5000',
+        agents: ['worker-1'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    expect(h.registry.get('worker-1')?.generation).toBe(1);
   }, 60_000);
 });

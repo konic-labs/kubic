@@ -1,6 +1,7 @@
 // §82 per-agent resource enforcement (issue #163): the limits a worker
 // actually runs under, not just the estimates admission compares.
 import { describe, expect, it, vi } from 'vitest';
+import type { ResourceBreach } from './resources.js';
 import {
   checkDiskLimit,
   checkMemoryLimit,
@@ -134,5 +135,43 @@ describe('resource limits (§82, issue #163)', () => {
     await vi.waitFor(() => expect(tick).toHaveBeenCalledTimes(1));
     watchdog.stop();
     expect(clear).toHaveBeenCalledWith(timer);
+  });
+});
+
+describe('watchdog robustness (issue #163 review)', () => {
+  it('swallows a throwing probe instead of rejecting out of the interval', async () => {
+    const breaches: ResourceBreach[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    let calls = 0;
+    const watchdog = createResourceWatchdog({
+      limits: { memMb: 100 },
+      probes: {
+        memoryMb: () => {
+          calls += 1;
+          if (calls > 1) throw new Error('probe died');
+          return 50;
+        },
+      },
+      pid: () => 1,
+      worktree: '/tmp/wt',
+      onBreach: (breach) => breaches.push(breach),
+      pollMs: 1,
+    });
+    try {
+      await watchdog.poll();
+      // The interval keeps firing: the second poll throws inside the guard.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      watchdog.stop();
+      // Give any unhandled rejection a turn to surface.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(calls).toBeGreaterThan(1);
+    expect(unhandled).toEqual([]);
   });
 });

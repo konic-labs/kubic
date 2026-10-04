@@ -605,3 +605,46 @@ describe('state permissions (issue #361)', () => {
     expect(check?.detail).toMatch(/private \(0700\) or absent/);
   });
 });
+
+describe('resource enforcement posture wiring (§82, issue #163)', () => {
+  it('adds the limit:resources check when the probe is wired', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      {
+        ...cleanDeps((line: string) => lines.push(line)),
+        resourceEnforcement: () => ({
+          platform: 'darwin',
+          memoryProbe: true,
+          diskProbe: true,
+          configured: {},
+        }),
+      },
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    const resources = report.checks.find(
+      (entry) => entry.id === 'limit:resources',
+    );
+    expect(resources?.status).toBe('warn');
+    expect(resources?.detail).toContain('enforced: wall clock');
+    expect(resources?.detail).toContain('NOT enforced: memory');
+    expect(code).toBe(0);
+  });
+
+  it('leaves the matrix unchanged when the probe is absent (legacy callers)', async () => {
+    const lines: string[] = [];
+    const code = await runDoctorCommand(
+      { json: true },
+      cleanDeps((line: string) => lines.push(line)),
+    );
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string }>;
+    };
+    expect(report.checks.map((entry) => entry.id)).not.toContain(
+      'limit:resources',
+    );
+    expect(code).toBe(0);
+  });
+});

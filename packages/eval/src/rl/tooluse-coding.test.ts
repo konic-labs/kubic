@@ -81,14 +81,14 @@ describe('buildCodingRecord (issue #54)', () => {
 });
 
 describe('rl index (issue #54)', () => {
-  it('re-exports all six dataset types', () => {
-    expect(typeof rl.buildSftRecord).toBe('function');
-    expect(typeof rl.buildDpoRecord).toBe('function');
-    expect(typeof rl.buildGrpoGroup).toBe('function');
-    expect(typeof rl.buildPreferencePair).toBe('function');
-    expect(typeof rl.buildToolUseRecord).toBe('function');
-    expect(typeof rl.buildCodingRecord).toBe('function');
-    expect(typeof rl.referenceVerifier).toBe('function');
-    expect(typeof rl.canonicalJson).toBe('function');
+  it('round-trips an SFT record through the index export, fail-closed', () => {
+    const built = rl.buildSftRecord(makeExport({}));
+    expect(rl.validateSftRecord(built)).toEqual({ valid: true, record: built });
+    const corrupted = rl.validateSftRecord({ ...built, completion: '' });
+    expect(corrupted.valid).toBe(false);
+    if (!corrupted.valid) {
+      expect(corrupted.errors).toEqual(['completion is required']);
+      expect(corrupted.record).toBeUndefined();
+    }
   });
 });

@@ -2,9 +2,23 @@
 // mutation hardening: exact shape assertions so dropped/added suites,
 // flipped stub flags, or a findSuite rewrite cannot survive.
 import { describe, expect, it } from 'vitest';
+import { EVAL_CATEGORIES } from './categories.js';
 import { EVAL_SUITES, findSuite } from './suites.js';
 
 describe('eval suites exact shape (issue #53, §48)', () => {
+  it('covers all eight required categories, in order', () => {
+    expect([...EVAL_CATEGORIES]).toEqual([
+      'swe',
+      'repo-mod',
+      'bugfix',
+      'refactor',
+      'testgen',
+      'review',
+      'terminal',
+      'agentic',
+    ]);
+  });
+
   it('ships exactly eight suites, one per category', () => {
     expect(EVAL_SUITES.map((suite) => suite.id)).toEqual([
       'swe-bench-mini',

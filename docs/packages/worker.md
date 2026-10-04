@@ -185,6 +185,20 @@ The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.
 
+A clipped stream spills its full text by path (issue #182; §27.5):
+`clipStream` bounds each stream to its last `BASH_RESULT_MAX_LINES` (2000,
+pi-durable's `DEFAULT_MAX_LINES`) and its last `BASH_RESULT_MAX_CHARS`
+(64 KiB), writes the untruncated stream through `OpContext.spill` — the
+session-scoped sink the lane builds from its session directory
+(`createSessionSpillSink`, `spill.ts`, one 0600 file per clipped stream under
+`<sessionDir>/spill/`) — and names the path in the header
+(`[kubic: N leading chars dropped — full output: <path>]`) and in
+`BashResult.spillPath`. Because the files live inside the session directory,
+`kubic sessions prune`'s one recursive remove takes them with the session and
+nothing lands in the workspace (where the end-of-run sweep would journal it)
+or in `$TMPDIR`. No sink (tests, journal-free contexts) or a sink that throws
+leaves the header without a path; the call never fails over a spill.
+
 The op also bounds a call in time (issue #339): with no `timeout` the command
 gets `BASH_DEFAULT_TIMEOUT_SEC` (120 s), any timeout is clamped to
 `BASH_MAX_TIMEOUT_SEC` (600 s), and processes the command backgrounded are
@@ -345,7 +359,9 @@ link itself, as before.
 ### Session storage (issue #392)
 
 One pi-durable `Storage` per session, at `<sessions-root>/<id>/` — the same
-directory that already held the journal, spans, approvals posture and lock.
+directory that already held the journal, spans, approvals posture and lock,
+and now the `spill/` directory of issue #182 (bash output too large for the
+model's context window; removed with the session by `kubic sessions prune`).
 The storage is opened over the exec file bridge (`bridgeToPiFileSystem`), not
 through pi-durable's Node entry point: session bytes keep crossing the I/O
 seam, so the #359 secret scrubbing and the #361 file modes apply to the

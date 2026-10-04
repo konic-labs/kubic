@@ -64,6 +64,7 @@ import {
   type ToolExecutionApi,
   type ToolRegistration,
 } from '../pi-boundary.js';
+import type { SpillSink } from '../spill.js';
 import type { OperationKillRegistry } from './abort.js';
 
 export interface KubicToolContext {
@@ -76,6 +77,11 @@ export interface KubicToolContext {
   // record every mutation. Wired by the lane in slice D; absent in tests
   // and journal-free contexts.
   journal?: FileJournalStore;
+  // Session-scoped spill sink (issue #182): when set, a bash stream clipped
+  // for the model's context window is written here in full and the result
+  // names the path. Wired by the lane from its session directory; absent in
+  // tests, where the clip notice names no path.
+  spill?: SpillSink;
 }
 
 // What a tool result records for the UI and the transcript. Unchanged from
@@ -307,6 +313,7 @@ export function kubicToolsToPiTools(
           // their call.
           toolCallId: api.callId,
           journal: context.journal,
+          spill: context.spill,
           signal: callContext.abortSignal,
           trackHandle: (kill) =>
             context.kills.track(String(api.conversationId), kill),

@@ -29,6 +29,14 @@ export interface BashResult {
    */
   truncated: boolean;
   /**
+   * Issue #182: the spill file holding a clipped stream's full text, so the
+   * dropped head stays recoverable by path. Names the stdout spill when
+   * there is one, else the stderr spill; each clipped stream's own notice
+   * names its own file. Absent when nothing was clipped, when the lane gave
+   * the op no sink, or when the spill could not be written.
+   */
+  spillPath?: string;
+  /**
    * Which shell actually executed the command — bash is preferred, sh is
    * the recorded fallback (issue #123).
    */
@@ -177,11 +185,60 @@ function turnNumber(turnId: string): number {
 // result itself should never be the thing that blows it.
 export const BASH_RESULT_MAX_CHARS = 64 * 1024;
 
-function clip(text: string): { text: string; truncated: boolean } {
-  if (text.length <= BASH_RESULT_MAX_CHARS) return { text, truncated: false };
+// …and a line bound on top of it (issue #182; §27.5): pi-durable's
+// `DEFAULT_MAX_LINES` is 2000, and a stream of short lines reaches the char
+// cap with far more than 2000 of them in view. Whichever bound bites first,
+// the TAIL is what stays — and the full stream is spilled by path.
+export const BASH_RESULT_MAX_LINES = 2000;
+
+// The last `maxLines` lines of `text` (all of it when it has fewer). A
+// trailing newline terminates the last line rather than starting an empty
+// one, so 'a\nb\n' with maxLines 1 keeps 'b\n'.
+function tailLines(text: string, maxLines: number): string {
+  let at = text.endsWith('\n') ? text.length - 1 : text.length;
+  for (let seen = 0; seen < maxLines; seen += 1) {
+    const nl = text.lastIndexOf('\n', at - 1);
+    if (nl === -1) return text;
+    at = nl;
+  }
+  return text.slice(at + 1);
+}
+
+interface ClippedStream {
+  text: string;
+  truncated: boolean;
+  spillPath?: string;
+}
+
+/**
+ * Bound one stream to the tail the model sees, and spill the full text when
+ * the lane gave the op a sink (issue #182). A spill that cannot be written
+ * is not a failed call: the notice simply names no path.
+ */
+function clipStream(
+  stream: 'stdout' | 'stderr',
+  text: string,
+  ctx: OpContext,
+): ClippedStream {
+  const byLines = tailLines(text, BASH_RESULT_MAX_LINES);
+  const kept =
+    byLines.length > BASH_RESULT_MAX_CHARS
+      ? byLines.slice(-BASH_RESULT_MAX_CHARS)
+      : byLines;
+  if (kept.length === text.length) return { text, truncated: false };
+  let spillPath: string | undefined;
+  try {
+    spillPath = ctx.spill?.write(stream, text);
+  } catch {
+    spillPath = undefined;
+  }
+  const notice = `[kubic: ${text.length - kept.length} leading chars dropped${
+    spillPath === undefined ? '' : ` — full output: ${spillPath}`
+  }]`;
   return {
-    text: `[kubic: ${text.length - BASH_RESULT_MAX_CHARS} leading chars dropped]\n${text.slice(-BASH_RESULT_MAX_CHARS)}`,
+    text: `${notice}\n${kept}`,
     truncated: true,
+    ...(spillPath === undefined ? {} : { spillPath }),
   };
 }
 
@@ -310,15 +367,20 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     // Clip AFTER abort/timeout handling: the seam already bounded memory;
     // this bound is the model's context window. The registry's
     // never-replay memoization stores the clipped result — consistent
-    // across retries.
-    const out = clip(result.stdout);
-    const err = clip(result.stderr);
+    // across retries. A clipped stream is spilled by path (issue #182), so
+    // the head stays reachable even though the context only carries the
+    // tail; `spillPath` names the stdout spill when there is one, else the
+    // stderr spill (each stream's own notice names its own file).
+    const out = clipStream('stdout', result.stdout, ctx);
+    const err = clipStream('stderr', result.stderr, ctx);
+    const spillPath = out.spillPath ?? err.spillPath;
     return {
       command: args.command,
       exitCode: aborted ? null : result.exitCode,
       stdout: out.text,
       stderr: err.text,
       truncated: out.truncated || err.truncated,
+      ...(spillPath === undefined ? {} : { spillPath }),
       shell: shellName,
       aborted,
       timedOut,

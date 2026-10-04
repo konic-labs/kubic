@@ -36,7 +36,7 @@ workspace.
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
 | `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
+| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | |
 | `git_diff` | `staged?`, `range?`, `path?` | |
 | `git_log` | `max?` (default 20, cap 100), `path?` | |
@@ -225,5 +225,17 @@ restores the CRLF/BOM file exactly as it was.
   workers** (the worker environment allowlist does not carry them; issue
   [#201](https://github.com/konic-labs/kubic/issues/201)), so a worker
   always uses the 120 s / 600 s limits and kills its background jobs.
-- **Output:** each stream keeps its last 64 KiB (`[kubic: N leading chars
-  dropped]` header, `, output truncated` flag).
+- **Output:** each stream keeps its last **64 KiB** and its last **2000
+  lines**, whichever is smaller — the tail is where a failure usually ends,
+  and the head is one read away (issue #182): a clipped stream is written in
+  full to a spill file inside the session directory and the header names it —
+  `[kubic: N leading chars dropped — full output: <path>]` — with the same
+  path on `BashResult.spillPath` (`stdout`'s spill when both streams were
+  clipped; each stream's own header names its own file). The file holds the
+  stream up to the seam's 10 MiB per-stream cap and is removed with the
+  session (`kubic sessions prune`); it is created `0600`, because a command's
+  output can carry secrets. A run whose lane injected no sink (tests, a
+  journal-free context) keeps the `[kubic: N leading chars dropped]` header
+  with no path, and a spill that cannot be written does not fail the call —
+  the header simply names no file. The result also carries
+  `, output truncated`.

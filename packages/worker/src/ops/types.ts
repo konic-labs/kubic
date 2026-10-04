@@ -9,6 +9,7 @@ import type {
   ProcessSnapshot,
 } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
+import type { SpillSink } from '../spill.js';
 
 export type JsonValue =
   | string
@@ -84,6 +85,10 @@ export interface OpContext {
   // Issue #339: bash default/max timeout and background-job policy.
   // Absent ⇒ resolved from the documented KUBIC_BASH_* env overrides.
   bashPolicy?: import('./bash.js').BashPolicy;
+  // Issue #182: where a clipped stream's full text is written. The lane
+  // injects a session-scoped sink; absent (tests, journal-free contexts) the
+  // clip notice simply names no path and the result shape is unchanged.
+  spill?: SpillSink;
 }
 
 export interface InvocationRef {

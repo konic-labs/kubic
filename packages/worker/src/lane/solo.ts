@@ -45,6 +45,7 @@ import {
   type SystemPromptInput,
   type TaskAffinity,
 } from '../prompts.js';
+import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
@@ -378,6 +379,9 @@ export async function bootSoloLane(
     agentId: options.agentId,
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
+    // Issue #182: clipped bash output spills into the session directory, so
+    // it is pruned with the session and never lands in the workspace.
+    spill: createSessionSpillSink(options.session.dir),
   };
   const baseTools = kubicToolsToPiTools(toolContext);
   // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the

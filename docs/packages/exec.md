@@ -167,7 +167,9 @@ Cross-process coordination (issue #337): every mutation — `append`,
 `enforceRetention` (rewrite + blob sweep) — runs under an O_EXCL lock beside
 the index (`journalMutationLockPath`, pid recorded, stale after ten seconds,
 waited for up to five); a nested call is re-entrant, a second process waits,
-and a crashed holder is stolen. The rewrite abandons itself when the index's
+and a crashed holder is stolen. The rewrite samples the index size *before* it reads the index and abandons
+itself (removing its tmp and dropping the byte/age caches, so the next pass
+re-derives truth) when the index's
 size changed between its read and its rename (a writer that does not hold the
 lock), leaving the interleaved line in place and dropping its caches so the
 next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer

@@ -411,7 +411,17 @@ export function withFileLocked<T>(
       // The pid is for observers, not for the lock itself: the O_EXCL create
       // is the mutex. Written after the create so a torn payload can only
       // ever read as stale, never as held.
-      writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
+      try {
+        writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
+      } catch (error) {
+        // A failed pid write (ENOSPC/EIO) must not leak the descriptor or
+        // leave the lock behind: the caller is about to rethrow, and this
+        // process would otherwise hold a lock nobody can steal for staleMs.
+        closeSync(fd);
+        fd = undefined;
+        rmSync(lockPath, { force: true });
+        throw error;
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       try {

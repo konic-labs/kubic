@@ -37,6 +37,9 @@ const hooks = vi.hoisted(() => ({
   // (simulate another process) before the real write happens.
   onWrite: null as null | ((path: string) => void),
   onAppendDurably: null as null | ((path: string) => void),
+  // Called after a read completes (the reader has its content; the world may
+  // change before the caller samples anything else).
+  onReadText: null as null | ((path: string) => void),
 }));
 
 vi.mock('./file-bridge.js', async (importOriginal) => {
@@ -55,6 +58,11 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
           hooks.onAppendDurably?.(path);
           bridge.appendDurably?.(path, content);
         },
+        readTextFile: (path) => {
+          const content = bridge.readTextFile(path);
+          hooks.onReadText?.(path);
+          return content;
+        },
       };
     },
   };
@@ -65,6 +73,7 @@ const roots: string[] = [];
 afterEach(() => {
   hooks.onWrite = null;
   hooks.onAppendDurably = null;
+  hooks.onReadText = null;
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -160,6 +169,52 @@ describe('journal mutation lock (issue #337)', () => {
       'interleaved.txt',
     ]);
     // No tmp litter from the abandoned rewrite.
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual(
+      [],
+    );
+    // Review fix 3: the abandon dropped the caches, so the next pass cannot
+    // prove the bound from a stale under-count — it re-reads the index.
+    let indexReads = 0;
+    hooks.onReadText = (path) => {
+      if (path === indexPath) indexReads += 1;
+    };
+    const next = store.enforceRetention({ maxBytes: 1024 * 1024 });
+    expect(next.entries).toBe(0);
+    expect(indexReads).toBeGreaterThan(0);
+  });
+
+  it('keeps a line appended while the retention pass is reading the index', () => {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, { durable: false });
+    store.append(entry({ path: 'a.txt', after: 'a\n' }));
+    store.append(entry({ path: 'b.txt', after: 'b\n' }));
+    const indexPath = join(dir, 'index.jsonl');
+    // Review fix 2: the size must be sampled BEFORE the read, so an append
+    // that lands inside the read window cannot hide inside the sample. The
+    // hook fires after the reader has its content: `all` does not contain the
+    // line, and only a sample taken earlier can notice it.
+    hooks.onReadText = (path) => {
+      if (path !== indexPath) return;
+      hooks.onReadText = null;
+      appendFileSync(
+        indexPath,
+        `${JSON.stringify({
+          path: 'mid-read.txt',
+          op: 'write',
+          beforeHash: null,
+          afterHash: sha256Hex('m\n'),
+          deltaHash: null,
+          bytesDelta: 2,
+          sessionId: 'other',
+          agentId: 'other',
+          toolCallId: null,
+          timestamp: 1_700_000_002_000,
+        })}\n`,
+      );
+    };
+    const pruned = store.enforceRetention({ maxBytes: 1 });
+    expect(pruned.entries).toBe(0);
+    expect(store.entries().map((e) => e.path)).toContain('mid-read.txt');
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual(
       [],
     );

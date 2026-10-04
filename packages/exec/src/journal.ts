@@ -877,12 +877,17 @@ export class FileJournalStore {
     ) {
       return { entries: 0, bytes: 0, overBound: 0 };
     }
-    const all = this.entries();
-    // Issue #337: the size of the index the pass just read. The rewrite below
-    // is only safe while the file is still that file — a writer that does not
-    // hold the mutation lock (an older build, a hand edit) can append between
-    // the read and the rename, and the rename would drop that line silently.
+    // Issue #337: the size of the index this pass is about to read, sampled
+    // BEFORE the read. The rewrite below is only safe while the file is still
+    // that file — a writer that does not hold the mutation lock (an older
+    // build, a hand edit) can append at any point, and the rename would drop
+    // that line silently. Sampled first so an append that lands during or
+    // after the read always moves the size: sampling after the read would
+    // swallow an append that landed inside it, and the rename would then drop
+    // a line the pass never saw. A false abandon (the line was read and is in
+    // `kept`) only costs the next pass a retry.
     const sizeAtRead = this.indexFileSize(bridge);
+    const all = this.entries();
     // `kept` must not alias `all`: the drop loop shifts entries out of
     // `kept` while `all` stays the pre-drop index for `removed`/`before`.
     let kept = [...all];
@@ -997,6 +1002,12 @@ export class FileJournalStore {
       const sizeNow = this.indexFileSize(bridge);
       if (sizeAtRead !== null && sizeNow !== sizeAtRead) {
         bridge.remove(tmp, false, true);
+        // The caches describe the index this pass read, not the one that just
+        // changed under it: dropping them makes the next pass re-derive truth
+        // instead of proving a bound from a stale under-count.
+        this.trackedBytes = null;
+        this.indexBytes = null;
+        this.oldestTimestamp = null;
         return { entries: 0, bytes: 0, overBound: 0 };
       }
       // Issue #344: the rewrite replaces the journal's whole history, so

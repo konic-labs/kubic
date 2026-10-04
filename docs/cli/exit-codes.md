@@ -1,16 +1,18 @@
 # Exit codes
 
-> Design ref: §78 exit codes. The table below covers all six failure
-> codes (plus 0) and matches the `kubic doctor` fixture behaviour:
+> Design ref: §78 exit codes. The table below covers the failure codes
+> (plus 0) and matches the `kubic doctor` fixture behaviour:
 > clean matrix → 0, provider-down → 6, any other fail → 1,
 > usage error → 2 (verified in `packages/host/src/doctor.test.ts`).
 
-## The six codes (`kubic run` termini)
+## The failure codes
 
 `kubic run` derives its exit code from the settled lane outcome
-(`mapTerminusToExitCode` in `packages/host/src/run-cli.ts`).
-`kubic doctor` exits through the same mapper shape
-(`limitsDoctorExit` in `packages/host/src/limits/doctor-limits.ts`).
+(`mapTerminusToExitCode` in `packages/host/src/run-cli.ts`); codes 0–6 are
+its six §78 termini. `kubic doctor` exits through the same mapper shape
+(`limitsDoctorExit` in `packages/host/src/limits/doctor-limits.ts`). Code 7
+is the delegated-run partial terminus (issue #169): `kubic run` never exits 7,
+because a single lane has no partial outcome to report.
 
 Two signal-driven exits sit outside the six codes, using the POSIX
 convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
@@ -26,6 +28,7 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Orchestrator mode outside a git repository (`kubic orchestrate`, `kubic clean`, `kubic tui --orchestrator` and the bare `kubic --orchestrator` — issue #372), and session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
 | 6 | `provider_probe_failed` / provider-down | The **pre-run probe**: no reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). A provider error **during** the run is not this code: it is exit 1 with `status: provider_transient` or `provider_auth` and the matching `failure.code` (issue #155). Doctor exits 6 when any failing check has reason `provider-down`. |
+| 7 | `partial` (`kubic orchestrate` only) | `--on-failure continue` and at least one worker failed while the run continued: whatever succeeded was merged, the failed workers are named with their own codes in the envelope (`status: "partial"`, `error.code: "partial_failure"`, `workers[].error.details.code`), and the failed ones stay pending for `--resume`. Without `--on-failure continue` a worker failure keeps the all-or-nothing exit 1 (or 3/4 for its own budget/approval terminus). |
 ## Per-command notes
 
 - **Unknown command / subcommand**: the root usage line on stdout,
@@ -141,8 +144,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   cannot tell them apart; read the label. `--json` reports the same code
   in its `exitCode` field. 3 when a worker exhausts its opt-in `--budget`.
   Parse errors (unknown flag, missing value, malformed `--agents` /
-  `--session` / `--budget`) exit 2 before anything runs; every `error:`
-  line is on stderr.
+  `--session` / `--budget` / `--on-failure`) exit 2 before anything runs;
+  every `error:` line is on stderr. 7 only under `--on-failure continue`,
+  when one or more workers failed and the run merged the rest (see the
+  table row above).
 - **`kubic clean`**: 0 success — including `--dry-run` (which mutates
   nothing) and a second run over an already-clean repo
   (`clean: nothing to prune`); 1 a hard failure (a dirty worktree without

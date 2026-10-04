@@ -98,6 +98,7 @@ import {
   RUN_EXIT_APPROVAL_DENIED,
   RUN_EXIT_FAILED,
   RUN_EXIT_OK,
+  RUN_EXIT_PARTIAL_FAILURE,
   RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
@@ -150,6 +151,12 @@ export interface OrchestrateCliOptions {
   // composition root installs it as the scheduler's session override (the
   // admission layer is built there, so the run never builds a second one).
   readonly concurrency?: number;
+  // What a worker's failure does to the RUN (issue #169, §9.2): `stop` (the
+  // default) keeps the all-or-nothing terminus; `continue` keeps the pending
+  // workers running, merges the ones that succeeded and exits 7 with every
+  // failed worker named. Always `stop` for an approval terminus — a denial is
+  // the user's decision for the whole run, never a worker-local hiccup.
+  readonly onFailure?: 'stop' | 'continue';
 }
 
 export class MergeConflictError extends Error {
@@ -813,7 +820,10 @@ export type OrchestrateStatus =
   | 'approval_denied'
   | 'approval_timeout'
   | 'merge_conflict'
-  | 'workspace_unavailable';
+  | 'workspace_unavailable'
+  // Some workers failed while the run continued (issue #169): the merge that
+  // did land is reported, and the failed ones are named with their codes.
+  | 'partial';
 
 export interface OrchestrateEnvelope {
   ok: boolean;
@@ -913,6 +923,9 @@ interface ParsedArgs {
   // This run's admission override (issue #206): absent means the scheduler's
   // own resolution (explicit limits cap > configured maxWorkers > 4) stands.
   concurrency?: number;
+  // This run's worker-failure policy (issue #169). `stop` is the shipped
+  // default; the flag only ever opts INTO continuing.
+  onFailure: 'stop' | 'continue';
 }
 
 // --budget maxToolCalls=10                                  (every worker)
@@ -1130,6 +1143,7 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
     ...(options.concurrency === undefined
       ? {}
       : { concurrency: options.concurrency }),
+    onFailure: options.onFailure ?? 'stop',
   };
 }
 
@@ -1141,6 +1155,9 @@ function statusForExit(exitCode: number, code: string): OrchestrateStatus {
   if (exitCode === RUN_EXIT_WORKSPACE_UNAVAILABLE) {
     return 'workspace_unavailable';
   }
+  // Exit 7 is one code, one terminus (issue #169): the run continued past a
+  // worker failure and merged what it could.
+  if (exitCode === RUN_EXIT_PARTIAL_FAILURE) return 'partial';
   // Exit 4 is one code, two termini (issues #129/#130): a refusal is
   // `approval_denied`; a bounded wait running out is `approval_timeout`.
   // The exit alone cannot tell them apart — the failure CODE names which,
@@ -1654,11 +1671,12 @@ export async function runOrchestrateCommand(
     role: spawnRoleInfo(agentId, rolePlan).role ?? 'worker',
   });
 
-  const partial = (): Pick<
-    OrchestrateEnvelope,
-    'workers' | 'mergeOrder' | 'attribution'
-  > => ({
-    workers: state.agents.map((agentId) => {
+  // One row per agent of the run, in AGENT order whatever order the records
+  // were written in (a resumed retry or a continued failure can upsert later
+  // than its neighbours — issue #169). Shared by every envelope terminus, so
+  // the report, `--json` and the error paths cannot disagree about a worker.
+  const workerRows = (): OrchestrateEnvelope['workers'] =>
+    state.agents.map((agentId) => {
       const record = state.records.find((entry) => entry.agentId === agentId);
       const hunks = hunksByAgent.get(agentId) ?? [];
       const result = resultsByAgent.get(agentId);
@@ -1671,7 +1689,13 @@ export async function runOrchestrateCommand(
         hunks: hunks.length,
         ...(result === undefined ? {} : workerResultView(result)),
       };
-    }),
+    });
+
+  const partial = (): Pick<
+    OrchestrateEnvelope,
+    'workers' | 'mergeOrder' | 'attribution'
+  > => ({
+    workers: workerRows(),
     mergeOrder: [...state.merged],
     attribution: state.records.flatMap((record) =>
       attributeMergedHunks(record.hunks, record.agentId),
@@ -1913,6 +1937,9 @@ export async function runOrchestrateCommand(
   type WorkerOutcome =
     | { ok: true }
     | { ok: false; exitCode: number; code: string; message: string };
+  // One worker's failure, as the driver reports it: the run's terminus under
+  // `stop`, one entry in `partialFailures` under `continue`.
+  type WorkerFailureOutcome = Extract<WorkerOutcome, { ok: false }>;
 
   const spawned: string[] = [];
   {
@@ -2154,7 +2181,31 @@ export async function runOrchestrateCommand(
   const started = new Set<string>();
   const handled = new Set<string>();
   const queued = new Set<string>();
-  let denied: { exitCode: number; code: string; message: string } | undefined;
+  // Worker-level failures the run continued past (issue #169): keyed by
+  // agent, in agent order, each with the named terminus the envelope and the
+  // partial-failure exit report.
+  const partialFailures = new Map<string, WorkerFailureOutcome>();
+  let denied: WorkerFailureOutcome | undefined;
+
+  // A worker-level failure is exactly that unless the run must stop. Under
+  // `--on-failure continue` (issue #169) everything but an approval terminus
+  // keeps the run going: a crash, a spawn failure and an exhausted budget are
+  // the worker's own terminus, never the run's. An approval terminus (exit 4)
+  // is the user's decision for the whole run and stops it either way.
+  const failWorker = (
+    agentId: string,
+    outcome: WorkerFailureOutcome,
+  ): 'stop' | 'continue' => {
+    if (
+      parsed.onFailure === 'continue' &&
+      outcome.exitCode !== RUN_EXIT_APPROVAL_DENIED
+    ) {
+      partialFailures.set(agentId, outcome);
+      return 'continue';
+    }
+    denied = outcome;
+    return 'stop';
+  };
 
   // One §49.1 trajectory record per admission transition (issue #106): the
   // queue depth when a spawn is queued (`wakeups` empty — nothing was woken
@@ -2168,6 +2219,17 @@ export async function runOrchestrateCommand(
         wakeups,
       }),
     );
+  };
+
+  // Release a settled worker's slot, then start whatever the scheduler's FIFO
+  // drain woke — shared by the success and the `continue` failure paths, so a
+  // failed worker frees its slot exactly like a completed one (issue #206).
+  const releaseSlot = (agentId: string): void => {
+    const woken = scheduler.complete(agentId);
+    observeAdmission();
+    const wakeups = woken.filter((id) => !started.has(id));
+    for (const id of wakeups) startWorker(id);
+    if (wakeups.length > 0) recordAdmission(wakeups);
   };
 
   const startWorker = (agentId: string): void => {
@@ -2225,7 +2287,16 @@ export async function runOrchestrateCommand(
         code: 'spawn_denied',
         message,
       });
-      denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+      if (
+        failWorker(agentId, {
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          code: 'spawn_denied',
+          message,
+        }) === 'continue'
+      ) {
+        continue;
+      }
       break;
     }
     if (admission.outcome === 'queued') {
@@ -2241,7 +2312,16 @@ export async function runOrchestrateCommand(
           code: 'spawn_denied',
           message,
         });
-        denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+        if (
+          failWorker(agentId, {
+            ok: false,
+            exitCode: RUN_EXIT_FAILED,
+            code: 'spawn_denied',
+            message,
+          }) === 'continue'
+        ) {
+          continue;
+        }
         break;
       }
       queued.add(agentId);
@@ -2267,15 +2347,13 @@ export async function runOrchestrateCommand(
       handled.add(agentId);
       advanced = true;
       if (!outcome.ok) {
-        denied = outcome;
-        break;
+        if (failWorker(agentId, outcome) === 'stop') break;
+        // The run continues (issue #169): free the failed worker's slot so
+        // the queue keeps draining, and move on to the next settled worker.
+        releaseSlot(agentId);
+        continue;
       }
-      // Release the slot and start whatever the scheduler's FIFO drain woke.
-      const woken = scheduler.complete(agentId);
-      observeAdmission();
-      const wakeups = woken.filter((id) => !started.has(id));
-      for (const id of wakeups) startWorker(id);
-      if (wakeups.length > 0) recordAdmission(wakeups);
+      releaseSlot(agentId);
     }
     if (denied !== undefined) break;
     if (inFlight.size > 0) {
@@ -2297,7 +2375,17 @@ export async function runOrchestrateCommand(
       code: 'spawn_denied',
       message,
     });
-    denied = { exitCode: RUN_EXIT_FAILED, code: 'spawn_denied', message };
+    handled.add(stuck);
+    if (
+      failWorker(stuck, {
+        ok: false,
+        exitCode: RUN_EXIT_FAILED,
+        code: 'spawn_denied',
+        message,
+      }) === 'stop'
+    ) {
+      break;
+    }
   }
 
   if (denied !== undefined) {
@@ -2330,8 +2418,11 @@ export async function runOrchestrateCommand(
   // Every pending worker settled: enqueue the candidates in AGENT order, so
   // the merge order is deterministic whatever the settle order was (issue
   // #206) and the write-ahead intent still travels with one candidate at a
-  // time.
+  // time. A worker the run continued past (issue #169) is never enqueued: it
+  // did not succeed, so there is nothing to merge, and it stays pending for
+  // `--resume` to retry.
   for (const agentId of state.pending) {
+    if (partialFailures.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
@@ -2726,6 +2817,26 @@ export async function runOrchestrateCommand(
   const perAgent = state.records
     .map((record) => `${record.agentId}=${record.hunks.length} hunk(s)`)
     .join(', ');
+  // --- #169 additions --- The partial terminus: workers the run continued
+  // past, in agent order, each with the code it failed on. The envelope is the
+  // ordinary report (whatever merged is reported) plus the named failures and
+  // exit 7 — never a bare exit 1 that hides the work that landed.
+  const failedWorkers = state.agents
+    .filter((agentId) => partialFailures.has(agentId))
+    .map((agentId) => {
+      const outcome = partialFailures.get(agentId) as WorkerFailureOutcome;
+      return { agentId, code: outcome.code, message: outcome.message };
+    });
+  const partialError =
+    failedWorkers.length === 0
+      ? undefined
+      : {
+          kind: 'partial',
+          code: 'partial_failure',
+          message: `orchestrated ${state.records.length} worker(s), merged ${state.merged.length}; failed: ${failedWorkers
+            .map((failure) => `${failure.agentId} (${failure.code})`)
+            .join(', ')}`,
+        };
   const textLines = [
     `${theme.accent('session:')} ${sessionId}`,
     ...state.records.map(
@@ -2741,6 +2852,10 @@ export async function runOrchestrateCommand(
     `merge order: ${state.merged.join(' -> ')}`,
     `attribution: ${perAgent}`,
     ...state.merged.map((agentId) => `${theme.success('merged:')} ${agentId}`),
+    ...failedWorkers.map(
+      (failure) =>
+        `${theme.error('failed:')} ${failure.agentId} code=${failure.code}`,
+    ),
     ...spawned.map((agentId) => `${theme.muted('reaped:')} ${agentId}`),
     // §54: the delegation shape, one line per node/edge of the run's DAG.
     ...delegationGraphLines(sessionId, state.agents).map(
@@ -2759,20 +2874,22 @@ export async function runOrchestrateCommand(
     // §44.1 retained-worktree status (issue #106) — after the run, one line
     // per retained worktree, dirty ones naming their files.
     ...retainedLines,
-    `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+    ...(partialError === undefined
+      ? [
+          `${theme.success('result:')} orchestrated ${state.records.length} worker(s), merged ${state.merged.length}`,
+        ]
+      : [
+          `${theme.error('result:')} orchestrated with ${failedWorkers.length} failed worker(s) — merged ${state.merged.length}, pending ${state.pending.length} (retry with \`--resume --session ${sessionId}\`)`,
+        ]),
   ];
   return emit(
     {
-      ok: true,
-      exitCode: RUN_EXIT_OK,
+      ok: partialError === undefined,
+      exitCode:
+        partialError === undefined ? RUN_EXIT_OK : RUN_EXIT_PARTIAL_FAILURE,
       sessionId,
-      status: 'completed',
-      workers: state.records.map((record) => ({
-        agentId: record.agentId,
-        branch: record.branch,
-        hunks: record.hunks.length,
-        ...(record.result === undefined ? {} : workerResultView(record.result)),
-      })),
+      status: partialError === undefined ? 'completed' : 'partial',
+      workers: workerRows(),
       mergeOrder: [...state.merged],
       attribution,
       graph: delegationGraphLines(sessionId, state.agents),
@@ -2780,6 +2897,7 @@ export async function runOrchestrateCommand(
       // Only present when a status reader is wired: an empty array would
       // claim "no worktree was retained", which is not what happened.
       ...(deps.worktreeStatus === undefined ? {} : { retained }),
+      ...(partialError === undefined ? {} : { error: partialError }),
     },
     textLines,
   );

@@ -57,11 +57,22 @@ function positiveInt(raw: string): number {
   return value;
 }
 
+// The worker-failure policy (issue #169): `stop` is the shipped all-or-nothing
+// default, `continue` keeps the run going and exits 7 with the failures named.
+// An unknown value is a usage error, never a silently ignored flag.
+function failureMode(raw: string): 'stop' | 'continue' {
+  if (raw !== 'stop' && raw !== 'continue') {
+    throw new InvalidArgumentError("Use 'stop' or 'continue'.");
+  }
+  return raw;
+}
+
 const ORCHESTRATE_EXAMPLES = `
 Examples:
   kubic orchestrate -p "add input validation" --agents api,ui
   kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
   kubic orchestrate -p "refactor" --concurrency 4 --agents api,ui,docs,cli
+  kubic orchestrate -p "migrate the modules" --agents a,b,c --on-failure continue
   kubic orchestrate --resume --session orch-1790000000000
   kubic orchestrate -p "refactor" --json
 
@@ -69,7 +80,7 @@ Needs a git repository (it never falls back to solo). Workers run
 concurrently up to --concurrency (default [orchestrator].maxWorkers, else
 4); the rest queue and start as slots free. Exit codes: 0 ok,
 1 run failure, 2 usage or not a git repo, 3 budget exhausted, 4 approval
-denied or timed out.`;
+denied or timed out, 7 partial (--on-failure continue with failed workers).`;
 
 const CLEAN_EXAMPLES = `
 Examples:
@@ -105,6 +116,11 @@ export const registerOrchestratorCommands: CommandRegistrar = (
       '--concurrency <n>',
       'max workers running at once for this run (overrides [orchestrator].maxWorkers)',
       positiveInt,
+    )
+    .option(
+      '--on-failure <mode>',
+      "what one worker's failure does to the run: 'stop' (default) fails the run, 'continue' merges the survivors and exits 7",
+      failureMode,
     )
     .option(
       '--session <id>',

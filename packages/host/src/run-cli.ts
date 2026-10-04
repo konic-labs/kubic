@@ -13,6 +13,7 @@ import {
   EXIT_BUDGET,
   EXIT_FAILED,
   EXIT_OK,
+  EXIT_PARTIAL,
   EXIT_PROVIDER,
   EXIT_USAGE,
   EXIT_WORKSPACE,
@@ -36,6 +37,10 @@ export const RUN_EXIT_BUDGET = EXIT_BUDGET;
 export const RUN_EXIT_APPROVAL_DENIED = EXIT_APPROVAL;
 export const RUN_EXIT_WORKSPACE_UNAVAILABLE = EXIT_WORKSPACE;
 export const RUN_EXIT_PROVIDER_PROBE_FAILED = EXIT_PROVIDER;
+// The delegated-run partial terminus (issue #169): some workers failed while
+// the run continued, so the merge that did land is reported on exit 7 rather
+// than hidden behind a plain failure.
+export const RUN_EXIT_PARTIAL_FAILURE = EXIT_PARTIAL;
 
 export type RunTerminusKind =
   | 'completed'

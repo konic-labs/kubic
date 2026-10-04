@@ -88,6 +88,7 @@ describe('kubic orchestrate (commander)', () => {
         '-p, --prompt <text>',
         '--agents <ids>',
         '--concurrency <n>',
+        '--on-failure <mode>',
         '--session <id>',
         '--resume',
         '--yes',
@@ -181,6 +182,25 @@ describe('kubic orchestrate (commander)', () => {
     expectUsage(
       await run(['orchestrate', '-p', 'x', 'extra']),
       /too many arguments/,
+    );
+  });
+
+  it('carries --on-failure to the runner and refuses an unknown mode (issue #169)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--on-failure',
+      'continue',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toEqual({
+      prompt: 'x',
+      onFailure: 'continue',
+    });
+    expectUsage(
+      await run(['orchestrate', '-p', 'x', '--on-failure', 'retry']),
+      /--on-failure.*'stop' or 'continue'/i,
     );
   });
 

@@ -234,6 +234,13 @@ worker finished first. A worker that fails stops the run (fail-fast); siblings
 still in flight are cancelled through the lifecycle layer before the manager
 returns, so no child keeps spending tokens behind a failed run.
 
+`--on-failure continue` (issue #169) opts out of that all-or-nothing terminus
+for worker-level failures: the run keeps going, merges the workers that
+succeeded, names every failed one with its own §78 code and exits **7**
+(`status: "partial"`); the failed workers stay pending, so `--resume` retries
+exactly them. An approval terminus still stops the run either way — a denial is
+the user's decision for the whole run, never a worker-local hiccup.
+
 There is one approvals surface for the run, not one per worker: concurrent
 workers publish their asks to the same mailbox, each under its own agent scope,
 and each is routed and answered on its own key.

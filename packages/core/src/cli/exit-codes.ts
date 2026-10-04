@@ -12,6 +12,12 @@ export const EXIT_BUDGET = 3;
 export const EXIT_APPROVAL = 4;
 export const EXIT_WORKSPACE = 5;
 export const EXIT_PROVIDER = 6;
+// 7 — a delegated run that continued past one or more failed workers
+// (issue #169, `kubic orchestrate --on-failure continue`): whatever succeeded
+// was merged, the failed workers are named with their own codes, and the run
+// is neither ok (0) nor wholly failed (1). `kubic run` never exits 7 — it has
+// one lane, so there is no partial outcome to report.
+export const EXIT_PARTIAL = 7;
 
 // A bad invocation a command detects itself (after commander parsed argv):
 // throw it from an action and the program prints `error: <message>` and

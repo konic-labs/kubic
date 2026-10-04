@@ -1007,6 +1007,32 @@ export async function orchestrateDepsWithDefaults(
     return root;
   };
 
+  // The approvals identity + mailbox a spawned child (worker OR resolver)
+  // needs to raise an ask the user can answer (issues #105, #149, #156, #159):
+  // the mailbox, the manager's public verification key, the child's bound,
+  // and the two session ids §23 attribution needs — the worker's OWN session
+  // (`<orch>-<agent>`) and the orchestration it belongs to. Absent when the
+  // run carries no approval layer: a child then gets no half-wired surface.
+  const approvalsChildEnv = (
+    childSession: string,
+    orchestrationSession: string,
+  ): Record<string, string> =>
+    approvalsActive === undefined
+      ? {}
+      : {
+          KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
+          // The child accepts an answer only with a matching MAC — the mailbox
+          // directory is one a worker can write, so its contents are bytes
+          // until this key says otherwise (issue #149).
+          KUBIC_APPROVALS_VERIFY_KEY: approvalsActive.verifyKey(),
+          KUBIC_ORCHESTRATOR_SESSION: orchestrationSession,
+          KUBIC_WORKER_SESSION: childSession,
+          // Issue #230: the child's bound, below the manager's.
+          KUBIC_APPROVALS_BOUND_MS: String(
+            workerApprovalBoundMs(approvalsBoundMs),
+          ),
+        };
+
   // Issue #222: a worker child runs in its own worktree, which holds only
   // tracked files — so it is told the manager's repo root and resolves the
   // SAME project models.json (still behind the inherited trust decision).
@@ -1733,30 +1759,10 @@ export async function orchestrateDepsWithDefaults(
             process.env.KUBIC_MODEL !== undefined
               ? {}
               : { KUBIC_MODEL: info.modelRef }),
-            ...(approvalsActive === undefined
-              ? {}
-              : {
-                  KUBIC_APPROVALS_DIR: approvalsActive.mailboxDir(),
-                  // Issue #149: the public half of the run's sealing key. The
-                  // child accepts an answer only with a matching MAC — the
-                  // mailbox directory is one the worker can write, so its
-                  // contents are bytes until this key says otherwise.
-                  KUBIC_APPROVALS_VERIFY_KEY: approvalsActive.verifyKey(),
-                  // Issue #159 (§23): TWO ids, never one. The child is told
-                  // which ORCHESTRATION it belongs to (its ask's ancestry) and
-                  // which session is its OWN (`<orch>-<agent>`, what its ask
-                  // is bound to and what `kubic audit` slices on). Before,
-                  // KUBIC_ORCHESTRATOR_SESSION carried the worker's own
-                  // session and there was no var for the run, so every
-                  // worker's audit row claimed itself as its own parent.
-                  KUBIC_ORCHESTRATOR_SESSION:
-                    info?.sessionId ?? orchestratorSessionId ?? 'orch',
-                  KUBIC_WORKER_SESSION: workerSession,
-                  // Issue #230: the child's bound, below the manager's.
-                  KUBIC_APPROVALS_BOUND_MS: String(
-                    workerApprovalBoundMs(approvalsBoundMs),
-                  ),
-                }),
+            ...approvalsChildEnv(
+              workerSession,
+              info?.sessionId ?? orchestratorSessionId ?? 'orch',
+            ),
             ...modelsRootEnv(),
             // §71 child-side budget (issue #208): ALWAYS written from the
             // resolved plan — set when one exists, cleared otherwise — so an
@@ -2152,6 +2158,11 @@ export async function orchestrateDepsWithDefaults(
                 (entry): entry is [string, string] => entry[1] !== undefined,
               ),
             ),
+            // Issue #156: the resolver is a delegated child too, so it gets
+            // the SAME approval surface its workers got — without this it
+            // raised a challenged call into a mailbox it was never told about
+            // and denied closed, while the docs promised the same rules.
+            ...approvalsChildEnv(workerSession, sessionId),
             ...modelsRootEnv(),
             ...trustEnv(),
           },

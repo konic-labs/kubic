@@ -606,7 +606,11 @@ manager then builds the writer-resolver spec — both diffs, the conflicted file
 list, the implementer tool set, the settlement constraints — from **its own
 live approval snapshot** (the hash is recomputed and the snapshot frozen inside
 the spec, so there is no second policy and no bypass) and spawns a resolver
-child in that worker's worktree. Only a successful **re-merge** settles the
+child in that worker's worktree. The resolver is a delegated child like a
+worker (issue #156): it is launched with the run's approval mailbox and
+identity, its asks are routed to **you** through the same layer, and a refused
+(or unanswered) ask ends that resolution with the denial named in the failure
+line. Only a successful **re-merge** settles the
 candidate: a resolver's report is never taken as the settlement. If the
 resolver cannot settle it, if the re-merge conflicts again, or if the run had
 no snapshot or no resolver seam, the queue stops exactly as before

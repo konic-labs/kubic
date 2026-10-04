@@ -2191,24 +2191,63 @@ export async function runOrchestrateCommand(
     // The manager drives the resolver through the same delegation sequence it
     // drives any worker with (spawn → wait → collect), so the merge-path
     // trace asserted below still describes what the manager actually did.
+    // Issue #156 (§45.2, §41.2): the sequence now includes the approval
+    // surface — the resolver is a delegated child like any other, so its
+    // challenged calls are ROUTED to the user through the run's router (the
+    // same one its workers used) instead of denying closed on a mailbox it was
+    // never told about. The scope names the worktree it reworks and the role
+    // the spec assigned, and a termination ends THIS resolution with the
+    // named denial, so the operator reads it in the merge_conflict note.
+    const resolverApprovals =
+      approvalsRun === undefined
+        ? undefined
+        : {
+            run: approvalsRun,
+            scope: {
+              sessionId,
+              agentId,
+              worktree: worktree.path,
+              role: spec.role,
+            } satisfies WorkerApprovalScope,
+          };
     recordLaneSequence();
+    if (resolverApprovals !== undefined) {
+      resolverApprovals.run.beginWorker(resolverApprovals.scope);
+    }
+    let outcome: ResolverOutcome;
     try {
-      const outcome = await deps.runResolver({
+      outcome = await deps.runResolver({
         agentId,
         worktree: { path: worktree.path, branch: worktree.branch },
         spec,
         prompt: resolverPromptFor(spec),
       });
-      if (outcome.resolved !== true) {
-        debug(
-          `resolution: resolver could not settle '${agentId}' — ${outcome.reason}`,
-        );
-        return { outcome: 'failed', message: outcome.reason };
-      }
     } catch (error) {
+      resolverApprovals?.run.endWorker(agentId);
       const message = error instanceof Error ? error.message : String(error);
       debug(`resolution: resolver failed for '${agentId}' — ${message}`);
       return { outcome: 'failed', message };
+    }
+    if (resolverApprovals !== undefined) {
+      // The settle-time pump is the resolver's last chance to be heard: an ask
+      // that raced its exit is routed now, and the resolver's terminal
+      // outcome is read after every ask has been answered.
+      const raced = await resolverApprovals.run.pump(resolverApprovals.scope);
+      resolverApprovals.run.endWorker(agentId);
+      const termination =
+        raced ?? resolverApprovals.run.takeTermination(agentId);
+      if (termination !== undefined) {
+        debug(
+          `resolution: resolver '${agentId}' ended on ${termination.code} — ${termination.message}`,
+        );
+        return { outcome: 'failed', message: termination.message };
+      }
+    }
+    if (outcome.resolved !== true) {
+      debug(
+        `resolution: resolver could not settle '${agentId}' — ${outcome.reason}`,
+      );
+      return { outcome: 'failed', message: outcome.reason };
     }
     debug(
       `resolved: ${agentId} by a ${spec.role} resolver (${spec.conflict.files.length} conflicted file(s)) — re-merging`,

@@ -155,7 +155,11 @@ describe('config route=deny reaches kubic tui (issue #230)', () => {
         whenBusy: 'reject',
       });
       expect(turn.kind).toBe('completed');
-      const entries = JSON.stringify(await loop.entries(BACKGROUND_CONTEXT));
+      // The route decided: the denial is in the transcript and the seat was
+      // never consulted.
+      expect(JSON.stringify(await loop.entries(BACKGROUND_CONTEXT))).toContain(
+        'denied by policy route',
+      );
       expect(asks).toBe(0);
     } finally {
       await boot.close?.();

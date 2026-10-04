@@ -435,20 +435,6 @@ export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 
 // --- #400 additions ---
 
-// --- #395 additions ---
-// JUSTIFICATION:
-//   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
-//   used by: packages/worker/src/lane/turn.ts (the caller's guard is a
-//     cancellable Context: a derived turn context is cancelled by a wall
-//     clock, a turn count or an interrupt) and apps/kubic/src/
-//     {headless-run,tui-run}.ts (the guard/quit bounds)
-//   why Pi has no alternative: chord's Context IS the cancellation plumbing
-//     every durable call is threaded with (§4, §65); hand-rolling a context
-//     object would not carry the ContextKeys the harness reads and would
-//     bypass chord's listener registration. The parent stays unchanged, so a
-//     per-turn bound never outlives its turn.
-//   review: issue #389 (K5 #395)
-export { withAbortSignal, withCancel } from '@earendil-works/chord/context';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ResetEntry
 //   used by: packages/worker/src/lane/transcript.ts (the shared pi-durable →
@@ -471,3 +457,18 @@ export { withAbortSignal, withCancel } from '@earendil-works/chord/context';
 //     upstream change.
 //   review: issue #391 (K10 #400)
 export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+
+// --- #395 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
+//   used by: packages/worker/src/lane/turn.ts (the caller's guard is a
+//     cancellable Context: a derived turn context is cancelled by a wall
+//     clock, a turn count or an interrupt) and apps/kubic/src/
+//     {headless-run,tui-run}.ts (the guard/quit bounds)
+//   why Pi has no alternative: chord's Context IS the cancellation plumbing
+//     every durable call is threaded with (§4, §65); hand-rolling a context
+//     object would not carry the ContextKeys the harness reads and would
+//     bypass chord's listener registration. The parent stays unchanged, so a
+//     per-turn bound never outlives its turn.
+//   review: issue #389 (K5 #395)
+export { withAbortSignal, withCancel } from '@earendil-works/chord/context';

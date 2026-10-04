@@ -74,7 +74,10 @@ new literals.
 - commander parse failures (unknown option, missing value, bad argument,
   excess operands) exit **2** with commander's one `error: …` line on
   stderr — `exitCodeForParseError` maps them; never commander's default 1.
-- `--help` / `-h` exits 0 on every command; `--version` / `-V` is root-only.
+- `--help` / `-h` exits 0 on every command; commander answers it before
+  any action runs, so a help request is side-effect free — no lane boot, no
+  runtime-exclude write, no extension load (issue #245). `--version` / `-V`
+  is root-only.
 - Throw `CliUsageError(message)` from an action for a semantic usage error
   (exit 2) or `CliExitError(code, message)` for any other documented code:
   the program prints `error: <message>` on stderr and exits with the code.

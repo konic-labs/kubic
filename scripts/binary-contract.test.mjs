@@ -50,6 +50,16 @@ function helpOut(line = ROOT_USAGE_LINE) {
   return ok(`${line}\n`);
 }
 
+// `kubic <command> --help` (issue #245): the command's own usage, exit 0,
+// and no lane-boot receipt anywhere.
+const COMMAND_HELP = new Set(['run', 'tui', 'orchestrate']);
+
+function commandHelpOut(command) {
+  return ok(
+    `Usage: kubic ${command} [options]\n\nOptions:\n  -h, --help  print usage\n`,
+  );
+}
+
 // Bare `kubic`: the identical line, exit 1 — POSIX usage-on-no-args.
 function bareOut(line = ROOT_USAGE_LINE) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
@@ -213,6 +223,9 @@ function fakeRun(overrides = {}) {
     if (args[0] === 'nosuch-command') {
       return overrides.unknown ?? unknownOut();
     }
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
     if (args[0] === 'orchestrate' || args[0] === 'clean') {
       if (opts.cwd === undefined) {
         throw new Error(
@@ -267,6 +280,12 @@ function fakeRun(overrides = {}) {
     if (args[0] === '--help') return overrides.help ?? helpOut();
     if (args[0] === '-h')
       return overrides.shortHelp ?? overrides.help ?? helpOut();
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
+    if (args.length >= 2 && args[1] === '--help' && COMMAND_HELP.has(args[0])) {
+      return overrides[`${args[0]}Help`] ?? commandHelpOut(args[0]);
+    }
     if (args[0] === 'doctor') return overrides.doctor ?? doctorOut();
     if (args[0] === 'run') return overrides.run ?? runOut();
     throw new Error(`unexpected probe: ${args.join(' ')}`);
@@ -1037,6 +1056,44 @@ describe('binary contract --json purity probes (issue #244)', () => {
     });
     assert.ok(
       result.problems.some((p) => /does not name the reason/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+});
+
+describe('binary contract command help probes (issue #245)', () => {
+  it('fails when a command help request boots a lane (extensions receipt)', () => {
+    const result = contractWith({
+      orchestrateHelp: {
+        code: 0,
+        stdout:
+          'extensions: loaded 1 (kubic/budget: budget: none configured)\nUsage: kubic orchestrate [options]\n',
+        stderr: '',
+        error: null,
+      },
+    });
+    assert.ok(
+      result.problems.some((p) => /must not boot a lane/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when a command help request exits non-zero', () => {
+    const result = contractWith({
+      runHelp: { ...commandHelpOut('run'), code: 1 },
+    });
+    assert.ok(
+      result.problems.some((p) => /exited 1 \(expected 0/.test(p)),
+      JSON.stringify(result.problems),
+    );
+  });
+
+  it('fails when a command help request prints the wrong usage', () => {
+    const result = contractWith({
+      tuiHelp: commandHelpOut('doctor'),
+    });
+    assert.ok(
+      result.problems.some((p) => /did not print its usage line/.test(p)),
       JSON.stringify(result.problems),
     );
   });

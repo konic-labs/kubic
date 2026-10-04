@@ -715,15 +715,24 @@ describe('runtime exclude (issue #91, moved order)', () => {
     }
   });
 
-  it('runs the exclude step before the runner, even for a --help argv', async () => {
+  it('a --help argv skips the exclude step (issue #245)', async () => {
     // `kubic run --help` is the command's generated help, not the root's:
-    // the root's help check is argv[0]-only, and the moved order ships the
-    // exclude rules before commander answers (the runner is never reached).
-    const h = harness();
-    expect(await dispatchCommand('run', ['--help'], h.deps)).toBe(0);
-    expect(h.state.excludeCalls).toBe(1);
-    expect(h.calls).toEqual([]);
-    expect(h.lines.join('\n')).toContain('Usage: kubic run');
+    // commander answers it before the action, so the runtime-exclude write
+    // (a repo mutation) must not happen for a help request.
+    for (const command of ['run', 'tui', 'orchestrate']) {
+      for (const flag of ['--help', '-h']) {
+        const h = harness();
+        expect(
+          await dispatchCommand(command, [flag], h.deps),
+          `${command} ${flag}`,
+        ).toBe(0);
+        expect(h.state.excludeCalls, `${command} ${flag}`).toBe(0);
+        expect(h.calls, `${command} ${flag}`).toEqual([]);
+        expect(h.lines.join('\n'), `${command} ${flag}`).toContain(
+          `Usage: kubic ${command}`,
+        );
+      }
+    }
   });
 
   it('ships the configured worktree parent with the runtime prefixes (issue #133)', async () => {

@@ -189,6 +189,34 @@ export function binaryContract({
     }
   }
 
+  // Issue #245: help is side-effect free — commander answers it before any
+  // action, so no lane boot, no repo write and no `extensions:` receipt
+  // around the usage line.
+  for (const command of ['run', 'tui', 'orchestrate']) {
+    const label = `kubic ${command} --help`;
+    const probe = run([command, '--help']);
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 0) {
+      problems.push(
+        `\`${label}\` exited ${probe.code} (expected 0 — help is success, §78)`,
+      );
+    }
+    if (!probe.stdout.includes(`Usage: kubic ${command}`)) {
+      problems.push(
+        `\`${label}\` did not print its usage line (stdout was ${JSON.stringify(probe.stdout.slice(0, 120))})`,
+      );
+    }
+    if (`${probe.stdout}${probe.stderr}`.includes('extensions:')) {
+      problems.push(
+        `\`${label}\` printed an extensions receipt — a help request must not boot a lane`,
+      );
+    }
+  }
+
   const bare = run([]);
   const bareFailed = probeProblems('kubic (no command)', bare);
   if (bareFailed.length > 0) {

@@ -223,9 +223,11 @@ describe('this repo ships the split (issue #91)', () => {
       'utf8',
     );
     // The commander migration keeps the pre-parse step: the state-creating
-    // modes are one named set, checked before the runtime-exclude call.
+    // modes are one named set, checked before the runtime-exclude call —
+    // skipped only for a help request (issue #245: `--help` is side-effect
+    // free, commander answers it before any action).
     const call = dispatch.match(
-      /if \(command !== undefined && STATE_CREATING_COMMANDS\.has\(command\)\) \{\n\s*deps\.ensureRuntimeExclude\(/,
+      /if \(\s*command !== undefined &&\s*STATE_CREATING_COMMANDS\.has\(command\) &&\s*!helpRequested\s*\) \{\n\s*deps\.ensureRuntimeExclude\(/,
     );
     assert.ok(
       call !== null,

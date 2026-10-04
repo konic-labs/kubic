@@ -84,7 +84,9 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   it is the repair path for exactly that refusal.
 - **`kubic --version`**: always 0.
 - **`kubic --help` / `-h`**: always 0 — prints the top-level command
-  listing (the same usage line an unknown command gets).
+  listing (the same usage line an unknown command gets). A command's own
+  `--help` is also 0 and side-effect free: commander answers it before any
+  action runs (issue #245).
 - **Bare `kubic`** (no command) off a TTY: 1, with the identical listing —
   usage-on-no-args is the deliberate POSIX posture, so `--help` and the
   bare invocation differ only in their exit code. On an interactive

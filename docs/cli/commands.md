@@ -40,6 +40,12 @@ exits 1.
 `scripts/binary-contract.mjs` pins both exits and the line itself, so the
 dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 
+**Every command's own `--help`/`-h` is side-effect free** (issue #245):
+commander answers it before the action runs, so `kubic run|tui|orchestrate
+--help` prints that command's usage and exits 0 without booting a lane,
+loading extensions or writing the runtime exclude rules — it works on a
+broken install whose extension bundle would fail the boot.
+
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
 `npm run kubic -- …`); anything else dispatches below; an unknown command
 prints

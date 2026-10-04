@@ -241,6 +241,10 @@ export async function dispatchCommand(
   const command =
     (requested === undefined && interactive) || bareFlag ? 'tui' : requested;
   const args = bareFlag ? [String(requested), ...rest] : rest;
+  // A help request is side-effect free (issue #245): commander answers
+  // `--help`/`-h` before any action, so the trust question and the
+  // runtime-exclude write must not happen for it either.
+  const helpRequested = rest.some((token) => HELP_TOKENS.has(token));
   // Issue #228 (§35.1): the interactive trust gate runs BEFORE the one
   // process-wide config load. Only the interactive TUI path asks; the
   // resolver persists the answer and this same invocation loads on it, so
@@ -249,7 +253,7 @@ export async function dispatchCommand(
   const trust =
     command !== undefined &&
     interactive &&
-    !rest.some((token) => HELP_TOKENS.has(token)) &&
+    !helpRequested &&
     INTERACTIVE_TRUST_COMMANDS.has(command)
       ? await deps.resolveProjectTrust?.()
       : undefined;
@@ -295,7 +299,11 @@ export async function dispatchCommand(
   // (idempotent, fail-open, never dirties a committed .gitignore) — so the
   // first run/orchestrate leaves `git status` clean while `.kubic/roles`
   // and `config.toml` stay trackable. Skipped outside a git repo.
-  if (command !== undefined && STATE_CREATING_COMMANDS.has(command)) {
+  if (
+    command !== undefined &&
+    STATE_CREATING_COMMANDS.has(command) &&
+    !helpRequested
+  ) {
     deps.ensureRuntimeExclude(
       runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
     );

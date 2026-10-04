@@ -1704,12 +1704,18 @@ the verdict line: `benchmark ok|FAILED: <passed>/<executed> suites passed,
 
 Stub suites show as `skipped (stub)` with `success:false`, so they are
 never reported as passing work, and they never count toward the verdict.
-The exit code is:
+Provenance (`--generation`, `--tier`, `--worktree`) is validated once
+before the matrix, so even a stub-only selection cannot skip it. A matrix
+with **no executable suite** (only stubs selected) refuses with
+`error: [no-executable-suites] benchmark: no executable suites selected`
+and exit 2 — it never reports `benchmark ok` over zero evidence. The exit
+code is:
 
 - 0 if every executed suite succeeded
 - 1 if any executed suite failed
 - 2 on usage errors: an unknown suite, missing provenance, a dirty
-  `--workspace worktree`, or a suite that needs the live runner the
+  `--workspace worktree`, a stub-only selection
+  (`no-executable-suites`), or a suite that needs the live runner the
   binary does not ship
 
 The flags are the same as `kubic eval` without `--task` and

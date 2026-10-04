@@ -357,8 +357,8 @@ describe('benchmark command (issue #53)', () => {
     expect(o.lines.join('\n')).toMatch(/swe-bench-mini/);
   });
 
-  it('reports a stub-only run as skipped (success:false) yet exits 0', async () => {
-    const o = out();
+  it('refuses a stub-only matrix instead of reporting ok (issue #264)', async () => {
+    const json = out();
     const exit = await runBenchmarkCommand(
       {
         suite: 'terminal-live',
@@ -368,20 +368,78 @@ describe('benchmark command (issue #53)', () => {
         tier: 'smoke',
         json: true,
       },
+      { ...deps, out: json.write, err: json.err },
+    );
+    expect(exit).toBe(2);
+    expect(json.errs).toEqual([]);
+    expect(JSON.parse(json.lines.join('\n'))).toEqual({
+      ok: false,
+      exitCode: 2,
+      error: {
+        code: 'no-executable-suites',
+        message: 'benchmark: no executable suites selected',
+      },
+    });
+    const text = out();
+    const textExit = await runBenchmarkCommand(
+      {
+        suite: 'agentic-live',
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        tier: 'smoke',
+      },
+      { ...deps, out: text.write, err: text.err },
+    );
+    expect(textExit).toBe(2);
+    expect(text.lines).toEqual([]);
+    expect(text.errs).toEqual([
+      'error: [no-executable-suites] benchmark: no executable suites selected',
+    ]);
+    expect(text.lines.join('\n')).not.toContain('ok');
+  });
+
+  it('validates provenance once before the matrix (issue #264)', async () => {
+    // The stub branch never reached runEvalTask, so the tier check was
+    // skipped entirely and the run exited 0.
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        suite: 'agentic-live',
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        json: true,
+      },
+      { ...deps, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      exitCode: number;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.exitCode).toBe(2);
+    expect(envelope.error.code).toBe('missing-tier');
+    expect(envelope.error.message).toMatch(/tier is required/);
+  });
+
+  it('keeps a mixed matrix green when every executed suite passes (issue #264)', async () => {
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        tier: 'smoke',
+      },
       { ...deps, out: o.write, err: o.err },
     );
     expect(exit).toBe(0);
-    const envelope = JSON.parse(o.lines.join('\n')) as {
-      ok: boolean;
-      results: Array<{ stub: boolean; skipped: boolean; success: boolean }>;
-    };
-    expect(envelope.ok).toBe(true);
-    expect(envelope.results).toHaveLength(1);
-    expect(envelope.results[0]).toMatchObject({
-      stub: true,
-      skipped: true,
-      success: false,
-    });
+    expect(o.lines.at(-1)).toBe(
+      'benchmark ok: 6/6 suites passed, 2 stub(s) skipped',
+    );
   });
 
   it('exits 2 on an invalid --workspace', async () => {

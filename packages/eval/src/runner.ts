@@ -25,6 +25,7 @@ import { findSuite } from './suites.js';
 export type EvalRunnerErrorCode =
   | 'unknown-suite'
   | 'stub-suite'
+  | 'no-executable-suites'
   | 'missing-worktree'
   | 'missing-generation'
   | 'missing-tier'
@@ -111,7 +112,10 @@ function requireTier(tier: string | undefined): EvalTier {
   return tier;
 }
 
-function requireProvenance(options: {
+// Exported for the benchmark path (issue #264): the matrix validates
+// provenance once before it runs anything, so a stub-only selection — which
+// never reaches runEvalTask — cannot skip the check and report `ok`.
+export function checkEvalProvenance(options: {
   worktree: string;
   generation: number;
   tier: string;
@@ -223,7 +227,7 @@ export async function runEvalTask(
       `suite ${JSON.stringify(options.suite)} is a stub — refusing to score unimplemented work`,
     );
   }
-  const tier = requireProvenance(options);
+  const tier = checkEvalProvenance(options);
   requireCleanWorktree(
     options.workspace,
     options.worktree,
@@ -293,7 +297,7 @@ export async function runEvalTrajectory(
   crossCheck('thinking', options.thinking, thinking);
   crossCheck('worktree', options.worktree, worktree);
   crossCheck('generation', options.generation, generation);
-  requireProvenance({ worktree, generation, tier });
+  checkEvalProvenance({ worktree, generation, tier });
   const signals = computeSignals(parsed);
   return toRecord(
     {

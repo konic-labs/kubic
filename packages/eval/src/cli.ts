@@ -16,6 +16,7 @@ import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { EvalRecord } from './records.js';
 import {
+  checkEvalProvenance,
   EvalRunnerError,
   type EvalTaskDeps,
   type EvalWorkspace,
@@ -286,6 +287,18 @@ export async function runBenchmarkCommand(
     log.error(provenance);
     return EVAL_EXIT_USAGE;
   }
+  // Issue #264: validate provenance once, before the matrix. A stub-only
+  // selection never reaches runEvalTask (which owns this check), so without
+  // it `benchmark --suite agentic-live` reported `ok` with no tier or
+  // worktree at all.
+  try {
+    checkEvalProvenance({ ...provenance, tier: parsed.tier });
+  } catch (error) {
+    if (error instanceof EvalRunnerError) {
+      return emitError(deps.out, log, error, parsed.json);
+    }
+    throw error;
+  }
   const selected =
     parsed.suite === undefined
       ? [...EVAL_SUITES]
@@ -346,7 +359,21 @@ export async function runBenchmarkCommand(
       return EVAL_EXIT_USAGE;
     }
   }
-  const allOk = results.filter((r) => !r.skipped).every((r) => r.success);
+  const executed = results.filter((r) => !r.skipped);
+  // Issue #264: a matrix with no executable suite proves nothing — it is a
+  // refusal (exit 2), never `benchmark ok` over an empty run.
+  if (executed.length === 0) {
+    return emitError(
+      deps.out,
+      log,
+      new EvalRunnerError(
+        'no-executable-suites',
+        'benchmark: no executable suites selected',
+      ),
+      parsed.json,
+    );
+  }
+  const allOk = executed.every((r) => r.success);
   const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
   if (parsed.json) {
     deps.out(formatJson({ ok: allOk, exitCode: exit, results }));
@@ -366,7 +393,6 @@ export async function runBenchmarkCommand(
       { fancy: deps.fancy === true, theme },
     ),
   );
-  const executed = results.filter((r) => !r.skipped);
   const verdict = `benchmark ${allOk ? 'ok' : 'FAILED'}: ${executed.filter((r) => r.success).length}/${executed.length} suites passed, ${results.length - executed.length} stub(s) skipped`;
   deps.out(allOk ? theme.success(verdict) : theme.error(verdict));
   return exit;

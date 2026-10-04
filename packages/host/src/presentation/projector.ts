@@ -265,8 +265,10 @@ export class PresentationProjector {
         return;
       }
       default: {
-        // `message-delta` streams into the transcript draft; the lane's
-        // state does not change (the committed entry is the state change).
+        // `message-delta` streams into the transcript draft and `entry`
+        // carries a committed non-assistant entry to the transcript's cells:
+        // neither changes the LANE's state (the lane's own facts are the
+        // status/tools/queue fields folded above).
         return;
       }
     }

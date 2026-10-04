@@ -588,7 +588,10 @@ assistant entry, + `entry`), `fault` (`code`, `message`),
 `retry` (`phase`, `attempt?`, `error?`), `compaction` (`phase`,
 `reason?`), `message-delta` (`text`: the in-flight generation's streamed
 text, issue #296; a whole-message or thinking-only batch maps to nothing),
-and `snapshot` — the attach / late-join / overflow path,
+`entry` (`entry`: a committed non-assistant message end — a user turn, a
+compaction summary, a reset handoff — issue #317, so the transcript folds it
+live), `inbox` (`items`: the conversation's queue, #334), and `snapshot` —
+the attach / late-join / overflow path,
 carrying the committed `entries`, live tools, retry, compactions and
 `pi.usage`; a snapshot REPLACES the consumer's state, it never appends.
 

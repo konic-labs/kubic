@@ -155,9 +155,9 @@ describe('solo commands: unknown flags exit 2', () => {
     });
   }
 
-  it('an unknown sessions subcommand exits 1 like an unknown command', async () => {
+  it('an unknown sessions subcommand exits 2 like any other usage error', async () => {
     const result = await kubic(['sessions', 'bogus']);
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.calls).toEqual([]);
     expect(result.err.join('\n')).toContain("unknown command 'bogus'");
   });

@@ -100,6 +100,7 @@ import {
   RUN_EXIT_OK,
   RUN_EXIT_PROVIDER_PROBE_FAILED,
   RUN_EXIT_USAGE,
+  RUN_EXIT_WORKSPACE_UNAVAILABLE,
   SESSION_ID_PATTERN,
 } from './run-cli.js';
 import type { WorkerListRow } from './workers-cli.js';
@@ -784,7 +785,8 @@ export type OrchestrateStatus =
   | 'usage'
   | 'approval_denied'
   | 'approval_timeout'
-  | 'merge_conflict';
+  | 'merge_conflict'
+  | 'workspace_unavailable';
 
 export interface OrchestrateEnvelope {
   ok: boolean;
@@ -1100,6 +1102,11 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
 function statusForExit(exitCode: number, code: string): OrchestrateStatus {
   if (exitCode === RUN_EXIT_OK) return 'completed';
   if (exitCode === RUN_EXIT_USAGE) return 'usage';
+  // Issue #372: outside a git repository is workspace-unavailable (§78
+  // code 5), its own terminus — never the usage code.
+  if (exitCode === RUN_EXIT_WORKSPACE_UNAVAILABLE) {
+    return 'workspace_unavailable';
+  }
   // Exit 4 is one code, two termini (issues #129/#130): a refusal is
   // `approval_denied`; a bounded wait running out is `approval_timeout`.
   // The exit alone cannot tell them apart — the failure CODE names which,
@@ -1249,15 +1256,22 @@ export async function runOrchestrateCommand(
     return RUN_EXIT_USAGE;
   }
   if (!(await deps.isGitRepo())) {
+    // Issue #372: outside a git repository is §78 code 5
+    // (workspace_unavailable), not the usage code — the invocation is
+    // well-formed, the workspace is not usable for orchestration.
     // --json: the envelope names it (and `fail` logs the one-line code);
     // text: the full refusal with the way out.
     if (parsed.json) {
-      return fail(RUN_EXIT_USAGE, 'not_a_repo', 'not a git repository');
+      return fail(
+        RUN_EXIT_WORKSPACE_UNAVAILABLE,
+        'not_a_repo',
+        'not a git repository',
+      );
     }
     log.error(
       'orchestrator mode needs a git repository — run solo here (`kubic run -p <prompt>`) or retry inside a git checkout (orchestrator never falls back to solo)',
     );
-    return RUN_EXIT_USAGE;
+    return RUN_EXIT_WORKSPACE_UNAVAILABLE;
   }
 
   // Resume: re-attach to the stored session. The stored payload is

@@ -10,13 +10,15 @@
 //
 // Exit codes (docs/cli/exit-codes.md): 0 success (including empty diff and
 // clean dry-run), 2 a usage error (thrown as CliUsageError: bad --session
-// id, conflicting store selectors, bad --max-content-bytes) and `undo`
-// completed with skipped steps; an IO failure propagates (root catch-all,
-// exit 1).
+// id, conflicting store selectors, bad --max-content-bytes), 1 an `undo`
+// that completed with skipped steps (issue #372 — the partial outcome has
+// its own code and never reuses the usage one) or any IO failure
+// (propagated to the root catch-all).
 
 import { basename, dirname, join, sep } from 'node:path';
 import {
   CliUsageError,
+  EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
 } from '../../core/src/cli/exit-codes.js';
@@ -486,9 +488,12 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   // scripts (and humans) can tell "cannot reverse" from "refused because
   // the file changed since" from "a previous undo already unwound it".
   const kinds = result.skippedDetails.map((d) => skipKindOf(d.reason));
-  // One JSON document (or the human report); the exit code is shared: 2
-  // when a real run skipped anything, a dry run always 0.
-  const exit = !dryRun && result.skipped.length > 0 ? EXIT_USAGE : EXIT_OK;
+  // One JSON document (or the human report); the exit code is shared: 1
+  // when a real run skipped anything (issue #372 — a partial undo is a
+  // task outcome, so it keeps the generic failure code and never the
+  // usage code; the structured `skipped` list is the machine-readable
+  // half), a dry run always 0.
+  const exit = !dryRun && result.skipped.length > 0 ? EXIT_FAILED : EXIT_OK;
   if (request.json === true) {
     deps.out(
       formatJson({

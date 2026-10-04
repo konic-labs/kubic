@@ -53,6 +53,24 @@ function bareOut(line = ROOT_USAGE_LINE) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
 }
 
+// An unknown command (issue #372): the root usage line on stdout, exit 2 —
+// a usage error, not commander's own stderr message.
+function unknownOut() {
+  return { code: 2, stdout: `${ROOT_USAGE_LINE}\n`, stderr: '', error: null };
+}
+
+// `kubic orchestrate -p x` / `kubic clean` outside a git repository (issue
+// #372): one named refusal on stderr, exit 5 (workspace unavailable) —
+// never the usage code.
+function nonRepoRefusalOut(what) {
+  return {
+    code: 5,
+    stdout: '',
+    stderr: `error: ${what} — nothing was removed\n`,
+    error: null,
+  };
+}
+
 // The launcher's guard refusal for a stubbed runtime: one named line on
 // stderr, exit 1, nothing on stdout (issue #128).
 function guardRefusal(stub) {
@@ -130,12 +148,28 @@ function fakeRun(overrides = {}) {
       throw new Error(`unexpected node stub: ${stub}`);
     }
     if (args.length === 0) return overrides.bare ?? bareOut();
+    if (args[0] === 'nosuch-command') {
+      return overrides.unknown ?? unknownOut();
+    }
+    if (args[0] === 'orchestrate' || args[0] === 'clean') {
+      if (opts.cwd === undefined) {
+        throw new Error(
+          `the \`${args.join(' ')}\` non-repo probe must run in a non-repo cwd`,
+        );
+      }
+      const refusal = nonRepoRefusalOut(
+        args[0] === 'orchestrate'
+          ? 'orchestrator mode needs a git repository'
+          : '`kubic clean` needs a git repository',
+      );
+      return overrides[args[0]] ?? refusal;
+    }
     if (args[0] === '__crash-probe') {
       // Without the contract's env gate the seam is unreachable (issue
       // #128): the command falls through to the unknown-command path —
-      // the same shape as the bare invocation.
+      // the same shape as any other unknown command (exit 2, issue #372).
       if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
-        return overrides.ungatedCrash ?? bareOut();
+        return overrides.ungatedCrash ?? unknownOut();
       }
       return opts.env?.KUBIC_DEBUG === '1'
         ? (overrides.debugCrash ?? debugCrashOut())
@@ -155,6 +189,7 @@ function contractWith(overrides = {}, options = {}) {
   return binaryContract({
     distPresent: options.distPresent ?? true,
     expectedLine: VERSION_LINE,
+    nonRepoCwd: options.nonRepoCwd ?? '/non-repo',
     run: fakeRun(overrides),
   });
 }
@@ -380,10 +415,71 @@ describe('binary contract failure probes (issue #128)', () => {
 
   it('fails when the seam fires without the env gate (internal-only breach)', () => {
     const result = contractWith({ ungatedCrash: crashOut() });
-    assert.equal(result.problems.length, 2);
-    assert.match(result.problems[0], /without the env gate/);
-    assert.match(result.problems[0], /internal-only/);
-    assert.match(result.problems[1], /without the env gate/);
+    assert.equal(result.problems.length, 3);
+    for (const problem of result.problems) {
+      assert.match(problem, /without the env gate/);
+    }
+    assert.match(result.problems[0], /exited 1 \(expected 2/);
+  });
+});
+
+describe('binary contract unknown-command probe (issue #372)', () => {
+  it('fails when an unknown command exits 1 (the old posture)', () => {
+    const result = contractWith({ unknown: { ...unknownOut(), code: 1 } });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /exited 1 \(expected 2/);
+  });
+
+  it('fails when the unknown-command path writes to stderr', () => {
+    const result = contractWith({
+      unknown: {
+        ...unknownOut(),
+        stderr: "error: unknown command 'nosuch-command'\n",
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected silence/);
+  });
+
+  it('fails when the unknown-command path drops the root usage line', () => {
+    const result = contractWith({ unknown: { ...unknownOut(), stdout: '' } });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /expected the root usage line/);
+  });
+});
+
+describe('binary contract non-repo refusal probes (issue #372)', () => {
+  it('fails when orchestrate outside a git repo exits 2 (the old usage code)', () => {
+    const result = contractWith({
+      orchestrate: {
+        ...nonRepoRefusalOut('orchestrator mode needs a git repository'),
+        code: 2,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(
+      result.problems[0],
+      /kubic orchestrate -p x` exited 2 \(expected 5/,
+    );
+  });
+
+  it('fails when clean outside a git repo exits 2 (the old usage code)', () => {
+    const result = contractWith({
+      clean: {
+        ...nonRepoRefusalOut('`kubic clean` needs a git repository'),
+        code: 2,
+      },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /kubic clean` exited 2 \(expected 5/);
+  });
+
+  it('fails when the refusal does not name the git requirement', () => {
+    const result = contractWith({
+      clean: { code: 5, stdout: '', stderr: 'error: nope\n', error: null },
+    });
+    assert.equal(result.problems.length, 1);
+    assert.match(result.problems[0], /did not name the git requirement/);
   });
 });
 

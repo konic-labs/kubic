@@ -207,7 +207,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
     ).toContain('feature/foreign');
   });
 
-  it('refuses outside a git repo with exit 2 without touching anything', async () => {
+  it('refuses outside a git repo with exit 5 without touching anything', async () => {
     const dir = plainDir();
     writeFileSync(join(dir, 'keep.txt'), 'keep\n');
 
@@ -215,7 +215,7 @@ describe('kubic clean on a scratch repo (issue #92)', () => {
       const { code, lines, errs } = await clean(dir, options);
       expect(lines).toEqual([]);
       const text = errs.join('\n');
-      expect(code).toBe(2);
+      expect(code).toBe(5);
       expect(text).toContain('needs a git repository');
       expect(text).toContain('nothing was removed');
     }

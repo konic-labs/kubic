@@ -41,10 +41,11 @@ exits 1.
 dispatcher and its help cannot drift apart. `kubic --version` exits 0.
 
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
-`npm run kubic -- …`); anything else dispatches below; an unknown command (or
-the bare invocation) prints
+`npm run kubic -- …`); anything else dispatches below; an unknown command
+prints
 `usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>`
-and exits 1. Solo mode runs in-process with your user authority: no
+and exits **2** (a usage error, issue #372), while the bare invocation keeps
+the POSIX usage-on-no-args posture: the identical line, exit 1. Solo mode runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 Orchestrator mode (`orchestrate`) is opt-in — `run` never delegates.
 
@@ -557,7 +558,8 @@ parsed `tests` counts.
 
 Failures print `error: <message> code=<code>` **on stderr** and exit 1
 (session creation, spawn, worker, merge, reap and manager-toolset failures),
-2 (usage, non-git refusal), or 4 (approval denied) — see
+2 (usage), 5 (the non-git refusal — orchestrator mode needs a git
+repository, §78), or 4 (approval denied) — see
 [exit codes](exit-codes.md). stdout carries only the report (or, under
 `--json`, exactly one two-space-indented envelope — the `error:` line still
 goes to stderr, so `kubic orchestrate --json … | jq` always parses). On a
@@ -624,10 +626,10 @@ Exit codes: 0 success (including a dry run and a second idempotent run),
 an unknown `--session`), 2 usage errors (unknown flag, stray operand, a
 missing value, a non-positive `--max-age-ms`/`--max-bytes`, an invalid
 `--session` id, `--all` with `--session` — each refused by the parser before
-anything is planned, one `error: …` line naming the flag) **and** the
+anything is planned, one `error: …` line naming the flag), **and** 5 the
 non-repo refusal — outside a git repo it prints `error: … needs a git
-repository … nothing was removed` and exits 2 without touching anything
-(§78). See [exit codes](exit-codes.md).
+repository … nothing was removed` and exits 5 without touching anything
+(§78, issue #372). See [exit codes](exit-codes.md).
 
 ## `kubic tui [--session <id>] [--role <name>] [--model <provider/id>] [--skill <path>]... [--no-skills] [--orchestrator] [--dangerously-skip-approvals]`
 
@@ -1019,8 +1021,8 @@ Usage errors exit 2 on stderr: a missing subcommand (commander prints the
 subcommand list), an unknown option, a missing value, `attach` without an
 id or with an id outside `[A-Za-z0-9_-]`, a malformed `--tail`,
 `--keep-days` or `--keep-session`, and `--yes` with `--dry-run`. An
-unknown subcommand exits 1 (`error: unknown command '<name>'`), like an
-unknown top-level command. Attaching a missing session exits 1; attaching
+unknown subcommand exits 2 (`error: unknown command '<name>'`), like an
+unknown top-level command (issue #372). Attaching a missing session exits 1; attaching
 a session another process holds live prints the lock refusal (issue #118 —
 the holder's pid and start time are named) and exits 1 without reading
 the transcript. Attaching a session written by Kubic on Pi 0.87 exits 1
@@ -1256,7 +1258,7 @@ Options also take the `--flag=value` form (`--agent=w1`).
 | Subcommand | Meaning |
 | --- | --- |
 | `diff [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). `--path`/`--agent` filter; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). |
-| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy) go to stderr as `warn: …`. `nothing to undo` exits 0. **Exit 2 when any step was skipped** — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy) go to stderr as `warn: …`. `nothing to undo` exits 0. **Exit 1 when any step was skipped** (issue #372 — the partial outcome never reuses the usage code) — three skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find, or a delete-shaped undo whose file was absent pre-undo), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety (issue #108).** Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo

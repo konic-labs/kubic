@@ -15,14 +15,19 @@
 | Code | Terminus / meaning | When you see it |
 | --- | --- | --- |
 | 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
-| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` usage and IO errors; journal IO failures; unknown top-level command. |
-| 2 | `usage` | Bad invocation: `run` without `-p`, missing flag values, invalid `--session` id, unknown flags, `doctor --skip` without a value or with an unknown check id, `undo` with skipped steps — non-reversible, stale, or already-undone (see below). |
+| 1 | `failed` | Run failed without a more specific cause (including a `kubic run` interrupted by `SIGINT`/`SIGTERM`/`SIGHUP` — `run interrupted by <SIGNAL>`, after its in-flight tools were killed); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` IO errors; journal IO failures; an `undo` that restored but skipped steps (issue #372 — the partial outcome has its own code, never the usage one). |
+| 2 | `usage` | Bad invocation: an unknown command or subcommand, unknown flags, missing flag values, an invalid `--session` id, `run` without `-p`, `doctor --skip` without a value or with an unknown check id, a stray operand, `sessions` without a subcommand. |
 | 3 | `budget_exhausted` | The lane settled with a budget-classified error, or a headless `kubic run` hit its wall-clock/turn guard (`--timeout`, default 300000 ms; `--max-turns`). |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
-| 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
+| 5 | `workspace_unavailable` | Orchestrator mode outside a git repository (`kubic orchestrate`, `kubic clean`, `kubic tui --orchestrator` and the bare `kubic --orchestrator` — issue #372), and session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
 | 6 | `provider_probe_failed` / provider-down | No reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). Doctor exits 6 when any failing check has reason `provider-down`. |
 ## Per-command notes
 
+- **Unknown command / subcommand**: the root usage line on stdout,
+  `error: unknown command '<name>'` on stderr for a registered group's
+  bad subcommand, exit 2 (issue #372). The one exception is the bare
+  `kubic` (no command) off a TTY: the identical usage line, exit 1 —
+  POSIX usage-on-no-args, the deliberate scripted posture.
 - **`kubic doctor`**: 0 clean (warns included — `warn` is informational
   and never exit-flipping), 6 on any provider-down fail, 1 on any other
   fail, 2 on usage errors. `--json` reports the same code in its
@@ -32,7 +37,7 @@
   a `--max-content-bytes` that is not a non-negative integer, an extra
   operand, an invalid or conflicting `--session` — with one `error:` line
   on stderr and nothing touched; 1 an unexpected IO failure (root
-  catch-all). `undo` also exits **2** when it restored but skipped steps. Three skip classes reach that code:
+  catch-all). `undo` also exits **1** when it restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
   appended (`unattributed`) whose baseline holds hashes, not pre-images
   (the exception is a path whose pre-image an earlier attributed entry in
@@ -42,7 +47,7 @@
   restoring would destroy unjournaled changes (issue #108; `--force`
   overrides per-invocation); and `already undone (skipped)` — a previous
   undo already unwound the step, nothing is rewritten. In every skipped
-  class the exit is 2 and nothing is written for that step.
+  class the exit is 1 and nothing is written for that step.
 - **`kubic git`**: 0 success (including `log` on a repo with no commits
   yet); 1 an op failure or outside a git repository (one `error:` line on
   stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,
@@ -53,7 +58,7 @@
   a missing `sessions` subcommand, `prune --yes --dry-run`); 1 op
   failure (`models --resolve` failure, a refused config, attaching a
   missing or live-locked session). An unknown `sessions` subcommand exits
-  1 like an unknown top-level command. `sessions prune`: 0 for a dry run
+  2 like an unknown top-level command (issue #372). `sessions prune`: 0 for a dry run
   (including a declined terminal prompt), `nothing to prune`, and a
   completed prune; 1 for a missing keep window (no `--keep-days`, no
   `session.retentionDays`), a malformed sessions root, or a session that
@@ -98,7 +103,7 @@
   (`error: … code=<code>` names it: `spawn_failed`, `worker_failed`,
   `result_invalid` (a worker exited 0 without a valid §68 result report),
   `spawn_denied`, `merge_failed`, `merge_conflict`,
-  `no_orchestrator_state`, `reap_failed`); 2 usage errors and the non-git
+  `no_orchestrator_state`, `reap_failed`); 2 usage errors; 5 the non-git
   refusal (never silently solo); 4 approval denied **or** approval timeout
   — both map to exit 4, and the envelope's `status`, `error.kind` and
   `error.code` all name which: `approval_denied` when the decider is the
@@ -117,7 +122,7 @@
   `--force`, a failing branch delete, an unknown `--session`), with one
   `error:` line per failure and nothing half-disposed (a worktree that
   survived keeps its branch); 2 usage errors (unknown flag, missing or
-  invalid flag value, `--all` with `--session`) and the non-repo refusal
+  invalid flag value, `--all` with `--session`); 5 the non-repo refusal
   (`… needs a git repository … nothing was removed`, nothing touched).
   `--json` emits `{ok, exitCode, dryRun, worktrees, branches, journal,
   failures?}` and reports the same code in `exitCode`.

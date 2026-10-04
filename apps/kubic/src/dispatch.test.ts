@@ -292,10 +292,10 @@ describe('dispatch routing (issue #135)', () => {
     expect(h.calls[0]?.config).toBe(config);
   });
 
-  it('falls through to the usage line for a command outside the table', async () => {
+  it('falls through to the usage line for a command outside the table (usage, exit 2)', async () => {
     const h = harness();
     expect(await dispatchCommand('definitely-not-a-command', [], h.deps)).toBe(
-      1,
+      2,
     );
     expect(h.lines).toEqual([ROOT_USAGE]);
     expect(h.calls).toEqual([]);
@@ -432,18 +432,18 @@ describe('front door (issue #128 behavior, moved)', () => {
     }
   });
 
-  it('an ungated crash probe is just an unknown command', async () => {
+  it('an ungated crash probe is just an unknown command (usage, exit 2)', async () => {
     delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
     const h = harness();
-    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(1);
+    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([ROOT_USAGE]);
     expect(h.calls).toEqual([]);
   });
 
-  it('an unknown root option or `help` is the unknown-command path (usage, exit 1)', async () => {
+  it('an unknown root option or `help` is a usage error (usage, exit 2)', async () => {
     for (const command of ['--bogus', '-x', 'help']) {
       const h = harness();
-      expect(await dispatchCommand(command, [], h.deps), command).toBe(1);
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
       expect(h.lines, command).toEqual([ROOT_USAGE]);
       expect(h.calls, command).toEqual([]);
     }

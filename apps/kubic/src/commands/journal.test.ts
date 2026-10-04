@@ -214,9 +214,9 @@ describe('journal commands: parsed requests reach the runner', () => {
     ]);
   });
 
-  it("the runner's exit code flows back (undo skips exit 2)", async () => {
-    const r = await kubic(['undo'], { journal: () => 2 });
-    expect(r.code).toBe(2);
+  it("the runner's exit code flows back (undo skips exit 1)", async () => {
+    const r = await kubic(['undo'], { journal: () => 1 });
+    expect(r.code).toBe(1);
   });
 
   it('log and status take --session and --json', async () => {

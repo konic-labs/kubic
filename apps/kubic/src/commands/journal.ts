@@ -60,7 +60,8 @@ Examples:
   $ kubic diff --json --max-content-bytes 0   # unclipped JSON`;
 
 const UNDO_HELP = `
-Exit 2 when any step was skipped (non-reversible, stale, already undone).
+Exit 1 when any step was skipped (non-reversible, stale, already undone);
+--json names each skipped path, kind and reason.
 
 Examples:
   $ kubic undo --dry-run          # show what would be restored

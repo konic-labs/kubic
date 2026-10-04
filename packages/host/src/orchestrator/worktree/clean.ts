@@ -19,6 +19,7 @@ import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  EXIT_WORKSPACE,
 } from '../../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../../core/src/cli/logger.js';
 import { formatJson } from '../../../../core/src/cli/output.js';
@@ -73,8 +74,11 @@ export const CLEAN_EXIT_OK = EXIT_OK;
 
 export const CLEAN_EXIT_FAILURE = EXIT_FAILED;
 
-// §78: 2 is usage *and* the non-repo refusal (nothing is mutated either way).
+// §78: 2 is usage; the non-repo refusal is 5 (workspace_unavailable, issue
+// #372) — a well-formed invocation whose workspace cannot run the command.
 export const CLEAN_EXIT_USAGE = EXIT_USAGE;
+
+export const CLEAN_EXIT_WORKSPACE = EXIT_WORKSPACE;
 
 export interface CleanOptions {
   dryRun?: boolean;
@@ -432,8 +436,9 @@ export async function runCleanCommand(
   // (issue #133) — `[orchestrator].root`, `.kubic/wt` by default.
   const worktreeRoot = deps.worktreeRoot;
 
-  // Outside a git repo the refusal is explicit and non-destructive: exit 2
-  // before any list or mutation (§78), never a silent solo-like no-op.
+  // Outside a git repo the refusal is explicit and non-destructive: exit 5
+  // before any list or mutation (§78, issue #372), never a silent
+  // solo-like no-op.
   const repoRoot =
     deps.repoRoot ??
     (await (deps.resolveRepoRoot ?? defaultResolveRepoRoot)(deps.env));
@@ -441,7 +446,7 @@ export async function runCleanCommand(
     log.error(
       '`kubic clean` needs a git repository — it disposes retained `kubic/<session>/<agent>` worktrees and branches only; nothing was removed. Run solo here (`kubic run -p`) or retry inside a git checkout',
     );
-    return CLEAN_EXIT_USAGE;
+    return CLEAN_EXIT_WORKSPACE;
   }
 
   let plan: CleanPlan;
@@ -505,7 +510,7 @@ export async function runCleanCommand(
     if (isWorktreeError(error)) {
       if (error.code === 'not_a_repo') {
         log.error(`${error.message} — nothing was removed`);
-        return CLEAN_EXIT_USAGE;
+        return CLEAN_EXIT_WORKSPACE;
       }
       log.error(error.message);
       return error.exitCode;

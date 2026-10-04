@@ -11,6 +11,10 @@
 // The check order is unchanged: config load → refusal → runtime exclude →
 // usage fallthrough → commander (help, version, crash probe, commands).
 
+import {
+  EXIT_FAILED,
+  EXIT_USAGE,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import { formatVersionLine } from '../../../packages/core/src/license.js';
 import {
   type ModelSelection,
@@ -33,10 +37,11 @@ import {
 } from './config-runtime.js';
 
 // The root dispatcher's usage line (issue #128): one string, printed by
-// `--help`/`-h` (exit 0 — a help request is a successful invocation) and by
-// the bare/unknown-command fallthrough (exit 1 — usage-on-no-args is the
-// deliberate POSIX posture). Both exits are pinned by
-// scripts/binary-contract.mjs; the two paths must never drift apart.
+// `--help`/`-h` (exit 0 — a help request is a successful invocation), by
+// the bare invocation or a bare TUI flag off a TTY (exit 1 — usage-on-no-args
+// is the deliberate POSIX posture), and by an unknown command or root option
+// (exit 2 — a usage error, issue #372). Every path is pinned by
+// scripts/binary-contract.mjs; they must never drift apart.
 export const ROOT_USAGE =
   'usage: kubic <sessions | git | models | diff | undo | log | status | run | orchestrate | clean | tui | doctor | config | trust | workers | eval | benchmark | replay | export | cost | perf | policy | audit>';
 
@@ -183,6 +188,9 @@ const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
 // orchestrator entry — on a TTY it is `kubic tui --orchestrator`; off a TTY
 // it keeps the bare usage + exit 1 posture like the other bare flags.
 const BARE_ORCHESTRATOR_FLAG = '--orchestrator';
+// Issue #295: the bare model pin, `--model <provider/id>` /
+// `--model=<provider/id>`.
+const BARE_MODEL_FLAG = '--model';
 
 export async function dispatchCommand(
   requested: string | undefined,
@@ -202,7 +210,8 @@ export async function dispatchCommand(
   const interactive = deps.isInteractive?.() === true;
   const bareModel =
     requested !== undefined &&
-    (requested === '--model' || requested.startsWith('--model=')) &&
+    (requested === BARE_MODEL_FLAG ||
+      requested.startsWith(`${BARE_MODEL_FLAG}=`)) &&
     interactive;
   const bareSkip = requested === BARE_SKIP_FLAG && interactive;
   const bareOrchestrator = requested === BARE_ORCHESTRATOR_FLAG && interactive;
@@ -261,12 +270,13 @@ export async function dispatchCommand(
       runtimeExcludeEntriesFor(cliConfig.runtime?.orchestrator.root),
     );
   }
-  // Unknown commands and the bare invocation keep the POSIX usage + exit 1
-  // posture pinned by scripts/binary-contract.mjs — decided before commander
-  // parses, so they print the one usage line on stdout rather than
-  // commander's stderr message. Root options (`--help`, `-V`, …) go on to
-  // the parser. The contract crash probe (issue #128) is registered only
-  // under its env gate, so an ungated `__crash-probe` lands here too.
+  // The bare invocation and a bare TUI flag off a TTY keep the POSIX
+  // usage-on-no-args posture (exit 1, issues #128/#308/#327): they are not
+  // bad invocations, they are the documented no-command form. Everything
+  // else that lands here — an unknown command word, an unknown root option,
+  // `help`, the ungated crash probe — is a usage error (exit 2, issue
+  // #372), so scripts can tell it from a task failure. Both print the one
+  // usage line on stdout rather than commander's stderr message.
   const crashProbe = process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1';
   const known =
     command !== undefined &&
@@ -274,8 +284,14 @@ export async function dispatchCommand(
       COMMAND_NAMES.has(command) ||
       (crashProbe && command === CRASH_PROBE));
   if (!known) {
+    const bareOffTty =
+      command === undefined ||
+      command === BARE_SKIP_FLAG ||
+      command === BARE_ORCHESTRATOR_FLAG ||
+      command === BARE_MODEL_FLAG ||
+      command.startsWith(`${BARE_MODEL_FLAG}=`);
     deps.out(ROOT_USAGE);
-    return 1;
+    return bareOffTty ? EXIT_FAILED : EXIT_USAGE;
   }
   const io = { out: deps.out, err: deps.err ?? deps.out };
   const program = createKubicProgram(io, {

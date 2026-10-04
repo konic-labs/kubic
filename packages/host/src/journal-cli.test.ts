@@ -141,7 +141,7 @@ describe('journal CLI (issue #18, slice D)', () => {
     expect(status.join('\n')).toContain('non-repo');
   });
 
-  it('exits 2 on partial undo', async () => {
+  it('exits 1 on partial undo (skips never reuse the usage code)', async () => {
     const { journalDir, root, out } = setup();
     const store = new FileJournalStore(journalDir);
     store.append({
@@ -158,7 +158,7 @@ describe('journal CLI (issue #18, slice D)', () => {
     });
     const lines: string[] = [];
     const deps = { journalDir, root, out: (l: string) => lines.push(l) };
-    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(2);
+    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(1);
     expect(lines.join('\n')).toContain('non-reversible');
     void out;
   });
@@ -189,7 +189,7 @@ describe('journal CLI undo staleness (issue #108)', () => {
     return { journalDir, root };
   }
 
-  it('skips stale steps with a named reason and exits 2, disk untouched', async () => {
+  it('skips stale steps with a named reason and exits 1, disk untouched', async () => {
     const { journalDir, root } = seedStale();
     const lines: string[] = [];
     const code = await runJournalCommand(
@@ -200,7 +200,7 @@ describe('journal CLI undo staleness (issue #108)', () => {
         out: (l) => lines.push(l),
       },
     );
-    expect(code).toBe(2);
+    expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('stale (skipped): stale.txt');
     expect(text).toContain('undo: 0 restored, 1 skipped (1 stale)');
@@ -713,7 +713,8 @@ describe('journal CLI undo record + redo (issue #117)', () => {
       ),
     ).toBe(0);
     const second: string[] = [];
-    // Already-undone skips exit 2 (main's semantics) — and write nothing.
+    // Already-undone skips exit 1 (the documented partial-undo code, never
+    // the usage code) — and write nothing.
     expect(
       await runJournalCommand(
         { command: 'undo' },
@@ -723,7 +724,7 @@ describe('journal CLI undo record + redo (issue #117)', () => {
           out: (l) => second.push(l),
         },
       ),
-    ).toBe(2);
+    ).toBe(1);
     expect(second.join('\n')).toContain('already undone (skipped): a.txt');
     expect(second.join('\n')).not.toContain('restored a.txt');
     expect(new FileJournalStore(journalDir).entries()).toHaveLength(2);
@@ -956,7 +957,7 @@ describe('journal CLI --json parity', () => {
       { command: 'undo', json: true },
       { journalDir, root },
     );
-    expect(again.code).toBe(2);
+    expect(again.code).toBe(1);
     expect(again.doc).toMatchObject({
       restored: [],
       skipped: [{ path: 'a.txt', kind: 'already-undone' }],

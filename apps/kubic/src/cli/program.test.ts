@@ -163,13 +163,13 @@ describe('kubic program (commander contracts)', () => {
     ).rejects.toThrow('boom');
   });
 
-  it('has no implicit `help` command', async () => {
+  it('has no implicit `help` command (it is an unknown command: usage)', async () => {
     const { channels } = io();
     const p = program(channels);
     p.command('demo').action(() => {});
     expect(
       await runKubicProgram(p, ['help'], channels, { code: () => 0 }),
-    ).toBe(1);
+    ).toBe(2);
   });
 });
 

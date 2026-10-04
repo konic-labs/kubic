@@ -375,7 +375,7 @@ describe('kubic clean (issue #45, #92)', () => {
     ]);
   });
 
-  it('refuses outside a git repo with exit 2 and mutates nothing', async () => {
+  it('refuses outside a git repo with exit 5 and mutates nothing', async () => {
     const env = new FakeExecutionEnv({
       'git rev-parse --show-toplevel': {
         exitCode: 128,
@@ -397,7 +397,7 @@ describe('kubic clean (issue #45, #92)', () => {
         },
       },
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(removals).toBe(0);
     // The refusal is a diagnostic: stderr, one logger line, stdout empty.
     expect(lines).toEqual([]);

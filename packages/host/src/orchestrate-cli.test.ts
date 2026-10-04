@@ -198,14 +198,14 @@ describe('orchestrate usage (issue #76)', () => {
   });
 });
 
-describe('orchestrate non-git refusal (issue #76)', () => {
-  it('refuses outside a git repo with exit 2 and never runs solo', async () => {
+describe('orchestrate non-git refusal (issue #76, recoded by #372)', () => {
+  it('refuses outside a git repo with exit 5 and never runs solo', async () => {
     const world = makeWorld({ isGitRepo: () => false });
     const code = await runOrchestrateCommand(
       { prompt: 'do things', agents: ['alpha', 'beta'] },
       world.deps,
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(world.lines).toEqual([]);
     expect(world.errLines).toEqual([
       expect.stringMatching(/^error: orchestrator mode needs a git repository/),
@@ -223,13 +223,17 @@ describe('orchestrate non-git refusal (issue #76)', () => {
       { prompt: 'do things', json: true },
       world.deps,
     );
-    expect(code).toBe(2);
+    expect(code).toBe(5);
     expect(world.lines).toHaveLength(1);
     expect(JSON.parse(world.lines[0] as string)).toMatchObject({
       ok: false,
-      exitCode: 2,
-      status: 'usage',
-      error: { code: 'not_a_repo', message: 'not a git repository' },
+      exitCode: 5,
+      status: 'workspace_unavailable',
+      error: {
+        kind: 'workspace_unavailable',
+        code: 'not_a_repo',
+        message: 'not a git repository',
+      },
     });
     expect(world.errLines).toEqual([
       'error: not a git repository code=not_a_repo',

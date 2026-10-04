@@ -68,8 +68,8 @@ function nonNegative(value: unknown): value is number {
   return typeof value === 'number' && value >= 0;
 }
 
-// Fail-closed gate: worktree/generation/tier missing or malformed means
-// the record is rejected, not stored — the caller must not persist
+// Fail-closed gate: worktree/generation/size/determinism missing or
+// malformed means the record is rejected, not stored — the caller must not persist
 // `record` when `valid` is false (it is absent on that branch).
 export function validateEvalRecord(input: unknown): RecordValidation {
   const errors: string[] = [];

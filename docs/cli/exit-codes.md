@@ -186,7 +186,7 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
 - **`kubic eval`**: 0 a record whose gates pass; 1 a record whose gates
   fail (a red tests/build/lint/typecheck signal, an incomplete run, or an
   unnamed runner failure as `eval-failed`); 2 usage errors and named
-  runner refusals (`error: [<code>] …` — a missing or invalid `--tier`,
+  runner refusals (`error: [<code>] …` — a missing or invalid `--size`,
   `--generation` or `--worktree`, a dirty `--workspace worktree`, a
   `--trajectory` provenance mismatch, an unknown suite, or a stub suite).
   `--json` reports the same code in its `exitCode` field; `ok` is

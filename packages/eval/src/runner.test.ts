@@ -139,7 +139,7 @@ describe('runEvalTask (issue #53)', () => {
     expect(record.tokens).toBe(150);
   });
 
-  it('rejects a run missing worktree/generation/tier instead of storing', async () => {
+  it('rejects a run missing worktree/generation/size instead of storing', async () => {
     await expect(
       runEvalTask(
         {
@@ -508,7 +508,7 @@ describe('runEvalTrajectory (issue #53)', () => {
   });
 
   it('exposes a machine-readable error code', () => {
-    const error = new EvalRunnerError('missing-size', 'tier missing');
+    const error = new EvalRunnerError('missing-size', 'size missing');
     expect(error.exitCode).toBe(2);
     expect(error.toJSON().error.code).toBe('missing-size');
   });
@@ -636,7 +636,7 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
     );
   });
 
-  it('still requires a tier (not recorded in the export)', async () => {
+  it('still requires a size (not recorded in the export)', async () => {
     await expect(
       runEvalTrajectory({ suite: 'swe-bench-mini', trajectory: makeExport() }),
     ).rejects.toMatchObject({ code: 'missing-size' });

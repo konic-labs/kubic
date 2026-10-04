@@ -103,7 +103,7 @@ function consumeTrajectory(run, path, readFile, problems) {
       readFile(path),
       '--suite',
       'bugfix-repro',
-      '--tier',
+      '--size',
       'smoke',
       '--json',
     ],

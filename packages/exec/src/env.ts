@@ -114,6 +114,13 @@ export interface ShellResult {
    * records so `kubic workers` can say SIGKILL rather than 137.
    */
   signal?: string | null;
+  /**
+   * The group SIGKILL escalation fired before the leader settled (issue
+   * #249): the command's own cooperative shutdown did not finish inside the
+   * kill grace, so it was forced. Absent when no kill was requested or the
+   * leader settled on the SIGTERM alone.
+   */
+  forced?: boolean;
   stdout: string;
   stderr: string;
   provenance: Provenance;
@@ -650,6 +657,8 @@ class NodeShell implements Shell {
     const outDec = new StringDecoder('utf8');
     const errDec = new StringDecoder('utf8');
     let settled = false;
+    // Issue #249: did the SIGKILL escalation beat the leader's own settle?
+    let forced = false;
     const snapshot = (): ProcessSnapshot => ({
       stdout: stdoutAcc.peek(),
       stderr: stderrAcc.peek(),
@@ -754,6 +763,7 @@ class NodeShell implements Shell {
         const result: ShellResult = {
           exitCode: leaderExit ?? 1,
           ...(leaderSignal === null ? {} : { signal: leaderSignal }),
+          ...(forced ? { forced: true } : {}),
           stdout: stdoutAcc.final(),
           stderr: stderrAcc.final(),
           provenance: options.provenance,
@@ -824,6 +834,9 @@ class NodeShell implements Shell {
         // keepBackground).
         if (!leaderAlive(pid)) return;
         const timer = setTimeout(() => {
+          // The leader is still up when the grace elapses: its cooperative
+          // shutdown did not finish, so this is a FORCED kill (issue #249).
+          if (!settled) forced = true;
           if (process.platform !== 'win32') {
             try {
               process.kill(-pid, 'SIGKILL');

@@ -175,6 +175,13 @@ export interface OrchestrateRunOptions {
   /** Wall-clock bound handed to each child `kubic run` (issue #94). */
   workerTimeoutMs?: number;
   /**
+   * §51 cancellation grace (issue #249) handed to the lifecycle layer: how
+   * long a worker's own cooperative shutdown gets after SIGTERM before the
+   * group SIGKILL escalation. Absent uses the lifecycle default (10 s), which
+   * is deliberately longer than the 2 s tool grace.
+   */
+  workerCancelGraceMs?: number;
+  /**
    * How the resolver child is reached (issue #106, §45.2). Defaults to
    * `workerEntry` — the resolver IS a `kubic run` child, so a test that
    * scripts a resolver fixture sets this; prod leaves it unset and the entry
@@ -1880,6 +1887,11 @@ export async function orchestrateDepsWithDefaults(
           ...(options.readyTimeoutMs === undefined
             ? {}
             : { readyTimeoutMs: options.readyTimeoutMs }),
+          // §51 cancellation grace (issue #249): the worker's own settle is
+          // not a tool call, so it gets its own (longer) grace.
+          ...(options.workerCancelGraceMs === undefined
+            ? {}
+            : { cancelGraceMs: options.workerCancelGraceMs }),
           worktreeMs: (() => {
             const started = worktreeStartedAt.get(agentId);
             return started === undefined ? undefined : Date.now() - started;
@@ -2314,6 +2326,11 @@ export async function orchestrateDepsWithDefaults(
           ...(options.readyTimeoutMs === undefined
             ? {}
             : { readyTimeoutMs: options.readyTimeoutMs }),
+          // §51 cancellation grace (issue #249): the worker's own settle is
+          // not a tool call, so it gets its own (longer) grace.
+          ...(options.workerCancelGraceMs === undefined
+            ? {}
+            : { cancelGraceMs: options.workerCancelGraceMs }),
         },
         {
           shell: shellForWorktree(request.worktree.path),

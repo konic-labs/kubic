@@ -40,6 +40,12 @@ export function allowlistedShell(inner: Shell): WorkerShell {
         ...(options.checkpointStore === undefined
           ? {}
           : { checkpointStore: options.checkpointStore }),
+        // §51 cancellation grace (issue #249): the worker's own settle needs
+        // a longer grace than the tool bound, and the wrapper must carry it
+        // through to the exec seam or the child is SIGKILLed at 2 s.
+        ...(options.killGraceMs === undefined
+          ? {}
+          : { killGraceMs: options.killGraceMs }),
       };
       return inner.spawn(
         'env',

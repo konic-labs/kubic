@@ -38,6 +38,10 @@ export interface WorkerRow {
   /** The signal the worker process died from (issue #151), when it was
    *  signalled — the name behind the 128+n exit code. */
   signal?: string;
+  /** §51 cancel outcome (issue #249): `settled` when the child's cooperative
+   *  shutdown finished inside the worker grace, `forced` when the group
+   *  SIGKILL escalation beat it. Absent when the worker was never cancelled. */
+  cancel?: 'settled' | 'forced';
   /** The orchestrator process that owns this worker (crash recovery: a
    *  row whose manager is dead is reconciled, see orphans.ts). */
   managerPid?: number;
@@ -55,6 +59,7 @@ interface WorkerEntry {
   pid?: number;
   startupMs?: number;
   signal?: string;
+  cancel?: 'settled' | 'forced';
 }
 
 export class WorkerRegistry {
@@ -113,6 +118,7 @@ export class WorkerRegistry {
     entry.pid = undefined;
     entry.startupMs = undefined;
     entry.signal = undefined;
+    entry.cancel = undefined;
     return this.rowOf(entry);
   }
 
@@ -132,6 +138,17 @@ export class WorkerRegistry {
       throw new Error(`unknown worker: ${workerId}`);
     }
     entry.agentStatus = status;
+    return this.rowOf(entry);
+  }
+
+  /** §51 cancel outcome (issue #249): recorded with the row so an operator
+   *  can tell a cooperative settle from a forced kill. */
+  recordCancel(workerId: string, cancel: 'settled' | 'forced'): WorkerRow {
+    const entry = this.entries.get(workerId);
+    if (entry === undefined) {
+      throw new Error(`unknown worker: ${workerId}`);
+    }
+    entry.cancel = cancel;
     return this.rowOf(entry);
   }
 
@@ -188,6 +205,7 @@ export class WorkerRegistry {
       pid: entry.pid,
       startupMs: entry.startupMs,
       signal: entry.signal,
+      cancel: entry.cancel,
     };
   }
 }

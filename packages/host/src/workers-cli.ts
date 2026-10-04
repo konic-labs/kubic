@@ -25,6 +25,9 @@ export interface WorkerListRow {
   agentStatus?: string;
   /** The signal the process died from, when it was signalled (issue #151). */
   signal?: string;
+  /** §51 cancel outcome (issue #249): `settled` (the worker's own shutdown
+   *  finished inside its grace) or `forced` (the SIGKILL escalation beat it). */
+  cancel?: string;
   startedAtMs: number;
   owner: string;
   resources?: TaskResources;
@@ -134,6 +137,7 @@ export async function runWorkersCommand(
           status: row.status,
           agentStatus: row.agentStatus,
           ...(row.signal === undefined ? {} : { signal: row.signal }),
+          ...(row.cancel === undefined ? {} : { cancel: row.cancel }),
           ageMs: now - row.startedAtMs,
           owner: row.owner,
           resources: row.resources,

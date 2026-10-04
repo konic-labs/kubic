@@ -12,6 +12,12 @@ export interface RawExit {
   code: number | null;
   signal: string | null;
   leakedHandles: number;
+  /**
+   * The group SIGKILL escalation beat the child's own cooperative shutdown
+   * (issue #249): the cancel was FORCED, not settled. Absent means the child
+   * settled on the SIGTERM alone (or no kill was requested).
+   */
+  forced?: boolean;
 }
 
 export interface ExitReport extends RawExit {
@@ -37,6 +43,7 @@ export function reportExit(raw: RawExit): ExitReport {
     code: raw.code,
     signal: raw.signal,
     leakedHandles: raw.leakedHandles,
+    ...(raw.forced === true ? { forced: true } : {}),
     kind: classified.kind,
     status: classified.status,
   };
@@ -45,7 +52,11 @@ export function reportExit(raw: RawExit): ExitReport {
 export interface ReapTarget {
   workerId: string;
   kill: () => void;
-  wait: () => Promise<{ code: number | null; signal?: string | null }>;
+  wait: () => Promise<{
+    code: number | null;
+    signal?: string | null;
+    forced?: boolean;
+  }>;
   leakedHandles?: number;
   cancelled?: boolean;
 }
@@ -84,6 +95,7 @@ export function reapDetached(
       code: done.code,
       signal: done.signal ?? null,
       leakedHandles: target.leakedHandles ?? 0,
+      ...(done.forced === true ? { forced: true } : {}),
       kind: classified.kind,
       status: classified.status,
     };
@@ -101,10 +113,13 @@ export function reapDetached(
       });
       const outcome = await Promise.race([drained, timeout]);
       if ('timedOut' in outcome) {
+        // The child never settled inside the teardown budget: whatever it
+        // was doing, the cancel was forced (issue #249).
         return {
           code: null,
           signal: null,
           leakedHandles: target.leakedHandles ?? 0,
+          forced: true,
           kind: 'timeout',
           status: 'timeout',
           timedOut: true,

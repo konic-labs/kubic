@@ -10,6 +10,13 @@
 // classify a failed child through the §52 failure codes, and reap through the
 // teardown budget. `kubic workers` reads the rows this writes.
 
+// §51 cancellation grace (issue #249): a worker is not a tool call. Its
+// SIGTERM handler runs a durable abort, a kill-registry drain and a reconcile
+// sweep, which the 2 s KILL_GRACE_MS cuts off mid-flight; the worker grace is
+// the longer bound, and a cancel that still had to escalate is recorded as
+// `forced` on the row.
+export const DEFAULT_WORKER_CANCEL_GRACE_MS = 10_000;
+
 // §13 (issue #151): the launcher owns BOTH vocabularies. The process phase is
 // the child's own state (spawning → ready → exiting); the agent state is what
 // the delegated work did. An exit settles the agent only as far as the exit
@@ -30,7 +37,7 @@ import { summarizeUsage } from '../usage.js';
 import type { PerfGateResult, PerfSample } from './budgets.js';
 import { checkPerfGate } from './budgets.js';
 import type { ExitReport } from './reap.js';
-import { reapDetached } from './reap.js';
+import { reapDetached, TEARDOWN_BUDGET_MS } from './reap.js';
 import type { WorkerRegistry } from './registry.js';
 import { StaleGenerationError } from './replace.js';
 import type { SpawnWorkerRequest, WorkerShell } from './spawn.js';
@@ -74,6 +81,14 @@ export interface LaunchWorkerRequest {
   credentials?: Record<string, string>;
   provenance: Provenance;
   readyTimeoutMs?: number;
+  /**
+   * §51 cancellation grace (issue #249): how long the worker's own
+   * cooperative shutdown gets after SIGTERM before the group SIGKILL
+   * escalation. The worker's settle (durable abort, kill-registry drain,
+   * reconcile sweep) is not a tool call, so it is NOT bounded by the 2 s
+   * tool grace; absent uses DEFAULT_WORKER_CANCEL_GRACE_MS.
+   */
+  cancelGraceMs?: number;
   /** Worktree/attach latencies the caller measured — the lifecycle layer
    *  times spawn, readiness and teardown itself. */
   worktreeMs?: number;
@@ -253,6 +268,7 @@ export function launchWorker(
     ...(request.readyTimeoutMs === undefined
       ? {}
       : { readyTimeoutMs: request.readyTimeoutMs }),
+    killGraceMs: request.cancelGraceMs ?? DEFAULT_WORKER_CANCEL_GRACE_MS,
   };
 
   const worker = spawnWorker(deps.shell, spawnRequest, {
@@ -374,22 +390,46 @@ export function launchWorker(
       agent === 'starting' || agent === 'running' || agent === 'waiting';
     if (cancelling) cancelRequested = true;
     const reapStartedAt = clock();
-    const detached = reapDetached({
-      workerId: request.workerId,
-      kill: () => worker.kill(),
-      wait: async () => {
-        const done = await worker.wait();
-        return { code: done.exitCode, signal: done.signal };
+    const detached = reapDetached(
+      {
+        workerId: request.workerId,
+        kill: () => worker.kill(),
+        wait: async () => {
+          const done = await worker.wait();
+          return {
+            code: done.exitCode,
+            signal: done.signal,
+            forced: done.forced,
+          };
+        },
+        // The manager's own kill (issue #151): §51 cancel terminates its
+        // worker, so the agent settles CANCELLED, never CRASHED.
+        cancelled: cancelling,
       },
-      // The manager's own kill (issue #151): §51 cancel terminates its
-      // worker, so the agent settles CANCELLED, never CRASHED.
-      cancelled: cancelling,
-    });
+      {
+        // The manager waits at least as long as the grace it gave the child,
+        // plus the teardown budget — a wait that expired exactly with the
+        // SIGKILL would make the outcome a coin toss (issue #249).
+        settleTimeoutMs:
+          (request.cancelGraceMs ?? DEFAULT_WORKER_CANCEL_GRACE_MS) +
+          TEARDOWN_BUDGET_MS,
+      },
+    );
     teardownInitiateMs = detached.teardownInitiateMs;
     report = await detached.reaped;
     teardownSettledMs = clock() - reapStartedAt;
     // A launch that never became ready and a worker the run already settled
     // keep their verdict; anything else is the cancellation this call made.
+    // §51 cancel outcome (issue #249): the row says whether the child's own
+    // shutdown settled inside the worker grace or the SIGKILL forced it.
+    // Only a worker that was actually cancelled carries the field — a reap
+    // after the child exited on its own is teardown, not a cancellation.
+    if (cancelRequested) {
+      registry.recordCancel(
+        request.workerId,
+        report.forced === true ? 'forced' : 'settled',
+      );
+    }
     if (cancelling && agent !== 'spawn_failed') {
       if (agent === 'failed' || agent === 'settling') {
         // The wait already settled the exit (a signal death is an

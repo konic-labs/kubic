@@ -38,8 +38,17 @@ const PROVENANCE: Provenance = {
 };
 
 // Announce readiness, then stay alive until killed (a worker mid-run).
+// SLOW_ABORT=<ms> (issue #249): a cooperative SIGTERM shutdown that takes
+// <ms> to settle, so a cancel grace can be measured against it.
 const FIXTURE = `
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
+const argv = process.argv.slice(2);
+const prompt = argv[argv.indexOf('-p') + 1] ?? '';
+const slowAbort = /SLOW_ABORT=(\\d+)/.exec(prompt)?.[1];
+if (slowAbort !== undefined) {
+  process.on('SIGTERM', () => { setTimeout(() => process.exit(0), Number(slowAbort)); });
+  setInterval(() => {}, 1000);
+}
 setTimeout(() => process.exit(0), 30000);
 `;
 
@@ -123,7 +132,10 @@ function fakeSignals(): OrchestrateSignals & {
   };
 }
 
-async function startLiveWorker(signals: OrchestrateSignals): Promise<{
+async function startLiveWorker(
+  signals: OrchestrateSignals,
+  options: { prompt?: string; cancelGraceMs?: number } = {},
+): Promise<{
   pid: number;
   settled: Promise<unknown>;
   deps: Awaited<ReturnType<typeof orchestrateDepsWithDefaults>>;
@@ -141,6 +153,9 @@ async function startLiveWorker(signals: OrchestrateSignals): Promise<{
     registry,
     workerEntry: { cmd: process.execPath, args: [fixture] },
     signals,
+    ...(options.cancelGraceMs === undefined
+      ? {}
+      : { workerCancelGraceMs: options.cancelGraceMs }),
   });
   const worktree = await deps.ensureWorktree('worker-1');
   await deps.createWorkerSession?.({
@@ -150,7 +165,7 @@ async function startLiveWorker(signals: OrchestrateSignals): Promise<{
     worktree,
   });
   const settled = Promise.resolve(
-    deps.runWorker('worker-1', worktree, 'work', {
+    deps.runWorker('worker-1', worktree, options.prompt ?? 'work', {
       sessionId: 'sigreap',
       workerSessionId: 'sigreap-worker-1',
     }),
@@ -384,5 +399,41 @@ describe('prod orchestrate path: a signal another listener owns still stops the 
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe('cancelled');
     expect(error.message).toMatch(/cancelled by SIGINT/);
+  }, 30_000);
+});
+
+describe('prod orchestrate path: §51 cancellation grace (issue #249)', () => {
+  it('lets a slow cooperative settle finish inside the worker grace (settled)', async () => {
+    const signals = fakeSignals();
+    // The child takes 3 s to settle after SIGTERM; the worker grace is 8 s,
+    // so the SIGKILL escalation must NOT cut it off.
+    const { pid, settled, deps } = await startLiveWorker(signals, {
+      prompt: 'work SLOW_ABORT=3000',
+      cancelGraceMs: 8_000,
+    });
+    expect(processAlive(pid)).toBe(true);
+    deps.cancelWorker?.('worker-1');
+    await settled;
+    await vi.waitFor(
+      () => expect(deps.launches?.rows()[0]?.cancel).toBe('settled'),
+      { timeout: 10_000 },
+    );
+    expect(processAlive(pid)).toBe(false);
+  }, 30_000);
+
+  it('records a forced kill when the grace elapses before the settle', async () => {
+    const signals = fakeSignals();
+    // Same 3 s settle, but only 500 ms of grace: the group SIGKILL lands
+    // first and the row says so.
+    const { settled, deps } = await startLiveWorker(signals, {
+      prompt: 'work SLOW_ABORT=3000',
+      cancelGraceMs: 500,
+    });
+    deps.cancelWorker?.('worker-1');
+    await settled;
+    await vi.waitFor(
+      () => expect(deps.launches?.rows()[0]?.cancel).toBe('forced'),
+      { timeout: 10_000 },
+    );
   }, 30_000);
 });

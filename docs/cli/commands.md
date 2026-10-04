@@ -365,7 +365,12 @@ Workers never outlive the manager on a signal: each child runs in its own
 process group, so while any worker is live the manager traps
 SIGINT/SIGTERM/SIGHUP (and process exit), kills every live worker's group,
 then re-delivers the signal. A manager killed with SIGKILL cannot do this.
-A manager killed hard (SIGKILL, crash) leaves rows claiming live workers; the
+A cancelled worker is given a **worker grace** (10 s by default, issue #249)
+between the SIGTERM to its process group and the SIGKILL escalation — its own
+shutdown is a durable abort, a kill-registry drain and a reconcile sweep, not
+a tool call, so it is not bounded by the 2 s tool grace. `kubic workers
+--json` records which happened: `cancel: "settled"` when the worker finished
+inside the grace, `cancel: "forced"` when the SIGKILL beat it. A manager killed hard (SIGKILL, crash) leaves rows claiming live workers; the
 next `kubic orchestrate` start reconciles them: an orphan still running under
 its own `--session` is killed (`cancelled`), a dead one is marked `crashed`,
 and a reused pid that is not a Kubic worker is never touched. A legacy row
@@ -1714,7 +1719,7 @@ an orchestrator has no record — nothing on stdout (`--json` prints `[]`), an
 | Flag | Meaning |
 | --- | --- |
 | (none) | A table with one row per worker: `WORKER  AGENT  PROCESS  GEN  AGE  OWNER  PID  STARTUP  RESOURCES` (`-` for an unknown pid/startup). Plain space-aligned columns off a TTY (pipes, CI, `NO_COLOR`); box-drawn, with both states coloured, on an interactive colour terminal. |
-| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). |
+| `--json` | The same rows as JSON (`workerId`, `sessionId`, `generation`, `status`, `agentStatus`, `signal`, `cancel`, `ageMs`, `owner`, `resources`, `pid`, `startupMs`) — field-for-field with the text view (`status` is the process phase, `agentStatus` the agent state). `cancel` appears only for a worker that was actually cancelled: `settled` when its own cooperative shutdown finished inside the worker grace, `forced` when the group SIGKILL escalation beat it (issue #249). |
 | `--debug` | `[worker] spawn …` per row plus `[exit] code=0 exited cleanly` on stderr (`KUBIC_DEBUG=1` does the same). Spawn env values are always redacted (`KUBIC_ROLE_*` never prints). |
 
 `kubic workers --help` prints the generated help and exits 0. An unknown

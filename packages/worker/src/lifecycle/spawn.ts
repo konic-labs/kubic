@@ -52,6 +52,14 @@ export interface SpawnWorkerRequest {
   credentials?: Record<string, string>;
   provenance: Provenance;
   readyTimeoutMs?: number;
+  /**
+   * §51 cancellation grace (issue #249): how long the child's own cooperative
+   * shutdown gets after SIGTERM before the group SIGKILL escalation. The
+   * worker's settle (durable abort, kill-registry drain, reconcile sweep)
+   * needs more than the 2 s tool bound, so the caller passes a worker grace;
+   * absent keeps the exec default.
+   */
+  killGraceMs?: number;
 }
 
 export interface SpawnWorkerDeps {
@@ -103,6 +111,9 @@ export interface SpawnedWorker {
   wait: () => Promise<{
     exitCode: number;
     signal: string | null;
+    /** The SIGKILL escalation beat the child's cooperative shutdown
+     *  (issue #249): the cancel was FORCED, not settled. */
+    forced: boolean;
     stdout: string;
     stderr: string;
   }>;
@@ -161,7 +172,13 @@ export function spawnWorker(
     startupMs: undefined,
     ready: Promise.resolve(),
     wait: () =>
-      Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
+      Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        forced: false,
+        stdout: '',
+        stderr: '',
+      }),
     kill: () => undefined,
   };
 
@@ -208,6 +225,9 @@ export function spawnWorker(
     handle = shell.spawn(request.cmd, request.args, {
       provenance: request.provenance,
       env,
+      ...(request.killGraceMs === undefined
+        ? {}
+        : { killGraceMs: request.killGraceMs }),
       onUpdate: (snapshot) => {
         const text = `${snapshot.stdout}\n${snapshot.stderr}`;
         if (text.includes(marker)) {
@@ -229,6 +249,7 @@ export function spawnWorker(
       worker.ready.then(() => ({
         exitCode: 1,
         signal: null,
+        forced: false,
         stdout: '',
         stderr: '',
       }));
@@ -261,6 +282,7 @@ export function spawnWorker(
     return {
       exitCode: result.exitCode,
       signal: result.signal ?? null,
+      forced: result.forced === true,
       stdout: result.stdout,
       stderr: result.stderr,
     };

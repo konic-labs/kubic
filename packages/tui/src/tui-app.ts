@@ -90,7 +90,7 @@ import {
   type TranscriptEntry,
   type TranscriptView,
 } from './transcript.js';
-import { AgentTreeView, type LaneEventLike } from './tree.js';
+import { AgentTreeView, applyTreeSnapshot } from './tree.js';
 import type {
   AutocompleteProvider,
   Component,
@@ -119,13 +119,7 @@ import {
   type PanelMode,
 } from './view-panel.js';
 
-export type {
-  JournalChangeLike,
-  LaneEntryLike,
-  LaneEventLike,
-  PanelMode,
-  Viewport,
-};
+export type { JournalChangeLike, LaneEntryLike, PanelMode, Viewport };
 
 // The request the overlay answers: approval-view.ts's own request shape, named
 // here so the composition root and the app agree on one type.
@@ -347,7 +341,17 @@ export interface TuiApp {
   render(width: number): string[];
   handleInput(data: string): TuiInputResult;
   finalDocument(width: number): string[];
-  applyLaneEvent(event: LaneEventLike): void;
+  // Issue #333 (§66): the app renders from replicated presentation state —
+  // the projector folds the lane events, the app never sees them.
+  applyPresentation(state: KubicPresentationState): void;
+  // The seed the host-side projector starts from (the app owns the live
+  // session facts the state mirrors).
+  presentationSeed(): {
+    sessionId: string;
+    model: string;
+    mode: StatusMode;
+    approvalsSkipped: boolean;
+  };
   applyLaneEntries(entries: ReadonlyArray<LaneEntryLike>): void;
   setUsage(rows: ReadonlyArray<StatusUsageRow>): void;
   // Issue #227: the live model label the header, welcome block and status
@@ -1228,17 +1232,35 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       return { quit: false, consumed: true, cancel: false };
     },
     finalDocument: (width: number): string[] => root.render(width),
-    applyLaneEvent: (event: LaneEventLike): void => {
-      tree.update(event);
-      // The diff panel follows the run: a tool call that starts or ends is
-      // what "the current run's changes" means, so the panel's default
-      // selection tracks it (an explicit setDiffToolCall still wins).
-      if (
-        (event.type === 'tool-start' || event.type === 'tool-end') &&
-        typeof event.toolCallId === 'string'
-      ) {
-        diffPanel.followToolCall(event.toolCallId);
+    presentationSeed: () => ({
+      sessionId: seed.sessionId,
+      model: modelLabel,
+      mode: sessionMode.current,
+      approvalsSkipped: status.getState().approvalsSkipped,
+    }),
+    applyPresentation: (state: KubicPresentationState): void => {
+      const lane = state.lanes.get(seed.sessionId);
+      if (lane !== undefined) {
+        applyTreeSnapshot(tree.getState(), {
+          status: lane.status,
+          tools: lane.tools,
+          usage: {
+            costTotal: state.usage.costUsd,
+            inputTokens: state.usage.inputTokens,
+            outputTokens: state.usage.outputTokens,
+          },
+        });
+        transcript.setQueuedPrompts(lane.queued);
+        // The diff panel follows the run: the newest call of the lane is
+        // what "the current run's changes" means, so the panel's default
+        // selection tracks it (an explicit setDiffToolCall still wins).
+        const last = lane.tools.at(-1);
+        if (last !== undefined) diffPanel.followToolCall(last.toolCallId);
       }
+      // The live model label stays the app's own (#227: `/model` moves it);
+      // the state's session facts drive the mode and posture indicators.
+      setMode(state.session.mode);
+      status.setApprovalsSkipped(state.session.approvalsSkipped);
     },
     applyLaneEntries: (entries: ReadonlyArray<LaneEntryLike>): void => {
       // The revision counter makes every apply a fresh snapshot: the

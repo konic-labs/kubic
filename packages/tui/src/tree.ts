@@ -307,6 +307,71 @@ function previousDurationMs(state: AgentTreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
+// Issue #333 (§66): the tree renders from replicated presentation state. The
+// snapshot carries the live turn's calls (the projector folds the events);
+// the summarizers stay here, so the state never carries a display string.
+export interface TreeToolSnapshot {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly status: 'running' | 'done';
+  readonly isError: boolean;
+  readonly args?: unknown;
+  readonly entry?: unknown;
+  readonly durationMs?: number;
+}
+
+export interface TreeLaneSnapshot {
+  readonly status: RunStatus;
+  readonly tools: ReadonlyArray<TreeToolSnapshot>;
+  readonly usage?: {
+    readonly costTotal: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
+}
+
+export function applyTreeSnapshot(
+  state: AgentTreeState,
+  lane: TreeLaneSnapshot,
+): void {
+  // A new turn (the root goes back to running) closes the previous group, the
+  // same boundary the run-start event draws in the event-driven path.
+  if (
+    lane.status === 'running' &&
+    state.rootStatus !== 'running' &&
+    state.tools.length > 0
+  ) {
+    state.previousTurns.push({
+      calls: state.tools.length,
+      durationMs: state.tools.reduce(
+        (sum, call) => sum + (call.durationMs ?? 0),
+        0,
+      ),
+    });
+    state.tools = [];
+  }
+  state.rootStatus = lane.status;
+  state.tools = lane.tools.map((tool) => ({
+    id: tool.toolCallId,
+    name: sanitizeLaneText(tool.toolName),
+    done: tool.status === 'done',
+    error: tool.isError,
+    argsSummary: summarizeToolArguments(tool.args),
+    ...(tool.status === 'done'
+      ? { outcome: summarizeToolOutcome(tool.entry, tool.toolName) }
+      : {}),
+    ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+  }));
+  if (lane.usage !== undefined) {
+    state.usage = {
+      seen: true,
+      costTotal: lane.usage.costTotal,
+      inputTokens: lane.usage.inputTokens,
+      outputTokens: lane.usage.outputTokens,
+    };
+  }
+}
+
 export function collapsedSummary(state: AgentTreeState): string {
   const calls = previousCalls(state) + state.tools.length;
   const total =

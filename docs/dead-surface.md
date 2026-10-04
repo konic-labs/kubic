@@ -134,7 +134,6 @@ file that no longer exists, or when a row's file has become reachable
 | 133 | `packages/agents/src/task.ts` | #99 | keep: type-only contract (`AgentTask`, `TaskResources`, `WorkspaceMode`, `validateAgentTask`, …) consumed by LIVE modules through `import type` — `host/src/workers-cli.ts`, `worker/src/lifecycle/{rows,registry}.ts`, `trajectory/src/schema.ts` (its schema mirrors the fields) and `roles-data.ts` (#104). The gate walks VALUE imports, so a types-only module can never be `reachable` by its own rule; deleting it would break the typecheck of live files. Re-owned from `wire:` to a named reason because #99 could not make it reachable without inventing a value import |
 | 4 | `packages/core/src/index.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/policy.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
-| 95 | `packages/core/src/presentation.ts` | #96 | wire: TUI view contract (#96); imported only by dead transcript/tui-app |
 | 4 | `packages/core/src/protocol.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 4 | `packages/core/src/session.ts` | #102 | delete: reserved `export {};` stub — not a terminal state (criterion 5) |
 | 49 | `packages/eval/src/index.ts` | #101 | delete: dead barrel over the live eval CLI |

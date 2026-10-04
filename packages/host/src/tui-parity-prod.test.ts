@@ -469,7 +469,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     // reaches the footer verbatim.
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const loop = {
@@ -519,7 +525,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[1];
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const runner = new TuiTurnRunner(app, loop, 'faux/test');
@@ -538,7 +550,13 @@ describe('the TUI footer names the lane failure (issue #113)', () => {
   it('names the busy refusal the durable turn reports (D6.1)', async () => {
     const app = {
       applyLaneEntries: () => {},
-      applyLaneEvent: () => {},
+      applyPresentation: () => {},
+      presentationSeed: () => ({
+        sessionId: 'sess-1',
+        model: 'faux/faux-1',
+        mode: 'solo' as const,
+        approvalsSkipped: false,
+      }),
       setUsage: () => {},
     } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
     const loop = {

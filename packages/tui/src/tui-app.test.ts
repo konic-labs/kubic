@@ -4,11 +4,44 @@
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
 import { describe, expect, it } from 'vitest';
+import type {
+  KubicPresentationState,
+  LaneSnapshot,
+} from '../../core/src/presentation.js';
 import type { ApprovalOverlayTui } from './approval-view.js';
 import { createTuiApp, seedFromPresentation } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
+
+// Issue #333: the app renders replicated state, so a test builds the state a
+// projector would produce (the projector itself lives in host).
+function presentation(
+  over: Partial<LaneSnapshot> = {},
+): KubicPresentationState {
+  return {
+    session: { sessionId: SESSION, mode: 'solo', approvalsSkipped: false },
+    agents: new Map(),
+    lanes: new Map([
+      [
+        SESSION,
+        {
+          laneId: SESSION,
+          agentId: 'root',
+          status: 'running',
+          tools: [],
+          queued: [],
+          compacting: false,
+          ...over,
+        },
+      ],
+    ]),
+    workers: new Map(),
+    approvals: [],
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    connection: { status: 'connected' },
+  };
+}
 
 describe('tui app root (issue #75)', () => {
   it('orders tree / transcript / status top to bottom at 100 cols', () => {
@@ -50,11 +83,18 @@ describe('tui app root (issue #75)', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
-    app.applyLaneEvent({
-      type: 'tool-start',
-      toolCallId: 't1',
-      toolName: 'read',
-    });
+    app.applyPresentation(
+      presentation({
+        tools: [
+          {
+            toolCallId: 't1',
+            toolName: 'read',
+            status: 'running',
+            isError: false,
+          },
+        ],
+      }),
+    );
     expect(app.render(100).join('\n')).toContain('● read');
     // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
@@ -204,7 +244,7 @@ describe('tui app root (issue #75)', () => {
       mode: 'solo',
       approvalsSkipped: false,
     });
-    app.applyLaneEvent({ type: 'run-start' });
+    app.applyPresentation(presentation());
     expect(app.render(100).join('\n')).toContain('● solo');
     app.setUsage([
       {
@@ -301,7 +341,11 @@ describe('presentation seed (issue #75; §66 contracts only)', () => {
   it('maps the core presentation snapshot to a tui seed', () => {
     const seed = seedFromPresentation(
       {
-        session: { sessionId: 'abc' },
+        session: {
+          sessionId: 'abc',
+          mode: 'solo',
+          approvalsSkipped: false,
+        },
         agents: new Map(),
         lanes: new Map(),
         workers: new Map(),
@@ -916,11 +960,18 @@ describe('slash commands in the app (issue #305)', () => {
       },
     ]);
     ui.appendNotice(['old turn']);
-    ui.applyLaneEvent({
-      type: 'tool-start',
-      toolCallId: 't1',
-      toolName: 'read',
-    });
+    ui.applyPresentation(
+      presentation({
+        tools: [
+          {
+            toolCallId: 't1',
+            toolName: 'read',
+            status: 'running',
+            isError: false,
+          },
+        ],
+      }),
+    );
     ui.setPendingEcho('old echo');
     ui.setQueuedPrompts(['old queue']);
     expect(ui.render(100).join('\n')).toContain('old turn');

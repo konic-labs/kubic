@@ -44,7 +44,13 @@ function fauxModels(texts: string[]): MutableModels {
 // The runner's view seams, inert: this test observes the file, not the UI.
 const app = {
   applyLaneEntries: () => {},
-  applyLaneEvent: () => {},
+  applyPresentation: () => {},
+  presentationSeed: () => ({
+    sessionId: 'sess-1',
+    model: 'faux/faux-1',
+    mode: 'solo' as const,
+    approvalsSkipped: false,
+  }),
   setUsage: () => {},
 } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
 

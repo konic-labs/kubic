@@ -14,10 +14,43 @@ import { describe, expect, it } from 'vitest';
 // One shared fake Terminal (issue #403): the panel's ScrollView is laid out
 // only by the live alt-screen, so its scrolling is asserted on real frames.
 import { fakeTerminal } from '../../../test/fake-terminal.js';
+import type {
+  KubicPresentationState,
+  LaneSnapshot,
+} from '../../core/src/presentation.js';
 import { bootScreen } from './screen.js';
 import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';
 import { DiffPanel } from './view-panel.js';
+
+// Issue #333: the app renders replicated state, so a test builds the state a
+// projector would produce (the projector itself lives in host).
+function presentation(
+  over: Partial<LaneSnapshot> = {},
+): KubicPresentationState {
+  return {
+    session: { sessionId: SESSION, mode: 'solo', approvalsSkipped: false },
+    agents: new Map(),
+    lanes: new Map([
+      [
+        SESSION,
+        {
+          laneId: SESSION,
+          agentId: 'root',
+          status: 'running',
+          tools: [],
+          queued: [],
+          compacting: false,
+          ...over,
+        },
+      ],
+    ]),
+    workers: new Map(),
+    approvals: [],
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    connection: { status: 'connected' },
+  };
+}
 
 const SESSION = 'sess-96';
 const MODEL = 'test-model';
@@ -59,17 +92,21 @@ function appWithRun(
     mode: 'solo',
     approvalsSkipped: false,
   });
-  app.applyLaneEvent({ type: 'run-start' });
-  app.applyLaneEvent({
-    type: 'tool-start',
-    toolCallId,
-    toolName: 'edit',
-  });
-  app.applyLaneEvent({
-    type: 'tool-end',
-    toolCallId,
-    toolName: 'edit',
-  });
+  // The lane is running with its edit call done: the state a projector would
+  // hold after run-start/tool-start/tool-end (#333).
+  app.applyPresentation(
+    presentation({
+      status: 'running',
+      tools: [
+        {
+          toolCallId,
+          toolName: 'edit',
+          status: 'done',
+          isError: false,
+        },
+      ],
+    }),
+  );
   app.setJournalChanges(changes);
   return app;
 }

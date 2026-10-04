@@ -15,34 +15,85 @@
 
 export interface SessionSnapshot {
   sessionId: string;
+  // Issue #333 (§66): the live session's replicated facts.
+  model?: string;
+  thinking?: string;
+  mode: 'solo' | 'orchestrator';
+  approvalsSkipped: boolean;
+}
+
+// §41/§66: an agent's budget burn-down, as replicated.
+export interface BudgetSummary {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  limitUsd?: number;
 }
 
 export interface AgentSummary {
   agentId: string;
   role: string;
   status: string;
+  // §66: the agent's workspace (solo: the repo root; a worker: its worktree).
+  workspace?: string;
+  budget?: BudgetSummary;
+}
+
+// One tool call of a lane, as the presentation renders it (issue #333; §66,
+// §18). `args`/`entry` are the replicated payloads the view summarizes for
+// display — the state never carries a render string the projector invented.
+export interface LaneToolSnapshot {
+  toolCallId: string;
+  toolName: string;
+  status: 'running' | 'done';
+  isError: boolean;
+  args?: unknown;
+  entry?: unknown;
+  durationMs?: number;
 }
 
 export interface LaneSnapshot {
   laneId: string;
+  agentId: string;
+  status: 'idle' | 'running' | 'done';
+  // The live turn's calls, oldest first; completed turns fold away.
+  tools: readonly LaneToolSnapshot[];
+  // §66 queues: the prompts the conversation's inbox holds but no turn has
+  // placed yet (#334).
+  queued: readonly string[];
+  // §27: a compaction is in flight / the last fault / a retry backoff.
+  compacting: boolean;
+  fault?: string;
+  retrying?: { attempt: number; error?: string };
 }
 
 export interface WorkerSummary {
   workerId: string;
+  role?: string;
+  status?: string;
+  workspace?: string;
+  budget?: BudgetSummary;
 }
 
 export interface ApprovalRequest {
   requestId: string;
+  toolName?: string;
+  capability?: string;
+  detail?: string;
 }
 
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  requests?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface ConnectionState {
   status: 'connected' | 'disconnected' | 'reconnecting';
+  detail?: string;
 }
 
 export interface KubicPresentationState {

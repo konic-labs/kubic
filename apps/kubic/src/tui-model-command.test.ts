@@ -42,7 +42,17 @@ describe('TuiTurnRunner model switch (issue #227)', () => {
       context: BACKGROUND_CONTEXT,
     } as unknown as TuiLaneLoop;
     const runner = new TuiTurnRunner(
-      { setModel: () => {} } as unknown as TuiApp,
+      {
+        setModel: () => {},
+        // Issue #333: the runner seeds its presentation projector from the
+        // app, so a stub app must answer the seed.
+        presentationSeed: () => ({
+          sessionId: 's',
+          model: 'faux/faux-1',
+          mode: 'solo' as const,
+          approvalsSkipped: false,
+        }),
+      } as unknown as TuiApp,
       loop,
       'faux/big',
     );

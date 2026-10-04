@@ -1330,8 +1330,16 @@ describe('kubic tui prompt loop (issue #88)', () => {
     try {
       const app = {
         applyLaneEntries: () => {},
-        applyLaneEvent: () => {},
+        // Issue #333: the runner folds events through its projector and hands
+        // the app the resulting state.
+        applyPresentation: () => {},
         setUsage: () => {},
+        presentationSeed: () => ({
+          sessionId: 'sess-1',
+          model: 'faux/faux-1',
+          mode: 'solo' as const,
+          approvalsSkipped: false,
+        }),
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
       const runner = new TuiTurnRunner(
         app,

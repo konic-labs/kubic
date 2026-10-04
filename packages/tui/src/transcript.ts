@@ -7,7 +7,6 @@
 // The ScrollView owns follow state (follow:'end', primary nearest,
 // overscroll chain); this module owns the document: delta appends rebuild
 // the single Markdown child exactly once per entry and never clear it.
-import type { LaneSnapshot } from '../../core/src/presentation.js';
 import { sanitizeLaneText } from './lane-cells.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
@@ -48,7 +47,12 @@ export interface TranscriptDelta {
   readonly append: string;
 }
 
-export type { LaneSnapshot };
+// The transcript only needs the lane's identity: the §66 state shape
+// (presentation.ts) is the projector's business, and requiring all of it here
+// would make every cell-application carry fields it never reads.
+export interface LaneIdentity {
+  readonly laneId: string;
+}
 
 // Collapsed tool output shows this many lines; Ctrl-X expands every block.
 export const TOOL_OUTPUT_PREVIEW_LINES = 5;
@@ -448,7 +452,7 @@ export interface TranscriptView {
   readonly writeLog: ReadonlyArray<TranscriptOp>;
   appendDelta(delta: TranscriptDelta): void;
   applyLaneSnapshot(
-    lane: LaneSnapshot,
+    lane: LaneIdentity,
     cells: ReadonlyArray<TranscriptEntry>,
     revision: number,
   ): void;
@@ -583,7 +587,7 @@ export function createTranscriptView(
       paint();
     },
     applyLaneSnapshot(
-      lane: LaneSnapshot,
+      lane: LaneIdentity,
       cells: ReadonlyArray<TranscriptEntry>,
       next: number,
     ): void {

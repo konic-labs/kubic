@@ -82,6 +82,7 @@ import {
   isModelAllowed,
   isToolAllowedByEnterprise,
 } from '../../../packages/host/src/policy/enterprise.js';
+import { PresentationProjector } from '../../../packages/host/src/presentation/projector.js';
 import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
 import {
   roleDocPath,
@@ -2132,6 +2133,7 @@ export class TuiTurnRunner {
     this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
     this.usageRows = [...usageRows];
+    this.projector = new PresentationProjector(app.presentationSeed());
   }
 
   // Issue #227: the live model label (updated by a `/model` switch), so the
@@ -2237,7 +2239,10 @@ export class TuiTurnRunner {
   // result) instead of re-reading the lane per event; tool status drives the
   // tree and usage rows drive the status bar (#398/D2).
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
-    this.app.applyLaneEvent(event);
+    // Issue #333 (§66): the projector folds the event; the app renders the
+    // state it produces (the presentation never folds raw events).
+    this.projector.apply(event);
+    this.app.applyPresentation(this.projector.state());
     this.onLaneEvent?.(event);
     if (event.type === 'run-start') {
       // The run is placed: a latched Ctrl-C may now abort it for real, and a
@@ -2291,6 +2296,10 @@ export class TuiTurnRunner {
       this.foldLaneEntries([event.entry]);
     }
   };
+
+  // Issue #333: the §66 state the app renders. Seeded from the app's own
+  // session facts and fed every lane event the subscription delivers.
+  private readonly projector: PresentationProjector;
 
   // Issue #296: the text streamed for the in-flight generation. Cleared when
   // the committed entry lands, on a snapshot rebase and at settlement.

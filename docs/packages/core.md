@@ -14,7 +14,7 @@ imports nothing internal — `scripts/dep-lint.mjs` rejects any
 
 | Module | Status | Exports |
 | --- | --- | --- |
-| `presentation.ts` | Implemented | `KubicPresentationState` + sub-interfaces, `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
+| `presentation.ts` | Implemented | `KubicPresentationState` + sub-interfaces (session/agent/budget/lane/tool/worker/approval/usage/connection), `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
 | `license.ts` | Implemented | `KUBIC_LICENSE`, `KUBIC_LICENSE_FILE`, `formatVersionLine`, `formatLicenseDetail` |
 | `protocol.ts` | Pointer | Owner module open — reserves the contract location (no wire protocol yet) |
 | `secret-keys.ts` | Implemented | `isSecretEnvKey`, `redactSecretEnv`, `REDACTED_ENV_VALUE` — the one secret env-key classifier shared by the worker spawn env and the trajectory exporter (#359) |
@@ -43,27 +43,33 @@ manager.
 | `approvals` | `readonly ApprovalRequest[]` |
 | `usage` | `UsageTotals` |
 | `connection` | `ConnectionState` |
+| `revision` | `number` (the projector's fold counter, issue #333) |
 
-`PRESENTATION_STATE_FIELDS` pins the same seven keys (`session`,
-`agents`, `lanes`, `workers`, `approvals`, `usage`, `connection`) via
+`PRESENTATION_STATE_FIELDS` pins the same keys (`session`, `agents`,
+`lanes`, `workers`, `approvals`, `usage`, `connection`, `revision`) via
 `satisfies Record<keyof KubicPresentationState, true>` — adding or
 removing a field breaks compilation.
 
-Sub-interfaces, field-for-field:
+Sub-interfaces, field-for-field (issue #333 fleshed out the stubs):
 
 | Interface | Fields |
 | --- | --- |
-| `SessionSnapshot` | `sessionId: string` |
-| `AgentSummary` | `agentId: string`, `role: string`, `status: string` |
-| `LaneSnapshot` | `laneId: string` |
-| `WorkerSummary` | `workerId: string` |
-| `ApprovalRequest` | `requestId: string` |
-| `UsageTotals` | `inputTokens: number`, `outputTokens: number`, `costUsd: number` |
-| `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'` |
+| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `mode: 'solo' \| 'orchestrator'`, `approvalsSkipped: boolean` |
+| `AgentSummary` | `agentId`, `role`, `status`, `workspace?`, `budget?: BudgetSummary` |
+| `BudgetSummary` | `inputTokens`, `outputTokens`, `costUsd`, `limitUsd?` |
+| `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
+| `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
+| `WorkerSummary` | `workerId`, `role?`, `status?`, `workspace?`, `budget?` |
+| `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
+| `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
+| `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
 
-Snapshot/summary shapes are stubs refined by their owners: session and
-connection in #14, agents in #41, lanes in #11, workers in #42,
-approvals in #16, usage in #20.
+The state is produced by the host-side projector
+(`packages/host/src/presentation/projector.ts`), which folds the lane event
+stream (#398's `subscribeLaneEvents`) plus the worker and approval facts the
+host feeds it into the state; `apps/kubic/src/tui-run.ts` feeds the TUI from
+it, and `packages/tui/src/tui-app.ts` renders it (`applyPresentation`) — the
+presentation never folds raw events itself (§15.2, §66).
 
 ### `PRESENTATION_COMMANDS` (`presentation.ts`)
 

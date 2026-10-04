@@ -100,6 +100,7 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await attachSession(store, id, BACKGROUND_CONTEXT);
   try {
+    // The durable reader (#400): the session storage directly, no harness.
     const items = entriesToTranscript(
       await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
     );

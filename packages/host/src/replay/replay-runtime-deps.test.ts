@@ -28,6 +28,7 @@ import {
   attachSession,
   openSessionStore,
 } from '../../../worker/src/lane/session-store.js';
+import { fauxToolUse } from '../../../worker/src/lane/test-harness.js';
 import {
   entriesToTranscript,
   readSessionEntries,
@@ -237,7 +238,8 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     const models: MutableModels = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([
+      // D8.2: a tool round must say `toolUse`, or the tool never runs.
+      fauxToolUse([
         fauxToolCall('bash', { command: 'curl https://example.com' }),
       ]),
       fauxAssistantMessage('did not fetch'),

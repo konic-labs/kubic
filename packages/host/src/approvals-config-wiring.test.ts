@@ -133,11 +133,7 @@ describe('config route=deny reaches kubic run (issue #230)', () => {
 });
 
 describe('config route=deny reaches kubic tui (issue #230)', () => {
-  // D8.3: the TUI half of #395 (k6-tui) ports `bootTuiLane` to the durable
-  // loop; this test drives that seam, so it is enabled again with the port
-  // (the headless half of the same rule is pinned above, in 'denies by
-  // policy route').
-  it.skip('never asks the seat', async () => {
+  it('never asks the seat', async () => {
     const loaded = loadedWith('route = "deny"');
     let asks = 0;
     const boot = await bootTuiLane(undefined, {
@@ -153,13 +149,13 @@ describe('config route=deny reaches kubic tui (issue #230)', () => {
     try {
       const loop = boot.loop;
       if (loop === undefined) throw new Error('the boot carries no loop');
-      // The durable drive lands with the TUI port: submit → wait, then read
-      // the conversation's own entries.
-      const settled = await loop.accept(
-        'clean the build dir',
-        BACKGROUND_CONTEXT,
-      );
-      expect(settled).toBeDefined();
+      const turn = await loop.runTurn('clean the build dir', {
+        requestId: 'approvals-deny',
+        context: BACKGROUND_CONTEXT,
+        whenBusy: 'reject',
+      });
+      expect(turn.kind).toBe('completed');
+      const entries = JSON.stringify(await loop.entries(BACKGROUND_CONTEXT));
       expect(asks).toBe(0);
     } finally {
       await boot.close?.();

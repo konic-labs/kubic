@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import {
   runTuiCommand,
+  soloTuiLoop,
   type TuiRunDeps,
 } from '../../../apps/kubic/src/tui-run.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
@@ -295,20 +296,9 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      // The notice is emitted before any turn, so this stub only has to be
-      // constructible: the TUI's durable loop seam is k6-tui's #395 port.
-      // The cast keeps this file compiling while that lands.
-      loop: {
-        accept: (prompt: string, ctx: typeof context) =>
-          solo.conversation.submit({ type: 'input', content: prompt }, ctx),
-        conversation: solo.conversation,
-        harness: solo.harness,
-        kills: solo.kills,
-        findEntries: () =>
-          solo.conversation.entries({}, 500, undefined, context),
-        context,
-      } as never,
+      loop: soloTuiLoop(solo),
       close: async () => {
+        await solo.close(context);
         await session.release(context);
       },
     };

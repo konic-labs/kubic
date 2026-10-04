@@ -320,3 +320,81 @@ describe('orchestrate worker concurrency (issue #206, §9.3/§45)', () => {
     expect(second.merged).toEqual(['a2', 'a3']);
   });
 });
+
+describe('orchestrate queue expiry and never-wakeable queues (issue #206 review)', () => {
+  it('refuses a queued worker the admission layer expired, by name', async () => {
+    // The scheduler's own bound elapses while the only slot is busy. Its
+    // sweep drops the entry and returns it only from `sweepPending` — the run
+    // must notice (reconcileQueue), not fall through to "can never admit".
+    let now = 1_000;
+    const scheduler = new ParallelScheduler(
+      { maxPendingMs: 30 },
+      { clock: () => now, sessionOverride: 1 },
+    );
+    const gates = new Map<string, Deferred>();
+    const started: string[] = [];
+    const world = latchWorld(gates, started, { scheduler });
+    const running = runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a1', 'a2'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      world.deps,
+    );
+    await vi.waitFor(() => expect(started).toEqual(['a1']));
+    expect(scheduler.queuedCount()).toBe(1);
+
+    now += 10_000;
+    gates.get('a1')?.resolve();
+
+    expect(await running).toBe(1);
+    // Nothing merged (the run stopped on the expiry) and the denial names the
+    // worker and the bound — never a silent disappearance.
+    expect(world.merged).toEqual([]);
+    const text = world.lines.join('\n');
+    expect(text).toMatch(/a2/);
+    expect(text).toMatch(/queued past the admission layer's 30ms bound/);
+    expect(text).toContain('spawn_denied');
+  });
+
+  it('refuses a queue head no release can wake, by name', async () => {
+    // The head is blocked by a provider rate window that the settled worker
+    // cannot free: nothing is in flight, so no release will ever come. The
+    // provider comes from each worker's model pin (a role document), which is
+    // also what makes the scheduler stamp the window.
+    const scheduler = new ParallelScheduler({
+      providerCaps: { prov: { maxPerWindow: 1, windowMs: 60_000 } },
+    });
+    const world = makeWorld({
+      scheduler,
+      loadWorkerRoles: (agents) => ({
+        assignments: agents.map((agentId) => ({
+          agentId,
+          role: 'worker',
+          promptText: '',
+          tools: [],
+          modelRef: 'prov/m1',
+        })),
+        refused: [],
+      }),
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a1', 'a2'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    expect(world.merged).toEqual([]);
+    const text = world.lines.join('\n');
+    expect(text).toMatch(/a2/);
+    expect(text).toMatch(/can never admit this spawn/);
+  });
+});

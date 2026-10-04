@@ -42,6 +42,9 @@ import type {
   WorkerCredentialRefusal,
   WorkerCredentialRequest,
 } from './config/role-credentials.js';
+// The shared `provider/model` split (issue #206 review): one parser, never a
+// second copy that can drift from the credential plan's.
+import { providerOfModelRef } from './config/role-credentials.js';
 import { BUDGET_EXHAUSTED } from './orchestrator/approvals/budgets.js';
 import {
   APPROVAL_TIMEOUT_CODE,
@@ -428,19 +431,6 @@ function worktreeFailureCode(error: unknown): string {
 // anything else with exit 2 before it can attach.
 export function workerSessionFor(sessionId: string, agentId: string): string {
   return `${sessionId}-${agentId}`;
-}
-
-// The provider half of a worker's `provider/id` model pin (issue #206, §45):
-// the admission layer's per-provider caps are keyed by provider, and the
-// worker's own pin is what its child will call. A pin that is not
-// `provider/id` (or absent) names no provider — the request then carries
-// none, and the scheduler's `default` bucket applies rather than a guess.
-export function providerOfModelRef(
-  modelRef: string | undefined,
-): string | undefined {
-  if (modelRef === undefined) return undefined;
-  const at = modelRef.indexOf('/');
-  return at > 0 ? modelRef.slice(0, at) : undefined;
 }
 
 // What the manager must do before spawning a worker (issue #85): `kubic run
@@ -2259,6 +2249,11 @@ export async function runOrchestrateCommand(
   };
 
   const startWorker = (agentId: string): void => {
+    // The agent is no longer waiting in the queue (issue #206 review):
+    // `queued` is the run's view of the scheduler's queue, and a started
+    // worker is out of it however it got out (a wakeup, or a drain the run
+    // did not observe).
+    queued.delete(agentId);
     if (started.has(agentId) || finished.has(agentId)) return;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     started.add(agentId);
@@ -2286,11 +2281,69 @@ export async function runOrchestrateCommand(
     inFlight.set(agentId, task);
   };
 
+  // §206 review F1/F2: the scheduler drops an entry it queued past its own
+  // maxPendingMs bound, and both `complete()` and `requestSpawn` discard the
+  // ids their internal sweeps deny (the deny is logged, never returned). The
+  // run therefore reconciles its own queue view after every scheduler
+  // interaction: an entry that is gone, never started and not running
+  // EXPIRED — a named denial naming the same bound the sweep used, never the
+  // "can never admit" fall-through. An entry the scheduler admitted in a
+  // drain this call site did not observe is started here, so a wakeup is
+  // never lost. Returns false when the run must stop.
+  const reconcileQueue = async (): Promise<boolean> => {
+    const pending = new Set(scheduler.pendingIds());
+    const running = new Set(scheduler.runningIds());
+    const woken: string[] = [];
+    const expired: string[] = [];
+    for (const agentId of [...queued]) {
+      if (pending.has(agentId)) continue;
+      if (running.has(agentId)) {
+        const wasStarted = started.has(agentId);
+        startWorker(agentId);
+        if (!wasStarted && started.has(agentId)) woken.push(agentId);
+        continue;
+      }
+      queued.delete(agentId);
+      if (!started.has(agentId)) expired.push(agentId);
+    }
+    if (woken.length > 0) recordAdmission(woken);
+    for (const agentId of expired) {
+      const worktree = prepared.get(agentId) as OrchestrateWorktree;
+      const message = `spawn denied for worker '${agentId}': queued past the admission layer's ${scheduler.maxPendingMs()}ms bound before a slot freed`;
+      await recordFailure(agentId, worktree, {
+        status: 'spawn_failed',
+        kind: 'process',
+        code: 'spawn_denied',
+        message,
+      });
+      if (
+        failWorker(agentId, {
+          ok: false,
+          exitCode: RUN_EXIT_FAILED,
+          code: 'spawn_denied',
+          message,
+        }) === 'stop'
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
   for (const agentId of state.pending) {
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     // §45 provider caps: the worker's own model pin names the provider its
-    // child will call, so the admission layer judges the right one. A worker
-    // with no pin has no provider to attribute (the scheduler's default).
+    // child will call, so the admission layer judges the right one. The pin
+    // here is the ROLE's (`spawnRoleInfo`), which is the child's own pin
+    // precedence minus the operator/manager pins the host cannot see: with no
+    // role document the request carries no provider and the scheduler's
+    // `default` bucket applies. Documented in the architecture page —
+    // provider caps are live, the credential plan's resolution is wider.
+    // `memMb`/`diskMb` are deliberately NOT passed (issue #206 review): no
+    // production estimate source exists, and a fabricated number would make
+    // the aggregate caps enforce fiction. The architecture page records that
+    // the aggregates stay opt-in and estimate-driven only for callers that
+    // supply estimates themselves.
     const provider = providerOfModelRef(
       spawnRoleInfo(agentId, rolePlan).modelRef,
     );
@@ -2361,8 +2414,16 @@ export async function runOrchestrateCommand(
     }
     startWorker(agentId);
   }
+  // The requests' own internal sweeps/drains can have dropped or admitted
+  // queued entries without telling this call site (issue #206 review): a
+  // dropped entry is a named expiry denial (`denied`), and the failure path
+  // below then reaps and reports it.
+  await reconcileQueue();
 
   while (denied === undefined) {
+    // Expiries during a worker's run are noticed here, before anything else
+    // is decided (issue #206 review).
+    if (!(await reconcileQueue())) break;
     let advanced = false;
     // Settled workers are consumed in AGENT order — deterministic, and the
     // order the merge phase expects (the enqueue below is one pass over
@@ -2427,9 +2488,13 @@ export async function runOrchestrateCommand(
     }
     if (advanced) continue;
     // Nothing settled and nothing is in flight: every worker either ran, or
-    // the queue holds entries no release can ever wake.
+    // the queue holds entries no release can ever wake (a request refused
+    // against an empty running set, or a gate nothing can free). `handled`
+    // keeps this idempotent: under `--on-failure continue` the same agent
+    // must not be found and re-recorded forever (issue #206/#169 review).
     const stuck = state.pending.find(
-      (agentId) => queued.has(agentId) && !started.has(agentId),
+      (agentId) =>
+        queued.has(agentId) && !started.has(agentId) && !handled.has(agentId),
     );
     if (stuck === undefined) break;
     const worktree = prepared.get(stuck) as OrchestrateWorktree;

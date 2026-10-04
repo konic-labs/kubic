@@ -124,6 +124,13 @@ export class ParallelScheduler {
     return this.queue.length;
   }
 
+  // The queue bound this scheduler judges against (issue #206 review): a
+  // caller that has to explain an expiry names the SAME bound the sweep used,
+  // never a second copy that can drift.
+  maxPendingMs(): number {
+    return this.limits.maxPendingMs ?? DEFAULT_MAX_PENDING_MS;
+  }
+
   // The resolved admission cap this scheduler judges against (issue #106,
   // §49.1/§50): a surface that reports running/queued must report the cap
   // they are measured against, and it must be the SAME resolution the

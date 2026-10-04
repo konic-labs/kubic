@@ -241,6 +241,16 @@ this run, else an explicit limits cap, else the configured
 subagents and D12 is amended to two; see
 [design drift](../design-drift.md) for the reconciliation.
 
+Admission judges what the run knows. Each spawn carries the worker's
+**provider**, taken from its role's model pin — so per-provider caps are live
+for workers with a role document; a worker with no pin is judged in the
+scheduler's `default` bucket, because the host cannot see the operator's or the
+manager's own pin (the credential plan resolves a wider chain). The mem/disk
+**aggregate** caps stay opt-in and estimate-driven: no production estimate
+source exists, so the run passes no `memMb`/`diskMb` and a run only reaches
+those caps if an embedder supplies estimates (a fabricated number would make
+the gate enforce fiction — recorded rather than invented).
+
 Concurrency changes only *when* workers run, never the merge: candidates are
 enqueued in **agent order** after the workers settle, so the merge order (and
 the write-ahead merge intent per candidate) is deterministic regardless of which

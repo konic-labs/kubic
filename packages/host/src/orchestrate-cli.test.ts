@@ -1674,7 +1674,7 @@ describe('failure results persist in the saved records (issue #185)', () => {
       },
     });
     const code = await runOrchestrateCommand(
-      { prompt: 'demo', agents: ['alpha'], session: 'sess-1' },
+      { prompt: 'demo', agents: ['alpha', 'beta'], session: 'sess-1' },
       world.deps,
     );
     expect(code).toBe(1);
@@ -1703,10 +1703,20 @@ describe('failure results persist in the saved records (issue #185)', () => {
       },
       metrics: { wallMs: 0, latencyMs: 0 },
     });
-    expect(lastState(world).pending).toEqual(['alpha']);
+    // Both workers ran concurrently (#206) and both failed: each gets its own
+    // synthesized record, both stay pending for the retry, and nothing merged.
+    expect(failureRecord(world, 'beta')?.result).toMatchObject({
+      status: 'failed',
+      error: { details: { code: 'worker_failed' } },
+    });
+    expect(lastState(world).pending).toEqual(['alpha', 'beta']);
     expect(lastState(world).merged).toEqual([]);
-    // The record is one entry, and nothing else was recorded.
-    expect(lastState(world).records).toHaveLength(1);
+    // One record per agent, in agent order — no double-record from the
+    // concurrent failure path.
+    expect(lastState(world).records.map((entry) => entry.agentId)).toEqual([
+      'alpha',
+      'beta',
+    ]);
   });
 
   it('a lifecycle spawn_failed error is a spawn_failed result', async () => {
@@ -1844,6 +1854,11 @@ describe('failure results persist in the saved records (issue #185)', () => {
         runningCount: () => 0,
         queuedCount: () => 0,
         maxConcurrency: () => 1,
+        // The run reconciles its queue view after every scheduler
+        // interaction (issue #206 review): a fake must answer these too.
+        pendingIds: () => [],
+        runningIds: () => [],
+        maxPendingMs: () => 60_000,
       } as unknown as OrchestrateCommandDeps['scheduler'],
     });
     const code = await runOrchestrateCommand(

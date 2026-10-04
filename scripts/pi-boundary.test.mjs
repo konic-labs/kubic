@@ -18,14 +18,27 @@ import { checkTree } from './dep-lint.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const PI_DEPS = [
-  '@earendil-works/pi-agent-core',
-  '@earendil-works/pi-ai',
-  '@earendil-works/pi-tui',
   '@earendil-works/chord',
+  '@earendil-works/pi-ai',
+  '@earendil-works/pi-durable',
+  '@earendil-works/pi-tui',
+];
+// Dropped in the Pi 1.0 migration (issue #390): pi-agent-core lost the
+// harness, and nothing imports pi-protocol / pi-telemetry directly.
+const REMOVED_PI_DEPS = [
+  '@earendil-works/pi-agent-core',
+  '@earendil-works/pi-protocol',
   '@earendil-works/pi-telemetry',
+];
+// Gone from the lockfile entirely — nothing depends on them transitively.
+const GONE_FROM_LOCK = [
+  '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
 ];
-const PI_VERSION = '0.87.1';
+// Transitive Pi deps re-pinned to PI_VERSION by a root `overrides` entry
+// (pi-ai@1.0.2 declares pi-telemetry with a caret).
+const OVERRIDDEN_PI_DEPS = ['@earendil-works/pi-telemetry'];
+const PI_VERSION = '1.0.2';
 
 const scratchDirs = [];
 after(() => {
@@ -48,7 +61,7 @@ function fixturePackageJson(deps) {
 }
 
 describe('pi pinning + boundary (issue #4)', () => {
-  it('worker pins all six Pi deps exactly', () => {
+  it('worker pins all four Pi deps exactly and drops the removed three', () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'worker', 'package.json'), 'utf8'),
     );
@@ -59,6 +72,24 @@ describe('pi pinning + boundary (issue #4)', () => {
         `${dep} must be pinned to ${PI_VERSION}`,
       );
     }
+    for (const dep of REMOVED_PI_DEPS) {
+      assert.equal(
+        pkg.dependencies?.[dep],
+        undefined,
+        `${dep} must be gone from the worker manifest`,
+      );
+    }
+  });
+
+  it('root overrides pin the transitive Pi telemetry exactly', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    // pi-ai@1.0.2 declares `@earendil-works/pi-telemetry: ^1.0.2`; Kubic
+    // re-pins it exactly so a telemetry release cannot move the runtime tree.
+    assert.equal(
+      pkg.overrides?.['@earendil-works/pi-telemetry'],
+      PI_VERSION,
+      `pi-telemetry must be overridden to ${PI_VERSION}`,
+    );
   });
 
   it('pinned check passes on the clean tree', () => {
@@ -182,18 +213,33 @@ describe('pi pinning + boundary (issue #4)', () => {
     assert.ok(yml.includes('check:pi'), 'ci.yml must run check:pi');
   });
 
-  it('lockfile pins the Pi deps', () => {
+  it('lockfile pins every copy of the Pi deps and drops the removed two', () => {
     const lock = JSON.parse(
       readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
     );
     const pkgs = lock.packages ?? {};
-    for (const dep of PI_DEPS) {
-      const key = `node_modules/${dep}`;
-      assert.equal(
-        pkgs[key]?.version,
-        PI_VERSION,
-        `lockfile must pin ${dep}@${PI_VERSION}`,
+    for (const dep of [...PI_DEPS, ...OVERRIDDEN_PI_DEPS]) {
+      // npm may hoist or nest each copy (pi-ai appears both under the worker
+      // and under pi-durable), so pin every resolved copy, not one path.
+      const suffix = `node_modules/${dep}`;
+      const copies = Object.entries(pkgs).filter(
+        ([path]) => path === suffix || path.endsWith(`/${suffix}`),
       );
+      assert.ok(copies.length > 0, `lockfile must contain ${dep}`);
+      for (const [path, entry] of copies) {
+        assert.equal(
+          entry.version,
+          PI_VERSION,
+          `${path} must be pinned to ${PI_VERSION}`,
+        );
+      }
+    }
+    for (const dep of GONE_FROM_LOCK) {
+      const suffix = `/node_modules/${dep}`;
+      const copies = Object.keys(pkgs).filter(
+        (path) => path === `node_modules/${dep}` || path.endsWith(suffix),
+      );
+      assert.deepEqual(copies, [], `${dep} must be gone from the lockfile`);
     }
   });
 

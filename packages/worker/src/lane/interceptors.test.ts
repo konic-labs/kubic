@@ -611,9 +611,13 @@ describe('secret redaction (issue #192)', () => {
   // back with no secret material. Probes are faux material only.
   const PROBES: ReadonlyArray<readonly [string, readonly string[]]> = [
     ['Authorization: Bearer sk-live-123', ['sk-live-123']],
+    ['Authorization hunter2', ['hunter2']],
+    ['--authorization hunter2', ['hunter2']],
     ['authorization: basic dXNlcjpwYXNzd29yZA==', ['dXNlcjpwYXNzd29yZA==']],
     ['curl -H "Authorization: Bearer sk-live-123" https://x', ['sk-live-123']],
     ['curl -u admin:hunter2 https://x', ['admin:hunter2', 'hunter2']],
+    ['curl -uadmin:hunter2 https://x', ['admin:hunter2', 'hunter2']],
+    ['curl -U admin:hunter2 https://x', ['admin:hunter2']],
     ['curl --user admin:hunter2 https://x', ['admin:hunter2']],
     ['curl --user=admin:hunter2 https://x', ['admin:hunter2']],
     ['curl --proxy-user admin:hunter2 https://x', ['admin:hunter2']],

@@ -285,9 +285,12 @@ const CREDENTIAL_WORD = '[A-Za-z0-9][A-Za-z0-9\\-._~+=]{9,}';
 // sk-live-123` used to redact only `Bearer` and leave the token in the clear.
 const AUTH_CREDENTIAL = new RegExp(
   [
-    // Header form: `Authorization: [scheme] <credential>` — the scheme is
-    // optional, so `Authorization: <credential>` is covered too.
-    String.raw`(\bauthorization\s*[:=]\s*(?:(?:bearer|basic|token|digest)\s+)?)\S+`,
+    // Header form: `Authorization[:=] [scheme] <credential>` — the separator
+    // and the scheme are both optional, so the space-separated
+    // `Authorization hunter2` and `--authorization hunter2` forms are covered
+    // too (review of #192: dropping `authorization` from the keyword pass had
+    // left the no-colon spelling in the clear).
+    String.raw`(\bauthorization\s*[:=]?\s*(?:(?:bearer|basic|token|digest)\s+)?)\S+`,
     // Bare scheme form: `Bearer <credential>` / `Basic <credential>`.
     `((?:^|[\\s"'=(])(?:bearer|basic|token|digest)\\s+)(${CREDENTIAL_WORD})`,
   ].join('|'),
@@ -295,14 +298,19 @@ const AUTH_CREDENTIAL = new RegExp(
 );
 
 // URL userinfo that carries a password (`https://user:pw@host`). User-only
-// userinfo (`ssh://git@host`) is not a secret and stays readable.
-const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
+// userinfo (`ssh://git@host`) is not a secret and stays readable. The scheme
+// length is BOUNDED: an unbounded `[a-z0-9+.-]*` before the required `://`
+// backtracks over a long letter-run at every start position (quadratic), and
+// no real scheme is 20 characters long.
+const URL_USERINFO = /([a-z][a-z0-9+.-]{1,20}:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
 
 // A user flag whose operand has the `user:password` shape: curl's `-u` /
-// `--user` and its proxy twin `-U` / `--proxy-user`. The colon is required,
-// so an unrelated `-u` (`cp -u a b`, `sort -u names`) is left alone.
+// `--user` and its proxy twin `-U` / `--proxy-user`. The short forms may be
+// attached (`-uadmin:hunter2`, review of #192); the long forms need `=` or a
+// space. The colon is required, so an unrelated `-u` (`cp -u a b`,
+// `sort -u names`) is left alone.
 const USER_FLAG_CREDENTIAL =
-  /((?:^|[\s"'])(?:-u|--user|--proxy-user|-U)[=\s]\s*"?)[^\s"']*:[^\s"']*/gi;
+  /((?:^|[\s"'])(?:-u|-U)(?:[=\s]\s*)?|(?:^|[\s"'])(?:--user|--proxy-user)[=\s]\s*"?)[^\s"']*:[^\s"']*/gi;
 
 // Secret-named values: `--token abc`, `SECRET_KEY=x`, `password: y`, and a
 // short bare `bearer abc` (the authorization header and the long bare

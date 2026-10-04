@@ -280,6 +280,12 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
     'echo token =abc rm',
     // A quoted value never spans a newline, even through a backslash.
     'PASSWORD="abc\\\nrm -rf x"',
+    // A user flag with no password shape is an ordinary flag; user-only
+    // userinfo is not a secret.
+    'cp -u a b',
+    'sort -u names.txt',
+    'curl -u admin https://example.test',
+    'ssh://git@github.com/x',
   ])('%s is displayed unchanged', (command) => {
     expect(approvalCommandText(command)).toBe(command);
   });
@@ -326,7 +332,23 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
     ['PRIVATE_KEY=abc rm', 'PRIVATE_KEY=[REDACTED] rm'],
     [
       'curl https://u:p4ss@host/x?token=abc&y=1',
-      'curl https://u:p4ss@host/x?token=[REDACTED]&y=1',
+      'curl https://[REDACTED]@host/x?token=[REDACTED]&y=1',
+    ],
+    [
+      'curl -u admin:hunter2 https://example.test',
+      'curl -u [REDACTED] https://example.test',
+    ],
+    [
+      'curl -uadmin:hunter2 https://example.test',
+      'curl -u[REDACTED] https://example.test',
+    ],
+    [
+      'curl --user=admin:hunter2 https://example.test',
+      'curl --user=[REDACTED] https://example.test',
+    ],
+    [
+      'git clone https://user:pw123456@host/x',
+      'git clone https://[REDACTED]@host/x',
     ],
     [
       'curl -H "Authorization: Bearer abc.def.ghi" https://example.test',

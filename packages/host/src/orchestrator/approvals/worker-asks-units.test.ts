@@ -391,7 +391,13 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
 
   it('writes no credential material into the ask JSON (issue #192)', async () => {
     const dir = tmpDir();
-    const seat = createWorkerMailboxSeat({ dir, maxPendingMs: 30, pollMs: 5 });
+    const signer = createApprovalSigner();
+    const seat = createWorkerMailboxSeat({
+      dir,
+      maxPendingMs: 30,
+      pollMs: 5,
+      verifyKey: signer.verifyKey,
+    });
     // A non-command call: the seat forwards the lane's SUMMARY (the broad
     // redactor path) as the ask's args, so a secret-shaped path lands in
     // the mailbox JSON under <repo>/.kubic unless the redactor knows the
@@ -405,7 +411,9 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
       }),
     });
     // The seat publishes synchronously before it waits for an answer.
-    const [pending] = readPendingWorkerAsks(dir);
+    const [pending] = readPendingWorkerAsks(dir, {
+      verifyKey: signer.verifyKey,
+    });
     expect(pending).toBeDefined();
     const raw = readFileSync(
       join(dir, ASKS_DIR, `${pending?.request.key ?? ''}.json`),
@@ -416,31 +424,40 @@ describe('createWorkerMailboxSeat (issue #379)', () => {
     await expect(verdict).resolves.toMatchObject({ approved: false });
 
     // A command-bearing ask forwards the display-redacted command; the
-    // summary is derived from it, so no token reaches the file either.
-    const command = 'curl -H "Authorization: Bearer sk-live-123" https://x';
-    const second = createWorkerMailboxSeat({
-      dir,
-      maxPendingMs: 30,
-      pollMs: 5,
-    });
-    const pendingCommand = second({
-      key: 'lane-key-2',
-      capability: 'network',
-      toolName: 'bash',
-      summary: summarizeCommand('network', command),
-      command: approvalCommandText(command),
-    });
-    const asks = readPendingWorkerAsks(dir);
-    const commandAsk = asks.find(
-      (entry) => entry.request.key !== pending?.request.key,
-    );
-    expect(commandAsk).toBeDefined();
-    const rawCommand = readFileSync(
-      join(dir, ASKS_DIR, `${commandAsk?.request.key ?? ''}.json`),
-      'utf8',
-    );
-    expect(rawCommand).not.toContain('sk-live-123');
-    await expect(pendingCommand).resolves.toMatchObject({ approved: false });
+    // summary is derived from it, so no token reaches the file either. Each
+    // shape is one the DISPLAY redactor owns (issue #192 review): the
+    // authorization header, a `-u` operand and URL userinfo.
+    const commands: ReadonlyArray<readonly [string, string]> = [
+      ['curl -H "Authorization: Bearer sk-live-123" https://x', 'sk-live-123'],
+      ['curl -u admin:hunter2 https://x', 'hunter2'],
+      ['git clone https://user:pw123456@host/x', 'pw123456'],
+    ];
+    for (const [index, [command, secret]] of commands.entries()) {
+      const seat = createWorkerMailboxSeat({
+        dir,
+        maxPendingMs: 30,
+        pollMs: 5,
+        verifyKey: signer.verifyKey,
+      });
+      const pendingCommand = seat({
+        key: `lane-key-cmd-${index}`,
+        capability: 'network',
+        toolName: 'bash',
+        summary: summarizeCommand('network', command),
+        command: approvalCommandText(command),
+      });
+      const asks = readPendingWorkerAsks(dir, { verifyKey: signer.verifyKey });
+      const commandAsk = asks.find(
+        (entry) => entry.request.key !== pending?.request.key,
+      );
+      expect(commandAsk, command).toBeDefined();
+      const rawCommand = readFileSync(
+        join(dir, ASKS_DIR, `${commandAsk?.request.key ?? ''}.json`),
+        'utf8',
+      );
+      expect(rawCommand, command).not.toContain(secret);
+      await expect(pendingCommand).resolves.toMatchObject({ approved: false });
+    }
   });
 });
 

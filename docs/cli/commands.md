@@ -949,9 +949,11 @@ the same secret-shape table the audit backstop uses (`sk-…`, `AKIA…`,
 `ghp_…`, `xox…-`, PEM headers), the full credential after an `Authorization:`
 header or a bare `bearer`/`basic` scheme, a `-u`/`--user`/`--proxy-user`
 `user:password` operand, and URL userinfo (`https://user:pw@host`) — and, when
-they shorten a command, say so: `… (+N chars)`. The dialog's `command` field is
-the only place the narrow redaction applies. Orchestrator worker asks carry the
-full command to your seat as well.
+they shorten a command, say so: `… (+N chars)`. The narrow redaction is what
+the approval dialog's `command` field shows, and the same field in an
+orchestrator worker ask — both carry the full command to the seat that decides,
+with the operator still seeing the host and the flag. The summary's broad
+redaction is the safe over-redacting one.
 
 Rows wrap by terminal **display columns**, not by character count: wide (CJK)
 characters count two columns, and a combining sequence or an emoji cluster is

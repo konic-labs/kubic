@@ -245,6 +245,13 @@ the cap wait in the `ParallelScheduler`'s FIFO queue and start when a settled
 worker releases its slot — starvation-safe, and reported rather than hidden
 (see below).
 
+§41.1's other half is live too (issue #277): an INTERACTIVE run that requests
+more workers than the cap raises one `spawn-agents` ask before anything spawns.
+Approving proceeds under the queueing rule above (the excess waits for a slot);
+denying fails exactly those workers with `spawn_agents_denied` after every
+worker inside the cap has settled, and an autonomous run — headless, or one
+passing `--yes` — never asks.
+
 The cap resolves in one place (`resolveMaxConcurrency`): `--concurrency <n>` for
 this run, else an explicit limits cap, else the configured
 `[orchestrator].maxWorkers`, else the shipped four. §45 says four concurrent

@@ -16,6 +16,7 @@
 // arrive injected (fakes in tests, the exec seam in prod via
 // apps/kubic/src/orchestrate-run.ts).
 
+import { type RunMode, resolveBlockedSpawn } from '../../agents/src/budget.js';
 import {
   addEdge,
   addNode,
@@ -938,6 +939,19 @@ export interface OrchestrateCommandDeps {
   // its own approval overlay — passes false so the message never names a flag
   // that does not exist there (issue #327).
   yesHint?: boolean;
+  /**
+   * Whether this run has a USER attached (a TTY, or the TUI's own overlay) —
+   * issue #277; §41.1. An interactive run asks before spawning more workers
+   * than the concurrency cap; a headless run (or one passing `--yes`) keeps
+   * the autonomous queueing rule. Absent means headless.
+   */
+  interactive?: boolean;
+  /**
+   * The manager's own checkout (issue #277). A run-level ask belongs to no
+   * worker worktree, so its §60 row names this path; absent falls back to the
+   * process cwd.
+   */
+  repoRoot?: string;
   // Per-worker approvals + opt-in budgets (issue #105, §41.1/§41.2/§71).
   // The CLI owns the RUN OPTIONS (session, bound, budget, full-access) and the
   // composition root owns construction (its dir, its TTY seat, its debug
@@ -2204,8 +2218,77 @@ export async function runOrchestrateCommand(
     const saveFailure = await saveOrFail(state);
     if (saveFailure !== undefined) return saveFailure;
   }
+  // §41.1/issue #277: a run that requests MORE workers than the concurrency
+  // cap is a decision the user makes on an interactive run — one `spawn-agents`
+  // ask naming the requested count, the cap and the excess ids — instead of a
+  // silent queue. The autonomous run keeps the shipped rule (the shared
+  // resolveBlockedSpawn contract): the cap bounds concurrency, it never asks.
+  const concurrencyCap = scheduler.maxConcurrency();
+  const excessAgents =
+    state.agents.length <= concurrencyCap
+      ? []
+      : state.agents
+          .slice(concurrencyCap)
+          .filter((agentId) => state.pending.includes(agentId));
+  const deniedSpawns = new Set<string>();
+  const refusalReasonFor = (agentId: string): string =>
+    `spawn-agents denied: worker '${agentId}' is beyond the concurrency cap (${concurrencyCap}) and the user refused the request`;
+  if (excessAgents.length > 0 && approvalsRun !== undefined) {
+    // `--yes` is the run's standing answer: it makes the run autonomous, so
+    // the cap never asks (issue #323's rule, applied to this ask too).
+    const runMode: RunMode =
+      deps.interactive === true && parsed.autoApprove !== true
+        ? 'interactive'
+        : 'autonomous';
+    const blocked = resolveBlockedSpawn(
+      runMode,
+      `${state.agents.length} workers requested with a concurrency cap of ${concurrencyCap}`,
+    );
+    if (blocked.outcome === 'ask') {
+      const verdict = await approvalsRun.decisions.ask({
+        trigger: 'spawn-agents',
+        toolName: 'spawn_agent',
+        args: {
+          agents: [...state.agents],
+          cap: concurrencyCap,
+          excess: [...excessAgents],
+        },
+        justification: `this run requests ${state.agents.length} workers with a concurrency cap of ${concurrencyCap}; approving proceeds under the queueing rule, denying fails the excess workers (${excessAgents.join(', ')})`,
+        sessionId,
+        agentId: 'manager',
+        role: 'manager',
+        worktree: deps.repoRoot ?? process.cwd(),
+        provenance: { parentSessionId: sessionId },
+      });
+      if (!verdict.approved) {
+        for (const agentId of excessAgents) deniedSpawns.add(agentId);
+        debug(
+          `admission: spawn-agents ask denied — ${excessAgents.join(', ')} will not spawn (${verdict.reason})`,
+        );
+      } else {
+        debug(
+          `admission: spawn-agents ask approved — ${excessAgents.join(', ')} proceed under the queueing rule`,
+        );
+      }
+    }
+  }
   const prepared = new Map<string, OrchestrateWorktree>();
   for (const agentId of state.pending) {
+    // Issue #277: a worker beyond the cap whose ask the user REFUSED fails
+    // before any worktree is created, with the denial as its result — the
+    // failed-worker contract every other spawn failure follows. The run
+    // itself ends only once every candidate INSIDE the cap has settled (the
+    // partial-failure contract below), so a denial never discards work the
+    // user did approve.
+    if (deniedSpawns.has(agentId)) {
+      await recordFailure(agentId, undefined, {
+        status: 'spawn_failed',
+        kind: 'approval',
+        code: 'spawn_agents_denied',
+        message: refusalReasonFor(agentId),
+      });
+      continue;
+    }
     // This attempt's own result: a failure record kept from an earlier run of
     // the same session is not this attempt's outcome (issue #185). Cleared
     // BEFORE any stage can fail — the worktree stage records its own failure
@@ -2575,6 +2658,10 @@ export async function runOrchestrateCommand(
   };
 
   for (const agentId of state.pending) {
+    // Issue #277: a worker the user refused to admit past the cap never got a
+    // worktree — its failure result was recorded when the run reached it — so
+    // it is skipped here rather than dereferencing a missing preparation.
+    if (deniedSpawns.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     // §45 provider caps: the worker's own model pin names the provider its
     // child will call, so the admission layer judges the right one. The pin
@@ -2798,7 +2885,10 @@ export async function runOrchestrateCommand(
   // did not succeed, so there is nothing to merge, and it stays pending for
   // `--resume` to retry.
   for (const agentId of state.pending) {
-    if (partialFailures.has(agentId)) continue;
+    // A worker the run continued past (issue #169), and — issue #277 — one the
+    // user refused past the concurrency cap: neither succeeded, so there is
+    // nothing to merge; both stay pending for `--resume` to retry.
+    if (partialFailures.has(agentId) || deniedSpawns.has(agentId)) continue;
     const worktree = prepared.get(agentId) as OrchestrateWorktree;
     queue.enqueue({ agentId, branch: worktree.branch });
     debug(`spawn: worker '${agentId}' in ${worktree.path}`);
@@ -3133,6 +3223,15 @@ export async function runOrchestrateCommand(
     }
     debug(`merged: ${agentId} (branch ${worktree.branch})`);
     candidate = queue.dequeue();
+  }
+
+  // Issue #277: the refused over-cap spawn is this run's terminus, reported
+  // after every in-cap candidate settled — the same partial-failure shape a
+  // worker failure takes, with the denial named.
+  if (deniedSpawns.size > 0) {
+    const refused = state.agents.find((agentId) => deniedSpawns.has(agentId));
+    const reason = refusalReasonFor(refused ?? 'worker');
+    return fail(RUN_EXIT_FAILED, 'spawn_agents_denied', reason, partial());
   }
 
   const reapError = await reapSpawned(spawned);

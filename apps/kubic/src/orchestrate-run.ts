@@ -2436,6 +2436,16 @@ export async function orchestrateDepsWithDefaults(
       return { from, to: outcome.generation };
     },
     requestApproval: mergeApprovalSeat,
+    // §41.1/issue #277: an over-cap spawn asks the USER only when this run has
+    // one — a TTY (the seat the merge gate already carries) or the TUI's own
+    // overlay (which injects its seat). Headless runs, and `--yes` runs, stay
+    // autonomous and keep the queueing rule.
+    interactive: optionsSeat !== undefined || process.stdin.isTTY === true,
+    // A run-level ask belongs to no worker worktree: its §60 row names the
+    // manager's own checkout (issue #277). Absent outside a git repository —
+    // the CLI never gets that far without one, and a test that builds these
+    // deps elsewhere must not throw.
+    ...(root === undefined ? {} : { repoRoot: root }),
     ...(options.yesHint === false ? { yesHint: false } : {}),
     // Every settled merge decision lands in the §60 ledger (issue #323),
     // naming who decided: `--yes` for the standing answer, `user` otherwise.

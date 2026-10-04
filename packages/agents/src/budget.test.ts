@@ -81,11 +81,13 @@ describe('budget (issue #9, §71)', () => {
     });
   });
 
-  it('blocked spawn fails with reason in interactive mode', () => {
+  it('blocked spawn asks the user in interactive mode', () => {
+    // §41.1/issue #277: the cap is a decision the user makes on an interactive
+    // run, not a silent queue — the caller raises the spawn-agents ask.
     expect(
       resolveBlockedSpawn('interactive', 'aggregate tokens exhausted'),
     ).toEqual({
-      outcome: 'failed',
+      outcome: 'ask',
       reason: 'aggregate tokens exhausted',
     });
   });

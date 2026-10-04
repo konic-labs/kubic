@@ -540,6 +540,18 @@ starvation-safe — and start when a settled worker releases its slot. §45's
 "default concurrency is 4" is that admitted cap. The design reconciliation is
 recorded in [design drift](../design-drift.md).
 
+**Requesting more workers than the cap asks** (issue #277; §41.1). On a run
+with a user attached (a TTY, or the TUI's own overlay) `--agents` naming more
+workers than the resolved cap raises ONE `spawn-agents` ask before anything
+spawns, naming the requested count, the cap and the excess worker ids. The
+verdict is a §60 row (`trigger:spawn-agents`, mode orchestrator): approving
+proceeds under the queueing rule above (the excess waits in the scheduler's
+FIFO queue for a slot), and denying leaves every worker inside the cap to run
+and merge, then fails the excess ones with `code=spawn_agents_denied` and exit
+1, the partial-failure contract. A headless run, and any run passing `--yes`
+(the standing answer makes it autonomous), never asks and keeps the queueing
+rule.
+
 Concurrency changes only *when* workers run, never the merge: candidates are
 enqueued in **agent order** after the workers settle, so `kubic orchestrate
 --json` reports the same `mergeOrder` whichever worker finished first, and the

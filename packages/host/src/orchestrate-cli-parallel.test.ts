@@ -7,16 +7,81 @@
 // never assumed. Since #206 the admission layer is a GATE: admitted workers
 // run concurrently up to the resolved cap, the rest wait in the scheduler
 // queue and are drained when a slot is released.
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   OrchestrateCommandDeps,
   OrchestrateWorktree,
   OrchestratorRunState,
 } from './orchestrate-cli.js';
 import { runOrchestrateCommand } from './orchestrate-cli.js';
+import {
+  createOrchestratorApprovalsRun,
+  type WorkerApprovalsRun,
+} from './orchestrator/approvals/worker-asks.js';
 import type { MergedHunk } from './orchestrator/merge/attribution.js';
 import { ParallelScheduler } from './orchestrator/parallel/scheduler.js';
 import type { ParallelTrajectoryEvent } from './orchestrator/parallel/visibility.js';
+import { readAuditLedger } from './policy/audit-ledger.js';
+
+const made: string[] = [];
+
+function tmpDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-277-'));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const dir of made.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A world whose approvals layer is the REAL run, over a temp state dir and a
+// seat the test controls (issue #277): the ask the CLI raises is routed for
+// real, and its §60 row lands in the run's own ledger.
+function spawnAskWorld(options: {
+  approve?: boolean;
+  interactive?: boolean;
+  yes?: boolean;
+}) {
+  const dir = tmpDir();
+  const raised: { trigger: string; agentId: string; justification: string }[] =
+    [];
+  let run: WorkerApprovalsRun | undefined;
+  const debugLines: string[] = [];
+  const world = makeWorld({
+    interactive: options.interactive ?? true,
+    repoRoot: '/repo',
+    debug: (line: string) => {
+      debugLines.push(line);
+    },
+    approvals: (approvalOptions) => {
+      run = createOrchestratorApprovalsRun({
+        dir,
+        sessionId: approvalOptions.sessionId,
+        maxPendingMs: approvalOptions.maxPendingMs,
+        pollMs: 5,
+        seat: async (request) => {
+          raised.push({
+            trigger: request.trigger,
+            agentId: request.agentId,
+            justification: request.justification,
+          });
+          return options.approve === false
+            ? { approved: false, reason: 'not this many workers' }
+            : { approved: true, by: 'user' };
+        },
+      });
+      return run;
+    },
+  });
+  return { world, dir, raised, debugLines };
+}
 
 interface FakeWorld {
   deps: OrchestrateCommandDeps;
@@ -397,5 +462,114 @@ describe('orchestrate queue expiry and never-wakeable queues (issue #206 review)
     const text = world.lines.join('\n');
     expect(text).toMatch(/a2/);
     expect(text).toMatch(/can never admit this spawn/);
+  });
+});
+
+// §41.1/issue #277: spawning more agents than the concurrency limit is an
+// approval trigger. The live orchestrate path consulted the scheduler with
+// `'autonomous'` always, so the interactive branch never ran and an over-cap
+// request queued in silence — no ask, no §60 row.
+describe('orchestrate asks before spawning past the cap (issue #277, §41.1)', () => {
+  it('an interactive run with five agents and cap 4 raises ONE spawn-agents ask', async () => {
+    const { world, raised, dir } = spawnAskWorld({});
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd', 'e'],
+        session: 'sess-1',
+      },
+      world.deps,
+    );
+    expect(code, world.lines.join('\n')).toBe(0);
+    expect(raised).toHaveLength(1);
+    expect(raised[0]?.trigger).toBe('spawn-agents');
+    // The ask names the excess worker, not a bare capability.
+    expect(raised[0]?.justification).toContain('5 workers');
+    expect(raised[0]?.justification).toContain('cap of 4');
+    expect(raised[0]?.justification).toContain('e');
+    expect(world.merged).toEqual(['a', 'b', 'c', 'd', 'e']);
+    // The verdict is audited as an orchestrator decision under the capability.
+    const row = readAuditLedger(join(dir, 'approvals')).find(
+      (record) => record.permission.permission === 'trigger:spawn-agents',
+    );
+    expect(row).toMatchObject({
+      mode: 'orchestrator',
+      result: 'ok',
+      agent: { session: 'sess-1', role: 'manager' },
+    });
+  });
+
+  it('a denied ask fails the excess worker and leaves the cap-sized set complete', async () => {
+    const { world, raised, debugLines } = spawnAskWorld({ approve: false });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd', 'e'],
+        session: 'sess-1',
+      },
+      world.deps,
+    );
+    expect(raised).toHaveLength(1);
+    // Partial-failure contract: the workers inside the cap completed, the
+    // excess one failed with the denial named, and the run exits non-zero.
+    expect(code).not.toBe(0);
+    expect(
+      world.merged,
+      `${world.lines.join('\n')}\nDEBUG:\n${debugLines.join('\n')}`,
+    ).toEqual(['a', 'b', 'c', 'd']);
+    expect(world.lines.join('\n')).toMatch(/spawn_agents_denied/);
+    const state = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    const failed = state.pending.filter((agentId) => agentId === 'e');
+    expect(failed).toEqual(['e']);
+    expect(world.lines.join('\n')).toMatch(
+      /spawn-agents denied: worker 'e' is beyond the concurrency cap \(4\)/,
+    );
+  });
+
+  it('an autonomous run never asks and keeps the queueing rule', async () => {
+    const { world, raised } = spawnAskWorld({
+      interactive: false,
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd', 'e'],
+        session: 'sess-1',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(raised).toEqual([]);
+    expect(world.merged).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('a --yes run is autonomous even with a user attached', async () => {
+    const { world, raised } = spawnAskWorld({});
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd', 'e'],
+        session: 'sess-1',
+        yes: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(raised).toEqual([]);
+    expect(world.merged).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('an in-cap interactive run asks nothing', async () => {
+    const { world, raised } = spawnAskWorld({});
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'do it',
+        agents: ['a', 'b', 'c', 'd'],
+        session: 'sess-1',
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(raised).toEqual([]);
   });
 });

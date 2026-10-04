@@ -1,5 +1,6 @@
 // Slice D: lane journal wiring + durable next-day undo (issue #17; §42.4).
-// RED: SoloBootOptions has no journal; restoreEntry does not exist.
+// The lane boots through the shared faux harness factory (#401): the journal
+// row it records is the durable `api.callId` of the model's own tool call.
 import {
   mkdtempSync,
   readFileSync,
@@ -10,24 +11,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { FileJournalStore, restoreEntry } from '../../../exec/src/journal.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  MemorySessionRepo,
-  type Session,
-} from '../pi-boundary.js';
-import { bootSoloLane, driveToSettled } from './solo.js';
+import { fauxAssistantMessage, fauxToolCall } from '../pi-boundary.js';
+import { bootFauxLane, type FauxLane, fauxToolUse } from './test-harness.js';
 
-const openSessions: Session[] = [];
+const lanes: FauxLane[] = [];
 const scratchDirs: string[] = [];
 afterAll(async () => {
-  for (const session of openSessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT);
+  for (const lane of lanes.splice(0)) {
+    await lane.cleanup();
   }
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -43,49 +35,28 @@ function scratch(prefix: string): string {
 describe('lane journal wiring (issue #17, slice D)', () => {
   it('records a lane write into the session journal with toolCallId', async () => {
     const journal = new FileJournalStore(scratch('j-'));
-    const env = new FakeExecutionEnv({});
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
-    openSessions.push(session);
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([
-      fauxAssistantMessage([
-        fauxToolCall(
-          'write',
-          { path: 'n.txt', content: 'hi\n' },
-          { id: 'call-write-1' },
-        ),
-      ]),
-      fauxAssistantMessage('wrote it'),
-    ]);
-    const { lane } = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
-      env,
-      sessionId: session.metadata.id,
-      agentId: 'root',
+    const lane = await bootFauxLane({
       journal,
+      responses: [
+        fauxToolUse([
+          fauxToolCall(
+            'write',
+            { path: 'n.txt', content: 'hi\n' },
+            { id: 'call-write-1' },
+          ),
+        ]),
+        fauxAssistantMessage('wrote it'),
+      ],
     });
-    const admission = await lane.accept(
-      { kind: 'prompt', prompt: 'write the file' },
-      BACKGROUND_CONTEXT,
-    );
-    if (!admission.ok) throw new Error('accept failed');
-    const outcome = await driveToSettled(
-      lane,
-      admission.value.operationId,
-      BACKGROUND_CONTEXT,
-    );
-    expect(outcome.kind).toBe('settled');
+    lanes.push(lane);
+    const outcome = await lane.run('write the file');
+    expect(outcome.status).toBe('completed');
     const entries = journal.entries();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.op).toBe('create');
     // The journal row carries the model's own tool call id, not a synthetic one.
     expect(entries[0]?.toolCallId).toBe('call-write-1');
-    expect(env.fs.readFile('n.txt')).toBe('hi\n');
+    expect(lane.env.fs.readFile('n.txt')).toBe('hi\n');
   });
 });
 

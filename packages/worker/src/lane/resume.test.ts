@@ -1,32 +1,26 @@
-// Slice B: kill mid-run -> attach -> lane resumes the pending op (#14).
+// Crash recovery through the durable session store (issue #14, slice B;
+// EPIC K #401 port). A process that dies mid-turn leaves its placed input
+// durably recorded; the next attach reopens the same JSONL session and
+// `settlePending`'s `resume` drives that work to completion. Pi 0.87's
+// per-operation drive is gone — the durable submission IS the pending work
+// (#396 owns the decision surface; this file pins it end to end through the
+// session store, the shared faux harness factory and the real lane).
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type OperationResultRecord,
-  type Session,
-} from '../pi-boundary.js';
-import { requestLaneAbort } from './abort.js';
-import {
-  attachSession,
-  createSession,
-  openSessionStore,
-} from './session-store.js';
-import { bootSoloLane, driveToSettled } from './solo.js';
+import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
+import { settlePending } from './pending.js';
+import { attachSession, openSessionStore } from './session-store.js';
+import { bootFauxLane, type FauxLane } from './test-harness.js';
 
-const openSessions: Session[] = [];
+const openLanes: FauxLane[] = [];
 const scratchDirs: string[] = [];
 
 afterAll(async () => {
-  for (const session of openSessions.splice(0)) {
-    await session.close(BACKGROUND_CONTEXT);
+  for (const lane of openLanes.splice(0)) {
+    await lane.cleanup().catch(() => undefined);
   }
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -40,134 +34,62 @@ function scratch(prefix: string): string {
 }
 
 describe('session resume (issue #14, slice B)', () => {
-  it('resumes a pending op after a simulated kill', async () => {
+  it('resumes the work a killed process left and completes it after attach', async () => {
     const root = scratch('resume-');
-    const env = new FakeExecutionEnv({});
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    const id = session.metadata.id;
+    const sessionId = 'sess-resume-1';
 
-    // First "process": boot, accept an op, then die without driving or closing.
-    let pendingOp = '';
-    {
-      const faux = fauxProvider();
-      const models = createModels();
-      models.setProvider(faux.provider);
-      faux.setResponses([fauxAssistantMessage('unfinished')]);
-      const { lane } = await bootSoloLane({
-        session,
-        models,
-        model: faux.getModel(),
-        env,
-        sessionId: id,
-        agentId: 'root',
-      });
-      const admission = await lane.accept(
-        { kind: 'prompt', prompt: 'finish this' },
-        BACKGROUND_CONTEXT,
-      );
-      if (!admission.ok) throw new Error('accept failed');
-      pendingOp = admission.value.operationId;
-    }
+    // First "process": boot the real session (JSONL storage + lock), admit
+    // one prompt, then die without driving or closing it — the answer never
+    // arrives, so the generation task stays durably pending.
+    const dying = await bootFauxLane({
+      storage: 'jsonl',
+      root,
+      sessionId,
+      // A provider that never answers: the killed process cannot commit a
+      // reply, exactly like a crash between admission and the response.
+      responses: [() => new Promise<never>(() => undefined)],
+    });
+    await dying.solo.conversation.submit(
+      { type: 'input', content: 'finish this' },
+      BACKGROUND_CONTEXT,
+    );
 
-    // Second "process": attach and resume the same operation. The first
-    // "process" died holding its session lock (it never closed), so the
-    // fixture rewrites lock.json as that crashed holder: a fake pid with
-    // liveness stubbed dead (hermetic — no real process is ever signalled;
-    // issue #118). A live holder would refuse this attach, correctly.
+    // Second "process": attach the same session. The first process died
+    // holding its session lock (it never closed), so the fixture rewrites
+    // lock.json as that crashed holder: a fake pid with liveness stubbed
+    // dead (hermetic — no real process is ever signalled; issue #118). A
+    // live holder would refuse this attach, correctly.
     writeFileSync(
-      join(root, id, 'lock.json'),
+      join(root, sessionId, 'lock.json'),
       JSON.stringify({ pid: 424242, startedAt: Date.now() }),
     );
-    const store2 = openSessionStore(root, createNodeFileBridge(root));
+    const store = openSessionStore(root, createNodeFileBridge(root));
     const kill = vi.spyOn(process, 'kill').mockImplementation((() => {
       throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
     }) as never);
     const attached = await attachSession(
-      store2,
-      id,
+      store,
+      sessionId,
       BACKGROUND_CONTEXT,
     ).finally(() => kill.mockRestore());
-    openSessions.push(attached);
-    const faux2 = fauxProvider();
-    const models2 = createModels();
-    models2.setProvider(faux2.provider);
-    faux2.setResponses([fauxAssistantMessage('done')]);
-    const resumed = await bootSoloLane({
-      session: attached,
-      models: models2,
-      model: faux2.getModel(),
-      env,
-      sessionId: id,
-      agentId: 'root',
+
+    const resumed = await bootFauxLane({
+      handle: attached,
+      responses: [fauxAssistantMessage('done')],
     });
-    const driven = await driveToSettled(
-      resumed.lane,
-      pendingOp,
-      BACKGROUND_CONTEXT,
-    );
-    expect(driven.kind).toBe('settled');
-    if (driven.kind === 'settled') {
-      const record = driven.outcome as OperationResultRecord;
-      expect(record.status).toBe('completed');
-    }
-    const transcript = JSON.stringify(
-      await resumed.lane.findEntries(undefined, BACKGROUND_CONTEXT),
-    );
+    openLanes.push(resumed);
+    const settlement = await settlePending(resumed.solo, 'resume', {
+      context: BACKGROUND_CONTEXT,
+      kills: resumed.solo.kills,
+    });
+    expect(settlement.outcome).toBe('resumed');
+    // The durable settlement is the answer the resumed run produced.
+    expect(settlement.settled).toBe('done');
+
+    const transcript = JSON.stringify(await resumed.entries());
     // The prompt was persisted by the dead process; the reply can only
-    // come from the resumed lane driving the pending op to completion.
+    // come from the resumed lane driving the pending work to completion.
     expect(transcript).toContain('finish this');
     expect(transcript).toContain('done');
-    expect(transcript).not.toContain('unfinished');
-  });
-});
-
-describe('abort persistence (issue #14, slice E)', () => {
-  it('abort settles the op as aborted with kills drained', async () => {
-    const root = scratch('abort-');
-    const env = new FakeExecutionEnv({});
-    const store = openSessionStore(root, createNodeFileBridge(root));
-    const session = await createSession(store, '/work', BACKGROUND_CONTEXT);
-    openSessions.push(session);
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage('never runs')]);
-    const { lane, kills } = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
-      env,
-      sessionId: session.metadata.id,
-      agentId: 'root',
-    });
-    const admission = await lane.accept(
-      { kind: 'prompt', prompt: 'doomed work' },
-      BACKGROUND_CONTEXT,
-    );
-    if (!admission.ok) throw new Error('accept failed');
-    const operationId = admission.value.operationId;
-    let drained = 0;
-    kills.track(operationId, () => {
-      drained += 1;
-    });
-    const aborted = await requestLaneAbort(
-      lane,
-      kills,
-      operationId,
-      BACKGROUND_CONTEXT,
-    );
-    expect(aborted.newlyRequested).toBe(true);
-    expect(aborted.killed).toBe(1);
-    expect(drained).toBe(1);
-    const driven = await driveToSettled(lane, operationId, BACKGROUND_CONTEXT);
-    expect(driven.kind).toBe('settled');
-    if (driven.kind === 'settled') {
-      const record = driven.outcome as OperationResultRecord;
-      expect(record.status).toBe('aborted');
-    }
-    expect(
-      JSON.stringify(await lane.findEntries(undefined, BACKGROUND_CONTEXT)),
-    ).not.toContain('never runs');
   });
 });

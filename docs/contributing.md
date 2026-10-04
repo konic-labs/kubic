@@ -106,9 +106,10 @@ standalone `npm run docs:check` step, and again inside `npm test` via
 ## CI gates (run these locally)
 
 A push runs the `test` job (the linters, suites and the shipped-artifact
-check below) plus the per-push `mutation` job on the changed lines (see
-"The gate"). The nightly full-scope `mutation-nightly` job is postponed
-(#137). Efficiency rules of the workflow:
+check below). The per-push `mutation` job on the changed lines (see
+"The gate") is postponed (#407) and the nightly full-scope
+`mutation-nightly` job is postponed (#137); run the per-push gate locally
+until #407 restores it. Efficiency rules of the workflow:
 
 - **`test` runs on node 22** (the lowest supported) on every ref, and on
   **22 and 24 on `main`**. The Node-independent static checks (typecheck, biome,
@@ -194,7 +195,11 @@ leaves gating to the per-file check).
 
 ### CI: per push and nightly
 
-- **`mutation` (every push / PR)** — `scripts/mutation-scope.mjs --ref <base>`
+- **`mutation` (every push / PR)** — *postponed (#407): the job is disabled
+  (`if: false`) until the EPIC K test-strength gaps and the scope's time
+  budget are fixed; run it locally (see "Run a scope locally" below) with
+  `--mutate "$(node scripts/mutation-scope.mjs --ref main)"`.*
+  When enabled — `scripts/mutation-scope.mjs --ref <base>`
   maps `git diff -U0` hunks to the **changed lines** of touched source files
   (`path:start-end` ranges; a core file alone can hold ~1k mutants covered by
   ~500 tests), capped at 25 files **and 2000 changed lines** (about 1500

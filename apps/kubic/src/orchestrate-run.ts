@@ -417,6 +417,29 @@ function launchesView(
   };
 }
 
+/**
+ * §13 WAITING (issue #151): while the router holds an unanswered ask for a
+ * worker, its row says WAITING; the answer (or the bound's denial) flips it
+ * back to RUNNING. Only a LIVE agent flips — a worker that settled keeps its
+ * own terminus — and only a change is written. Exported so the wiring itself
+ * is what the approvals test drives, not a copy of it.
+ */
+export function workerAskStateObserver(
+  registry: WorkerRegistry,
+  persist: () => void,
+): (agentId: string, pending: boolean) => void {
+  return (agentId, pending) => {
+    const row = registry.get(agentId);
+    const next = pending ? 'waiting' : 'running';
+    if (row === undefined || row.agentStatus === next) return;
+    if (row.agentStatus !== 'running' && row.agentStatus !== 'waiting') {
+      return;
+    }
+    registry.updateAgentStatus(agentId, next);
+    persist();
+  };
+}
+
 function provenanceFor(sessionId: string, agentId: string, tool: string) {
   return {
     sessionId,
@@ -977,8 +1000,6 @@ export async function orchestrateDepsWithDefaults(
     return workerShell;
   };
   const launchedByAgent = new Map<string, ReturnType<typeof launchWorker>>();
-  // The handle the runWorker catch settles (§13, issue #151).
-  let launchedForSettle: ReturnType<typeof launchWorker> | undefined;
   // Workers the run cancelled (issue #206 fail-fast): remembered separately
   // from the signal guard, because the cancellation is per AGENT and may
   // arrive before that agent's child exists.
@@ -1643,20 +1664,12 @@ export async function orchestrateDepsWithDefaults(
           : { budgetForAgent: approvalOptions.budgetForAgent }),
         ...(approvalOptions.fullAccess ? { fullAccess: true } : {}),
         ...(approvalOptions.fresh ? { fresh: true } : {}),
-        // §13 WAITING (issue #151): while the router holds an unanswered ask
-        // for a worker, its row says WAITING; the answer (or the bound's
-        // denial) flips it back to RUNNING. Only a live agent flips — a
-        // worker that settled keeps its own terminus.
-        onAskState: (agentId, pending) => {
-          const row = workerRegistry.get(agentId);
-          const next = pending ? 'waiting' : 'running';
-          if (row === undefined || row.agentStatus === next) return;
-          if (row.agentStatus !== 'running' && row.agentStatus !== 'waiting') {
-            return;
-          }
-          workerRegistry.updateAgentStatus(agentId, next);
-          persistWorkerRowsNow();
-        },
+        // §13 WAITING (issue #151): the router's ask-state changes become the
+        // worker row's waiting/running state.
+        onAskState: workerAskStateObserver(
+          workerRegistry,
+          persistWorkerRowsNow,
+        ),
         // The TTY seat when this run has a user attached; without one a
         // worker ask denies closed on the router's own bound (never a silent
         // hang). `--yes` never replaces it (issue #323): the standing answer
@@ -1790,11 +1803,6 @@ export async function orchestrateDepsWithDefaults(
           `worker '${agentId}': ${credentialGrant.refusal.message}`,
         );
       }
-      // §13 settling (issue #151): the outer catch needs the handle to settle
-      // an agent whose clean exit was followed by a failed settle (a stage,
-      // commit, diff or §68-report failure) — block-scoped `launched` is not
-      // visible there.
-      launchedForSettle = undefined;
       const launched = launchWorker(
         {
           workerId: agentId,
@@ -1907,7 +1915,6 @@ export async function orchestrateDepsWithDefaults(
         },
       );
       launchedByAgent.set(agentId, launched);
-      launchedForSettle = launched;
       // A cancel that arrived between the readiness check above and this
       // launch (issue #206): the handle exists now, so the kill lands instead
       // of waiting out the child's own bound. `throwIfCancelled` still turns
@@ -2127,12 +2134,13 @@ export async function orchestrateDepsWithDefaults(
         // commit, diff or report) is a FAILED agent, never a settling one
         // (issue #151). A launch that never became ready keeps its own
         // SPAWN_FAILED terminus, and an already-settled agent is left alone.
-        if (
-          launchedForSettle !== undefined &&
-          launchedForSettle.agentStatus() === 'settling'
-        ) {
+        // The PER-AGENT handle (issue #151 review): `runWorker` is one shared
+        // closure and workers run concurrently, so a run-scoped pointer would
+        // hold whichever worker launched last — settling a sibling, or none.
+        const settlingHandle = launchedByAgent.get(agentId);
+        if (settlingHandle?.agentStatus() === 'settling') {
           try {
-            launchedForSettle.settleAgent('failed');
+            settlingHandle.settleAgent('failed');
           } catch {
             // The agent settled concurrently — its own verdict stands.
           }

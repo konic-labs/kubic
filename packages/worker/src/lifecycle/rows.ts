@@ -148,7 +148,8 @@ export function workerRowsPath(repo: string): string {
 export function workersListFromRepo(repo: string): WorkerRow[] {
   try {
     // A manager that died hard leaves rows claiming a live status: the
-    // listing shows them as `crashed` when both worker and manager are gone.
+    // listing shows them as `exiting / failed` when both worker and manager
+    // are gone (issue #151 — a process exiting is not an agent outcome).
     return viewWorkerRows(
       readWorkerRows(
         createNodeFileBridge(join(repo, '.kubic', 'orchestrator')),

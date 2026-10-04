@@ -80,7 +80,8 @@ export function isLiveWorkerRow(
 }
 
 /** Sync read-only view for `kubic workers`: a live-status row whose worker
- *  AND manager are both dead is shown as `crashed`. Nothing is killed. */
+ *  AND manager are both dead is shown as `exiting / failed` (issue #151).
+ *  Nothing is killed. */
 export function viewWorkerRows(
   rows: readonly WorkerRow[],
   alive: (pid: number) => boolean = pidAlive,

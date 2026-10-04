@@ -51,6 +51,7 @@ const PROVENANCE: Provenance = {
 //                   launcher handed it (KUBIC_WORKER_GENERATION) is n
 //   CRASH_ALWAYS    SIGKILL itself after announcing, every generation
 //   REPORT_STATUS=<s>  print a §68 report with this status before exiting
+//   NOREPORT_FOR=<id>  skip the §68 report for THIS worker id only
 const FIXTURE = `
 import { writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
@@ -77,16 +78,21 @@ if (
   // A crash-class death: signal-killed after the readiness handshake.
   process.kill(process.pid, 'SIGKILL');
 }
+const noReportFor = /NOREPORT_FOR=(\\S+)/.exec(prompt)?.[1];
+const skipReport =
+  noReportFor !== undefined
+    ? process.env.KUBIC_WORKER_ID === noReportFor
+    : prompt.includes('NOREPORT');
 const reportStatus = /REPORT_STATUS=(\\S+)/.exec(prompt)?.[1];
 if (reportStatus !== undefined) {
   const a = process.argv;
   process.stdout.write(JSON.stringify({ ok: false, status: reportStatus, sessionId: a[a.indexOf('--session') + 1], result: { summary: 'fixture stopped' } }) + String.fromCharCode(10));
 }
 if (sleep === null || sleep === undefined) {
-  if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
+  if (exitCode === 0 && !skipReport) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); }
   process.exit(exitCode);
 }
-setTimeout(() => { if (exitCode === 0 && !prompt.includes('NOREPORT')) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); } process.exit(exitCode); }, Number(sleep[1]));
+setTimeout(() => { if (exitCode === 0 && !skipReport) { const a = process.argv; process.stdout.write(JSON.stringify({ ok: true, exitCode: 0, sessionId: a[a.indexOf('--session') + 1], status: 'completed', result: { summary: 'fixture done' } }) + String.fromCharCode(10)); } process.exit(exitCode); }, Number(sleep[1]));
 `;
 
 // Every scratch dir is removed after each test; the worktrees live under the
@@ -559,7 +565,24 @@ describe('prod orchestrate path: §81 worker replacement (issue #175)', () => {
     expect(text).toContain('worker_failed');
     // Both generations are named: the run replaced once and stopped.
     expect(text).toMatch(/generations 1 → 2/);
-    expect(h.registry.get('worker-1')?.generation).toBe(2);
+    // §13 (issue #151): the SIGKILL is recorded BY NAME on the live row and in
+    // the persisted record `kubic workers` reads — the agent failed, the
+    // process exited, and the signal is what killed it.
+    expect(h.registry.get('worker-1')).toMatchObject({
+      generation: 2,
+      status: 'exiting',
+      agentStatus: 'failed',
+      signal: 'SIGKILL',
+    });
+    const persistedCrash = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    ).find((entry) => entry.workerId === 'worker-1');
+    expect(persistedCrash).toMatchObject({
+      status: 'exiting',
+      agentStatus: 'failed',
+      signal: 'SIGKILL',
+    });
   }, 60_000);
 
   it('does not replace a launch that never became ready (spawn_failed is terminal)', async () => {
@@ -672,5 +695,41 @@ describe('prod orchestrate path: §13 agent vs process states (issue #151)', () 
       status: 'exiting',
       agentStatus: 'timeout',
     });
+  }, 60_000);
+});
+
+describe('prod orchestrate path: §13 settling is per agent (issue #151 review)', () => {
+  it('settles only the worker whose own report failed, not a concurrent sibling', async () => {
+    const h = await harness();
+    const dumpDir = scratchRoot('kubic-orch-settle-');
+    // Both workers exit 0; only alpha prints no §68 report, so only alpha's
+    // agent must settle FAILED. The other worker's row keeps its own verdict.
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing EXIT=0 NOREPORT_FOR=alpha PROMPTDUMPDIR=${dumpDir}`,
+        agents: ['alpha', 'beta'],
+        session: 'lifecycle',
+        yes: true,
+      },
+      h.deps,
+    );
+    expect(code).toBe(1);
+    const alpha = h.registry.get('alpha');
+    const beta = h.registry.get('beta');
+    expect(alpha?.status).toBe('exiting');
+    expect(beta?.status).toBe('exiting');
+    // Exactly one of them failed, and the run named that worker.
+    const failed = [alpha, beta].filter((row) => row?.agentStatus === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.workerId).toBe('alpha');
+    // The run's terminus names the worker whose report was invalid.
+    expect(h.lines.join('\n')).toMatch(/alpha/);
+    expect(h.lines.join('\n')).toMatch(/result_invalid/);
+    const persisted = readWorkerRows(
+      createNodeFileBridge(join(h.root, '.kubic', 'orchestrator')),
+      WORKER_ROWS_FILE,
+    );
+    const failedRows = persisted.filter((row) => row.agentStatus === 'failed');
+    expect(failedRows).toHaveLength(1);
   }, 60_000);
 });

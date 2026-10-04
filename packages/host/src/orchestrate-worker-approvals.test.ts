@@ -16,6 +16,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+// The PROD wiring for §13 WAITING (issue #151), so this test drives the real
+// observer instead of a copy of it.
+import { workerAskStateObserver } from '../../../apps/kubic/src/orchestrate-run.js';
+import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
 import type {
   MergeDecisionRecord,
   OrchestrateCliOptions,
@@ -88,6 +92,8 @@ interface Harness {
   mergeAsks: () => number;
   /** §13 WAITING → RUNNING transitions the router reported (issue #151). */
   askStates: { agentId: string; pending: boolean }[];
+  /** The registry rows the prod ask-state observer writes (issue #151). */
+  registry: WorkerRegistry;
   /** The layer the CLI constructed through `deps.approvals`. */
   readonly approvals: WorkerApprovalsRun;
   dir: string;
@@ -128,8 +134,10 @@ function harness(
   const raised: OrchestratorApprovalRequest[] = [];
   const published: PublishedWorkerAsk[] = [];
   const merges: MergeDecisionRecord[] = [];
-  // §13 WAITING (issue #151): the ask-state changes the router observed.
+  // §13 WAITING (issue #151): the ask-state changes the router observed, and
+  // the registry rows the PROD observer writes from them.
   const askStates: { agentId: string; pending: boolean }[] = [];
+  const registry = new WorkerRegistry(() => 1700000000000);
   // How many times each worker has been launched (issue #175): the fake
   // child's own attempt counter, the replacement's `from` generation.
   const attempts = new Map<string, number>();
@@ -251,6 +259,18 @@ function harness(
         ...(cliOptions.fullAccess === true ? { fullAccess: true } : {}),
         onAskState: (agentId, pending) => {
           askStates.push({ agentId, pending });
+          // The prod observer (orchestrate-run.ts) is what turns the change
+          // into the row; a row is registered for the worker so it can.
+          if (registry.get(agentId) === undefined) {
+            registry.register({
+              workerId: agentId,
+              sessionId: cliOptions.sessionId,
+              generation: 1,
+              owner: 'orchestrate:test',
+            });
+            registry.updateAgentStatus(agentId, 'running');
+          }
+          workerAskStateObserver(registry, () => undefined)(agentId, pending);
         },
         ...(options.noSeat === true
           ? {}
@@ -277,6 +297,7 @@ function harness(
     raised,
     published,
     askStates,
+    registry,
     merges,
     mergeAsks: () => mergeAskCount,
     get approvals(): WorkerApprovalsRun {
@@ -353,15 +374,23 @@ describe('per-worker approvals on the delegation path (issue #105)', () => {
   });
 
   it('AC (issue #151): a pending ask shows WAITING, then RUNNING after the answer', async () => {
-    const h = harness(() => ({ approved: true }));
+    let statusWhilePending: string | undefined;
+    const h = harness((request) => {
+      // The decider runs while the ask is still unanswered: the row must
+      // already say WAITING.
+      statusWhilePending = h.registry.get(request.agentId)?.agentStatus;
+      return { approved: true };
+    });
     expect(await runOrchestrateCommand(ORCHESTRATE_ARGS, h.deps)).toBe(0);
-    // The router observed the ask as pending, then answered it: the row's
-    // agent state goes WAITING → RUNNING, and only on a CHANGE (a second
-    // pump that finds nothing pending reports nothing).
+    // The router observed the ask as pending, then answered it: the ROW the AC
+    // names goes WAITING → RUNNING, and only on a CHANGE (a second pump that
+    // finds nothing pending reports nothing).
+    expect(statusWhilePending).toBe('waiting');
     expect(h.askStates).toEqual([
       { agentId: 'worker-1', pending: true },
       { agentId: 'worker-1', pending: false },
     ]);
+    expect(h.registry.get('worker-1')?.agentStatus).toBe('running');
   });
 
   it('AC6 (issue #206): two workers’ asks in flight at once are routed and answered independently', async () => {

@@ -350,3 +350,109 @@ describe('expanded tool output wraps instead of clipping (issue #300)', () => {
     expect(lines.join('\n').split('d').length - 1).toBe(200);
   });
 });
+describe('steady-state markdown caching (issue #298)', () => {
+  it('parses each cell at most once across identical frames', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        { id: 'a1', kind: 'text', markdown: 'first answer' },
+        { id: 'a2', kind: 'text', markdown: 'second **answer**' },
+      ],
+      1,
+    );
+    view.render(80);
+    const parses = view.markdownParses();
+    expect(parses).toBeLessThanOrEqual(2);
+    view.render(80);
+    view.render(80);
+    // pi-tui's setText invalidates unconditionally: a steady frame must not
+    // touch it, or every assistant cell re-parses every 100 ms spinner tick.
+    expect(view.markdownParses()).toBe(parses);
+  });
+
+  it('re-parses only the cell whose text changed', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        { id: 'a1', kind: 'text', markdown: 'one' },
+        { id: 'a2', kind: 'text', markdown: 'two' },
+      ],
+      1,
+    );
+    view.render(80);
+    const parses = view.markdownParses();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        { id: 'a1', kind: 'text', markdown: 'one changed' },
+        { id: 'a2', kind: 'text', markdown: 'two' },
+      ],
+      2,
+    );
+    view.render(80);
+    expect(view.markdownParses()).toBe(parses + 1);
+  });
+
+  it('prunes the markdown cache when a snapshot drops cells', () => {
+    const view = createTranscriptView();
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [
+        { id: 'a1', kind: 'text', markdown: 'one' },
+        { id: 'a2', kind: 'text', markdown: 'two' },
+        { id: 't1', kind: 'tool', markdown: 'tool read', toolCallId: 'c1' },
+        { id: 'o1', kind: 'output', markdown: 'out', toolCallId: 'c1' },
+      ],
+      1,
+    );
+    view.render(80);
+    expect(view.markdownCacheSize()).toBe(2);
+    view.applyLaneSnapshot(
+      { laneId: 'l' },
+      [{ id: 'a2', kind: 'text', markdown: 'two' }],
+      2,
+    );
+    view.render(80);
+    expect(view.markdownCacheSize()).toBe(1);
+  });
+
+  it('renders a 400-turn steady-state frame under 10 ms', () => {
+    const view = createTranscriptView();
+    const cells: Array<{
+      id: string;
+      kind: 'prompt' | 'text';
+      markdown: string;
+    }> = [];
+    // ~15 rows per turn, the shape the audit measured (a long session's
+    // document is thousands of rows, and every one used to be rebuilt).
+    const body = Array.from(
+      { length: 10 },
+      (_, i) => `- point ${i} with **bold** and \`code\``,
+    ).join('\n');
+    for (let i = 0; i < 400; i += 1) {
+      cells.push({
+        id: `p${i}`,
+        kind: 'prompt',
+        markdown: `\u203a prompt ${i}`,
+      });
+      cells.push({
+        id: `a${i}`,
+        kind: 'text',
+        markdown: `answer ${i}\n\n${body}`,
+      });
+    }
+    view.applyLaneSnapshot({ laneId: 'l' }, cells, 1);
+    view.render(120); // first render parses every cell
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 5; i += 1) {
+      const started = performance.now();
+      view.render(120);
+      best = Math.min(best, performance.now() - started);
+    }
+    // Best of five: the machine is shared with other agents, and the point is
+    // the steady-state cost, not one scheduler hiccup.
+    expect(best).toBeLessThan(10);
+  });
+});

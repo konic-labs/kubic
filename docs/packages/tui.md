@@ -75,7 +75,12 @@ module owns arrangement only.
   collapsed to `TOOL_OUTPUT_PREVIEW_LINES` rows (cut at the width, with a
   hint naming hidden or clipped rows); Ctrl-X expands it, and then every
   output line and the tool call's args summary wrap with a hanging indent
-  instead of being cut (issue #300).
+  instead of being cut (issue #300). Caching (issue #298): each cell's
+  markdown and finished rows are reused while its text, width and theme
+  level are unchanged — a steady frame (the 100 ms spinner repaint) parses
+  nothing — and a snapshot that drops cells prunes their cache entries;
+  `markdownCacheSize()`/`markdownParses()` expose the counters the perf
+  tests assert on.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
   `AgentTreeState` toggles (`toggleTree`), consumes lane events
   (`LaneEventLike` via `applyLaneEvent` — run status, tool start/end, usage

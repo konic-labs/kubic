@@ -90,6 +90,13 @@ function fit(line: string, width: number): string {
   return truncateToWidth(line, Math.max(0, width), '…');
 }
 
+// Cache keys are `${theme.level}\u0000${cell.id}`: the id is everything after
+// the first NUL (entry ids never contain one).
+function cellIdOf(key: string): string {
+  const at = key.indexOf('\u0000');
+  return at === -1 ? key : key.slice(at + 1);
+}
+
 // The rendered document: welcome block, then one block per cell. Pure over
 // its fields — the active theme is read per render, so a theme set after
 // construction (the composition root) takes effect on the next frame.
@@ -104,9 +111,49 @@ class TranscriptDocument implements Component {
   expanded = false;
   inline: ((width: number) => string[] | undefined) | undefined;
   private readonly markdownCache = new Map<string, Markdown>();
+  // Issue #298: the text each cached Markdown was built from, and the final
+  // rendered lines of each cell. pi-tui's `setText` invalidates
+  // unconditionally, so calling it every frame re-parsed every assistant
+  // cell; the document therefore only pushes a cell's lines when its text,
+  // width or theme actually changed.
+  private readonly markdownText = new Map<string, string>();
+  private readonly lineCache = new Map<
+    string,
+    { text: string; width: number; lines: string[] }
+  >();
+  // A parse is forced by constructing a Markdown or by setText; tests pin
+  // that a steady frame adds none.
+  private parses = 0;
 
   invalidate(): void {
     this.markdownCache.clear();
+    this.markdownText.clear();
+    this.lineCache.clear();
+  }
+
+  // Issue #298: the cells a snapshot carries REPLACE the previous set, so a
+  // cache entry whose id left the snapshot is dead weight (a long session
+  // would otherwise hold every markdown cell it ever showed).
+  setCells(cells: TranscriptEntry[]): void {
+    this.cells = cells;
+    const live = new Set(cells.map((cell) => cell.id));
+    for (const key of this.markdownCache.keys()) {
+      if (!live.has(cellIdOf(key))) {
+        this.markdownCache.delete(key);
+        this.markdownText.delete(key);
+      }
+    }
+    for (const key of this.lineCache.keys()) {
+      if (!live.has(cellIdOf(key))) this.lineCache.delete(key);
+    }
+  }
+
+  markdownCacheSize(): number {
+    return this.markdownCache.size;
+  }
+
+  markdownParses(): number {
+    return this.parses;
   }
 
   private markdown(cell: TranscriptEntry, theme: TuiTheme): Markdown {
@@ -115,10 +162,42 @@ class TranscriptDocument implements Component {
     if (md === undefined) {
       md = new Markdown(cell.markdown, 0, 0, markdownThemeFor(theme));
       this.markdownCache.set(key, md);
-    } else {
+      this.parses += 1;
+    } else if (this.markdownText.get(key) !== cell.markdown) {
       md.setText(cell.markdown);
+      this.parses += 1;
     }
+    this.markdownText.set(key, cell.markdown);
     return md;
+  }
+
+  // The cell's finished rows (indent, prefix, width clamp, styling), reused
+  // while text, width and theme are unchanged. `undefined` means "render it
+  // and store the result".
+  private cachedLines(
+    cell: TranscriptEntry,
+    width: number,
+    theme: TuiTheme,
+  ): string[] | undefined {
+    const cached = this.lineCache.get(`${theme.level}\u0000${cell.id}`);
+    if (cached === undefined) return undefined;
+    if (cached.text !== cell.markdown || cached.width !== width) {
+      return undefined;
+    }
+    return cached.lines;
+  }
+
+  private storeLines(
+    cell: TranscriptEntry,
+    width: number,
+    theme: TuiTheme,
+    lines: string[],
+  ): void {
+    this.lineCache.set(`${theme.level}\u0000${cell.id}`, {
+      text: cell.markdown,
+      width,
+      lines,
+    });
   }
 
   render(width: number): string[] {
@@ -195,19 +274,28 @@ class TranscriptDocument implements Component {
             break;
           }
           gap();
+          const cached = this.cachedLines(cell, w, theme);
+          if (cached !== undefined) {
+            out.push(...cached);
+            break;
+          }
           const body = this.markdown(cell, theme).render(Math.max(1, w - 2));
+          const lines: string[] = [];
           let first = true;
           for (const raw of body) {
             // Markdown pads rows to the width; the padding is dropped so a
             // row's length is its text (the alt-screen clears the rest).
             const line = raw.replace(/ +$/, '');
             if (first && line.trim() !== '') {
-              out.push(fit(`${theme.accent(ASSISTANT_MARK)} ${line}`, w));
+              lines.push(fit(`${theme.accent(ASSISTANT_MARK)} ${line}`, w));
               first = false;
             } else {
-              out.push(fit(`  ${line}`, w));
+              lines.push(fit(`  ${line}`, w));
             }
           }
+          this.storeLines(cell, w, theme, lines);
+          out.push(...lines);
+          break;
         }
       }
     }
@@ -326,6 +414,10 @@ export interface TranscriptView {
   setQueuedPrompts(prompts: readonly string[]): void;
   toggleExpanded(): boolean;
   readonly expanded: boolean;
+  // Issue #298: cache counters the perf tests assert on — the live markdown
+  // entries and how many parses (constructor + setText) the document forced.
+  markdownCacheSize(): number;
+  markdownParses(): number;
 }
 
 export interface TranscriptViewOptions {
@@ -357,7 +449,9 @@ export function createTranscriptView(
   let revision = -1;
   const log: Array<TranscriptOp> = [];
   const paint = (): void => {
-    document.cells = entries.map((entry) => ({ ...entry }));
+    // Issue #298: through setCells, so a cell that left the snapshot also
+    // leaves the markdown/line caches.
+    document.setCells(entries.map((entry) => ({ ...entry })));
     rebuilds += 1;
   };
   return {
@@ -428,6 +522,12 @@ export function createTranscriptView(
     },
     render(width: number): string[] {
       return scroll.render(width);
+    },
+    markdownCacheSize(): number {
+      return document.markdownCacheSize();
+    },
+    markdownParses(): number {
+      return document.markdownParses();
     },
     setWelcome(lines: ReadonlyArray<string>): void {
       document.welcome = [...lines];

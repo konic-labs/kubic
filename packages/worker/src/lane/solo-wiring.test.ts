@@ -24,6 +24,7 @@ import {
 } from './solo.js';
 
 const captured = vi.hoisted(() => ({
+  interceptorCalls: 0,
   interceptorOptions: undefined as
     | {
         workspace?: string;
@@ -43,6 +44,7 @@ vi.mock('./interceptors.js', () => ({
     workspace?: string;
     readRoots?: readonly string[];
   }) => {
+    captured.interceptorCalls += 1;
     captured.interceptorOptions = options;
     return [{ task: 'ToolTask', handlers: {} }];
   },
@@ -92,6 +94,7 @@ const SOLOS: SoloLane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  captured.interceptorCalls = 0;
   captured.interceptorOptions = undefined;
   captured.compactionOptions = [];
   for (const solo of SOLOS.splice(0)) {
@@ -213,6 +216,13 @@ describe('solo boot installs the extension stack in hook order (issues #208, #98
     expect(kubic?.sections?.map((section) => section.key)).toEqual([
       SOLO_PROMPT_SECTION,
     ]);
+    // The handlers are built per boot from the current options, never
+    // captured once at module load: two boots, two fresh registrations.
+    expect(captured.interceptorCalls).toBe(1);
+    await boot({
+      policy: { interceptors: { workspace: '/ws' } },
+    });
+    expect(captured.interceptorCalls).toBe(2);
   });
 
   it('installs only the Kubic extension when no policy hooks are given', async () => {

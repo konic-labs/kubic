@@ -258,8 +258,11 @@ export interface SoloBootOptions {
   thinkingLevel?: ModelThinkingLevel;
   // Harness-wide run policy (retry, stream, toolExecution, steering/follow
   // up). Compaction is NOT passable: it is built from `compaction` through
-  // soloCompactionSettings so the Kubic clamp cannot be bypassed.
-  settings?: Omit<HarnessSettings, 'compaction'>;
+  // soloCompactionSettings so the Kubic clamp cannot be bypassed. Extension
+  // selection is NOT passable either: the lane owns the four Kubic
+  // extensions, and a caller-supplied selection could uninstall the tools,
+  // the prompt and every policy hook silently (review #394 low 3).
+  settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
 }
 
 function resolveStoredModel(
@@ -418,16 +421,35 @@ export async function bootSoloLane(
     options.toolAllowlist !== undefined || enterpriseGate !== undefined;
 
   // Compaction (#399): reserveTokens is a live getter over the window of the
-  // conversation's CURRENT model, so a model switch needs no re-clamp. The
-  // getter reads affinity first (escalation updates it), else the boot's
-  // effective model; a direct `configure({ model })` outside this module
-  // lands on the next boot's model.
+  // conversation's CURRENT model. It reads the attached `pi.agent` document
+  // first, so EVERY model switch — `escalateSoloModel`, the TUI/headless
+  // `configure({ model })`, a boot — re-clamps on the next use, with no
+  // explicit re-clamp step. Affinity and the boot model are fallbacks for
+  // the window between this boot and its first configure.
   let currentModelId = defaultSoloModelId(options.model);
   const windowOf = (provider: string, modelId: string) =>
     options.models.getModels(provider).find((model) => model.id === modelId)
       ?.contextWindow;
   let soloRef: SoloLane | undefined;
+  // Minimal structural view of the attached `pi.agent` document state: its
+  // committed `model` and its dispose(), so this module needs no extra
+  // pi-boundary type for it.
+  let agentState:
+    | {
+        readonly value: {
+          readonly model?: {
+            readonly provider: string;
+            readonly modelId: string;
+          };
+        } | null;
+        dispose(): void;
+      }
+    | undefined;
   const currentWindow = (): number | undefined => {
+    const live = agentState?.value?.model;
+    if (live !== undefined) {
+      return windowOf(live.provider, live.modelId);
+    }
     const id = soloRef?.affinity?.modelId ?? currentModelId;
     try {
       const parsed = splitSoloModelId(id);
@@ -496,11 +518,19 @@ export async function bootSoloLane(
     context,
   );
   const conversation = await harness.root(context);
+  // The live `pi.agent` document drives currentWindow: attached once here,
+  // disposed by close(). `value` is the committed state, so a configure from
+  // any caller (this module, the TUI, a headless switch) moves the reserve.
+  agentState = await harness.documentState(AgentDoc, conversation.id, context);
   // Issue #148: reconcile the stored conversation model with the selection
   // BEFORE the extension fixes the system prompt and the reserve.
   const selectedId = defaultSoloModelId(options.model);
-  const stored = (await harness.snapshot(AgentDoc, conversation.id, context))
-    ?.model;
+  const storedAgent = await harness.snapshot(
+    AgentDoc,
+    conversation.id,
+    context,
+  );
+  const stored = storedAgent?.model;
   const storedId =
     stored === undefined
       ? undefined
@@ -604,6 +634,13 @@ export async function bootSoloLane(
       { tools: toolsForNames(registry, effectiveToolNames) },
       context,
     );
+  } else if (classAllowed === undefined && storedAgent?.tools !== undefined) {
+    // The stored filter is durable (configure writes it), so a session
+    // booted with a role/enterprise narrowing would otherwise keep it while
+    // this boot's prompt advertises the full intersection (review #394 med
+    // 1). Clearing it makes the offered set total on every boot; the
+    // prompt's `tools:` line is the same set by construction.
+    await conversation.configure({ tools: null }, context);
   }
 
   let binding: LaneBinding | undefined;
@@ -661,7 +698,10 @@ export async function bootSoloLane(
     configuredReserveTokens:
       options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
     modelWindow: windowOf,
-    close: (closeContext) => harness.close(closeContext),
+    close: async (closeContext) => {
+      agentState?.dispose();
+      await harness.close(closeContext);
+    },
     ...(binding === undefined ? {} : { binding }),
     ...(options.taskId === undefined
       ? {}

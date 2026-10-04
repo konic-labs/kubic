@@ -79,9 +79,11 @@ no second process.
   The thinking level persists per conversation, so #225 is a config/flag
   question only.
 - **Compaction** is Pi's mechanism under Kubic's policy: the harness
-  compaction reserve is a live getter over the current model's window
-  (clamped to at most a quarter of it), so a model switch needs no
-  explicit re-clamp.
+  compaction reserve is a live getter over the window of the conversation's
+  *current* model (clamped to at most a quarter of it). The getter reads the
+  committed `pi.agent` document, so every model switch — `escalateSoloModel`,
+  the TUI picker, a headless `--model` run — re-clamps on the next request
+  with no explicit re-clamp step.
 
 The session handle's `release()` — lock included — stays the caller's job
 after `close()`: the lane closes only its harness.

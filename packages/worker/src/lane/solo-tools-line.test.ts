@@ -4,6 +4,9 @@
 // declared and by the role allowlist when declared — in every combination,
 // including the classes-only one the pre-fix code advertised in full.
 // Ported to the durable harness in #394.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
@@ -14,6 +17,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   MemoryStorage,
+  openNodeJsonlStorage,
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
@@ -61,11 +65,15 @@ vi.mock('./tools-adapter.js', async () => {
 });
 
 const SOLOS: SoloLane[] = [];
+const DIRS: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const solo of SOLOS.splice(0)) {
     await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  }
+  for (const dir of DIRS.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -200,5 +208,80 @@ describe('the prompt tools line is the same intersection the conversation offers
       .sort();
     expect(advertised).toEqual(all);
     expect(offered).toEqual(all);
+  });
+
+  it('a reopened session without narrowing offers exactly the prompt tools line (review #394 med 1)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-tools-reopen-'));
+    DIRS.push(dir);
+    const all = Object.keys(
+      (await import('../ops/registry.js')).OPERATIONS,
+    ).sort();
+
+    // One boot on the same sessions dir; drives a turn and reports the
+    // prompt's tools: line next to the conversation's offered set.
+    async function bootOn(extra: {
+      toolAllowlist?: string[];
+    }): Promise<{ advertised: string[]; offered: string[] }> {
+      const faux = fauxProvider();
+      const models = createModels();
+      models.setProvider(faux.provider);
+      faux.setResponses([fauxAssistantMessage('hi')]);
+      const sessionId = 'reopen';
+      const solo = await bootSoloLane({
+        session: {
+          id: sessionId,
+          dir,
+          storage: await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
+          meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+          release: async () => undefined,
+        } as never,
+        models,
+        model: faux.getModel(),
+        env: new FakeExecutionEnv({}),
+        sessionId,
+        agentId: 'root',
+        ...extra,
+      });
+      SOLOS.push(solo);
+      const settled = await (
+        await solo.conversation.submit(
+          { type: 'input', content: 'hi' },
+          BACKGROUND_CONTEXT,
+        )
+      ).wait(BACKGROUND_CONTEXT);
+      expect(settled.status).toBe('done');
+      const page = await solo.conversation.entries(
+        {},
+        200,
+        undefined,
+        BACKGROUND_CONTEXT,
+      );
+      const system = page.items.find((entry) => SystemEntry.is(entry));
+      const message = (
+        system?.model as unknown as Array<{
+          sections?: Record<string, string | null>;
+        }>
+      )?.[0];
+      return {
+        advertised: toolsLine(message?.sections?.[SOLO_PROMPT_SECTION] ?? ''),
+        offered: (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools
+          .map((tool) => tool.name)
+          .sort(),
+      };
+    }
+
+    const narrowed = await bootOn({ toolAllowlist: ['read', 'grep'] });
+    expect(narrowed).toEqual({
+      advertised: ['grep', 'read'],
+      offered: ['grep', 'read'],
+    });
+    await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
+
+    // The narrowing was durably stored; this boot has none, so it must clear
+    // the stored filter instead of keeping a set the prompt no longer names.
+    const cleared = await bootOn({});
+    expect(cleared.advertised).toEqual(all);
+    expect(cleared.offered).toEqual(all);
+    await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
   });
 });

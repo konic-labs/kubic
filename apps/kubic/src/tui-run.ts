@@ -19,6 +19,11 @@ import { randomUUID } from 'node:crypto';
 import { homedir, constants as osConstants } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import {
+  checkAgreement,
+  SOLO_DEFAULTS,
+  validateClasses,
+} from '../../../packages/agents/src/policy.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -186,6 +191,7 @@ import {
   parseModelFlag,
   supportedThinking,
 } from '../../../packages/worker/src/model-select.js';
+import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
 import {
   isThinkingLevel,
   THINKING_LEVELS,
@@ -853,6 +859,9 @@ export interface TuiBootFlags {
   skillsList?: string[];
   // Issue #308: `--dangerously-skip-approvals` for the booted session.
   dangerouslySkipApprovals?: boolean;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
+  tools?: string[];
+  noTools?: boolean;
   // `--model` is deliberately NOT a boot flag (issues #227, #295): dispatch
   // pre-scans it from the raw argv into the ONE config load as the `cli`
   // layer, so `TuiConfigProjection.model` already carries cli > env > file
@@ -867,6 +876,10 @@ export interface TuiRunOptions {
   // config-consuming command, so it takes the same projection `kubic run`
   // does. Absent means the documented SOLO_DEFAULTS.
   classes?: PermissionClasses;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools` —
+  // intersected with the classes/role/enterprise sets, never widening.
+  toolSelection?: string[];
+  noTools?: boolean;
   // Issue #86: the config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default'.
   policySource?: 'config' | 'default';
@@ -982,6 +995,42 @@ export function soloTuiLoop(
 // Prod solo boot: same session/model setup as the headless runner
 // (create-or-attach, journal dir, assembled models, default select, lane
 // boot) plus the loop surface the interactive path drives.
+export class ToolSelectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolSelectionError';
+  }
+}
+
+// §40.1 mechanism 1 (issue #273): the per-invocation tool selection is
+// validated before the lane boots — mutual exclusion, unknown names and the
+// §40.3 agreement with the permission classes all fail closed (exit 2)
+// rather than silently narrowing the run.
+function assertToolSelection(
+  selection: readonly string[] | undefined,
+  noTools: boolean,
+  classes: PermissionClasses | undefined,
+): void {
+  if (selection !== undefined && noTools) {
+    throw new ToolSelectionError(
+      '--tools and --no-tools are mutually exclusive',
+    );
+  }
+  if (selection === undefined) return;
+  const known = Object.keys(OPERATIONS).sort();
+  const unknown = selection.find((tool) => !known.includes(tool));
+  if (unknown !== undefined) {
+    throw new ToolSelectionError(
+      `unknown tool ${JSON.stringify(unknown)} (known tools: ${known.join(', ')})`,
+    );
+  }
+  const agreement = checkAgreement(
+    validateClasses({ ...(classes ?? SOLO_DEFAULTS) }),
+    [...selection],
+  );
+  if (!agreement.agree) throw new ToolSelectionError(agreement.reason);
+}
+
 export async function bootTuiLane(
   sessionId?: string,
   options: TuiRunOptions = {},
@@ -995,6 +1044,11 @@ export async function bootTuiLane(
     );
   }
   const root = options.sessionsRoot ?? defaultSessionsRoot();
+  assertToolSelection(
+    options.toolSelection,
+    options.noTools === true,
+    options.classes,
+  );
   const context = BACKGROUND_CONTEXT;
   const bridge = createNodeFileBridge(root);
   const store = openSessionStore(root, bridge);
@@ -1293,6 +1347,12 @@ export async function bootTuiLane(
       // before model selection, with the same fail-closed refusals as
       // `kubic run`.
       ...roleBoot,
+      // §40.1 mechanism 1 (issue #273): the CLI's `--tools`/`--no-tools`
+      // selection narrows the booted lane's tool set (never widens).
+      ...(options.toolSelection === undefined
+        ? {}
+        : { toolSelection: options.toolSelection }),
+      ...(options.noTools === true ? { noTools: true } : {}),
       // The same installed policy `kubic run` boots with (issue #86): one
       // derivation, so the interactive path is not the unprotected one.
       policy: {
@@ -1828,6 +1888,10 @@ export function tuiBootOptions(
     ...(flags?.dangerouslySkipApprovals === true
       ? { dangerouslySkipApprovals: true }
       : {}),
+    ...(flags?.tools === undefined || flags.tools.length === 0
+      ? {}
+      : { toolSelection: flags.tools }),
+    ...(flags?.noTools === true ? { noTools: true } : {}),
   };
 }
 
@@ -2601,6 +2665,10 @@ export interface TuiCommandOptions {
   // Issue #327 (§17, §81): `--orchestrator` — start the session in
   // orchestrator mode (delegation stays opt-in; solo is the default).
   readonly orchestrator?: boolean;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` narrows the booted
+  // lane's tool set; `--no-tools` is the empty set. Mutually exclusive.
+  readonly tools?: readonly string[];
+  readonly noTools?: boolean;
 }
 
 export async function runTuiCommand(
@@ -2634,6 +2702,19 @@ export async function runTuiCommand(
   if (options.dangerouslySkipApprovals === true) {
     flags.dangerouslySkipApprovals = true;
   }
+  // §40.1 mechanism 1 (issue #273): the selection is a usage rule the
+  // parser owns — both flags at once exit 2 before the alt-screen (the
+  // boot re-validates names/agreement with the §40.3 reason).
+  if (options.tools !== undefined && options.noTools === true) {
+    (deps.err ?? deps.out)(
+      'error: --tools and --no-tools are mutually exclusive',
+    );
+    return RUN_EXIT_USAGE;
+  }
+  if (options.tools !== undefined && options.tools.length > 0) {
+    flags.tools = [...options.tools];
+  }
+  if (options.noTools === true) flags.noTools = true;
   // commander validated the id already; re-checked because it becomes a
   // path segment under the sessions root.
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
@@ -2661,6 +2742,9 @@ export async function runTuiCommand(
     (deps.err ?? deps.out)(`error: ${message}`);
     if (error instanceof ModelSelectError)
       return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    // Issue #273: a refused tool selection is a usage error (exit 2), not a
+    // generic lane boot failure.
+    if (error instanceof ToolSelectionError) return RUN_EXIT_USAGE;
     return mapCaughtErrorToTerminus(error) === 'workspace_unavailable'
       ? RUN_EXIT_WORKSPACE_UNAVAILABLE
       : RUN_EXIT_FAILED;

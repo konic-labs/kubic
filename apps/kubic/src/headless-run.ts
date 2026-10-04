@@ -11,6 +11,11 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import {
+  checkAgreement,
+  SOLO_DEFAULTS,
+  validateClasses,
+} from '../../../packages/agents/src/policy.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -158,6 +163,7 @@ import {
   type ModelSelection,
   type selectModel,
 } from '../../../packages/worker/src/model-select.js';
+import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -199,6 +205,12 @@ export interface HeadlessRunOptions {
   // session this run creates or resumes, recorded in its posture.json and
   // the audit ledger, never in config.
   dangerouslySkipApprovals?: boolean;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` narrows the run's tool
+  // set (intersected with the classes/role/enterprise sets — never widened);
+  // `--no-tools` is the empty set. Mutually exclusive, validated before the
+  // lane boots.
+  tools?: readonly string[];
+  noTools?: boolean;
 }
 
 export interface HeadlessRunDeps {
@@ -875,6 +887,34 @@ async function runHeadlessPromptImpl(
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
+  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection is
+  // validated before any lane boots — mutual exclusion, unknown names and
+  // the §40.3 agreement with the permission classes all fail closed as the
+  // usage terminus (exit 2), never a silently narrowed run.
+  if (options.tools !== undefined && options.noTools === true) {
+    const invalid = '--tools and --no-tools are mutually exclusive';
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  if (options.tools !== undefined) {
+    const known = Object.keys(OPERATIONS).sort();
+    const unknown = options.tools.find((tool) => !known.includes(tool));
+    if (unknown !== undefined) {
+      const invalid = `unknown tool ${JSON.stringify(unknown)} (known tools: ${known.join(', ')})`;
+      return finished('unassigned', 'usage', invalid, invalid);
+    }
+    const agreement = checkAgreement(
+      validateClasses({ ...(deps.policyClasses ?? SOLO_DEFAULTS) }),
+      [...options.tools],
+    );
+    if (!agreement.agree) {
+      return finished(
+        'unassigned',
+        'usage',
+        agreement.reason,
+        agreement.reason,
+      );
+    }
+  }
   // §71 child-side budget (issue #208): the manager hands each worker its
   // resolved spec through the §3.8 allowlisted KUBIC_BUDGET. A malformed
   // payload fails closed as a usage terminus — a silently dropped limit is
@@ -1536,6 +1576,10 @@ async function runHeadlessPromptImpl(
                 ? {}
                 : { toolAllowlist: role.resolved.tools }),
             }),
+        ...(options.noTools === true ? { noTools: true } : {}),
+        ...(options.tools === undefined
+          ? {}
+          : { toolSelection: [...options.tools] }),
         // One policy object carrying every mechanism (#86 + #90 + #93, #397):
         // the classes come from the config layer when it supplies them and
         // from the documented safe default otherwise, the interceptors are

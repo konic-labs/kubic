@@ -58,6 +58,57 @@ function nonNegativeInt(what: string): (value: string) => number {
   });
 }
 
+// §40.1 mechanism 1 (issue #273): `--tools read,ls` — one comma-separated
+// value, repeatable. An empty list is a usage error (use `--no-tools` for
+// the empty set); unknown names and class conflicts are refused by the
+// runner/boot with the §40.3 reason.
+function toolList(value: string): string[] {
+  const names = value
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name !== '');
+  if (names.length === 0) {
+    throw new InvalidArgumentError('needs at least one tool name');
+  }
+  return names;
+}
+
+// commander's negated `--no-tools` can leave `false` as the previous value
+// (the order `--no-tools --tools x`), which the shared collector would try
+// to spread. Tolerating it lets the parse finish so the action's raw-argv
+// mutual-exclusion check can refuse both forms cleanly.
+function collectTools(): (value: string, previous: string[][]) => string[][] {
+  const one = rule(toolList);
+  return (value, previous) => [
+    ...(Array.isArray(previous) ? previous : []),
+    one(value),
+  ];
+}
+
+// commander's `--no-tools` negates the `tools` option (its value becomes
+// false), so both selection forms arrive on one key. Normalize to
+// (names, noTools) and refuse both-given from the raw argv — order decides
+// which value commander keeps, and a silent last-wins would be the
+// dishonest half.
+function toolSelectionOf(
+  parsed: false | string[][] | undefined,
+  rest: readonly string[],
+): { tools: string[]; noTools: boolean } {
+  const rawTools = rest.some(
+    (token) => token === '--tools' || token.startsWith('--tools='),
+  );
+  const rawNoTools = rest.includes('--no-tools');
+  if (rawTools && rawNoTools) {
+    throw new CliUsageError(
+      '--tools and --no-tools are mutually exclusive — pass one',
+    );
+  }
+  return {
+    tools: Array.isArray(parsed) ? parsed.flat() : [],
+    noTools: parsed === false,
+  };
+}
+
 function examples(lines: readonly string[]): string {
   return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
 }
@@ -114,6 +165,13 @@ function registerRun(program: Command, ctx: CommandContext): void {
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
+    .option(
+      '--tools <a,b,...>',
+      'narrow the tool set to these tools (comma-separated, repeatable; intersected with the permission classes and any --role set)',
+      collectTools(),
+      [] as string[][],
+    )
+    .option('--no-tools', 'run with no tools at all (chat only)')
     .allowExcessArguments()
     .addHelpText(
       'after',
@@ -157,6 +215,9 @@ function registerRun(program: Command, ctx: CommandContext): void {
           `${fromFlag ? 'invalid -p/--prompt' : 'invalid prompt'}: ${(error as Error).message}`,
         );
       }
+      // §40.1 mechanism 1 (issue #273): the two selection forms are
+      // mutually exclusive; both at once is a usage error naming both.
+      const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
         await ctx.runners.run(
           {
@@ -172,6 +233,8 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
+            ...(selection.tools.length === 0 ? {} : { tools: selection.tools }),
+            ...(selection.noTools ? { noTools: true } : {}),
           },
           ctx.config,
         ),
@@ -205,6 +268,13 @@ function registerTui(program: Command, ctx: CommandContext): void {
       '--dangerously-skip-approvals',
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
+    .option(
+      '--tools <a,b,...>',
+      'narrow the tool set to these tools (comma-separated, repeatable; intersected with the permission classes and any --role set)',
+      collectTools(),
+      [] as string[][],
+    )
+    .option('--no-tools', 'run with no tools at all (chat only)')
     .addHelpText(
       'after',
       examples([
@@ -214,6 +284,9 @@ function registerTui(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (opts) => {
+      // §40.1 mechanism 1 (issue #273): both selection forms at once is a
+      // usage error naming both (the boot re-validates names/agreement).
+      const selection = toolSelectionOf(opts.tools, ctx.rest);
       ctx.setExitCode(
         await ctx.runners.tui(
           {
@@ -226,6 +299,8 @@ function registerTui(program: Command, ctx: CommandContext): void {
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
+            ...(selection.tools.length === 0 ? {} : { tools: selection.tools }),
+            ...(selection.noTools ? { noTools: true } : {}),
           },
           ctx.config,
         ),

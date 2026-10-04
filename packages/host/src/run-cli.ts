@@ -299,6 +299,9 @@ export interface RunCommandDeps extends CliIo {
       debug?: boolean;
       // §41.4 (issue #308): forwarded to the runner's one enable path.
       dangerouslySkipApprovals?: boolean;
+      // §40.1 mechanism 1 (issue #273): the per-invocation tool selection.
+      tools?: readonly string[];
+      noTools?: boolean;
     },
   ) => Promise<HeadlessRunResult>;
   persist?: (result: HeadlessRunResult) => Promise<void> | void;
@@ -337,6 +340,9 @@ export interface RunCommandOptions {
   readonly json?: boolean;
   // §41.4 (issue #308): session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
+  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` / `--no-tools`.
+  readonly tools?: readonly string[];
+  readonly noTools?: boolean;
 }
 
 // A value the command refuses (exit 2). The message is the whole reason;
@@ -516,6 +522,10 @@ export async function runRunCommand(
       ...(options.dangerouslySkipApprovals === true
         ? { dangerouslySkipApprovals: true }
         : {}),
+      ...(options.tools === undefined || options.tools.length === 0
+        ? {}
+        : { tools: [...options.tools] }),
+      ...(options.noTools === true ? { noTools: true } : {}),
     });
     await deps.persist?.(result);
   } catch (error) {

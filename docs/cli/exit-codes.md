@@ -111,8 +111,10 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   before loading anything —
   `kubic: node >= 22.19 required (running <version>) — see the README
   install section`, exit 1.
-- **`kubic run`**: 2 for every usage error (missing `-p`, unknown option,
-  missing or invalid value, stray operand), before any lane boots.
+- **`kubic run`**: 2 for every usage error (missing `-p`/positional prompt,
+  unknown option, missing or invalid value, stray operand, an unknown
+  `--tools` name or one the permission classes forbid, `--tools` with
+  `--no-tools`), before any lane boots.
   `KUBIC_PROVIDER` set to anything but `faux` ends `provider_probe_failed`
   (6). `--json`: the envelope's `ok` field is `exitCode === 0`.
   A wall-clock `--timeout` elapse is `status: timeout`, exit 1 (issue #280);

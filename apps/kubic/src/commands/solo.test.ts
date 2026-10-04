@@ -344,6 +344,52 @@ describe('kubic run', () => {
     expect(result.calls[0]?.input).toEqual({ prompt: '--weird prompt' });
   });
 
+  it('parses --tools (comma-separated, repeatable) and --no-tools (issue #273)', async () => {
+    const tools = await kubic(['run', '-p', 'x', '--tools', 'read,ls']);
+    expect(tools.calls[0]?.input).toMatchObject({ tools: ['read', 'ls'] });
+    const repeat = await kubic([
+      'run',
+      '-p',
+      'x',
+      '--tools',
+      'read',
+      '--tools',
+      'ls',
+    ]);
+    expect(repeat.calls[0]?.input).toMatchObject({ tools: ['read', 'ls'] });
+    const none = await kubic(['run', '-p', 'x', '--no-tools']);
+    expect(none.calls[0]?.input).toMatchObject({ noTools: true });
+    expect(none.calls[0]?.input).not.toHaveProperty('tools');
+  });
+
+  it('refuses --tools together with --no-tools, in either order (issue #273)', async () => {
+    expect(
+      await usageError(['run', '-p', 'x', '--tools', 'read', '--no-tools']),
+    ).toContain('mutually exclusive');
+    expect(
+      await usageError(['run', '-p', 'x', '--no-tools', '--tools', 'read']),
+    ).toContain('mutually exclusive');
+  });
+
+  it('refuses an empty --tools value (issue #273)', async () => {
+    expect(await usageError(['run', '-p', 'x', '--tools', ''])).toContain(
+      'at least one tool name',
+    );
+    expect(await usageError(['run', '-p', 'x', '--tools', ', ,'])).toContain(
+      'at least one tool name',
+    );
+  });
+
+  it('parses --tools / --no-tools on tui too (issue #273)', async () => {
+    const tools = await kubic(['tui', '--tools', 'read,ls']);
+    expect(tools.calls[0]?.input).toMatchObject({ tools: ['read', 'ls'] });
+    const none = await kubic(['tui', '--no-tools']);
+    expect(none.calls[0]?.input).toMatchObject({ noTools: true });
+    expect(
+      await usageError(['tui', '--tools', 'read', '--no-tools']),
+    ).toContain('mutually exclusive');
+  });
+
   it('refuses -p together with a positional prompt, naming both', async () => {
     const text = await usageError(['run', '-p', 'a', 'b']);
     expect(text).toContain('both -p/--prompt and a positional prompt');

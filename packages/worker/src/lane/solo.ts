@@ -51,7 +51,11 @@ import {
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
 } from './interceptors.js';
-import { applyToolPolicy, toolsForNames } from './policy.js';
+import {
+  applyToolPolicy,
+  PolicyRefusedError,
+  toolsForNames,
+} from './policy.js';
 import type { SessionHandle } from './session-store.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
@@ -239,6 +243,13 @@ export interface SoloBootOptions {
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
+  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection
+  // (`--tools <a,b>`). Intersected with the class/role/enterprise sets — a
+  // selection can only narrow, never widen. `noTools` is the empty set (a
+  // chat-only run); the two are mutually exclusive and a library caller
+  // that sets both is refused by name.
+  toolSelection?: string[];
+  noTools?: boolean;
   // Resumed-session model identity (issue #148; §21, §26.1). The root
   // conversation's `pi.agent` document restores a resumed session's STORED
   // model; `model` only seeds a new conversation. When they differ:
@@ -401,7 +412,17 @@ export async function bootSoloLane(
   const enterpriseGate = options.policy?.toolAllowed;
   const baseNames = baseTools.map((tool) => tool.name);
   const registeredNames = new Set(baseNames);
-  const roleNames = options.toolAllowlist ?? baseNames;
+  if (options.toolSelection !== undefined && options.noTools === true) {
+    throw new PolicyRefusedError(
+      '--tools and --no-tools are mutually exclusive',
+    );
+  }
+  let roleNames = options.toolAllowlist ?? baseNames;
+  if (options.toolSelection !== undefined) {
+    const selected = new Set(options.toolSelection);
+    roleNames = roleNames.filter((tool) => selected.has(tool));
+  }
+  if (options.noTools === true) roleNames = [];
   let effectiveToolNames =
     classAllowed === undefined
       ? [...roleNames]
@@ -421,7 +442,10 @@ export async function bootSoloLane(
   // class-derived allowlist; only the two narrowing paths need their own
   // activation (and their set can never exceed the class-derived one).
   const mustActivateTools =
-    options.toolAllowlist !== undefined || enterpriseGate !== undefined;
+    options.toolAllowlist !== undefined ||
+    options.toolSelection !== undefined ||
+    options.noTools === true ||
+    enterpriseGate !== undefined;
 
   // Compaction (#399): reserveTokens is a live getter over the window of the
   // conversation's CURRENT model. It reads the attached `pi.agent` document

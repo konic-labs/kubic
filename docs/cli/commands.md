@@ -1043,7 +1043,14 @@ boot and after every turn, never assumed); the editor; and a footer row that sho
 spinner during a turn and the solo notice or the turn's outcome otherwise.
 Colour follows the Konic palette on truecolor terminals, falls back to
 256/16 colours, and is off for `NO_COLOR`, `TERM=dumb`, or a non-TTY
-stdout (`FORCE_COLOR=0..3` overrides).
+stdout (`FORCE_COLOR=0..3` overrides). The palette is selectable: `[ui]
+theme` takes a built-in name (`default`/`dark`, the shipped brand palette,
+or `light`) or a path to a JSON theme file (§16.9), resolved and validated
+before the screen opens — a missing or invalid file is one
+`error: theme '<ref>': …` line on stderr and exit 2. A custom theme's
+truecolor values are downgraded to the terminal's colour level exactly like
+the built-in palette; see `[ui] theme` under
+[configuration](configuration.md).
 
 | Key | Meaning |
 | --- | --- |

@@ -293,6 +293,11 @@ export function prodTuiDeps(
     // flag still wins), so the documented key selects something instead of
     // being parsed and ignored.
     modes: cliConfig.runtime?.modes,
+    // Issue #304 (§16.9): the `[ui] theme` reference — a built-in name or a
+    // JSON theme path, resolved and validated before the alt-screen opens.
+    ...(cliConfig.runtime?.config.ui?.theme === undefined
+      ? {}
+      : { theme: cliConfig.runtime.config.ui.theme }),
     // Issue #327: the manager-lane projections the interactive orchestrator
     // drive consumes — the same `[orchestrator]` worktree/cap values and the
     // same approval snapshot the CLI orchestrate runner threads (never a

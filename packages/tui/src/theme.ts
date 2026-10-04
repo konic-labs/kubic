@@ -67,6 +67,256 @@ function fg(level: ColorLevel, key: PaletteKey): string {
   return String(entry.c16);
 }
 
+// --- Issue #304: JSON themes (§16.9 "Themes are JSON with a schema") ---
+//
+// A theme file names the seven colours Kubic styles with; the structure
+// (bold accent, dim, italic, …) stays Kubic's. Colours are #rrggbb hex and
+// are downgraded to the terminal's colour level exactly like the built-in
+// palette: truecolor emits the RGB triple, 256 the nearest xterm-256 entry,
+// 16 the nearest ANSI colour, and NO_COLOR/none the identity.
+
+export const THEME_COLOR_KEYS = [
+  'accent',
+  'warm',
+  'success',
+  'error',
+  'warning',
+  'muted',
+  'prompt',
+] as const;
+
+export type ThemeColorKey = (typeof THEME_COLOR_KEYS)[number];
+
+/** The seven colours of a theme, each `#rrggbb`. */
+export type ThemeColors = Readonly<Record<ThemeColorKey, string>>;
+
+// The shipped built-ins: `default` and `dark` are the Konic brand palette
+// (dark-on-near-black), `light` is the light-background variant.
+export const THEME_BUILTINS = ['default', 'dark', 'light'] as const;
+export type ThemeBuiltin = (typeof THEME_BUILTINS)[number];
+
+/** A named theme rejection: a bad file, a bad key or a bad colour. */
+export class ThemeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ThemeError';
+  }
+}
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// The one parser for a theme file's text. Strict on purpose (§16.9's schema):
+// an unknown key or a missing colour is refused by name rather than silently
+// dropped, so a typo cannot leave the operator staring at the default theme
+// wondering whether the file was read at all.
+export function parseThemeJson(text: string, source: string): ThemeColors {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ThemeError(`theme '${source}': invalid JSON (${detail})`);
+  }
+  if (!isRecord(parsed)) {
+    throw new ThemeError(`theme '${source}': must be a JSON object`);
+  }
+  const unknown = Object.keys(parsed).filter(
+    (key) => key !== 'name' && key !== 'colors',
+  );
+  if (unknown.length > 0) {
+    throw new ThemeError(
+      `theme '${source}': unknown key '${unknown[0]}' (expected name, colors)`,
+    );
+  }
+  const colors = parsed.colors;
+  if (!isRecord(colors)) {
+    throw new ThemeError(`theme '${source}': 'colors' must be an object`);
+  }
+  const extra = Object.keys(colors).filter(
+    (key) => !(THEME_COLOR_KEYS as readonly string[]).includes(key),
+  );
+  if (extra.length > 0) {
+    throw new ThemeError(
+      `theme '${source}': unknown colour '${extra[0]}' ` +
+        `(expected ${THEME_COLOR_KEYS.join(', ')})`,
+    );
+  }
+  const out: Partial<Record<ThemeColorKey, string>> = {};
+  for (const key of THEME_COLOR_KEYS) {
+    const value = colors[key];
+    if (value === undefined) {
+      throw new ThemeError(`theme '${source}': missing colour '${key}'`);
+    }
+    if (typeof value !== 'string' || !HEX_COLOR.test(value)) {
+      throw new ThemeError(
+        `theme '${source}': '${key}' must be a #rrggbb colour ` +
+          `(got ${JSON.stringify(value)})`,
+      );
+    }
+    out[key] = value;
+  }
+  return out as ThemeColors;
+}
+
+// The built-in palettes as hex. `default`/`dark` carry the same numbers the
+// shipped `createTuiTheme` hand-picked (so its bytes never move); `light`
+// is the light-background counterpart.
+const BRAND_HEX: ThemeColors = {
+  accent: '#ff004d',
+  warm: '#ff7a2e',
+  success: '#5ed68c',
+  error: '#ff2a1f',
+  warning: '#ff9433',
+  muted: '#808080',
+  prompt: '#f4f4f4',
+};
+
+const LIGHT_HEX: ThemeColors = {
+  accent: '#c40038',
+  warm: '#b45309',
+  success: '#15803d',
+  error: '#b91c1c',
+  warning: '#b45309',
+  muted: '#52525b',
+  prompt: '#18181b',
+};
+
+export function builtinThemeColors(name: ThemeBuiltin): ThemeColors {
+  return name === 'light' ? LIGHT_HEX : BRAND_HEX;
+}
+
+function parseHex(hex: string): readonly [number, number, number] {
+  return [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+// The xterm-256 palette: a 6x6x6 colour cube (16..231) plus a 24-step
+// grayscale ramp (232..255). Both candidates are scored and the closer one
+// wins, so a neutral grey lands on the ramp instead of a cube corner.
+const CUBE_LEVELS = [0, 95, 135, 175, 215, 255] as const;
+
+function nearestCubeIndex(value: number): number {
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  CUBE_LEVELS.forEach((level, index) => {
+    const distance = Math.abs(level - value);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+export function nearestXterm256(
+  rgb: readonly [number, number, number],
+): number {
+  const [r, g, b] = rgb;
+  const cubeRgb: readonly [number, number, number] = [
+    CUBE_LEVELS[nearestCubeIndex(r)] as number,
+    CUBE_LEVELS[nearestCubeIndex(g)] as number,
+    CUBE_LEVELS[nearestCubeIndex(b)] as number,
+  ];
+  const cube =
+    16 +
+    36 * nearestCubeIndex(r) +
+    6 * nearestCubeIndex(g) +
+    nearestCubeIndex(b);
+  const grayIndex = Math.min(
+    23,
+    Math.max(0, Math.round(((r + g + b) / 3 - 8) / 10)),
+  );
+  const grayValue = 8 + grayIndex * 10;
+  const distance = (candidate: readonly [number, number, number]): number =>
+    (candidate[0] - r) ** 2 + (candidate[1] - g) ** 2 + (candidate[2] - b) ** 2;
+  return distance(cubeRgb) <= distance([grayValue, grayValue, grayValue])
+    ? cube
+    : 232 + grayIndex;
+}
+
+// The 16 ANSI foregrounds as xterm RGB (the values terminals actually draw),
+// indexed by their SGR code minus 30 (30..37 normal, 90..97 bright).
+const ANSI16_RGB: readonly (readonly [number, number, number])[] = [
+  [0, 0, 0],
+  [205, 0, 0],
+  [0, 205, 0],
+  [205, 205, 0],
+  [0, 0, 238],
+  [205, 0, 205],
+  [0, 205, 205],
+  [229, 229, 229],
+  [127, 127, 127],
+  [255, 0, 0],
+  [0, 255, 0],
+  [255, 255, 0],
+  [92, 92, 255],
+  [255, 0, 255],
+  [0, 255, 255],
+  [255, 255, 255],
+];
+
+export function nearestAnsi16(rgb: readonly [number, number, number]): number {
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  ANSI16_RGB.forEach((candidate, index) => {
+    const distance =
+      (candidate[0] - rgb[0]) ** 2 +
+      (candidate[1] - rgb[1]) ** 2 +
+      (candidate[2] - rgb[2]) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best < 8 ? 30 + best : 90 + (best - 8);
+}
+
+function hexFg(level: ColorLevel, hex: string): string {
+  const rgb = parseHex(hex);
+  if (level === 'truecolor') return `38;2;${rgb.join(';')}`;
+  if (level === '256') return `38;5;${nearestXterm256(rgb)}`;
+  return String(nearestAnsi16(rgb));
+}
+
+// A theme from an arbitrary palette. The structure is exactly the shipped
+// one: only the colours move, so a custom theme cannot lose the styling
+// contract the views read.
+export function createThemeFromColors(
+  colors: ThemeColors,
+  level: ColorLevel,
+): TuiTheme {
+  if (level === 'none') return createTuiTheme('none');
+  const color = (hex: string): Style => sgr(hexFg(level, hex), '39');
+  return {
+    level,
+    accent: color(colors.accent),
+    accentBold: sgr(`1;${hexFg(level, colors.accent)}`, '22;39'),
+    warm: color(colors.warm),
+    success: color(colors.success),
+    error: color(colors.error),
+    warning: sgr(`1;${hexFg(level, colors.warning)}`, '22;39'),
+    muted: color(colors.muted),
+    dim: sgr('2', '22'),
+    bold: sgr('1', '22'),
+    italic: sgr('3', '23'),
+    underline: sgr('4', '24'),
+    strike: sgr('9', '29'),
+    code: color(colors.warning),
+    prompt: sgr(`1;${hexFg(level, colors.prompt)}`, '22;39'),
+  };
+}
+
+export function isThemeBuiltin(name: string): name is ThemeBuiltin {
+  return (THEME_BUILTINS as readonly string[]).includes(name);
+}
+
 const identity: Style = (text: string): string => text;
 
 export function createTuiTheme(level: ColorLevel): TuiTheme {

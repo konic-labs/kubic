@@ -128,10 +128,16 @@ import type {
   StatusUsageRow,
 } from '../../../packages/tui/src/status-bar.js';
 import {
+  builtinThemeColors,
   type ColorLevel,
+  createThemeFromColors,
   createTuiTheme,
   detectColorLevel,
+  isThemeBuiltin,
+  parseThemeJson,
   setTuiTheme,
+  ThemeError,
+  type TuiTheme,
   tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import {
@@ -826,6 +832,10 @@ export interface TuiRunDeps {
   // This is what makes the documented key do something instead of being
   // parsed and ignored.
   modes?: { readonly orchestrator: boolean };
+  // Issue #304 (§16.9): the config `[ui] theme` reference — a built-in name
+  // (`default`, `dark`, `light`) or a path to a JSON theme file, resolved
+  // and validated before the alt-screen opens.
+  theme?: string;
   // Issue #327: the git probe behind the non-git orchestrator refusal
   // (exit 5). Consulted only when the resolved mode IS orchestrator; absent
   // means the caller owns the check (viewer boots and injected fakes).
@@ -1906,6 +1916,10 @@ export type TuiConfigProjection = {
   // Consumed by runTuiCommand: `orchestrator = true` starts the session in
   // orchestrator mode; the flag still beats it.
   modes?: { readonly orchestrator: boolean };
+  // Issue #304 (§16.9): the `[ui] theme` reference (a built-in name or a
+  // JSON theme path), threaded from the same config load `kubic run`
+  // consumes. Absent means the shipped brand palette.
+  theme?: string;
   // Issue #228 (§29.3): the project-trust check for skills discovery,
   // threaded from the same config report `kubic run` consumes — a store
   // grant checked per ancestor on the interactive lane.
@@ -1961,6 +1975,9 @@ export function tuiBootOptions(
     // Issue #327: the `[modes]` session default and the manager-lane
     // projections the interactive orchestrator drive consumes.
     modes: provided.modes,
+    // Issue #304: the `[ui] theme` reference (resolved by runTuiCommand
+    // before the alt-screen opens).
+    theme: provided.theme,
     orchestratorRuntime: provided.orchestratorRuntime,
     approvalPolicy: provided.approvalPolicy,
     // Issue #228: the per-path trust check and the skills roots it gates.
@@ -1997,6 +2014,10 @@ export function tuiDepsWithDefaults(
     ...(provided.err === undefined ? {} : { err: provided.err }),
     createTerminal: () => new ProcessTerminal(),
     ...(provided.modes === undefined ? {} : { modes: provided.modes }),
+    // Issue #304 (§16.9): the `[ui] theme` reference, resolved by
+    // runTuiCommand before the alt-screen opens (a named error and exit 2
+    // when the file is missing or invalid).
+    ...(provided.theme === undefined ? {} : { theme: provided.theme }),
     // Issue #327: the non-git orchestrator refusal needs a real probe before
     // the alt-screen opens. Lazy: solo sessions never call it.
     isGitRepo: () => defaultIsGitRepo(),
@@ -2749,6 +2770,31 @@ export class TuiTurnRunner {
   }
 }
 
+// Issue #304 (§16.9): the `[ui] theme` reference → the active theme. A
+// built-in name (`default`, `dark`, `light`) needs no file; anything else is
+// a JSON theme path, read through the exec bridge and validated against the
+// schema. Every failure is a `ThemeError` naming the reference, so the boot
+// can report it before the screen opens.
+export function resolveTuiTheme(
+  ref: string | undefined,
+  level: ColorLevel,
+  files: FileBridge,
+): TuiTheme {
+  if (ref === undefined || ref === '' || isThemeBuiltin(ref)) {
+    return ref === 'light'
+      ? createThemeFromColors(builtinThemeColors('light'), level)
+      : createTuiTheme(level);
+  }
+  let text: string;
+  try {
+    text = files.readTextFile(ref);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ThemeError(`theme '${ref}': cannot read (${detail})`);
+  }
+  return createThemeFromColors(parseThemeJson(text, ref), level);
+}
+
 // The `/image <path>` command of the interactive loop (issue #338; §16.8).
 // `undefined` means the draft is a prompt, not the command. One parser for
 // the dispatch and its tests: `/image` alone is the usage error, anything
@@ -2962,6 +3008,27 @@ export async function runTuiCommand(
     );
     return RUN_EXIT_USAGE;
   }
+  // Issue #304 (§16.9): the `[ui] theme` reference is resolved and validated
+  // BEFORE anything opens — a missing or invalid theme file is a named
+  // `error:` line and exit 2, never a half-painted screen or a silent
+  // fallback to the default palette. The path form is read through the exec
+  // file bridge (§9), the same seam `/image` uses.
+  const files = createNodeFileBridge(process.cwd());
+  let resolvedTheme: TuiTheme;
+  try {
+    resolvedTheme = resolveTuiTheme(
+      deps.theme,
+      deps.colorLevel ??
+        detectColorLevel(process.env, process.stdout.isTTY === true),
+      files,
+    );
+  } catch (error) {
+    if (error instanceof ThemeError) {
+      (deps.err ?? deps.out)(`error: ${error.message}`);
+      return RUN_EXIT_USAGE;
+    }
+    throw error;
+  }
   // Issue #96: the approval surface must exist BEFORE the lane boots, because
   // the boot installs the policy that consults the seat. The root therefore
   // creates the surface, hands its ask to the boot AS the seat, and attaches
@@ -2993,12 +3060,7 @@ export async function runTuiCommand(
   // never depends on the shell's colour variables) and the theme this run
   // replaces is restored when it ends — the global never leaks.
   const previousTheme = tuiTheme();
-  setTuiTheme(
-    createTuiTheme(
-      deps.colorLevel ??
-        detectColorLevel(process.env, process.stdout.isTTY === true),
-    ),
-  );
+  setTuiTheme(resolvedTheme);
   // Issue #308: the full-access warning lands on stderr (the main screen)
   // before the alt-screen opens, and the bar shows OFF from the first frame.
   for (const notice of boot.notices ?? []) {
@@ -3436,8 +3498,9 @@ export async function runTuiCommand(
     let pendingImages: AttachmentImage[] = [];
     // The exec file bridge the `/image` read goes through (§9): the same
     // seam the session store uses, rooted at the workspace, and an absolute
-    // path is taken as typed because the operator named it.
-    const imageFiles = createNodeFileBridge(process.cwd());
+    // path is taken as typed because the operator named it. The theme
+    // resolution above uses the same bridge.
+    const imageFiles = files;
     // Issue #338 review: a large inline paste arrives in chunks, so a partial
     // OSC 1337 sequence is held here across listener calls (bounded) instead
     // of being typed into the draft as raw escape + base64.

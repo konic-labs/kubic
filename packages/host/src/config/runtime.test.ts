@@ -657,7 +657,8 @@ describe('effective config view (issue #90)', () => {
   it('renders the disposition on every effective value (issue #133)', () => {
     const runtime = load(
       {
-        [PROJECT]: '[agent]\nname = "kubic"\n[ui]\ntheme = "dark"\n',
+        [PROJECT]:
+          '[agent]\nname = "kubic"\n[ui]\ntheme = "dark"\nstatusBar = true\n',
       },
       { projectTrusted: true },
     );
@@ -665,7 +666,12 @@ describe('effective config view (issue #90)', () => {
     expect(view.values.find((v) => v.key === 'agent.name')?.disposition).toBe(
       'consumed',
     );
+    // Issue #304: `ui.theme` is consumed (the TUI resolves it before the
+    // alt-screen opens); `ui.statusBar` stays kept.
     expect(view.values.find((v) => v.key === 'ui.theme')?.disposition).toBe(
+      'consumed',
+    );
+    expect(view.values.find((v) => v.key === 'ui.statusBar')?.disposition).toBe(
       'kept',
     );
     const lines = renderEffectiveConfig(view);
@@ -675,7 +681,14 @@ describe('effective config view (issue #90)', () => {
       ),
     ).toBe(true);
     expect(
-      lines.some((line) => line.includes('ui.theme = "dark" (project, kept)')),
+      lines.some((line) =>
+        line.includes('ui.theme = "dark" (project, consumed)'),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((line) =>
+        line.includes('ui.statusBar = true (project, kept)'),
+      ),
     ).toBe(true);
     // One summary line states the split, so a reader sees it before the list.
     expect(

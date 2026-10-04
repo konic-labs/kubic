@@ -199,7 +199,8 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
     effect: 'default admission cap for the orchestrator scheduler (§45)',
   },
   'ui.theme': {
-    kept: 'pi-tui owns presentation; no theme engine exists — key parsed and reported for forward-compat only',
+    effect:
+      'TUI theme: a built-in name (`default`, `dark`, `light`) or a path to a JSON theme file, resolved and validated before the alt-screen opens (a missing or invalid file is a named `error:` line and exit 2)',
   },
   'ui.statusBar': {
     kept: 'pi-tui owns presentation; the status bar belongs to the TUI — key parsed and reported for forward-compat only',

@@ -1,8 +1,34 @@
 // `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
+import {
+  createSession,
+  openSessionStore,
+} from '../../../../worker/src/lane/session-store.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  MemoryStorage,
+  type Storage,
+} from '../../../../worker/src/pi-boundary.js';
+import { FAUX_PROVIDER_ID } from '../../faux-provider.js';
 import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
-import { runCostCommand } from './cost-cli.js';
+import {
+  loadSessionCostRows,
+  readSessionRunUsage,
+  readSessionUsage,
+  runCostCommand,
+  totalSessionUsage,
+} from './cost-cli.js';
 import { summarizePerAgentCost, toCostJson } from './per-agent-cost.js';
 
 const ROWS = [
@@ -341,5 +367,150 @@ describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
     const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(shaped);
     expect(text).toContain(REDACTED_SECRET);
+  });
+});
+
+describe('kubic cost durable usage (issue #400)', () => {
+  // The faux provider's default model (not the host fixture's `echo`).
+  const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
+  const made: string[] = [];
+  const open: Harness[] = [];
+
+  function tmpRoot(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'cost-'));
+    made.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
+    for (const harness of open.splice(0)) {
+      await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);
+    }
+    for (const dir of made.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A real faux harness over one storage, with one tool-call turn stored.
+  async function fauxRun(storage: Storage) {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const harness = await Harness.open(
+      storage,
+      { models, registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    open.push(harness);
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('done'),
+    ]);
+    await (
+      await conversation.submit(
+        { type: 'input', content: 'read a.txt' },
+        BACKGROUND_CONTEXT,
+      )
+    ).wait(BACKGROUND_CONTEXT);
+    return harness;
+  }
+
+  it('reads the same totals harness.usage() reports for a faux run', async () => {
+    const storage = new MemoryStorage();
+    const harness = await fauxRun(storage);
+    const expected = await harness.usage(BACKGROUND_CONTEXT);
+    const rows = await readSessionUsage(storage, BACKGROUND_CONTEXT);
+    const totals = totalSessionUsage(rows);
+
+    // One row per `pi.usage` bucket, and the same numbers in the totals.
+    expect(rows.map((row) => `${row.kind}:${row.key}`)).toEqual(
+      Object.entries(expected.models).map(([key]) => `model:${key}`),
+    );
+    const summed = Object.values(expected.models).reduce(
+      (acc, usage) => ({
+        input: acc.input + usage.input,
+        output: acc.output + usage.output,
+        cacheRead: acc.cacheRead + usage.cacheRead,
+        cacheWrite: acc.cacheWrite + usage.cacheWrite,
+        costUsd: acc.costUsd + usage.cost.total,
+      }),
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 },
+    );
+    expect(totals).toEqual(summed);
+    // The faux run really did spend tokens (not a vacuous match).
+    expect(totals.input).toBeGreaterThan(0);
+    expect(rows[0]?.key).toBe(MODEL_REF);
+  });
+
+  it('loads one row per usage bucket from a stored session', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.storage);
+    // The harness closed the storage with it; the lock is still held.
+    await session.release(BACKGROUND_CONTEXT);
+
+    const rows = await loadSessionCostRows(root, session.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      agentId: session.id,
+      model: MODEL_REF,
+    });
+    expect(rows[0]?.input).toBeGreaterThan(0);
+    expect(rows[0]?.costUsd).toBeGreaterThanOrEqual(0);
+    expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
+  });
+
+  it('skips a session whose storage a live run owns, without opening it', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    // Still attached: the Kubic lock is held by this live process, exactly
+    // as a running `kubic run` holds it.
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    try {
+      const rows = await loadSessionCostRows(root);
+      expect(rows).toEqual([
+        {
+          agentId: session.id,
+          model: '(locked)',
+          costUsd: 0,
+          input: 0,
+          output: 0,
+        },
+      ]);
+    } finally {
+      await session.release(BACKGROUND_CONTEXT);
+    }
+  });
+
+  it('reads a run envelope usage and the last answering model from the transcript', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.storage);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const measured = await readSessionRunUsage(root, session.id);
+    expect(measured.model).toBe(MODEL_REF);
+    expect(measured.usage.toolCalls).toBe(1);
+    expect(measured.usage.input).toBeGreaterThan(0);
+    expect(measured.usage.costUsd).toBeGreaterThanOrEqual(0);
   });
 });

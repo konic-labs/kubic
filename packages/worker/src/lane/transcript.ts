@@ -214,6 +214,13 @@ export async function readSessionEntries(
   storage: Storage,
   context: Context,
 ): Promise<EntryRecord[]> {
+  // A session that never ran has no root conversation yet: no transcript,
+  // and never a throw (a reader must not invent one).
+  const conversation = await storage.conversation(
+    ROOT_CONVERSATION_ID,
+    context,
+  );
+  if (conversation === undefined) return [];
   // The newest entry that starts a context (a compaction or reset) is the
   // range's lower bound; without one, the conversation's whole visible
   // history. Scans are newest-first, so the result is reversed at the end.

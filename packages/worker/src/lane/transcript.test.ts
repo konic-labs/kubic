@@ -426,4 +426,12 @@ describe('entriesToTranscript over a real harness (issue #400)', () => {
       'stored answer',
     ]);
   });
+
+  it('reads no transcript from a storage whose conversation never existed', async () => {
+    // A freshly created session has metadata but no root conversation yet:
+    // the reader must answer with nothing instead of failing.
+    expect(
+      await readSessionEntries(new MemoryStorage(), BACKGROUND_CONTEXT),
+    ).toEqual([]);
+  });
 });

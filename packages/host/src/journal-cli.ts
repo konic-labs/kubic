@@ -133,9 +133,11 @@ async function defaultSessionWorkspaces(
       BACKGROUND_CONTEXT,
     );
     for (const entry of listed) {
-      if (entry.cwd !== undefined && entry.cwd !== '') {
-        out.set(entry.id, entry.cwd);
-      }
+      // The recorded cwd lives in the session's metadata (issue #392); a
+      // session that recorded none — a 0.87 transcript, a hand-made dir —
+      // stays unassociated rather than guessing one.
+      const cwd = entry.meta?.cwd;
+      if (cwd !== undefined && cwd !== '') out.set(entry.id, cwd);
     }
   } catch {
     // No readable sessions root — no recorded workspaces.

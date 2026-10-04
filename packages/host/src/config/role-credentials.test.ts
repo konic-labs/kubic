@@ -41,11 +41,23 @@ describe('provider resolution for a worker role (issue #200)', () => {
     expect(providerOfModelRef(undefined)).toBeUndefined();
   });
 
-  it('mirrors the launch contract precedence: env pin, role pin, manager pin, fallback', () => {
+  it('mirrors the launch contract precedence: the told pin, env pin, manager pin, fallback', () => {
+    // Issue #202: the child is TOLD `modelRef` as its `KUBIC_MODEL`, so an
+    // ambient operator pin the manager overwrote must not decide the grant —
+    // the role's provider would then run without its key.
     expect(
       resolveWorkerProvider({
         envModel: 'anthropic/claude',
         modelRef: 'gw/m1',
+        managerModel: 'openai/gpt-5',
+        fallbackProvider: 'local',
+      }),
+    ).toBe('gw');
+    // No told pin: the child inherits the ambient `KUBIC_MODEL`, so that one
+    // decides.
+    expect(
+      resolveWorkerProvider({
+        envModel: 'anthropic/claude',
         managerModel: 'openai/gpt-5',
         fallbackProvider: 'local',
       }),

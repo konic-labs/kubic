@@ -64,12 +64,15 @@ export function providerOfModelRef(
 }
 
 // The provider the worker child will actually select, mirroring the launch
-// contract the orchestrate path pins: the operator's KUBIC_MODEL wins, then
-// the role's own resolved `provider/model` (the value injected as the
-// child's pin), then the manager's configured pin, then the provider the
-// child falls back to when nothing is pinned at all. Model resolution itself
-// is issue #202's concern — the credential plan follows whatever value the
-// caller resolved for the role, never a hardcoded role default.
+// contract the orchestrate path pins (issue #202): the value the child is
+// TOLD as `KUBIC_MODEL` wins — the role's `[roles.<r>].model` pin, the
+// explicit per-agent pin, or the manager's model inherited as the fallback
+// level — then the operator's ambient `KUBIC_MODEL` (the child inherits it
+// only when no resolved pin overwrote it), then the manager's configured
+// pin, then the provider the child falls back to when nothing is pinned at
+// all. Model resolution itself is issue #202's concern; the credential plan
+// follows the value the caller resolved for the role, never a hardcoded role
+// default — and never an ambient pin the child does not run.
 export interface WorkerProviderResolution {
   /** KUBIC_MODEL from the orchestrator's environment, when set. */
   readonly envModel?: string;
@@ -95,8 +98,8 @@ export function resolveWorkerProvider(
     return providerOfModelRef(input.managerModel) ?? input.fallbackProvider;
   }
   return (
-    providerOfModelRef(input.envModel) ??
     providerOfModelRef(input.modelRef) ??
+    providerOfModelRef(input.envModel) ??
     providerOfModelRef(input.managerModel) ??
     input.fallbackProvider
   );

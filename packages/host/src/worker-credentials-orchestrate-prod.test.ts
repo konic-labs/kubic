@@ -181,6 +181,13 @@ async function harness(
     requireCredentialBroker?: boolean;
     projectTrust?: (path: string) => boolean;
     modelPinFrozen?: boolean;
+    /** The manager's effective model; defaults to the project `gw/m1`. */
+    model?: { provider: string; id: string };
+    /** The config `[roles.<name>]` layers prod projects from the load. */
+    roleLayers?: Array<{
+      layer: 'project';
+      roles: Record<string, { model?: string; tools?: string[] }>;
+    }>;
   } = {},
 ): Promise<Harness> {
   const sessionsRoot = scratchRoot('kubic-orch-200-sessions-');
@@ -200,12 +207,15 @@ async function harness(
     workerEntry: { cmd: process.execPath, args: [fixture] },
     // The manager's own model pin; the manager of this run resolves `gw`
     // through the project models.json, and every worker inherits it.
-    model: { provider: 'gw', id: 'm1' },
+    model: options.model ?? { provider: 'gw', id: 'm1' },
     signals: fakeSignals(),
     ...(options.requireCredentialBroker === true
       ? { requireCredentialBroker: true }
       : {}),
     ...(options.modelPinFrozen === true ? { modelPinFrozen: true } : {}),
+    ...(options.roleLayers === undefined
+      ? {}
+      : { roleLayers: options.roleLayers }),
     // What prod passes (`projectTrustFor(cliConfig)`): the persistent
     // store's per-root decision, with the env opt-in NOT exported.
     ...(options.projectTrust === undefined
@@ -238,6 +248,54 @@ function dumpOf(h: Harness, agentId: string): Record<string, string> {
 }
 
 describe('prod orchestrate worker credentials (issue #200)', () => {
+  it('grants the provider of the role pin the child is told, not the ambient KUBIC_MODEL (issue #202)', async () => {
+    // The operator's ambient pin names `other`; the committed config layer
+    // pins the planner to `gw`. The child's `KUBIC_MODEL` is overwritten
+    // with the role pin, so the GRANT must follow the role pin too — the
+    // pre-#202 order resolved the credential plan from the ambient pin and
+    // handed the worker a key its provider never runs with.
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    const catalog = JSON.parse(
+      readFileSync(join(root, 'models.json'), 'utf8'),
+    ) as { providers: { id: string }[] };
+    catalog.providers.push({
+      id: 'other',
+      baseUrl: provider.url,
+      api: 'openai-completions',
+      apiKeyEnv: 'OTHER_API_KEY',
+      models: [{ id: 'm1' }],
+    } as never);
+    writeFileSync(join(root, 'models.json'), JSON.stringify(catalog));
+    vi.stubEnv('GW_API_KEY', SECRET);
+    vi.stubEnv('OTHER_API_KEY', 'sk-other-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'other/m1');
+    const h = await harness(root, {
+      // prod passes the manager's effective pin (runtimeModelPin) and the
+      // config `[roles.<name>]` layers (roleLayersFromConfig).
+      model: { provider: 'other', id: 'm1' },
+      roleLayers: [
+        { layer: 'project', roles: { planner: { model: 'gw/m1' } } },
+      ],
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha:planner'],
+        yes: true,
+        session: 'rolepincreds',
+      },
+      h.deps,
+    );
+    expect(code, [...h.errLines, ...h.lines].join('\n')).toBe(0);
+    const env = dumpOf(h, 'alpha');
+    // The child runs the role pin…
+    expect(env.KUBIC_MODEL).toBe('gw/m1');
+    // …and holds exactly that provider's key, not the ambient pin's.
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+    expect(env.KUBIC_ROLE_PLANNER_OTHER_API_KEY).toBeUndefined();
+  });
+
   it('hands a real child exactly its role provider key under the grant namespace', async () => {
     const provider = await fakeProvider();
     const root = await initRepo(provider.url);
@@ -444,7 +502,11 @@ describe('prod orchestrate worker credentials for multi-variable providers (issu
     vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'aws-orch-secret-200');
     vi.stubEnv('AWS_REGION', 'us-east-1');
     vi.stubEnv('KUBIC_MODEL', 'amazon-bedrock/anthropic.claude-sonnet-4');
-    const h = await harness(root);
+    // The manager's effective model is the ambient pin (prod: runtimeModelPin
+    // reads the same env), and the worker inherits it as its fallback level.
+    const h = await harness(root, {
+      model: { provider: 'amazon-bedrock', id: 'anthropic.claude-sonnet-4' },
+    });
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
@@ -526,7 +588,9 @@ describe('prod orchestrate under a frozen enterprise model (issue #295)', () => 
     const root = await initRepo(provider.url);
     vi.stubEnv('GOOGLE_CLOUD_API_KEY', 'vertex-orch-key-200');
     vi.stubEnv('KUBIC_MODEL', 'google-vertex/gemini-2.5-pro');
-    const h = await harness(root);
+    const h = await harness(root, {
+      model: { provider: 'google-vertex', id: 'gemini-2.5-pro' },
+    });
     const code = await runOrchestrateCommand(
       {
         prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,

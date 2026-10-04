@@ -101,7 +101,7 @@ describe('status aggregates (issue #27, slice A)', () => {
       }),
       row({
         entryId: 'e2',
-        usage: { ...priced().usage, input: 420, cacheRead: 0 },
+        usage: { ...priced().usage, input: 420, cacheRead: 0, cacheWrite: 0 },
       }),
     ]);
     expect(summary.contextTokens).toBe(420);
@@ -149,7 +149,7 @@ describe('context-window gauge (issue #347; §18)', () => {
   function requestRow(input: number, cacheRead: number): StatusUsageRow {
     return row({
       entryId: 'e1',
-      usage: { ...priced().usage, input, cacheRead },
+      usage: { ...priced().usage, input, cacheRead, cacheWrite: 0 },
     });
   }
 
@@ -219,6 +219,25 @@ describe('context-window gauge (issue #347; §18)', () => {
       100,
     );
     expect(lines[0]).toContain('ctx 100%');
+  });
+
+  it('counts the cache-write prefix, not just the reused one (review #347)', () => {
+    // The first request of a session (or one after the cache TTL lapses)
+    // writes the whole prefix: pi's `input` is then only the new user text,
+    // and a gauge that ignored cacheWrite would read `ctx 0%` while the
+    // context is nearly 7% of a 128k window.
+    const rowWithWrite = row({
+      entryId: 'e1',
+      usage: { ...priced().usage, input: 30, cacheRead: 0, cacheWrite: 9000 },
+    });
+    const summary = summarizeStatusRows([rowWithWrite]);
+    expect(summary.contextTokens).toBe(9030);
+    const lines = renderStatusLines(
+      state({ rows: [rowWithWrite], contextWindow: 128000 }),
+      120,
+    );
+    expect(lines[0]).toContain('ctx 7%');
+    expect(lines[0]).not.toContain('ctx 0%');
   });
 });
 

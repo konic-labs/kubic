@@ -846,7 +846,8 @@ the status bar, whose first row shows model, thinking level, tokens, cache
 and session cost, plus a `ctx NN%` context gauge once the lane has reported
 a committed request and the model's window is known — it turns to the
 warning colour at or above the auto-compaction threshold (window minus the
-reserve), so `ctx 93%` is the signal that the next turn will compact, and
+reserve; roughly 87% of a 128k window, higher on larger ones), so the
+warning is the signal that the next turn will compact, and
 it drops out first when the terminal narrows. The status bar's second row is
 the always-visible mode indicator
 (`solo • approvals:on`, or the warning-styled

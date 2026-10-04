@@ -51,9 +51,12 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
-  // Issue #347: the prompt size of the last COMMITTED request (its input plus
-  // the cache-read tokens it reused — pi's `input` excludes the cached
-  // prefix). Undefined until a row names its committed entry: the seeded
+  // Issue #347: the prompt size of the last COMMITTED request — its input
+  // plus BOTH cache counters. pi-ai normalises `input` to exclude the cached
+  // prefix it reused (cacheRead) and the prefix it wrote (cacheWrite), so
+  // input + cacheRead + cacheWrite is the context the model actually
+  // processed, the same quantity the harness's own compaction baseline
+  // counts. Undefined until a row names its committed entry: the seeded
   // `pi.usage` buckets (#346) are cumulative, so reading them here would show
   // total spend as context pressure.
   readonly contextTokens?: number;
@@ -77,7 +80,8 @@ export function summarizeStatusRows(
     cacheWrite += row.usage.cacheWrite;
     costTotal += row.usage.cost.total;
     if (row.entryId !== undefined) {
-      contextTokens = row.usage.input + row.usage.cacheRead;
+      contextTokens =
+        row.usage.input + row.usage.cacheRead + row.usage.cacheWrite;
     }
   }
   return {

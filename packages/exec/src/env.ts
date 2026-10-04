@@ -147,7 +147,10 @@ export interface SpawnOptions {
    * Per-stream output accumulation cap in bytes (issue #121). The tail is
    * kept (endings usually carry the error) and the final result gains a
    * header naming the dropped leading bytes. Default: 10 MiB per stream —
-   * a chatty child (`yes`, a verbose build) must not OOM the run.
+   * a chatty child (`yes`, a verbose build) must not OOM the run. Measured
+   * in UTF-8 bytes and trimmed on code-point boundaries (issue #354), so a
+   * CJK or emoji stream cannot admit 3-4x the cap and the kept tail never
+   * starts with half a surrogate pair.
    */
   maxOutputBytes?: number;
   /**
@@ -500,6 +503,16 @@ async function reapGroup(pgid: number, graceMs: number): Promise<void> {
   await waitGroupGone(pgid, graceMs);
 }
 
+// UTF-8 byte length of a code point, computed without allocating a string
+// for it (issue #354): the output accumulator trims on code-point
+// boundaries, so it needs each code point's encoded size.
+function utf8Length(codePoint: number): number {
+  if (codePoint < 0x80) return 1;
+  if (codePoint < 0x800) return 2;
+  if (codePoint < 0x10000) return 3;
+  return 4;
+}
+
 class NodeShell implements Shell {
   readonly cwd: string;
 
@@ -525,26 +538,47 @@ class NodeShell implements Shell {
     // the error — and the final result names exactly what was dropped.
     // `peek` feeds progress snapshots (bounded by the same cap), `final`
     // produces the settled stream with the truncation header.
+    //
+    // Issue #354: the cap is documented in BYTES and must be measured in
+    // bytes. Counting UTF-16 code units admitted up to ~3x the intended
+    // memory for CJK text (one unit, three bytes), misstated the dropped
+    // size, and let `slice(-cap)` start the kept tail with half a surrogate
+    // pair — a lone low surrogate reaches the model, the trajectory and the
+    // session store as U+FFFD. Bytes are the bound; code points are the trim
+    // boundary.
     const cap = options.maxOutputBytes ?? MAX_CHILD_OUTPUT_BYTES;
     const makeAccumulator = () => {
       let text = '';
+      let bytes = 0;
       let dropped = 0;
       return {
         push(chunk: string): void {
-          if (text.length + chunk.length <= cap) {
+          const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+          if (bytes + chunkBytes <= cap) {
             text += chunk;
+            bytes += chunkBytes;
             return;
           }
           const combined = text + chunk;
-          dropped += combined.length - cap;
-          text = combined.slice(-cap);
+          const total = bytes + chunkBytes;
+          const excess = total - cap;
+          let at = 0;
+          let drop = 0;
+          while (drop < excess && at < combined.length) {
+            const codePoint = combined.codePointAt(at) ?? 0;
+            drop += utf8Length(codePoint);
+            at += codePoint > 0xffff ? 2 : 1;
+          }
+          dropped += drop;
+          text = combined.slice(at);
+          bytes = total - drop;
         },
         peek(): string {
           return text;
         },
         final(): string {
           if (dropped === 0) return text;
-          return `[kubic: output truncated — dropped ${dropped} leading bytes, kept the last ${text.length}]\n${text}`;
+          return `[kubic: output truncated — dropped ${dropped} leading bytes, kept the last ${bytes}]\n${text}`;
         },
       };
     };

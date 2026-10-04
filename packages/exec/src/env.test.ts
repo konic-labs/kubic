@@ -475,6 +475,92 @@ describe('child output caps (issue #121)', () => {
   });
 });
 
+// Issue #354: the cap is documented in BYTES, but the accumulator compared
+// UTF-16 code units — so CJK/emoji output admitted up to ~3x the intended
+// memory (a 3-byte character cost 1 unit), the header misstated the dropped
+// size, and slice(-cap) could start the kept tail with half a surrogate
+// pair (a lone low surrogate, which reaches the model and the session store
+// as U+FFFD). Bytes are the bound; code points are the trim boundary.
+const CAP_HEADER =
+  /^\[kubic: output truncated — dropped (\d+) leading bytes, kept the last (\d+)\]\n/;
+
+function cappedTail(stdout: string): {
+  dropped: number;
+  kept: number;
+  tail: string;
+} {
+  const match = stdout.match(CAP_HEADER);
+  expect(match).not.toBeNull();
+  const head = match as RegExpMatchArray;
+  return {
+    dropped: Number(head[1]),
+    kept: Number(head[2]),
+    tail: stdout.slice(head[0].length),
+  };
+}
+
+describe('child output caps count bytes (issue #354)', () => {
+  it('keeps at most maxOutputBytes of UTF-8, not of UTF-16 units', async () => {
+    const { env } = makeNodeEnv();
+    // 100 three-byte characters: 300 UTF-8 bytes, 100 UTF-16 units.
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('日'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 10 },
+    );
+    const result = await handle.wait();
+    const { kept, tail } = cappedTail(result.stdout);
+    expect(Buffer.byteLength(tail, 'utf8')).toBeLessThanOrEqual(10);
+    // 3 whole characters fit; the tenth byte would cut one in half.
+    expect(kept).toBe(9);
+    expect(tail).toBe('日日日');
+    expect(tail).not.toContain('\uFFFD');
+  });
+
+  it("reports the header's dropped and kept counts in bytes", async () => {
+    const { env } = makeNodeEnv();
+    const total = Buffer.byteLength('日'.repeat(100), 'utf8');
+    const handle = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('日'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 10 },
+    );
+    const result = await handle.wait();
+    const { dropped, kept, tail } = cappedTail(result.stdout);
+    const tailBytes = Buffer.byteLength(tail, 'utf8');
+    // Both numbers describe the same units the cap does: bytes.
+    expect(kept).toBe(tailBytes);
+    expect(dropped).toBe(total - tailBytes);
+  });
+
+  it('never starts the kept tail with half a surrogate pair', async () => {
+    const { env } = makeNodeEnv();
+    // 100 four-byte emoji: 4 UTF-8 bytes, 2 UTF-16 units each.
+    const four = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('😀'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 4 },
+    );
+    const fourResult = await four.wait();
+    const whole = cappedTail(fourResult.stdout);
+    // Exactly one complete code point fits in four bytes.
+    expect(whole.tail).toBe('😀');
+    expect(whole.kept).toBe(4);
+    // A cap of three cannot hold an emoji: the tail is empty, never a
+    // dangling low surrogate (which slice(-3) used to produce).
+    const three = env.shell.spawn(
+      process.execPath,
+      ['-e', `process.stdout.write('😀'.repeat(100))`],
+      { provenance: PROV, maxOutputBytes: 3 },
+    );
+    const threeResult = await three.wait();
+    const partial = cappedTail(threeResult.stdout);
+    expect(partial.tail).toBe('');
+    expect(partial.dropped).toBe(400);
+    expect(/^[\uDC00-\uDFFF]/.test(partial.tail)).toBe(false);
+  });
+});
+
 // Issue #112: pipe chunks are arbitrary byte slices. Decoding each chunk
 // with Buffer.toString() independently corrupts any multi-byte UTF-8
 // codepoint split across a chunk boundary (U+FFFD on both sides of the

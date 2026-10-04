@@ -58,7 +58,13 @@ Child output is capped at two independent layers, both keeping the **tail**
   capture independently. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
-  header.
+  header. Both numbers are **bytes** (issue #354): the accumulator measures
+  `Buffer.byteLength` per chunk and trims on a **code-point boundary**, so
+  CJK or emoji output cannot admit 3-4x the promised memory the way a
+  UTF-16 code-unit count did, and the kept tail can never start with half a
+  surrogate pair (a lone low surrogate would reach the model, the
+  trajectory and the session store as U+FFFD). A code point that does not
+  fit is dropped whole, so the tail is at most the cap and may be shorter.
 - **Op (context window):** `bash` clips each stream to
   `BASH_RESULT_MAX_CHARS` (64 K chars) in the result the model sees, with a
   `[kubic: N leading chars dropped]` header and `truncated: true` on

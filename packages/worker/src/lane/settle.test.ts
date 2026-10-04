@@ -1,13 +1,29 @@
-// Slice C: settlement mapping + abort with kill tree (issue #11).
+// Settlement mapping (issue #11 slice C; ported to pi-durable in #395):
+// submitted settlements → Kubic §52 codes and #7 result vocabulary.
 import { describe, expect, it } from 'vitest';
-import { BACKGROUND_CONTEXT } from '../pi-boundary.js';
+import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import {
-  drainOperation,
-  type LaneAborter,
-  OperationKillRegistry,
-  requestLaneAbort,
-} from './abort.js';
-import { classifyHarnessError, settleTerminalStatus } from './settle.js';
+  classifyHarnessError,
+  classifySubmissionFailure,
+  classifyThrownError,
+  laneErrorOf,
+  laneStatusOf,
+  settleSubmission,
+  settleTerminalStatus,
+} from './settle.js';
+
+function settled(
+  record:
+    | { status: 'done' }
+    | { status: 'unanswered'; reason: string; detail?: string },
+): SettledSubmissionRecord {
+  return {
+    id: 'sub-1',
+    conversationId: 'conv-1',
+    type: 'input',
+    ...record,
+  } as unknown as SettledSubmissionRecord;
+}
 
 describe('settlement mapping (issue #11, slice C)', () => {
   it('maps completed to a completed result without error', () => {
@@ -23,9 +39,14 @@ describe('settlement mapping (issue #11, slice C)', () => {
     expect(settled.error?.kind).toBe('context');
   });
 
-  it('maps aborted and declined to cancelled', () => {
+  it('maps aborted to cancelled', () => {
     expect(settleTerminalStatus('aborted')).toEqual({ status: 'cancelled' });
-    expect(settleTerminalStatus('declined').status).toBe('cancelled');
+    expect(
+      settleTerminalStatus('aborted', {
+        code: 'aborted',
+        message: 'lane aborted',
+      }).status,
+    ).toBe('cancelled');
   });
 
   it('classifies harness error codes by keyword', () => {
@@ -51,180 +72,78 @@ describe('settlement mapping (issue #11, slice C)', () => {
   });
 });
 
-describe('lane abort (issue #11, slice C)', () => {
-  function stubLane(newlyRequested: boolean) {
-    return {
-      requestAbort: async (operationId: string) => ({
-        ok: true as const,
-        value: { operationId, newlyRequested, steer: [], followUp: [] },
-      }),
-    };
-  }
-
-  it('requests abort and drains tracked kills', async () => {
-    const kills = new OperationKillRegistry();
-    let killed = 0;
-    kills.track('op-1', () => {
-      killed += 1;
+describe('settled pi-durable submissions (#395)', () => {
+  it('maps a done submission to completed', () => {
+    expect(settleSubmission(settled({ status: 'done' }))).toEqual({
+      status: 'completed',
     });
-    const result = await requestLaneAbort(
-      stubLane(true),
-      kills,
-      'op-1',
-      BACKGROUND_CONTEXT,
-    );
-    expect(result.newlyRequested).toBe(true);
-    expect(result.killed).toBe(1);
-    expect(killed).toBe(1);
+    expect(laneStatusOf(settled({ status: 'done' }))).toBe('completed');
+    expect(laneErrorOf(settled({ status: 'done' }))).toBeUndefined();
   });
 
-  it('attempts every kill even when one throws', async () => {
-    const kills = new OperationKillRegistry();
-    const attempted: string[] = [];
-    kills.track('op-1', () => {
-      attempted.push('first');
-      throw new Error('already gone');
+  it('maps model_error to the §52 model code with the harness detail as message', () => {
+    const record = settled({
+      status: 'unanswered',
+      reason: 'model_error',
+      detail: 'provider returned 500',
     });
-    kills.track('op-1', () => {
-      attempted.push('second');
+    expect(settleSubmission(record)).toEqual({
+      status: 'failed',
+      error: {
+        kind: 'model',
+        message: 'provider returned 500',
+        details: 'provider returned 500',
+      },
     });
-    await expect(
-      requestLaneAbort(stubLane(false), kills, 'op-1', BACKGROUND_CONTEXT),
-    ).rejects.toThrow(/lane abort kills failed/i);
-    expect(attempted).toEqual(['first', 'second']);
-  });
-
-  it('throws when the harness rejects the abort', async () => {
-    const lane = {
-      requestAbort: async (_operationId: string) => ({
-        ok: false as const,
-        error: { _tag: 'Closed', message: 'shut' },
-      }),
-    };
-    await expect(
-      requestLaneAbort(
-        lane,
-        new OperationKillRegistry(),
-        'op-1',
-        BACKGROUND_CONTEXT,
-      ),
-    ).rejects.toThrow(/lane abort failed/i);
-  });
-});
-
-// Issue #312: drainOperation is the best-effort backstop shared with the TUI
-// quit path. Every "requestAbort refused" branch reports a distinct, exact
-// message and the kills still run — pinned per branch so a mutated report
-// string or a skipped drain cannot pass.
-describe('drainOperation (issue #312)', () => {
-  function lane(requestAbort: LaneAborter['requestAbort']): LaneAborter {
-    return { requestAbort };
-  }
-
-  function trackedKills(): { kills: OperationKillRegistry; log: string[] } {
-    const kills = new OperationKillRegistry();
-    const log: string[] = [];
-    kills.track('op-1', () => {
-      log.push('first');
-      throw new Error('already gone');
+    expect(
+      classifySubmissionFailure('model_error', 'provider returned 500'),
+    ).toEqual({
+      code: 'model_failed',
+      message: 'provider returned 500',
+      error: {
+        kind: 'model',
+        message: 'provider returned 500',
+        details: 'provider returned 500',
+      },
     });
-    kills.track('op-1', () => {
-      log.push('second');
+    expect(laneStatusOf(record)).toBe('failed');
+    expect(laneErrorOf(record)).toEqual({
+      code: 'model_error',
+      message: 'provider returned 500',
+      details: 'provider returned 500',
     });
-    return { kills, log };
-  }
-
-  async function drain(aborter: LaneAborter): Promise<{
-    reports: string[];
-    log: string[];
-    kills: OperationKillRegistry;
-  }> {
-    const { kills, log } = trackedKills();
-    const reports: string[] = [];
-    await drainOperation(aborter, kills, 'op-1', BACKGROUND_CONTEXT, (m) =>
-      reports.push(m),
-    );
-    return { reports, log, kills };
-  }
-
-  it('reports nothing and drains every kill when the abort is accepted', async () => {
-    const { reports, log, kills } = await drain(
-      lane(async (operationId) => ({
-        ok: true as const,
-        value: { operationId, newlyRequested: true },
-      })),
-    );
-    expect(reports).toEqual([]);
-    // A throwing kill never stops the next; the registry is emptied.
-    expect(log).toEqual(['first', 'second']);
-    expect(kills.drain('op-1')).toEqual([]);
   });
 
-  it('reports a refusal carrying an Error by its message, then still kills', async () => {
-    const { reports, log } = await drain(
-      lane(async () => ({
-        ok: false as const,
-        error: new Error('harness closed'),
-      })),
-    );
-    expect(reports).toEqual(['requestAbort refused: harness closed']);
-    expect(log).toEqual(['first', 'second']);
+  it('maps a bare reason to a readable message, never the code alone', () => {
+    const failure = classifySubmissionFailure('no_model');
+    expect(failure.code).toBe('provider_auth');
+    expect(failure.message).toBe('lane settled no_model');
   });
 
-  it('reports a refusal carrying a plain object as its JSON, then still kills', async () => {
-    const { reports, log } = await drain(
-      lane(async () => ({
-        ok: false as const,
-        error: { _tag: 'Closed', message: 'shut' },
-      })),
-    );
-    expect(reports).toEqual([
-      'requestAbort refused: {"_tag":"Closed","message":"shut"}',
-    ]);
-    expect(log).toEqual(['first', 'second']);
+  it('maps an aborted settlement to cancelled with no error (D6.1)', () => {
+    const record = settled({ status: 'unanswered', reason: 'aborted' });
+    expect(settleSubmission(record)).toEqual({ status: 'cancelled' });
+    expect(laneStatusOf(record)).toBe('aborted');
+    expect(laneErrorOf(record)).toBeUndefined();
   });
 
-  it('reports a throwing requestAbort (Error) by its message, then still kills', async () => {
-    const { reports, log } = await drain(
-      lane(async () => {
-        throw new Error('rpc down');
-      }),
-    );
-    expect(reports).toEqual(['requestAbort refused: rpc down']);
-    expect(log).toEqual(['first', 'second']);
+  it('maps a faulted settlement to the §52 process code', () => {
+    const failure = classifySubmissionFailure('faulted', 'task bug');
+    expect(failure.code).toBe('process_crashed');
+    expect(failure.error.kind).toBe('process');
   });
 
-  it('reports a throwing requestAbort (non-Error) as its string form, then still kills', async () => {
-    const { reports, log } = await drain(
-      lane(async () => {
-        throw 'plain string failure';
-      }),
+  it('classifies a thrown provider error as its §52 code', () => {
+    const failure = classifyThrownError(
+      Object.assign(new Error('fetch failed'), { name: 'FetchError' }),
     );
-    expect(reports).toEqual(['requestAbort refused: plain string failure']);
-    expect(log).toEqual(['first', 'second']);
+    expect(failure.code).toBe('provider_transient');
+    expect(failure.message).toBe('fetch failed');
   });
 
-  it('never throws and still kills when no report sink is given', async () => {
-    const { kills, log } = trackedKills();
-    await expect(
-      drainOperation(
-        lane(async () => ({ ok: false as const, error: new Error('x') })),
-        kills,
-        'op-1',
-        BACKGROUND_CONTEXT,
-      ),
-    ).resolves.toBeUndefined();
-    await expect(
-      drainOperation(
-        lane(async () => {
-          throw new Error('y');
-        }),
-        kills,
-        'op-1',
-        BACKGROUND_CONTEXT,
-      ),
-    ).resolves.toBeUndefined();
-    // The first drain emptied the registry, so only it ran the kills.
-    expect(log).toEqual(['first', 'second']);
+  it('classifies a thrown unknown as process_crashed, keeping the message', () => {
+    const failure = classifyThrownError(new Error('kaboom'));
+    expect(failure.code).toBe('process_crashed');
+    expect(failure.error.message).toBe('kaboom');
   });
 });

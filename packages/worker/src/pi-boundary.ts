@@ -174,20 +174,39 @@ export { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 //     from upstream and fail to type-check at the calls they feed (§65).
 //   review: issue #391 (K2 #392, K3 #393, K4 #394, K5 #395, K7 #397,
 //     K8 #398, K9 #399, K10 #400, K11 #401)
+// --- #398 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
+//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
+//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
+//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
+//     (per-response rows built from a committed assistant entry)
+//   why Pi has no alternative: these are the exact types of the events
+//     watchEvents delivers and of the ids Kubic keys its own lane events
+//     by; structural copies would drift from the committed stream (§15.3)
+//     and fail to type-check where Harness/watchEvents are called.
+//   review: issue #391 (K9 #398; CONTRACT decision D2)
 export type {
   AgentEvent,
   CompactionPolicy,
   Conversation,
+  ConversationId,
+  EntryId,
   EntryRecord,
   Extension,
   HarnessSettings,
   HookRegistration,
+  JsonObject,
   SettledSubmissionRecord,
+  SnapshotEvent,
   Storage,
   Submission,
+  SubmissionId,
+  TaskId,
   ToolExecutionApi,
   ToolHooks,
   ToolRegistration,
+  UsageState,
 } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Harness, createRegistry,
@@ -282,7 +301,6 @@ export {
   watchEvents,
   wrapTool,
 } from '@earendil-works/pi-durable';
-
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#FileSystem (with Result,
 //     FileErrorCode, FileInfo, FileKind, ExecutionEnv types)
@@ -303,7 +321,6 @@ export type {
   FileSystem,
   Result,
 } from '@earendil-works/pi-durable/env';
-
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#ok, #err, #FileError
 //   used by: packages/worker/src/lane/session-fs.ts (constructing the same
@@ -313,7 +330,6 @@ export type {
 //     drift from the interface the JSONL core and built-in tools read.
 //   review: issue #391 (K2 #392)
 export { err, FileError, ok } from '@earendil-works/pi-durable/env';
-
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/storage/jsonl/node#openNodeJsonlStorage
 //   used by: packages/worker/src/lane/session-store.ts (one storage per
@@ -323,28 +339,6 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //     is gone in 1.0, and Kubic owns no storage format of its own.
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
-
-// --- #398 additions ---
-// JUSTIFICATION:
-//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
-//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
-//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
-//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
-//     (per-response rows built from a committed assistant entry)
-//   why Pi has no alternative: these are the exact types of the events
-//     watchEvents delivers and of the ids Kubic keys its own lane events
-//     by; structural copies would drift from the committed stream (§15.3)
-//     and fail to type-check where Harness/watchEvents are called.
-//   review: issue #391 (K9 #398; CONTRACT decision D2)
-export type {
-  ConversationId,
-  EntryId,
-  JsonObject,
-  SnapshotEvent,
-  SubmissionId,
-  TaskId,
-  UsageState,
-} from '@earendil-works/pi-durable';
 
 // --- #399 additions ---
 
@@ -363,6 +357,31 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 
 // --- #394 additions ---
 
+// --- #395 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
+//   used by: packages/worker/src/lane/turn.ts (the caller's guard is a
+//     cancellable Context: a derived turn context is cancelled by a wall
+//     clock, a turn count or an interrupt) and apps/kubic/src/
+//     {headless-run,tui-run}.ts (the guard/quit bounds)
+//   why Pi has no alternative: chord's Context IS the cancellation plumbing
+//     every durable call is threaded with (§4, §65); hand-rolling a context
+//     object would not carry the ContextKeys the harness reads and would
+//     bypass chord's listener registration. The parent stays unchanged, so a
+//     per-turn bound never outlives its turn.
+//   review: issue #389 (K5 #395)
+export { withAbortSignal, withCancel } from '@earendil-works/chord/context';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
+//   used by: packages/worker/src/lane/session-store.ts (minting a new
+//     session id)
+//   why Pi has no alternative: the session id is part of the store's public
+//     contract (`kubic run --session`, `kubic sessions list`, the session
+//     directory name) and 0.87 minted it with this generator; another source
+//     would change every printed id's shape and lose the time-ordered
+//     property operators rely on. node:crypto only mints v4.
+//   review: issue #391 (K2 #392)
+export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Registry
 //   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
@@ -374,34 +393,6 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 //     publish the ToolRegistration objects an allowlist must reference.
 //   review: issue #389 (K4 #394)
 export type { Registry } from '@earendil-works/pi-durable';
-
-// --- #392 additions ---
-// JUSTIFICATION:
-//   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
-//     JSONL storage core, opened over a supplied FileSystem)
-//   used by: packages/worker/src/lane/session-store.ts (one storage per
-//     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
-//     conformance suite runs over the exec bridge)
-//   why Pi has no alternative: JSONL durability, commit markers and crash
-//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo is
-//     gone in 1.0 and Kubic owns no storage format of its own. The portable
-//     core — not the `/node` entry point — is what takes the exec bridge, so
-//     every session byte crosses the I/O seam (confinement §9, #359 secret
-//     scrubbing, #361 file modes).
-//   review: issue #391 (K2 #392)
-export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
-
-// JUSTIFICATION:
-//   seam: @earendil-works/pi-durable/testing#registerStorageConformance
-//   used by: packages/worker/src/lane/session-fs.test.ts (issue #392: the
-//     exec-bridge FileSystem is checked against pi-durable's own storage
-//     contract, so an adapter that drifts from the interface the storage
-//     relies on fails there instead of corrupting a session)
-//   why Pi has no alternative: the suite is the storage implementation's own
-//     contract; a Kubic copy would test a different contract than the one
-//     production runs against.
-//   review: issue #391 (K2 #392)
-export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
@@ -417,15 +408,29 @@ export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 //     Session kernel, not the store's own createSession.
 //   review: issue #391 (K2 #392)
 export { createSession } from '@earendil-works/pi-durable';
-
+// --- #392 additions ---
 // JUSTIFICATION:
-//   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
-//   used by: packages/worker/src/lane/session-store.ts (minting a new
-//     session id)
-//   why Pi has no alternative: the session id is part of the store's public
-//     contract (`kubic run --session`, `kubic sessions list`, the session
-//     directory name) and 0.87 minted it with this generator; another source
-//     would change every printed id's shape and lose the time-ordered
-//     property operators rely on. node:crypto only mints v4.
+//   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
+//     JSONL storage core, opened over a supplied FileSystem)
+//   used by: packages/worker/src/lane/session-store.ts (one storage per
+//     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
+//     conformance suite runs over the exec bridge)
+//   why Pi has no alternative: JSONL durability, commit markers and crash
+//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo is
+//     gone in 1.0 and Kubic owns no storage format of its own. The portable
+//     core — not the `/node` entry point — is what takes the exec bridge, so
+//     every session byte crosses the I/O seam (confinement §9, #359 secret
+//     scrubbing, #361 file modes).
 //   review: issue #391 (K2 #392)
-export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
+export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable/testing#registerStorageConformance
+//   used by: packages/worker/src/lane/session-fs.test.ts (issue #392: the
+//     exec-bridge FileSystem is checked against pi-durable's own storage
+//     contract, so an adapter that drifts from the interface the storage
+//     relies on fails there instead of corrupting a session)
+//   why Pi has no alternative: the suite is the storage implementation's own
+//     contract; a Kubic copy would test a different contract than the one
+//     production runs against.
+//   review: issue #391 (K2 #392)
+export { registerStorageConformance } from '@earendil-works/pi-durable/testing';

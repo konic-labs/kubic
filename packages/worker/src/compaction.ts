@@ -1,23 +1,30 @@
-// Kubic compaction policy on the Pi mechanism (issue #34; §27.1-27.6).
+// Kubic compaction policy on the pi-durable mechanism (issues #34, #399;
+// §27.1-27.6).
 //
-// Pi owns the mechanism (checkpoints, /compact + /tree commands,
-// summarization runs, output bounds, spill files in artifacts). This
-// module is Kubic's policy layer: the trigger formula, where checks
-// fire, the structured summary shape with cumulative file ops, branch
-// summary entries, and spill-path wiring.
+// Pi owns the mechanism: the threshold and overflow checks, the summarization
+// request, the `pi.compaction` entry, output bounds and spill files. Kubic
+// owns the policy numbers Pi reads and the compact prompt:
+// - `soloCompactionSettings` builds the `HarnessSettings.compaction` Kubic
+//   hands the harness. HarnessSettings are read at every use and never copied,
+//   so `reserveTokens` is a LIVE getter over the current model's window: a
+//   `configure({ model })` switch re-clamps with no explicit re-clamp step.
+// - `compactSoloLane` is the manual path (`/compact [focus]`, issue #330):
+//   it admits Pi's compaction task with Kubic's compact prompt as the
+//   summarizer instructions.
 //
-// Pure: no Pi imports (not even via pi-boundary — policy only), no
-// network, no filesystem. No Kubic-side truncation scheme exists here
-// by design: Pi output bounds + spill files are the only truncation
-// path, and long content passes through byte-identical.
+// The rest of this module is pure policy and formatting. The seam types are
+// type-only imports (erased), no Pi runtime import, no network, no filesystem.
+
+import type {
+  CompactionPolicy,
+  CompactionResult,
+  Context,
+  Conversation,
+  Harness,
+  TaskId,
+} from './pi-boundary.js';
 
 export const DEFAULT_RESERVE_TOKENS = 16384;
-
-export interface CompactionThreshold {
-  contextTokens: number;
-  contextWindow: number;
-  reserveTokens?: number;
-}
 
 // A reserve may take at most this share of the window. Without the clamp a
 // window at or below the reserve (an 8192-token local model vs the 16384
@@ -36,42 +43,53 @@ export function effectiveReserveTokens(
   );
 }
 
-export function compactionThreshold(
-  contextWindow: number,
-  reserveTokens: number = DEFAULT_RESERVE_TOKENS,
-): number {
-  return contextWindow - effectiveReserveTokens(contextWindow, reserveTokens);
+// §27.1: roughly how much recent context stays verbatim. 20000 matches
+// pi-durable's own default (pi-durable's `keepRecentTokens`).
+export const SOLO_KEEP_RECENT_TOKENS = 20000;
+
+// §27.1 — Kubic owns the trigger: exactly one threshold (contextTokens above
+// contextWindow - reserveTokens) starts a summarization. pi-durable's own
+// default (32768) also starts a background compaction that far BELOW the
+// blocking threshold, i.e. a speculative summary model call before the
+// reserved room is needed. Kubic pins it off so the reserved room is the only
+// trigger — the behaviour the solo lane had before the Pi 1.0 migration — and
+// so a session that ends early never pays for a summary nobody needed. A
+// caller that wants the head start can still pass an explicit value.
+export const SOLO_BACKGROUND_TOKENS = 0;
+
+export interface SoloCompactionSettingsOptions {
+  enabled?: boolean;
+  configuredReserveTokens?: number;
+  keepRecentTokens?: number;
+  backgroundTokens?: number;
+  /** Window of the conversation's CURRENT model; undefined when unknown. */
+  currentWindow: () => number | undefined;
 }
 
-// Trigger: contextTokens STRICTLY above contextWindow - reserve (clamped).
-// Boundary: equality does not fire.
-export function shouldCompact(input: CompactionThreshold): boolean {
-  return (
-    input.contextTokens >
-    compactionThreshold(input.contextWindow, input.reserveTokens)
-  );
-}
-
-export const COMPACTION_CHECKPOINTS = [
-  'post-tools',
-  'pre-prompt',
-  'post-low-run',
-] as const;
-
-export type CompactionCheckpoint = (typeof COMPACTION_CHECKPOINTS)[number];
-
-export interface CheckpointContext {
-  batchTerminal: boolean;
-}
-
-// Pi checkpoints: post-tools, pre-prompt, post-low-run fire on
-// interactive lanes; batch-terminal lanes skip every checkpoint.
-export function shouldCheckAt(
-  point: CompactionCheckpoint,
-  ctx: CheckpointContext,
-): boolean {
-  void point;
-  return ctx.batchTerminal === false;
+/**
+ * The `settings.compaction` Kubic hands the harness.
+ *
+ * HarnessSettings are harness-wide and read at every use, so the solo process
+ * (one active conversation) satisfies the live getter with that
+ * conversation's current model window. `reserveTokens` is a getter for exactly
+ * that reason: the harness reads it at each threshold check and each
+ * summarization request, so a model switch follows without any re-clamp call
+ * (Pi 1.0 has none).
+ */
+export function soloCompactionSettings(
+  options: SoloCompactionSettingsOptions,
+): Partial<CompactionPolicy> {
+  const configured = options.configuredReserveTokens ?? DEFAULT_RESERVE_TOKENS;
+  return {
+    enabled: options.enabled ?? true,
+    keepRecentTokens: options.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+    backgroundTokens: options.backgroundTokens ?? SOLO_BACKGROUND_TOKENS,
+    // A window of 0/undefined (model unknown) has nothing to clamp against:
+    // effectiveReserveTokens returns the configured reserve.
+    get reserveTokens() {
+      return effectiveReserveTokens(options.currentWindow() ?? 0, configured);
+    },
+  };
 }
 
 export function parseCompactCommand(input: string): string {
@@ -104,6 +122,37 @@ export function buildCompactPrompt(input: CompactPromptInput): string {
   if (focus.length > 0) sections.push(`focus: ${focus}`);
   sections.push(...(input.extraSections ?? []));
   return sections.join('\n');
+}
+
+/**
+ * The half of #394's `SoloLane` compaction needs: the structural twin of
+ * `Pick<SoloLane, 'harness' | 'conversation'>`. Naming `SoloLane` here would
+ * make compaction.ts import lane/solo.ts while solo.ts imports this module.
+ */
+export interface SoloCompactionLane {
+  readonly harness: Harness;
+  readonly conversation: Conversation;
+}
+
+/**
+ * §27.2 manual compaction: `/compact [focus]` (issue #330) admits Pi's
+ * `CompactionTask` and returns its id. Pi summarizes while the conversation
+ * keeps working and places the summary at once when idle, otherwise at the
+ * next turn boundary; the caller waits on `harness.waitForTask`.
+ *
+ * Kubic's compact prompt — the caller's focus verbatim (#82 rule 7) — is the
+ * task's instructions: the one path where Kubic owns the summarizer's text.
+ * Automatic (threshold/overflow) compaction uses Pi's own summarization
+ * prompt, because pi-durable only accepts instructions through `compact()`.
+ */
+export async function compactSoloLane(
+  solo: SoloCompactionLane,
+  focus: string | undefined,
+  context: Context,
+): Promise<{ taskId: TaskId<CompactionResult> }> {
+  const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
+  const taskId = await solo.conversation.compact(instructions, context);
+  return { taskId };
 }
 
 export interface BranchSummaryEntry {

@@ -58,7 +58,9 @@ default) or to deny. The rules are fail-closed:
 - Every ask is time-bounded and denies on timeout; headless runs can
   never hang on an open question.
 - The first answer wins; only settled decisions persist, never open
-  questions — after a restart, pending asks time out to deny.
+  questions — a crash while an ask is pending re-raises the ask on
+  resume rather than resuming the call unapproved, and a settled
+  session decision is reused instead of asked again.
 - Decisions are session-scoped unless the host explicitly wires a
   shared store.
 

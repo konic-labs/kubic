@@ -1,10 +1,14 @@
 // Opt-in orchestrator budgets (issue #48; §71 enforcement table).
 // No defaults: an empty budget is valid and enforces nothing. Each dim
 // (maxTokens/maxCostUsd/maxRuntimeMs/maxToolCalls/retryBudget) is
-// validated positive when present. Burn-down tracks spend; the before_tool
+// validated positive when present. Burn-down tracks spend; the beforeTool
 // gate blocks with budget_exhausted — a distinct status from failure that
 // maps to exit 3 (RUN_EXIT_BUDGET). Above-task raises need user approval:
 // a worker self-raise of its own budget is refused, never applied.
+
+import type { HookRegistration } from '../../../../worker/src/pi-boundary.js';
+import { hook, ToolTask } from '../../../../worker/src/pi-boundary.js';
+import type { KubicUsageRow } from '../../../../worker/src/usage.js';
 import { MAX_RUN_TIMEOUT_MS, RUN_EXIT_BUDGET } from '../../run-cli.js';
 
 export const BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED';
@@ -361,27 +365,25 @@ export function parseWorkerBudgetEnv(
 // harness import) so the wiring itself is unit-testable with fakes.
 
 /**
- * The run's budget enforcer as two handlers a live lane attaches separately.
- * Split (not one wiring helper) because hook ORDER is part of correctness
- * (issue #208 review): Pi's before_tool chain stops at the FIRST block, so
- * the attempt counter must subscribe BEFORE the policy guards — a later
- * subscriber never sees a blocked/denied call and would undercount. The
- * usage handler has no ordering constraint and shares the same meter.
+ * The run's budget enforcer as one pi-durable `ToolTask` hook plus a usage
+ * sink (issue #397). The gate is registered as the `kubic.budget` extension,
+ * BEFORE `kubic.policy`: a beforeTool chain stops at the FIRST block, so the
+ * attempt counter must subscribe before the policy guards — a later
+ * subscriber never sees a blocked/denied call and would undercount (#208).
+ * `onUsage(row)` is fed from the lane's routed usage events (#398).
  */
 export interface RunBudgetEnforcer {
-  /** BEFORE_TOOL handler: counts the attempt, blocks once exhausted. */
-  onToolAttempt: () =>
-    | { block: { reason: string; terminate: false } }
-    | undefined;
-  /** USAGE handler: accumulates spend and reports the breach. */
-  onUsage: (event: { row: BudgetUsageRowLike }) => void;
+  /** The `kubic.budget` extension's hooks: beforeTool counts every attempt. */
+  hooks(): HookRegistration[];
+  /** USAGE sink: accumulates spend and reports the breach. */
+  onUsage: (row: KubicUsageRow) => void;
 }
 
 export function budgetBlockReason(termination: BudgetTermination): string {
   return `budget ${BUDGET_EXHAUSTED} (limit=${termination.limit}): the call is blocked, exit ${RUN_EXIT_BUDGET}`;
 }
 
-// One meter behind both handlers: every before_tool ATTEMPT counts (including
+// One meter behind both seams: every beforeTool ATTEMPT counts (including
 // one a later policy handler blocks) and every usage row accumulates; the
 // FIRST termination calls onBreach exactly once (the run ends on it) and
 // every later attempt is still blocked.
@@ -391,24 +393,27 @@ export function createRunBudgetEnforcer(
 ): RunBudgetEnforcer {
   const meter = createRunBudgetMeter(budget);
   let breached: BudgetTermination | undefined;
-  const stop = (
-    termination: BudgetTermination,
-  ): { block: { reason: string; terminate: false } } => {
+  const stop = (termination: BudgetTermination): { block: string } => {
     if (breached === undefined) {
       breached = termination;
       onBreach(termination);
     }
-    return {
-      block: { reason: budgetBlockReason(termination), terminate: false },
-    };
+    return { block: budgetBlockReason(termination) };
   };
+  const onToolAttempt = (): { block: string } | undefined => {
+    const hit = meter.nextToolCall();
+    return hit === undefined ? undefined : stop(hit);
+  };
+  // Built once: `hooks()` hands the same registrations to every caller, so a
+  // read-twice wiring cannot manufacture a second beforeTool handler over
+  // the same meter (which would count every attempt twice).
+  const registrations: HookRegistration[] = [
+    hook(ToolTask, { beforeTool: () => onToolAttempt() }),
+  ];
   return {
-    onToolAttempt: () => {
-      const hit = meter.nextToolCall();
-      return hit === undefined ? undefined : stop(hit);
-    },
-    onUsage: (event) => {
-      const hit = meter.recordUsage(usageSpendOf(event.row));
+    hooks: () => registrations,
+    onUsage: (row) => {
+      const hit = meter.recordUsage(usageSpendOf(row));
       if (hit !== undefined) stop(hit);
     },
   };

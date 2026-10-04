@@ -36,6 +36,24 @@ export interface ToolInvocation {
   readonly invocationId: string;
   readonly operationId: string;
   readonly turnId: string;
+  /**
+   * Whether `callOperation` keeps its own never-replay result memo (§20.2)
+   * under this invocation.
+   *
+   * `true` — the caller has NO replay gate of its own (an in-process
+   * `MemoStore` at best), so the result of a `replay: 'never'` op is stored
+   * under `op-result-<op>` and a retry with the same invocation id returns
+   * it instead of re-executing.
+   *
+   * `false` — the caller's engine already refuses to re-execute the op
+   * (pi-durable `ToolRegistration.replay: 'unsafe'`: an interrupted call is
+   * settled `interrupted` without re-entering `execute`). The memo could
+   * never be read, and writing it costs a second durable copy of a result
+   * that can be a fully capped bash transcript, so nothing is stored.
+   * Explicit op memos (`getMemo`/`setMemo`/`memoOnce`) stay available either
+   * way; this only governs the registry's own guard.
+   */
+  readonly keepEffectMemo: boolean;
   getMemo(name: string): Promise<JsonValue | undefined>;
   setMemo(name: string, value: JsonValue | undefined): Promise<void>;
   memoOnce(name: string, candidate: JsonValue): Promise<JsonValue>;

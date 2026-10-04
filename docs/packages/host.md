@@ -46,7 +46,11 @@ sinks. Since issue #98 it is **live on the run path**: `ops/perf/run-spans.ts`
 maps what the lane and the harness actually do onto it and
 `apps/kubic/src/headless-run.ts` drives it, so a real `kubic run` records
 `kubic.agent.run` → `kubic.lane.accept` / `kubic.lane.drive` →
-`pi.tool.execute`, with parent linkage and per-span ms.
+`pi.tool.execute`, with parent linkage and per-span ms. The tool-span half
+is `runSpanHooks` (#397): the run wiring (#395) installs it as the
+`kubic.spans` extension's `ToolTask` hooks, after `kubic.policy` so a
+blocked call opens no span — `beforeTool` opens the span, `afterTool`
+closes it and returns the result unchanged (the hook never fails a call).
 
 Two destinations, both documented on the
 [commands page](../cli/commands.md#where-the-spans-go):
@@ -61,9 +65,10 @@ Two destinations, both documented on the
    one JSON object per closed span. Evidence only: nothing reads it back
    yet (aggregation is #95/#96).
 
-A span that never settles stays open (`endMs: null`) rather than being
-dropped, and a run with no spans behaves exactly as before — the wiring
-is additive by construction.
+A tool span whose call never settled before the run ended is closed by
+`endRun` (`error=run ended before the call settled`) instead of being
+serialized with `endMs: null`, and a run with no spans behaves exactly as
+before — the wiring is additive by construction.
 
 ### Approvals (`approvals.ts`, #48)
 
@@ -84,7 +89,12 @@ session root in use, `installSoloPolicy({ home, sessionsRoot })`, issue #324).
 `ApprovalStore` (`load`/`save`) has memory and file backings;
 `ApprovalService` + `createApprovalAsk` serve the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
-`TriggerContext`. The bash detectors are literal-pattern heuristics with
+`TriggerContext`. The lane awaits the ask inside its pi-durable
+`ToolTask.beforeTool` hook (#397), which runs before the tool's intent is
+committed — so the service's `maxPendingMs` bound still denies a seat that
+never answers, and a crash mid-ask re-raises the ask on resume instead of
+resuming the call unapproved. The bash detectors are literal-pattern
+heuristics with
 two documented shapes: a `tee`/`cp`/`mv`/`install` write target is the
 last argument of the command segment (last-argument heuristic), and
 `sudo` matches by word anywhere in the raw command — deliberately

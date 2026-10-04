@@ -67,6 +67,15 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 // recorded against that cwd (0.87 layout), never one session's state dir.
 const LEGACY_DIR_PATTERN = /^--.*--$/;
 
+// A usable session id is a plain path segment that is NOT shaped like a pi
+// transcript directory: `listSessions` classifies `--…--` as the 0.87 layout,
+// so a session with such an id would be invisible to `sessions list`, the
+// overlap probe and `kubic doctor` — attachable, but unlistable. Refusing the
+// shape on both paths is the containment rule the id class already carries.
+function isSessionId(id: string): boolean {
+  return SESSION_ID_PATTERN.test(id) && !LEGACY_DIR_PATTERN.test(id);
+}
+
 // A JSONL header is one short line (`{kind:"kubic.session",…}` for Kubic's,
 // `{v:4,kind:"header",…}` for a 0.87 transcript); this bounds the read so
 // listing never pulls a whole transcript into memory.
@@ -123,14 +132,25 @@ export interface SessionHandle {
    * The pi-durable storage for this session, open for the handle's lifetime.
    * The Kubic session lock is held for that same lifetime: a harness opened
    * over this storage is the only owner, and a second attach is refused.
+   *
+   * Ownership stays with the handle: this property is for READS (see
+   * `readSessionMetadata`). A harness is booted from `adopt()`.
    */
   readonly storage: Storage;
   readonly meta: KubicSessionMeta;
   /**
-   * Give the session back: close the storage and release the lock, both
-   * idempotent, so a session that was never booted into a harness and one
-   * whose harness already closed it release the same way. A harness still
-   * open over `storage` must be closed first.
+   * Hand the storage to a durable Harness (K5 #394):
+   * `Harness.open(handle.adopt(), …)`. The handle stops owning the storage,
+   * so `release()` gives the lock back without closing a storage a live
+   * harness is using — the harness closes it. Returns the same object
+   * `storage` exposes.
+   */
+  adopt(): Storage;
+  /**
+   * Give the session back: always release the lock, and close the storage
+   * only while no harness adopted it (`adopt()`). Both are idempotent, so a
+   * session that was never booted and one whose harness already closed it
+   * release the same way. Call after the harness is closed.
    */
   release(context: Context): Promise<void>;
 }
@@ -435,24 +455,30 @@ async function openSessionStorage(
   );
 }
 
-// Release gives the storage AND the lock back (issue #118): every consumer's
-// release path gets the unlock for free, so no caller can leak a lock by
-// forgetting an unlock step. The storage close is idempotent (a harness that
-// already closed it is fine) and the lock release runs either way.
+// Release gives the lock back, and gives the storage back too while the handle
+// still owns it (issue #118, #392): every consumer's release path gets the
+// unlock for free, so no caller can leak a lock by forgetting an unlock step.
+// A storage a harness adopted is never closed from under it — the harness owns
+// it and closes it — and every step is idempotent.
 function handleFor(
   storage: Storage,
   sessionDir: string,
   id: string,
   meta: KubicSessionMeta,
 ): SessionHandle {
+  let adopted = false;
   return {
     id,
     dir: sessionDir,
     storage,
     meta,
+    adopt: (): Storage => {
+      adopted = true;
+      return storage;
+    },
     release: async (context: Context): Promise<void> => {
       try {
-        await storage.close(context);
+        if (!adopted) await storage.close(context);
       } finally {
         releaseSessionLock(sessionDir);
       }
@@ -466,7 +492,7 @@ export async function createSession(
   context: Context,
 ): Promise<SessionHandle> {
   const sessionId = opts.id ?? uuidv7();
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new SessionIdError(sessionId);
+  if (!isSessionId(sessionId)) throw new SessionIdError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
   // Refusals before the lock: a session that already exists is never
   // re-created over (0.87's `Session already exists: <id>`, same message),
@@ -580,8 +606,7 @@ export async function attachSession(
   context: Context,
 ): Promise<SessionHandle> {
   // Containment before any path join: the id becomes a directory name.
-  if (!SESSION_ID_PATTERN.test(sessionId))
-    throw new SessionAttachError(sessionId);
+  if (!isSessionId(sessionId)) throw new SessionAttachError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
   // Nothing to open: either a 0.87 transcript holds this id (refused by name)
   // or the store has never seen it. Checked before the lock so an unknown id
@@ -638,7 +663,10 @@ export function listSessions(
       const header = parseJsonObject(readFirstLine(store.bridge, file.path));
       if (header === undefined) continue;
       if (header.kind !== 'header' || header.v !== 4) continue;
-      if (typeof header.id !== 'string' || header.id === '') continue;
+      // The id is rendered by `kubic sessions list` (#400): a foreign or
+      // hand-edited header whose id is not a session id is skipped, never
+      // listed.
+      if (typeof header.id !== 'string' || !isSessionId(header.id)) continue;
       const meta = metaFrom(header);
       entries.set(header.id, {
         id: header.id,

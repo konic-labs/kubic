@@ -1,20 +1,52 @@
-// Kubic operations as Pi harness tools (issue #11, slice A; issue #168).
-// One AgentHarnessTool per OPERATIONS entry: name/description/replay map
-// straight across (§20.2 alignment is structural, not coincidental).
+// Kubic operations as pi-durable tools (issue #11, slice A; issue #168;
+// issue #393/EPIC K).
+// One ToolRegistration per OPERATIONS entry: name/description/replay map
+// straight across (§20.2 alignment is structural, not coincidental) — the
+// Kubic `never`/`safe` vocabulary becomes pi-durable's `unsafe`/`safe`, so
+// an interrupted `never` call is never rerun and reaches the model as an
+// `interrupted` error result carrying the output it had already committed.
 // Issue #168 (§37.5, §40.3): every tool carries its real parameter schema
 // from ops/registry.ts (OPERATION_PARAMETERS — the single source) and
 // declares json_schema constrained sampling with strict 'prefer', so capable
-// providers enforce valid arguments; Pi validates against the same schema
-// before execute, and Kubic's validators stay authoritative after it.
+// providers enforce valid arguments; pi-durable validates against the same
+// schema before execute, and Kubic's validators stay authoritative after it.
 // read/bash/grep results reach the model as plain text under a short header
 // (raw lines, never JSON-escaped); the other ops keep their JSON result.
-// Structured op errors are returned as model-readable content (Pi's own
-// tools report exit codes the same way); only unexpected throws propagate
-// to the harness as faults.
-
-import type { CheckpointStore, ExecutionEnv } from '../../../exec/src/env.js';
+// Structured op errors are returned as model-readable content (as they were
+// with the 0.87 harness); only unexpected throws propagate to the harness,
+// which turns them into its own error result.
+//
+// Pi 1.0 surface (EPIC K #393): the durable execute signature is
+// `execute(args, api, context)` — the 0.87 positional `toolCallId`/`onUpdate`
+// arguments and the harness `toolContext` are gone, so the Kubic context
+// (env, sessionId, agentId, journal, kills) is captured in this closure:
+//
+// - identity: `api.callId` is the invocationId (and the journal's
+//   `toolCallId`), `api.taskId` is the operationId, and `context` carries
+//   cancellation. The durable task IS the call's identity: 0.87's separate
+//   turn id has no 1.0 equivalent, so operationId and turnId both name it.
+// - cancellation: `context.abortSignal` becomes `OpContext.signal`, so an
+//   aborted lane run kills in-flight children through the same op code path
+//   as a timeout (bash's own abort listener). The kill registry stays as the
+//   TUI's best-effort backstop and is keyed by the conversation id — the
+//   durable scope of the one live run — so a lane abort can drain it.
+// - memos: `ToolInvocation.getMemo`/`setMemo`/`memoOnce` are `api.memo`, so
+//   an op that memoizes something gets the durable, first-writer-wins store
+//   of its own task. `keepEffectMemo: false` tells `callOperation` not to
+//   copy a never-replay RESULT into a memo: pi-durable's `replay: 'unsafe'`
+//   never re-enters `execute`, so that copy could never be read and would
+//   cost one extra durable write (and a second copy) per effect.
+// - running output: `api.output(chunk)` feeds the live view. Kubic's own
+//   caps stay authoritative for the model-visible result (see
+//   OUTPUT_BACKSTOP and BASH_OUTPUT_LIMITS), so #121/#182 semantics do not
+//   move into the harness.
+import type {
+  CheckpointStore,
+  ExecutionEnv,
+  ProcessSnapshot,
+} from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
-import type { BashResult } from '../ops/bash.js';
+import { BASH_RESULT_MAX_CHARS, type BashResult } from '../ops/bash.js';
 import type { GrepResult } from '../ops/grep.js';
 import type { ReadResult } from '../ops/read.js';
 import {
@@ -23,10 +55,13 @@ import {
   OPERATIONS,
   type OperationName,
 } from '../ops/registry.js';
-import type { MemoStore, OpContext, ToolInvocation } from '../ops/types.js';
-import type {
-  AgentHarnessTool,
-  AgentHarnessToolInvocation,
+import type { OpContext, ToolInvocation } from '../ops/types.js';
+import {
+  type Context,
+  defineTool,
+  type JsonValue,
+  type ToolExecutionApi,
+  type ToolRegistration,
 } from '../pi-boundary.js';
 import type { OperationKillRegistry } from './abort.js';
 
@@ -34,7 +69,6 @@ export interface KubicToolContext {
   env: ExecutionEnv;
   sessionId: string;
   agentId: string;
-  memos: MemoStore;
   kills: OperationKillRegistry;
   checkpointStore?: CheckpointStore;
   // Session journal for interception (issue #17): when set, write/edit
@@ -43,23 +77,106 @@ export interface KubicToolContext {
   journal?: FileJournalStore;
 }
 
-function toInvocation(pi: AgentHarnessToolInvocation): ToolInvocation {
+// What a tool result records for the UI and the transcript. Unchanged from
+// the 0.87 harness (no consumer reads it today, but the record keeps naming
+// the call and the invocation). A union, not optional fields: pi-durable
+// types tool details as JsonValue, which has no `undefined` property.
+type KubicToolDetails =
+  | {
+      readonly ok: true;
+      readonly toolCallId: string;
+      readonly invocationId: string;
+    }
+  | { readonly ok: false; readonly toolCallId: string; readonly code: string };
+
+// The durable harness bounds whatever a tool reports (2000 lines / 50 KiB by
+// default) and appends its own `truncated` diagnostic — which would edit
+// model-visible text Kubic already bounded itself (#121: bash 64 KiB per
+// stream; #176: read 51200B, exactly the harness default). These limits sit
+// an order of magnitude above every Kubic cap, so the harness's trimming can
+// never be the binding bound and the model sees exactly what the op
+// rendered; they exist only as a memory backstop for the running-output
+// buffer and for today's deliberately unbounded results (#190: git_diff,
+// git_show). Pinned by test so lowering them is a deliberate, visible act.
+const OUTPUT_BACKSTOP = {
+  maxBytes: 8 * 1024 * 1024,
+  maxLines: 100_000,
+  retain: 'head',
+} as const;
+
+// bash is the one op that STREAMS (api.output), and on the interrupted path
+// pi-durable hands the model the retained live output as the result content —
+// `renderBashText` never runs, so its #121 cap cannot apply there. Retaining
+// the tail within four times the per-stream cap keeps that content the same
+// order of magnitude as a normal bash result (two capped streams plus their
+// markers stay well inside the window, so the head/tail choice never edits a
+// completed call), while a command that streams megabytes before a crash can
+// no longer put the 8 MiB backstop into the model's context. `retain: 'tail'`
+// matches `clip()`: endings carry the error.
+const BASH_OUTPUT_LIMITS = {
+  maxBytes: 4 * BASH_RESULT_MAX_CHARS,
+  maxLines: 100_000,
+  retain: 'tail',
+} as const;
+
+/** The deferred-answer channel an op reads and writes through its invocation. */
+function toInvocation(api: ToolExecutionApi, context: Context): ToolInvocation {
   return {
-    invocationId: pi.invocationId,
-    operationId: pi.operationId,
-    turnId: pi.turnId,
-    getMemo: (name: string) => pi.getMemo(name),
-    setMemo: (name: string, value) => pi.setMemo(name, value),
-    // Check-then-set, not atomic: safe because the harness never executes
-    // the same toolCallId concurrently (single-flight drive). If an op ever
-    // relies on this for never-replay gating under concurrent retry, route
-    // it through an atomic primitive instead.
-    memoOnce: async (name, candidate) => {
-      const existing = await pi.getMemo(name);
-      if (existing !== undefined) return existing;
-      await pi.setMemo(name, candidate);
-      return candidate;
+    invocationId: api.callId,
+    operationId: String(api.taskId),
+    turnId: String(api.taskId),
+    // pi-durable settles an interrupted `unsafe` call without re-entering
+    // execute, so the registry's never-replay memo would be an unreadable
+    // second durable copy of the result.
+    keepEffectMemo: false,
+    getMemo: (name: string) => api.memo<JsonValue>(name, context),
+    setMemo: async (name, value) => {
+      // pi-durable memos hold JSON and have no delete; nothing in Kubic
+      // writes `undefined` (registry.ts stores an OpResult), and dropping
+      // such a write is safer than storing `null`, which a later getMemo
+      // would hand back as a result.
+      if (value === undefined) return;
+      await api.memo(name, value, context);
     },
+    // First-writer-wins in the durable task record — atomic across a crash
+    // and a recovery rerun, unlike 0.87's check-then-set.
+    memoOnce: (name, candidate) => api.memo(name, candidate, context),
+  };
+}
+
+/** The appended part of a cumulative snapshot, or all of a trimmed stream. */
+function appended(previous: string, next: string): string {
+  // env.ts keeps the tail once its 10 MiB per-stream cap trims the head, so
+  // the retained text stops being an extension of the previous snapshot and
+  // the live view restarts from what the seam still holds.
+  return next.startsWith(previous) ? next.slice(previous.length) : next;
+}
+
+// Running output for the live view (§27.5): pi-durable exposes one
+// append-only output stream per call, while a Kubic ProcessSnapshot is two
+// cumulative streams. Only what was appended is pushed (the old harness got
+// a full JSON snapshot per update), each stream announced once so the live
+// text reads like the tail of the final result.
+function createOutputStreamer(
+  api: ToolExecutionApi,
+): (snapshot: ProcessSnapshot) => void {
+  let stdout = '';
+  let stderr = '';
+  let stdoutOpen = false;
+  let stderrOpen = false;
+  return (snapshot) => {
+    const nextOut = appended(stdout, snapshot.stdout);
+    const nextErr = appended(stderr, snapshot.stderr);
+    stdout = snapshot.stdout;
+    stderr = snapshot.stderr;
+    if (nextOut !== '') {
+      api.output(`${stdoutOpen ? '' : '--- stdout ---\n'}${nextOut}`);
+      stdoutOpen = true;
+    }
+    if (nextErr !== '') {
+      api.output(`${stderrOpen ? '' : '--- stderr ---\n'}${nextErr}`);
+      stderrOpen = true;
+    }
   };
 }
 
@@ -149,50 +266,47 @@ export function renderToolText(name: string, result: unknown): string {
   return JSON.stringify(result);
 }
 
-export function kubicToolsToPiTools(): AgentHarnessTool<KubicToolContext>[] {
-  return Object.values(OPERATIONS).map((op) => ({
-    name: op.name,
-    label: op.name,
-    description: op.description,
-    parameters: OPERATION_PARAMETERS[op.name as OperationName],
-    constrainedSampling: { type: 'json_schema', strict: 'prefer' },
-    replay: op.replay,
-    execute: async (toolCallId, params, onUpdate, toolContext, invocation) => {
-      const inv = toInvocation(invocation);
-      const ctx: OpContext = {
-        env: toolContext.env,
-        sessionId: toolContext.sessionId,
-        agentId: toolContext.agentId,
-        checkpointStore: toolContext.checkpointStore,
-        // The harness toolCallId is the journal's attribution key (issue
-        // #17): without it, intercepted entries could not name their call.
-        toolCallId,
-        journal: toolContext.journal,
-        trackHandle: (kill) => toolContext.kills.track(inv.operationId, kill),
-        onUpdate: (snapshot) =>
-          onUpdate({
-            content: [{ type: 'text', text: JSON.stringify(snapshot) }],
-            details: { kind: 'streaming', toolCallId },
-          }),
-      };
-      const out = await callOperation(op.name, params, inv, ctx);
-      if (out.ok) {
-        return {
-          content: [
-            { type: 'text', text: renderToolText(op.name, out.result) },
-          ],
-          details: { ok: true, toolCallId, invocationId: inv.invocationId },
+export function kubicToolsToPiTools(
+  context: KubicToolContext,
+): ToolRegistration[] {
+  return Object.values(OPERATIONS).map((op) =>
+    defineTool({
+      name: op.name,
+      description: op.description,
+      parameters: OPERATION_PARAMETERS[op.name as OperationName],
+      constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+      replay: op.replay === 'never' ? 'unsafe' : 'safe',
+      outputLimits: op.name === 'bash' ? BASH_OUTPUT_LIMITS : OUTPUT_BACKSTOP,
+      execute: async (args, api, callContext) => {
+        const inv = toInvocation(api, callContext);
+        const opContext: OpContext = {
+          env: context.env,
+          sessionId: context.sessionId,
+          agentId: context.agentId,
+          checkpointStore: context.checkpointStore,
+          // The pi-durable call id is the journal's attribution key
+          // (issue #17): without it, intercepted entries could not name
+          // their call.
+          toolCallId: api.callId,
+          journal: context.journal,
+          signal: callContext.abortSignal,
+          trackHandle: (kill) =>
+            context.kills.track(String(api.conversationId), kill),
+          onUpdate: createOutputStreamer(api),
         };
-      }
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `error ${out.error.code}: ${out.error.message}`,
-          },
-        ],
-        details: { ok: false, toolCallId, code: out.error.code },
-      };
-    },
-  }));
+        const out = await callOperation(op.name, args, inv, opContext);
+        const details: KubicToolDetails = out.ok
+          ? {
+              ok: true,
+              toolCallId: api.callId,
+              invocationId: inv.invocationId,
+            }
+          : { ok: false, toolCallId: api.callId, code: out.error.code };
+        const text = out.ok
+          ? renderToolText(op.name, out.result)
+          : `error ${out.error.code}: ${out.error.message}`;
+        return { content: [{ type: 'text', text }], details };
+      },
+    }),
+  );
 }

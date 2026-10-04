@@ -361,6 +361,72 @@ export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 //   review: issue #391 (K2 #392)
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
 
+// --- #398 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
+//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
+//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
+//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
+//     (per-response rows built from a committed assistant entry)
+//   why Pi has no alternative: these are the exact types of the events
+//     watchEvents delivers and of the ids Kubic keys its own lane events
+//     by; structural copies would drift from the committed stream (§15.3)
+//     and fail to type-check where Harness/watchEvents are called.
+//   review: issue #391 (K9 #398; CONTRACT decision D2)
+export type {
+  ConversationId,
+  EntryId,
+  JsonObject,
+  SnapshotEvent,
+  SubmissionId,
+  TaskId,
+  UsageState,
+} from '@earendil-works/pi-durable';
+
+// --- #399 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
+//   used by: packages/worker/src/compaction.ts (compactSoloLane returns the
+//     admitted manual compaction's id; callers wait with
+//     harness.waitForTask and match LiveDoc.compactions entries)
+//   why Pi has no alternative: TaskId is the branded id the durable task
+//     graph hands back from Conversation.compact(); a Kubic string handle
+//     would not type-check against waitForTask/getTask and would drift from
+//     the ids in LiveDoc.compactions and the pi.compaction entries.
+//   review: issue #399 (CONTRACT D3)
+// TaskId is re-exported by the #398 block above (deduped at merge).
+export type { CompactionResult } from '@earendil-works/pi-durable';
+
+// --- #394 additions ---
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#Registry
+//   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
+//     per-process registry the boot installs the Kubic extensions into)
+//     and lane/policy.ts (resolving a name-based allowlist back to the
+//     ToolRegistration objects configure({ tools }) takes)
+//   why Pi has no alternative: HarnessOptions takes exactly this Registry,
+//     and a Kubic-shaped copy would neither type against Harness.open nor
+//     publish the ToolRegistration objects an allowlist must reference.
+//   review: issue #389 (K4 #394)
+export type { Registry } from '@earendil-works/pi-durable';
+
+// --- #392 additions ---
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
+//     JSONL storage core, opened over a supplied FileSystem)
+//   used by: packages/worker/src/lane/session-store.ts (one storage per
+//     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
+//     conformance suite runs over the exec bridge)
+//   why Pi has no alternative: JSONL durability, commit markers and crash
+//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo is
+//     gone in 1.0 and Kubic owns no storage format of its own. The portable
+//     core — not the `/node` entry point — is what takes the exec bridge, so
+//     every session byte crosses the I/O seam (confinement §9, #359 secret
+//     scrubbing, #361 file modes).
+//   review: issue #391 (K2 #392)
+export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/testing#registerStorageConformance
 //   used by: packages/worker/src/lane/session-fs.test.ts (issue #392: the
@@ -373,6 +439,32 @@ export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/n
 //   review: issue #391 (K2 #392)
 export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
+//     over one storage: commits and document reads, no harness)
+//   used by: packages/worker/src/lane/session-store.ts (the creating commit
+//     that writes the kubic.session document)
+//   why Pi has no alternative: a document write is a Session commit, and the
+//     kernel is the only sanctioned writer of storage records (it owns the
+//     record shapes, minted IDs and validation). Booting a Harness here would
+//     need a model layer and a registry the session store does not own, and
+//     hand-built StorageWrite records would reimplement the kernel. Import
+//     it as `createSession as createSessionKernel`: it is pi-durable's plain
+//     Session kernel, not the store's own createSession.
+//   review: issue #391 (K2 #392)
+export { createSession } from '@earendil-works/pi-durable';
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
+//   used by: packages/worker/src/lane/session-store.ts (minting a new
+//     session id)
+//   why Pi has no alternative: the session id is part of the store's public
+//     contract (`kubic run --session`, `kubic sessions list`, the session
+//     directory name) and 0.87 minted it with this generator; another source
+//     would change every printed id's shape and lose the time-ordered
+//     property operators rely on. node:crypto only mints v4.
+//   review: issue #391 (K2 #392)
+export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 // --- #400 additions ---
 
 // JUSTIFICATION:

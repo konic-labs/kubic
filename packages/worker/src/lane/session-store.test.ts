@@ -287,6 +287,22 @@ describe('pi-durable session storage (issue #392)', () => {
     ).rejects.toBeInstanceOf(SessionAttachError);
   });
 
+  it('refuses an id shaped like a pi transcript directory', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    // `--a--` matches the id class but is the shape of pi's transcript
+    // directories: listing classifies it as a 0.87 layout, so a session with
+    // that id would be invisible to `sessions list`, the overlap probe and
+    // `kubic doctor`. Refused on both paths, before any directory is made.
+    await expect(
+      createSession(store, { cwd: '/work', id: '--a--' }, BACKGROUND_CONTEXT),
+    ).rejects.toBeInstanceOf(SessionIdError);
+    await expect(
+      attachSession(store, '--a--', BACKGROUND_CONTEXT),
+    ).rejects.toBeInstanceOf(SessionAttachError);
+    expect(existsSync(join(root, '--a--'))).toBe(false);
+  });
+
   it('refuses to create over an existing session and never rewrites its metadata', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
@@ -380,6 +396,50 @@ describe('pi-durable session storage (issue #392)', () => {
       }
     }
     expect(lines).toBeGreaterThan(0);
+  });
+
+  it('release closes a storage no harness took, and gives the lock back', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await session.release(BACKGROUND_CONTEXT);
+    expect(existsSync(join(root, session.id, 'lock.json'))).toBe(false);
+    // Nobody adopted the storage, so the handle closed it: it is unusable.
+    await expect(
+      Harness.open(
+        session.storage,
+        { models: createModels(), registry: createRegistry() },
+        BACKGROUND_CONTEXT,
+      ),
+    ).rejects.toThrow(/closed/i);
+  });
+
+  it('release leaves an adopted storage open and still gives the lock back', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const adopted = session.adopt();
+    expect(adopted).toBe(session.storage);
+    await session.release(BACKGROUND_CONTEXT);
+    // The lock is released either way...
+    expect(existsSync(join(root, session.id, 'lock.json'))).toBe(false);
+    // ...but the storage is the harness's now, so release never closed it.
+    const harness = await Harness.open(
+      adopted,
+      { models: createModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    await harness.close(BACKGROUND_CONTEXT);
+    // Release stays idempotent after the harness closed it.
+    await session.release(BACKGROUND_CONTEXT);
   });
 
   it('commits without an fsync seam on the bridge (upstream default)', async () => {
@@ -489,6 +549,18 @@ describe('session listing (issue #392)', () => {
     );
     // Nothing was converted or moved: the transcript is exactly as written.
     expect(existsSync(path)).toBe(true);
+  });
+
+  it('skips a 0.87 header whose id is not a session id', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    // A hand-edited or foreign header: its id never reaches a listing that
+    // #400's CLI renders, and it can never be attached.
+    writeLegacySession(root, '/work', '../escape', Date.now() - 60_000);
+    expect(await listSessions(store, BACKGROUND_CONTEXT)).toEqual([]);
+    await expect(
+      attachSession(store, 'escape', BACKGROUND_CONTEXT),
+    ).rejects.toBeInstanceOf(SessionAttachError);
   });
 
   it('lists a 1.0 session beside a legacy one and keeps the 1.0 entry', async () => {

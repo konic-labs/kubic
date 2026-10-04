@@ -1004,8 +1004,10 @@ its own generated help (`kubic sessions prune --help`).
 | Subcommand | Meaning |
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory). `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#legacy-pi-087-sessions)). |
+
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, box-drawn on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
 | `attach [--] <id> [--tail <n>]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), one `pending task: <kind> (<status>)` / `pending submission: <type> (<status>)` line per piece of unfinished durable work a crashed run left (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text is untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. |
+
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
 Usage errors exit 2 on stderr: a missing subcommand (commander prints the
@@ -1018,12 +1020,14 @@ a session another process holds live prints the lock refusal (issue #118 —
 the holder's pid and start time are named) and exits 1 without reading
 the transcript. Attaching a session written by Kubic on Pi 0.87 exits 1
 with `session <id> was written by Kubic on Pi 0.87; start a new session`
-([below](#legacy-pi-087-sessions)).
+
+([below](#session-storage-and-legacy-pi-087-sessions)).
 
 The transcript `attach` prints is the durable one, read through the shared
 pi-durable adapter (`packages/worker/src/lane/transcript.ts`, issue #400)
 and never by booting a lane: a reader must be able to inspect a session it
 may not run.
+
 
 ### Session storage and legacy Pi 0.87 sessions
 

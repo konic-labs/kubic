@@ -130,10 +130,16 @@ function normalize(options: EvalOptions): Parsed | string {
   }
   let generation: number | undefined;
   if (options.generation !== undefined) {
-    generation = Number(options.generation);
-    if (options.generation.trim() === '' || !Number.isInteger(generation)) {
+    // Issue #266: only decimal digits name a generation. `Number('')` is 0,
+    // `Number('1e3')` is 1000 and `Number(' 2 ')` is 2 — accepting those
+    // invented a generation the caller never wrote.
+    if (
+      !/^\d+$/.test(options.generation) ||
+      !Number.isSafeInteger(Number(options.generation))
+    ) {
       return '--generation needs an integer';
     }
+    generation = Number(options.generation);
   }
   return {
     suite: options.suite,
@@ -472,21 +478,25 @@ export async function runBenchmarkCommand(
         generation: record.generation,
       });
     } catch (error) {
-      // A named runner refusal keeps its code (issue #262): a dirty
-      // worktree is `dirty-worktree`, not a generic `eval-failed`. Only an
-      // unnamed throw falls back to the benchmark's documented mapping.
-      if (error instanceof EvalRunnerError) {
-        return emitError(deps.out, log, error, parsed.json);
-      }
+      // A named runner refusal keeps its code (issues #262, #266): a dirty
+      // worktree is `dirty-worktree`, not a generic `eval-failed`; an
+      // unnamed throw falls back to the benchmark's documented mapping. The
+      // envelope also carries the rows already completed — a matrix that
+      // dies on suite 3 still reports suites 1–2.
+      const code =
+        error instanceof EvalRunnerError ? error.code : 'eval-failed';
       const message = error instanceof Error ? error.message : String(error);
       if (parsed.json) {
         deps.out(
           formatJson({
             ok: false,
             exitCode: EVAL_EXIT_USAGE,
-            error: { code: 'eval-failed', message },
+            error: { code, message },
+            results,
           }),
         );
+      } else if (error instanceof EvalRunnerError) {
+        log.error(`[${code}] ${message}`);
       } else {
         log.error(message);
       }

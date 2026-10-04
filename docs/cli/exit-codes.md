@@ -192,8 +192,9 @@ convention `kubic tui` also pins (issue #313): a `kubic run` interrupted by
   runner refusals (`error: [<code>] …` — a missing or invalid `--size`,
   `--generation` or `--worktree`, a dirty `--workspace worktree`, an
   unreadable/malformed `--trajectory` file (`trajectory-unreadable` /
-  `trajectory-malformed`), a `--trajectory` provenance mismatch, an
-  unknown suite, or a stub suite).
+  `trajectory-malformed`), a `--trajectory` provenance mismatch, a
+  record-validation failure (`invalid-record`), an unknown suite, or a
+  stub suite).
   `--json` reports the same code in its `exitCode` field; `ok` is
   `exitCode === 0`.
 - **`kubic benchmark`**: 0 every executed suite succeeded; 1 any executed

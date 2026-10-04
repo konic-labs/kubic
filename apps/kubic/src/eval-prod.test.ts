@@ -395,9 +395,13 @@ describe('the live suite runner runs the built-in suites (issue #262)', () => {
     const envelope = JSON.parse(lines.join('\n')) as {
       ok: boolean;
       error: { code: string };
+      results: unknown[];
     };
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe('dirty-worktree');
+    // Issue #266: the refusal envelope carries the (empty) result set
+    // rather than dropping the key.
+    expect(envelope.results).toEqual([]);
     expect(errs).toEqual([]);
     expect(existsSync(join(repo, 'untracked.txt'))).toBe(true);
   });

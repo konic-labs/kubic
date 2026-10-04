@@ -37,6 +37,7 @@ export type EvalRunnerErrorCode =
   | 'usage-mismatch'
   | 'missing-usage-rows'
   | 'invalid-trajectory'
+  | 'invalid-record'
   | 'trajectory-unreadable'
   | 'trajectory-malformed'
   | 'provenance-mismatch';
@@ -210,8 +211,10 @@ function toRecord(
     signals: options.signals,
   });
   if (!validated.valid) {
+    // Issue #266: the code names the real cause (a validation failure is
+    // `invalid-record`, not `missing-worktree`).
     throw new EvalRunnerError(
-      'missing-worktree',
+      'invalid-record',
       `record rejected: ${validated.errors.join('; ')}`,
     );
   }

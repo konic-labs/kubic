@@ -6,6 +6,7 @@ import {
   runEvalCommand,
 } from './cli.js';
 import { makeExport } from './rl/fixtures.js';
+import { EvalRunnerError } from './runner.js';
 import type { EvalSignals } from './signals.js';
 
 function signals(): EvalSignals {
@@ -513,7 +514,9 @@ describe('eval/benchmark semantics over parsed options', () => {
   });
 
   it('refuses a non-integer generation (exit 2, stderr only)', async () => {
-    for (const generation of ['1.5', 'three', ' ']) {
+    // Issue #266: '' read as 0 and '1e3' as 1000 before the digit check;
+    // '-1' was and stays refused.
+    for (const generation of ['1.5', 'three', ' ', '', '1e3', ' 2 ', '-1']) {
       const o = out();
       const exit = await runEvalCommand(
         { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, generation },
@@ -643,6 +646,83 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(o.errs[0]).toMatch(/no file reader/);
   });
 
+  it('names a record-validation failure invalid-record (issue #266)', async () => {
+    const broken = {
+      runSuite: async () => ({
+        success: true,
+        signals: { ...signals(), costUsd: -1 },
+        usageRows: [
+          { inputTokens: 100, outputTokens: 50, costUsd: -1, latencyMs: 60000 },
+        ],
+      }),
+    };
+    const o = out();
+    const exit = await runEvalCommand(
+      { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, json: true },
+      { ...broken, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('invalid-record');
+    expect(envelope.error.message).toMatch(/costUsd/);
+  });
+
+  it('keeps the benchmark refusal code and its completed rows (issue #266)', async () => {
+    let calls = 0;
+    const halfRed = {
+      runSuite: async () => {
+        calls += 1;
+        if (calls === 2) {
+          throw new EvalRunnerError(
+            'dirty-worktree',
+            'worktree "/wt/a" is not clean — refusing to benchmark against a dirty tree',
+          );
+        }
+        return {
+          success: true,
+          signals: signals(),
+          usageRows: [
+            {
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 0.02,
+              latencyMs: 60000,
+            },
+          ],
+        };
+      },
+    };
+    const o = out();
+    const exit = await runBenchmarkCommand(
+      {
+        model: 'acme/m1',
+        worktree: '/wt/a',
+        generation: '1',
+        size: 'smoke',
+        json: true,
+      },
+      { ...halfRed, out: o.write, err: o.err },
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      ok: boolean;
+      error: { code: string };
+      results: Array<{ suite: string; success: boolean }>;
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('dirty-worktree');
+    // The suites that already completed are reported, not dropped.
+    expect(envelope.results).toHaveLength(1);
+    expect(envelope.results[0]).toMatchObject({
+      suite: 'swe-bench-mini',
+      success: true,
+    });
+  });
+
   it('exits 2 with the named refusal in the --json envelope', async () => {
     const o = out();
     const exit = await runEvalCommand(
@@ -740,6 +820,8 @@ describe('eval/benchmark semantics over parsed options', () => {
       ok: false,
       exitCode: EVAL_EXIT_USAGE,
       error: { code: 'eval-failed', message: 'suite exploded' },
+      // Issue #266: the refusal keeps the rows already completed.
+      results: [],
     });
   });
 

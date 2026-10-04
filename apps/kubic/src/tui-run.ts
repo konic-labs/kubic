@@ -1342,6 +1342,12 @@ export async function bootTuiLane(
         ...(options.roles?.layers === undefined
           ? {}
           : { roleLayers: options.roles.layers }),
+        // The lane's current model (issue #202): read at each delegation, so
+        // a `/model` switch is the model the workers inherit — the same
+        // §38.1 `parentModel` `kubic orchestrate` passes from its resolved
+        // pin. The boot's live model is the first value; `liveModelOf`
+        // re-reads the attached agent each turn.
+        currentModel: () => liveModelOf(booted, context),
         // A frozen enterprise `[model]` binds the workers too (issue #295).
         ...(options.modelPinFrozen === true && options.model !== undefined
           ? { frozenModel: options.model }

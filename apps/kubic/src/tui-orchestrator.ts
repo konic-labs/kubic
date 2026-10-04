@@ -146,10 +146,18 @@ export interface ProdTuiOrchestratorOptions {
   // own `kubic run --role` resolves it.
   roleLayers?: RoleLayerInput[];
   // A frozen enterprise `[model]` is the effective pin (issue #295; §35.1):
-  // `model` is that pin, and every worker runs it whatever KUBIC_MODEL says.
-  // Both travel together — `model` is only meaningful to the run as the
-  // frozen pin.
+  // every worker runs it whatever KUBIC_MODEL says. It outranks
+  // `currentModel`.
   frozenModel?: { provider: string; id: string };
+  // The lane's CURRENT model (issue #202): read per turn, so a `/model`
+  // switch becomes the delegation's `parentModel` and TUI workers inherit
+  // the model the session is actually running — the same §38.1 level
+  // `kubic orchestrate` passes from its own resolved pin. Absent means no
+  // pin (workers keep their own selection default).
+  currentModel?: () =>
+    | Promise<{ provider: string; id: string } | undefined>
+    | { provider: string; id: string }
+    | undefined;
   // The `[orchestrator]` projection (worktree parent + worker cap).
   orchestrator?: RuntimeOrchestrator;
   // Test seams: the deps factory and the command function. Absent means the
@@ -199,6 +207,11 @@ export function createProdTuiOrchestrator(
     async run(objective, onReport): Promise<TuiTurnOutcome> {
       sink = onReport ?? options.out;
       try {
+        // The model the workers inherit: the frozen enterprise pin when one
+        // is in force, else the lane's current model (issue #202) — read per
+        // turn, so a `/model` switch reaches the next delegation.
+        const currentModel =
+          options.frozenModel ?? (await options.currentModel?.());
         const deps = await createDeps({
           out: report,
           err: options.err ?? report,
@@ -221,9 +234,14 @@ export function createProdTuiOrchestrator(
           ...(options.roleLayers === undefined
             ? {}
             : { roleLayers: options.roleLayers }),
-          ...(options.frozenModel === undefined
+          ...(currentModel === undefined
             ? {}
-            : { model: options.frozenModel, modelPinFrozen: true }),
+            : {
+                model: currentModel,
+                ...(options.frozenModel === undefined
+                  ? {}
+                  : { modelPinFrozen: true }),
+              }),
           ...(options.orchestrator === undefined
             ? {}
             : { orchestrator: options.orchestrator }),

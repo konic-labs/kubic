@@ -512,6 +512,63 @@ describe('createProdTuiOrchestrator (issue #327)', () => {
     expect(built).toBe(2);
   });
 
+  it("hands the lane's current model to each delegation (issue #202)", async () => {
+    // A `/model` switch is what the next delegation's workers inherit: the
+    // model is read per turn, and the frozen enterprise pin still wins.
+    const seen: Array<{
+      model?: { provider: string; id: string };
+      modelPinFrozen?: boolean;
+    }> = [];
+    let current = { provider: 'acme', id: 'm1' };
+    const drive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      currentModel: () => current,
+      createDeps: async (options) => {
+        seen.push({
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.modelPinFrozen === undefined
+            ? {}
+            : { modelPinFrozen: options.modelPinFrozen }),
+        });
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await drive.run('one');
+    current = { provider: 'acme', id: 'm2' };
+    await drive.run('two');
+    expect(seen).toEqual([
+      { model: { provider: 'acme', id: 'm1' } },
+      { model: { provider: 'acme', id: 'm2' } },
+    ]);
+
+    const frozen: typeof seen = [];
+    const frozenDrive = createProdTuiOrchestrator({
+      sessionId: 'orch-9',
+      out: () => {},
+      currentModel: () => current,
+      frozenModel: { provider: 'enterprise', id: 'pinned' },
+      createDeps: async (options) => {
+        frozen.push({
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.modelPinFrozen === undefined
+            ? {}
+            : { modelPinFrozen: options.modelPinFrozen }),
+        });
+        return {} as OrchestrateCommandDeps;
+      },
+      runCommand: async () => 0,
+    });
+    await frozenDrive.run('three');
+    expect(frozen).toEqual([
+      {
+        model: { provider: 'enterprise', id: 'pinned' },
+        modelPinFrozen: true,
+      },
+    ]);
+  });
+
   it('gives every prompt its OWN orchestrator session id: retained worktrees are session-scoped (issue #327)', async () => {
     const sessions: string[] = [];
     const drive = createProdTuiOrchestrator({

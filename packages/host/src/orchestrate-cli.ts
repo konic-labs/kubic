@@ -1058,6 +1058,11 @@ export interface OrchestrateEnvelope {
   // Same lines as the text output, so the two surfaces cannot disagree.
   retained?: RetainedWorktreeRow[];
   error?: { kind: string; message: string; code: string };
+  // §78 reap_failed evidence (issue #171): every reap error the run collected
+  // on a FAILURE path, where the primary terminus wins. A run that exits on
+  // `reap_failed` itself carries the first error in `error`, and the rest
+  // here. Absent when every reap succeeded.
+  reapErrors?: { agentId: string; message: string }[];
 }
 
 // The manager-side merge-path trace (§9.2, issue #46): spawn, diff, merge,
@@ -1491,6 +1496,7 @@ export async function runOrchestrateCommand(
     }
     return envelope.exitCode;
   };
+  const reapErrors: { agentId: string; message: string }[] = [];
   const fail = (
     exitCode: number,
     code: string,
@@ -1518,6 +1524,7 @@ export async function runOrchestrateCommand(
         attribution: partial?.attribution ?? [],
         graph: delegationGraphLines(sessionId, graphAgents ?? parsed.agents),
         error: { kind: status, message, code },
+        ...(reapErrors.length === 0 ? {} : { reapErrors: [...reapErrors] }),
       },
       [`${theme.accent('session:')} ${sessionId}`],
     );
@@ -1970,18 +1977,31 @@ export async function runOrchestrateCommand(
     ),
   });
 
+  // Every spawned worker is reaped even when one reap fails (issue #171): the
+  // first failure used to return early, leaving the remaining children
+  // unreaped. All errors are collected, reported on the debug channel, and
+  // carried on the envelope — a failure path that drops them leaves an
+  // operator with a child that was never reaped and no evidence.
+  const reaped = new Set<string>();
   const reapSpawned = async (
     spawned: string[],
   ): Promise<{ agentId: string; message: string } | undefined> => {
+    const errors: { agentId: string; message: string }[] = [];
     for (const agentId of spawned) {
+      if (reaped.has(agentId)) continue;
+      reaped.add(agentId);
       try {
         await deps.reapWorker(agentId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { agentId, message };
+        errors.push({ agentId, message });
       }
     }
-    return undefined;
+    for (const error of errors) {
+      debug(`reap: worker '${error.agentId}' failed — ${error.message}`);
+      reapErrors.push(error);
+    }
+    return errors[0];
   };
 
   // Fail-closed state save (issue #76 fix c): a store throw used to

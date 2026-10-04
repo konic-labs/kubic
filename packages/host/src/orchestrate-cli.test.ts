@@ -627,6 +627,42 @@ describe('orchestrate failure codes (issue #76)', () => {
     expect(world.calls.reap).toContain('alpha');
   });
 
+  it('keeps merge_conflict as the terminus and surfaces failure-path reap errors (issue #171)', async () => {
+    const reaped: string[] = [];
+    const world = makeWorld({
+      mergeBranch: () => {
+        throw new MergeConflictError('a2', {
+          oursDiff: 'ours',
+          theirsDiff: 'theirs',
+        });
+      },
+      reapWorker: (agentId: string) => {
+        reaped.push(agentId);
+        throw new Error(`reap exploded for ${agentId}`);
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a1', 'a2'],
+        session: 'sess-1',
+        yes: true,
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    const envelope = lastJsonLine(world.lines);
+    // The conflict is the run's terminus; the reap errors ride along instead
+    // of replacing it or disappearing.
+    expect(envelope.error).toMatchObject({ code: 'merge_conflict' });
+    expect(envelope.reapErrors).toEqual([
+      { agentId: 'a1', message: 'reap exploded for a1' },
+      { agentId: 'a2', message: 'reap exploded for a2' },
+    ]);
+    expect(reaped).toEqual(['a1', 'a2']);
+  });
+
   it('stops the queue fail-closed on an unresolvable conflict', async () => {
     const world = makeWorld({
       mergeBranch: (agentId: string) => {
@@ -664,6 +700,35 @@ describe('orchestrate failure codes (issue #76)', () => {
     expect(code).toBe(1);
     expect(world.errLines.join('\n')).toMatch(/code=reap_failed/);
     expect(world.calls.merge).toEqual(['alpha', 'beta']);
+  });
+
+  it('reaps every spawned worker even when one reap throws, naming the first (issue #171)', async () => {
+    const reaped: string[] = [];
+    const world = makeWorld({
+      reapWorker: (agentId: string) => {
+        reaped.push(agentId);
+        if (agentId === 'a1') throw new Error('zombie');
+      },
+    });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: 'demo',
+        agents: ['a1', 'a2', 'a3'],
+        session: 'sess-1',
+        json: true,
+      },
+      world.deps,
+    );
+    expect(code).toBe(1);
+    // The first failure does NOT stop the sweep: a2 and a3 are reaped too.
+    expect(reaped).toEqual(['a1', 'a2', 'a3']);
+    const text = world.errLines.join('\n');
+    expect(text).toMatch(/code=reap_failed/);
+    expect(text).toMatch(/a1/);
+    // The envelope carries the collected reap errors next to the primary code.
+    const envelope = lastJsonLine(world.lines);
+    expect(envelope.error).toMatchObject({ code: 'reap_failed' });
+    expect(envelope.reapErrors).toEqual([{ agentId: 'a1', message: 'zombie' }]);
   });
 });
 

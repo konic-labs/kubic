@@ -199,6 +199,41 @@ describe('/model on the kubic tui path (issue #227, criterion 5)', () => {
     });
   });
 
+  it('does not resurrect an accepted /model steer (#334 review round 2)', async () => {
+    // Alt+Enter submits like Enter when idle. A `/model` steer the loop
+    // ACCEPTED ran the command, so the draft must not come back as if it had
+    // been refused (the pre-fix branch restored on anything but 'queued').
+    const workspace = tmpRoot('tui-334-steer-ws-');
+    const sessionsRoot = tmpRoot('tui-334-steer-sessions-');
+    const lines: string[] = [];
+    const fake = fakeTerminal(120);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        bootLane: async (sid, answer) =>
+          bootTuiLane(sid, {
+            sessionsRoot,
+            models: twoProviders(),
+            env: new NodeExecutionEnv(workspace),
+            ...(answer === undefined ? {} : { answer }),
+            model: { provider: 'faux', id: 'big' },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of '/model alt/m1') fake.feed(ch);
+    fake.feed('\x1b\r');
+    await waitFor(() => fake.frame.includes('model: alt/m1'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    const doc = lines.join('\n');
+    expect(doc).toContain('switched');
+    // The editor row at quit is empty: nothing resurrected the command.
+    expect(doc).not.toContain('/model alt/m1');
+  });
+
   it('reports the current model and refuses an unknown one by name', async () => {
     const workspace = tmpRoot('tui-227-report-ws-');
     const sessionsRoot = tmpRoot('tui-227-report-sessions-');

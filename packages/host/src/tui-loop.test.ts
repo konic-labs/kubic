@@ -822,24 +822,21 @@ describe('kubic tui prompt loop (issue #88)', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first prompt'));
-    const mark = fake.writes.length;
     for (const ch of '/model faux/other') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
       fake.writes
-        .slice(mark)
         .join('')
         .includes('model: finish the current turn before switching'),
-    );
-    // The draft is back in the editor row (frames are differential, so the
-    // restored row may land in a later frame than the footer).
-    await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('/model faux/other'),
     );
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
+    // The whole layout at quit carries the draft in the editor row: a
+    // refused submit put it back (a frame scan could match the characters as
+    // they were TYPED, before the Enter cleared them).
+    expect(lines.join('\n')).toContain('/model faux/other');
   });
 
   it('keeps the draft when a steer is refused (#334 review)', async () => {
@@ -871,22 +868,18 @@ describe('kubic tui prompt loop (issue #88)', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first prompt'));
-    const mark = fake.writes.length;
     for (const ch of '/model faux/other') fake.feed(ch);
     fake.feed('\x1b\r');
     await waitFor(() =>
       fake.writes
-        .slice(mark)
         .join('')
         .includes('model: finish the current turn before switching'),
-    );
-    await waitFor(() =>
-      fake.writes.slice(mark).join('').includes('/model faux/other'),
     );
     release();
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
+    expect(lines.join('\n')).toContain('/model faux/other');
   });
 
   it('releases the busy latch when a failed run leaves a queued follow-up (#334 review)', async () => {
@@ -1077,19 +1070,17 @@ describe('kubic tui prompt loop (issue #88)', () => {
     // Ctrl-G (0x07) switches the session mode to orchestrator.
     fake.feed('\x07');
     await waitFor(() => fake.writes.join('').includes('orchestrator ·'));
-    const mark = fake.writes.length;
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
       fake.writes
-        .slice(mark)
         .join('')
         .includes('the orchestrator lane has no session transcript to compact'),
     );
-    // Refused, so the draft came back (finding 1 of the #334 review).
-    await waitFor(() => fake.writes.slice(mark).join('').includes('/compact'));
     fake.feed('\x03');
     expect(await pending).toBe(0);
+    // Refused, so the draft came back (finding 1 of the #334 review).
+    expect(lines.join('\n')).toContain('/compact');
   });
 
   it('a durably busy conversation refuses the second turn with the busy failure', async () => {

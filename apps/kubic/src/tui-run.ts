@@ -2840,15 +2840,16 @@ export async function runTuiCommand(
       if (routed.steer !== undefined) {
         const steered = routed.steer;
         const outcome = submitForLoop?.(steered, true);
-        if (
+        if (outcome === 'refused') {
+          // Issue #334 (review): only a REFUSAL hands the draft back — the
+          // app already cleared it for the key, and an accepted `/model`
+          // steer must not resurrect the command it just ran.
+          app.restoreDraft(steered);
+        } else if (
           outcome === 'accepted' &&
           parseModelCommand(steered) === undefined
         ) {
           app.setPendingEcho(steered);
-        } else if (outcome !== 'queued') {
-          // Issue #334 (review): a refused (or unreachable) steer hands the
-          // draft back — the app already cleared it for the key.
-          app.restoreDraft(steered);
         }
         return { consume: true };
       }

@@ -1,17 +1,24 @@
-// Slice D: deterministic wrap composition (issue #15).
-import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+// Slice D: deterministic wrap composition (issue #15; EPIC K #393).
+// Composition stays pre-registration: `composeTools` returns the tool
+// registrations the Kubic extension is installed with, and the wrappers ride
+// the pi-durable `execute(args, api, context)` signature unchanged.
+import { afterEach, describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import type { AgentHarnessTool } from '../pi-boundary.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
+  createRegistry,
+  defineExtension,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  MemorySessionRepo,
+  Harness,
+  MemoryStorage,
+  type ToolRegistration,
+  ToolResultEntry,
 } from '../pi-boundary.js';
-import { bootSoloLane, driveToSettled } from './solo.js';
+import { OperationKillRegistry } from './abort.js';
+import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
   compositionOrder,
@@ -23,16 +30,15 @@ import {
   withTelemetry,
 } from './wrap.js';
 
-function stubTool(log: string[]): AgentHarnessTool<never> {
+function stubTool(log: string[]): ToolRegistration {
   return {
     name: 'read',
-    label: 'read',
     description: 'stub',
     parameters: {},
     execute: (async () => {
       log.push('core');
       return { content: [] };
-    }) as unknown as AgentHarnessTool<never>['execute'],
+    }) as unknown as ToolRegistration['execute'],
   };
 }
 
@@ -52,6 +58,29 @@ function recorder(id: string, log: string[]): ToolContribution {
   };
 }
 
+function toolContext(env: FakeExecutionEnv): KubicToolContext {
+  return {
+    env,
+    sessionId: 's1',
+    agentId: 'root',
+    kills: new OperationKillRegistry(),
+  };
+}
+
+const open: Harness[] = [];
+afterEach(async () => {
+  for (const harness of open.splice(0)) {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
+});
+
+/** The single composed tool, or a failure that names the setup mistake. */
+function only(tools: ToolRegistration[]): ToolRegistration {
+  const [tool] = tools;
+  if (tool === undefined) throw new Error('no composed tool');
+  return tool;
+}
+
 describe('wrap composition (issue #15, slice D)', () => {
   it('composes in listed order: telemetry(permission(core))', async () => {
     const log: string[] = [];
@@ -60,7 +89,7 @@ describe('wrap composition (issue #15, slice D)', () => {
       recorder('telemetry', log),
     ];
     expect(compositionOrder(contributions)).toBe('permission>telemetry');
-    const [tool] = composeTools([stubTool(log)], contributions);
+    const tool = only(composeTools([stubTool(log)], contributions));
     await (tool.execute as unknown as ExecuteFn)();
     expect(log).toEqual([
       'telemetry-pre',
@@ -78,7 +107,7 @@ describe('wrap composition (issue #15, slice D)', () => {
     const base = [stubTool(log)];
     const first = compositionOrder([permission, telemetry]);
     await (
-      composeTools(base, [permission, telemetry])[0]
+      only(composeTools(base, [permission, telemetry]))
         .execute as unknown as ExecuteFn
     )();
     expect(log).toEqual([
@@ -91,7 +120,7 @@ describe('wrap composition (issue #15, slice D)', () => {
     // Removal is recomposition without the contribution — nothing to undo.
     log.length = 0;
     await (
-      composeTools(base, [permission])[0].execute as unknown as ExecuteFn
+      only(composeTools(base, [permission])).execute as unknown as ExecuteFn
     )();
     expect(log).toEqual(['permission-pre', 'core', 'permission-post']);
     // Re-adding yields the identical order string.
@@ -108,9 +137,8 @@ describe('wrap composition (issue #15, slice D)', () => {
       }),
     ];
     expect(compositionOrder(contributions)).toBe('permission>telemetry');
-    const [denied] = composeTools(
-      [{ ...stubTool(log), name: 'bash' }],
-      contributions,
+    const denied = only(
+      composeTools([{ ...stubTool(log), name: 'bash' }], contributions),
     );
     await expect((denied.execute as unknown as ExecuteFn)()).rejects.toThrow(
       PolicyDeniedError,
@@ -119,61 +147,83 @@ describe('wrap composition (issue #15, slice D)', () => {
     expect(log).toEqual([]);
     expect(records).toHaveLength(1);
     expect(records[0]?.toolName).toBe('bash');
-    const [allowed] = composeTools([stubTool(log)], contributions);
+    const allowed = only(composeTools([stubTool(log)], contributions));
     await (allowed.execute as unknown as ExecuteFn)();
     expect(log).toEqual(['core']);
     expect(records.map((record) => record.toolName)).toEqual(['bash', 'read']);
   });
 
-  it('boots the solo lane with classes, interceptors, and wraps applied', async () => {
+  it('applies the wraps through the pi-durable harness: a denial is an error result', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('notes.txt', 'workspace notes\n');
-    const repo = new MemorySessionRepo();
-    const session = await repo.create({}, BACKGROUND_CONTEXT);
+    const records: TelemetryRecord[] = [];
+    // Defense in depth behind the tool allowlist: read is registered but
+    // denied at execute time, and telemetry still times the attempt.
+    const tools = composeTools(kubicToolsToPiTools(toolContext(env)), [
+      withPermissionCheck((name) => name !== 'read'),
+      withTelemetry((record) => {
+        records.push(record);
+      }),
+    ]);
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('read', { path: 'notes.txt' })]),
+      fauxAssistantMessage(
+        [
+          fauxToolCall('read', { path: 'notes.txt' }, { id: 'call-read-1' }),
+          fauxToolCall('ls', {}, { id: 'call-ls-1' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
       fauxAssistantMessage('done'),
     ]);
-    const records: TelemetryRecord[] = [];
-    const booted = await bootSoloLane({
-      session,
-      models,
-      model: faux.getModel(),
-      env,
-      sessionId: session.metadata.id,
-      agentId: 'root',
-      policy: {
-        classes: { ...SOLO_DEFAULTS, filesystem: 'read', shell: false },
-        interceptors: { workspace: env.cwd },
-        contributions: [
-          withTelemetry((record) => {
-            records.push(record);
-          }),
-        ],
-      },
+    const registry = createRegistry();
+    registry.install(defineExtension({ name: 'kubic', tools }));
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      { models, registry },
+      BACKGROUND_CONTEXT,
+    );
+    open.push(harness);
+    const model = faux.getModel();
+    const root = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: model.provider, modelId: model.id } },
     });
-    try {
-      const active = await booted.lane.getActiveTools(BACKGROUND_CONTEXT);
-      expect(active).not.toContain('bash');
-      expect(active).not.toContain('write');
-      expect(active).toContain('read');
-      const admission = await booted.lane.accept(
-        { kind: 'prompt', prompt: 'read the file' },
+
+    await (
+      await root.submit(
+        { type: 'input', content: 'read it' },
         BACKGROUND_CONTEXT,
-      );
-      if (!admission.ok) throw new Error('accept failed');
-      const outcome = await driveToSettled(
-        booted.lane,
-        admission.value.operationId,
-        BACKGROUND_CONTEXT,
-      );
-      expect(outcome.kind).toBe('settled');
-      expect(records.map((record) => record.toolName)).toContain('read');
-    } finally {
-      await session.close(BACKGROUND_CONTEXT);
-    }
+      )
+    ).wait(BACKGROUND_CONTEXT);
+
+    const page = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT);
+    const results = [...page.items]
+      .reverse()
+      .filter((entry) => ToolResultEntry.is(entry))
+      .map((entry) => {
+        const message = entry.model?.[0];
+        if (message?.role !== 'toolResult') return undefined;
+        return {
+          toolName: message.toolName,
+          isError: message.isError,
+          text: message.content
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join(''),
+        };
+      })
+      .filter((result) => result !== undefined);
+    const denied = results.find((result) => result?.toolName === 'read');
+    expect(denied?.isError).toBe(true);
+    expect(denied?.text).toContain('denied by policy wrapper');
+    const allowed = results.find((result) => result?.toolName === 'ls');
+    expect(allowed?.isError).toBe(false);
+    // Outermost by convention: every attempt is recorded, denied included.
+    expect(records.map((record) => record.toolName).sort()).toEqual([
+      'ls',
+      'read',
+    ]);
+    expect(records.every((record) => record.durationMs >= 0)).toBe(true);
   });
 });

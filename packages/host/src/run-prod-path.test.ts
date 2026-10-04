@@ -21,6 +21,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   createModels,
+  type EntryRecord,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -101,7 +102,10 @@ function userTexts(entries: unknown): string[] {
 
 // Read a session's active transcript the way a CLI reader does (#400): the
 // storage directly, no harness boot, and the handle gives the lock back.
-async function readTranscript(root: string, id: string): Promise<unknown[]> {
+async function readTranscript(
+  root: string,
+  id: string,
+): Promise<EntryRecord[]> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await attachSession(store, id, BACKGROUND_CONTEXT);
   try {
@@ -207,11 +211,16 @@ describe('prod run path, durable retry (issue #395, §20.6)', () => {
     // The failed attempt spent tokens: the run's usage counts both requests.
     expect(result.usage?.input).toBeGreaterThan(0);
     const entries = await readTranscript(root, result.sessionId);
-    const assistantTexts = entriesToTranscript(entries)
+    const items = entriesToTranscript(entries);
+    // #247 stands on the retry path too: the prompt appears exactly once.
+    expect(items.filter((item) => item.kind === 'user')).toHaveLength(1);
+    // Both attempts are committed responses: the retryable error, then the
+    // answer. That the ANSWER is the summary proves the harness retried
+    // without Kubic driving anything.
+    const assistantTexts = items
       .filter((item) => item.kind === 'assistant')
       .map((item) => item.text);
-    expect(assistantTexts).toContain('failed attempt');
-    expect(assistantTexts).toContain('recovered');
+    expect(assistantTexts).toEqual(['failed attempt', 'recovered']);
   });
 });
 

@@ -149,6 +149,7 @@ import {
   type Context,
   createModels,
   createRegistry,
+  type EntryRecord,
   Harness,
   type MutableModels,
   UserEntry,
@@ -435,7 +436,7 @@ async function captureEntries(
   solo: SoloLane | undefined,
   session: SessionHandle,
   context: Context,
-): Promise<unknown[]> {
+): Promise<EntryRecord[]> {
   try {
     return solo === undefined
       ? await readSessionEntries(session.storage, context)
@@ -496,12 +497,23 @@ async function abortAbandonedLane(
   }
 }
 
-// #247: `submit` writes `pi.user` itself, so a run that reached its turn has
-// exactly ONE user entry. A run that never submitted — no model, a refused
-// role, an interrupt before the turn — still keeps its prompt durable (the
-// pre-1.0 guarantee `kubic run -p` always had) through one plain entry
-// write, never a second copy on a run that did submit.
-async function persistUnsubmittedPrompt(
+// The mapped result outranks telemetry: a throwing debug sink in the
+// end-of-run cleanup must not replace the run's own HeadlessRunResult.
+function guardedReport(
+  report: ((message: string) => void) | undefined,
+  message: string,
+): void {
+  try {
+    report?.(message);
+  } catch {
+    // Swallowed by design — the mapped result stands.
+  }
+}
+
+// One plain `pi.user` entry for a prompt no submission carried: a throwaway
+// Harness over the session's own storage (no model layer is needed to write
+// an entry), closed again immediately.
+async function appendPromptEntry(
   session: SessionHandle,
   prompt: string,
   context: Context,
@@ -520,6 +532,43 @@ async function persistUnsubmittedPrompt(
     }, context);
   } finally {
     await harness.close(context);
+  }
+}
+
+// #247: `submit` writes `pi.user` itself, so a run that reached its turn has
+// exactly ONE user entry. Every other exit path — no model, a refused role,
+// a signal between boot and the turn, a busy refusal — still keeps the
+// prompt durable (the pre-1.0 guarantee `kubic run -p` always had) through
+// one plain entry write. The TRANSCRIPT decides, in both directions: a
+// prompt already carried by an entry (the turn's own, a resumed run's, an
+// earlier identical prompt) is never written twice, and a lane that booted
+// but never admitted the prompt still gets its entry.
+async function ensurePromptDurable(
+  solo: SoloLane | undefined,
+  session: SessionHandle,
+  prompt: string,
+  context: Context,
+  report: (message: string) => void,
+): Promise<void> {
+  const entries = await captureEntries(solo, session, context);
+  const present = entriesToTranscript(entries).some(
+    (item) => item.kind === 'user' && item.text.trim() === prompt.trim(),
+  );
+  if (present) return;
+  try {
+    if (solo === undefined) {
+      await appendPromptEntry(session, prompt, context);
+    } else {
+      await solo.conversation.commit(async (tx) => {
+        await tx.appendEntry(UserEntry, solo.conversation.id, {
+          model: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+        });
+      }, context);
+    }
+  } catch (error) {
+    report(
+      `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -821,11 +870,6 @@ async function runHeadlessPromptImpl(
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
   let solo: SoloLane | undefined;
-  // Set once the prompt is durable in the transcript: by the durable submit
-  // (#247 — submit writes pi.user itself) or by resuming the pending
-  // submission that already carries it. A run that never got that far keeps
-  // its prompt through the one fallback write in the finally.
-  let promptDurable = false;
   // Set when a guard or an interrupt abandoned a live turn: the finally then
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
@@ -1473,9 +1517,6 @@ async function runHeadlessPromptImpl(
             placed !== undefined
           ) {
             resumed = await solo.harness.submission(placed.id, context);
-            // The dead process's entry already carries this prompt: the run
-            // must not write a second copy of it (#247).
-            promptDurable = true;
             notice(
               `${pending.summary ?? 'pending work'} carries this prompt: resuming it instead of re-prompting`,
             );
@@ -1514,7 +1555,6 @@ async function runHeadlessPromptImpl(
             // turn nobody is watching (#334 owns follow-up UX).
             whenBusy: 'reject',
           });
-          promptDurable = true;
         }
       } finally {
         spans.endLane(driveSpan, guardFailure()?.message);
@@ -1591,7 +1631,9 @@ async function runHeadlessPromptImpl(
     // and the sweep both stand.
     if (solo !== undefined) {
       if (abandoned) {
-        await abortAbandonedLane(solo, (message) => debug?.(message));
+        await abortAbandonedLane(solo, (message) =>
+          guardedReport(debug, message),
+        );
       } else {
         forgetLaneKills(solo);
       }
@@ -1623,23 +1665,25 @@ async function runHeadlessPromptImpl(
     } catch {
       // Best-effort: the mapped result stands.
     }
+    // The prompt guarantee first (#247): a run that never admitted the
+    // prompt still gets its one durable entry, and the transcript decides —
+    // never a second copy for a prompt that is already carried. Done before
+    // the capture below so the §46 trajectory carries the fallback write.
+    try {
+      await ensurePromptDurable(solo, session, prompt, context, (message) =>
+        guardedReport(debug, message),
+      );
+    } catch (error) {
+      guardedReport(
+        debug,
+        `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     // The §46 trajectory's entries (issue #383), read while the session is
     // still open through the shared transcript adapter (#400); a read
     // failure leaves the trajectory without actions, never the run without
     // its result.
     capture.entries = await captureEntries(solo, session, context);
-    // The prompt a run never submitted is still durable (#247 keeps the
-    // ordinary path at one entry): the session gets exactly the entry submit
-    // would have written, so a retry or an attach can read the intent.
-    if (!promptDurable && solo === undefined) {
-      try {
-        await persistUnsubmittedPrompt(session, prompt, context);
-      } catch (error) {
-        debug?.(
-          `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back (and closes a storage no
     // harness took). The result is already mapped: a close failure must

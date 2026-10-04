@@ -15,9 +15,14 @@ import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';
 import { FakeExecutionEnv, NodeExecutionEnv } from '../../exec/src/env.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
+  attachSession,
   createSession,
   openSessionStore,
 } from '../../worker/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../worker/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -170,6 +175,50 @@ describe('headless run signal handling (solo lane)', () => {
     );
     expect(result.terminus).toBe('completed');
     expect(SIGNALS.map((name) => process.listenerCount(name))).toEqual(before);
+  });
+
+  it('keeps the prompt durable when a signal lands after the boot but before the turn', async () => {
+    // The reviewer's case: the lane booted, the turn never submitted. The
+    // pre-1.0 `recordPrompt` wrote the prompt BEFORE the boot, so this path
+    // must still leave exactly one durable pi.user entry — the fallback
+    // write is derived from the transcript, not from a submit flag.
+    const root = tmpRoot();
+    const signals = new EventEmitter();
+    const result = await runHeadlessPrompt(
+      'late-prompt',
+      { debug: true },
+      {
+        sessionsRoot: root,
+        models: textModels('never answered'),
+        env: new FakeExecutionEnv({}),
+        signals,
+        // 'lane accept start' is emitted after the boot and before the turn.
+        debugSink: (line) => {
+          if (line.includes('lane accept start')) {
+            signals.emit('SIGINT', 'SIGINT');
+          }
+        },
+      },
+    );
+    expect(result.terminus).toBe('failed');
+    expect(result.summary).toContain('interrupted by SIGINT');
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await attachSession(
+      store,
+      result.sessionId,
+      BACKGROUND_CONTEXT,
+    );
+    let userTexts: string[];
+    try {
+      userTexts = entriesToTranscript(
+        await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
+      )
+        .filter((item) => item.kind === 'user')
+        .map((item) => item.text);
+    } finally {
+      await session.release(BACKGROUND_CONTEXT);
+    }
+    expect(userTexts).toEqual(['late-prompt']);
   });
 
   it('a signal during boot (before admission) cancels the run instead of driving it', async () => {

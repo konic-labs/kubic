@@ -116,9 +116,12 @@ describe('journal durability (issue #117, slice 1)', () => {
     hooks.fsyncs = 0;
     hooks.durableAppends = [];
     store.append(entry({ path: 'a.txt', after: 'hello\n' }));
-    expect(hooks.fsyncs).toBe(1);
+    // The blob the entry references is flushed too (issue #344): one flush
+    // for the blob's bytes, one for its directory entry, then the index
+    // line — the record is always last.
+    expect(hooks.fsyncs).toBe(3);
     store.append(entry({ path: 'b.txt', after: 'world\n' }));
-    expect(hooks.fsyncs).toBe(2);
+    expect(hooks.fsyncs).toBe(6);
     // The durable path is the bridge method, never plain appendFile.
     expect(
       hooks.durableAppends.filter((path) => path.endsWith('index.jsonl')),
@@ -140,9 +143,16 @@ describe('journal durability (issue #117, slice 1)', () => {
     try {
       const store = new FileJournalStore(tmpRoot());
       hooks.fsyncs = 0;
+      hooks.durableAppends = [];
       store.append(entry({ path: 'a.txt', after: 'hello\n' }));
       expect(store.entries()).toHaveLength(1);
-      expect(hooks.fsyncs).toBe(0);
+      // The index line falls back to the plain append (no fsync), but the
+      // blob it references is still flushed (issue #344): two fsyncs, none
+      // of them the index.
+      expect(hooks.fsyncs).toBe(2);
+      expect(
+        hooks.durableAppends.filter((path) => path.endsWith('index.jsonl')),
+      ).toEqual([]);
     } finally {
       hooks.withoutAppendDurably = false;
     }

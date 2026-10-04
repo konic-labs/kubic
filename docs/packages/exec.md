@@ -111,14 +111,27 @@ append truncates the partial write back to the pre-append length — the
 repair byte included — so the index is exactly as it was and the retry
 repairs the tail again. `readIndex()` returns the parseable entries plus
 the `corruptLines` count, which `kubic status` prints as `corrupt index
-lines: N` (separate from `corrupt`, which counts lost content). The fsync
-covers the appended index line only — blob payloads and the retention
-compaction rewrite are renamed without one, so a crash right after a
-compaction can lose more than the last line. Blob writes and undo
-restores are tmp+rename in the target's own directory, so a partial file
-is never visible under its real name; directory-entry fsync is
-deliberately out of scope — rename atomicity is the guarantee, stated in
-[the journal and safety page](../architecture/journal-and-safety.md).
+lines: N` (separate from `corrupt`, which counts lost content).
+
+Journal durable writes (issue #344): with `durable` on, the fsync covers
+the content the entry references, in order. A blob is written to a sibling
+tmp, its bytes are fsynced, it is renamed into place, and the blob
+directory is fsynced so the rename survives — then the index line that
+references it is appended durably. A durable entry therefore never points
+at a blob whose bytes were still in the page cache when the power went.
+The retention compaction rewrite is the mirror case: its bytes are fsynced
+before the rename over `index.jsonl` and the journal directory after it,
+so a crash right after a compaction cannot leave an empty or truncated
+index where the whole history was. An existing blob is no longer trusted
+because its name is right: `putBlob` checks its size first (one stat,
+which catches the zero-length crash shape) and then its hash, and rewrites
+a file that fails either check from the bytes in hand — so a blob lost to
+delayed allocation is healed instead of poisoning every later entry that
+reuses it. `durable: false` trades all of this back for throughput; a
+bridge without `flushFile`/`flushDir` keeps rename atomicity without
+rename durability. Undo restores stay tmp+rename without an fsync —
+atomicity, not durability, as
+[the journal and safety page](../architecture/journal-and-safety.md) states.
 
 Undo records (issue #117): every successful restore appends its inverse
 entry — pre-undo content as `before`, restored content as `after`,

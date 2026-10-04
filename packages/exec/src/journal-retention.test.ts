@@ -117,8 +117,10 @@ describe('blob size cache (issue #124, slice 1)', () => {
     counts.blobInfo = 0;
     store.append(entry({ path: 'f50.txt', after: uniqueContent(50) }));
     // Before the size cache this append stat'd every unique referenced blob
-    // (30 here, growing per entry); sizes recorded at write time make it 0.
-    expect(counts.blobInfo).toBe(0);
+    // (30 here, growing per entry). Now the only stat is the integrity check
+    // on the ONE blob the append is about to reuse (issue #344) — content-20
+    // already exists — never the referenced set.
+    expect(counts.blobInfo).toBe(1);
   });
 });
 
@@ -190,8 +192,10 @@ describe('retention fast path (issue #124, slice 2)', () => {
     for (let i = 0; i < 100; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
-    // Sizes are recorded at write time and no prune runs: zero blob stats.
-    expect(counts.blobInfo).toBe(0);
+    // Sizes are recorded at write time and no prune runs: the only blob
+    // stat is the #344 integrity check on a blob the append is about to
+    // reuse — at most one per append, never the 30-strong referenced set.
+    expect(counts.blobInfo).toBeLessThanOrEqual(100);
     // And the pass is skipped outright: no per-append index reads — one
     // seeding pass at most, never one scan per append.
     expect(counts.indexReads).toBeLessThanOrEqual(2);

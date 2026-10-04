@@ -54,14 +54,18 @@ export interface JournalRetention {
   maxBytes?: number;
   maxAgeMs?: number;
   /**
-   * fsync every index append before it returns (issue #117), default true.
-   * One fsync per tool write is the price of "reversible": the entry is on
-   * platter before the append returns, so a crash cannot take back a change
-   * the journal already promised to undo. The window it closes is small but
-   * real — a lost last line reads as "the run did nothing". Set `false` to
-   * trade that durability for throughput (a crash may then truncate the
-   * last line, which `entries()` skips); a bridge without `appendDurably`
-   * always falls back to a plain append.
+   * Flush the journal's writes before they are trusted (issues #117,
+   * #344), default true. A few fsyncs per tool write are the price of
+   * "reversible": the blob an entry references is on platter before the
+   * entry is, and the index line is on platter before the append returns,
+   * so a crash can neither take back a change the journal already promised
+   * to undo nor leave a durable entry pointing at bytes that were never
+   * written. The retention rewrite is flushed the same way — it replaces
+   * the whole history, so a crash right after it must not be able to leave
+   * an empty index. Set `false` to trade that durability for throughput (a
+   * crash may then truncate the last line, which `entries()` skips); a
+   * bridge without `appendDurably`/`flushFile`/`flushDir` degrades to the
+   * plain write, keeping atomicity without durability.
    */
   durable?: boolean;
 }
@@ -684,7 +688,14 @@ export class FileJournalStore {
         (kept.length > 0 ? '\n' : ''),
     );
     try {
+      // Issue #344: the rewrite replaces the journal's whole history, so
+      // with `durable` on its bytes are fsynced before the rename and the
+      // directory after it. Without that, a crash right after the rename
+      // can leave an empty or truncated index where the old one was —
+      // losing everything the compaction was supposed to keep.
+      if (this.durable) bridge.flushFile?.(tmp);
       bridge.renameFile(tmp, this.indexPath);
+      if (this.durable) bridge.flushDir?.(dirname(this.indexPath));
     } catch {
       try {
         bridge.remove(tmp, false, true);
@@ -722,8 +733,17 @@ export class FileJournalStore {
   ): void {
     const path = join(this.blobsDir, hash);
     if (bridge.exists(path)) {
-      this.trackRef(bridge, hash);
-      return;
+      // Issue #344: a blob under its own name is not proof of integrity. A
+      // crash on a delayed-allocation filesystem can land the rename and
+      // lose the data, leaving a zero-length or torn file at the address;
+      // the old short-circuit then reused that file forever, so every later
+      // entry read as corrupt. Size first (one stat — catches the truncated
+      // crash shape without reading), then the content hash; a blob that
+      // fails either check is rewritten from the bytes in hand.
+      if (this.blobIsIntact(bridge, path, hash, content)) {
+        this.trackRef(bridge, hash);
+        return;
+      }
     }
     // tmp+rename (issue #117): a blob becomes visible under its real name
     // only when complete — a crash can never expose half a blob to
@@ -731,10 +751,18 @@ export class FileJournalStore {
     // so the rename is atomic. A failed write/rename cleans the tmp up,
     // best-effort, and fails the append: a silently appended entry whose
     // blob was never written would read as corrupt content.
+    //
+    // Issue #344: with `durable` on, the tmp's bytes are fsynced before the
+    // rename and the directory after it. The index line that references
+    // this blob is fsynced (appendDurably) later in `append`, so the order
+    // is data-then-record: a durable entry can never point at a blob whose
+    // bytes were still in the page cache when the power went.
     const tmp = join(this.blobsDir, `${hash}.${process.pid}.tmp`);
     try {
       bridge.writeFile(tmp, content);
+      if (this.durable) bridge.flushFile?.(tmp);
       bridge.renameFile(tmp, path);
+      if (this.durable) bridge.flushDir?.(this.blobsDir);
     } catch (error) {
       try {
         bridge.remove(tmp, false, true);
@@ -805,6 +833,28 @@ export class FileJournalStore {
       this.blobSizes.set(hash, size);
     }
     return size;
+  }
+
+  // Issue #344: is the blob already at `path` the content it claims to be?
+  // The size gate is one stat; only a same-size file is read and hashed (a
+  // torn blob of the wrong length never costs a read, and one that is
+  // unreadable or unstattable is treated as corrupt so the caller rewrites
+  // it). The caller holds the bytes, so a corrupt blob costs one rewrite
+  // and is healed instead of poisoning every later entry that reuses it.
+  private blobIsIntact(
+    bridge: FileBridge,
+    path: string,
+    hash: string,
+    content: string,
+  ): boolean {
+    try {
+      if (bridge.fileInfo(path).size !== Buffer.byteLength(content, 'utf8')) {
+        return false;
+      }
+      return sha256Hex(bridge.readTextFile(path)) === hash;
+    } catch {
+      return false;
+    }
   }
 
   // Content-addressed read (issue #111): the blob's own name is the

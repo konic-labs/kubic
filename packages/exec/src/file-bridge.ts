@@ -104,6 +104,15 @@ export interface FileBridge {
    * durability explicitly. Optional like the rest.
    */
   flushFile?(path: string): void;
+  /**
+   * fsync a directory (issue #344): a rename is atomic, but its directory
+   * entry is durable only once the directory itself is flushed. The journal
+   * flushes the blob directory after renaming a blob into place, and the
+   * journal directory after renaming a rewritten index over the old one, so
+   * a power loss cannot roll either name back. Optional like the rest; a
+   * bridge without it keeps rename atomicity without rename durability.
+   */
+  flushDir?(path: string): void;
   renameFile(source: string, destination: string): void;
   /**
    * Set a path's permission bits (issue #117 review): the seam that lets a
@@ -252,6 +261,18 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     // fresh file is deliberately out of scope, like appendDurably's.
     flushFile: (path: string): void => {
       const fd = openSync(absolutePath(path), 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    },
+    // Directory fsync (issue #344): the rename's own durability. macOS and
+    // Linux both allow opening a directory read-only and flushing it; a
+    // platform that refuses the open surfaces the error, and the caller's
+    // `durable` knob is the documented way to trade this for throughput.
+    flushDir: (path: string): void => {
+      const fd = openSync(absolutePath(path), 'r');
       try {
         fsyncSync(fd);
       } finally {

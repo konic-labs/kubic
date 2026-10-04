@@ -78,6 +78,7 @@ function scratchRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }

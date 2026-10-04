@@ -2005,15 +2005,24 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       capabilities = detected.filter((capability) =>
         ALWAYS_ASK.has(capability),
       );
-      if (capabilities.length === 0) {
-        // Explicit, session-scoped full access — recorded, never implied.
+      // Issue #234: record exactly what full access waived — one record per
+      // capability, posture 'full-access' — and nothing at all for an
+      // untriggered call. The single `trigger:full-access` row this replaces
+      // was written for EVERY call, read and ls included: one fsync per tool
+      // call, and a trail that could not name what ran unapproved.
+      for (const capability of detected) {
+        if (ALWAYS_ASK.has(capability)) continue;
         audit(
           call.toolName,
-          'full-access',
+          capability,
           { approved: true, by: 'full-access' },
           true,
         );
-        return { approved: true, challenged: true };
+      }
+      if (capabilities.length === 0) {
+        // An untriggered call waived nothing, so it is not challenged and no
+        // guard needs standing down.
+        return { approved: true, challenged: detected.length > 0 };
       }
     }
     if (capabilities.length === 0) return { approved: true, challenged: false };

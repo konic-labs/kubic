@@ -64,7 +64,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--debug` | Emit §49.3 lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same `DEBUG_CLASSES` vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): the extension-load receipt, `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. Off by default; stdout stays consumable. |
-| `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. A later `kubic run --session <id>` on that session warns again on stderr. |
+| `--dangerously-skip-approvals` | Full access for **this run's session only** (§41.4): challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged (issue #234). A later `kubic run --session <id>` on that session warns again on stderr. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, and optional `error`) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed): `kubic orchestrate` reads a worker's envelope as the last stdout line. |
 
 **Skill paths the `read` tool may open (§29.3, issue #173).** Every skill
@@ -1808,8 +1808,12 @@ shipped runtime ignore rules cover this file.
   has `--posture approvals` or `full-access`.
 - `kubic run` and `kubic tui` append one `mode: solo` record per
   resolved solo approval ask, approved or denied, with `posture`
-  `approvals` or `full-access`. A run from `<repo>/sub` writes the repo
-  ledger, never `<repo>/sub/.kubic/`.
+  `approvals` or `full-access`. An untriggered call raises no ask and
+  writes nothing; a call full access waives is recorded once per
+  capability it raised (`trigger:<capability>`, posture `full-access`),
+  so the trail names what ran unapproved instead of one opaque
+  `trigger:full-access` row per tool call (issue #234). A run from
+  `<repo>/sub` writes the repo ledger, never `<repo>/sub/.kubic/`.
 - A worker child of `kubic orchestrate` writes no record for an ask the
   manager answered (the manager's record is the one record). A decision
   the child makes on its own (a latched answer, the route,

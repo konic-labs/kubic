@@ -167,8 +167,19 @@ solo) — and `run` never delegates.
   conflicted file list, the implementer tool set, the settlement constraints —
   from its own live approval snapshot (the carried hash is recomputed and the
   snapshot frozen inside the spec: no second policy, no bypass) and spawns a
-  resolver child in that worker's worktree. The resolver commits its
-  settlement on the worker's branch; the manager **re-merges**, and only a
+  resolver child in that worker's worktree. The resolver is a delegated child
+  like the workers are (issue
+  [#156](https://github.com/konic-labs/kubic/issues/156)): it is launched with
+  the run's approval mailbox and identity (`KUBIC_APPROVALS_DIR`,
+  `KUBIC_APPROVALS_VERIFY_KEY`, the §23 session pair) and driven through the
+  same `beginWorker`/pump/`endWorker` sequence, so a challenged call it raises
+  reaches the user instead of denying closed — and a denial ends that
+  resolution with the named reason in the failure line. It runs under the id
+  and session of the worker whose worktree it reworks (deliberately: the
+  resolution belongs to that worker's change, and its asks are answered by the
+  same scope), so its §60 rows share `agent.session` with that worker's. The
+  resolver commits its settlement on the worker's branch; the manager
+  **re-merges**, and only a
   successful re-merge settles the candidate. A resolver report is never the
   settlement. If the resolver cannot settle it, if the re-merge conflicts
   again, or if the run carries no snapshot or no resolver seam, the queue

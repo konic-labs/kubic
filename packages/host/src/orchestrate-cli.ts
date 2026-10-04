@@ -2223,8 +2223,19 @@ export async function runOrchestrateCommand(
         prompt: resolverPromptFor(spec),
       });
     } catch (error) {
-      resolverApprovals?.run.endWorker(agentId);
+      // A resolver that throws may still have ended on a named approval
+      // termination (its ask was denied while the child died): prefer that
+      // outcome over the raw exception, and take it out of the map so a later
+      // resolution does not inherit it (issue #156 review).
       const message = error instanceof Error ? error.message : String(error);
+      const termination = resolverApprovals?.run.takeTermination(agentId);
+      resolverApprovals?.run.endWorker(agentId);
+      if (termination !== undefined) {
+        debug(
+          `resolution: resolver '${agentId}' ended on ${termination.code} — ${termination.message}`,
+        );
+        return { outcome: 'failed', message: termination.message };
+      }
       debug(`resolution: resolver failed for '${agentId}' — ${message}`);
       return { outcome: 'failed', message };
     }

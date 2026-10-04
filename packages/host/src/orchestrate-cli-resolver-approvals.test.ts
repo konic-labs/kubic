@@ -7,10 +7,15 @@
 // `merge_conflict` — the "resolver runs under the same approval rules" claim
 // held on paper only.
 //
-// Fakes only (faux in-process child, no provider, no network) and no temp
-// files: the resolver's own mailbox traffic is real (the module under test is
-// the real one), driven through the run's approvals layer.
-import { describe, expect, it } from 'vitest';
+// Fakes only (faux in-process child, no provider, no network). The approvals
+// run underneath is the REAL one, so it writes its §60 ledger for every
+// settled decision — into a temp dir (`/repo/...` would be an unwritable path
+// on most hosts and, on one where `/` is writable, a directory the test never
+// removes); the whole tree goes in `afterEach`.
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   MergeConflictError,
   type OrchestrateCommandDeps,
@@ -41,6 +46,20 @@ const CONFLICT_DIFFS = {
   theirsDiff: 'diff --git a/shared.ts b/shared.ts\n+theirs',
 };
 
+const made: string[] = [];
+
+function tmpDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-156-'));
+  made.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of made.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 interface FakeWorld {
   deps: OrchestrateCommandDeps;
   lines: string[];
@@ -48,6 +67,8 @@ interface FakeWorld {
   raised: { agentId: string; trigger: string; role: string }[];
   saved: OrchestratorRunState[];
   resolverRuns: ResolverRequest[];
+  /** The temp dir the run's approvals state (and its §60 ledger) lives in. */
+  approvalsDir: () => string;
 }
 
 // One world per test: the real `runOrchestrateCommand` over fake seams, with a
@@ -67,6 +88,7 @@ function makeWorld(options: {
   const resolverRuns: ResolverRequest[] = [];
   const hunks: MergedHunk[] = [{ path: 'a.txt', hunk: '@@ -0,0 +1 @@ +a' }];
   let approvals: WorkerApprovalsRun | undefined;
+  let approvalsDir = '';
   let betaMerges = 0;
   const decide = options.decide ?? (() => ({ approved: true, by: 'user' }));
   const world: FakeWorld = {
@@ -76,6 +98,7 @@ function makeWorld(options: {
     raised,
     saved,
     resolverRuns,
+    approvalsDir: () => approvalsDir,
   };
   world.deps = {
     out: (line: string) => {
@@ -108,8 +131,12 @@ function makeWorld(options: {
     requestApproval: () => true,
     approvalPolicy: POLICY,
     approvals: (approvalOptions) => {
+      approvalsDir = tmpDir();
       approvals = createOrchestratorApprovalsRun({
-        dir: `/repo/.kubic/orchestrator-${approvalOptions.sessionId}`,
+        // A real approvals run writes a real ledger: sandbox it, so the write
+        // happens (and is asserted) instead of failing silently against an
+        // unwritable `/repo`.
+        dir: approvalsDir,
         sessionId: approvalOptions.sessionId,
         maxPendingMs: approvalOptions.maxPendingMs,
         pollMs: 5,
@@ -180,6 +207,12 @@ describe('a resolver ask reaches the user through the run approval layer (issue 
     expect(world.raised).toEqual([
       { agentId: 'beta', trigger: 'install', role: 'implementer' },
     ]);
+    // The settled decision landed in the run's OWN ledger under the temp dir —
+    // the §60 row the manager writes for a resolver ask (issue #156 review:
+    // sandboxed, so this is asserted rather than silently failing).
+    expect(
+      existsSync(join(world.approvalsDir(), 'approvals', 'audit.jsonl')),
+    ).toBe(true);
   });
 
   it('still settles when nobody is asked (no approvals layer wired)', async () => {

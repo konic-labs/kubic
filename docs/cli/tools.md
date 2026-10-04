@@ -112,12 +112,19 @@ src/b.ts:3: // TODO remove
 written beside the **resolved** file and renamed onto it, so writing to a
 link updates its target and the link stays a link — the workspace never
 gains a surprise regular file and the target never keeps the old content.
-A link (or a symlinked directory above the path) whose target resolves
-**outside the workspace** is refused with `error symlink_escape: …` before
-anything is journaled or written; the tool never writes through it. A
-failed write or rename removes its tmp (`<target>.kubic-tmp-<pid>-<n>`)
-instead of leaking it into the workspace. A dangling link has no target to
-resolve, so the write replaces the link itself.
+The journal records that resolved path (workspace-relative), so `diff` and
+`status` name the file whose content changed, the end-of-run sweep keys it
+exactly like the walk does — no phantom `write` of the target and no phantom
+`delete` of the link — and `kubic undo` restores the target with the link
+left in place. A link (or a symlinked directory above the path) whose target
+resolves **outside the workspace** is refused with
+`error symlink_escape: …` before anything is journaled or written; the tool
+never writes through it, however the workspace root is spelled (the physical
+`realpath` counts as inside). A failed write or rename removes its tmp
+(`<target>.kubic-tmp-<pid>-<n>`) instead of leaking it into the workspace,
+and residue a crashed run left at that name is collected before the next
+write. A dangling link has no target to resolve, so the write replaces the
+link itself.
 
 ## Search walk (`find` and `grep`)
 

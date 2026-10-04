@@ -216,17 +216,26 @@ journal-first tmp+rename writer. It now follows symlinks instead of
 replacing them: the target is resolved (`FileSystem.realpath`, resolving
 the nearest existing prefix and appending the components a create has yet
 to make), the tmp is written **beside the resolved file** and renamed onto
-it, and the journal still names the path the call used. A resolved target
-outside `ctx.env.cwd` is refused with a named `symlink_escape` OpError
-before the journal append — following it would write outside the
-confinement guardrail; the same check covers a symlinked directory above
-the path. The tmp carries a pid- and call-unique name
-(`<target>.kubic-tmp-<pid>-<n>`, so two writers cannot collide), any
-stale residue at that exact name is cleared before the write, and the tmp
-is removed best-effort through `FileSystem.unlink` when the write, chmod
-or rename fails — the earlier fixed-name tmp leaked into the workspace and
-the next sweep journaled it as an unattributed create. Both new seam
-members are optional (test doubles have no links and no cleanup) and
+it, and the journal records the **resolved path** (workspace-relative) in
+that case. That keying matters beyond display: the end-of-run sweep keys
+entries root-relative and the walk skips symlinks, so recording the link
+path made one symlinked edit produce two phantom entries — an unattributed
+`write <target>` (the target really changed) and a `delete <link>` (the walk
+never listed it) — and `undo` renamed onto the link, replacing it. With the
+resolved path the sweep adds nothing, and undo restores the target with the
+link intact. A resolved target outside `ctx.env.cwd` — a link, or a
+symlinked directory above the path, however the workspace root is spelled
+(its own `realpath` counts as inside) — is refused with a named
+`symlink_escape` OpError before the journal append. A `realpath` failure
+that is not a missing component (`EACCES`, `ELOOP`) is treated as
+unresolvable: the writer falls back to the named path and the seam's
+confinement rather than guessing a resolved one. The tmp carries a pid- and
+call-unique name (`<target>.kubic-tmp-<pid>-<n>`, so two writers cannot
+collide), residue at that name is swept before the write, and the tmp is
+removed best-effort through `FileSystem.unlink` when the write, chmod or
+rename fails — the earlier fixed-name tmp leaked into the workspace and the
+next sweep journaled it as an unattributed create. Both new seam members
+are optional (test doubles have no links and no cleanup) and
 `withReadRoots` forwards them, or a run with skill roots would leak the
 tmp. A dangling link has no target to resolve, so the write replaces the
 link itself, as before.

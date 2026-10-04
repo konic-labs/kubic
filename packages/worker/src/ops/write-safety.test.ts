@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -15,8 +16,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
+import { type FileSystem, NodeExecutionEnv } from '../../../exec/src/env.js';
+import {
+  captureBaseline,
+  FileJournalStore,
+  reconcile,
+} from '../../../exec/src/journal.js';
 import { diffEntries } from '../../../exec/src/journal-diff.js';
 import { journalStatus } from '../../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../../exec/src/journal-undo.js';
@@ -171,8 +176,192 @@ describe('write/edit symlink safety (issue #140)', () => {
       expect(lstatSync(join(root, 'link.md')).isSymbolicLink()).toBe(true);
       expect(readFileSync(join(root, 'real.md'), 'utf8')).toBe('new\n');
       expect(tmpNames(root)).toEqual([]);
-      // The journal names the path the call used, not the resolved target.
-      expect(journal.entries()[0]?.path).toBe('link.md');
+      // The journal names the file whose content changed (§42 attribution),
+      // so the sweep keys it like the walk does and undo restores the
+      // target — see the two tests below.
+      expect(journal.entries()[0]?.path).toBe('real.md');
+    },
+  );
+
+  it.runIf(posix)(
+    'a symlinked edit reconciles clean: no phantom write or delete at run end',
+    async () => {
+      const { root, journal, c } = setup();
+      writeFileSync(join(root, 'real.md'), 'old\n');
+      symlinkSync('real.md', join(root, 'link.md'));
+      // Boot baseline: the walk skips symlinks, so it knows real.md only.
+      const baseline = captureBaseline(root);
+      const out = await callOperation(
+        'edit',
+        { path: 'link.md', oldText: 'old', newText: 'new' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      const added = reconcile(journal, baseline, root, {
+        sessionId: 's1',
+        agentId: 'root',
+        timestamp: Date.now(),
+      });
+      // Before the journal keyed the resolved path this recorded two
+      // phantoms: an unattributed `write real.md` (the target really
+      // changed) and a `delete link.md` (the walk skips the link, so it
+      // looked absent).
+      expect(added).toBe(0);
+      expect(journal.entries().map((e) => e.path)).toEqual(['real.md']);
+    },
+  );
+
+  it.runIf(posix)(
+    'undo of a symlinked edit restores the target and keeps the link',
+    async () => {
+      const { root, journal, c } = setup();
+      writeFileSync(join(root, 'real.md'), 'old\n');
+      symlinkSync('real.md', join(root, 'link.md'));
+      const out = await callOperation(
+        'edit',
+        { path: 'link.md', oldText: 'old', newText: 'new' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      const result = applyUndo(journal, planUndo(journal, {}, root), root, {});
+      expect(result.restored).toEqual(['real.md']);
+      expect(readFileSync(join(root, 'real.md'), 'utf8')).toBe('old\n');
+      expect(lstatSync(join(root, 'link.md')).isSymbolicLink()).toBe(true);
+    },
+  );
+
+  it.runIf(posix)(
+    'refuses an escape even when the workspace is spelled physically',
+    async () => {
+      // The cwd itself is reached through a link (macOS /tmp and /var), so
+      // `realpathSync(cwd)` is a second spelling of the same workspace. A
+      // path through it must not bypass the resolution: with the early
+      // return on the lexical test it did, and the write landed outside.
+      const real = tmp('ws-real-');
+      const link = join(tmp('ws-link-'), 'ws');
+      symlinkSync(real, link);
+      const journal = new FileJournalStore(tmp('j-'));
+      const c: OpContext = {
+        env: new NodeExecutionEnv(link),
+        sessionId: 's1',
+        agentId: 'root',
+        toolCallId: 'call-1',
+        journal,
+      };
+      const outside = tmp('outside-');
+      symlinkSync(outside, join(real, 'linkdir'));
+      const out = await callOperation(
+        'write',
+        {
+          path: join(realpathSync(link), 'linkdir', 'new.txt'),
+          content: 'pwned\n',
+        },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error.code).toBe('symlink_escape');
+      expect(existsSync(join(outside, 'new.txt'))).toBe(false);
+      expect(journal.entries()).toEqual([]);
+    },
+  );
+
+  it.runIf(posix)(
+    'writes through the physical spelling of the workspace',
+    async () => {
+      const real = tmp('ws-real-');
+      const link = join(tmp('ws-link-'), 'ws');
+      symlinkSync(real, link);
+      const journal = new FileJournalStore(tmp('j-'));
+      const c: OpContext = {
+        env: new NodeExecutionEnv(link),
+        sessionId: 's1',
+        agentId: 'root',
+        toolCallId: 'call-1',
+        journal,
+      };
+      // Boot baseline: the file does not exist yet.
+      const baseline = captureBaseline(link);
+      const out = await callOperation(
+        'write',
+        { path: join(realpathSync(link), 'a.txt'), content: 'new\n' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      expect(readFileSync(join(real, 'a.txt'), 'utf8')).toBe('new\n');
+      // Keyed the way the walk sees it, so the sweep stays quiet: a path the
+      // sweep cannot key (the physical absolute) reads as an unattributed
+      // create of a.txt instead.
+      expect(journal.entries()[0]?.path).toBe('a.txt');
+      expect(
+        reconcile(journal, baseline, link, {
+          sessionId: 's1',
+          agentId: 'root',
+          timestamp: Date.now(),
+        }),
+      ).toBe(0);
+    },
+  );
+
+  it('does not resolve through a realpath failure that is not a missing component', async () => {
+    const { root, c } = setup();
+    writeFileSync(join(root, 'a.txt'), 'old\n');
+    const written: string[] = [];
+    const renamed: string[][] = [];
+    // A seam whose realpath answers for the parent but fails the leaf with
+    // EACCES: the resolution is UNKNOWN, so the writer must fall back to the
+    // named path (and the seam's own confinement), never to a guessed
+    // resolved one.
+    const fake: FileSystem = {
+      readFile: () => 'old\n',
+      writeFile: (path) => {
+        written.push(path);
+      },
+      rename: (from, to) => {
+        renamed.push([from, to]);
+      },
+      listDir: () => [],
+      stat: () => ({ isFile: true, isDirectory: false, size: 4, mode: 0o644 }),
+      realpath: (path) => {
+        if (path === 'a.txt') {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return '/fake-root';
+      },
+      unlink: () => undefined,
+    };
+    const out = await callOperation(
+      'write',
+      { path: 'a.txt', content: 'new\n' },
+      inv(),
+      { ...c, env: { ...c.env, fs: fake } },
+    );
+    expect(out.ok).toBe(true);
+    expect(written[0]).toMatch(/^a\.txt\.kubic-tmp-\d+-\d+$/);
+    expect(renamed[0]?.[1]).toBe('a.txt');
+  });
+
+  it.runIf(posix)(
+    'collects crash residue at its own tmp name before writing',
+    async () => {
+      const { root, c } = setup();
+      writeFileSync(join(root, 'a.txt'), 'old\n');
+      // Residue from a crashed run (another pid, so this writer never
+      // overwrites it): without the sweep it lingers forever and the next
+      // end-of-run sweep journals it as an unattributed create.
+      writeFileSync(join(root, 'a.txt.kubic-tmp-4242-9'), 'stale\n');
+      const out = await callOperation(
+        'write',
+        { path: 'a.txt', content: 'new\n' },
+        inv(),
+        c,
+      );
+      expect(out.ok).toBe(true);
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n');
+      expect(tmpNames(root)).toEqual([]);
     },
   );
 

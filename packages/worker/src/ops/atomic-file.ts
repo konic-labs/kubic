@@ -3,7 +3,7 @@
 // file's mode. All I/O goes through the confined ctx.env.fs seam.
 
 import { createHash } from 'node:crypto';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { FileSystem } from '../../../exec/src/env.js';
 import type { JournalEntryInput } from '../../../exec/src/journal.js';
 import type { OpContext } from './types.js';
@@ -68,9 +68,12 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
 // name replaces the link with a regular file — the link is silently lost
 // and its target keeps the old content. The tmp is written beside the
 // RESOLVED file and renamed onto it, so the link survives and the real file
-// changes. A resolution that leaves the workspace is refused first (a
-// `symlink_escape` OpError, journal untouched): following the link would
-// write outside the guardrail. A failed write or rename removes its tmp.
+// changes. The journal records the RESOLVED path in that case, so the
+// end-of-run sweep (§42) keys the file the walk sees and undo restores the
+// target instead of replacing the link. A resolution that leaves the
+// workspace is refused first (a `symlink_escape` OpError, journal
+// untouched): following the link would write outside the guardrail. A
+// failed write or rename removes its tmp.
 export function replaceFile(
   ctx: OpContext,
   opName: string,
@@ -82,11 +85,11 @@ export function replaceFile(
     'sessionId' | 'agentId' | 'toolCallId' | 'timestamp' | 'path'
   >,
 ): void {
-  const target = writeTarget(ctx, opName, path);
+  const write = writeTarget(ctx, opName, path);
   if (ctx.journal !== undefined) {
     try {
       ctx.journal.append({
-        path,
+        path: write.journalPath,
         ...entry,
         sessionId: ctx.sessionId,
         agentId: ctx.agentId,
@@ -100,6 +103,8 @@ export function replaceFile(
       );
     }
   }
+  const target = write.target;
+  sweepTmpResidue(ctx.env.fs, target);
   const tmp = tmpNameFor(target);
   // A stale tmp can already sit at this exact name (a crashed run, then pid
   // reuse): clear it best-effort first, so the write never inherits its
@@ -116,31 +121,77 @@ export function replaceFile(
   }
 }
 
+interface WriteTarget {
+  /** Where the bytes must land: the caller's path with symlinks resolved. */
+  target: string;
+  /**
+   * What the journal records: the caller's path verbatim, unless a link was
+   * followed — then the resolved file, relative to the workspace root.
+   */
+  journalPath: string;
+}
+
+function inside(base: string, path: string): boolean {
+  return path === base || path.startsWith(base + sep);
+}
+
+// Root-relative, '/'-separated (the walk's key spelling), so a journaled
+// path keys exactly like the baseline entry for the same file.
+function rootKey(base: string, path: string): string {
+  return relative(base, path).split(sep).join('/');
+}
+
 // Where a write to `path` must land, and whether that is allowed. The
 // caller's named path is kept when the seam cannot resolve links (test
-// doubles) or when the path is already outside the workspace lexically —
-// there the seam's own confinement error is the honest one.
-function writeTarget(ctx: OpContext, opName: string, path: string): string {
+// doubles, an unresolvable component) — there the seam's own confinement
+// and the OS decide, exactly as before #140.
+function writeTarget(
+  ctx: OpContext,
+  opName: string,
+  path: string,
+): WriteTarget {
   const fs = ctx.env.fs;
   const cwd = resolve(ctx.env.cwd);
   const lexical = resolve(cwd, path);
-  if (lexical !== cwd && !lexical.startsWith(cwd + sep)) return path;
   const root = resolveThroughLinks(fs, cwd);
   const target = resolveThroughLinks(fs, path);
-  if (root === undefined || target === undefined) return path;
-  if (target !== root && !target.startsWith(root + sep)) {
-    throw new OpError(
-      'symlink_escape',
-      `${opName} not applied: '${path}' resolves to '${target}', outside the workspace`,
-    );
+  if (root === undefined || target === undefined)
+    return { target: path, journalPath: path };
+  if (!inside(root, target)) {
+    // Refuse a target that resolves outside the workspace — but only when
+    // the caller's path was inside it: lexically, or spelled through the
+    // workspace root's own realpath (macOS /tmp and /var resolve to
+    // /private/…, and the seam accepts that spelling). A path outside the
+    // workspace entirely is the seam's confinement to refuse, with its own
+    // honest error.
+    if (inside(cwd, lexical) || inside(root, lexical)) {
+      throw new OpError(
+        'symlink_escape',
+        `${opName} not applied: '${path}' resolves to '${target}', outside the workspace`,
+      );
+    }
+    return { target: path, journalPath: path };
   }
-  return target;
+  // A link was followed exactly when the resolved file is not the one the
+  // caller's path names. Then the journal names the file whose content
+  // actually changed: the sweep keys it like the walk does, `diff` shows the
+  // real path, and undo restores the target instead of replacing the link.
+  const resolvedKey = target === root ? undefined : rootKey(root, target);
+  const lexicalKey = inside(cwd, lexical) ? rootKey(cwd, lexical) : undefined;
+  const journalPath =
+    resolvedKey !== undefined && resolvedKey !== lexicalKey
+      ? resolvedKey
+      : path;
+  return { target, journalPath };
 }
 
 // The physical spelling of `path`: every existing prefix resolved, the
 // components that do not exist yet appended verbatim (a write may create
-// them). undefined when the seam cannot resolve links at all or reaches the
-// filesystem root without resolving anything.
+// them). undefined when the seam cannot resolve links at all, or when a
+// component fails for a reason other than "does not exist" — EACCES, ELOOP
+// — because guessing the verbatim path there could hide a link the OS would
+// follow. The caller then falls back to the named path, whose confinement
+// the seam enforces as before.
 function resolveThroughLinks(fs: FileSystem, path: string): string | undefined {
   const realpath = fs.realpath;
   if (realpath === undefined) return undefined;
@@ -150,7 +201,9 @@ function resolveThroughLinks(fs: FileSystem, path: string): string | undefined {
     try {
       const real = realpath.call(fs, head);
       return missing.length === 0 ? real : join(real, ...missing);
-    } catch {
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return undefined;
       const parent = dirname(head);
       if (parent === head) return undefined;
       missing.unshift(basename(head));
@@ -175,5 +228,29 @@ function removeTmpBestEffort(fs: FileSystem, tmp: string): void {
     // Best-effort: the write/rename failure is the error the caller must
     // see, and a tmp that cannot be removed is not a second failure to
     // report. Seams without unlink leave it for the operator.
+  }
+}
+
+// Crash residue from an earlier run — a tmp whose write or rename never
+// finished — is never overwritten (the name is pid- and call-unique), so it
+// would sit in the workspace forever and the next sweep would journal it as
+// an unattributed create: the failure mode this issue removes for
+// exceptions, reached through the crash path instead. Collect the siblings
+// this writer can name before writing, exactly as the journal's restore path
+// collects its own `.kubic-restore-*` residue. Best-effort and confined to
+// `<basename(target)>.kubic-tmp-*` in the target's own directory.
+function sweepTmpResidue(fs: FileSystem, target: string): void {
+  if (fs.listDir === undefined || fs.unlink === undefined) return;
+  const dir = dirname(target);
+  const prefix = `${basename(target)}.kubic-tmp-`;
+  let names: string[];
+  try {
+    names = fs.listDir(dir);
+  } catch {
+    return; // An unreadable or absent directory has nothing to sweep.
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    removeTmpBestEffort(fs, join(dir, name));
   }
 }

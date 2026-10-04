@@ -842,6 +842,17 @@ describe('proxy credentials in the tool env (issue #366)', () => {
     });
     expect(JSON.stringify(out)).not.toContain('sekret');
   });
+
+  it('strips a scheme-less value whose path contains :// (never fails open)', () => {
+    // Anchoring the scheme at position 0 is what keeps this from returning
+    // the value untouched: searching the whole string for '://' sliced the
+    // "authority" out of the path and missed the '@' entirely.
+    const out = toolSpawnEnv({
+      HTTP_PROXY: 'user:sekret@proxy.corp:3128/path://x',
+    });
+    expect(out.HTTP_PROXY).toBe('proxy.corp:3128/path://x');
+    expect(JSON.stringify(out)).not.toContain('sekret');
+  });
 });
 
 describe('kill escalation reaches the whole group', () => {

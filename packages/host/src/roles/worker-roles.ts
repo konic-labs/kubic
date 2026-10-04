@@ -134,7 +134,11 @@ export function roleForAgent(
   roles: Readonly<Record<string, string>> = {},
 ): string | undefined {
   if (!agents.includes(agentId)) return undefined;
-  return roles[agentId] ?? DEFAULT_WORKER_ROLE;
+  // OWN property only: an agent id is `[A-Za-z0-9_-]+`, so `toString`,
+  // `constructor` and friends are legal ids — a plain `roles[id]` lookup
+  // would return `Object.prototype`'s member and treat a FUNCTION as the
+  // role (review finding, #178).
+  return Object.hasOwn(roles, agentId) ? roles[agentId] : DEFAULT_WORKER_ROLE;
 }
 
 // The worker prompt: the role document's `## Prompt` text plus that
@@ -223,7 +227,9 @@ export function planWorkerRoles(input: WorkerRolesInput): WorkerRolesPlan {
         // role's own config pin, then the manager's model — never the role
         // NAME and never a hardcoded provider.
         modelRef:
-          input.models?.[agentId] ??
+          (input.models !== undefined && Object.hasOwn(input.models, agentId)
+            ? input.models[agentId]
+            : undefined) ??
           selected.resolved.model ??
           input.parentModel,
         thinking: input.thinkingOverride ?? fallbackThinking,

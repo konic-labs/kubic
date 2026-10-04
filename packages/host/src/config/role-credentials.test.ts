@@ -331,6 +331,22 @@ describe('workerCredentialDoctorProbe (issue #200)', () => {
     expect(probe.detail).toContain("provider 'unusable'");
   });
 
+  it('qualifies the entry with the agent id only when one role resolves to several providers (issue #178)', () => {
+    const probe = workerCredentialDoctorProbe(
+      [
+        { agentId: 'a', role: 'implementer', modelRef: 'gw/m1' },
+        { agentId: 'b', role: 'implementer', modelRef: 'anthropic/claude' },
+        // Two planners on one provider stay collapsed: one role, one line.
+        { agentId: 'c', role: 'planner', modelRef: 'gw/m1' },
+        { agentId: 'd', role: 'planner', modelRef: 'gw/m1' },
+      ],
+      deps,
+    );
+    expect(probe.detail).toBe(
+      'a(implementer)→gw, b(implementer)→anthropic, planner→gw',
+    );
+  });
+
   it('names the fallback provider when no role is assigned', () => {
     const probe = workerCredentialDoctorProbe([], deps);
     expect(probe).toEqual({

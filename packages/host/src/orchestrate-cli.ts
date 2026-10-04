@@ -213,8 +213,11 @@ export function parseAgentBindings(
     return { ok: false, reason: 'Name at least one worker id.' };
   }
   const ids: string[] = [];
-  const roles: Record<string, string> = {};
-  const models: Record<string, string> = {};
+  // Null-prototype maps: an agent id is `[A-Za-z0-9_-]+`, so `__proto__` is
+  // a legal id — assigning it on a plain object would set the prototype and
+  // silently drop the binding (review finding, #178).
+  const roles: Record<string, string> = Object.create(null);
+  const models: Record<string, string> = Object.create(null);
   for (const entry of entries) {
     const parts = entry.split(':').map((part) => part.trim());
     if (parts.length > 3 || parts.some((part) => part === '')) {
@@ -265,8 +268,13 @@ function parseStoredBinding(
   agents: readonly string[],
   kind: 'roles' | 'models',
 ): Record<string, string> | undefined {
-  if (typeof raw !== 'object' || raw === null) return undefined;
-  const out: Record<string, string> = {};
+  // An array is an object too, but never a record of agent ids.
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  // Null-prototype, like the parser: a stored `__proto__` key must stay an
+  // own key, never become the record's prototype.
+  const out: Record<string, string> = Object.create(null);
   for (const [agent, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value !== 'string') return undefined;
     if (!agents.includes(agent)) return undefined;
@@ -1603,24 +1611,45 @@ export async function runOrchestrateCommand(
       records: [],
     };
   }
-  // The binding in force: the stored one on a resume (never re-derived from
-  // the CLI defaults), the parsed one otherwise.
-  const stateBinding: WorkerRoleBinding = {
-    roles: { ...(state.roles ?? {}) },
-    models: { ...(state.models ?? {}) },
-  };
-  // --resume re-applies the STORED assignment; a flag naming a different one
-  // is refused rather than silently mixed in (the --budget rule, issue #208).
+  // --resume re-applies the STORED assignment; a flag naming a DIFFERENT one
+  // is refused rather than silently mixed in (the --budget rule, issue
+  // #208). Two carve-outs (review finding, #178): a state written before the
+  // binding persisted has nothing to differ from — the flag is adopted
+  // below — and a bare `--agents a,b` carries no assignment at all (the ids
+  // are ignored on resume regardless).
+  const stateStoresBinding =
+    state.roles !== undefined || state.models !== undefined;
+  const flagCarriesBinding = !bindingIsEmpty(parsed.binding);
   if (
     parsed.resume &&
     options.agents !== undefined &&
-    !bindingsEqual(stateBinding, parsed.binding)
+    stateStoresBinding &&
+    flagCarriesBinding &&
+    !bindingsEqual(
+      { roles: state.roles ?? {}, models: state.models ?? {} },
+      parsed.binding,
+    )
   ) {
     log.error(
       `--agents differs from the assignment stored for session '${sessionId}': --resume re-applies the stored one — drop the flag to continue`,
     );
     return RUN_EXIT_USAGE;
   }
+  // A pre-#178 state adopts the flag's assignment, so a later resume replays
+  // it (the budget rule's adoption, issue #208).
+  if (parsed.resume && !stateStoresBinding && flagCarriesBinding) {
+    state = {
+      ...state,
+      roles: { ...parsed.binding.roles },
+      models: { ...parsed.binding.models },
+    };
+  }
+  // The binding in force: the stored (or just adopted) one on a resume —
+  // never re-derived from the CLI defaults — the parsed one otherwise.
+  const stateBinding: WorkerRoleBinding = {
+    roles: { ...(state.roles ?? {}) },
+    models: { ...(state.models ?? {}) },
+  };
   // A per-agent clause must name an agent of THIS run: the stored session's
   // list on resume, the parsed --agents list otherwise. A clause for a worker
   // that never spawns would look configured while enforcing nothing

@@ -20,6 +20,7 @@ import type {
 import {
   MergeConflictError,
   managerCallsForMerge,
+  parseOrchestratorRunState,
   runOrchestrateCommand,
   workerSessionFor,
 } from './orchestrate-cli.js';
@@ -338,6 +339,64 @@ describe('per-agent role and model binding (issue #178)', () => {
       models: {},
     });
     expect(second.calls.run).toEqual(['b']);
+  });
+
+  it('adopts an --agents assignment for a state written before the binding persisted (issue #178)', async () => {
+    // The pre-#178 state has nothing to differ from (the --budget rule,
+    // issue #208): the flag is adopted and persisted, never refused.
+    const legacy: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-legacy',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const seen: Parameters<typeof echoRoles>[0] = [];
+    const world = makeWorld({
+      loadState: () => structuredClone(legacy),
+      loadWorkerRoles: echoRoles(seen),
+    });
+    const code = await runOrchestrateCommand(
+      {
+        resume: true,
+        session: 'sess-legacy',
+        agents: ['a:planner', 'b:reviewer'],
+      },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(seen[0]?.binding).toEqual({
+      roles: { a: 'planner', b: 'reviewer' },
+      models: {},
+    });
+    const saved = world.saved[world.saved.length - 1] as OrchestratorRunState;
+    expect(saved.roles).toEqual({ a: 'planner', b: 'reviewer' });
+  });
+
+  it('accepts a bare --agents on resume: the ids are ignored and carry no assignment (issue #178)', async () => {
+    const stored: OrchestratorRunState = {
+      version: 1,
+      sessionId: 'sess-bind',
+      prompt: 'demo',
+      agents: ['a', 'b'],
+      roles: { a: 'planner' },
+      merged: [],
+      pending: ['a', 'b'],
+      stopped: false,
+      records: [],
+    };
+    const world = makeWorld({ loadState: () => structuredClone(stored) });
+    const code = await runOrchestrateCommand(
+      { resume: true, session: 'sess-bind', agents: ['a', 'b'] },
+      world.deps,
+    );
+    expect(code).toBe(0);
+    expect(world.errLines.join('\n')).not.toMatch(
+      /differs from the assignment/,
+    );
   });
 
   it('refuses a --resume whose --agents binding differs from the stored one (issue #178)', async () => {
@@ -1310,6 +1369,46 @@ describe('orchestrate resume state validation (issue #76 fix)', () => {
       expect(world.calls.run).toEqual([]);
     },
   );
+
+  it('refuses every malformed stored role/model binding shape (issue #178)', () => {
+    // The same table discipline as the stored budget (issue #220): a
+    // half-read assignment must refuse the resume, never apply partly.
+    const bindings: unknown[] = [
+      { roles: null },
+      { roles: [] },
+      { roles: 'planner' },
+      { roles: { alpha: 42 } },
+      // A key that names no worker of the stored run.
+      { roles: { ghost: 'planner' } },
+      // A role outside the five.
+      { roles: { alpha: 'teleporter' } },
+      { models: null },
+      { models: { alpha: 'not-a-ref' } },
+      { models: { alpha: '/m1' } },
+      { models: { ghost: 'acme/m1' } },
+      { models: { alpha: 7 } },
+    ];
+    for (const binding of bindings) {
+      expect(
+        parseOrchestratorRunState(
+          { ...validBase, ...(binding as Record<string, unknown>) },
+          'sess-1',
+        ),
+        JSON.stringify(binding),
+      ).toBeUndefined();
+    }
+    // A valid assignment round-trips.
+    const ok = parseOrchestratorRunState(
+      {
+        ...validBase,
+        roles: { alpha: 'planner' },
+        models: { alpha: 'acme/m1' },
+      },
+      'sess-1',
+    );
+    expect(ok?.roles).toEqual({ alpha: 'planner' });
+    expect(ok?.models).toEqual({ alpha: 'acme/m1' });
+  });
 });
 
 // Issue #103: the manager lane is live. The run registers its toolset through

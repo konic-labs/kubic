@@ -166,6 +166,22 @@ async function initRepo(providerUrl: string): Promise<string> {
   return root;
 }
 
+// A second provider in the untracked project catalog, so an ambient or
+// per-agent pin can name a provider the role's pin does not.
+function addOtherProvider(root: string, url: string): void {
+  const catalog = JSON.parse(
+    readFileSync(join(root, 'models.json'), 'utf8'),
+  ) as { providers: Record<string, unknown>[] };
+  catalog.providers.push({
+    id: 'other',
+    baseUrl: url,
+    api: 'openai-completions',
+    apiKeyEnv: 'OTHER_API_KEY',
+    models: [{ id: 'm1' }],
+  });
+  writeFileSync(join(root, 'models.json'), JSON.stringify(catalog));
+}
+
 interface Harness {
   root: string;
   dumpDir: string;
@@ -256,17 +272,7 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     // handed the worker a key its provider never runs with.
     const provider = await fakeProvider();
     const root = await initRepo(provider.url);
-    const catalog = JSON.parse(
-      readFileSync(join(root, 'models.json'), 'utf8'),
-    ) as { providers: { id: string }[] };
-    catalog.providers.push({
-      id: 'other',
-      baseUrl: provider.url,
-      api: 'openai-completions',
-      apiKeyEnv: 'OTHER_API_KEY',
-      models: [{ id: 'm1' }],
-    } as never);
-    writeFileSync(join(root, 'models.json'), JSON.stringify(catalog));
+    addOtherProvider(root, provider.url);
     vi.stubEnv('GW_API_KEY', SECRET);
     vi.stubEnv('OTHER_API_KEY', 'sk-other-not-a-real-key');
     vi.stubEnv('KUBIC_MODEL', 'other/m1');
@@ -292,6 +298,34 @@ describe('prod orchestrate worker credentials (issue #200)', () => {
     // The child runs the role pin…
     expect(env.KUBIC_MODEL).toBe('gw/m1');
     // …and holds exactly that provider's key, not the ambient pin's.
+    expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
+    expect(env.KUBIC_ROLE_PLANNER_OTHER_API_KEY).toBeUndefined();
+  });
+
+  it('grants the provider of the per-agent --agents pin, not the ambient KUBIC_MODEL (issue #178)', async () => {
+    // The highest §38.1 level is the explicit per-agent pin; the ambient
+    // operator pin is overwritten in the child, so the GRANT must follow the
+    // flag — the pre-fix order resolved (and refused on) the ambient
+    // provider's credential instead.
+    const provider = await fakeProvider();
+    const root = await initRepo(provider.url);
+    addOtherProvider(root, provider.url);
+    vi.stubEnv('GW_API_KEY', SECRET);
+    vi.stubEnv('OTHER_API_KEY', 'sk-other-not-a-real-key');
+    vi.stubEnv('KUBIC_MODEL', 'other/m1');
+    const h = await harness(root, { model: { provider: 'other', id: 'm1' } });
+    const code = await runOrchestrateCommand(
+      {
+        prompt: `do the thing ${WORKER_ENV_DIR_MARKER}${h.dumpDir}`,
+        agents: ['alpha:planner:gw/m1'],
+        yes: true,
+        session: 'flagpincreds',
+      },
+      h.deps,
+    );
+    expect(code, [...h.errLines, ...h.lines].join('\n')).toBe(0);
+    const env = dumpOf(h, 'alpha');
+    expect(env.KUBIC_MODEL).toBe('gw/m1');
     expect(env.KUBIC_ROLE_PLANNER_GW_API_KEY).toBe(SECRET);
     expect(env.KUBIC_ROLE_PLANNER_OTHER_API_KEY).toBeUndefined();
   });

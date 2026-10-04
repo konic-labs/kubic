@@ -279,14 +279,31 @@ export function workerCredentialDoctorProbe(
       detail: `no roles assigned; workers resolve ${deps.resolution.fallbackProvider ?? 'no provider'}`,
     };
   }
+  const pairs = requests.map((request) => {
+    const grant = plan.grants.get(request.agentId);
+    return {
+      agentId: request.agentId,
+      role: request.role,
+      provider: grant?.provider ?? 'no provider',
+    };
+  });
   // One entry per DISTINCT role→provider pair: two workers of the same role
   // resolve the same provider, and the line names what each role gets
-  // (issue #178 — the default delegation set is now two implementers).
+  // (issue #178 — the default delegation set is two implementers). When one
+  // role resolves to SEVERAL providers (per-agent `--agents <id>:<role>:<provider/id>`
+  // pins), the agent id qualifies the entry, so the line still says which
+  // worker is which.
+  const providersByRole = new Map<string, Set<string>>();
+  for (const pair of pairs) {
+    const seen = providersByRole.get(pair.role) ?? new Set<string>();
+    seen.add(pair.provider);
+    providersByRole.set(pair.role, seen);
+  }
   const parts = [
     ...new Set(
-      requests.map((request) => {
-        const grant = plan.grants.get(request.agentId);
-        return `${request.role}→${grant?.provider ?? 'no provider'}`;
+      pairs.map((pair) => {
+        const qualified = (providersByRole.get(pair.role)?.size ?? 0) > 1;
+        return `${qualified ? `${pair.agentId}(${pair.role})` : pair.role}→${pair.provider}`;
       }),
     ),
   ];

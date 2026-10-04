@@ -125,6 +125,28 @@ describe('delegation-path role assignment (issue #104, §12)', () => {
     );
   });
 
+  it('never mistakes an Object.prototype member for a binding (issue #178)', () => {
+    // `toString` / `constructor` / `__proto__` are legal agent ids, so a
+    // plain `roles[id]` lookup would hand back a FUNCTION as the role.
+    expect(roleForAgent(['toString'], 'toString')).toBe('implementer');
+    expect(roleForAgent(['constructor'], 'constructor')).toBe('implementer');
+    expect(roleForAgent(['__proto__'], '__proto__')).toBe('implementer');
+    const plan = planFor(['toString', 'constructor'], {
+      roles: { toString: 'planner' },
+    });
+    expect(
+      plan.assignments.map((entry) => [entry.agentId, entry.role]),
+    ).toEqual([
+      ['toString', 'planner'],
+      ['constructor', 'implementer'],
+    ]);
+    // A `__proto__` model pin is a binding too, not a prototype.
+    const pinned = planFor(['__proto__'], {
+      models: { ['__proto__']: 'acme/m' },
+    });
+    expect(pinned.assignments[0]?.modelRef).toBe('acme/m');
+  });
+
   it('assigns the explicit per-agent roles the caller bound (issue #178)', () => {
     const plan = planFor(['alpha', 'beta'], TWO_ROLES);
     expect(plan.refused).toEqual([]);

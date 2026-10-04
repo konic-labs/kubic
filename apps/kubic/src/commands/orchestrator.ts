@@ -47,6 +47,11 @@ function budgetSpec(raw: string): ParsedBudgetSpec {
   return spec;
 }
 
+// A repeatable flag's collector: commander calls it once per occurrence.
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function positiveInt(raw: string): number {
   const value = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1) {
@@ -72,6 +77,7 @@ Examples:
   kubic orchestrate -p "fix the flaky tests" --yes --budget maxToolCalls=20
   kubic orchestrate -p "refactor" --concurrency 4 --agents api,ui,docs,cli
   kubic orchestrate -p "migrate the modules" --agents a,b,c --on-failure continue
+  kubic orchestrate -p "use our conventions" --skill ./skills/house-style
   kubic orchestrate --resume --session orch-1790000000000
   kubic orchestrate -p "refactor" --json
 
@@ -135,6 +141,12 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     )
     .option('--yes', 'auto-approve every merge (non-interactive)')
     .option(
+      '--skill <path>',
+      'skill every worker and the resolver are granted (repeatable); a relative path resolves against this cwd',
+      collect,
+      [],
+    )
+    .option(
       '--budget <dims>',
       'opt-in per-worker budget, e.g. maxToolCalls=20 or w1:maxCostUsd=1;w2:maxTokens=5000',
       budgetSpec,
@@ -146,20 +158,24 @@ export const registerOrchestratorCommands: CommandRegistrar = (
     .option('--full-access', 'deprecated alias of --dangerously-skip-approvals')
     .option('--json', 'print one JSON envelope on stdout')
     .addHelpText('after', ORCHESTRATE_EXAMPLES)
-    .action(async ({ dangerouslySkipApprovals, fullAccess, ...rest }) => {
-      // Issue #308: one flag name for full access across every command;
-      // `--full-access` still works and says what replaced it.
-      if (fullAccess === true) {
-        ctx.err(
-          'hint: --full-access is deprecated — use --dangerously-skip-approvals',
-        );
-      }
-      const options =
-        dangerouslySkipApprovals === true || fullAccess === true
-          ? { ...rest, fullAccess: true }
-          : rest;
-      ctx.setExitCode(await runners.orchestrate(options, config));
-    });
+    .action(
+      async ({ dangerouslySkipApprovals, fullAccess, skill, ...rest }) => {
+        // Issue #308: one flag name for full access across every command;
+        // `--full-access` still works and says what replaced it.
+        if (fullAccess === true) {
+          ctx.err(
+            'hint: --full-access is deprecated — use --dangerously-skip-approvals',
+          );
+        }
+        // Issue #170: `--skill` is repeatable; the typed option is the list.
+        const base = { ...rest, skills: skill ?? [] };
+        const options =
+          dangerouslySkipApprovals === true || fullAccess === true
+            ? { ...base, fullAccess: true }
+            : base;
+        ctx.setExitCode(await runners.orchestrate(options, config));
+      },
+    );
 
   program
     .command('clean')

@@ -13,7 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 // §67 (issue #191): the task and the capability grant travel together — the
 // manager builds and validates the task it hands a worker child.
@@ -585,6 +585,25 @@ function writeAgentTask(
   const relative = join(sessionId, AGENT_TASK_FILE);
   sessionBridge.writeFile(relative, `${JSON.stringify(task)}\n`);
   return sessionBridge.absolutePath(relative);
+}
+
+// `--skill` values (issue #170): relative paths resolve against the MANAGER's
+// cwd — a child runs in its own worktree, where the same relative path would
+// name something else — and every value travels twice: as `--skill <abs>` on
+// the child's argv and as the §67 task's `resources.skills`, which is also
+// what the registry row records for `kubic workers`. Order is kept, duplicates
+// collapse.
+function resolveSkillPaths(
+  skills: readonly string[] | undefined,
+  cwd: string,
+): string[] {
+  if (skills === undefined || skills.length === 0) return [];
+  const out: string[] = [];
+  for (const skill of skills) {
+    const absolute = isAbsolute(skill) ? skill : resolve(cwd, skill);
+    if (!out.includes(absolute)) out.push(absolute);
+  }
+  return out;
 }
 
 // `provider/id` → the task's model selection; a ref without a usable split
@@ -1945,6 +1964,9 @@ export async function orchestrateDepsWithDefaults(
         info?.role ?? 'worker',
         info?.modelRef,
       );
+      // §67 task resources (issue #170): the run's `--skill` values, resolved
+      // against the manager's cwd.
+      const skills = resolveSkillPaths(info?.skills, cwd);
       // §67 (issue #191): the task and the capability grant travel together.
       // The manager builds and VALIDATES the worker's task before the child
       // exists — a task whose worktree is not absolute or whose tool set is
@@ -1970,6 +1992,7 @@ export async function orchestrateDepsWithDefaults(
           toolNames: info.tools ?? [],
           ...(budgetForSpawn === undefined ? {} : { budget: budgetForSpawn }),
           ...(model === undefined ? {} : { model }),
+          ...(skills.length === 0 ? {} : { resources: { skills } }),
         });
         if (!built.valid) {
           throw new AgentTaskRefusedError(agentId, built.errors);
@@ -2084,6 +2107,9 @@ export async function orchestrateDepsWithDefaults(
             '--json',
             '--timeout',
             String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
+            // §67 task resources (issue #170): the child's own `--skill`
+            // surface, absolute so it resolves in its worktree too.
+            ...skills.flatMap((skill) => ['--skill', skill]),
           ],
           provenance: provenanceFor(workerSession, agentId, 'worker-run'),
           ...(options.readyTimeoutMs === undefined
@@ -2111,6 +2137,9 @@ export async function orchestrateDepsWithDefaults(
           worktree: worktree.path,
           ...(modelPin === undefined ? {} : { model: modelPin }),
           ...(thinking === undefined ? {} : { thinking }),
+          // §67 task resources (issue #170): the registry row `kubic workers`
+          // reads prints them as `skills=…`.
+          ...(skills.length === 0 ? {} : { resources: { skills } }),
         },
         {
           shell: shellForWorktree(worktree.path),
@@ -2516,6 +2545,9 @@ export async function orchestrateDepsWithDefaults(
       // drops the resolver onto a default lane. Its session dir is the
       // conflicted worker's (same session id), so the file is named apart
       // from that worker's own task.
+      // §67 task resources (issue #170): the resolver gets the run's
+      // `--skill` values, resolved against the manager's cwd like a worker's.
+      const resolverSkills = resolveSkillPaths(request.skills, cwd);
       const resolverTask = buildAgentTask({
         taskId: `${workerSession}:${request.agentId}:resolver`,
         parentSessionId: sessionId,
@@ -2524,6 +2556,9 @@ export async function orchestrateDepsWithDefaults(
         worktree: request.worktree.path,
         toolNames: request.spec.tools,
         constraints: request.spec.constraints,
+        ...(resolverSkills.length === 0
+          ? {}
+          : { resources: { skills: resolverSkills } }),
       });
       if (!resolverTask.valid) {
         return {
@@ -2585,12 +2620,17 @@ export async function orchestrateDepsWithDefaults(
             '--json',
             '--timeout',
             String(options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS),
+            // §67 task resources (issue #170): the resolver's own `--skill`.
+            ...resolverSkills.flatMap((skill) => ['--skill', skill]),
           ],
           provenance: provenanceFor(
             workerSession,
             request.agentId,
             'resolver-run',
           ),
+          ...(resolverSkills.length === 0
+            ? {}
+            : { resources: { skills: resolverSkills } }),
           ...(options.readyTimeoutMs === undefined
             ? {}
             : { readyTimeoutMs: options.readyTimeoutMs }),

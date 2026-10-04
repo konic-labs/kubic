@@ -144,7 +144,11 @@ solo) — and `run` never delegates.
   fails closed. A worker with no role assignment gets no task file and keeps
   its own default lane. The resolver gets the same treatment, with its spec's
   writer tool set — never a fallback to the child's default. The task's
-  identity is what the worker's trajectory records.
+  identity is what the worker's trajectory records. The same task carries the
+  run's `--skill` values (issue #170) as `resources.skills`: they reach the
+  child as absolute `--skill <path>` arguments (resolved against the
+  manager's cwd, because a child runs in its own worktree) and are recorded
+  on the worker's registry row, so `kubic workers` prints `skills=…`.
 - **What reaches a worker's env (issue
   [#201](https://github.com/konic-labs/kubic/issues/201); §3.8, §35.1, §36.3).**
   A worker child starts from a fresh env built by the spawn allowlist

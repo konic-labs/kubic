@@ -176,6 +176,13 @@ export interface OrchestrateCliOptions {
   // failed worker named. Always `stop` for an approval terminus — a denial is
   // the user's decision for the whole run, never a worker-local hiccup.
   readonly onFailure?: 'stop' | 'continue';
+  /**
+   * `--skill <path>` (repeatable, issue #170): skills every worker AND the
+   * resolver are granted. Relative values are resolved against the manager's
+   * cwd by the run (a child runs in its own worktree), so the value here is
+   * whatever the operator typed.
+   */
+  readonly skills?: readonly string[];
 }
 
 /**
@@ -644,6 +651,8 @@ export interface WorkerSpawnInfo {
   modelRef?: string;
   /** §38.1 (issue #202): the thinking level this worker's child is told. */
   thinking?: string;
+  /** §67 task resources (issue #170): the `--skill` values this worker gets. */
+  skills?: string[];
 }
 
 // The §54 delegation DAG (§49.1 projection): the shipped run is one manager
@@ -1169,6 +1178,9 @@ interface ParsedArgs {
   // This run's worker-failure policy (issue #169), when the flag was given.
   // Absent means the stored policy (on --resume) or the shipped `stop`.
   onFailure?: 'stop' | 'continue';
+  // `--skill` values (issue #170), as typed: the run resolves relative paths
+  // against the manager's cwd before they reach a child.
+  skills: string[];
 }
 
 // --budget maxToolCalls=10                                  (every worker)
@@ -1368,6 +1380,7 @@ function parsedFrom(options: OrchestrateCliOptions): ParsedArgs {
       : { budget: options.budget.shared }),
     budgetsByAgent: options.budget?.byAgent ?? {},
     fullAccess: options.fullAccess === true,
+    skills: [...(options.skills ?? [])],
     ...(options.prompt === undefined ? {} : { prompt: options.prompt }),
     ...(options.session === undefined ? {} : { sessionId: options.session }),
     ...(options.concurrency === undefined
@@ -2461,6 +2474,9 @@ export async function runOrchestrateCommand(
           // a tool — absence, never approval. Absent means no role
           // document exists for this worker, so nothing is narrowed.
           ...spawnRoleInfo(agentId, rolePlan),
+          // §67 task resources (issue #170): the run's `--skill` values reach
+          // every worker, and the run resolves them against its own cwd.
+          ...(parsed.skills.length === 0 ? {} : { skills: [...parsed.skills] }),
         }),
       );
       if (output.result !== undefined) {

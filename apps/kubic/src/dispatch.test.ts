@@ -119,7 +119,8 @@ const PARSED: Readonly<Record<string, unknown>> = {
   doctor: { skip: [] },
   config: { json: true },
   trust: {},
-  orchestrate: {},
+  // `--skill` is repeatable: commander's collector yields [] when unused.
+  orchestrate: { skills: [] },
   clean: { dryRun: true },
   workers: { json: true },
   git: { command: 'status' },

@@ -27,6 +27,7 @@ export const DEFAULT_WORKER_CANCEL_GRACE_MS = 10_000;
 // that can carry one (shell.ts `allowlistedShell` is the Node binding;
 // the exec FakeExecutionEnv satisfies WorkerShell directly).
 
+import type { TaskResources } from '../../../agents/src/task.js';
 import type { Provenance } from '../../../exec/src/env.js';
 import type { FailureCode } from '../lane/failures.js';
 import { classifyFailure } from '../lane/failures.js';
@@ -120,6 +121,12 @@ export interface LaunchWorkerRequest {
   worktree?: string;
   model?: string;
   thinking?: string;
+  /**
+   * §67 task resources this spawn was granted (issue #170): recorded on the
+   * registry row, which is what `kubic workers` prints (`skills=…`). Absent
+   * means no resources were configured for the spawn.
+   */
+  resources?: TaskResources;
 }
 
 export interface LaunchWorkerDeps {
@@ -265,6 +272,9 @@ export function launchWorker(
       sessionId: request.sessionId,
       generation: 1,
       owner: request.owner ?? 'orchestrator',
+      ...(request.resources === undefined
+        ? {}
+        : { resources: request.resources }),
     });
   } else {
     registry.replace(request.workerId, existing.generation);

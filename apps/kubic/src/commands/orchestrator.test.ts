@@ -135,6 +135,7 @@ describe('kubic orchestrate (commander)', () => {
           },
           fullAccess: true,
           json: true,
+          skills: [],
         },
       },
     ]);
@@ -151,13 +152,14 @@ describe('kubic orchestrate (commander)', () => {
       prompt: 'ship it',
       session: 's1',
       resume: true,
+      skills: [],
     });
   });
 
   it('hands a flagless invocation to the runner, which owns the -p/--resume rule', async () => {
     const result = await run(['orchestrate']);
     expect(result.calls).toEqual([
-      { runner: 'orchestrate', config: CONFIG, args: {} },
+      { runner: 'orchestrate', config: CONFIG, args: { skills: [] } },
     ]);
   });
 
@@ -197,6 +199,7 @@ describe('kubic orchestrate (commander)', () => {
     expect(result.calls[0]?.args).toEqual({
       prompt: 'x',
       onFailure: 'continue',
+      skills: [],
     });
     expectUsage(
       await run(['orchestrate', '-p', 'x', '--on-failure', 'retry']),
@@ -228,6 +231,7 @@ describe('kubic orchestrate (commander)', () => {
       prompt: 'x',
       agents: ['a', 'b', 'c'],
       concurrency: 2,
+      skills: [],
     });
     // Zero, negatives and rubbish are usage errors, never a silent default.
     for (const value of ['0', '-1', '2.5', 'many']) {
@@ -236,6 +240,24 @@ describe('kubic orchestrate (commander)', () => {
         /--concurrency.*positive integer/i,
       );
     }
+  });
+
+  it('collects repeatable --skill values and hands them to the runner (issue #170)', async () => {
+    const result = await run([
+      'orchestrate',
+      '-p',
+      'x',
+      '--skill',
+      './skills/house.md',
+      '--skill',
+      '/abs/team.md',
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.calls[0]?.args).toMatchObject({
+      skills: ['./skills/house.md', '/abs/team.md'],
+    });
+    // A bare --skill without a value is a usage error, never an empty skill.
+    expectUsage(await run(['orchestrate', '-p', 'x', '--skill']), /skill/);
   });
 
   it('refuses an invalid --session id with exit 2', async () => {
@@ -402,7 +424,7 @@ describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
       {
         runner: 'orchestrate',
         config: CONFIG,
-        args: { prompt: 'x', fullAccess: true },
+        args: { prompt: 'x', fullAccess: true, skills: [] },
       },
     ]);
   });
@@ -414,7 +436,7 @@ describe('orchestrate --dangerously-skip-approvals (issue #308)', () => {
       {
         runner: 'orchestrate',
         config: CONFIG,
-        args: { prompt: 'x', fullAccess: true },
+        args: { prompt: 'x', fullAccess: true, skills: [] },
       },
     ]);
     expect(result.err.join('\n')).toContain('--full-access is deprecated');

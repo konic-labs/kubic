@@ -95,6 +95,8 @@ export interface AgentTaskInput {
   constraints?: readonly string[];
   expectedOutput?: string;
   model?: ModelSelection;
+  /** §67 task resources (issue #170): the skills this worker is granted. */
+  resources?: TaskResources;
 }
 
 // Build AND validate in one call (§67, issue #191): the manager builds the
@@ -119,6 +121,7 @@ export function buildAgentTask(input: AgentTaskInput): TaskValidation {
       ? {}
       : { expectedOutput: input.expectedOutput }),
     ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.resources === undefined ? {} : { resources: input.resources }),
   });
 }
 

@@ -35,6 +35,7 @@ import {
 import { SOLO_PROMPT_SECTION } from '../../worker/src/lane/solo.js';
 import { readSessionEntries } from '../../worker/src/lane/transcript.js';
 import { WorkerRegistry } from '../../worker/src/lifecycle/registry.js';
+import { workersListFromRepo } from '../../worker/src/lifecycle/rows.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -69,6 +70,7 @@ if (dumpDir !== undefined) {
   writeFileSync(dumpDir + '/' + id + '.json', JSON.stringify({
     cwd: process.cwd(),
     taskFile: process.env.KUBIC_TASK_FILE ?? null,
+    argv: process.argv.slice(2),
   }));
 }
 process.stdout.write('KUBIC_WORKER_READY ' + (process.env.KUBIC_WORKER_ID ?? '') + '\\n');
@@ -125,11 +127,12 @@ async function initRepo(committedTools: string[] | null): Promise<string> {
 interface Dump {
   cwd: string;
   taskFile: string | null;
+  argv: string[];
 }
 
 async function runOne(
   root: string,
-  options: { session?: string; agents?: string[] } = {},
+  options: { session?: string; agents?: string[]; skills?: string[] } = {},
 ): Promise<{ dump: Dump; dumpDir: string; code: number; lines: string[] }> {
   const fixture = join(scratchRoot('kubic-orch-191-child-'), 'child.mjs');
   writeFileSync(fixture, FIXTURE);
@@ -149,6 +152,7 @@ async function runOne(
       agents: options.agents ?? ['alpha'],
       yes: true,
       session: options.session ?? 'task191',
+      ...(options.skills === undefined ? {} : { skills: options.skills }),
     },
     deps,
   );
@@ -303,6 +307,36 @@ describe('prod orchestrate path: the worker gets its §67 task (issue #191)', ()
     expect(code).toBe(1);
     expect(lines.join('\n')).toMatch(/code=task_refused/);
     expect(lines.join('\n')).toMatch(/toolNames must be a non-empty/);
+  });
+});
+
+describe('prod orchestrate path: --skill reaches every worker (issue #170)', () => {
+  it('puts the run’s skills in the child argv, absolute, and in the task and the registry row', async () => {
+    const root = await initRepo(['read', 'ls']);
+    mkdirSync(join(root, 'skills'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'house.md'), '# house\n');
+    // Committed: an untracked file would trip the pre-merge clean-tree guard.
+    execFileSync('git', ['add', '-A'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'add the skill'], { cwd: root });
+    const absolute = join(root, 'skills', 'house.md');
+    const { dump, code, lines } = await runOne(root, {
+      // Relative on purpose: the child runs in its own worktree, so the
+      // manager resolves it against ITS cwd before the value travels.
+      skills: ['./skills/house.md'],
+    });
+    expect(code, lines.join('\n')).toBe(0);
+    const at = dump.argv.indexOf('--skill');
+    expect(at).toBeGreaterThan(-1);
+    expect(dump.argv[at + 1]).toBe(absolute);
+    // §67 task resources travel with the task…
+    const task = JSON.parse(readFileSync(dump.taskFile as string, 'utf8')) as {
+      resources?: { skills?: string[] };
+    };
+    expect(task.resources).toEqual({ skills: [absolute] });
+    // …and the registry row is what `kubic workers` reads (the run persists
+    // it to <repo>/.kubic/orchestrator/workers.json).
+    const rows = workersListFromRepo(root);
+    expect(rows[0]?.resources).toEqual({ skills: [absolute] });
   });
 });
 

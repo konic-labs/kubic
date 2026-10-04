@@ -21,6 +21,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  GenerationTask,
   Harness,
   ToolResultEntry,
 } from '../../worker/src/pi-boundary.js';
@@ -290,6 +291,53 @@ describe('sessions CLI (issue #14, slice F)', () => {
     const text = o.lines.join('\n');
     expect(text).toContain('owned');
     expect(text).not.toContain('\u001b');
+  });
+
+  it('names the unfinished durable work a crashed run left behind', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    const harness = await Harness.open(
+      session.storage,
+      { models: fauxModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    // A live task record a dead process would have left: created without
+    // enabling scheduling, then the storage is closed under it.
+    await harness.commit(async (tx) => {
+      await tx.createTask(
+        GenerationTask,
+        {},
+        {
+          ownership: { kind: 'conversation' },
+          conversationId: conversation.id,
+        },
+      );
+      // A queued input that never reached the transcript either.
+      await tx.createSubmission({
+        type: 'input',
+        conversationId: conversation.id,
+        status: 'queued',
+      });
+    }, BACKGROUND_CONTEXT);
+    await harness.close(BACKGROUND_CONTEXT);
+    await session.release(BACKGROUND_CONTEXT);
+
+    const o = out();
+    const code = await runSessionsCommand(
+      { command: 'attach', id: session.id, tail: 0 },
+      { sessionsRoot: root, out: o.write },
+    );
+    expect(code).toBe(0);
+    expect(o.lines).toContain('pending task: pi.generation (pending)');
+    expect(o.lines).toContain('pending submission: input (queued)');
   });
 
   it('fails cleanly for unknown sessions and unsafe ids', async () => {

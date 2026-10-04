@@ -13,12 +13,15 @@ import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
+  defineExtension,
+  defineTool,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   Harness,
   MemoryStorage,
   type Storage,
+  Type,
 } from '../../../../worker/src/pi-boundary.js';
 import { FAUX_PROVIDER_ID } from '../../faux-provider.js';
 import { REDACTED_SECRET } from '../../policy/secret-shapes.js';
@@ -392,13 +395,13 @@ describe('kubic cost durable usage (issue #400)', () => {
   });
 
   // A real faux harness over one storage, with one tool-call turn stored.
-  async function fauxRun(storage: Storage) {
+  async function fauxRun(storage: Storage, registry = createRegistry()) {
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
     const harness = await Harness.open(
       storage,
-      { models, registry: createRegistry() },
+      { models, registry },
       BACKGROUND_CONTEXT,
     );
     open.push(harness);
@@ -445,6 +448,76 @@ describe('kubic cost durable usage (issue #400)', () => {
     // The faux run really did spend tokens (not a vacuous match).
     expect(totals.input).toBeGreaterThan(0);
     expect(rows[0]?.key).toBe(MODEL_REF);
+  });
+
+  it('reports a tool that spends its own tokens as a tool:<name> row', async () => {
+    // A tool that reports `usage` on its result lands in `pi.usage.tools`
+    // (pi-durable), so the readout must carry it beside the model rows.
+    const spend = defineTool({
+      name: 'spend',
+      description: 'reports its own usage',
+      parameters: Type.Object({}),
+      execute: async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: {
+          input: 5,
+          output: 2,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 7,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0.0005,
+          },
+        },
+      }),
+    });
+    const registry = createRegistry();
+    registry.install(
+      defineExtension({ name: 'spending-tool', tools: [spend] }),
+    );
+    const storage = new MemoryStorage();
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const harness = await Harness.open(
+      storage,
+      { models, registry },
+      BACKGROUND_CONTEXT,
+    );
+    open.push(harness);
+    const conversation = await harness.root(BACKGROUND_CONTEXT, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    });
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('spend', {})], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('spent'),
+    ]);
+    await (
+      await conversation.submit(
+        { type: 'input', content: 'spend something' },
+        BACKGROUND_CONTEXT,
+      )
+    ).wait(BACKGROUND_CONTEXT);
+
+    const expected = await harness.usage(BACKGROUND_CONTEXT);
+    expect(Object.keys(expected.tools)).toEqual(['spend']);
+    const rows = await readSessionUsage(storage, BACKGROUND_CONTEXT);
+    const tool = rows.find((row) => row.kind === 'tool');
+    expect(tool?.key).toBe('spend');
+    expect(tool?.usage.cost.total).toBeCloseTo(0.0005);
+    // The totals include the tool's own spend.
+    expect(totalSessionUsage(rows).input).toBe(
+      Object.values(expected.models).reduce(
+        (acc, usage) => acc + usage.input,
+        0,
+      ) + 5,
+    );
   });
 
   it('loads one row per usage bucket from a stored session', async () => {

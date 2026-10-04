@@ -169,12 +169,6 @@ function itemFor(entry: EntryRecord): TranscriptItem | undefined {
   return undefined;
 }
 
-function entryOrder(left: EntryRecord, right: EntryRecord): number {
-  const a = typeof left.id === 'number' ? left.id : 0;
-  const b = typeof right.id === 'number' ? right.id : 0;
-  return a - b;
-}
-
 // Map durable entries to transcript items, in transcript order. Callers may
 // hand entries in any order (storage scans are newest-first): entry ids are
 // assigned in commit order, so sorting by id restores the order the session
@@ -183,7 +177,7 @@ export function entriesToTranscript(
   entries: readonly EntryRecord[],
 ): TranscriptItem[] {
   const items: TranscriptItem[] = [];
-  for (const entry of [...entries].sort(entryOrder)) {
+  for (const entry of [...entries].sort((left, right) => left.id - right.id)) {
     const item = itemFor(entry);
     if (item !== undefined) items.push(item);
   }

@@ -1681,9 +1681,9 @@ otherwise. The exit code is:
 
 Reads real usage out of the durable session store: one `AGENT / MODEL /
 TOKENS / COST` row per usage bucket a session recorded — each
-`provider/model`, and each tool that reported its own spend — followed by
-`task total $<sum> (<n> agents)`. The total is exactly the sum of the
-rows.
+`provider/model`, and each tool that reported its own spend (labelled
+`tool:<name>`) — followed by `task total $<sum> (<n> agents)`. The total is
+exactly the sum of the rows.
 
 The numbers are the session's `pi.usage` documents, summed per bucket, so
 they match what `Harness.usage()` reports for the same run. Reading is

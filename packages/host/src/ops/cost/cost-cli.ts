@@ -258,7 +258,9 @@ export async function loadSessionCostRows(
       )) {
         rows.push({
           agentId: entry.id,
-          model: row.key,
+          // A tool bucket has no provider/model identity: it is labelled
+          // `tool:<name>` so the readout never looks like a model row.
+          model: row.kind === 'tool' ? `tool:${row.key}` : row.key,
           costUsd: num(row.usage.cost?.total),
           input: row.usage.input,
           output: row.usage.output,

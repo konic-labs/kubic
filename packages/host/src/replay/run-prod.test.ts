@@ -67,22 +67,26 @@ function request(): ReplayRunRequest {
     worktree: '/repo/.kubic/wt/agent-1',
     lockfile: 'pins.json',
     roleConfig: null,
+    role: null,
   };
 }
 
 describe('prod replay runner (issue #78)', () => {
-  it('re-executes the recorded objective and passes the terminus through', async () => {
-    const seen: Array<{ prompt: string; model: string }> = [];
+  it('re-executes the recorded objective and hands the pins to the run seam', async () => {
+    const seen: Array<{ prompt: string; model: string; request: unknown }> = [];
     const run = createProdReplayRun({
       loadTrajectory: () => fixtureTrajectory(),
-      runPrompt: async (prompt, model) => {
-        seen.push({ prompt, model });
+      runPrompt: async (prompt, model, request) => {
+        seen.push({ prompt, model, request });
         return { terminus: 'completed', summary: 'redone' };
       },
     });
-    const result = await run(request());
+    const pinned = request();
+    const result = await run(pinned);
     expect(result).toEqual({ terminus: 'completed', summary: 'redone' });
-    expect(seen).toEqual([{ prompt: 'Fix the widget', model: 'acme/m1' }]);
+    expect(seen).toEqual([
+      { prompt: 'Fix the widget', model: 'acme/m1', request: pinned },
+    ]);
   });
 
   it('passes failed/workspace_unavailable/provider_probe_failed through', async () => {

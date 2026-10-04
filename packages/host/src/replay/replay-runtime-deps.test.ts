@@ -131,6 +131,7 @@ function request(): ReplayRunRequest {
     worktree: '/repo/.kubic/wt/agent-1',
     lockfile: 'pins.json',
     roleConfig: null,
+    role: null,
   };
 }
 
@@ -200,7 +201,7 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     let captured: ReplayRuntimeDeps | undefined;
     const run = createProdReplayRun({
       loadTrajectory: () => fixtureTrajectory(),
-      runPrompt: async (_prompt, _model, runtime) => {
+      runPrompt: async (_prompt, _model, _request, runtime) => {
         captured = runtime;
         return { terminus: 'completed', summary: 'replayed' };
       },
@@ -247,7 +248,7 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     let sessionId = '';
     const run = createProdReplayRun({
       loadTrajectory: (path) => parseTrajectoryExportJSON(readText(path)),
-      runPrompt: async (prompt, _model, runtime) => {
+      runPrompt: async (prompt, _model, _request, runtime) => {
         const result = await runHeadlessPrompt(
           prompt,
           {},

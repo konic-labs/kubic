@@ -1677,10 +1677,35 @@ id, exits 2 with one `error:` line.
 | Invocation | Meaning |
 | --- | --- |
 | `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exits 0 and prints the tier. |
-| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the solo lane at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`). |
-| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config. Refuses with exit 2 without the role config. `--model` and `--lockfile` are refused under live. |
+| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the solo lane at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`); a model the lockfile does not pin refuses with `lockfile-mismatch` (exit 2). |
+| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config — a JSON file `{"role": "<name>"}`. The role document `.kubic/roles/<name>.md` is loaded from the pinned worktree, so its tools and prompt apply. Refuses with exit 2 without the role config. `--model` and `--lockfile` are refused under live. |
 | `... --diff-against other.json` | Recorded compare: names the variables that changed (`model`, `worktree`, `diff`). Any difference exits 1 as the regression signal; identical trajectories exit 0. |
 
+- **Worktree pin (§72).** The re-execution lane is rooted at the pinned
+  worktree — the `--worktree` override, or the trajectory's recorded
+  `worktree.path` when that path exists on this machine — so the lane's
+  tools, journal, role document and project `models.json` resolve there.
+  A recorded worktree absent on this machine falls back to the working
+  directory; `--worktree` is existence-checked before the run, so an
+  explicit override never falls back silently.
+- **Lockfile pins (§72).** `--lockfile <file>` is JSON:
+
+  ```json
+  {
+    "models": { "provider/id": { "digest": "sha256:…" } },
+    "prompt": { "digest": "sha256:<hex>" },
+    "tools":  { "digest": "sha256:<hex>" }
+  }
+  ```
+
+  `models` may also key a provider to its pinned ids
+  (`{ "provider": ["id", …] }`). The requested `--model` must be pinned
+  there, or the run refuses with `lockfile-mismatch` (exit 2) — an
+  unpinned model is never silently re-executed. The optional `prompt` and
+  `tools` digests are verified against the trajectory being replayed (its
+  objective text, and the sorted distinct tools its actions used); a
+  mismatch is the same named refusal, and a malformed pin is
+  `lockfile-invalid` (exit 2).
 - **Experimental worktree.** `--worktree <path>` is an experimental
   override for the re-execution tiers. In text mode it prints
   `warn: --worktree is experimental` on stderr; in `--json` it adds

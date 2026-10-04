@@ -9,7 +9,13 @@
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
 // from the hermetic vitest env.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -417,14 +423,17 @@ describe('a model refusal names the real source of the pin (issues #227, #295)',
 });
 
 describe('`kubic replay --tier live` re-executes under the enterprise policy (issue #288)', () => {
-  function replayFixture(): { trajectory: string; lockfile: string } {
+  function replayFixture(objective = 'say hi'): {
+    trajectory: string;
+    lockfile: string;
+  } {
     const dir = tmpRoot('kubic-replay-policy-');
     const trajectory = join(dir, 't.json');
     writeFileSync(
       trajectory,
       JSON.stringify(
         buildTrajectoryExport({
-          task: { taskId: 'task-1', objective: 'say hi', role: 'writer' },
+          task: { taskId: 'task-1', objective, role: 'writer' },
           identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
           model: {
             provider: 'faux',
@@ -514,7 +523,15 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     const { trajectory } = replayFixture();
     const roleConfig = join(tmpRoot('kubic-replay-role-'), 'role.json');
     writeFileSync(roleConfig, '{"role":"writer"}\n');
-    const { r, lines, errs } = runners(tmpRoot());
+    // Issue #272: the role config names the role; the document it pins
+    // must exist in the re-execution's worktree (the mocked workspace).
+    const workspace = tmpRoot();
+    mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.kubic', 'roles', 'writer.md'),
+      '---\nrole: writer\ntools: [read]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# writer\n\n## Prompt\n\nWrite.\n',
+    );
+    const { r, lines, errs } = runners(workspace);
     const code = await r.replay(
       { trajectory, tier: 'live', roleConfig, json: true },
       cliConfig({
@@ -525,6 +542,67 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
     );
     expect(code).toBe(6);
+  });
+
+  it('applies the pinned role: a tool outside its allowlist is not registered (issue #272)', async () => {
+    // The re-execution prompt asks for bash. Under a role whose tools are
+    // [read] the bash tool is never registered, so the marker cannot be
+    // created; under a role that allows bash it is. That is the difference
+    // the pin must make — checked-then-ignored role configs produced the
+    // same run either way.
+    const objective = 'faux:tool bash {"command":"touch marker"}';
+    const { trajectory } = replayFixture(objective);
+    const marker = (workspace: string): string => join(workspace, 'marker');
+    const roleDoc = (tools: string, shell: boolean): string =>
+      `---\nrole: reader\ntools: [${tools}]\nfilesystem: workspace-write\nshell: ${String(shell)}\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# reader\n\n## Prompt\n\nRead.\n`;
+
+    for (const [tools, shell, expected] of [
+      ['read', false, false],
+      ['read, bash', true, true],
+    ] as const) {
+      const workspace = tmpRoot('kubic-replay-role-tools-');
+      mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
+      writeFileSync(
+        join(workspace, '.kubic', 'roles', 'reader.md'),
+        roleDoc(tools, shell),
+      );
+      const roleConfig = join(tmpRoot('kubic-replay-role-pin-'), 'role.json');
+      writeFileSync(roleConfig, '{"role":"reader"}');
+      const { r } = runners(workspace);
+      await r.replay(
+        { trajectory, tier: 'live', roleConfig, json: true },
+        cliConfig({}),
+      );
+      expect(
+        existsSync(marker(workspace)),
+        `tools=[${tools}] must ${expected ? '' : 'not '}register bash`,
+      ).toBe(expected);
+    }
+  });
+
+  it('runs the re-execution in the pinned worktree (issue #272)', async () => {
+    // The lane's cwd is the pin: a bash write lands in the worktree the
+    // request names, not in the process working directory. The role
+    // document is loaded from that same tree.
+    const { trajectory } = replayFixture(
+      'faux:tool bash {"command":"touch marker"}',
+    );
+    const workspace = tmpRoot('kubic-replay-cwd-');
+    const worktree = tmpRoot('kubic-replay-wt-');
+    mkdirSync(join(worktree, '.kubic', 'roles'), { recursive: true });
+    writeFileSync(
+      join(worktree, '.kubic', 'roles', 'reader.md'),
+      '---\nrole: reader\ntools: [read, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# reader\n\n## Prompt\n\nRead.\n',
+    );
+    const roleConfig = join(tmpRoot('kubic-replay-role-pin-'), 'role.json');
+    writeFileSync(roleConfig, '{"role":"reader"}');
+    const { r } = runners(workspace);
+    await r.replay(
+      { trajectory, tier: 'live', roleConfig, worktree, json: true },
+      cliConfig({}),
+    );
+    expect(existsSync(join(worktree, 'marker'))).toBe(true);
+    expect(existsSync(join(workspace, 'marker'))).toBe(false);
   });
 
   it('re-executes a model the policy allows (control)', async () => {

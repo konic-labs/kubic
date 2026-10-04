@@ -2,6 +2,7 @@
 // §72, §78). Faux-only: the re-execution runner is injected (zero
 // network); trajectory fixtures are built with the versioned #51
 // exporter so tests always run against the current stable contract.
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -503,14 +504,189 @@ describe('replay deterministic (§47 different-model; §47.1 Deterministic)', ()
   });
 });
 
-describe('replay live (§47.1 Live)', () => {
-  function writeRoleConfig(dir: string, name: string, body?: string): string {
+describe('replay pins: the lockfile and role config are enforced (issue #272, §72)', () => {
+  function digest(text: string): string {
+    return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
+  }
+
+  function writePin(dir: string, name: string, extra: object): string {
     const path = join(dir, name);
     writeFileSync(
       path,
-      body ??
-        '---\nrole: implementer\ntools: [read, edit]\n---\n\nDo the task.\n',
+      JSON.stringify({
+        models: { 'acme/m1': { digest: 'sha256:abc' } },
+        ...extra,
+      }),
     );
+    return path;
+  }
+
+  it('refuses a model the lockfile does not pin (exit 2, named)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writeLockfile(dir, 'pins.json');
+    const o = out();
+    const exit = await runReplayCommand(
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'other/m9',
+        lockfile: lock,
+        json: true,
+      },
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      error: { code: string; message: string };
+    };
+    expect(envelope.error.code).toBe('lockfile-mismatch');
+    expect(envelope.error.message).toMatch(
+      /does not pin model "other\/m9" — refusing a deterministic replay at an unpinned model/,
+    );
+  });
+
+  it('accepts the provider-keyed pin form (provider -> [ids])', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = join(dir, 'pins.json');
+    writeFileSync(lock, JSON.stringify({ models: { acme: ['m1'] } }));
+    let called = false;
+    const exit = await runReplayCommand(
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+      },
+      {
+        ...deps(out()),
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'ok' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(called).toBe(true);
+  });
+
+  it('refuses a lockfile whose prompt/tools pins do not match the trajectory', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    for (const [key, bad] of [
+      ['prompt', { digest: digest('another prompt') }],
+      ['tools', { digest: digest('read') }],
+    ] as const) {
+      const lock = writePin(dir, `${key}.json`, { [key]: bad });
+      const o = out();
+      const exit = await runReplayCommand(
+        {
+          trajectory: traj,
+          tier: 'deterministic',
+          model: 'acme/m1',
+          lockfile: lock,
+          json: true,
+        },
+        deps(o),
+      );
+      expect(exit, key).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        error: { code: string; message: string };
+      };
+      expect(envelope.error.code, key).toBe('lockfile-mismatch');
+      expect(envelope.error.message, key).toMatch(
+        new RegExp(`${key} pin sha256:.* does not match the recorded ${key}`),
+      );
+    }
+  });
+
+  it('accepts matching prompt/tools pins and re-executes', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writePin(dir, 'match.json', {
+      prompt: { digest: digest(fixtureTrajectory().task.objective) },
+      tools: { digest: digest('edit\nread') },
+    });
+    let called = false;
+    const exit = await runReplayCommand(
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+      },
+      {
+        ...deps(out()),
+        run: async () => {
+          called = true;
+          return { terminus: 'completed', summary: 'ok' };
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(called).toBe(true);
+  });
+
+  it('refuses a malformed digest pin (exit 2, lockfile-invalid)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const lock = writePin(dir, 'bad.json', { prompt: 'sha256:abc' });
+    const o = out();
+    const exit = await runReplayCommand(
+      {
+        trajectory: traj,
+        tier: 'deterministic',
+        model: 'acme/m1',
+        lockfile: lock,
+        json: true,
+      },
+      deps(o),
+    );
+    expect(exit).toBe(2);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      error: { code: string; message: string };
+    };
+    expect(envelope.error.code).toBe('lockfile-invalid');
+    expect(envelope.error.message).toMatch(/prompt pin must be an object/);
+  });
+
+  it('refuses a role config that is not the JSON pin form (exit 2, named)', async () => {
+    const dir = tmpRoot();
+    const traj = writeTrajectory(dir, 't.json');
+    const cases: Array<[string, RegExp]> = [
+      [
+        'not json at all',
+        /is not valid JSON — live replay needs \{"role": "<name>"\}/,
+      ],
+      [JSON.stringify({ tools: ['read'] }), /non-empty "role" name/],
+      [JSON.stringify({ role: '  ' }), /non-empty "role" name/],
+    ];
+    for (const [index, [body, message]] of cases.entries()) {
+      const role = join(dir, `role-${index}.json`);
+      writeFileSync(role, body);
+      const o = out();
+      const exit = await runReplayCommand(
+        { trajectory: traj, tier: 'live', roleConfig: role, json: true },
+        deps(o),
+      );
+      expect(exit, body).toBe(2);
+      const envelope = JSON.parse(o.lines.join('\n')) as {
+        error: { code: string; message: string };
+      };
+      expect(envelope.error.code, body).toBe('role-config-invalid');
+      expect(envelope.error.message, body).toMatch(message);
+    }
+  });
+});
+
+describe('replay live (§47.1 Live)', () => {
+  // Issue #272: --role-config is the pin artifact naming the role the
+  // re-execution boots as (`{"role": "<name>"}`); the role document itself
+  // lives at `.kubic/roles/<name>.md` in the pinned worktree.
+  function writeRoleConfig(dir: string, name: string, body?: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, body ?? JSON.stringify({ role: 'implementer' }));
     return path;
   }
 
@@ -615,6 +791,7 @@ describe('replay live (§47.1 Live)', () => {
     expect(seen[0]).toMatchObject({
       tier: 'live',
       roleConfig: role,
+      role: 'implementer',
       model: 'acme/m1',
     });
     const envelope = JSON.parse(o.lines.join('\n')) as {
@@ -844,8 +1021,8 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
     const dir = tmpRoot();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
-    const rolePath = join(dir, 'role.md');
-    writeFileSync(rolePath, '---\nrole: implementer\n---\n');
+    const rolePath = join(dir, 'role.json');
+    writeFileSync(rolePath, JSON.stringify({ role: 'implementer' }));
     const cases: { args: ReplayCommandOptions; tier: string; exit: number }[] =
       [
         { args: { trajectory: traj }, tier: 'recorded', exit: 0 },
@@ -956,7 +1133,7 @@ describe('replay tier honesty (negative tests; §47.1)', () => {
       {
         trajectory: traj,
         tier: 'deterministic',
-        model: 'other/m9',
+        model: 'acme/m1',
         lockfile: lock,
         worktree: wt,
       },

@@ -809,6 +809,10 @@ export function createProdRunners(io: ProdRunnerIo): DispatchRunners {
           ...(enterprisePolicy === undefined
             ? {}
             : { modelPolicy: enterprisePolicy }),
+          // Issue #272: the shared lane projections `kubic run` threads
+          // (agent id + config-sourced role layers + the out-of-scope
+          // paths) — the pinned role merges under them identically.
+          ...runtimeLaneDeps(cliConfig),
         },
       );
     },

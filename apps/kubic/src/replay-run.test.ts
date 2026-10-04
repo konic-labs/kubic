@@ -104,6 +104,7 @@ function request(overrides: Partial<ReplayRunRequest> = {}): ReplayRunRequest {
     worktree: '/repo',
     lockfile: 'pins.json',
     roleConfig: null,
+    role: null,
     ...overrides,
   };
 }
@@ -210,5 +211,49 @@ describe('prod replay re-execution runner (issue #382)', () => {
     await runProdReplay(request(), { policySource: 'config', trustProject });
     expect(trustProject).toHaveBeenCalledTimes(1);
     expect(trustProject.mock.calls[0]?.[0]).toBe(process.cwd());
+  });
+
+  it('roots the lane at the pinned worktree and boots the pinned role (issue #272)', async () => {
+    cwdWithTrajectory();
+    const worktree = tempDir('replay-worktree-');
+    const roleConfig = join(worktree, 'role.json');
+    writeFileSync(roleConfig, JSON.stringify({ role: 'reader' }));
+    const layers = [{ layer: 'project' as const, roles: { reader: {} } }];
+    const result = await runProdReplay(
+      request({ tier: 'live', role: 'reader', roleConfig, worktree }),
+      {
+        policySource: 'config',
+        agentId: 'alice',
+        roles: { layers },
+        reconcileOutOfScope: ['dist'],
+      },
+    );
+    expect(result).toEqual({ terminus: 'completed', summary: 'redone' });
+    const [prompt, options, deps] = lane.runHeadlessPrompt.mock.calls[0] ?? [];
+    expect(prompt).toBe('Fix the widget');
+    // The role pin is applied, not checked-then-ignored: the lane boots as
+    // the named role, whose tools and prompt the role machinery installs.
+    expect(options).toEqual({ role: 'reader' });
+    // AC: --worktree gives lane env.cwd === dir; the role document and the
+    // project models.json resolve in that same tree.
+    expect(deps.env.cwd).toBe(worktree);
+    expect(deps.roles).toEqual({ cwd: worktree, layers });
+    expect(deps.agentId).toBe('alice');
+    expect(deps.reconcileOutOfScope).toEqual(['dist']);
+  });
+
+  it('boots no role when the request carries none (deterministic tier)', async () => {
+    cwdWithTrajectory();
+    await runProdReplay(request());
+    const options = lane.runHeadlessPrompt.mock.calls[0]?.[1];
+    expect(options).toEqual({});
+  });
+
+  it('falls back to the working directory when the recorded worktree is absent', async () => {
+    const cwd = cwdWithTrajectory();
+    await runProdReplay(request({ worktree: join(cwd, 'does-not-exist') }));
+    const deps = lane.runHeadlessPrompt.mock.calls[0]?.[2];
+    expect(deps.env.cwd).toBe(cwd);
+    expect(deps.roles.cwd).toBe(cwd);
   });
 });

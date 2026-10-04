@@ -7,6 +7,14 @@
 // silently re-executing at another model. Trajectory reads go through
 // the exec FileBridge (I/O confinement, §9): this file never imports
 // node:fs directly.
+//
+// Issue #272 (§72): the request's pins are the re-execution's inputs, not
+// checked-then-ignored labels. The lane is rooted at the pinned worktree
+// (the `--worktree` override, or the recorded path when it exists here),
+// the live tier boots the role the `--role-config` names — its tools and
+// prompt apply through the same role machinery `kubic run` uses — and the
+// effective config's lane projections travel with it.
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import type {
@@ -21,6 +29,25 @@ import {
   parseModelFlag,
 } from '../../../packages/worker/src/model-select.js';
 import { runHeadlessPrompt } from './headless-run.js';
+
+// §72 (issue #272): the re-execution is rooted at the pinned worktree when
+// that path exists on this machine. A recorded worktree that is absent
+// here (another machine's trajectory) falls back to the working directory
+// — the documented pre-#272 behaviour — while an explicit `--worktree`
+// override is existence-checked by the command before it gets this far.
+function replayCwd(worktree: string): string {
+  try {
+    if (
+      worktree !== '' &&
+      createNodeFileBridge(process.cwd()).exists(worktree)
+    ) {
+      return worktree;
+    }
+  } catch {
+    // An unreadable path is not a workspace: fall through to the cwd.
+  }
+  return process.cwd();
+}
 
 export async function runProdReplay(
   request: ReplayRunRequest,
@@ -37,12 +64,16 @@ export async function runProdReplay(
     runPrompt: async (
       prompt: string,
       model: string,
+      rerun: ReplayRunRequest,
       runRuntime: ReplayRuntimeDeps,
     ) => {
-      const assembled = await assembleModels(process.cwd(), process.env, {
-        ...(runtime.trustProject === undefined
+      // The pinned worktree is where models.json, the role document and
+      // the lane's tools resolve.
+      const cwd = replayCwd(rerun.worktree);
+      const assembled = await assembleModels(cwd, process.env, {
+        ...(runRuntime.trustProject === undefined
           ? {}
-          : { projectTrust: runtime.trustProject }),
+          : { projectTrust: runRuntime.trustProject }),
       });
       try {
         const selection = parseModelFlag(model);
@@ -57,11 +88,24 @@ export async function runProdReplay(
         }
         return await runHeadlessPrompt(
           prompt,
-          {},
+          // The live tier's pin artifact names the role; the lane loads
+          // `.kubic/roles/<name>.md` from the pinned worktree and applies
+          // its tools and prompt (issue #272).
+          rerun.role === null ? {} : { role: rerun.role },
           {
             models: assembled.models,
             model: selection,
             ...runRuntime,
+            // §72: the lane runs where the pin says, under the config's
+            // own projections (agent id, role layers, out-of-scope paths)
+            // exactly as `kubic run` installs them.
+            env: new NodeExecutionEnv(cwd),
+            roles: {
+              cwd,
+              ...(runRuntime.roles?.layers === undefined
+                ? {}
+                : { layers: runRuntime.roles.layers }),
+            },
           },
         );
       } catch (error) {

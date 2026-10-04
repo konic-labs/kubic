@@ -48,15 +48,19 @@ describe('slash-command registry (issue #305)', () => {
       if (spec.command === undefined) continue;
       expect(isPresentationCommand(spec.command)).toBe(true);
     }
-    expect(findSlashCommand('new')?.command).toBe('session.detach');
+    // `/new` and `/resume` both attach (the dispatcher keys off this); the
+    // local reads and `/quit` carry no §66 command.
+    expect(findSlashCommand('new')?.command).toBe('session.attach');
     expect(findSlashCommand('resume')?.command).toBe('session.attach');
     expect(findSlashCommand('model')?.command).toBe('model.select');
     expect(findSlashCommand('thinking')?.command).toBe('thinking.cycle');
     expect(findSlashCommand('compact')?.command).toBe('lane.compact');
-    // A local read issues nothing.
+    // A local read (or a process-exiting command) issues nothing.
     expect(findSlashCommand('help')?.command).toBeUndefined();
     expect(findSlashCommand('session')?.command).toBeUndefined();
     expect(findSlashCommand('diff')?.command).toBeUndefined();
+    expect(findSlashCommand('undo')?.command).toBeUndefined();
+    expect(findSlashCommand('quit')?.command).toBeUndefined();
   });
 
   it('parses the command name and its verbatim argument', () => {

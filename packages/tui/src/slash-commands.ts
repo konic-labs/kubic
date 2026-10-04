@@ -59,7 +59,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     name: 'new',
     summary: 'start a fresh session without leaving the TUI',
     usage: '/new',
-    command: 'session.detach',
+    command: 'session.attach',
   },
   {
     name: 'resume',
@@ -79,11 +79,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     usage: '/undo',
   },
   {
+    // No §66 command: quitting ends the process (the session close is part
+    // of that), which the presentation vocabulary does not name.
     name: 'quit',
     summary: 'leave the TUI',
     usage: '/quit',
     keys: 'Esc',
-    command: 'session.detach',
   },
   {
     name: 'model',

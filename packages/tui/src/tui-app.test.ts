@@ -791,9 +791,16 @@ describe('slash commands in the app (issue #305)', () => {
     const doc = ui.render(100).join('\n');
     expect(doc).toContain('/help — the commands');
     expect(doc).toContain('/session — id, tokens, cost');
-    // A lane snapshot is the session's own transcript: the notice goes.
+    // A lane snapshot is the session's own transcript: the notice goes, and
+    // the NEXT notice starts from an empty list (review fix: a stale list
+    // must not be re-applied under the new report).
     ui.applyLaneEntries([]);
     expect(ui.render(100).join('\n')).not.toContain('/help — the commands');
+    ui.appendNotice(['/session — the second one']);
+    const after = ui.render(100).join('\n');
+    expect(after).toContain('/session — the second one');
+    expect(after).not.toContain('/help — the commands');
+    expect(after).not.toContain('/session — id, tokens, cost');
   });
 
   it('reports the session id, tokens and cost from the status rows', () => {
@@ -818,11 +825,14 @@ describe('slash commands in the app (issue #305)', () => {
         },
       },
     ]);
-    const report = ui.sessionReport();
+    const report = ui.sessionReport('/work/repo');
     expect(report).toContain(`session ${SESSION}`);
+    expect(report).toContain('in /work/repo');
     expect(report).toContain(MODEL);
     expect(report).toContain('in 1200 out 340');
     expect(report).toContain('$0.25');
+    // Without a known workspace the report simply omits it.
+    expect(ui.sessionReport()).not.toContain('in /work/repo');
   });
 
   it('resets every session-scoped surface for /new and /resume', () => {

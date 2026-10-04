@@ -371,9 +371,10 @@ export interface TuiApp {
   // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
   // it, exactly like the orchestrator report.
   appendNotice(lines: ReadonlyArray<string>): void;
-  // Issue #305: `/session` — id, model, thinking level, tokens and cost from
-  // the rows the status bar already carries (one source of truth).
-  sessionReport(): string;
+  // Issue #305: `/session` — id, workspace, model, thinking level, tokens and
+  // cost from the rows the status bar already carries (one source of truth).
+  // `cwd` comes from the boot (the app never guesses a workspace).
+  sessionReport(cwd?: string): string;
   // Issue #305: `/new` and `/resume` — clear every session-scoped surface
   // (transcript, tree, usage, panels, echoes) and take the next session's
   // identity, without recreating the app.
@@ -1123,8 +1124,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       const cells = entriesToCells(entries);
       transcript.applyLaneSnapshot({ laneId: sessionId }, cells, revision);
       // Issue #327: a solo lane snapshot is the session's own transcript, so
-      // the orchestrator report stops being it.
+      // the orchestrator report stops being it — and the command notices
+      // with it (review fix: a stale notice list must never be re-applied by
+      // the next `/help`).
       reportCells = [];
+      noticeCells = [];
       // The echoed prompt is dropped once the lane has committed a NEW
       // prompt cell (counted, not matched by text: an identical resubmit
       // must not clear on the previous turn's cell).
@@ -1255,10 +1259,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       );
       transcript.rePin();
     },
-    sessionReport: (): string => {
+    sessionReport: (cwd?: string): string => {
       const state = status.getState();
       const summary = summarizeStatusRows(state.rows);
-      return `session ${sessionId} · ${state.model} · thinking ${state.thinking} · in ${summary.input} out ${summary.output} (cached ${summary.cacheRead}) · ${formatStatusCost(summary.costTotal)}`;
+      const where = cwd === undefined ? '' : ` in ${cwd}`;
+      return `session ${sessionId}${where} · ${state.model} · thinking ${state.thinking} · in ${summary.input} out ${summary.output} (cached ${summary.cacheRead}) · ${formatStatusCost(summary.costTotal)}`;
     },
     resetSession: (options): void => {
       sessionId = options.sessionId;

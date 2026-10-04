@@ -3261,9 +3261,121 @@ export async function runTuiCommand(
       // Issue #305: the commands this TUI answers itself. Every one of them
       // reports on the footer (and, when there is something to read, in the
       // transcript) and NONE of them reaches the model.
+      // Issue #305: the commands this TUI answers itself. Every one of them
+      // reports on the footer (and, when there is something to read, in the
+      // transcript) and NONE of them reaches the model.
+      //
+      // The side-effecting entries dispatch on the §66 `command` their
+      // registry row names (typed, never a bare string); the local reads
+      // carry no §66 command and dispatch by name. Review fix (#305): the
+      // side-effecting commands are refused while a turn runs — they swap or
+      // close the session under it (the quit path's drain is the only place
+      // that owns that race).
+      const busyRefusal = (what: string): TuiSubmitOutcome => {
+        app.setEditorFooter(
+          `${what}: finish the current turn before switching`,
+        );
+        if (!stopped) screen?.render();
+        return 'refused';
+      };
+      const openNewSession = (): TuiSubmitOutcome => {
+        app.setEditorFooter('session: booting a fresh session…');
+        if (!stopped) screen?.render();
+        void rebindSession(undefined)
+          .then(() => {
+            if (stopped) return;
+            app.setEditorFooter(`session: ${boot.sessionId} (new)`);
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `session: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+        return 'accepted';
+      };
+      const openResumePicker = (): TuiSubmitOutcome => {
+        const list = boot.listSessions;
+        if (list === undefined) {
+          app.setEditorFooter(
+            'resume: this session cannot list other sessions',
+          );
+          if (!stopped) screen?.render();
+          return 'refused';
+        }
+        void list()
+          .then((rows) => {
+            if (stopped) return;
+            const others = rows.filter((row) => row.id !== boot.sessionId);
+            if (others.length === 0) {
+              app.setEditorFooter('resume: no other sessions');
+              screen?.render();
+              return;
+            }
+            const opened = app.openPicker({
+              rows: others.map((row) => ({
+                value: row.id,
+                label: row.id,
+                description: [row.cwd, row.createdAt]
+                  .filter((part): part is string => part !== undefined)
+                  .join(' · '),
+              })),
+              onSelect: (id) => {
+                app.setEditorFooter(`session: attaching ${id}…`);
+                screen?.render();
+                void rebindSession(id)
+                  .then(() => {
+                    if (stopped) return;
+                    app.setEditorFooter(`session: ${boot.sessionId} (resumed)`);
+                    screen?.render();
+                  })
+                  .catch((error: unknown) => {
+                    if (stopped) return;
+                    app.setEditorFooter(
+                      `session: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                    screen?.render();
+                  });
+              },
+              onCancel: () => {
+                if (stopped) return;
+                app.setEditorFooter('resume: cancelled');
+                screen?.render();
+              },
+            });
+            if (!opened) {
+              app.setEditorFooter(
+                'resume needs a wider terminal — use kubic sessions list',
+              );
+            }
+            screen?.render();
+          })
+          .catch((error: unknown) => {
+            if (stopped) return;
+            app.setEditorFooter(
+              `resume: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            screen?.render();
+          });
+        return 'accepted';
+      };
       const runLocalCommand = (
         command: ParsedSlashCommand,
       ): TuiSubmitOutcome => {
+        const spec = findSlashCommand(command.name);
+        switch (spec?.command) {
+          case 'session.attach': {
+            if (activeTurn?.isRunning() === true) return busyRefusal('session');
+            return command.name === 'resume'
+              ? openResumePicker()
+              : openNewSession();
+          }
+          default: {
+            break;
+          }
+        }
         switch (command.name) {
           case 'help': {
             const wanted =
@@ -3295,7 +3407,7 @@ export async function runTuiCommand(
             return 'accepted';
           }
           case 'session': {
-            const report = app.sessionReport();
+            const report = app.sessionReport(boot.cwd);
             app.appendNotice([report]);
             app.setEditorFooter(report);
             if (!stopped) screen?.render();
@@ -3308,6 +3420,7 @@ export async function runTuiCommand(
             return 'accepted';
           }
           case 'undo': {
+            if (activeTurn?.isRunning() === true) return busyRefusal('undo');
             const store = boot.journal;
             const root = boot.cwd;
             if (store === undefined || root === undefined) {
@@ -3334,91 +3447,6 @@ export async function runTuiCommand(
           }
           case 'quit': {
             shutdown();
-            return 'accepted';
-          }
-          case 'new': {
-            app.setEditorFooter('session: booting a fresh session…');
-            if (!stopped) screen?.render();
-            void rebindSession(undefined)
-              .then(() => {
-                if (stopped) return;
-                app.setEditorFooter(`session: ${boot.sessionId} (new)`);
-                screen?.render();
-              })
-              .catch((error: unknown) => {
-                if (stopped) return;
-                app.setEditorFooter(
-                  `session: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                screen?.render();
-              });
-            return 'accepted';
-          }
-          case 'resume': {
-            const list = boot.listSessions;
-            if (list === undefined) {
-              app.setEditorFooter(
-                'resume: this session cannot list other sessions',
-              );
-              if (!stopped) screen?.render();
-              return 'refused';
-            }
-            void list()
-              .then((rows) => {
-                if (stopped) return;
-                const others = rows.filter((row) => row.id !== boot.sessionId);
-                if (others.length === 0) {
-                  app.setEditorFooter('resume: no other sessions');
-                  screen?.render();
-                  return;
-                }
-                const opened = app.openPicker({
-                  rows: others.map((row) => ({
-                    value: row.id,
-                    label: row.id,
-                    description: [row.cwd, row.createdAt]
-                      .filter((part): part is string => part !== undefined)
-                      .join(' · '),
-                  })),
-                  onSelect: (id) => {
-                    app.setEditorFooter(`session: attaching ${id}…`);
-                    screen?.render();
-                    void rebindSession(id)
-                      .then(() => {
-                        if (stopped) return;
-                        app.setEditorFooter(
-                          `session: ${boot.sessionId} (resumed)`,
-                        );
-                        screen?.render();
-                      })
-                      .catch((error: unknown) => {
-                        if (stopped) return;
-                        app.setEditorFooter(
-                          `session: ${error instanceof Error ? error.message : String(error)}`,
-                        );
-                        screen?.render();
-                      });
-                  },
-                  onCancel: () => {
-                    if (stopped) return;
-                    app.setEditorFooter('resume: cancelled');
-                    screen?.render();
-                  },
-                });
-                if (!opened) {
-                  app.setEditorFooter(
-                    'resume needs a wider terminal — use kubic sessions list',
-                  );
-                }
-                screen?.render();
-              })
-              .catch((error: unknown) => {
-                if (stopped) return;
-                app.setEditorFooter(
-                  `resume: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                screen?.render();
-              });
             return 'accepted';
           }
           default: {

@@ -1181,6 +1181,62 @@ describe('kubic tui prompt loop (issue #88)', () => {
     expect(calls()).toBe(0);
   });
 
+  it('refuses the side-effecting commands while a turn runs (#305 review)', async () => {
+    // `/new`, `/resume` and `/undo` swap or close the session (and touch the
+    // workspace) — a turn in flight owns both. The local reads stay allowed.
+    const root = tmpRoot();
+    const lines: string[] = [];
+    const fake = fakeTerminal(100);
+    let release: () => void = () => {};
+    const gated = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { models, calls } = fauxModels([
+      async () => {
+        await gated;
+        return fauxAssistantMessage('first answer');
+      },
+    ]);
+    const pending = runTuiCommand(
+      {},
+      {
+        out: (line: string) => lines.push(line),
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        bootLane: fauxLaneBoot(root, models),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    for (const ch of 'first prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('first prompt'));
+    const run = (command: string): void => {
+      fake.feed('\x15');
+      for (const ch of command) fake.feed(ch);
+      fake.feed('\r');
+    };
+    for (const command of ['/new', '/resume', '/undo']) {
+      const mark = fake.writes.length;
+      run(command);
+      await waitFor(() =>
+        fake.writes
+          .slice(mark)
+          .join('')
+          .includes('finish the current turn before switching'),
+      );
+    }
+    // The reads still answer while the turn runs.
+    run('/session');
+    await waitFor(() => fake.writes.join('').includes('in 0 out 0 (cached 0)'));
+    run('/help');
+    await waitFor(() => fake.writes.join('').includes('help: 10 commands'));
+    release();
+    await waitFor(() => fake.writes.join('').includes('first answer'));
+    fake.feed('\x03');
+    expect(await pending).toBe(0);
+    expect(calls()).toBe(1);
+  });
+
   it('runs a command from the Ctrl-P palette (#305)', async () => {
     const root = tmpRoot();
     const lines: string[] = [];

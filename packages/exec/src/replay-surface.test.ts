@@ -3,11 +3,11 @@
 // Issue #97 decided the replay-safety kernel: the Kubic-side state machine
 // (`effects.ts`) and the file-backed checkpoint store (`checkpoint-store.ts`)
 // were deleted rather than wired, because both duplicate machinery the Pi
-// harness itself owns — the tool-call machine
-// (`planned → effect_pending → outcome_ready → completed`, `replay:
-// "never" | "safe"`) and the abort-aware admission gate are the harness's
-// (`@earendil-works/pi-agent-core`, session/types.ts + execution/effect-gate.ts),
-// and nothing ever read a persisted checkpoint.
+// harness itself owns — the durable tool task (one ToolTask per call, whose
+// recorded intent carries `replay: 'safe' | 'unsafe'`:
+// `@earendil-works/pi-durable`, `harness/tool.ts`) and the abort-aware
+// admission/settlement path are the harness's, and nothing ever read a
+// persisted checkpoint.
 //
 // This file is the regression gate for that decision: a deleted surface must
 // stay deleted, no tracked document may advertise it, and the exec package

@@ -32,9 +32,12 @@ export const TURN_BUSY_REASON = 'busy';
 
 export type TurnAbortReason = 'guard' | 'user' | 'signal';
 
+// §52 code, or the one refusal Kubic raises itself (busy).
+export type TurnFailureReason = FailureCode | typeof TURN_BUSY_REASON;
+
 export type TurnOutcome =
   | { kind: 'completed'; submissionId: string }
-  | { kind: 'failed'; reason: FailureCode; error?: string }
+  | { kind: 'failed'; reason: TurnFailureReason; error?: string }
   | { kind: 'aborted'; reason: TurnAbortReason };
 
 // A cancelled turn's abort reason, carried on the Context's AbortSignal.
@@ -99,24 +102,24 @@ export async function runTurn(
       options.context,
     );
   } catch (error) {
-    const cancelled = cancelledReason(options.context);
-    if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
-    if (error instanceof ConversationBusy) {
-      return {
-        kind: 'failed',
-        reason: TURN_BUSY_REASON,
-        error: error.message,
-      };
-    }
-    return failureOutcome(classifyThrownError(error));
+    return submissionFailure(error, options.context);
   }
+  return awaitTurn(submission, options.context);
+}
+
+// The wait half of a turn, for a submission admitted elsewhere: the durable
+// settlement of an input this process did not submit (issue #147's "resume
+// the pending run that carries this prompt as this run"). Same outcome
+// vocabulary as runTurn.
+export async function awaitTurn(
+  submission: Submission,
+  context: Context,
+): Promise<TurnOutcome> {
   let settled: Awaited<ReturnType<Submission['wait']>>;
   try {
-    settled = await submission.wait(options.context);
+    settled = await submission.wait(context);
   } catch (error) {
-    const cancelled = cancelledReason(options.context);
-    if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
-    return failureOutcome(classifyThrownError(error));
+    return submissionFailure(error, context);
   }
   if (settled.status === 'done') {
     return { kind: 'completed', submissionId: String(settled.id) };
@@ -124,12 +127,27 @@ export async function runTurn(
   // A cancelled context wins over the durable settlement: the guard that
   // cancelled the turn may race the `conversation.abort()` it triggered, and
   // the caller's own reason is the truthful one.
-  const cancelled = cancelledReason(options.context);
+  const cancelled = cancelledReason(context);
   if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
   if (settled.reason === 'aborted') return { kind: 'aborted', reason: 'user' };
   return failureOutcome(
     classifySubmissionFailure(settled.reason, settled.detail),
   );
+}
+
+// A throw from submit/wait: a cancelled context is the turn's own abort
+// reason, anything else is a classified failure.
+function submissionFailure(error: unknown, context: Context): TurnOutcome {
+  const cancelled = cancelledReason(context);
+  if (cancelled !== undefined) return { kind: 'aborted', reason: cancelled };
+  if (error instanceof ConversationBusy) {
+    return {
+      kind: 'failed',
+      reason: TURN_BUSY_REASON,
+      error: error.message,
+    };
+  }
+  return failureOutcome(classifyThrownError(error));
 }
 
 function failureOutcome(failure: SubmissionFailure): TurnOutcome {

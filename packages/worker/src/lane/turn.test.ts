@@ -14,6 +14,7 @@ import {
   type Storage,
   withAbortSignal,
 } from '../pi-boundary.js';
+import type { AbortableLane } from './abort.js';
 import { abortLane, forgetLaneKills, OperationKillRegistry } from './abort.js';
 import { bootSoloLane, type SoloLane } from './solo.js';
 import {
@@ -259,15 +260,12 @@ describe('turnLaneRecord (D6.1)', () => {
 });
 
 describe('abortLane (D6.2)', () => {
-  function laneStub(abort: (context: Context) => Promise<void>) {
+  function laneStub(abort: (context: Context) => Promise<void>): AbortableLane {
     const kills = new OperationKillRegistry();
     return {
       kills,
       conversation: { id: 'conv-1', abort },
-    } as never as {
-      kills: OperationKillRegistry;
-      conversation: { id: string; abort: (c: Context) => Promise<void> };
-    };
+    } as unknown as AbortableLane;
   }
 
   it('aborts the conversation and runs every tracked kill', async () => {

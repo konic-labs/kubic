@@ -155,7 +155,12 @@ describe('no tracked doc claims roles are absent from the delegation path (#104)
     // unreachable, so their rows were the right call. Both siblings have since
     // landed and wired them, and the reachability gate fails on a row for a
     // reachable file — so the surviving property is the stronger one: those
-    // two must carry NO row, and the still-dead #98 module must keep its.
+    // two must carry NO row.
+    //
+    // `merge/telemetry.ts` (#98) was the still-dead module this pin kept its
+    // row for; issue #158 wired it (the orchestrate driver records per-agent
+    // MergeTelemetry), so it moved to the same property as the two above —
+    // a reachable module carries no row. #104's own rows stay absent.
     //
     // Scoped to TABLE ROWS, never the whole file: the prose below the table
     // names these paths on purpose, recording what each issue executed, and a
@@ -171,7 +176,7 @@ describe('no tracked doc claims roles are absent from the delegation path (#104)
     expect(ledger).not.toMatch(
       row('packages/host/src/orchestrator/merge/conflicts.ts'),
     );
-    expect(ledger).toMatch(
+    expect(ledger).not.toMatch(
       row('packages/host/src/orchestrator/merge/telemetry.ts'),
     );
   });

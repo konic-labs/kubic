@@ -799,13 +799,15 @@ export function readPendingWorkerAsks(
       nonce: published.nonce,
     });
     if (answer.state === 'verified') continue;
-    if (answer.state === 'refused') options.onRefused?.(answer.detail);
     if (
       options.agentId !== undefined &&
       published.request.agentId !== options.agentId
     ) {
+      // Another worker's ask: not this pump's business to report (#149 review
+      // finding 2) — its own run's pump reports it.
       continue;
     }
+    if (answer.state === 'refused') options.onRefused?.(answer.detail);
     out.push(published);
   }
   return out.sort((a, b) => a.request.key.localeCompare(b.request.key));
@@ -1289,6 +1291,10 @@ export function createOrchestratorApprovalsRun(
   // children as KUBIC_APPROVALS_VERIFY_KEY. The private half never leaves this
   // process and is never written anywhere.
   const signer = options.signer ?? createApprovalSigner();
+  // ONE approvals run owns a session's state directory per process (and per
+  // machine, via the session lock): the construction prune below assumes it,
+  // and a second run of the same session id constructed concurrently here
+  // would wipe the first's mailbox (#149 review finding 3).
   const bridge = createNodeFileBridge(dir);
   // The mailbox is THIS process's: an ask another process read can never be
   // answered by this one (its answer would not carry this run's MAC), so asks
@@ -1307,12 +1313,25 @@ export function createOrchestratorApprovalsRun(
   const auditLog = new RouterAuditTrace();
   const audit = (event: RouterAuditEvent): void => {
     auditLog.append(event);
+    // A planted/foreign/stale ANSWER is the attack this issue is about, so its
+    // refusal is durable too — not only the in-memory trace and the debug sink
+    // (#149 review finding 1). The refusal note is already deduped/capped.
     if (event.type === 'orchestrator-decision-seed-dropped') {
       appendToLedger(
         ledgerDir,
         droppedStateAudit({
           sessionId: options.sessionId,
           what: 'decision',
+          detail: event.detail,
+        }),
+        (message) => debug(`audit: ledger append failed: ${message}`),
+      );
+    } else if (event.type === 'orchestrator-ask-refused') {
+      appendToLedger(
+        ledgerDir,
+        droppedStateAudit({
+          sessionId: options.sessionId,
+          what: 'answer',
           detail: event.detail,
         }),
         (message) => debug(`audit: ledger append failed: ${message}`),
